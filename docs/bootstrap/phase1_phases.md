@@ -6,10 +6,10 @@
 
 | Task | Status |
 |-----|--------|
-| Path canonicalization | Todo |
-| Hash selection | Todo |
-| NodeID generation | Todo |
-| FrameID generation | Todo |
+| Path canonicalization | ✅ Complete |
+| Hash selection | ✅ Complete |
+| NodeID generation | ✅ Complete |
+| FrameID generation | ✅ Complete |
 
 ### Phase 1B — Filesystem Merkle Tree
 
@@ -64,4 +64,3 @@
 ---
 
 [← Back to Spec](phase1_spec.md) | [Next: Implementation →](phase1_implementation.md)
-

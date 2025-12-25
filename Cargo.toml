@@ -37,6 +37,7 @@ parking_lot = "0.12"
 # Testing
 proptest = "1.4"
 tempfile = "3.8"
+hex = "0.4"  # For test vector hex encoding/decoding
 
 # Benchmarking
 criterion = "0.5"
