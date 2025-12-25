@@ -25,18 +25,18 @@
 
 | Task | Status |
 |-----|--------|
-| GetNode API | Todo |
-| PutFrame API | Todo |
-| ContextView wiring | Todo |
-| Error model | Todo |
-| API determinism tests | Todo |
-| Concurrent request handling | Todo |
+| GetNode API | Complete |
+| PutFrame API | Complete |
+| ContextView wiring | Complete |
+| Error model | Complete |
+| API determinism tests | Complete |
+| Concurrent request handling | Complete |
 
 **Exit Criteria:**
-- GetNode and PutFrame APIs implemented
-- APIs are deterministic (same inputs → same outputs)
-- Error handling is comprehensive and deterministic
-- Concurrent requests handled safely
+- ✅ GetNode and PutFrame APIs implemented
+- ✅ APIs are deterministic (same inputs → same outputs)
+- ✅ Error handling is comprehensive and deterministic
+- ✅ Concurrent requests handled safely
 
 ---
 

@@ -41,4 +41,20 @@ impl HeadIndex {
         self.heads.insert((*node_id, frame_type.to_string()), *frame_id);
         Ok(())
     }
+
+    /// Get all frame IDs for a given node
+    ///
+    /// Returns all FrameIDs that are heads for the specified node.
+    pub fn get_all_heads_for_node(&self, node_id: &NodeID) -> Vec<FrameID> {
+        self.heads
+            .iter()
+            .filter_map(|((nid, _), frame_id)| {
+                if *nid == *node_id {
+                    Some(*frame_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }

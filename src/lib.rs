@@ -4,6 +4,7 @@
 //! hash-based tracking of filesystem state and associated context.
 
 pub mod agent;
+pub mod api;
 pub mod concurrency;
 pub mod error;
 pub mod frame;
