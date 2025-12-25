@@ -9,6 +9,7 @@ pub mod concurrency;
 pub mod error;
 pub mod frame;
 pub mod heads;
+pub mod regeneration;
 pub mod store;
 pub mod synthesis;
 pub mod tree;

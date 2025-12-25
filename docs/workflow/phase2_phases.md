@@ -63,18 +63,18 @@
 
 | Task | Status |
 |-----|--------|
-| Basis diff detection | Todo |
-| Regeneration workflow | Todo |
-| Atomic head updates | Todo |
-| Basis index implementation | Todo |
-| Regeneration tests | Todo |
-| Idempotency tests | Todo |
+| Basis diff detection | Complete |
+| Regeneration workflow | Complete |
+| Atomic head updates | Complete |
+| Basis index implementation | Complete |
+| Regeneration tests | Complete |
+| Idempotency tests | Complete |
 
 **Exit Criteria:**
-- Basis change detection working
-- Regeneration only affects changed frames
-- Regeneration is idempotent
-- Old frames preserved (append-only)
+- ✅ Basis change detection working
+- ✅ Regeneration only affects changed frames
+- ✅ Regeneration is idempotent
+- ✅ Old frames preserved (append-only)
 
 ---
 

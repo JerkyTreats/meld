@@ -7,7 +7,9 @@ use crate::agent::AgentRegistry;
 use crate::concurrency::NodeLockManager;
 use crate::error::ApiError;
 use crate::frame::{Basis, Frame, FrameMerkleSet, FrameStorage};
+use crate::frame::id::compute_basis_hash;
 use crate::heads::HeadIndex;
+use crate::regeneration::{BasisIndex, RegenerationReport, regenerate_node};
 use crate::store::{NodeRecord, NodeRecordStore};
 use crate::synthesis::{collect_child_frames, synthesize_content, SynthesisBasis, SynthesisPolicy};
 use crate::types::{FrameID, NodeID};
@@ -77,6 +79,8 @@ pub struct ContextApi {
     frame_storage: Arc<FrameStorage>,
     /// Head index for O(1) head resolution
     head_index: Arc<parking_lot::RwLock<HeadIndex>>,
+    /// Basis index for regeneration (Phase 2D)
+    basis_index: Arc<parking_lot::RwLock<BasisIndex>>,
     /// Agent registry for authorization
     agent_registry: Arc<parking_lot::RwLock<AgentRegistry>>,
     /// Lock manager for concurrent access safety
@@ -89,6 +93,7 @@ impl ContextApi {
         node_store: Arc<dyn NodeRecordStore + Send + Sync>,
         frame_storage: Arc<FrameStorage>,
         head_index: Arc<parking_lot::RwLock<HeadIndex>>,
+        basis_index: Arc<parking_lot::RwLock<BasisIndex>>,
         agent_registry: Arc<parking_lot::RwLock<AgentRegistry>>,
         lock_manager: Arc<NodeLockManager>,
     ) -> Self {
@@ -96,6 +101,7 @@ impl ContextApi {
             node_store,
             frame_storage,
             head_index,
+            basis_index,
             agent_registry,
             lock_manager,
         }
@@ -273,12 +279,19 @@ impl ContextApi {
         // and update it. For Phase 2B MVP, we'll track frame sets in memory.
         // For now, we'll just update the head index.
 
-        // Update head index atomically
+        // Update head index and basis index atomically
         {
             let mut head_index = self.head_index.write();
             head_index
                 .update_head(&node_id, &frame.frame_type, &frame.frame_id)
                 .map_err(ApiError::from)?;
+        }
+
+        // Update basis index (Phase 2D)
+        {
+            let basis_hash = compute_basis_hash(&frame.basis).map_err(ApiError::from)?;
+            let mut basis_index = self.basis_index.write();
+            basis_index.add_frame(basis_hash, frame.frame_id);
         }
 
         // TODO: Update node record's frame_set_root
@@ -376,12 +389,18 @@ impl ContextApi {
             // Store frame
             self.frame_storage.store(&frame).map_err(ApiError::from)?;
 
-            // Update head index
+            // Update head index and basis index
             {
                 let mut head_index = self.head_index.write();
                 head_index
                     .update_head(&node_id, &frame_type, &frame.frame_id)
                     .map_err(ApiError::from)?;
+            }
+
+            {
+                let basis_hash = compute_basis_hash(&frame.basis).map_err(ApiError::from)?;
+                let mut basis_index = self.basis_index.write();
+                basis_index.add_frame(basis_hash, frame.frame_id);
             }
 
             return Ok(frame.frame_id);
@@ -428,7 +447,7 @@ impl ContextApi {
         // Store frame
         self.frame_storage.store(&frame).map_err(ApiError::from)?;
 
-        // Update head index atomically
+        // Update head index and basis index atomically
         {
             let mut head_index = self.head_index.write();
             head_index
@@ -436,7 +455,75 @@ impl ContextApi {
                 .map_err(ApiError::from)?;
         }
 
+        // Update basis index (Phase 2D)
+        {
+            let basis_hash = compute_basis_hash(&frame.basis).map_err(ApiError::from)?;
+            let mut basis_index = self.basis_index.write();
+            basis_index.add_frame(basis_hash, frame.frame_id);
+        }
+
         Ok(frame.frame_id)
+    }
+
+    /// Regenerate frames for a node
+    ///
+    /// Regenerates all frames whose basis has changed. Regeneration is incremental,
+    /// localized, and basis-driven—only frames whose basis has changed are regenerated.
+    ///
+    /// # Arguments
+    /// * `node_id` - NodeID to regenerate frames for
+    /// * `recursive` - Whether to regenerate descendant nodes
+    /// * `agent_id` - Identity of agent performing regeneration
+    ///
+    /// # Returns
+    /// * `RegenerationReport` - Summary of regenerated frames
+    /// * `ApiError` - Error if node not found or regeneration fails
+    ///
+    /// # Behavior
+    /// * Incremental: Only regenerates frames with changed basis
+    /// * Idempotent: Re-running produces same result
+    /// * Atomic: Regeneration is transactional
+    /// * Append-only: Old frames preserved
+    pub fn regenerate(
+        &self,
+        node_id: NodeID,
+        recursive: bool,
+        agent_id: String,
+    ) -> Result<RegenerationReport, ApiError> {
+        // Verify agent exists
+        let _agent = {
+            let registry = self.agent_registry.read();
+            registry
+                .get_or_error(&agent_id)?
+                .clone()
+        };
+
+        // Verify node exists
+        let _node_record = self
+            .node_store
+            .get(&node_id)
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+
+        // Acquire write lock for this node (atomic operation)
+        let lock = self.lock_manager.get_lock(&node_id);
+        let _guard = lock.write();
+
+        // Regenerate
+        let mut basis_index = self.basis_index.write();
+        let mut head_index = self.head_index.write();
+
+        let report = regenerate_node(
+            node_id,
+            recursive,
+            &mut basis_index,
+            &mut head_index,
+            &self.frame_storage,
+            self.node_store.as_ref(),
+            agent_id,
+        )?;
+
+        Ok(report)
     }
 }
 
@@ -458,6 +545,7 @@ mod tests {
         let node_store = Arc::new(SledNodeRecordStore::new(&store_path).unwrap());
         let frame_storage = Arc::new(FrameStorage::new(&frame_storage_path).unwrap());
         let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
+        let basis_index = Arc::new(parking_lot::RwLock::new(BasisIndex::new()));
         let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
         let lock_manager = Arc::new(NodeLockManager::new());
 
@@ -465,6 +553,7 @@ mod tests {
             node_store,
             frame_storage,
             head_index,
+            basis_index,
             agent_registry,
             lock_manager,
         );
@@ -661,5 +750,40 @@ mod tests {
         assert_eq!(context.node_id, node_id);
         assert_eq!(context.frames.len(), 1);
         assert_eq!(context.frames[0].frame_id, frame_id);
+    }
+
+    #[test]
+    fn test_regenerate_idempotent() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register a writer agent
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Create and put a frame
+        let basis = Basis::Node(node_id);
+        let content = b"test content".to_vec();
+        let frame_type = "test".to_string();
+        let agent_id = "writer-1".to_string();
+        let metadata = HashMap::new();
+
+        let frame = Frame::new(basis, content, frame_type.clone(), agent_id.clone(), metadata).unwrap();
+        let _frame_id = api.put_frame(node_id, frame, agent_id.clone()).unwrap();
+
+        // Regenerate - should be idempotent (no changes)
+        let report = api.regenerate(node_id, false, agent_id.clone()).unwrap();
+        assert_eq!(report.regenerated_count, 0, "Regeneration should be idempotent");
+
+        // Regenerate again - should still be idempotent
+        let report2 = api.regenerate(node_id, false, agent_id).unwrap();
+        assert_eq!(report2.regenerated_count, 0, "Second regeneration should also be idempotent");
     }
 }
