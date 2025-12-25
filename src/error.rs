@@ -1,0 +1,23 @@
+//! Error types for the Merkle filesystem state management system.
+
+use crate::types::{FrameID, Hash, NodeID};
+use thiserror::Error;
+
+/// Storage-related errors
+#[derive(Debug, Error)]
+pub enum StorageError {
+    #[error("Node not found: {0:?}")]
+    NodeNotFound(NodeID),
+
+    #[error("Frame not found: {0:?}")]
+    FrameNotFound(FrameID),
+
+    #[error("Hash mismatch: expected {expected:?}, got {actual:?}")]
+    HashMismatch { expected: Hash, actual: Hash },
+
+    #[error("Invalid path: {0}")]
+    InvalidPath(String),
+
+    #[error("Storage I/O error: {0}")]
+    IoError(#[from] std::io::Error),
+}

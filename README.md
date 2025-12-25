@@ -206,7 +206,7 @@ async fn regenerate(
 ) -> Result<RegenerationReport, ApiError>;
 ```
 
-📖 **[Phase 2 API Documentation](docs/workflow/phase2_apis.md)**  
+📖 **[Phase 2 API Documentation](docs/workflow/phase2_apis.md)**
 📖 **[Phase 3 API Documentation](docs/productionize/phase3_api.md)**
 
 ## Performance Targets
@@ -231,7 +231,7 @@ async fn regenerate(
 - **[Specification](docs/bootstrap/phase1_spec.md)**: Goals, components, APIs, constraints
 - **[Architecture](docs/bootstrap/phase1_architecture.md)**: Component relationships and system properties
 - **[Components](docs/bootstrap/phase1_components.md)**: Detailed component specifications
-- **[Merkle Design](docs/bootstrap/phase1_merkle_design.md)**: Algorithm research and design decisions
+- **[Merkle Implementation](docs/bootstrap/merkle_implementation.md)**: Algorithm research and design decisions
 - **[Implementation](docs/bootstrap/phase1_implementation.md)**: Rust-specific implementation details
 - **[Phases](docs/bootstrap/phase1_phases.md)**: Development task breakdown
 
@@ -302,4 +302,3 @@ All phases are currently in planning/specification stage. Implementation tasks a
 ## Contributing
 
 [Contributing guidelines to be added]
-
