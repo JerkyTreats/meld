@@ -6,12 +6,12 @@
 
 | Task | Status |
 |-----|--------|
-| Define agent roles | Todo |
-| Agent identity model | Todo |
-| Writer append rules | Todo |
-| Reader access rules | Todo |
-| Concurrent access safety | Todo |
-| Agent authorization checks | Todo |
+| Define agent roles | Complete |
+| Agent identity model | Complete |
+| Writer append rules | Complete |
+| Reader access rules | Complete |
+| Concurrent access safety | Complete |
+| Agent authorization checks | Complete |
 
 **Exit Criteria:**
 - Agent roles clearly defined (Reader, Writer, Synthesis)
@@ -128,4 +128,3 @@ Phase 2 is complete when:
 ---
 
 [← Back to Phase 2 Spec](phase2_spec.md)
-

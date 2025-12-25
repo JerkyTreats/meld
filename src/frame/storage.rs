@@ -60,10 +60,15 @@ impl FrameStorage {
     /// - The FrameID doesn't match the computed hash (corruption detection)
     pub fn store(&self, frame: &Frame) -> Result<(), StorageError> {
         // Verify FrameID matches computed hash (corruption detection)
+        // Extract agent_id from metadata (it should always be present per Phase 2A)
+        let agent_id = frame.metadata.get("agent_id")
+            .ok_or_else(|| StorageError::InvalidPath("Frame missing agent_id in metadata".to_string()))?;
+
         let computed_id = crate::frame::id::compute_frame_id(
             &frame.basis,
             &frame.content,
             &frame.frame_type,
+            agent_id,
         )?;
 
         if computed_id != frame.frame_id {
@@ -208,9 +213,10 @@ mod tests {
         let basis = Basis::Node(node_id);
         let content = b"test frame content".to_vec();
         let frame_type = "test".to_string();
+        let agent_id = "test-agent".to_string();
         let metadata = HashMap::new();
 
-        let frame = Frame::new(basis, content, frame_type, metadata).unwrap();
+        let frame = Frame::new(basis, content, frame_type, agent_id, metadata).unwrap();
 
         // Store frame
         storage.store(&frame).unwrap();
@@ -236,9 +242,10 @@ mod tests {
         let basis = Basis::Node(node_id);
         let content = b"test content".to_vec();
         let frame_type = "test".to_string();
+        let agent_id = "test-agent".to_string();
         let metadata = HashMap::new();
 
-        let frame = Frame::new(basis, content, frame_type, metadata).unwrap();
+        let frame = Frame::new(basis, content, frame_type, agent_id, metadata).unwrap();
 
         // Store frame twice
         storage.store(&frame).unwrap();
@@ -271,9 +278,10 @@ mod tests {
         let basis = Basis::Node(node_id);
         let content = b"test".to_vec();
         let frame_type = "test".to_string();
+        let agent_id = "test-agent".to_string();
         let metadata = HashMap::new();
 
-        let frame = Frame::new(basis, content, frame_type, metadata).unwrap();
+        let frame = Frame::new(basis, content, frame_type, agent_id, metadata).unwrap();
 
         // Frame doesn't exist yet
         assert!(!storage.exists(&frame.frame_id).unwrap());
@@ -315,9 +323,10 @@ mod tests {
         let basis = Basis::Node(node_id);
         let content = b"test".to_vec();
         let frame_type = "test".to_string();
+        let agent_id = "test-agent".to_string();
         let metadata = HashMap::new();
 
-        let mut frame = Frame::new(basis, content, frame_type, metadata).unwrap();
+        let mut frame = Frame::new(basis, content, frame_type, agent_id, metadata).unwrap();
 
         // Corrupt the FrameID
         frame.frame_id[0] = 0xFF;

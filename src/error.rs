@@ -21,3 +21,28 @@ pub enum StorageError {
     #[error("Storage I/O error: {0}")]
     IoError(#[from] std::io::Error),
 }
+
+/// API-related errors for Phase 2
+#[derive(Debug, Error)]
+pub enum ApiError {
+    #[error("Node not found: {0:?}")]
+    NodeNotFound(NodeID),
+
+    #[error("Frame not found: {0:?}")]
+    FrameNotFound(FrameID),
+
+    #[error("Agent unauthorized: {0}")]
+    Unauthorized(String),
+
+    #[error("Invalid frame: {0}")]
+    InvalidFrame(String),
+
+    #[error("Synthesis failed: {0}")]
+    SynthesisFailed(String),
+
+    #[error("Regeneration failed: {0}")]
+    RegenerationFailed(String),
+
+    #[error("Storage error: {0}")]
+    StorageError(#[from] StorageError),
+}

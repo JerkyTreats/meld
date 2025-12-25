@@ -3,6 +3,8 @@
 //! A Merkle-based filesystem state management system that provides deterministic,
 //! hash-based tracking of filesystem state and associated context.
 
+pub mod agent;
+pub mod concurrency;
 pub mod error;
 pub mod frame;
 pub mod heads;

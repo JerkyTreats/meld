@@ -130,12 +130,12 @@ mod tests {
         let node_id: NodeID = [1u8; 32];
         let basis = Basis::Node(node_id);
         let content = format!("content_{}", frame_id_base).into_bytes();
-        let mut metadata = HashMap::new();
-        if let Some(agent) = agent_id {
-            metadata.insert("agent_id".to_string(), agent.to_string());
-        }
+        let metadata = HashMap::new();
 
-        let frame = Frame::new(basis, content, frame_type.to_string(), metadata).unwrap();
+        // Use provided agent_id or default to "test-agent"
+        let agent_id = agent_id.unwrap_or("test-agent").to_string();
+
+        let frame = Frame::new(basis, content, frame_type.to_string(), agent_id, metadata).unwrap();
 
         // In real implementation, timestamps come from SystemTime::now()
         // For testing, we'll use the frame as-is since we can't easily mock SystemTime

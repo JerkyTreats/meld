@@ -36,14 +36,21 @@ pub struct Frame {
 impl Frame {
     /// Create a new frame with computed FrameID
     ///
-    /// The FrameID is computed deterministically from the basis, content, and frame_type.
+    /// The FrameID is computed deterministically from the basis, agent_id, content, and frame_type.
+    /// The agent_id is included in both the FrameID computation and the metadata (Phase 2A requirement).
     pub fn new(
         basis: Basis,
         content: Vec<u8>,
         frame_type: String,
+        agent_id: String,
         metadata: HashMap<String, String>,
     ) -> Result<Self, crate::error::StorageError> {
-        let frame_id = id::compute_frame_id(&basis, &content, &frame_type)?;
+        // Ensure agent_id is in metadata (Phase 2A: agent identity preserved in all frames)
+        let mut metadata = metadata;
+        metadata.insert("agent_id".to_string(), agent_id.clone());
+
+        // Compute FrameID with agent_id included in hash
+        let frame_id = id::compute_frame_id(&basis, &content, &frame_type, &agent_id)?;
 
         Ok(Frame {
             frame_id,
