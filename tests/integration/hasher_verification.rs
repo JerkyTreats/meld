@@ -204,3 +204,4 @@ fn test_unicode_content_hashing() {
     // Unicode content should hash deterministically
     assert_eq!(hash1, hash2);
 }
+
