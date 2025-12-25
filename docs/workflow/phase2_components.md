@@ -250,7 +250,147 @@ enum CompositionSource {
 
 ---
 
-### 6. Tooling & Integration Layer
+### 6. Model Provider Abstraction
+
+#### Description
+Unified interface for interacting with multiple LLM providers (OpenAI, Anthropic, local models via Ollama, custom local servers). Provides a consistent API for agent-driven frame generation while maintaining provider-agnostic agent identity. All providers use OpenAI-compatible API format for consistency.
+
+#### Requirements
+- **Unified API across providers**: Single interface for all LLM providers
+- **OpenAI-compatible format**: All providers (including local) use OpenAI API format
+- **Provider-agnostic agent identity**: Agent identity independent of provider choice
+- **Configurable per-agent**: Each agent can specify its preferred provider and model
+- **Error handling**: Provider errors mapped to ApiError
+- **Streaming support**: Optional streaming for long-running operations
+- **Determinism considerations**: Provider responses may vary; system handles non-deterministic outputs
+
+#### Supported Providers
+- **OpenAI**: GPT-3.5, GPT-4, and other OpenAI models
+- **Anthropic**: Claude models (Claude 3, etc.)
+- **Ollama**: Local models via Ollama (Llama, Mistral, etc.)
+- **Custom Local**: Any local server with OpenAI-compatible API (LM Studio, vLLM, etc.)
+
+#### Data Structures
+```rust
+enum ModelProvider {
+    OpenAI {
+        model: String,
+        api_key: String,
+        base_url: Option<String>,  // For custom endpoints
+    },
+    Anthropic {
+        model: String,
+        api_key: String,
+    },
+    Ollama {
+        model: String,
+        base_url: Option<String>,  // Default: http://localhost:11434
+    },
+    LocalCustom {
+        model: String,
+        endpoint: String,  // OpenAI-compatible API endpoint
+        api_key: Option<String>,
+    },
+}
+
+struct AgentIdentity {
+    agent_id: String,
+    role: AgentRole,
+    capabilities: Vec<Capability>,
+    provider: Option<ModelProvider>,  // Optional: agents can be provider-agnostic
+}
+
+trait ModelProviderClient: Send + Sync {
+    async fn complete(
+        &self,
+        messages: Vec<ChatMessage>,
+        options: CompletionOptions,
+    ) -> Result<CompletionResponse, ApiError>;
+
+    async fn stream(
+        &self,
+        messages: Vec<ChatMessage>,
+        options: CompletionOptions,
+    ) -> Result<CompletionStream, ApiError>;
+}
+
+struct ChatMessage {
+    role: MessageRole,  // System, User, Assistant
+    content: String,
+}
+
+enum MessageRole {
+    System,
+    User,
+    Assistant,
+}
+
+struct CompletionOptions {
+    temperature: Option<f32>,
+    max_tokens: Option<u32>,
+    top_p: Option<f32>,
+    // Other OpenAI-compatible parameters
+}
+
+struct CompletionResponse {
+    content: String,
+    model: String,
+    usage: TokenUsage,
+}
+
+struct TokenUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    total_tokens: u32,
+}
+```
+
+#### Provider Implementation Strategy
+- **Use existing crate**: Leverage `genai` crate for unified provider abstraction
+- **Wrap in trait**: Define `ModelProviderClient` trait for provider-agnostic code
+- **Error mapping**: Map provider-specific errors to `ApiError::ProviderError`
+- **Configuration**: Store provider config in agent metadata or separate config
+
+#### Integration with Agent Model
+- **Optional provider**: Agents can operate without a provider (manual frame creation)
+- **Provider selection**: Agents specify provider at creation or runtime
+- **Provider switching**: Agents can switch providers (new frames reflect new provider)
+- **Provider attribution**: Provider info stored in frame metadata (not in FrameID)
+
+#### Determinism Considerations
+- **Provider responses may vary**: LLM outputs are inherently non-deterministic
+- **FrameID still deterministic**: FrameID based on inputs (prompt, context, agent_id), not outputs
+- **Content may differ**: Same inputs may produce different frame content (acceptable)
+- **Basis tracking**: Frame basis includes prompt/context hash, not response content
+
+#### Error Handling
+```rust
+enum ApiError {
+    // ... existing variants ...
+
+    #[error("Provider error: {0}")]
+    ProviderError(String),
+
+    #[error("Provider not configured: {0}")]
+    ProviderNotConfigured(String),
+
+    #[error("Provider request failed: {0}")]
+    ProviderRequestFailed(String),
+}
+```
+
+#### Test Criteria
+- Multiple providers can be used simultaneously (different agents, different providers)
+- Provider errors handled gracefully (mapped to ApiError)
+- Agent identity preserved regardless of provider
+- Provider switching works correctly (agent can change providers)
+- Local providers (Ollama, custom) work with OpenAI-compatible format
+- Streaming support works for supported providers
+- Provider configuration validated on agent creation
+
+---
+
+### 7. Tooling & Integration Layer
 
 #### Description
 Integration layer providing CLI tools, editor hooks, CI integration, and adapters for internal agents. Ensures the context engine can be used from various environments while maintaining determinism and idempotency.
@@ -302,6 +442,14 @@ trait AgentAdapter {
     fn read_context(&self, node_id: NodeID, view: ContextView) -> Result<NodeContext>;
     fn write_context(&self, node_id: NodeID, frame: Frame) -> Result<FrameID>;
     fn synthesize(&self, node_id: NodeID, frame_type: String) -> Result<FrameID>;
+
+    // Optional: LLM-powered frame generation
+    async fn generate_frame(
+        &self,
+        node_id: NodeID,
+        prompt: String,
+        frame_type: String,
+    ) -> Result<FrameID, ApiError>;
 }
 ```
 
@@ -316,4 +464,3 @@ trait AgentAdapter {
 ---
 
 [← Back to Phase 2 Spec](phase2_spec.md)
-

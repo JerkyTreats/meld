@@ -96,7 +96,33 @@
 
 ---
 
-### Phase 2F — Tooling & Integrations
+### Phase 2F — Model Provider Integration
+
+| Task | Status |
+|-----|--------|
+| Model provider abstraction trait | Todo |
+| OpenAI provider implementation | Todo |
+| Anthropic provider implementation | Todo |
+| Ollama provider implementation | Todo |
+| Custom local provider support | Todo |
+| Provider error handling | Todo |
+| Agent-provider integration | Todo |
+| Provider configuration | Todo |
+| Streaming support | Todo |
+| Provider tests | Todo |
+
+**Exit Criteria:**
+- Multiple providers supported (OpenAI, Anthropic, Ollama, custom local)
+- Unified API across all providers
+- Provider errors mapped to ApiError
+- Agents can specify and switch providers
+- Local providers work with OpenAI-compatible format
+- Streaming support implemented
+- Provider configuration validated
+
+---
+
+### Phase 2G — Tooling & Integrations
 
 | Task | Status |
 |-----|--------|
@@ -122,6 +148,8 @@ Phase 2 is complete when:
 - Branch context is synthesized incrementally
 - Regeneration is minimal and deterministic
 - Workflows compose without search or mutation
+- Multiple LLM providers supported with unified API
+- Agents can use cloud or local providers seamlessly
 - All components tested and documented
 - Tooling is functional and idempotent
 

@@ -59,19 +59,22 @@ Phase 2 assumes the following Phase 1 components are complete and operational:
 - Frame types are explicitly declared (frame_type: String)
 - Workspace root is stable during workflow execution
 - Concurrent access is handled via appropriate locking mechanisms
+- LLM providers use OpenAI-compatible API format (for local and cloud providers)
+- Provider responses may be non-deterministic (acceptable; FrameID based on inputs, not outputs)
 
 ---
 
 ## Major Components
 
-Phase 2 consists of six core components that enable agent-driven workflows:
+Phase 2 consists of seven core components that enable agent-driven workflows:
 
 1. **Agent Read / Write Model**: Defines how agents interact with nodes and context frames
 2. **Context APIs (Core Workflows)**: Minimal, stateless API surface for agent interaction
 3. **Branch Context Synthesis**: Directory-level aggregation of child node context
 4. **Incremental Regeneration**: Rebuilds derived context frames when bases change
 5. **Multi-Frame Composition**: Combining multiple context frames into composite views
-6. **Tooling & Integration Layer**: CLI tools, editor hooks, CI integration, and agent adapters
+6. **Model Provider Abstraction**: Unified interface for multiple LLM providers (OpenAI, Anthropic, local)
+7. **Tooling & Integration Layer**: CLI tools, editor hooks, CI integration, and agent adapters
 
 For detailed component specifications, see **[Component Specifications](phase2_components.md)**.
 
@@ -99,22 +102,31 @@ For detailed API specifications with examples, see **[API Specifications](phase2
 enum ApiError {
     #[error("Node not found: {0:?}")]
     NodeNotFound(NodeID),
-    
+
     #[error("Frame not found: {0:?}")]
     FrameNotFound(FrameID),
-    
+
     #[error("Agent unauthorized: {0}")]
     Unauthorized(String),
-    
+
     #[error("Invalid frame: {0}")]
     InvalidFrame(String),
-    
+
     #[error("Synthesis failed: {0}")]
     SynthesisFailed(String),
-    
+
     #[error("Regeneration failed: {0}")]
     RegenerationFailed(String),
-    
+
+    #[error("Provider error: {0}")]
+    ProviderError(String),
+
+    #[error("Provider not configured: {0}")]
+    ProviderNotConfigured(String),
+
+    #[error("Provider request failed: {0}")]
+    ProviderRequestFailed(String),
+
     #[error("Storage error: {0}")]
     StorageError(#[from] StorageError),
 }
@@ -252,6 +264,7 @@ For detailed task breakdown and exit criteria, see **[Development Phases](phase2
 - **[Component Specifications](phase2_components.md)** - Detailed specifications for each component
 - **[Architecture Overview](phase2_architecture.md)** - System architecture and component relationships
 - **[API Specifications](phase2_apis.md)** - Detailed API signatures with examples
+- **[Model Provider Specification](phase2_model_providers.md)** - Model provider abstraction and integration
 - **[Development Phases](phase2_phases.md)** - Task breakdown and exit criteria
 
 ---
