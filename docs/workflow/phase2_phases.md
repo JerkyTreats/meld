@@ -82,17 +82,17 @@
 
 | Task | Status |
 |-----|--------|
-| Composition policies | Todo |
-| Ordering strategies | Todo |
-| Bounded output enforcement | Todo |
-| Multi-source composition | Todo |
-| Determinism tests | Todo |
+| Composition policies | Complete |
+| Ordering strategies | Complete |
+| Bounded output enforcement | Complete |
+| Multi-source composition | Complete |
+| Determinism tests | Complete |
 
 **Exit Criteria:**
-- Composition policies implemented
-- Composition is deterministic
-- Output is bounded (max frames enforced)
-- Multiple composition sources supported
+- ✅ Composition policies implemented
+- ✅ Composition is deterministic
+- ✅ Output is bounded (max frames enforced)
+- ✅ Multiple composition sources supported
 
 ---
 

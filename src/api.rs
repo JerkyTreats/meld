@@ -4,6 +4,7 @@
 //! Implements GetNode and PutFrame APIs as specified in Phase 2B.
 
 use crate::agent::AgentRegistry;
+use crate::composition::{CompositionPolicy, compose_frames};
 use crate::concurrency::NodeLockManager;
 use crate::error::ApiError;
 use crate::frame::{Basis, Frame, FrameMerkleSet, FrameStorage};
@@ -524,6 +525,51 @@ impl ContextApi {
         )?;
 
         Ok(report)
+    }
+
+    /// Compose frames from multiple sources
+    ///
+    /// Combines context frames from multiple sources (current node, parent, siblings, related)
+    /// into a composite view. Composition is read-time only, policy-driven, and produces
+    /// bounded, deterministic results.
+    ///
+    /// # Arguments
+    /// * `node_id` - NodeID to compose context for
+    /// * `policy` - Composition policy specifying sources, filters, ordering, and bounds
+    ///
+    /// # Returns
+    /// * `Vec<Frame>` - Composed frames in policy-determined order
+    /// * `ApiError` - Error if node not found or composition fails
+    ///
+    /// # Behavior
+    /// * Read-only: Never triggers writes
+    /// * Deterministic: Same inputs → same outputs
+    /// * Bounded: Never exceeds max_frames
+    /// * Graceful: Missing frames are skipped, not errors
+    pub fn compose(
+        &self,
+        node_id: NodeID,
+        policy: CompositionPolicy,
+    ) -> Result<Vec<Frame>, ApiError> {
+        // Verify node exists
+        let _node_record = self
+            .node_store
+            .get(&node_id)
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+
+        // Compose frames
+        let head_index = self.head_index.read();
+        let composed = compose_frames(
+            node_id,
+            &policy,
+            self.node_store.as_ref(),
+            &self.frame_storage,
+            &head_index,
+        )?;
+        drop(head_index);
+
+        Ok(composed)
     }
 }
 
