@@ -63,4 +63,7 @@ pub enum ApiError {
 
     #[error("Storage error: {0}")]
     StorageError(#[from] StorageError),
+
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 }

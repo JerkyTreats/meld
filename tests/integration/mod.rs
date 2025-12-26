@@ -3,6 +3,7 @@
 mod agent_authorization;
 mod blake3_verification;
 mod branch_synthesis;
+mod config_integration;
 mod context_api;
 mod hasher_verification;
 mod model_providers;

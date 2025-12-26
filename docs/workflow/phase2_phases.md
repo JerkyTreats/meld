@@ -122,6 +122,34 @@
 
 ---
 
+### Phase 2H — Configuration System
+
+| Task | Status |
+|-----|--------|
+| Configuration structure design | Complete |
+| Configuration loading implementation | Complete |
+| TOML configuration file support | Complete |
+| Environment variable overrides | Complete |
+| Configuration validation | Complete |
+| Agent configuration loading | Complete |
+| Provider configuration loading | Complete |
+| System configuration integration | Complete |
+| Runtime configuration updates | Complete |
+| Configuration tests | Complete |
+
+**Exit Criteria:**
+- ✅ Configuration loads from TOML files with hierarchical precedence
+- ✅ Environment variable overrides work correctly
+- ✅ Configuration validation catches invalid values
+- ✅ Agent configurations loaded into registry with system prompts
+- ✅ Provider configurations create valid provider clients
+- ✅ System-wide settings applied from configuration
+- ✅ Runtime configuration updates work for reloadable settings
+- ✅ Default values applied when fields are missing
+- ✅ Configuration errors provide clear, actionable messages
+
+---
+
 ### Phase 2G — Tooling & Integrations
 
 | Task | Status |
@@ -150,6 +178,7 @@ Phase 2 is complete when:
 - Workflows compose without search or mutation
 - Multiple LLM providers supported with unified API
 - Agents can use cloud or local providers seamlessly
+- Configuration system enables runtime-driven agent and provider management
 - All components tested and documented
 - Tooling is functional and idempotent
 

@@ -66,7 +66,7 @@ Phase 2 assumes the following Phase 1 components are complete and operational:
 
 ## Major Components
 
-Phase 2 consists of seven core components that enable agent-driven workflows:
+Phase 2 consists of eight core components that enable agent-driven workflows:
 
 1. **Agent Read / Write Model**: Defines how agents interact with nodes and context frames
 2. **Context APIs (Core Workflows)**: Minimal, stateless API surface for agent interaction
@@ -74,7 +74,8 @@ Phase 2 consists of seven core components that enable agent-driven workflows:
 4. **Incremental Regeneration**: Rebuilds derived context frames when bases change
 5. **Multi-Frame Composition**: Combining multiple context frames into composite views
 6. **Model Provider Abstraction**: Unified interface for multiple LLM providers (OpenAI, Anthropic, local)
-7. **Tooling & Integration Layer**: CLI tools, editor hooks, CI integration, and agent adapters
+7. **Configuration System**: Runtime-driven configuration for agents, providers, and system settings
+8. **Tooling & Integration Layer**: CLI tools, editor hooks, CI integration, and agent adapters
 
 For detailed component specifications, see **[Component Specifications](phase2_components.md)**.
 
@@ -265,6 +266,7 @@ For detailed task breakdown and exit criteria, see **[Development Phases](phase2
 - **[Architecture Overview](phase2_architecture.md)** - System architecture and component relationships
 - **[API Specifications](phase2_apis.md)** - Detailed API signatures with examples
 - **[Model Provider Specification](phase2_model_providers.md)** - Model provider abstraction and integration
+- **[Configuration Specification](phase2_configuration.md)** - Runtime configuration system for agents, providers, and system settings
 - **[Development Phases](phase2_phases.md)** - Task breakdown and exit criteria
 
 ---

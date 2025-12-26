@@ -390,7 +390,90 @@ enum ApiError {
 
 ---
 
-### 7. Tooling & Integration Layer
+### 7. Configuration System
+
+#### Description
+Runtime-driven configuration system that enables dynamic agent behavior, model provider management, and system-wide settings without requiring code changes. Follows Rust idiomatic best practices with hierarchical configuration, environment variable overrides, and runtime validation.
+
+#### Requirements
+- **Runtime-driven configuration**: All agent behavior, provider settings, and system parameters driven from configuration
+- **Hierarchical configuration**: Layered precedence (defaults → file config → environment → runtime)
+- **Type safety and validation**: Strong typing with serde, schema validation on load
+- **Agent-centric design**: Per-agent configuration objects with system prompts in config
+- **Provider configuration**: Model providers defined in configuration with validation
+- **Dynamic updates**: Some configuration can be reloaded at runtime (where safe)
+
+#### Configuration Structure
+- **Model Provider Configuration**: Provider definitions with API keys, endpoints, default options
+- **Agent Configuration**: Unique config per agent with system prompts, provider assignment, capabilities
+- **System Configuration**: Storage paths, logging, concurrency, feature flags
+- **Context Configuration**: Default view settings, frame type priorities, agent priorities
+- **Synthesis Configuration**: Default synthesis policies, frame type priorities
+- **Regeneration Configuration**: Auto-regeneration settings, batch sizes, parallel execution
+
+#### Configuration Sources (Precedence)
+1. Runtime overrides (highest)
+2. Environment variables (`MERKLE_*` prefixed)
+3. Environment-specific files (`config/production.toml`, `config/development.toml`)
+4. Base configuration file (`config/config.toml` or `.merkle/config.toml`)
+5. Default values (lowest)
+
+#### Agent Configuration
+```rust
+struct AgentConfig {
+    agent_id: String,
+    role: AgentRole,
+    system_prompt: String,  // Primary behavior-defining prompt
+    provider_name: Option<String>,  // References provider from providers map
+    completion_options: Option<CompletionOptions>,
+    allowed_frame_types: Vec<String>,
+    node_patterns: Vec<String>,  // Glob patterns for node access
+    enabled: bool,
+}
+```
+
+#### Provider Configuration
+```rust
+struct ProviderConfig {
+    provider_type: ProviderType,  // OpenAI, Anthropic, Ollama, LocalCustom
+    model: String,
+    api_key: Option<String>,  // Can be loaded from environment
+    endpoint: Option<String>,
+    default_options: CompletionOptions,
+    timeout_seconds: u64,
+    retry: RetryConfig,
+}
+```
+
+#### Configuration Validation
+- **Provider validation**: Unique names, required fields, valid URLs, option ranges
+- **Agent validation**: Unique IDs, non-empty prompts, valid provider references, valid roles
+- **System validation**: Valid paths, positive limits, valid log levels
+
+#### Runtime Updates
+- **Reloadable**: Agent enable/disable, provider settings, logging levels, feature flags
+- **Requires restart**: Storage paths, workspace root, new agent definitions
+
+#### Integration Points
+- **Agent Registry**: Loads agents from configuration into registry
+- **Provider Factory**: Creates provider clients from configuration
+- **System Settings**: Applies system-wide configuration to all components
+
+#### Test Criteria
+- Configuration loads correctly from TOML files
+- Environment variable overrides work correctly
+- Configuration validation catches invalid values
+- Agent configurations correctly loaded into registry
+- Provider configurations create valid provider clients
+- Runtime configuration updates work for reloadable settings
+- Default values applied when fields missing
+- Configuration errors provide clear, actionable messages
+
+For detailed configuration specification, see **[Configuration Specification](phase2_configuration.md)**.
+
+---
+
+### 8. Tooling & Integration Layer
 
 #### Description
 Integration layer providing CLI tools, editor hooks, CI integration, and adapters for internal agents. Ensures the context engine can be used from various environments while maintaining determinism and idempotency.

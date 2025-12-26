@@ -42,6 +42,9 @@ pub struct AgentIdentity {
     pub capabilities: Vec<Capability>,
     /// Optional model provider for LLM-powered operations
     pub provider: Option<ModelProvider>,
+    /// Metadata for agent (e.g., system prompts, custom settings)
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
 }
 
 impl AgentIdentity {
@@ -58,6 +61,7 @@ impl AgentIdentity {
             role,
             capabilities,
             provider: None,
+            metadata: HashMap::new(),
         }
     }
 
@@ -141,6 +145,37 @@ impl AgentRegistry {
         self.get(agent_id).ok_or_else(|| {
             ApiError::Unauthorized(format!("Agent not found: {}", agent_id))
         })
+    }
+
+    /// Load agents from configuration
+    pub fn load_from_config(&mut self, config: &crate::config::MerkleConfig) -> Result<(), ApiError> {
+        for (_, agent_config) in &config.agents {
+            let mut identity = AgentIdentity::new(
+                agent_config.agent_id.clone(),
+                agent_config.role,
+            );
+
+            // Set provider if configured
+            if let Some(provider_name) = &agent_config.provider_name {
+                let provider_config = config.providers.get(provider_name)
+                    .ok_or_else(|| ApiError::ProviderNotConfigured(provider_name.clone()))?;
+
+                identity.provider = Some(provider_config.to_model_provider()?);
+            }
+
+            // Store system prompt in metadata if provided
+            if let Some(system_prompt) = &agent_config.system_prompt {
+                identity.metadata.insert("system_prompt".to_string(), system_prompt.clone());
+            }
+
+            // Copy metadata from config
+            for (key, value) in &agent_config.metadata {
+                identity.metadata.insert(key.clone(), value.clone());
+            }
+
+            self.register(identity);
+        }
+        Ok(())
     }
 }
 
