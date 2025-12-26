@@ -571,6 +571,51 @@ impl ContextApi {
 
         Ok(composed)
     }
+
+    /// Get agent identity by ID
+    ///
+    /// This is a helper method for adapters and tooling that need to access
+    /// agent information, particularly for provider configuration.
+    pub fn get_agent(&self, agent_id: &str) -> Result<crate::agent::AgentIdentity, ApiError> {
+        let registry = self.agent_registry.read();
+        registry.get_or_error(agent_id).map(|a| a.clone())
+    }
+
+    /// Get head frame ID for a node and frame type
+    ///
+    /// Returns the latest frame ID for the given node and frame type.
+    pub fn get_head(&self, node_id: &NodeID, frame_type: &str) -> Result<Option<FrameID>, ApiError> {
+        let head_index = self.head_index.read();
+        head_index.get_head(node_id, frame_type).map_err(ApiError::from)
+    }
+
+    /// Get all head frame IDs for a node
+    ///
+    /// Returns all frame IDs that are heads for the specified node.
+    pub fn get_all_heads(&self, node_id: &NodeID) -> Vec<FrameID> {
+        let head_index = self.head_index.read();
+        head_index.get_all_heads_for_node(node_id)
+    }
+
+    /// Get access to frame storage (for tooling)
+    pub fn frame_storage(&self) -> &FrameStorage {
+        &self.frame_storage
+    }
+
+    /// Get access to node store (for tooling)
+    pub fn node_store(&self) -> &Arc<dyn NodeRecordStore + Send + Sync> {
+        &self.node_store
+    }
+
+    /// Get access to head index (for tooling)
+    pub fn head_index(&self) -> &Arc<parking_lot::RwLock<HeadIndex>> {
+        &self.head_index
+    }
+
+    /// Get access to basis index (for tooling)
+    pub fn basis_index(&self) -> &Arc<parking_lot::RwLock<BasisIndex>> {
+        &self.basis_index
+    }
 }
 
 #[cfg(test)]

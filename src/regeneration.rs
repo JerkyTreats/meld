@@ -82,6 +82,21 @@ impl BasisIndex {
     pub fn has_basis(&self, basis_hash: &Hash) -> bool {
         self.index.contains_key(basis_hash)
     }
+
+    /// Get the number of basis entries in the index
+    pub fn len(&self) -> usize {
+        self.index.len()
+    }
+
+    /// Check if the index is empty
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
+    /// Iterate over all basis entries
+    pub fn iter(&self) -> impl Iterator<Item = (&Hash, &Vec<FrameID>)> {
+        self.index.iter()
+    }
 }
 
 /// Regeneration report

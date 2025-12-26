@@ -83,8 +83,8 @@ impl NodeRecord {
     /// Populate a NodeRecordStore from a Tree
     ///
     /// Converts all nodes in the tree to NodeRecords and stores them.
-    pub fn populate_store_from_tree<S: NodeRecordStore>(
-        store: &S,
+    pub fn populate_store_from_tree(
+        store: &dyn NodeRecordStore,
         tree: &Tree,
     ) -> Result<(), StorageError> {
         for (node_id, node) in &tree.nodes {

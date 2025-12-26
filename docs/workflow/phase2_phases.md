@@ -126,11 +126,11 @@
 
 | Task | Status |
 |-----|--------|
-| CLI tooling | Todo |
-| Editor integration hooks | Todo |
-| CI integration | Todo |
-| Internal agent adapters | Todo |
-| Tool idempotency tests | Todo |
+| CLI tooling | Complete |
+| Editor integration hooks | Complete |
+| CI integration | Complete |
+| Internal agent adapters | Complete |
+| Tool idempotency tests | Complete |
 
 **Exit Criteria:**
 - CLI commands implemented

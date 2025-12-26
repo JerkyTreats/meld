@@ -43,15 +43,27 @@ reqwest = { version = "0.11", features = ["json"] }
 # Streaming support
 futures = "0.3"
 
+# CLI support
+clap = { version = "4.0", features = ["derive"] }
+
+# File watching for editor integration
+notify = "6.0"
+
+# Hex encoding/decoding
+hex = "0.4"
+
 [dev-dependencies]
 # Testing
 proptest = "1.4"
 tempfile = "3.8"
-hex = "0.4"  # For test vector hex encoding/decoding
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
 
 # Benchmarking
 criterion = "0.5"
+
+[[bin]]
+name = "merkle"
+path = "src/bin/merkle.rs"
 
 [[bench]]
 name = "node_lookup"

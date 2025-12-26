@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 /// Head index: (NodeID, frame_type) -> FrameID
 pub struct HeadIndex {
-    heads: HashMap<(NodeID, String), FrameID>,
+    pub(crate) heads: HashMap<(NodeID, String), FrameID>,
 }
 
 impl Default for HeadIndex {
@@ -56,5 +56,14 @@ impl HeadIndex {
                 }
             })
             .collect()
+    }
+
+    /// Get all unique node IDs that have heads
+    pub fn get_all_node_ids(&self) -> Vec<NodeID> {
+        let mut node_ids = std::collections::HashSet::new();
+        for ((node_id, _), _) in &self.heads {
+            node_ids.insert(*node_id);
+        }
+        node_ids.into_iter().collect()
     }
 }
