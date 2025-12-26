@@ -116,6 +116,9 @@ pub trait ModelProviderClient: Send + Sync {
 
     /// Get the model name
     fn model_name(&self) -> &str;
+
+    /// List available models from the provider
+    async fn list_models(&self) -> Result<Vec<String>, ApiError>;
 }
 
 // OpenAI-compatible API request/response structures
@@ -311,6 +314,41 @@ impl ModelProviderClient for OpenAIClient {
     fn model_name(&self) -> &str {
         &self.model
     }
+
+    async fn list_models(&self) -> Result<Vec<String>, ApiError> {
+        let url = format!("{}/models", self.base_url);
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .map_err(map_http_error)?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(ApiError::ProviderError(format!(
+                "Failed to list models: status {} - {}",
+                status, error_text
+            )));
+        }
+
+        #[derive(Deserialize)]
+        struct ModelsResponse {
+            data: Vec<ModelInfo>,
+        }
+        #[derive(Deserialize)]
+        struct ModelInfo {
+            id: String,
+        }
+
+        let models: ModelsResponse = response.json().await.map_err(|e| {
+            ApiError::ProviderError(format!("Failed to parse models response: {}", e))
+        })?;
+
+        Ok(models.data.into_iter().map(|m| m.id).collect())
+    }
 }
 
 /// Anthropic provider client (using OpenAI-compatible format via Claude API)
@@ -457,6 +495,14 @@ impl ModelProviderClient for AnthropicClient {
     fn model_name(&self) -> &str {
         &self.model
     }
+
+    async fn list_models(&self) -> Result<Vec<String>, ApiError> {
+        // Anthropic doesn't have a public models list endpoint
+        // Return an error indicating this isn't supported
+        Err(ApiError::ProviderError(
+            "Anthropic API does not provide a models list endpoint".to_string()
+        ))
+    }
 }
 
 /// Ollama provider client (local models)
@@ -569,6 +615,40 @@ impl ModelProviderClient for OllamaClient {
 
     fn model_name(&self) -> &str {
         &self.model
+    }
+
+    async fn list_models(&self) -> Result<Vec<String>, ApiError> {
+        let url = format!("{}/api/tags", self.base_url);
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(map_http_error)?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(ApiError::ProviderError(format!(
+                "Failed to list models: status {} - {}",
+                status, error_text
+            )));
+        }
+
+        #[derive(Deserialize)]
+        struct TagsResponse {
+            models: Vec<ModelInfo>,
+        }
+        #[derive(Deserialize)]
+        struct ModelInfo {
+            name: String,
+        }
+
+        let tags: TagsResponse = response.json().await.map_err(|e| {
+            ApiError::ProviderError(format!("Failed to parse models response: {}", e))
+        })?;
+
+        Ok(tags.models.into_iter().map(|m| m.name).collect())
     }
 }
 
@@ -688,6 +768,48 @@ impl ModelProviderClient for CustomLocalClient {
     fn model_name(&self) -> &str {
         &self.model
     }
+
+    async fn list_models(&self) -> Result<Vec<String>, ApiError> {
+        // Try OpenAI-compatible /v1/models endpoint
+        let url = format!("{}/models", self.endpoint);
+        let mut request_builder = self
+            .client
+            .get(&url)
+            .header("Content-Type", "application/json");
+
+        if let Some(api_key) = &self.api_key {
+            request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+        }
+
+        let response = request_builder
+            .send()
+            .await
+            .map_err(map_http_error)?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(ApiError::ProviderError(format!(
+                "Failed to list models: status {} - {}",
+                status, error_text
+            )));
+        }
+
+        #[derive(Deserialize)]
+        struct ModelsResponse {
+            data: Vec<ModelInfo>,
+        }
+        #[derive(Deserialize)]
+        struct ModelInfo {
+            id: String,
+        }
+
+        let models: ModelsResponse = response.json().await.map_err(|e| {
+            ApiError::ProviderError(format!("Failed to parse models response: {}", e))
+        })?;
+
+        Ok(models.data.into_iter().map(|m| m.id).collect())
+    }
 }
 
 /// Provider factory for creating provider clients
@@ -791,6 +913,11 @@ impl ModelProviderClient for MockProvider {
 
     fn model_name(&self) -> &str {
         &self.model_name
+    }
+
+    async fn list_models(&self) -> Result<Vec<String>, ApiError> {
+        // Mock provider returns empty list for testing
+        Ok(vec![])
     }
 }
 

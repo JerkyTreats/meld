@@ -56,6 +56,9 @@ notify = "6.0"
 # Hex encoding/decoding
 hex = "0.4"
 
+# Async runtime
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread"] }
+
 [dev-dependencies]
 # Testing
 proptest = "1.4"

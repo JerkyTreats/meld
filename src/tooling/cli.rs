@@ -4,10 +4,12 @@
 //! operations with idempotent execution.
 
 use crate::api::{ContextApi, ContextView};
+use crate::config::ConfigLoader;
 use crate::error::ApiError;
 use crate::frame::{Basis, Frame};
 use crate::heads::HeadIndex;
 use crate::regeneration::BasisIndex;
+use crate::provider::ProviderFactory;
 use crate::store::{NodeRecord, NodeRecordStore};
 use crate::store::persistence::SledNodeRecordStore;
 use crate::tree::builder::TreeBuilder;
@@ -105,6 +107,12 @@ pub enum Commands {
     Status,
     /// Validate workspace integrity
     Validate,
+    /// Validate provider configurations and test model availability
+    ValidateProviders {
+        /// Agent ID to validate (if not provided, validates all agents with providers)
+        #[arg(long)]
+        agent_id: Option<String>,
+    },
 }
 
 /// CLI context for managing workspace state
@@ -401,6 +409,132 @@ impl CliContext {
                     }
                     Ok(result)
                 }
+            }
+            Commands::ValidateProviders { agent_id } => {
+                // Load configuration
+                let config = ConfigLoader::load(&self.workspace_root)
+                    .map_err(|e| ApiError::ConfigError(format!("Failed to load config: {}", e)))?;
+
+                // Validate configuration structure
+                config.validate()
+                    .map_err(|errors| {
+                        let error_msgs: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+                        ApiError::ConfigError(format!("Configuration validation failed:\n{}", error_msgs.join("\n")))
+                    })?;
+
+                let mut results = Vec::new();
+                let mut errors = Vec::new();
+
+                // Determine which agents to validate
+                let agents_to_validate: Vec<_> = if let Some(ref agent_id) = agent_id {
+                    config.agents.iter()
+                        .filter(|(_, agent)| agent.agent_id == *agent_id)
+                        .collect()
+                } else {
+                    config.agents.iter()
+                        .filter(|(_, agent)| agent.provider_name.is_some())
+                        .collect()
+                };
+
+                if agents_to_validate.is_empty() {
+                    return Ok("No agents with providers found to validate".to_string());
+                }
+
+                // Validate each agent's provider
+                for (_, agent_config) in agents_to_validate {
+                    if let Some(provider_name) = &agent_config.provider_name {
+                        match config.providers.get(provider_name) {
+                            Some(provider_config) => {
+                                // Convert to ModelProvider
+                                match provider_config.to_model_provider() {
+                                    Ok(model_provider) => {
+                                        // Create provider client
+                                        match ProviderFactory::create_client(&model_provider) {
+                                            Ok(client) => {
+                                                // Test model availability
+                                                // Use async runtime for async operations
+                                                let rt = tokio::runtime::Runtime::new()
+                                                    .map_err(|e| ApiError::ProviderError(format!("Failed to create runtime: {}", e)))?;
+                                                match rt.block_on(client.list_models()) {
+                                                    Ok(available_models) => {
+                                                        if available_models.iter().any(|m| m == &provider_config.model) {
+                                                            results.push(format!(
+                                                                "✓ Agent '{}': Model '{}' is available",
+                                                                agent_config.agent_id,
+                                                                provider_config.model
+                                                            ));
+                                                        } else {
+                                                            errors.push(format!(
+                                                                "✗ Agent '{}': Model '{}' not found. Available models: {}",
+                                                                agent_config.agent_id,
+                                                                provider_config.model,
+                                                                available_models.join(", ")
+                                                            ));
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        // If we can't list models, try a test completion
+                                                        // For now, just report that we couldn't verify
+                                                        results.push(format!(
+                                                            "? Agent '{}': Model '{}' - Could not verify ({}). Model may still be valid.",
+                                                            agent_config.agent_id,
+                                                            provider_config.model,
+                                                            e
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                errors.push(format!(
+                                                    "✗ Agent '{}': Failed to create provider client: {}",
+                                                    agent_config.agent_id,
+                                                    e
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        errors.push(format!(
+                                            "✗ Agent '{}': Failed to create model provider: {}",
+                                            agent_config.agent_id,
+                                            e
+                                        ));
+                                    }
+                                }
+                            }
+                            None => {
+                                errors.push(format!(
+                                    "✗ Agent '{}': Provider '{}' not found in configuration",
+                                    agent_config.agent_id,
+                                    provider_name
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                // Format output
+                let mut output = String::new();
+                if !results.is_empty() {
+                    output.push_str("Validation Results:\n");
+                    for result in &results {
+                        output.push_str(&format!("  {}\n", result));
+                    }
+                }
+                if !errors.is_empty() {
+                    output.push_str("\nErrors:\n");
+                    for error in &errors {
+                        output.push_str(&format!("  {}\n", error));
+                    }
+                }
+
+                if errors.is_empty() {
+                    output.push_str("\n✓ All provider configurations are valid");
+                } else {
+                    output.push_str(&format!("\n✗ Found {} error(s)", errors.len()));
+                }
+
+                Ok(output)
             }
         }
     }

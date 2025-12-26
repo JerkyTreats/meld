@@ -6,9 +6,43 @@
 use crate::api::{ContextApi, ContextView, NodeContext};
 use crate::error::ApiError;
 use crate::frame::{Basis, Frame};
-use crate::provider::{ChatMessage, CompletionOptions, ProviderFactory};
+use crate::provider::{ChatMessage, CompletionOptions, ModelProviderClient, ProviderFactory};
 use crate::types::{FrameID, NodeID};
 use std::collections::HashMap;
+
+/// Enhance ProviderModelNotFound errors with available models list
+async fn enhance_model_error(
+    error: ApiError,
+    client: &dyn ModelProviderClient,
+    requested_model: &str,
+) -> ApiError {
+    if let ApiError::ProviderModelNotFound(_) = error {
+        // Try to get list of available models
+        match client.list_models().await {
+            Ok(available_models) => {
+                if available_models.is_empty() {
+                    ApiError::ProviderModelNotFound(format!(
+                        "Model '{}' not found. Unable to retrieve available models list.",
+                        requested_model
+                    ))
+                } else {
+                    ApiError::ProviderModelNotFound(format!(
+                        "Model '{}' not found. Available models: {}",
+                        requested_model,
+                        available_models.join(", ")
+                    ))
+                }
+            }
+            Err(_) => {
+                // If we can't list models, return original error
+                error
+            }
+        }
+    } else {
+        // Not a model error, return as-is
+        error
+    }
+}
 
 /// Adapter for internal agents to interact with the context engine
 ///
@@ -145,15 +179,18 @@ impl AgentAdapter for ContextApiAdapter {
             });
         }
 
-        // Generate completion
-        let response = client.complete(
+        // Generate completion with enhanced error handling
+        let response = match client.complete(
             messages,
             CompletionOptions {
                 temperature: Some(0.7),
                 max_tokens: Some(2000),
                 ..Default::default()
             },
-        ).await?;
+        ).await {
+            Ok(r) => Ok(r),
+            Err(e) => Err(enhance_model_error(e, client.as_ref(), client.model_name()).await),
+        }?;
 
         // Create frame with generated content
         let basis = Basis::Node(node_id);
