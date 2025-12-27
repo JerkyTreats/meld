@@ -147,6 +147,11 @@ impl AgentRegistry {
         })
     }
 
+    /// Get all registered agents
+    pub fn list_all(&self) -> Vec<&AgentIdentity> {
+        self.agents.values().collect()
+    }
+
     /// Load agents from configuration
     pub fn load_from_config(&mut self, config: &crate::config::MerkleConfig) -> Result<(), ApiError> {
         for (_, agent_config) in &config.agents {
@@ -257,5 +262,26 @@ mod tests {
             }
             _ => panic!("Wrong provider type"),
         }
+    }
+
+    #[test]
+    fn test_agent_registry_list_all() {
+        let mut registry = AgentRegistry::new();
+
+        let agent1 = AgentIdentity::new("agent-1".to_string(), AgentRole::Reader);
+        let agent2 = AgentIdentity::new("agent-2".to_string(), AgentRole::Writer);
+        let agent3 = AgentIdentity::new("agent-3".to_string(), AgentRole::Synthesis);
+
+        registry.register(agent1);
+        registry.register(agent2);
+        registry.register(agent3);
+
+        let all_agents = registry.list_all();
+        assert_eq!(all_agents.len(), 3);
+
+        let agent_ids: Vec<String> = all_agents.iter().map(|a| a.agent_id.clone()).collect();
+        assert!(agent_ids.contains(&"agent-1".to_string()));
+        assert!(agent_ids.contains(&"agent-2".to_string()));
+        assert!(agent_ids.contains(&"agent-3".to_string()));
     }
 }

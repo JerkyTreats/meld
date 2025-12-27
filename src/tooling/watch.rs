@@ -16,7 +16,8 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use parking_lot::RwLock;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, debug};
+use hex;
 
 /// Watch mode configuration
 #[derive(Debug, Clone)]
@@ -41,6 +42,10 @@ pub struct WatchConfig {
     pub ignore_patterns: Vec<String>,
     /// Maximum event queue size
     pub max_queue_size: usize,
+    /// Enable automatic contextframe creation for agents
+    pub auto_create_frames: bool,
+    /// Batch size for contextframe creation
+    pub frame_batch_size: usize,
 }
 
 impl Default for WatchConfig {
@@ -64,6 +69,8 @@ impl Default for WatchConfig {
                 "**/*.tmp".to_string(),
             ],
             max_queue_size: 10000,
+            auto_create_frames: true,
+            frame_batch_size: 50,
         }
     }
 }
@@ -308,6 +315,14 @@ impl WatchDaemon {
             &tree,
         ).map_err(ApiError::from)?;
 
+        // Create missing contextframes for all nodes and agents if enabled
+        if self.config.auto_create_frames {
+            info!("Creating missing contextframes for all nodes");
+            let all_node_ids: Vec<NodeID> = tree.nodes.keys().copied().collect();
+            self.ensure_agent_frames_batched(&all_node_ids)?;
+            info!("Contextframe creation completed");
+        }
+
         Ok(())
     }
 
@@ -378,6 +393,11 @@ impl WatchDaemon {
             }
         }
 
+        // Create missing contextframes for agents if enabled
+        if self.config.auto_create_frames {
+            self.ensure_agent_frames_batched(&affected_nodes)?;
+        }
+
         info!(
             event_count = events.len(),
             affected_nodes = affected_nodes.len(),
@@ -443,11 +463,92 @@ impl WatchDaemon {
         }
         Ok(())
     }
+
+    /// Ensure contextframes exist for all agents for the given nodes (batched)
+    ///
+    /// This method batches the contextframe creation to avoid overwhelming the system
+    /// when processing many nodes (e.g., during initialization).
+    pub(crate) fn ensure_agent_frames_batched(&self, node_ids: &[NodeID]) -> Result<(), ApiError> {
+        if node_ids.is_empty() {
+            return Ok(());
+        }
+
+        // Get all agents
+        let agents: Vec<String> = {
+            let registry = self.api.agent_registry().read();
+            registry.list_all().iter().map(|a| a.agent_id.clone()).collect()
+        };
+
+        if agents.is_empty() {
+            warn!("No agents registered, skipping contextframe creation. Please configure agents in your config file.");
+            return Ok(());
+        }
+
+        info!(
+            agent_count = agents.len(),
+            agents = ?agents,
+            "Found {} agent(s) for contextframe creation",
+            agents.len()
+        );
+
+        // Process nodes in batches
+        let batch_size = self.config.frame_batch_size;
+        let mut created_count = 0;
+        let mut skipped_count = 0;
+
+        for chunk in node_ids.chunks(batch_size) {
+            for node_id in chunk {
+                for agent_id in &agents {
+                    match self.api.ensure_agent_frame(*node_id, agent_id.clone(), None) {
+                        Ok(Some(frame_id)) => {
+                            created_count += 1;
+                            debug!(
+                                node_id = %hex::encode(node_id),
+                                agent_id = %agent_id,
+                                frame_id = %hex::encode(frame_id),
+                                "Created contextframe"
+                            );
+                        }
+                        Ok(None) => {
+                            skipped_count += 1;
+                            debug!(
+                                node_id = %hex::encode(node_id),
+                                agent_id = %agent_id,
+                                "Skipped contextframe (already exists or agent cannot write)"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                node_id = %hex::encode(node_id),
+                                agent_id = %agent_id,
+                                error = %e,
+                                "Failed to create contextframe"
+                            );
+                            // Continue with other agents/nodes
+                        }
+                    }
+                }
+            }
+        }
+
+        info!(
+            node_count = node_ids.len(),
+            agent_count = agents.len(),
+            created = created_count,
+            skipped = skipped_count,
+            "Ensured agent contextframes"
+        );
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::AgentIdentity;
+    use crate::store::{NodeRecord, NodeType};
+    use std::path::PathBuf;
 
     #[test]
     fn test_watch_config_default() {
@@ -455,6 +556,8 @@ mod tests {
         assert_eq!(config.debounce_ms, 100);
         assert_eq!(config.batch_window_ms, 50);
         assert_eq!(config.agent_id, "watch-daemon");
+        assert!(config.auto_create_frames);
+        assert_eq!(config.frame_batch_size, 50);
     }
 
     #[test]
@@ -470,5 +573,186 @@ mod tests {
 
         let batch = batcher.take_batch();
         assert_eq!(batch.len(), 1);
+    }
+
+    fn create_test_watch_daemon() -> (WatchDaemon, tempfile::TempDir) {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let store_path = temp_dir.path().join("store");
+        let frame_storage_path = temp_dir.path().join("frames");
+
+        let node_store = Arc::new(crate::store::SledNodeRecordStore::new(&store_path).unwrap());
+        let frame_storage = Arc::new(crate::frame::FrameStorage::new(&frame_storage_path).unwrap());
+        let head_index = Arc::new(parking_lot::RwLock::new(crate::heads::HeadIndex::new()));
+        let basis_index = Arc::new(parking_lot::RwLock::new(crate::regeneration::BasisIndex::new()));
+        let agent_registry = Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new()));
+        let lock_manager = Arc::new(crate::concurrency::NodeLockManager::new());
+
+        let api = ContextApi::new(
+            node_store,
+            frame_storage,
+            head_index,
+            basis_index,
+            agent_registry,
+            lock_manager,
+        );
+
+        let config = WatchConfig {
+            workspace_root: temp_dir.path().to_path_buf(),
+            auto_create_frames: true,
+            frame_batch_size: 10,
+            ..Default::default()
+        };
+
+        let daemon = WatchDaemon::new(Arc::new(api), config);
+        (daemon, temp_dir)
+    }
+
+    #[test]
+    fn test_ensure_agent_frames_batched_empty_nodes() {
+        let (daemon, _temp_dir) = create_test_watch_daemon();
+
+        // Should handle empty node list gracefully
+        let result = daemon.ensure_agent_frames_batched(&[]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_ensure_agent_frames_batched_no_agents() {
+        let (daemon, _temp_dir) = create_test_watch_daemon();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = NodeRecord {
+            node_id,
+            path: PathBuf::from("/test/file.txt"),
+            node_type: NodeType::File {
+                size: 100,
+                content_hash: [0u8; 32],
+            },
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: std::collections::HashMap::new(),
+        };
+        daemon.api.node_store().put(&node_record).unwrap();
+
+        // No agents registered, should skip gracefully
+        let result = daemon.ensure_agent_frames_batched(&[node_id]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_ensure_agent_frames_batched_creates_frames() {
+        let (daemon, _temp_dir) = create_test_watch_daemon();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = NodeRecord {
+            node_id,
+            path: PathBuf::from("/test/file.txt"),
+            node_type: NodeType::File {
+                size: 100,
+                content_hash: [0u8; 32],
+            },
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: std::collections::HashMap::new(),
+        };
+        daemon.api.node_store().put(&node_record).unwrap();
+
+        // Register writer agents
+        {
+            let mut registry = daemon.api.agent_registry().write();
+            let agent1 = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            let agent2 = AgentIdentity::new("writer-2".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent1);
+            registry.register(agent2);
+        }
+
+        // Ensure frames are created
+        let result = daemon.ensure_agent_frames_batched(&[node_id]);
+        assert!(result.is_ok());
+
+        // Verify frames were created
+        assert!(daemon.api.has_agent_frame(&node_id, "writer-1").unwrap());
+        assert!(daemon.api.has_agent_frame(&node_id, "writer-2").unwrap());
+    }
+
+    #[test]
+    fn test_ensure_agent_frames_batched_skips_reader_agents() {
+        let (daemon, _temp_dir) = create_test_watch_daemon();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = NodeRecord {
+            node_id,
+            path: PathBuf::from("/test/file.txt"),
+            node_type: NodeType::File {
+                size: 100,
+                content_hash: [0u8; 32],
+            },
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: std::collections::HashMap::new(),
+        };
+        daemon.api.node_store().put(&node_record).unwrap();
+
+        // Register reader agent (cannot write)
+        {
+            let mut registry = daemon.api.agent_registry().write();
+            let agent = AgentIdentity::new("reader-1".to_string(), crate::agent::AgentRole::Reader);
+            registry.register(agent);
+        }
+
+        // Ensure frames - reader should be skipped
+        let result = daemon.ensure_agent_frames_batched(&[node_id]);
+        assert!(result.is_ok());
+
+        // Verify no frame was created for reader
+        assert!(!daemon.api.has_agent_frame(&node_id, "reader-1").unwrap());
+    }
+
+    #[test]
+    fn test_ensure_agent_frames_batched_handles_large_batches() {
+        let (daemon, _temp_dir) = create_test_watch_daemon();
+
+        // Create multiple node records
+        let mut node_ids = Vec::new();
+        for i in 0..25 {
+            let node_id: NodeID = [i as u8; 32];
+            node_ids.push(node_id);
+
+            let node_record = NodeRecord {
+                node_id,
+                path: PathBuf::from(format!("/test/file{}.txt", i)),
+                node_type: NodeType::File {
+                    size: 100,
+                    content_hash: [0u8; 32],
+                },
+                children: vec![],
+                parent: None,
+                frame_set_root: None,
+                metadata: std::collections::HashMap::new(),
+            };
+            daemon.api.node_store().put(&node_record).unwrap();
+        }
+
+        // Register writer agent
+        {
+            let mut registry = daemon.api.agent_registry().write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Ensure frames with batch size of 10 (should process in chunks)
+        let result = daemon.ensure_agent_frames_batched(&node_ids);
+        assert!(result.is_ok());
+
+        // Verify frames were created for all nodes
+        for node_id in &node_ids {
+            assert!(daemon.api.has_agent_frame(node_id, "writer-1").unwrap());
+        }
     }
 }

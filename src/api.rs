@@ -631,6 +631,93 @@ impl ContextApi {
         Ok(composed)
     }
 
+    /// Check if a contextframe exists for a specific agent and node
+    ///
+    /// Returns true if any frame for the node has the specified agent_id in its metadata.
+    /// Uses the default frame type "context" for the agent.
+    pub fn has_agent_frame(&self, node_id: &NodeID, agent_id: &str) -> Result<bool, ApiError> {
+        // Get all head frames for this node
+        let frame_ids = self.get_all_heads(node_id);
+
+        // Check if any frame has this agent_id in metadata
+        for frame_id in frame_ids {
+            if let Some(frame) = self.frame_storage.get(&frame_id).map_err(ApiError::from)? {
+                if let Some(frame_agent_id) = frame.metadata.get("agent_id") {
+                    if frame_agent_id == agent_id {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// Create a default contextframe for an agent if it doesn't exist
+    ///
+    /// Creates a simple context frame with basic node information.
+    /// Only creates frames for agents with write capability.
+    ///
+    /// # Arguments
+    /// * `node_id` - NodeID to create frame for
+    /// * `agent_id` - Agent ID to create frame for
+    /// * `frame_type` - Frame type (defaults to "context" if None)
+    ///
+    /// # Returns
+    /// * `Option<FrameID>` - FrameID if frame was created, None if it already existed
+    pub fn ensure_agent_frame(
+        &self,
+        node_id: NodeID,
+        agent_id: String,
+        frame_type: Option<String>,
+    ) -> Result<Option<FrameID>, ApiError> {
+        // Check if frame already exists
+        if self.has_agent_frame(&node_id, &agent_id)? {
+            return Ok(None);
+        }
+
+        // Verify agent exists and can write
+        let agent = {
+            let registry = self.agent_registry.read();
+            registry.get_or_error(&agent_id)?.clone()
+        };
+
+        // Only create frames for agents that can write
+        if !agent.can_write() {
+            return Ok(None);
+        }
+
+        // Use provided frame_type or default to "context-{agent_id}" to ensure uniqueness per agent
+        let frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
+
+        // Get node record for context
+        let node_record = self
+            .node_store
+            .get(&node_id)
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+
+        // Create default frame content
+        let content = format!(
+            "Node: {}\nPath: {:?}\nType: {:?}",
+            hex::encode(node_id),
+            node_record.path,
+            node_record.node_type
+        )
+        .into_bytes();
+
+        // Create frame
+        let basis = Basis::Node(node_id);
+        let metadata = HashMap::new();
+        let frame = Frame::new(basis, content, frame_type.clone(), agent_id.clone(), metadata)
+            .map_err(|e| ApiError::StorageError(e))?;
+
+        // Store frame
+        let frame_id = self.put_frame(node_id, frame, agent_id)?;
+
+        Ok(Some(frame_id))
+    }
+
     /// Get agent identity by ID
     ///
     /// This is a helper method for adapters and tooling that need to access
@@ -940,5 +1027,142 @@ mod tests {
         // Regenerate again - should still be idempotent
         let report2 = api.regenerate(node_id, false, agent_id).unwrap();
         assert_eq!(report2.regenerated_count, 0, "Second regeneration should also be idempotent");
+    }
+
+    #[test]
+    fn test_has_agent_frame() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register a writer agent
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Initially, no frame exists
+        assert!(!api.has_agent_frame(&node_id, "writer-1").unwrap());
+
+        // Create a frame
+        let basis = Basis::Node(node_id);
+        let content = b"test content".to_vec();
+        let frame_type = "test".to_string();
+        let agent_id = "writer-1".to_string();
+        let metadata = HashMap::new();
+
+        let frame = Frame::new(basis, content, frame_type, agent_id.clone(), metadata).unwrap();
+        api.put_frame(node_id, frame, agent_id.clone()).unwrap();
+
+        // Now frame should exist
+        assert!(api.has_agent_frame(&node_id, "writer-1").unwrap());
+        assert!(!api.has_agent_frame(&node_id, "writer-2").unwrap());
+    }
+
+    #[test]
+    fn test_ensure_agent_frame_creates_when_missing() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register a writer agent
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Ensure frame - should create it
+        let frame_id = api.ensure_agent_frame(node_id, "writer-1".to_string(), None).unwrap();
+        assert!(frame_id.is_some());
+
+        // Verify frame exists
+        assert!(api.has_agent_frame(&node_id, "writer-1").unwrap());
+
+        // Ensure again - should return None (already exists)
+        let frame_id2 = api.ensure_agent_frame(node_id, "writer-1".to_string(), None).unwrap();
+        assert!(frame_id2.is_none());
+    }
+
+    #[test]
+    fn test_ensure_agent_frame_skips_reader_agents() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register a reader agent (cannot write)
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("reader-1".to_string(), crate::agent::AgentRole::Reader);
+            registry.register(agent);
+        }
+
+        // Ensure frame - should return None (reader can't write)
+        let frame_id = api.ensure_agent_frame(node_id, "reader-1".to_string(), None).unwrap();
+        assert!(frame_id.is_none());
+
+        // Verify no frame was created
+        assert!(!api.has_agent_frame(&node_id, "reader-1").unwrap());
+    }
+
+    #[test]
+    fn test_ensure_agent_frame_with_custom_frame_type() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register a writer agent
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Ensure frame with custom frame type
+        let frame_id = api.ensure_agent_frame(
+            node_id,
+            "writer-1".to_string(),
+            Some("custom-type".to_string()),
+        ).unwrap();
+        assert!(frame_id.is_some());
+
+        // Verify frame exists and has correct type
+        assert!(api.has_agent_frame(&node_id, "writer-1").unwrap());
+        let head = api.get_head(&node_id, "custom-type").unwrap();
+        assert!(head.is_some());
+    }
+
+    #[test]
+    fn test_ensure_agent_frame_node_not_found() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Register a writer agent
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Try to ensure frame for non-existent node
+        let result = api.ensure_agent_frame(node_id, "writer-1".to_string(), None);
+        assert!(result.is_err());
+        match result {
+            Err(ApiError::NodeNotFound(id)) => assert_eq!(id, node_id),
+            _ => panic!("Expected NodeNotFound error"),
+        }
     }
 }

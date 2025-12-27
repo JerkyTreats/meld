@@ -606,20 +606,38 @@ impl CliContext {
             } => {
                 use crate::tooling::watch::{WatchConfig, WatchDaemon};
 
+                // Load configuration to register agents
+                let config = if let Some(ref config_path) = self.config_path {
+                    // Load from specified config file
+                    ConfigLoader::load_from_file(config_path)
+                        .map_err(|e| ApiError::ConfigError(format!("Failed to load config from {}: {}", config_path.display(), e)))?
+                } else {
+                    // Load from default locations
+                    ConfigLoader::load(&self.workspace_root)
+                        .map_err(|e| ApiError::ConfigError(format!("Failed to load config: {}", e)))?
+                };
+
+                // Load agents from config into registry
+                {
+                    let mut registry = self.api.agent_registry().write();
+                    registry.load_from_config(&config)
+                        .map_err(|e| ApiError::ConfigError(format!("Failed to load agents from config: {}", e)))?;
+                }
+
                 // Build watch config
-                let mut config = WatchConfig::default();
-                config.workspace_root = self.workspace_root.clone();
-                config.debounce_ms = *debounce_ms;
-                config.batch_window_ms = *batch_window_ms;
-                config.recursive = *recursive;
-                config.max_depth = *max_depth;
-                config.agent_id = agent_id.clone();
+                let mut watch_config = WatchConfig::default();
+                watch_config.workspace_root = self.workspace_root.clone();
+                watch_config.debounce_ms = *debounce_ms;
+                watch_config.batch_window_ms = *batch_window_ms;
+                watch_config.recursive = *recursive;
+                watch_config.max_depth = *max_depth;
+                watch_config.agent_id = agent_id.clone();
                 if !ignore.is_empty() {
-                    config.ignore_patterns.extend(ignore.iter().cloned());
+                    watch_config.ignore_patterns.extend(ignore.iter().cloned());
                 }
 
                 // Create watch daemon
-                let daemon = WatchDaemon::new(self.api.clone(), config);
+                let daemon = WatchDaemon::new(self.api.clone(), watch_config);
 
                 // Start daemon (this will block)
                 info!("Starting watch mode daemon");
