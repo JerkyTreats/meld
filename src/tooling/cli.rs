@@ -206,8 +206,8 @@ impl CliContext {
                 };
                 let context = self.api.get_node(node_id, view)?;
                 Ok(format!(
-                    "Node: {:?}\nFrames: {}/{}\nPath: {}",
-                    context.node_id,
+                    "Node: {}\nFrames: {}/{}\nPath: {}",
+                    hex::encode(context.node_id),
                     context.frames.len(),
                     context.frame_count,
                     context.node_record.path.display()
@@ -221,12 +221,12 @@ impl CliContext {
                 let basis = Basis::Node(node_id);
                 let frame = Frame::new(basis, content, frame_type.clone(), agent_id.clone(), HashMap::new())?;
                 let frame_id = self.api.put_frame(node_id, frame, agent_id.clone())?;
-                Ok(format!("Frame created: {:?}", frame_id))
+                Ok(format!("Frame created: {}", hex::encode(frame_id)))
             }
             Commands::Synthesize { node_id, frame_type, agent_id } => {
                 let node_id = parse_node_id(node_id)?;
                 let frame_id = self.api.synthesize_branch(node_id, frame_type.clone(), agent_id.clone(), None)?;
-                Ok(format!("Synthesized frame: {:?}", frame_id))
+                Ok(format!("Synthesized frame: {}", hex::encode(frame_id)))
             }
             Commands::Regenerate { node_id, recursive, agent_id } => {
                 let node_id = parse_node_id(node_id)?;
@@ -257,7 +257,7 @@ impl CliContext {
                 let node_id = parse_node_id(node_id)?;
                 if let Some(ft) = frame_type {
                     if let Some(frame_id) = self.api.get_head(&node_id, ft)? {
-                        Ok(format!("Head frame: {:?}", frame_id))
+                        Ok(format!("Head frame: {}", hex::encode(frame_id)))
                     } else {
                         Ok("No head frame found".to_string())
                     }
@@ -281,9 +281,10 @@ impl CliContext {
                 if !force {
                     // Check if root node exists
                     if self.api.node_store().get(&tree.root_id).map_err(ApiError::from)?.is_some() {
+                        let root_hex = hex::encode(tree.root_id);
                         return Ok(format!(
-                            "Tree already exists (root: {:?}). Use --force to rebuild.",
-                            tree.root_id
+                            "Tree already exists (root: {}). Use --force to rebuild.",
+                            root_hex
                         ));
                     }
                 }
@@ -298,10 +299,12 @@ impl CliContext {
                 // We can't easily downcast Arc<dyn Trait>, so we'll skip flush for now
                 // The store will flush on drop or can be flushed manually if needed
 
+                // Format root NodeID as hex string for easy CLI usage
+                let root_hex = hex::encode(tree.root_id);
                 Ok(format!(
-                    "Scanned {} nodes (root: {:?})",
+                    "Scanned {} nodes (root: {})",
                     tree.nodes.len(),
-                    tree.root_id
+                    root_hex
                 ))
             }
             Commands::Status => {
@@ -339,9 +342,10 @@ impl CliContext {
                     basis_index.len()
                 };
 
+                let root_hex = hex::encode(root_hash);
                 Ok(format!(
-                    "Workspace Status:\n  Root hash: {:?}\n  Nodes: {}\n  Frames: {}\n  Head entries: {}\n  Basis entries: {}",
-                    root_hash, node_count, frame_count, head_count, basis_count
+                    "Workspace Status:\n  Root hash: {}\n  Nodes: {}\n  Frames: {}\n  Head entries: {}\n  Basis entries: {}",
+                    root_hex, node_count, frame_count, head_count, basis_count
                 ))
             }
             Commands::Validate => {
@@ -364,8 +368,8 @@ impl CliContext {
                         // Verify the record is valid
                         if record.node_id != root_hash {
                             errors.push(format!(
-                                "Root node record has mismatched node_id: {:?} vs {:?}",
-                                record.node_id, root_hash
+                                "Root node record has mismatched node_id: {} vs {}",
+                                hex::encode(record.node_id), hex::encode(root_hash)
                             ));
                         }
                         1 // At least root exists
@@ -384,8 +388,8 @@ impl CliContext {
                         // Verify frame exists in storage
                         if self.api.frame_storage().get(&frame_id).map_err(ApiError::from)?.is_none() {
                             warnings.push(format!(
-                                "Head frame {:?} for node {:?} not found in storage",
-                                frame_id, node_id
+                                "Head frame {} for node {} not found in storage",
+                                hex::encode(frame_id), hex::encode(node_id)
                             ));
                         }
                     }
@@ -399,8 +403,8 @@ impl CliContext {
                         // Verify frame exists
                         if self.api.frame_storage().get(frame_id).map_err(ApiError::from)?.is_none() {
                             warnings.push(format!(
-                                "Basis index frame {:?} not found in storage",
-                                frame_id
+                                "Basis index frame {} not found in storage",
+                                hex::encode(frame_id)
                             ));
                         }
                     }
@@ -415,15 +419,16 @@ impl CliContext {
                     0
                 };
 
+                let root_hex = hex::encode(root_hash);
                 if errors.is_empty() && warnings.is_empty() {
                     Ok(format!(
-                        "Validation passed:\n  Root hash: {:?}\n  Nodes: {}\n  Frames: {}\n  All checks passed",
-                        root_hash, node_count, frame_count
+                        "Validation passed:\n  Root hash: {}\n  Nodes: {}\n  Frames: {}\n  All checks passed",
+                        root_hex, node_count, frame_count
                     ))
                 } else {
                     let mut result = format!(
-                        "Validation completed with issues:\n  Root hash: {:?}\n  Nodes: {}\n  Frames: {}",
-                        root_hash, node_count, frame_count
+                        "Validation completed with issues:\n  Root hash: {}\n  Nodes: {}\n  Frames: {}",
+                        root_hex, node_count, frame_count
                     );
                     if !errors.is_empty() {
                         result.push_str(&format!("\n\nErrors ({}):", errors.len()));
