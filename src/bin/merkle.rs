@@ -10,7 +10,7 @@ fn main() {
     let cli = Cli::parse();
 
     // Create CLI context
-    let context = match CliContext::new(cli.workspace) {
+    let context = match CliContext::new(cli.workspace.clone(), cli.config.clone()) {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("Error initializing workspace: {}", e);

@@ -34,6 +34,10 @@ pub struct Cli {
     /// Workspace root directory
     #[arg(long, default_value = ".")]
     pub workspace: PathBuf,
+
+    /// Configuration file path (overrides default config loading)
+    #[arg(long)]
+    pub config: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -119,11 +123,12 @@ pub enum Commands {
 pub struct CliContext {
     api: ContextApi,
     workspace_root: PathBuf,
+    config_path: Option<PathBuf>,
 }
 
 impl CliContext {
     /// Create a new CLI context
-    pub fn new(workspace_root: PathBuf) -> Result<Self, ApiError> {
+    pub fn new(workspace_root: PathBuf, config_path: Option<PathBuf>) -> Result<Self, ApiError> {
         // Initialize storage
         let store_path = workspace_root.join(".merkle").join("store");
         std::fs::create_dir_all(&store_path).map_err(|e| {
@@ -161,6 +166,7 @@ impl CliContext {
         Ok(Self {
             api,
             workspace_root,
+            config_path,
         })
     }
 
@@ -412,8 +418,15 @@ impl CliContext {
             }
             Commands::ValidateProviders { agent_id } => {
                 // Load configuration
-                let config = ConfigLoader::load(&self.workspace_root)
-                    .map_err(|e| ApiError::ConfigError(format!("Failed to load config: {}", e)))?;
+                let config = if let Some(ref config_path) = self.config_path {
+                    // Load from specified config file
+                    ConfigLoader::load_from_file(config_path)
+                        .map_err(|e| ApiError::ConfigError(format!("Failed to load config from {}: {}", config_path.display(), e)))?
+                } else {
+                    // Load from default locations
+                    ConfigLoader::load(&self.workspace_root)
+                        .map_err(|e| ApiError::ConfigError(format!("Failed to load config: {}", e)))?
+                };
 
                 // Validate configuration structure
                 config.validate()

@@ -20,3 +20,4 @@ Thumbs.db
 test_data/
 
 .merkle/
+config.toml
