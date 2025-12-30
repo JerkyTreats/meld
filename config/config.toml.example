@@ -140,3 +140,36 @@ provider_name = "local-ollama"
 [agents.local-dev-agent.metadata]
 environment = "development"
 preferred_temperature = "0.7"
+
+# ============================================================================
+# Watch Mode Configuration
+# ============================================================================
+# Configuration for watch mode daemon and automatic frame generation
+
+[watch]
+# Enable automatic LLM-based frame generation
+auto_generate_frames = true
+
+# Frame generation queue configuration
+[watch.generation]
+# Maximum concurrent generations per agent
+max_concurrent_per_agent = 3
+
+# Batch size for processing requests
+batch_size = 50
+
+# Maximum retry attempts per request
+max_retry_attempts = 3
+
+# Delay between retries (milliseconds)
+retry_delay_ms = 1000
+
+# Rate limit: minimum delay between requests per agent (milliseconds)
+# Set to null to disable rate limiting
+rate_limit_ms = 100
+
+# Maximum queue size (prevents memory exhaustion)
+max_queue_size = 10000
+
+# Number of worker tasks per agent
+workers_per_agent = 2
