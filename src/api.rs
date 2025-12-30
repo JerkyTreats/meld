@@ -58,6 +58,88 @@ impl From<ContextView> for ViewPolicy {
     }
 }
 
+impl ContextView {
+    /// Create a new builder for constructing ContextView
+    ///
+    /// Provides a fluent API for building context views.
+    ///
+    /// # Example
+    /// ```rust
+    /// let view = ContextView::builder()
+    ///     .max_frames(20)
+    ///     .recent()
+    ///     .by_type("analysis")
+    ///     .by_agent("agent-1")
+    ///     .build();
+    /// ```
+    pub fn builder() -> ContextViewBuilder {
+        ContextViewBuilder::default()
+    }
+}
+
+/// Builder for constructing ContextView with a fluent API
+#[derive(Debug, Default)]
+pub struct ContextViewBuilder {
+    max_frames: Option<usize>,
+    ordering: Option<crate::views::OrderingPolicy>,
+    filters: Vec<crate::views::FrameFilter>,
+}
+
+impl ContextViewBuilder {
+    /// Set maximum number of frames to return
+    ///
+    /// Defaults to 100 if not specified.
+    pub fn max_frames(mut self, n: usize) -> Self {
+        self.max_frames = Some(n);
+        self
+    }
+
+    /// Order by recency (most recent first)
+    pub fn recent(mut self) -> Self {
+        self.ordering = Some(crate::views::OrderingPolicy::Recency);
+        self
+    }
+
+    /// Order by frame type (lexicographic)
+    pub fn by_type_ordering(mut self) -> Self {
+        self.ordering = Some(crate::views::OrderingPolicy::Type);
+        self
+    }
+
+    /// Order by agent ID (lexicographic)
+    pub fn by_agent_ordering(mut self) -> Self {
+        self.ordering = Some(crate::views::OrderingPolicy::Agent);
+        self
+    }
+
+    /// Filter by frame type
+    pub fn by_type(mut self, frame_type: impl Into<String>) -> Self {
+        self.filters
+            .push(crate::views::FrameFilter::ByType(frame_type.into()));
+        self
+    }
+
+    /// Filter by agent ID
+    pub fn by_agent(mut self, agent_id: impl Into<String>) -> Self {
+        self.filters
+            .push(crate::views::FrameFilter::ByAgent(agent_id.into()));
+        self
+    }
+
+    /// Build the ContextView
+    ///
+    /// Uses default values for any fields not explicitly set:
+    /// - max_frames: 100
+    /// - ordering: Recency
+    pub fn build(self) -> ContextView {
+        ContextView {
+            max_frames: self.max_frames.unwrap_or(100),
+            ordering: self.ordering.unwrap_or(crate::views::OrderingPolicy::Recency),
+            filters: self.filters,
+        }
+    }
+}
+
 /// Node context response
 ///
 /// Contains the node record and selected frames based on the context view policy.
@@ -71,6 +153,92 @@ pub struct NodeContext {
     pub frames: Vec<Frame>,
     /// Total frame count (may exceed view limit)
     pub frame_count: usize,
+}
+
+impl NodeContext {
+    /// Get all frame contents as UTF-8 strings
+    ///
+    /// Filters out frames with invalid UTF-8 content.
+    pub fn text_contents(&self) -> Vec<String> {
+        self.frames
+            .iter()
+            .filter_map(|f| f.text_content().ok())
+            .collect()
+    }
+
+    /// Get concatenated text content with separator
+    ///
+    /// Combines all valid UTF-8 frame contents into a single string,
+    /// separated by the specified separator.
+    pub fn combined_text(&self, separator: &str) -> String {
+        self.text_contents().join(separator)
+    }
+
+    /// Get content slices filtered by frame type
+    ///
+    /// Returns raw byte slices for frames matching the specified type.
+    pub fn content_by_type(&self, frame_type: &str) -> Vec<&[u8]> {
+        self.frames
+            .iter()
+            .filter(|f| f.is_type(frame_type))
+            .map(|f| f.content.as_slice())
+            .collect()
+    }
+
+    /// Parse frames as JSON
+    ///
+    /// Attempts to parse each frame's content as JSON into the specified type.
+    /// Returns a vector of results, allowing callers to handle parsing errors per frame.
+    pub fn json_frames<T>(&self) -> Vec<Result<T, serde_json::Error>>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        self.frames.iter().map(|f| f.json_content()).collect()
+    }
+
+    /// Get most recent frame of specific type
+    ///
+    /// Returns the frame with the latest timestamp that matches the specified type.
+    pub fn latest_frame_of_type(&self, frame_type: &str) -> Option<&Frame> {
+        self.frames
+            .iter()
+            .filter(|f| f.is_type(frame_type))
+            .max_by_key(|f| f.timestamp)
+    }
+
+    /// Get all frames from specific agent
+    ///
+    /// Returns all frames where the agent_id in metadata matches the specified agent.
+    pub fn frames_by_agent(&self, agent_id: &str) -> Vec<&Frame> {
+        self.frames
+            .iter()
+            .filter(|f| f.agent_id().map(|id| id == agent_id).unwrap_or(false))
+            .collect()
+    }
+
+    /// Iterator over frames
+    ///
+    /// Provides an iterator over all frames in the context.
+    pub fn frames_iter(&self) -> impl Iterator<Item = &Frame> {
+        self.frames.iter()
+    }
+
+    /// Iterator over text content
+    ///
+    /// Provides an iterator over valid UTF-8 text content from frames.
+    /// Filters out frames with invalid UTF-8.
+    pub fn text_iter(&self) -> impl Iterator<Item = String> + '_ {
+        self.frames
+            .iter()
+            .filter_map(|f| f.text_content().ok())
+    }
+
+    /// Get frames filtered by type
+    ///
+    /// Returns all frames matching the specified type.
+    pub fn filter_by_type(&self, frame_type: &str) -> Vec<&Frame> {
+        self.frames.iter().filter(|f| f.is_type(frame_type)).collect()
+    }
 }
 
 /// Context API service
@@ -847,6 +1015,82 @@ impl ContextApi {
         head_index.get_all_heads_for_node(node_id)
     }
 
+    /// Get latest context (most recent frame)
+    ///
+    /// Convenience method that retrieves the most recent frame for a node.
+    /// Equivalent to `get_node()` with a view requesting 1 frame ordered by recency.
+    pub fn latest_context(&self, node_id: NodeID) -> Result<NodeContext, ApiError> {
+        let view = ContextView {
+            max_frames: 1,
+            ordering: crate::views::OrderingPolicy::Recency,
+            filters: vec![],
+        };
+        self.get_node(node_id, view)
+    }
+
+    /// Get context filtered by frame type
+    ///
+    /// Retrieves frames matching the specified type, ordered by recency.
+    ///
+    /// # Arguments
+    /// * `node_id` - The NodeID to retrieve context for
+    /// * `frame_type` - The frame type to filter by
+    /// * `max_frames` - Maximum number of frames to return
+    pub fn context_by_type(
+        &self,
+        node_id: NodeID,
+        frame_type: &str,
+        max_frames: usize,
+    ) -> Result<NodeContext, ApiError> {
+        let view = ContextView {
+            max_frames,
+            ordering: crate::views::OrderingPolicy::Recency,
+            filters: vec![crate::views::FrameFilter::ByType(frame_type.to_string())],
+        };
+        self.get_node(node_id, view)
+    }
+
+    /// Get context filtered by agent
+    ///
+    /// Retrieves frames created by the specified agent, ordered by recency.
+    ///
+    /// # Arguments
+    /// * `node_id` - The NodeID to retrieve context for
+    /// * `agent_id` - The agent ID to filter by
+    /// * `max_frames` - Maximum number of frames to return
+    pub fn context_by_agent(
+        &self,
+        node_id: NodeID,
+        agent_id: &str,
+        max_frames: usize,
+    ) -> Result<NodeContext, ApiError> {
+        let view = ContextView {
+            max_frames,
+            ordering: crate::views::OrderingPolicy::Recency,
+            filters: vec![crate::views::FrameFilter::ByAgent(agent_id.to_string())],
+        };
+        self.get_node(node_id, view)
+    }
+
+    /// Get combined text content directly
+    ///
+    /// Retrieves context and returns the combined text content of all frames.
+    /// Filters out frames with invalid UTF-8 content.
+    ///
+    /// # Arguments
+    /// * `node_id` - The NodeID to retrieve context for
+    /// * `separator` - String to use as separator between frame contents
+    /// * `view` - ContextView policy for frame selection
+    pub fn combined_context_text(
+        &self,
+        node_id: NodeID,
+        separator: &str,
+        view: ContextView,
+    ) -> Result<String, ApiError> {
+        let context = self.get_node(node_id, view)?;
+        Ok(context.combined_text(separator))
+    }
+
     /// Get access to frame storage (for tooling)
     pub fn frame_storage(&self) -> &FrameStorage {
         &self.frame_storage
@@ -879,7 +1123,7 @@ mod tests {
     use crate::agent::AgentIdentity;
     use crate::frame::{Basis, Frame};
     use crate::store::SledNodeRecordStore;
-    use crate::views::OrderingPolicy;
+    use crate::views::{FrameFilter, OrderingPolicy};
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -1269,5 +1513,334 @@ mod tests {
             Err(ApiError::NodeNotFound(id)) => assert_eq!(id, node_id),
             _ => panic!("Expected NodeNotFound error"),
         }
+    }
+
+    // Tests for ergonomic convenience methods
+
+    #[test]
+    fn test_frame_text_content() {
+        let frame = {
+            let node_id: NodeID = [1u8; 32];
+            let basis = Basis::Node(node_id);
+            let content = b"Hello, world!".to_vec();
+            Frame::new(basis, content, "test".to_string(), "agent-1".to_string(), HashMap::new()).unwrap()
+        };
+
+        assert_eq!(frame.text_content().unwrap(), "Hello, world!");
+    }
+
+    #[test]
+    fn test_frame_agent_id() {
+        let frame = {
+            let node_id: NodeID = [1u8; 32];
+            let basis = Basis::Node(node_id);
+            let content = b"test".to_vec();
+            Frame::new(basis, content, "test".to_string(), "agent-123".to_string(), HashMap::new()).unwrap()
+        };
+
+        assert_eq!(frame.agent_id(), Some("agent-123"));
+    }
+
+    #[test]
+    fn test_frame_is_type() {
+        let frame = {
+            let node_id: NodeID = [1u8; 32];
+            let basis = Basis::Node(node_id);
+            let content = b"test".to_vec();
+            Frame::new(basis, content, "analysis".to_string(), "agent-1".to_string(), HashMap::new()).unwrap()
+        };
+
+        assert!(frame.is_type("analysis"));
+        assert!(!frame.is_type("summary"));
+    }
+
+    #[test]
+    fn test_node_context_text_contents() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register a writer agent
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Create frames with different types so we get multiple frames
+        let agent_id = "writer-1".to_string();
+        let basis = Basis::Node(node_id);
+        let frame1 = Frame::new(basis.clone(), b"Frame content 0".to_vec(), "type1".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+        let frame2 = Frame::new(basis.clone(), b"Frame content 1".to_vec(), "type2".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+        let frame3 = Frame::new(basis.clone(), b"Frame content 2".to_vec(), "type3".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+        api.put_frame(node_id, frame1, agent_id.clone()).unwrap();
+        api.put_frame(node_id, frame2, agent_id.clone()).unwrap();
+        api.put_frame(node_id, frame3, agent_id.clone()).unwrap();
+
+        let view = ContextView {
+            max_frames: 10,
+            ordering: OrderingPolicy::Recency,
+            filters: vec![],
+        };
+
+        let context = api.get_node(node_id, view).unwrap();
+        let texts = context.text_contents();
+
+        // With different frame types, we get all frames
+        assert_eq!(texts.len(), 3);
+        assert!(texts.iter().any(|t| t.contains("Frame content 0")));
+        assert!(texts.iter().any(|t| t.contains("Frame content 1")));
+        assert!(texts.iter().any(|t| t.contains("Frame content 2")));
+    }
+
+    #[test]
+    fn test_node_context_combined_text() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register a writer agent
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Create frames with different types
+        let agent_id = "writer-1".to_string();
+        let basis = Basis::Node(node_id);
+        let frame1 = Frame::new(basis.clone(), b"First".to_vec(), "type1".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+        let frame2 = Frame::new(basis.clone(), b"Second".to_vec(), "type2".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+        api.put_frame(node_id, frame1, agent_id.clone()).unwrap();
+        api.put_frame(node_id, frame2, agent_id.clone()).unwrap();
+
+        let view = ContextView {
+            max_frames: 10,
+            ordering: OrderingPolicy::Recency,
+            filters: vec![],
+        };
+
+        let context = api.get_node(node_id, view).unwrap();
+        let combined = context.combined_text(" | ");
+
+        // With different frame types, we get both frames
+        assert!(combined.contains("First"));
+        assert!(combined.contains("Second"));
+        assert!(combined.contains(" | "));
+    }
+
+    #[test]
+    fn test_node_context_latest_frame_of_type() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register a writer agent
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Create frames of different types
+        let agent_id = "writer-1".to_string();
+        let basis = Basis::Node(node_id);
+        let frame1 = Frame::new(basis.clone(), b"analysis1".to_vec(), "analysis".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+        let frame2 = Frame::new(basis.clone(), b"summary1".to_vec(), "summary".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+        let frame3 = Frame::new(basis.clone(), b"analysis2".to_vec(), "analysis".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+
+        api.put_frame(node_id, frame1, agent_id.clone()).unwrap();
+        api.put_frame(node_id, frame2, agent_id.clone()).unwrap();
+        api.put_frame(node_id, frame3, agent_id.clone()).unwrap();
+
+        let view = ContextView {
+            max_frames: 10,
+            ordering: OrderingPolicy::Recency,
+            filters: vec![],
+        };
+
+        let context = api.get_node(node_id, view).unwrap();
+        let latest_analysis = context.latest_frame_of_type("analysis");
+
+        // Note: Head index only tracks latest frame per type
+        // So we get the latest analysis frame (analysis2)
+        assert!(latest_analysis.is_some());
+        assert_eq!(latest_analysis.unwrap().frame_type, "analysis");
+        assert_eq!(latest_analysis.unwrap().text_content().unwrap(), "analysis2");
+    }
+
+    #[test]
+    fn test_node_context_frames_by_agent() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register multiple agents
+        {
+            let mut registry = api.agent_registry.write();
+            registry.register(AgentIdentity::new("agent-1".to_string(), crate::agent::AgentRole::Writer));
+            registry.register(AgentIdentity::new("agent-2".to_string(), crate::agent::AgentRole::Writer));
+        }
+
+        // Create frames from different agents with different types
+        let basis = Basis::Node(node_id);
+        let frame1 = Frame::new(basis.clone(), b"content1".to_vec(), "type1".to_string(), "agent-1".to_string(), HashMap::new()).unwrap();
+        let frame2 = Frame::new(basis.clone(), b"content2".to_vec(), "type2".to_string(), "agent-2".to_string(), HashMap::new()).unwrap();
+        let frame3 = Frame::new(basis.clone(), b"content3".to_vec(), "type3".to_string(), "agent-1".to_string(), HashMap::new()).unwrap();
+
+        api.put_frame(node_id, frame1, "agent-1".to_string()).unwrap();
+        api.put_frame(node_id, frame2, "agent-2".to_string()).unwrap();
+        api.put_frame(node_id, frame3, "agent-1".to_string()).unwrap();
+
+        let view = ContextView {
+            max_frames: 10,
+            ordering: OrderingPolicy::Recency,
+            filters: vec![],
+        };
+
+        let context = api.get_node(node_id, view).unwrap();
+        let agent1_frames = context.frames_by_agent("agent-1");
+
+        // With different frame types, we get both agent-1 frames
+        assert_eq!(agent1_frames.len(), 2);
+        assert!(agent1_frames.iter().all(|f| f.agent_id() == Some("agent-1")));
+    }
+
+    #[test]
+    fn test_context_view_builder() {
+        let view = ContextView::builder()
+            .max_frames(50)
+            .recent()
+            .by_type("analysis")
+            .by_agent("agent-1")
+            .build();
+
+        assert_eq!(view.max_frames, 50);
+        assert_eq!(view.ordering, OrderingPolicy::Recency);
+        assert_eq!(view.filters.len(), 2);
+        assert!(matches!(view.filters[0], FrameFilter::ByType(_)));
+        assert!(matches!(view.filters[1], FrameFilter::ByAgent(_)));
+    }
+
+    #[test]
+    fn test_context_view_builder_defaults() {
+        let view = ContextView::builder().build();
+
+        assert_eq!(view.max_frames, 100); // Default
+        assert_eq!(view.ordering, OrderingPolicy::Recency); // Default
+        assert!(view.filters.is_empty());
+    }
+
+    #[test]
+    fn test_context_api_latest_context() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register a writer agent
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Create multiple frames
+        let agent_id = "writer-1".to_string();
+        let basis = Basis::Node(node_id);
+        for i in 0..5 {
+            let content = format!("Frame {}", i).into_bytes();
+            let frame = Frame::new(basis.clone(), content, "test".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+            api.put_frame(node_id, frame, agent_id.clone()).unwrap();
+        }
+
+        let context = api.latest_context(node_id).unwrap();
+        assert_eq!(context.frames.len(), 1); // Should only return latest
+        assert_eq!(context.frames[0].text_content().unwrap(), "Frame 4");
+    }
+
+    #[test]
+    fn test_context_api_context_by_type() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register a writer agent
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Create frames of different types
+        let agent_id = "writer-1".to_string();
+        let basis = Basis::Node(node_id);
+        let frame1 = Frame::new(basis.clone(), b"analysis1".to_vec(), "analysis".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+        let frame2 = Frame::new(basis.clone(), b"summary1".to_vec(), "summary".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+        let frame3 = Frame::new(basis.clone(), b"analysis2".to_vec(), "analysis".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+
+        api.put_frame(node_id, frame1, agent_id.clone()).unwrap();
+        api.put_frame(node_id, frame2, agent_id.clone()).unwrap();
+        api.put_frame(node_id, frame3, agent_id.clone()).unwrap();
+
+        let context = api.context_by_type(node_id, "analysis", 10).unwrap();
+        // Note: Head index only tracks latest frame per type
+        // So we get 1 analysis frame (the latest)
+        assert_eq!(context.frames.len(), 1);
+        assert!(context.frames.iter().all(|f| f.is_type("analysis")));
+    }
+
+    #[test]
+    fn test_context_api_combined_context_text() {
+        let (api, _temp_dir) = create_test_api();
+        let node_id: NodeID = [1u8; 32];
+
+        // Create and store node record
+        let node_record = create_test_node_record(node_id);
+        api.node_store.put(&node_record).unwrap();
+
+        // Register a writer agent
+        {
+            let mut registry = api.agent_registry.write();
+            let agent = AgentIdentity::new("writer-1".to_string(), crate::agent::AgentRole::Writer);
+            registry.register(agent);
+        }
+
+        // Create frames with different types
+        let agent_id = "writer-1".to_string();
+        let basis = Basis::Node(node_id);
+        let frame1 = Frame::new(basis.clone(), b"First".to_vec(), "type1".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+        let frame2 = Frame::new(basis.clone(), b"Second".to_vec(), "type2".to_string(), agent_id.clone(), HashMap::new()).unwrap();
+        api.put_frame(node_id, frame1, agent_id.clone()).unwrap();
+        api.put_frame(node_id, frame2, agent_id.clone()).unwrap();
+
+        let view = ContextView {
+            max_frames: 10,
+            ordering: OrderingPolicy::Recency,
+            filters: vec![],
+        };
+
+        let combined = api.combined_context_text(node_id, " | ", view).unwrap();
+        // With different frame types, we get both frames
+        assert!(combined.contains("First"));
+        assert!(combined.contains("Second"));
+        assert!(combined.contains(" | "));
     }
 }

@@ -63,4 +63,42 @@ impl Frame {
             timestamp: std::time::SystemTime::now(),
         })
     }
+
+    /// Get content as UTF-8 string
+    ///
+    /// Returns an error if the content is not valid UTF-8.
+    pub fn text_content(&self) -> Result<String, std::string::FromUtf8Error> {
+        String::from_utf8(self.content.clone())
+    }
+
+    /// Parse content as JSON
+    ///
+    /// Attempts to deserialize the frame content as JSON into the specified type.
+    pub fn json_content<T>(&self) -> Result<T, serde_json::Error>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        serde_json::from_slice(&self.content)
+    }
+
+    /// Get agent ID from metadata
+    ///
+    /// Returns the agent_id stored in the frame's metadata, if present.
+    pub fn agent_id(&self) -> Option<&str> {
+        self.metadata.get("agent_id").map(|s| s.as_str())
+    }
+
+    /// Get metadata value by key
+    ///
+    /// Returns the metadata value for the given key, if present.
+    pub fn metadata_value(&self, key: &str) -> Option<&str> {
+        self.metadata.get(key).map(|s| s.as_str())
+    }
+
+    /// Check if frame matches the specified type
+    ///
+    /// Returns true if the frame's type matches the given frame_type.
+    pub fn is_type(&self, frame_type: &str) -> bool {
+        self.frame_type == frame_type
+    }
 }

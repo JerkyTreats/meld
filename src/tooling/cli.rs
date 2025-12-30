@@ -14,7 +14,6 @@ use crate::store::{NodeRecord, NodeRecordStore};
 use crate::store::persistence::SledNodeRecordStore;
 use crate::tree::builder::TreeBuilder;
 use crate::types::{Hash, NodeID};
-use crate::views::OrderingPolicy;
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::fs;
@@ -66,6 +65,35 @@ pub enum Commands {
         /// Maximum frames to return
         #[arg(long, default_value = "10")]
         max_frames: usize,
+        /// Filter by frame type
+        #[arg(long)]
+        frame_type: Option<String>,
+        /// Filter by agent ID
+        #[arg(long)]
+        agent_id: Option<String>,
+        /// Show text content of frames
+        #[arg(long)]
+        show_content: bool,
+        /// Combine all frame content with separator
+        #[arg(long)]
+        combine: bool,
+    },
+    /// Get combined text content from node context
+    GetText {
+        /// Node ID (hex string)
+        node_id: String,
+        /// Separator between frames (default: "\n\n---\n\n")
+        #[arg(long, default_value = "\n\n---\n\n")]
+        separator: String,
+        /// Maximum frames to return
+        #[arg(long, default_value = "10")]
+        max_frames: usize,
+        /// Filter by frame type
+        #[arg(long)]
+        frame_type: Option<String>,
+        /// Filter by agent ID
+        #[arg(long)]
+        agent_id: Option<String>,
     },
     /// Put a frame to a node
     PutFrame {
@@ -232,21 +260,80 @@ impl CliContext {
     /// Execute a CLI command
     pub fn execute(&self, command: &Commands) -> Result<String, ApiError> {
         match command {
-            Commands::GetNode { node_id, max_frames } => {
+            Commands::GetNode { node_id, max_frames, frame_type, agent_id, show_content, combine } => {
                 let node_id = parse_node_id(node_id)?;
-                let view = ContextView {
-                    max_frames: *max_frames,
-                    ordering: OrderingPolicy::Recency,
-                    filters: vec![],
-                };
+                
+                // Use builder pattern for view construction
+                let mut builder = ContextView::builder().max_frames(*max_frames).recent();
+                if let Some(ft) = frame_type {
+                    builder = builder.by_type(ft);
+                }
+                if let Some(aid) = agent_id {
+                    builder = builder.by_agent(aid);
+                }
+                let view = builder.build();
+                
                 let context = self.api.get_node(node_id, view)?;
-                Ok(format!(
+                
+                let mut output = format!(
                     "Node: {}\nFrames: {}/{}\nPath: {}",
                     hex::encode(context.node_id),
                     context.frames.len(),
                     context.frame_count,
                     context.node_record.path.display()
-                ))
+                );
+                
+                if *show_content || *combine {
+                    if *combine {
+                        // Use combined_text convenience method
+                        let combined = context.combined_text("\n\n---\n\n");
+                        output.push_str(&format!("\n\nCombined Content:\n{}", combined));
+                    } else {
+                        // Show individual frame contents
+                        output.push_str("\n\nFrame Contents:");
+                        for (i, frame) in context.frames.iter().enumerate() {
+                            output.push_str(&format!("\n\nFrame {} (type: {}, agent: {}):", 
+                                i + 1,
+                                frame.frame_type,
+                                frame.agent_id().unwrap_or("unknown")
+                            ));
+                            if let Ok(text) = frame.text_content() {
+                                output.push_str(&format!("\n{}", text));
+                            } else {
+                                output.push_str("\n[Binary content - not UTF-8]");
+                            }
+                        }
+                    }
+                } else {
+                    // Show frame summary
+                    output.push_str("\n\nFrames:");
+                    for (i, frame) in context.frames.iter().enumerate() {
+                        output.push_str(&format!("\n  {}: {} (agent: {})", 
+                            i + 1,
+                            frame.frame_type,
+                            frame.agent_id().unwrap_or("unknown")
+                        ));
+                    }
+                }
+                
+                Ok(output)
+            }
+            Commands::GetText { node_id, separator, max_frames, frame_type, agent_id } => {
+                let node_id = parse_node_id(node_id)?;
+                
+                // Use builder pattern for view construction
+                let mut builder = ContextView::builder().max_frames(*max_frames).recent();
+                if let Some(ft) = frame_type {
+                    builder = builder.by_type(ft);
+                }
+                if let Some(aid) = agent_id {
+                    builder = builder.by_agent(aid);
+                }
+                let view = builder.build();
+                
+                // Use convenience method for combined text
+                let combined = self.api.combined_context_text(node_id, separator, view)?;
+                Ok(combined)
             }
             Commands::PutFrame { node_id, frame_file, frame_type, agent_id } => {
                 let node_id = parse_node_id(node_id)?;
