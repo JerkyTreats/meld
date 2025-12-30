@@ -5,6 +5,7 @@ mod blake3_verification;
 mod branch_synthesis;
 mod config_integration;
 mod context_api;
+mod frame_queue;
 mod hasher_verification;
 mod model_providers;
 mod store_integration;

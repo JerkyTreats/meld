@@ -655,7 +655,7 @@ impl CliContext {
                 }
 
                 // Create watch daemon
-                let daemon = WatchDaemon::new(self.api.clone(), watch_config);
+                let daemon = WatchDaemon::new(self.api.clone(), watch_config)?;
 
                 // Start daemon (this will block)
                 info!("Starting watch mode daemon");

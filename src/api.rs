@@ -7,7 +7,7 @@ use crate::agent::AgentRegistry;
 use crate::composition::{CompositionPolicy, compose_frames};
 use crate::concurrency::NodeLockManager;
 use crate::error::ApiError;
-use crate::frame::{Basis, Frame, FrameMerkleSet, FrameStorage};
+use crate::frame::{Basis, Frame, FrameMerkleSet, FrameStorage, FrameGenerationQueue, Priority};
 use crate::frame::id::compute_basis_hash;
 use crate::heads::HeadIndex;
 use crate::regeneration::{BasisIndex, RegenerationReport, regenerate_node};
@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 use hex;
 
 /// Context view policy for frame selection
@@ -715,19 +715,23 @@ impl ContextApi {
     ///
     /// Creates a simple context frame with basic node information.
     /// Only creates frames for agents with write capability.
+    /// If a generation queue is provided and the agent has a provider configured,
+    /// the frame generation will be queued for asynchronous LLM-based generation.
     ///
     /// # Arguments
     /// * `node_id` - NodeID to create frame for
     /// * `agent_id` - Agent ID to create frame for
     /// * `frame_type` - Frame type (defaults to "context" if None)
+    /// * `generation_queue` - Optional generation queue for LLM-based frame generation
     ///
     /// # Returns
-    /// * `Option<FrameID>` - FrameID if frame was created, None if it already existed
+    /// * `Option<FrameID>` - FrameID if frame was created synchronously, None if queued or already existed
     pub fn ensure_agent_frame(
         &self,
         node_id: NodeID,
         agent_id: String,
         frame_type: Option<String>,
+        generation_queue: Option<Arc<FrameGenerationQueue>>,
     ) -> Result<Option<FrameID>, ApiError> {
         // Check if frame already exists
         if self.has_agent_frame(&node_id, &agent_id)? {
@@ -755,6 +759,48 @@ impl ContextApi {
             .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
 
+        // If agent has provider and queue is available, queue generation
+        if let (Some(_provider), Some(queue)) = (agent.provider.as_ref(), generation_queue.as_ref()) {
+            // Validate agent has required prompts before queuing
+            let missing_prompts = FrameGenerationQueue::validate_agent_prompts(&agent, &node_record);
+            if !missing_prompts.is_empty() {
+                error!(
+                    agent_id = %agent_id,
+                    node_id = %hex::encode(node_id),
+                    missing = ?missing_prompts,
+                    "Agent has provider configured but missing required prompts. Skipping generation."
+                );
+                // Fall through to create metadata frame
+            } else {
+                // Queue generation request
+                let priority = Priority::Normal; // Could be configurable
+                // Try to get current tokio runtime handle
+                match tokio::runtime::Handle::try_current() {
+                    Ok(handle) => {
+                        // We're in an async context, spawn a task to enqueue
+                        let queue = Arc::clone(queue);
+                        let node_id = node_id;
+                        let agent_id = agent_id.clone();
+                        let frame_type = Some(frame_type);
+                        handle.spawn(async move {
+                            if let Err(e) = queue.enqueue(node_id, agent_id, frame_type, priority).await {
+                                error!(error = %e, "Failed to enqueue generation request");
+                            }
+                        });
+                        return Ok(None); // Frame will be created asynchronously
+                    }
+                    Err(_) => {
+                        // No tokio runtime available, fall through to create metadata frame
+                        warn!(
+                            agent_id = %agent_id,
+                            "No tokio runtime available, creating metadata frame instead of queuing"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Fallback: create metadata frame
         // Create default frame content
         let content = format!(
             "Node: {}\nPath: {:?}\nType: {:?}",
@@ -1138,14 +1184,14 @@ mod tests {
         }
 
         // Ensure frame - should create it
-        let frame_id = api.ensure_agent_frame(node_id, "writer-1".to_string(), None).unwrap();
+        let frame_id = api.ensure_agent_frame(node_id, "writer-1".to_string(), None, None).unwrap();
         assert!(frame_id.is_some());
 
         // Verify frame exists
         assert!(api.has_agent_frame(&node_id, "writer-1").unwrap());
 
         // Ensure again - should return None (already exists)
-        let frame_id2 = api.ensure_agent_frame(node_id, "writer-1".to_string(), None).unwrap();
+        let frame_id2 = api.ensure_agent_frame(node_id, "writer-1".to_string(), None, None).unwrap();
         assert!(frame_id2.is_none());
     }
 
@@ -1166,7 +1212,7 @@ mod tests {
         }
 
         // Ensure frame - should return None (reader can't write)
-        let frame_id = api.ensure_agent_frame(node_id, "reader-1".to_string(), None).unwrap();
+        let frame_id = api.ensure_agent_frame(node_id, "reader-1".to_string(), None, None).unwrap();
         assert!(frame_id.is_none());
 
         // Verify no frame was created
@@ -1194,6 +1240,7 @@ mod tests {
             node_id,
             "writer-1".to_string(),
             Some("custom-type".to_string()),
+            None,
         ).unwrap();
         assert!(frame_id.is_some());
 
@@ -1216,7 +1263,7 @@ mod tests {
         }
 
         // Try to ensure frame for non-existent node
-        let result = api.ensure_agent_frame(node_id, "writer-1".to_string(), None);
+        let result = api.ensure_agent_frame(node_id, "writer-1".to_string(), None, None);
         assert!(result.is_err());
         match result {
             Err(ApiError::NodeNotFound(id)) => assert_eq!(id, node_id),

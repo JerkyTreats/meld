@@ -250,7 +250,9 @@ fn determine_format(config: Option<&LoggingConfig>) -> Result<String, ApiError> 
 
 /// Output destinations
 struct OutputDestinations {
+    #[allow(dead_code)] // Planned for future use (see comment in init_logging)
     stdout: bool,
+    #[allow(dead_code)] // Planned for future use (see comment in init_logging)
     stderr: bool,
     file: bool,
 }

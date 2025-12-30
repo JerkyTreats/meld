@@ -10,6 +10,7 @@ use crate::provider::{ChatMessage, CompletionOptions, ModelProviderClient, Provi
 use crate::types::{FrameID, NodeID};
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Enhance ProviderModelNotFound errors with available models list
 async fn enhance_model_error(
@@ -89,12 +90,17 @@ pub trait AgentAdapter: Send + Sync {
 
 /// Implementation of AgentAdapter for ContextApi
 pub struct ContextApiAdapter {
-    api: ContextApi,
+    api: Arc<ContextApi>,
 }
 
 impl ContextApiAdapter {
     /// Create a new adapter wrapping a ContextApi
     pub fn new(api: ContextApi) -> Self {
+        Self { api: Arc::new(api) }
+    }
+
+    /// Create a new adapter from an Arc<ContextApi>
+    pub fn from_arc(api: Arc<ContextApi>) -> Self {
         Self { api }
     }
 
@@ -146,6 +152,12 @@ impl AgentAdapter for ContextApiAdapter {
         let provider = agent.provider.as_ref()
             .ok_or_else(|| ApiError::ProviderNotConfigured(agent_id.clone()))?;
 
+        // Get system prompt from agent metadata (required for queue-based generation)
+        // If not in metadata, use a default
+        let system_prompt = agent.metadata.get("system_prompt")
+            .cloned()
+            .unwrap_or_else(|| "You are a helpful assistant that generates context frames.".to_string());
+
         // Create provider client
         let client = ProviderFactory::create_client(provider)?;
 
@@ -161,7 +173,7 @@ impl AgentAdapter for ContextApiAdapter {
         let mut messages = vec![
             ChatMessage {
                 role: crate::provider::MessageRole::System,
-                content: "You are a helpful assistant that generates context frames.".to_string(),
+                content: system_prompt, // Use agent's system prompt
             },
         ];
 

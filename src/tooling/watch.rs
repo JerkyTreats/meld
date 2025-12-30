@@ -5,9 +5,11 @@
 
 use crate::api::ContextApi;
 use crate::error::ApiError;
+use crate::frame::{FrameGenerationQueue, GenerationConfig};
 use crate::heads::HeadIndex;
 use crate::regeneration::BasisIndex;
 use crate::store::{NodeRecord, NodeRecordStore};
+use crate::tooling::adapter::ContextApiAdapter;
 use crate::tree::builder::TreeBuilder;
 use crate::tree::path::canonicalize_path;
 use crate::types::NodeID;
@@ -48,6 +50,10 @@ pub struct WatchConfig {
     pub auto_create_frames: bool,
     /// Batch size for contextframe creation
     pub frame_batch_size: usize,
+    /// Enable automatic LLM-based frame generation
+    pub auto_generate_frames: bool,
+    /// Generation queue configuration
+    pub generation_config: Option<GenerationConfig>,
 }
 
 impl Default for WatchConfig {
@@ -73,6 +79,8 @@ impl Default for WatchConfig {
             max_queue_size: 10000,
             auto_create_frames: true,
             frame_batch_size: 50,
+            auto_generate_frames: false,
+            generation_config: None,
         }
     }
 }
@@ -199,11 +207,12 @@ pub struct WatchDaemon {
     api: Arc<ContextApi>,
     config: WatchConfig,
     running: Arc<RwLock<bool>>,
+    generation_queue: Option<Arc<FrameGenerationQueue>>,
 }
 
 impl WatchDaemon {
     /// Create a new watch daemon
-    pub fn new(api: Arc<ContextApi>, config: WatchConfig) -> Self {
+    pub fn new(api: Arc<ContextApi>, config: WatchConfig) -> Result<Self, ApiError> {
         // Load head index on startup if workspace root is configured
         let head_index_path = HeadIndex::persistence_path(&config.workspace_root);
         {
@@ -228,11 +237,29 @@ impl WatchDaemon {
             }
         }
 
-        Self {
+        // Create generation queue if auto_generate_frames is enabled
+        let generation_queue = if config.auto_generate_frames {
+            let gen_config = config.generation_config.clone().unwrap_or_default();
+            let adapter = Arc::new(ContextApiAdapter::from_arc(Arc::clone(&api)));
+            let queue = Arc::new(FrameGenerationQueue::new(
+                Arc::clone(&api),
+                adapter,
+                gen_config,
+            ));
+            // Start the queue workers
+            queue.start()?;
+            info!("Frame generation queue started");
+            Some(queue)
+        } else {
+            None
+        };
+
+        Ok(Self {
             api,
             config,
             running: Arc::new(RwLock::new(false)),
-        }
+            generation_queue,
+        })
     }
 
     /// Start the watch daemon
@@ -326,8 +353,15 @@ impl WatchDaemon {
     }
 
     /// Stop the watch daemon
-    pub fn stop(&self) {
+    pub async fn stop(&self) -> Result<(), ApiError> {
         *self.running.write() = false;
+        
+        // Stop generation queue if it exists
+        if let Some(queue) = &self.generation_queue {
+            queue.stop().await?;
+        }
+        
+        Ok(())
     }
 
     /// Build the initial tree from filesystem
@@ -525,7 +559,12 @@ impl WatchDaemon {
         for chunk in node_ids.chunks(batch_size) {
             for node_id in chunk {
                 for agent_id in &agents {
-                    match self.api.ensure_agent_frame(*node_id, agent_id.clone(), None) {
+                    match self.api.ensure_agent_frame(
+                        *node_id,
+                        agent_id.clone(),
+                        None,
+                        self.generation_queue.as_ref().map(Arc::clone),
+                    ) {
                         Ok(Some(frame_id)) => {
                             created_count += 1;
                             debug!(
@@ -629,7 +668,7 @@ mod tests {
             ..Default::default()
         };
 
-        let daemon = WatchDaemon::new(Arc::new(api), config);
+        let daemon = WatchDaemon::new(Arc::new(api), config).unwrap();
         (daemon, temp_dir)
     }
 
