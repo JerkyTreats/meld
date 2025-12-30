@@ -65,6 +65,8 @@ impl ContextView {
     ///
     /// # Example
     /// ```rust
+    /// use merkle::api::ContextView;
+    /// 
     /// let view = ContextView::builder()
     ///     .max_frames(20)
     ///     .recent()
