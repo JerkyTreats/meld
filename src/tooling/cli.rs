@@ -255,6 +255,9 @@ impl CliContext {
                 })
         ));
         let agent_registry = Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new()));
+        let mut provider_registry = crate::provider::ProviderRegistry::new();
+        provider_registry.load_from_config(&config)?;
+        let provider_registry = Arc::new(parking_lot::RwLock::new(provider_registry));
         let lock_manager = Arc::new(crate::concurrency::NodeLockManager::new());
 
         let api = ContextApi::with_workspace_root(
@@ -263,6 +266,7 @@ impl CliContext {
             head_index,
             basis_index,
             agent_registry,
+            provider_registry,
             lock_manager,
             workspace_root.clone(),
         );
@@ -587,7 +591,7 @@ impl CliContext {
                     Ok(result)
                 }
             }
-            Commands::ValidateProviders { agent_id } => {
+            Commands::ValidateProviders { agent_id: _ } => {
                 // Load configuration
                 let config = if let Some(ref config_path) = self.config_path {
                     // Load from specified config file
@@ -609,90 +613,66 @@ impl CliContext {
                 let mut results = Vec::new();
                 let mut errors = Vec::new();
 
-                // Determine which agents to validate
-                let agents_to_validate: Vec<_> = if let Some(ref agent_id) = agent_id {
-                    config.agents.iter()
-                        .filter(|(_, agent)| agent.agent_id == *agent_id)
-                        .collect()
-                } else {
-                    config.agents.iter()
-                        .filter(|(_, agent)| agent.provider_name.is_some())
-                        .collect()
-                };
-
-                if agents_to_validate.is_empty() {
-                    return Ok("No agents with providers found to validate".to_string());
+                // Validate providers directly (providers are now independent from agents)
+                if config.providers.is_empty() {
+                    return Ok("No providers found to validate".to_string());
                 }
 
-                // Validate each agent's provider
-                for (_, agent_config) in agents_to_validate {
-                    if let Some(provider_name) = &agent_config.provider_name {
-                        match config.providers.get(provider_name) {
-                            Some(provider_config) => {
-                                // Convert to ModelProvider
-                                match provider_config.to_model_provider() {
-                                    Ok(model_provider) => {
-                                        // Create provider client
-                                        match ProviderFactory::create_client(&model_provider) {
-                                            Ok(client) => {
-                                                // Test model availability
-                                                // Use async runtime for async operations
-                                                let rt = tokio::runtime::Runtime::new()
-                                                    .map_err(|e| ApiError::ProviderError(format!("Failed to create runtime: {}", e)))?;
-                                                match rt.block_on(client.list_models()) {
-                                                    Ok(available_models) => {
-                                                        if available_models.iter().any(|m| m == &provider_config.model) {
-                                                            results.push(format!(
-                                                                "✓ Agent '{}': Model '{}' is available",
-                                                                agent_config.agent_id,
-                                                                provider_config.model
-                                                            ));
-                                                        } else {
-                                                            errors.push(format!(
-                                                                "✗ Agent '{}': Model '{}' not found. Available models: {}",
-                                                                agent_config.agent_id,
-                                                                provider_config.model,
-                                                                available_models.join(", ")
-                                                            ));
-                                                        }
-                                                    }
-                                                    Err(e) => {
-                                                        // If we can't list models, try a test completion
-                                                        // For now, just report that we couldn't verify
-                                                        results.push(format!(
-                                                            "? Agent '{}': Model '{}' - Could not verify ({}). Model may still be valid.",
-                                                            agent_config.agent_id,
-                                                            provider_config.model,
-                                                            e
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
+                // Validate each provider
+                for (provider_name, provider_config) in &config.providers {
+                    // Convert to ModelProvider
+                    match provider_config.to_model_provider() {
+                        Ok(model_provider) => {
+                            // Create provider client
+                            match ProviderFactory::create_client(&model_provider) {
+                                Ok(client) => {
+                                    // Test model availability
+                                    // Use async runtime for async operations
+                                    let rt = tokio::runtime::Runtime::new()
+                                        .map_err(|e| ApiError::ProviderError(format!("Failed to create runtime: {}", e)))?;
+                                    match rt.block_on(client.list_models()) {
+                                        Ok(available_models) => {
+                                            if available_models.iter().any(|m| m == &provider_config.model) {
+                                                results.push(format!(
+                                                    "✓ Provider '{}': Model '{}' is available",
+                                                    provider_name,
+                                                    provider_config.model
+                                                ));
+                                            } else {
                                                 errors.push(format!(
-                                                    "✗ Agent '{}': Failed to create provider client: {}",
-                                                    agent_config.agent_id,
-                                                    e
+                                                    "✗ Provider '{}': Model '{}' not found. Available models: {}",
+                                                    provider_name,
+                                                    provider_config.model,
+                                                    available_models.join(", ")
                                                 ));
                                             }
                                         }
-                                    }
-                                    Err(e) => {
-                                        errors.push(format!(
-                                            "✗ Agent '{}': Failed to create model provider: {}",
-                                            agent_config.agent_id,
-                                            e
-                                        ));
+                                        Err(e) => {
+                                            // If we can't list models, just report that we couldn't verify
+                                            results.push(format!(
+                                                "? Provider '{}': Model '{}' - Could not verify ({}). Model may still be valid.",
+                                                provider_name,
+                                                provider_config.model,
+                                                e
+                                            ));
+                                        }
                                     }
                                 }
+                                Err(e) => {
+                                    errors.push(format!(
+                                        "✗ Provider '{}': Failed to create provider client: {}",
+                                        provider_name,
+                                        e
+                                    ));
+                                }
                             }
-                            None => {
-                                errors.push(format!(
-                                    "✗ Agent '{}': Provider '{}' not found in configuration",
-                                    agent_config.agent_id,
-                                    provider_name
-                                ));
-                            }
+                        }
+                        Err(e) => {
+                            errors.push(format!(
+                                "✗ Provider '{}': Failed to create model provider: {}",
+                                provider_name,
+                                e
+                            ));
                         }
                     }
                 }

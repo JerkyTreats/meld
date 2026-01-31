@@ -647,6 +647,7 @@ mod tests {
         let head_index = Arc::new(parking_lot::RwLock::new(crate::heads::HeadIndex::new()));
         let basis_index = Arc::new(parking_lot::RwLock::new(crate::regeneration::BasisIndex::new()));
         let agent_registry = Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new()));
+        let provider_registry = Arc::new(parking_lot::RwLock::new(crate::provider::ProviderRegistry::new()));
         let lock_manager = Arc::new(crate::concurrency::NodeLockManager::new());
 
         let api = ContextApi::new(
@@ -655,6 +656,7 @@ mod tests {
             head_index,
             basis_index,
             agent_registry,
+            provider_registry,
             lock_manager,
         );
 

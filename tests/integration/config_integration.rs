@@ -28,7 +28,6 @@ endpoint = "http://localhost:11434"
 agent_id = "test-agent"
 role = "Writer"
 system_prompt = "You are a test agent."
-provider_name = "test-ollama"
 "#).unwrap();
 
     let config = ConfigLoader::load_from_file(&config_file).unwrap();
@@ -44,7 +43,7 @@ provider_name = "test-ollama"
         agent.metadata.get("system_prompt"),
         Some(&"You are a test agent.".to_string())
     );
-    assert!(agent.provider.is_some());
+    // Agent no longer has provider field - providers are managed separately
 }
 
 #[test]
@@ -68,7 +67,7 @@ system_prompt = "You are a reader agent."
     let agent = registry.get("reader-agent").unwrap();
     assert_eq!(agent.agent_id, "reader-agent");
     assert_eq!(agent.role, AgentRole::Reader);
-    assert!(agent.provider.is_none());
+    // Agent no longer has provider field - providers are managed separately
     assert_eq!(
         agent.metadata.get("system_prompt"),
         Some(&"You are a reader agent.".to_string())
@@ -81,6 +80,7 @@ fn test_config_provider_conversion() {
 
     // Add OpenAI provider
     config.providers.insert("openai-test".to_string(), ProviderConfig {
+        provider_name: Some("openai-test".to_string()),
         provider_type: ProviderType::OpenAI,
         model: "gpt-4".to_string(),
         api_key: Some("test-key-123".to_string()),
@@ -90,6 +90,7 @@ fn test_config_provider_conversion() {
 
     // Add Ollama provider
     config.providers.insert("ollama-test".to_string(), ProviderConfig {
+        provider_name: Some("ollama-test".to_string()),
         provider_type: ProviderType::Ollama,
         model: "llama2".to_string(),
         api_key: None,
@@ -124,13 +125,11 @@ fn test_config_provider_conversion() {
 fn test_config_validation_errors() {
     let mut config = MerkleConfig::default();
 
-    // Add agent with invalid provider reference
+    // Add agent with invalid agent_id (empty string) to trigger validation error
     config.agents.insert("bad-agent".to_string(), AgentConfig {
-        agent_id: "bad-agent".to_string(),
+        agent_id: "".to_string(), // Empty agent_id should fail validation
         role: AgentRole::Writer,
         system_prompt: None,
-        provider_name: Some("nonexistent-provider".to_string()),
-        completion_options: None,
         metadata: HashMap::new(),
     });
 

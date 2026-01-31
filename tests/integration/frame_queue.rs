@@ -31,6 +31,19 @@ fn create_test_api() -> (ContextApi, TempDir) {
     let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
     let basis_index = Arc::new(parking_lot::RwLock::new(BasisIndex::new()));
     let agent_registry = Arc::new(parking_lot::RwLock::new(merkle::agent::AgentRegistry::new()));
+    let mut provider_registry = merkle::provider::ProviderRegistry::new();
+    // Add a test provider
+    let mut config = merkle::config::MerkleConfig::default();
+    config.providers.insert("test-provider".to_string(), merkle::config::ProviderConfig {
+        provider_name: Some("test-provider".to_string()),
+        provider_type: merkle::config::ProviderType::Ollama,
+        model: "test-model".to_string(),
+        api_key: None,
+        endpoint: None,
+        default_options: merkle::provider::CompletionOptions::default(),
+    });
+    provider_registry.load_from_config(&config).unwrap();
+    let provider_registry = Arc::new(parking_lot::RwLock::new(provider_registry));
     let lock_manager = Arc::new(merkle::concurrency::NodeLockManager::new());
 
     let api = ContextApi::new(
@@ -39,6 +52,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
         head_index,
         basis_index,
         agent_registry,
+        provider_registry,
         lock_manager,
     );
 
@@ -70,10 +84,10 @@ async fn test_priority_ordering() {
     let node3 = Hash::from([3u8; 32]);
     let node4 = Hash::from([4u8; 32]);
 
-    queue.enqueue(node1, "agent1".to_string(), None, Priority::Low).await.unwrap();
-    queue.enqueue(node2, "agent1".to_string(), None, Priority::High).await.unwrap();
-    queue.enqueue(node3, "agent1".to_string(), None, Priority::Urgent).await.unwrap();
-    queue.enqueue(node4, "agent1".to_string(), None, Priority::Normal).await.unwrap();
+    queue.enqueue(node1, "agent1".to_string(), "test-provider".to_string(), None, Priority::Low).await.unwrap();
+    queue.enqueue(node2, "agent1".to_string(), "test-provider".to_string(), None, Priority::High).await.unwrap();
+    queue.enqueue(node3, "agent1".to_string(), "test-provider".to_string(), None, Priority::Urgent).await.unwrap();
+    queue.enqueue(node4, "agent1".to_string(), "test-provider".to_string(), None, Priority::Normal).await.unwrap();
 
     // Verify ordering by checking stats and testing dequeue behavior
     // Since we can't directly access the internal queue, we verify through
@@ -87,7 +101,7 @@ async fn test_enqueue_dequeue() {
     let (queue, _temp_dir) = create_test_queue();
     
     let node_id = Hash::from([1u8; 32]);
-    queue.enqueue(node_id, "agent1".to_string(), None, Priority::Normal).await.unwrap();
+    queue.enqueue(node_id, "agent1".to_string(), "test-provider".to_string(), None, Priority::Normal).await.unwrap();
 
     let stats = queue.stats();
     assert_eq!(stats.pending, 1);
@@ -105,12 +119,12 @@ async fn test_queue_size_limit() {
     // Fill queue to capacity
     for i in 0..3 {
         let node_id = Hash::from([i as u8; 32]);
-        queue.enqueue(node_id, "agent1".to_string(), None, Priority::Normal).await.unwrap();
+        queue.enqueue(node_id, "agent1".to_string(), "test-provider".to_string(), None, Priority::Normal).await.unwrap();
     }
 
     // Next enqueue should fail
     let node_id = Hash::from([4u8; 32]);
-    let result = queue.enqueue(node_id, "agent1".to_string(), None, Priority::Normal).await;
+    let result = queue.enqueue(node_id, "agent1".to_string(), "test-provider".to_string(), None, Priority::Normal).await;
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), ApiError::ConfigError(_)));
 
@@ -123,9 +137,9 @@ async fn test_batch_enqueue() {
     let (queue, _temp_dir) = create_test_queue();
     
     let requests = vec![
-        (Hash::from([1u8; 32]), "agent1".to_string(), None, Priority::Normal),
-        (Hash::from([2u8; 32]), "agent1".to_string(), None, Priority::High),
-        (Hash::from([3u8; 32]), "agent2".to_string(), None, Priority::Urgent),
+        (Hash::from([1u8; 32]), "agent1".to_string(), "test-provider".to_string(), None, Priority::Normal),
+        (Hash::from([2u8; 32]), "agent1".to_string(), "test-provider".to_string(), None, Priority::High),
+        (Hash::from([3u8; 32]), "agent2".to_string(), "test-provider".to_string(), None, Priority::Urgent),
     ];
 
     queue.enqueue_batch(requests).await.unwrap();
@@ -142,9 +156,9 @@ async fn test_batch_enqueue_size_limit() {
 
     // Try to enqueue batch that exceeds limit
     let requests = vec![
-        (Hash::from([1u8; 32]), "agent1".to_string(), None, Priority::Normal),
-        (Hash::from([2u8; 32]), "agent1".to_string(), None, Priority::Normal),
-        (Hash::from([3u8; 32]), "agent1".to_string(), None, Priority::Normal),
+        (Hash::from([1u8; 32]), "agent1".to_string(), "test-provider".to_string(), None, Priority::Normal),
+        (Hash::from([2u8; 32]), "agent1".to_string(), "test-provider".to_string(), None, Priority::Normal),
+        (Hash::from([3u8; 32]), "agent1".to_string(), "test-provider".to_string(), None, Priority::Normal),
     ];
 
     let result = queue.enqueue_batch(requests).await;
@@ -162,6 +176,7 @@ async fn test_generation_request_ordering() {
         request_id: RequestId::next(),
         node_id: Hash::from([1u8; 32]),
         agent_id: "agent1".to_string(),
+        provider_name: "test-provider".to_string(),
         frame_type: "test".to_string(),
         priority: Priority::High,
         retry_count: 0,
@@ -173,6 +188,7 @@ async fn test_generation_request_ordering() {
         request_id: RequestId::next(),
         node_id: Hash::from([2u8; 32]),
         agent_id: "agent1".to_string(),
+        provider_name: "test-provider".to_string(),
         frame_type: "test".to_string(),
         priority: Priority::Low,
         retry_count: 0,
@@ -188,6 +204,7 @@ async fn test_generation_request_ordering() {
         request_id: RequestId::next(),
         node_id: Hash::from([3u8; 32]),
         agent_id: "agent1".to_string(),
+        provider_name: "test-provider".to_string(),
         frame_type: "test".to_string(),
         priority: Priority::Normal,
         retry_count: 0,
@@ -199,6 +216,7 @@ async fn test_generation_request_ordering() {
         request_id: RequestId::next(),
         node_id: Hash::from([4u8; 32]),
         agent_id: "agent1".to_string(),
+        provider_name: "test-provider".to_string(),
         frame_type: "test".to_string(),
         priority: Priority::Normal,
         retry_count: 0,
@@ -223,7 +241,7 @@ async fn test_queue_stats() {
     // Enqueue some items
     for i in 0..5 {
         let node_id = Hash::from([i as u8; 32]);
-        queue.enqueue(node_id, "agent1".to_string(), None, Priority::Normal).await.unwrap();
+        queue.enqueue(node_id, "agent1".to_string(), "test-provider".to_string(), None, Priority::Normal).await.unwrap();
     }
 
     let stats = queue.stats();
@@ -252,7 +270,7 @@ async fn test_frame_type_default() {
     let (queue, _temp_dir) = create_test_queue();
     
     let node_id = Hash::from([1u8; 32]);
-    queue.enqueue(node_id, "my-agent".to_string(), None, Priority::Normal).await.unwrap();
+    queue.enqueue(node_id, "my-agent".to_string(), "test-provider".to_string(), None, Priority::Normal).await.unwrap();
 
     // Frame type is set during enqueue, verify through stats
     let stats = queue.stats();
@@ -267,6 +285,7 @@ async fn test_frame_type_custom() {
     queue.enqueue(
         node_id,
         "my-agent".to_string(),
+        "test-provider".to_string(),
         Some("custom-type".to_string()),
         Priority::Normal,
     ).await.unwrap();
@@ -299,7 +318,7 @@ async fn test_concurrent_enqueue() {
         let queue = Arc::clone(&queue);
         let handle = tokio::spawn(async move {
             let node_id = Hash::from([i as u8; 32]);
-            queue.enqueue(node_id, "agent1".to_string(), None, Priority::Normal).await
+            queue.enqueue(node_id, "agent1".to_string(), "test-provider".to_string(), None, Priority::Normal).await
         });
         handles.push(handle);
     }

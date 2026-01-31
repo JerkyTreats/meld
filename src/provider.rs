@@ -850,6 +850,71 @@ impl ProviderFactory {
     }
 }
 
+/// Provider registry for managing provider configurations independently
+///
+/// Manages provider configurations separately from agents, enabling
+/// runtime provider selection and reuse across multiple agents.
+pub struct ProviderRegistry {
+    providers: std::collections::HashMap<String, crate::config::ProviderConfig>,
+}
+
+impl ProviderRegistry {
+    /// Create a new empty provider registry
+    pub fn new() -> Self {
+        Self {
+            providers: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Load providers from configuration
+    ///
+    /// For Phase 1, loads from MerkleConfig. Phase 2 will add load_from_xdg().
+    pub fn load_from_config(&mut self, config: &crate::config::MerkleConfig) -> Result<(), ApiError> {
+        for (name, provider_config) in &config.providers {
+            let mut config_with_name = provider_config.clone();
+            // Set provider_name if not already set
+            if config_with_name.provider_name.is_none() {
+                config_with_name.provider_name = Some(name.clone());
+            }
+            self.providers.insert(name.clone(), config_with_name);
+        }
+        Ok(())
+    }
+
+    /// Get a provider configuration by name
+    pub fn get(&self, provider_name: &str) -> Option<&crate::config::ProviderConfig> {
+        self.providers.get(provider_name)
+    }
+
+    /// Get a provider configuration by name or return an error
+    pub fn get_or_error(&self, provider_name: &str) -> Result<&crate::config::ProviderConfig, ApiError> {
+        self.get(provider_name).ok_or_else(|| {
+            ApiError::ProviderNotConfigured(format!("Provider not found: {}", provider_name))
+        })
+    }
+
+    /// List all registered providers
+    pub fn list_all(&self) -> Vec<&crate::config::ProviderConfig> {
+        self.providers.values().collect()
+    }
+
+    /// Create a provider client from a provider name
+    ///
+    /// Looks up the provider configuration, converts it to a ModelProvider,
+    /// and creates the appropriate client implementation.
+    pub fn create_client(&self, provider_name: &str) -> Result<Box<dyn ModelProviderClient>, ApiError> {
+        let provider_config = self.get_or_error(provider_name)?;
+        let model_provider = provider_config.to_model_provider()?;
+        ProviderFactory::create_client(&model_provider)
+    }
+}
+
+impl Default for ProviderRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Mock provider for testing
 #[cfg(test)]
 pub struct MockProvider {

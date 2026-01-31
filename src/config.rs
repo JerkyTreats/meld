@@ -44,6 +44,10 @@ pub struct MerkleConfig {
 /// Model provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
+    /// Provider name (unique identifier)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_name: Option<String>,
+
     /// Provider type (OpenAI, Anthropic, Ollama, LocalCustom)
     pub provider_type: ProviderType,
 
@@ -92,14 +96,6 @@ pub struct AgentConfig {
     /// If not provided, a default system prompt will be used.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-
-    /// Model provider to use (references a provider from providers map)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider_name: Option<String>,
-
-    /// Override completion options for this agent (optional)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_options: Option<CompletionOptions>,
 
     /// Agent-specific metadata
     #[serde(default)]
@@ -331,17 +327,10 @@ impl ProviderConfig {
 
 impl AgentConfig {
     /// Validate agent configuration
-    pub fn validate(&self, providers: &HashMap<String, ProviderConfig>) -> Result<(), String> {
+    pub fn validate(&self, _providers: &HashMap<String, ProviderConfig>) -> Result<(), String> {
         // Validate agent_id is not empty
         if self.agent_id.trim().is_empty() {
             return Err("Agent ID cannot be empty".to_string());
-        }
-
-        // Validate provider reference exists
-        if let Some(provider_name) = &self.provider_name {
-            if !providers.contains_key(provider_name) {
-                return Err(format!("Provider '{}' not found in providers map", provider_name));
-            }
         }
 
         // Validate system prompt is not empty if provided
@@ -649,6 +638,7 @@ mod tests {
     #[test]
     fn test_provider_config_validation() {
         let mut provider = ProviderConfig {
+            provider_name: Some("test-openai".to_string()),
             provider_type: ProviderType::OpenAI,
             model: "gpt-4".to_string(),
             api_key: Some("test-key".to_string()),
@@ -671,6 +661,7 @@ mod tests {
     fn test_agent_config_validation() {
         let mut providers = HashMap::new();
         providers.insert("test-provider".to_string(), ProviderConfig {
+            provider_name: Some("test-provider".to_string()),
             provider_type: ProviderType::Ollama,
             model: "llama2".to_string(),
             api_key: None,
@@ -682,22 +673,18 @@ mod tests {
             agent_id: "test-agent".to_string(),
             role: AgentRole::Writer,
             system_prompt: Some("Test prompt".to_string()),
-            provider_name: Some("test-provider".to_string()),
-            completion_options: None,
             metadata: HashMap::new(),
         };
         assert!(agent.validate(&providers).is_ok());
 
-        // Missing provider should fail
+        // Agent validation no longer checks provider references
         let agent_bad = AgentConfig {
             agent_id: "test-agent-2".to_string(),
             role: AgentRole::Writer,
             system_prompt: None,
-            provider_name: Some("nonexistent".to_string()),
-            completion_options: None,
             metadata: HashMap::new(),
         };
-        assert!(agent_bad.validate(&providers).is_err());
+        assert!(agent_bad.validate(&providers).is_ok());
     }
 
     #[test]
@@ -706,6 +693,7 @@ mod tests {
 
         // Add a valid provider
         config.providers.insert("test-provider".to_string(), ProviderConfig {
+            provider_name: Some("test-provider".to_string()),
             provider_type: ProviderType::Ollama,
             model: "llama2".to_string(),
             api_key: None,
@@ -718,8 +706,6 @@ mod tests {
             agent_id: "test-agent".to_string(),
             role: AgentRole::Writer,
             system_prompt: Some("Test".to_string()),
-            provider_name: Some("test-provider".to_string()),
-            completion_options: None,
             metadata: HashMap::new(),
         });
 
@@ -730,8 +716,6 @@ mod tests {
             agent_id: "test-agent".to_string(), // Same ID
             role: AgentRole::Reader,
             system_prompt: None,
-            provider_name: None,
-            completion_options: None,
             metadata: HashMap::new(),
         });
 
@@ -741,6 +725,7 @@ mod tests {
     #[test]
     fn test_provider_to_model_provider() {
         let provider_config = ProviderConfig {
+            provider_name: Some("test-ollama".to_string()),
             provider_type: ProviderType::Ollama,
             model: "llama2".to_string(),
             api_key: None,

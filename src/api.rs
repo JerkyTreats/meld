@@ -7,7 +7,7 @@ use crate::agent::AgentRegistry;
 use crate::composition::{CompositionPolicy, compose_frames};
 use crate::concurrency::NodeLockManager;
 use crate::error::ApiError;
-use crate::frame::{Basis, Frame, FrameMerkleSet, FrameStorage, FrameGenerationQueue, Priority};
+use crate::frame::{Basis, Frame, FrameMerkleSet, FrameStorage, FrameGenerationQueue};
 use crate::frame::id::compute_basis_hash;
 use crate::heads::HeadIndex;
 use crate::regeneration::{BasisIndex, RegenerationReport, regenerate_node};
@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 use hex;
 
 /// Context view policy for frame selection
@@ -258,6 +258,8 @@ pub struct ContextApi {
     basis_index: Arc<parking_lot::RwLock<BasisIndex>>,
     /// Agent registry for authorization
     agent_registry: Arc<parking_lot::RwLock<AgentRegistry>>,
+    /// Provider registry for LLM provider management
+    provider_registry: Arc<parking_lot::RwLock<crate::provider::ProviderRegistry>>,
     /// Lock manager for concurrent access safety
     lock_manager: Arc<NodeLockManager>,
     /// Workspace root for persistence (optional)
@@ -272,6 +274,7 @@ impl ContextApi {
         head_index: Arc<parking_lot::RwLock<HeadIndex>>,
         basis_index: Arc<parking_lot::RwLock<BasisIndex>>,
         agent_registry: Arc<parking_lot::RwLock<AgentRegistry>>,
+        provider_registry: Arc<parking_lot::RwLock<crate::provider::ProviderRegistry>>,
         lock_manager: Arc<NodeLockManager>,
     ) -> Self {
         Self {
@@ -280,6 +283,7 @@ impl ContextApi {
             head_index,
             basis_index,
             agent_registry,
+            provider_registry,
             lock_manager,
             workspace_root: None,
         }
@@ -292,6 +296,7 @@ impl ContextApi {
         head_index: Arc<parking_lot::RwLock<HeadIndex>>,
         basis_index: Arc<parking_lot::RwLock<BasisIndex>>,
         agent_registry: Arc<parking_lot::RwLock<AgentRegistry>>,
+        provider_registry: Arc<parking_lot::RwLock<crate::provider::ProviderRegistry>>,
         lock_manager: Arc<NodeLockManager>,
         workspace_root: PathBuf,
     ) -> Self {
@@ -301,6 +306,7 @@ impl ContextApi {
             head_index,
             basis_index,
             agent_registry,
+            provider_registry,
             lock_manager,
             workspace_root: Some(workspace_root),
         }
@@ -901,7 +907,7 @@ impl ContextApi {
         node_id: NodeID,
         agent_id: String,
         frame_type: Option<String>,
-        generation_queue: Option<Arc<FrameGenerationQueue>>,
+        _generation_queue: Option<Arc<FrameGenerationQueue>>,
     ) -> Result<Option<FrameID>, ApiError> {
         // Check if frame already exists
         if self.has_agent_frame(&node_id, &agent_id)? {
@@ -929,51 +935,9 @@ impl ContextApi {
             .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
 
-        // If agent has provider and queue is available, queue generation
-        if let (Some(_provider), Some(queue)) = (agent.provider.as_ref(), generation_queue.as_ref()) {
-            // Validate agent has required prompts before queuing
-            let missing_prompts = FrameGenerationQueue::validate_agent_prompts(&agent, &node_record);
-            if !missing_prompts.is_empty() {
-                error!(
-                    agent_id = %agent_id,
-                    node_id = %hex::encode(node_id),
-                    missing = ?missing_prompts,
-                    "Agent has provider configured but missing required prompts. Skipping generation."
-                );
-                // Fall through to create metadata frame
-            } else {
-                // Queue generation request
-                let priority = Priority::Normal; // Could be configurable
-                // Try to get current tokio runtime handle
-                match tokio::runtime::Handle::try_current() {
-                    Ok(handle) => {
-                        // We're in an async context, spawn a task to enqueue
-                        let queue = Arc::clone(queue);
-                        let node_id = node_id;
-                        let agent_id = agent_id.clone();
-                        let frame_type = Some(frame_type);
-                        handle.spawn(async move {
-                            match queue.enqueue(node_id, agent_id, frame_type, priority).await {
-                                Ok(_request_id) => {
-                                    debug!("Generation request enqueued successfully");
-                                }
-                                Err(e) => {
-                                    error!(error = %e, "Failed to enqueue generation request");
-                                }
-                            }
-                        });
-                        return Ok(None); // Frame will be created asynchronously
-                    }
-                    Err(_) => {
-                        // No tokio runtime available, fall through to create metadata frame
-                        warn!(
-                            agent_id = %agent_id,
-                            "No tokio runtime available, creating metadata frame instead of queuing"
-                        );
-                    }
-                }
-            }
-        }
+        // Note: Generation with providers now requires explicit provider_name parameter
+        // This method only creates metadata frames. Use ContextApiAdapter::generate_frame
+        // with explicit provider_name for LLM-based generation.
 
         // Fallback: create metadata frame
         // Create default frame content
@@ -1122,6 +1086,11 @@ impl ContextApi {
     pub fn agent_registry(&self) -> &Arc<parking_lot::RwLock<AgentRegistry>> {
         &self.agent_registry
     }
+
+    /// Get a reference to the provider registry
+    pub fn provider_registry(&self) -> &Arc<parking_lot::RwLock<crate::provider::ProviderRegistry>> {
+        &self.provider_registry
+    }
 }
 
 #[cfg(test)]
@@ -1146,12 +1115,14 @@ mod tests {
         let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
         let lock_manager = Arc::new(NodeLockManager::new());
 
+        let provider_registry = Arc::new(parking_lot::RwLock::new(crate::provider::ProviderRegistry::new()));
         let api = ContextApi::new(
             node_store,
             frame_storage,
             head_index,
             basis_index,
             agent_registry,
+            provider_registry,
             lock_manager,
         );
 

@@ -91,8 +91,6 @@ Your primary responsibilities include:
   - `agent_id`: Unique identifier (must match filename)
   - `role`: AgentRole (Reader, Writer, Synthesis)
   - `system_prompt_path`: Path to markdown prompt file (absolute or relative to config dir)
-- **Optional Fields**:
-  - `metadata`: Key-value pairs for agent-specific settings (including user prompt templates)
 
 **Example Agent Config** (`~/.config/merkle/agents/code-analyzer.toml`):
 ```toml
@@ -101,19 +99,8 @@ role = "Writer"
 
 # Path to markdown prompt file (absolute or relative to ~/.config/merkle/)
 system_prompt_path = "~/prompts/code-analysis.md"
-
-# User prompt templates (in metadata)
-[metadata]
-user_prompt_file = "Analyze the code at {path}..."
-user_prompt_directory = "Analyze the directory at {path}..."
-
-# Agent-specific metadata (no provider references!)
-[metadata]
-specialization = "rust"
-focus = "performance"
 ```
 
-**Note**: Agents are **provider-agnostic**. Provider selection happens at runtime via `--provider` flag or API parameter. See [Provider-Agent Separation](../provider/provider_agent_separation.md) for details.
 
 ### R4: Prompt Path Resolution
 
@@ -130,11 +117,13 @@ focus = "performance"
 1. Absolute path (if starts with `/`)
 2. Tilde expansion (if starts with `~/`)
 3. Relative to `$XDG_CONFIG_HOME/merkle/`
+4. Relative to `$pwd` (if starts wtih `./`)
 
 **Examples**:
 - `system_prompt_path = "/home/user/prompts/code.md"` → absolute
 - `system_prompt_path = "~/prompts/code.md"` → `$HOME/prompts/code.md`
 - `system_prompt_path = "prompts/code.md"` → `$XDG_CONFIG_HOME/merkle/prompts/code.md`
+- `system_prompt_path = "./prompts/code.md"` → `$pwd/prompts/code.md`
 
 ### R5: Agent Discovery and Management
 

@@ -1,76 +1,96 @@
 //! Integration tests for Model Provider Integration
 
 use merkle::agent::{AgentIdentity, AgentRole};
+use merkle::config::{MerkleConfig, ProviderConfig, ProviderType};
 use merkle::provider::{
-    ChatMessage, CompletionOptions, MessageRole, ModelProvider, ProviderFactory,
+    ChatMessage, CompletionOptions, MessageRole, ModelProvider, ProviderRegistry,
 };
 
 #[test]
-fn test_agent_with_openai_provider() {
-    let mut agent = AgentIdentity::new("openai-agent".to_string(), AgentRole::Writer);
-
-    agent.provider = Some(ModelProvider::OpenAI {
+fn test_provider_registry_with_openai() {
+    let mut registry = ProviderRegistry::new();
+    let mut config = MerkleConfig::default();
+    
+    config.providers.insert("test-openai".to_string(), ProviderConfig {
+        provider_name: Some("test-openai".to_string()),
+        provider_type: ProviderType::OpenAI,
         model: "gpt-4".to_string(),
-        api_key: "test-key".to_string(),
-        base_url: None,
+        api_key: Some("test-key".to_string()),
+        endpoint: None,
+        default_options: CompletionOptions::default(),
     });
-
-    assert!(agent.provider.is_some());
-    let client = ProviderFactory::create_client(agent.provider.as_ref().unwrap()).unwrap();
+    
+    registry.load_from_config(&config).unwrap();
+    let client = registry.create_client("test-openai").unwrap();
     assert_eq!(client.provider_name(), "openai");
     assert_eq!(client.model_name(), "gpt-4");
 }
 
 #[test]
-fn test_agent_with_anthropic_provider() {
-    let mut agent = AgentIdentity::new("anthropic-agent".to_string(), AgentRole::Writer);
-
-    agent.provider = Some(ModelProvider::Anthropic {
+fn test_provider_registry_with_anthropic() {
+    let mut registry = ProviderRegistry::new();
+    let mut config = MerkleConfig::default();
+    
+    config.providers.insert("test-anthropic".to_string(), ProviderConfig {
+        provider_name: Some("test-anthropic".to_string()),
+        provider_type: ProviderType::Anthropic,
         model: "claude-3-opus".to_string(),
-        api_key: "test-key".to_string(),
+        api_key: Some("test-key".to_string()),
+        endpoint: None,
+        default_options: CompletionOptions::default(),
     });
-
-    assert!(agent.provider.is_some());
-    let client = ProviderFactory::create_client(agent.provider.as_ref().unwrap()).unwrap();
+    
+    registry.load_from_config(&config).unwrap();
+    let client = registry.create_client("test-anthropic").unwrap();
     assert_eq!(client.provider_name(), "anthropic");
     assert_eq!(client.model_name(), "claude-3-opus");
 }
 
 #[test]
-fn test_agent_with_ollama_provider() {
-    let mut agent = AgentIdentity::new("ollama-agent".to_string(), AgentRole::Writer);
-
-    agent.provider = Some(ModelProvider::Ollama {
+fn test_provider_registry_with_ollama() {
+    let mut registry = ProviderRegistry::new();
+    let mut config = MerkleConfig::default();
+    
+    config.providers.insert("test-ollama".to_string(), ProviderConfig {
+        provider_name: Some("test-ollama".to_string()),
+        provider_type: ProviderType::Ollama,
         model: "llama2".to_string(),
-        base_url: None,
+        api_key: None,
+        endpoint: None,
+        default_options: CompletionOptions::default(),
     });
-
-    assert!(agent.provider.is_some());
-    let client = ProviderFactory::create_client(agent.provider.as_ref().unwrap()).unwrap();
+    
+    registry.load_from_config(&config).unwrap();
+    let client = registry.create_client("test-ollama").unwrap();
     assert_eq!(client.provider_name(), "ollama");
     assert_eq!(client.model_name(), "llama2");
 }
 
 #[test]
-fn test_agent_with_custom_local_provider() {
-    let mut agent = AgentIdentity::new("local-agent".to_string(), AgentRole::Writer);
-
-    agent.provider = Some(ModelProvider::LocalCustom {
+fn test_provider_registry_with_custom_local() {
+    let mut registry = ProviderRegistry::new();
+    let mut config = MerkleConfig::default();
+    
+    config.providers.insert("test-local".to_string(), ProviderConfig {
+        provider_name: Some("test-local".to_string()),
+        provider_type: ProviderType::LocalCustom,
         model: "custom-model".to_string(),
-        endpoint: "http://localhost:8080/v1".to_string(),
         api_key: None,
+        endpoint: Some("http://localhost:8080/v1".to_string()),
+        default_options: CompletionOptions::default(),
     });
-
-    assert!(agent.provider.is_some());
-    let client = ProviderFactory::create_client(agent.provider.as_ref().unwrap()).unwrap();
+    
+    registry.load_from_config(&config).unwrap();
+    let client = registry.create_client("test-local").unwrap();
     assert_eq!(client.provider_name(), "local");
     assert_eq!(client.model_name(), "custom-model");
 }
 
 #[test]
 fn test_agent_without_provider() {
-    let agent = AgentIdentity::new("no-provider-agent".to_string(), AgentRole::Reader);
-    assert!(agent.provider.is_none());
+    // Agents are now provider-agnostic
+    let _agent = AgentIdentity::new("no-provider-agent".to_string(), AgentRole::Reader);
+    // Agent no longer has provider field - this is expected
 }
 
 #[test]

@@ -12,11 +12,12 @@ The agent management commands are organized under `merkle agent`:
 merkle agent <subcommand> [options]
 ```
 
-## Commands
 
-### 1) List Agents
+## List Agents
 
 Display all available agents from XDG directory.
+
+### Requirements
 
 **Syntax**
 
@@ -59,9 +60,28 @@ Note: Agents are provider-agnostic. Providers are selected at runtime.
 }
 ```
 
-### 2) Show Agent
+### Implementation
+
+- Add `Agent` subcommand to `Commands` enum in `src/tooling/cli.rs`
+- Add `List` variant with `format` and `role` options
+- Implement agent loading from XDG directory in `src/agent.rs` (AgentRegistry)
+- Add output formatting logic (text/JSON) in command handler
+- Update `src/tooling/cli.rs` command dispatch logic
+
+### Tests
+
+- Unit tests in `src/agent.rs` for agent loading and filtering
+- Integration test in `tests/integration/agent_authorization.rs` or new `tests/integration/agent_cli.rs`
+  - Test listing all agents
+  - Test filtering by role
+  - Test text and JSON output formats
+  - Test empty agent list handling
+
+## Show Agent
 
 Display detailed information about a specific agent.
+
+### Requirements
 
 **Syntax**
 
@@ -113,9 +133,28 @@ Prompt Content (--include-prompt):
 
 **Note**: Agents are provider-agnostic. No provider information in agent config.
 
-### 3) Validate Agent
+### Implementation
+
+- Add `Show` variant to `Agent` subcommand in `src/tooling/cli.rs`
+- Add `agent_id` argument and `format`, `include_prompt` options
+- Implement agent lookup in `src/agent.rs` (AgentRegistry::get)
+- Add prompt file loading logic in `src/agent.rs`
+- Add output formatting (text/JSON) in command handler
+
+### Tests
+
+- Unit tests in `src/agent.rs` for agent lookup and prompt loading
+- Integration test in `tests/integration/agent_cli.rs`
+  - Test showing existing agent
+  - Test showing agent with --include-prompt
+  - Test text and JSON output formats
+  - Test error handling for non-existent agent
+
+## Validate Agent
 
 Validate agent configuration and prompt file.
+
+### Requirements
 
 **Syntax**
 
@@ -159,9 +198,33 @@ Validating agent: invalid-agent
 Validation failed: 3 errors found
 ```
 
-### 4) Create Agent
+### Implementation
+
+- Add `Validate` variant to `Agent` subcommand in `src/tooling/cli.rs`
+- Add `agent_id` argument and `verbose` option
+- Implement validation logic in `src/agent.rs` (AgentRegistry or new validation module)
+- Add validation checks:
+  - Agent ID matches filename
+  - Role is valid enum value
+  - Prompt file exists and is readable
+  - Prompt file is valid UTF-8
+  - User prompt templates in metadata (for Writer/Synthesis)
+
+### Tests
+
+- Unit tests in `src/agent.rs` for validation logic
+- Integration test in `tests/integration/agent_cli.rs`
+  - Test validation of valid agent
+  - Test validation with missing prompt file
+  - Test validation with invalid role
+  - Test validation with missing metadata templates
+  - Test verbose output format
+
+## Create Agent
 
 Interactively create a new agent configuration.
+
+### Requirements
 
 **Syntax**
 
@@ -178,8 +241,6 @@ merkle agent create <agent_id> [options]
 **Behavior (Interactive Mode)**
 1. Prompt for agent role
 2. If Writer/Synthesis, prompt for prompt file path
-3. Prompt for user prompt templates (optional, can add to metadata)
-4. Prompt for additional metadata (optional)
 5. Create agent config file in XDG directory
 6. Validate configuration
 7. Display created agent
@@ -196,8 +257,6 @@ $ merkle agent create my-agent
 
 Role (Reader/Writer/Synthesis): Writer
 Prompt file path: ~/prompts/my-prompt.md
-User prompt template for files (optional): Analyze the code at {path}...
-User prompt template for directories (optional): Analyze the directory at {path}...
 
 Creating agent configuration...
 ✓ Agent created: ~/.config/merkle/agents/my-agent.toml
@@ -205,9 +264,34 @@ Creating agent configuration...
 Note: Provider will be selected at runtime when using this agent.
 ```
 
-### 5) Edit Agent
+Note: "Agent created:" follows pathing logic described in this document. 
+
+### Implementation
+
+- Add `Create` variant to `Agent` subcommand in `src/tooling/cli.rs`
+- Add `agent_id` argument and options for role, prompt-path, interactive/non-interactive
+- Implement interactive prompts using `dialoguer` or similar crate
+- Add agent config file creation in `src/agent.rs` (AgentRegistry or new module)
+- Use `src/tooling/editor.rs` patterns for interactive input if needed
+- Implement XDG directory creation if needed
+- Add validation after creation
+
+### Tests
+
+- Unit tests in `src/agent.rs` for agent creation logic
+- Integration test in `tests/integration/agent_cli.rs`
+  - Test non-interactive creation with all flags
+  - Test creation of Reader agent
+  - Test creation of Writer agent with prompt path
+  - Test creation of Synthesis agent with prompt path
+  - Test error handling for missing required fields
+  - Test error handling for invalid prompt path
+
+## Edit Agent
 
 Edit an existing agent configuration.
+
+### Requirements
 
 **Syntax**
 
@@ -233,9 +317,30 @@ merkle agent edit <agent_id> [options]
 - Validate and save on exit
 - Clean up temporary file
 
-### 6) Remove Agent
+### Implementation
+
+- Add `Edit` variant to `Agent` subcommand in `src/tooling/cli.rs`
+- Add `agent_id` argument and options for prompt-path, role, editor
+- Implement flag-based editing (direct field updates)
+- Use `src/tooling/editor.rs` for editor-based editing
+- Add agent config update logic in `src/agent.rs`
+- Add validation after update
+
+### Tests
+
+- Unit tests in `src/agent.rs` for agent update logic
+- Integration test in `tests/integration/agent_cli.rs`
+  - Test editing with --prompt-path flag
+  - Test editing with --role flag
+  - Test editing with editor (mock editor)
+  - Test error handling for non-existent agent
+  - Test validation after edit
+
+## Remove Agent
 
 Remove an agent configuration (XDG agents only).
+
+### Requirements
 
 **Syntax**
 
@@ -261,6 +366,23 @@ Configuration file deleted: ~/.config/merkle/agents/code-analyzer.toml
 **Error Handling**
 - If agent not found: Error message
 - If agent in use: Warning (but allow removal)
+
+### Implementation
+
+- Add `Remove` variant to `Agent` subcommand in `src/tooling/cli.rs`
+- Add `agent_id` argument and `force` option
+- Implement confirmation prompt (unless --force)
+- Add agent config file deletion logic
+- Check if agent is in use (optional warning)
+
+### Tests
+
+- Unit tests in `src/agent.rs` for agent removal logic
+- Integration test in `tests/integration/agent_cli.rs`
+  - Test removal with confirmation
+  - Test removal with --force flag
+  - Test error handling for non-existent agent
+  - Test removal of agent config file
 
 ## Common Options
 

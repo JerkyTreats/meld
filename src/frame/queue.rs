@@ -6,7 +6,7 @@
 use crate::api::{ContextApi, ContextView};
 use crate::error::ApiError;
 use crate::frame::{Basis, Frame};
-use crate::provider::{ChatMessage, CompletionOptions, ProviderFactory};
+use crate::provider::ChatMessage;
 use crate::store::NodeRecord;
 use crate::types::{FrameID, NodeID};
 use hex;
@@ -49,6 +49,8 @@ pub struct GenerationRequest {
     pub node_id: NodeID,
     /// Agent ID that will generate the frame
     pub agent_id: String,
+    /// Provider name to use for generation
+    pub provider_name: String,
     /// Frame type to generate
     pub frame_type: String,
     /// Priority level (higher = more important)
@@ -67,6 +69,7 @@ impl Clone for GenerationRequest {
             request_id: self.request_id,
             node_id: self.node_id,
             agent_id: self.agent_id.clone(),
+            provider_name: self.provider_name.clone(),
             frame_type: self.frame_type.clone(),
             priority: self.priority,
             retry_count: self.retry_count,
@@ -248,6 +251,7 @@ impl FrameGenerationQueue {
         &self,
         node_id: NodeID,
         agent_id: String,
+        provider_name: String,
         frame_type: Option<String>,
         priority: Priority,
     ) -> Result<RequestId, ApiError> {
@@ -273,6 +277,7 @@ impl FrameGenerationQueue {
             request_id,
             node_id,
             agent_id: agent_id.clone(),
+            provider_name: provider_name.clone(),
             frame_type,
             priority,
             retry_count: 0,
@@ -296,6 +301,7 @@ impl FrameGenerationQueue {
             request_id = ?request_id,
             node_id = %hex::encode(node_id),
             agent_id = %agent_id,
+            provider_name = %provider_name,
             priority = ?priority,
             queue_size = queue.len(),
             "Enqueued generation request"
@@ -309,6 +315,7 @@ impl FrameGenerationQueue {
         &self,
         node_id: NodeID,
         agent_id: String,
+        provider_name: String,
         frame_type: Option<String>,
         priority: Priority,
         timeout: Option<Duration>,
@@ -337,6 +344,7 @@ impl FrameGenerationQueue {
             request_id,
             node_id,
             agent_id: agent_id.clone(),
+            provider_name: provider_name.clone(),
             frame_type,
             priority,
             retry_count: 0,
@@ -361,6 +369,7 @@ impl FrameGenerationQueue {
             request_id = ?request_id,
             node_id = %hex::encode(node_id),
             agent_id = %agent_id,
+            provider_name = %provider_name,
             priority = ?priority,
             "Enqueued sync generation request"
         );
@@ -382,7 +391,7 @@ impl FrameGenerationQueue {
     /// Enqueue multiple requests (batch enqueue)
     pub async fn enqueue_batch(
         &self,
-        requests: Vec<(NodeID, String, Option<String>, Priority)>,
+        requests: Vec<(NodeID, String, String, Option<String>, Priority)>,
     ) -> Result<Vec<RequestId>, ApiError> {
         let batch_size = requests.len();
         let mut queue = self.queue.lock().await;
@@ -402,13 +411,14 @@ impl FrameGenerationQueue {
         }
 
         // Use provided frame_type or default to "context-{agent_id}"
-        for (node_id, agent_id, frame_type, priority) in requests {
+        for (node_id, agent_id, provider_name, frame_type, priority) in requests {
             let request_id = RequestId::next();
             let frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
             let request = GenerationRequest {
                 request_id,
                 node_id,
                 agent_id: agent_id.clone(),
+                provider_name: provider_name.clone(),
                 frame_type,
                 priority,
                 retry_count: 0,
@@ -720,9 +730,18 @@ impl FrameGenerationQueue {
         // Get agent
         let agent = api.get_agent(&request.agent_id)?;
 
-        // Check if agent has provider configured
-        let provider = agent.provider.as_ref()
-            .ok_or_else(|| ApiError::ProviderNotConfigured(request.agent_id.clone()))?;
+        // Get provider config and type from registry (drop guard before await)
+        let (provider_config, provider_type_str) = {
+            let provider_registry = api.provider_registry().read();
+            let config = provider_registry.get_or_error(&request.provider_name)?;
+            let provider_type_str = match config.provider_type {
+                crate::config::ProviderType::OpenAI => "openai",
+                crate::config::ProviderType::Anthropic => "anthropic",
+                crate::config::ProviderType::Ollama => "ollama",
+                crate::config::ProviderType::LocalCustom => "local",
+            };
+            (config.clone(), provider_type_str)
+        };
 
         // Get node record
         let node_record = api
@@ -738,7 +757,7 @@ impl FrameGenerationQueue {
                 agent_id = %request.agent_id,
                 node_id = %hex::encode(request.node_id),
                 missing = ?missing_prompts,
-                "Agent has provider configured but missing required prompts. Skipping generation."
+                "Agent missing required prompts. Skipping generation."
             );
             return Err(ApiError::ConfigError(format!(
                 "Agent '{}' missing required prompts: {}",
@@ -750,8 +769,11 @@ impl FrameGenerationQueue {
         // Generate prompts
         let (system_prompt, user_prompt) = Self::generate_prompts(&agent, &node_record)?;
 
-        // Create provider client
-        let client = ProviderFactory::create_client(provider)?;
+        // Create provider client (need to get registry again, but drop before await)
+        let client = {
+            let provider_registry = api.provider_registry().read();
+            provider_registry.create_client(&request.provider_name)?
+        };
 
         // Get node context to build prompt
         let view = ContextView {
@@ -786,15 +808,17 @@ impl FrameGenerationQueue {
             });
         }
 
+        // Resolve completion options: provider defaults > agent preferences (if any)
+        let completion_options = provider_config.default_options.clone();
+        
+        // Agent preferences from metadata (optional hints, not requirements)
+        // For now, we just use provider defaults. Agent preferences can be added later if needed.
+
         // Generate completion - THIS IS THE ONLY PLACE PROVIDERS ARE CALLED
         let start = Instant::now();
         let response = match client.complete(
             messages,
-            CompletionOptions {
-                temperature: Some(0.7),
-                max_tokens: Some(2000),
-                ..Default::default()
-            },
+            completion_options,
         ).await {
             Ok(r) => Ok(r),
             Err(e) => {
@@ -829,9 +853,9 @@ impl FrameGenerationQueue {
         let basis = Basis::Node(request.node_id);
         let content = response.content.into_bytes();
         let mut metadata = HashMap::new();
-        metadata.insert("provider".to_string(), client.provider_name().to_string());
+        metadata.insert("provider".to_string(), request.provider_name.clone());
         metadata.insert("model".to_string(), client.model_name().to_string());
-        metadata.insert("provider_type".to_string(), client.provider_name().to_string());
+        metadata.insert("provider_type".to_string(), provider_type_str.to_string());
         metadata.insert("prompt".to_string(), user_prompt);
 
         let frame = Frame::new(basis, content, request.frame_type.clone(), request.agent_id.clone(), metadata)?;

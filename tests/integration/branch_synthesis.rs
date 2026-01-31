@@ -29,6 +29,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
     let frame_storage = Arc::new(FrameStorage::new(&frame_storage_path).unwrap());
     let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
     let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
+    let provider_registry = Arc::new(parking_lot::RwLock::new(merkle::provider::ProviderRegistry::new()));
     let lock_manager = Arc::new(NodeLockManager::new());
 
     let basis_index = Arc::new(parking_lot::RwLock::new(merkle::regeneration::BasisIndex::new()));
@@ -38,6 +39,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
         head_index,
         basis_index,
         agent_registry,
+        provider_registry,
         lock_manager,
     );
 

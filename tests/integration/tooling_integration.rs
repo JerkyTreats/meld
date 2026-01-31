@@ -22,6 +22,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
     let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
     let basis_index = Arc::new(parking_lot::RwLock::new(BasisIndex::new()));
     let agent_registry = Arc::new(parking_lot::RwLock::new(merkle::agent::AgentRegistry::new()));
+    let provider_registry = Arc::new(parking_lot::RwLock::new(merkle::provider::ProviderRegistry::new()));
     let lock_manager = Arc::new(merkle::concurrency::NodeLockManager::new());
 
     let api = ContextApi::new(
@@ -30,6 +31,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
         head_index,
         basis_index,
         agent_registry,
+        provider_registry,
         lock_manager,
     );
 

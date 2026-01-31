@@ -5,7 +5,6 @@
 //! operate concurrently while maintaining data integrity.
 
 use crate::error::ApiError;
-use crate::provider::ModelProvider;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -40,8 +39,6 @@ pub struct AgentIdentity {
     pub role: AgentRole,
     /// Additional capabilities (for future extensibility)
     pub capabilities: Vec<Capability>,
-    /// Optional model provider for LLM-powered operations
-    pub provider: Option<ModelProvider>,
     /// Metadata for agent (e.g., system prompts, custom settings)
     #[serde(default)]
     pub metadata: HashMap<String, String>,
@@ -60,7 +57,6 @@ impl AgentIdentity {
             agent_id,
             role,
             capabilities,
-            provider: None,
             metadata: HashMap::new(),
         }
     }
@@ -160,14 +156,6 @@ impl AgentRegistry {
                 agent_config.role,
             );
 
-            // Set provider if configured
-            if let Some(provider_name) = &agent_config.provider_name {
-                let provider_config = config.providers.get(provider_name)
-                    .ok_or_else(|| ApiError::ProviderNotConfigured(provider_name.clone()))?;
-
-                identity.provider = Some(provider_config.to_model_provider()?);
-            }
-
             // Store system prompt in metadata if provided
             if let Some(system_prompt) = &agent_config.system_prompt {
                 identity.metadata.insert("system_prompt".to_string(), system_prompt.clone());
@@ -245,24 +233,8 @@ mod tests {
         assert!(registry.get_or_error("agent-3").is_err());
     }
 
-    #[test]
-    fn test_agent_with_provider() {
-        let mut agent = AgentIdentity::new("agent-with-provider".to_string(), AgentRole::Writer);
-        assert!(agent.provider.is_none());
-
-        agent.provider = Some(ModelProvider::Ollama {
-            model: "llama2".to_string(),
-            base_url: None,
-        });
-
-        assert!(agent.provider.is_some());
-        match agent.provider.as_ref().unwrap() {
-            ModelProvider::Ollama { model, .. } => {
-                assert_eq!(model, "llama2");
-            }
-            _ => panic!("Wrong provider type"),
-        }
-    }
+    // Note: Provider is no longer part of AgentIdentity
+    // Providers are managed separately via ProviderRegistry
 
     #[test]
     fn test_agent_registry_list_all() {
