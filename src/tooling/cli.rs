@@ -186,6 +186,82 @@ pub enum Commands {
         #[arg(long)]
         foreground: bool,
     },
+    /// Manage agents
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AgentCommands {
+    /// List all agents
+    List {
+        /// Output format (text or json)
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Filter by role (Reader, Writer, or Synthesis)
+        #[arg(long)]
+        role: Option<String>,
+    },
+    /// Show agent details
+    Show {
+        /// Agent ID
+        agent_id: String,
+        /// Output format (text or json)
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Include prompt file content in output
+        #[arg(long)]
+        include_prompt: bool,
+    },
+    /// Validate agent configuration
+    Validate {
+        /// Agent ID
+        agent_id: String,
+        /// Show detailed validation results
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Create new agent
+    Create {
+        /// Agent ID
+        agent_id: String,
+        /// Agent role (Reader, Writer, or Synthesis)
+        #[arg(long)]
+        role: Option<String>,
+        /// Path to prompt file (required for Writer/Synthesis)
+        #[arg(long)]
+        prompt_path: Option<String>,
+        /// Use interactive mode (default)
+        #[arg(long)]
+        interactive: bool,
+        /// Use non-interactive mode (use flags)
+        #[arg(long)]
+        non_interactive: bool,
+    },
+    /// Edit agent configuration
+    Edit {
+        /// Agent ID
+        agent_id: String,
+        /// Update prompt file path
+        #[arg(long)]
+        prompt_path: Option<String>,
+        /// Update agent role
+        #[arg(long)]
+        role: Option<String>,
+        /// Editor to use (default: $EDITOR)
+        #[arg(long)]
+        editor: Option<String>,
+    },
+    /// Remove agent
+    Remove {
+        /// Agent ID
+        agent_id: String,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// CLI context for managing workspace state
@@ -707,6 +783,9 @@ impl CliContext {
 
                 Ok(output)
             }
+            Commands::Agent { command } => {
+                self.handle_agent_command(command)
+            }
             Commands::Watch {
                 debounce_ms,
                 batch_window_ms,
@@ -759,6 +838,540 @@ impl CliContext {
             }
         }
     }
+
+    /// Handle agent management commands
+    fn handle_agent_command(&self, command: &AgentCommands) -> Result<String, ApiError> {
+        match command {
+            AgentCommands::List { format, role } => {
+                self.handle_agent_list(format.clone(), role.as_deref())
+            }
+            AgentCommands::Show { agent_id, format, include_prompt } => {
+                self.handle_agent_show(agent_id, format.clone(), *include_prompt)
+            }
+            AgentCommands::Validate { agent_id, verbose } => {
+                self.handle_agent_validate(agent_id, *verbose)
+            }
+            AgentCommands::Create { agent_id, role, prompt_path, interactive, non_interactive } => {
+                self.handle_agent_create(agent_id, role.as_deref(), prompt_path.as_deref(), *interactive, *non_interactive)
+            }
+            AgentCommands::Edit { agent_id, prompt_path, role, editor } => {
+                self.handle_agent_edit(agent_id, prompt_path.as_deref(), role.as_deref(), editor.as_deref())
+            }
+            AgentCommands::Remove { agent_id, force } => {
+                self.handle_agent_remove(agent_id, *force)
+            }
+        }
+    }
+
+    /// Handle agent list command
+    fn handle_agent_list(&self, format: String, role_filter: Option<&str>) -> Result<String, ApiError> {
+        let registry = self.api.agent_registry().read();
+        
+        // Parse role filter
+        let role = if let Some(role_str) = role_filter {
+            match role_str {
+                "Reader" => Some(crate::agent::AgentRole::Reader),
+                "Writer" => Some(crate::agent::AgentRole::Writer),
+                "Synthesis" => Some(crate::agent::AgentRole::Synthesis),
+                _ => {
+                    return Err(ApiError::ConfigError(format!(
+                        "Invalid role filter: {}. Must be Reader, Writer, or Synthesis",
+                        role_str
+                    )));
+                }
+            }
+        } else {
+            None
+        };
+
+        let agents = registry.list_by_role(role);
+        
+        match format.as_str() {
+            "json" => Ok(format_agent_list_json(&agents)),
+            "text" | _ => Ok(format_agent_list_text(&agents)),
+        }
+    }
+
+    /// Handle agent show command
+    fn handle_agent_show(&self, agent_id: &str, format: String, include_prompt: bool) -> Result<String, ApiError> {
+        let registry = self.api.agent_registry().read();
+        
+        let agent = registry.get_or_error(agent_id)?;
+        
+        // Load prompt content if requested
+        let prompt_content = if include_prompt {
+            agent.metadata.get("system_prompt").cloned()
+        } else {
+            None
+        };
+
+        match format.as_str() {
+            "json" => Ok(format_agent_show_json(agent, prompt_content.as_deref())),
+            "text" | _ => Ok(format_agent_show_text(agent, prompt_content.as_deref())),
+        }
+    }
+
+    /// Handle agent validate command
+    fn handle_agent_validate(&self, agent_id: &str, verbose: bool) -> Result<String, ApiError> {
+        let registry = self.api.agent_registry().read();
+        let result = registry.validate_agent(agent_id)?;
+        Ok(format_validation_result(&result, verbose))
+    }
+
+    /// Handle agent create command
+    fn handle_agent_create(
+        &self,
+        agent_id: &str,
+        role: Option<&str>,
+        prompt_path: Option<&str>,
+        interactive: bool,
+        non_interactive: bool,
+    ) -> Result<String, ApiError> {
+        // Determine mode
+        let is_interactive = interactive || (!non_interactive && role.is_none());
+
+        let (final_role, final_prompt_path) = if is_interactive {
+            // Interactive mode
+            self.create_agent_interactive(agent_id)?
+        } else {
+            // Non-interactive mode
+            let role = role.ok_or_else(|| {
+                ApiError::ConfigError("Role is required in non-interactive mode. Use --role <role>".to_string())
+            })?;
+            
+            let parsed_role = match role {
+                "Reader" => crate::agent::AgentRole::Reader,
+                "Writer" => crate::agent::AgentRole::Writer,
+                "Synthesis" => crate::agent::AgentRole::Synthesis,
+                _ => {
+                    return Err(ApiError::ConfigError(format!(
+                        "Invalid role: {}. Must be Reader, Writer, or Synthesis",
+                        role
+                    )));
+                }
+            };
+
+            // Prompt path required for Writer/Synthesis
+            let prompt = if parsed_role != crate::agent::AgentRole::Reader {
+                Some(prompt_path.ok_or_else(|| {
+                    ApiError::ConfigError(
+                        "Prompt path is required for Writer/Synthesis agents. Use --prompt-path <path>".to_string()
+                    )
+                })?.to_string())
+            } else {
+                None
+            };
+
+            (parsed_role, prompt)
+        };
+
+        // Create agent config
+        let mut agent_config = crate::config::AgentConfig {
+            agent_id: agent_id.to_string(),
+            role: final_role,
+            system_prompt: None,
+            system_prompt_path: final_prompt_path.clone(),
+            metadata: HashMap::new(),
+        };
+
+        // Add user prompt templates for Writer/Synthesis
+        if final_role != crate::agent::AgentRole::Reader {
+            if let Some(ref prompt_path) = final_prompt_path {
+                // Add default templates if not provided
+                agent_config.metadata.insert(
+                    "user_prompt_file".to_string(),
+                    format!("Analyze the file at {{path}} using the system prompt from {}", prompt_path),
+                );
+                agent_config.metadata.insert(
+                    "user_prompt_directory".to_string(),
+                    format!("Analyze the directory at {{path}} using the system prompt from {}", prompt_path),
+                );
+            }
+        }
+
+        // Save config
+        crate::agent::AgentRegistry::save_agent_config(agent_id, &agent_config)?;
+
+        // Reload registry to include new agent
+        {
+            let mut registry = self.api.agent_registry().write();
+            registry.load_from_xdg()?;
+        }
+
+        Ok(format!(
+            "Agent created: {}\nConfiguration file: {}",
+            agent_id,
+            crate::agent::AgentRegistry::get_agent_config_path(agent_id)?.display()
+        ))
+    }
+
+    /// Interactive agent creation
+    fn create_agent_interactive(&self, _agent_id: &str) -> Result<(crate::agent::AgentRole, Option<String>), ApiError> {
+        use dialoguer::{Select, Input};
+
+        // Prompt for role
+        let role_selection = Select::new()
+            .with_prompt("Agent role")
+            .items(&["Reader", "Writer", "Synthesis"])
+            .default(1)
+            .interact()
+            .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
+
+        let role = match role_selection {
+            0 => crate::agent::AgentRole::Reader,
+            1 => crate::agent::AgentRole::Writer,
+            2 => crate::agent::AgentRole::Synthesis,
+            _ => unreachable!(),
+        };
+
+        // Prompt for prompt path if Writer/Synthesis
+        let prompt_path = if role != crate::agent::AgentRole::Reader {
+            let path: String = Input::new()
+                .with_prompt("Prompt file path")
+                .interact_text()
+                .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
+            Some(path)
+        } else {
+            None
+        };
+
+        Ok((role, prompt_path))
+    }
+
+    /// Handle agent edit command
+    fn handle_agent_edit(
+        &self,
+        agent_id: &str,
+        prompt_path: Option<&str>,
+        role: Option<&str>,
+        editor: Option<&str>,
+    ) -> Result<String, ApiError> {
+        // Check if agent exists
+        {
+            let registry = self.api.agent_registry().read();
+            registry.get_or_error(agent_id)?;
+        }
+
+        let config_path = crate::agent::AgentRegistry::get_agent_config_path(agent_id)?;
+
+        // If flags provided, do flag-based editing
+        if prompt_path.is_some() || role.is_some() {
+            // Load existing config
+            let content = std::fs::read_to_string(&config_path)
+                .map_err(|e| ApiError::ConfigError(format!("Failed to read config: {}", e)))?;
+            
+            let mut agent_config: crate::config::AgentConfig = toml::from_str(&content)
+                .map_err(|e| ApiError::ConfigError(format!("Failed to parse config: {}", e)))?;
+
+            // Update fields
+            if let Some(new_prompt_path) = prompt_path {
+                agent_config.system_prompt_path = Some(new_prompt_path.to_string());
+            }
+
+            if let Some(new_role_str) = role {
+                let new_role = match new_role_str {
+                    "Reader" => crate::agent::AgentRole::Reader,
+                    "Writer" => crate::agent::AgentRole::Writer,
+                    "Synthesis" => crate::agent::AgentRole::Synthesis,
+                    _ => {
+                        return Err(ApiError::ConfigError(format!(
+                            "Invalid role: {}. Must be Reader, Writer, or Synthesis",
+                            new_role_str
+                        )));
+                    }
+                };
+                agent_config.role = new_role;
+            }
+
+            // Save updated config
+            crate::agent::AgentRegistry::save_agent_config(agent_id, &agent_config)?;
+        } else {
+            // Editor-based editing
+            self.edit_agent_with_editor(agent_id, editor)?;
+        }
+
+        // Reload registry
+        {
+            let mut registry = self.api.agent_registry().write();
+            registry.load_from_xdg()?;
+        }
+
+        Ok(format!("Agent updated: {}", agent_id))
+    }
+
+    /// Edit agent config with external editor
+    fn edit_agent_with_editor(&self, agent_id: &str, editor: Option<&str>) -> Result<(), ApiError> {
+        use std::process::Command;
+
+        let config_path = crate::agent::AgentRegistry::get_agent_config_path(agent_id)?;
+        
+        // Load existing config
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|e| ApiError::ConfigError(format!("Failed to read config: {}", e)))?;
+
+        // Create temp file in system temp directory
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join(format!("merkle-agent-{}.toml", agent_id));
+        
+        std::fs::write(&temp_path, content.as_bytes())
+            .map_err(|e| ApiError::ConfigError(format!("Failed to write temp file: {}", e)))?;
+
+        // Determine editor
+        let editor_cmd = if let Some(ed) = editor {
+            ed.to_string()
+        } else {
+            std::env::var("EDITOR")
+                .map_err(|_| ApiError::ConfigError(
+                    "No editor specified and $EDITOR not set. Use --editor <editor>".to_string()
+                ))?
+        };
+
+        // Open editor
+        let status = Command::new(&editor_cmd)
+            .arg(&temp_path)
+            .status()
+            .map_err(|e| ApiError::ConfigError(format!("Failed to open editor: {}", e)))?;
+
+        if !status.success() {
+            return Err(ApiError::ConfigError("Editor exited with non-zero status".to_string()));
+        }
+
+        // Read edited content
+        let edited_content = std::fs::read_to_string(&temp_path)
+            .map_err(|e| ApiError::ConfigError(format!("Failed to read edited file: {}", e)))?;
+
+        // Parse and validate
+        let agent_config: crate::config::AgentConfig = toml::from_str(&edited_content)
+            .map_err(|e| ApiError::ConfigError(format!("Invalid config after editing: {}", e)))?;
+
+        // Validate agent_id matches
+        if agent_config.agent_id != agent_id {
+            return Err(ApiError::ConfigError(format!(
+                "Agent ID mismatch: config has '{}' but expected '{}'",
+                agent_config.agent_id, agent_id
+            )));
+        }
+
+        // Save
+        crate::agent::AgentRegistry::save_agent_config(agent_id, &agent_config)?;
+
+        // Clean up temp file
+        let _ = std::fs::remove_file(&temp_path);
+
+        Ok(())
+    }
+
+    /// Handle agent remove command
+    fn handle_agent_remove(&self, agent_id: &str, force: bool) -> Result<String, ApiError> {
+        // Check if agent exists
+        {
+            let registry = self.api.agent_registry().read();
+            registry.get_or_error(agent_id)?;
+        }
+
+        // Confirm removal unless --force
+        if !force {
+            use dialoguer::Confirm;
+            let confirmed = Confirm::new()
+                .with_prompt(format!("Remove agent '{}'?", agent_id))
+                .interact()
+                .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
+            
+            if !confirmed {
+                return Ok("Removal cancelled".to_string());
+            }
+        }
+
+        // Delete config file
+        let config_path = crate::agent::AgentRegistry::get_agent_config_path(agent_id)?;
+        crate::agent::AgentRegistry::delete_agent_config(agent_id)?;
+
+        // Note: Agent will be removed from registry on next load_from_xdg() call
+        // since the config file no longer exists
+
+        Ok(format!("Removed agent: {}\nConfiguration file deleted: {}", agent_id, config_path.display()))
+    }
+}
+
+/// Format agent list as text
+fn format_agent_list_text(agents: &[&crate::agent::AgentIdentity]) -> String {
+    if agents.is_empty() {
+        return "No agents found.\n\nNote: Agents are provider-agnostic. Providers are selected at runtime.".to_string();
+    }
+
+    let mut output = String::from("Available Agents:\n");
+    for agent in agents {
+        let role_str = match agent.role {
+            crate::agent::AgentRole::Reader => "Reader",
+            crate::agent::AgentRole::Writer => "Writer",
+            crate::agent::AgentRole::Synthesis => "Synthesis",
+        };
+        
+        let prompt_path = agent.metadata.get("system_prompt")
+            .and_then(|_| {
+                // Try to get the original path from config
+                let config_path = crate::agent::AgentRegistry::get_agent_config_path(&agent.agent_id).ok()?;
+                let content = std::fs::read_to_string(&config_path).ok()?;
+                let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
+                config.system_prompt_path
+            })
+            .unwrap_or_else(|| "[inline prompt]".to_string());
+
+        output.push_str(&format!("  {:<20} {:<10} {}\n", agent.agent_id, role_str, prompt_path));
+    }
+
+    output.push_str(&format!("\nTotal: {} agent(s)\n\nNote: Agents are provider-agnostic. Providers are selected at runtime.", agents.len()));
+    output
+}
+
+/// Format agent list as JSON
+fn format_agent_list_json(agents: &[&crate::agent::AgentIdentity]) -> String {
+    use serde_json::json;
+
+    let agent_list: Vec<_> = agents.iter().map(|agent| {
+        let prompt_path = agent.metadata.get("system_prompt")
+            .and_then(|_| {
+                let config_path = crate::agent::AgentRegistry::get_agent_config_path(&agent.agent_id).ok()?;
+                let content = std::fs::read_to_string(&config_path).ok()?;
+                let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
+                config.system_prompt_path
+            })
+            .unwrap_or_else(|| "[inline prompt]".to_string());
+
+        json!({
+            "agent_id": agent.agent_id,
+            "role": match agent.role {
+                crate::agent::AgentRole::Reader => "Reader",
+                crate::agent::AgentRole::Writer => "Writer",
+                crate::agent::AgentRole::Synthesis => "Synthesis",
+            },
+            "system_prompt_path": prompt_path,
+        })
+    }).collect();
+
+    let result = json!({
+        "agents": agent_list,
+        "total": agents.len(),
+    });
+
+    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Format agent show as text
+fn format_agent_show_text(agent: &crate::agent::AgentIdentity, prompt_content: Option<&str>) -> String {
+    let mut output = format!("Agent: {}\n", agent.agent_id);
+    output.push_str(&format!("Role: {:?}\n", agent.role));
+
+    let prompt_path = agent.metadata.get("system_prompt")
+        .and_then(|_| {
+            let config_path = crate::agent::AgentRegistry::get_agent_config_path(&agent.agent_id).ok()?;
+            let content = std::fs::read_to_string(&config_path).ok()?;
+            let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
+            config.system_prompt_path
+        })
+        .unwrap_or_else(|| "[inline prompt]".to_string());
+
+    output.push_str(&format!("Prompt File: {}\n", prompt_path));
+
+    if !agent.metadata.is_empty() {
+        output.push_str("\nMetadata:\n");
+        for (key, value) in &agent.metadata {
+            if key != "system_prompt" {
+                output.push_str(&format!("  {}: {}\n", key, value));
+            }
+        }
+    }
+
+    if let Some(prompt) = prompt_content {
+        output.push_str("\nPrompt Content:\n");
+        output.push_str(prompt);
+    }
+
+    output.push_str("\n\nNote: Agents are provider-agnostic. No provider information in agent config.");
+    output
+}
+
+/// Format agent show as JSON
+fn format_agent_show_json(agent: &crate::agent::AgentIdentity, prompt_content: Option<&str>) -> String {
+    use serde_json::json;
+
+    let prompt_path = agent.metadata.get("system_prompt")
+        .and_then(|_| {
+            let config_path = crate::agent::AgentRegistry::get_agent_config_path(&agent.agent_id).ok()?;
+            let content = std::fs::read_to_string(&config_path).ok()?;
+            let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
+            config.system_prompt_path
+        })
+        .unwrap_or_else(|| "[inline prompt]".to_string());
+
+    let mut metadata = json!({});
+    for (key, value) in &agent.metadata {
+        if key != "system_prompt" {
+            metadata[key] = json!(value);
+        }
+    }
+
+    let mut result = json!({
+        "agent_id": agent.agent_id,
+        "role": match agent.role {
+            crate::agent::AgentRole::Reader => "Reader",
+            crate::agent::AgentRole::Writer => "Writer",
+            crate::agent::AgentRole::Synthesis => "Synthesis",
+        },
+        "system_prompt_path": prompt_path,
+        "metadata": metadata,
+    });
+
+    if let Some(prompt) = prompt_content {
+        result["prompt_content"] = json!(prompt);
+    }
+
+    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Format validation result
+fn format_validation_result(result: &crate::agent::ValidationResult, verbose: bool) -> String {
+    let mut output = format!("Validating agent: {}\n\n", result.agent_id);
+
+    if result.errors.is_empty() && result.checks.iter().all(|(_, passed)| *passed) {
+        output.push_str("✓ All validation checks passed\n\n");
+    } else {
+        // Show checks
+        for (description, passed) in &result.checks {
+            if *passed {
+                output.push_str(&format!("✓ {}\n", description));
+            } else {
+                output.push_str(&format!("✗ {}\n", description));
+            }
+        }
+
+        // Show errors
+        if !result.errors.is_empty() {
+            output.push_str("\n");
+            for error in &result.errors {
+                output.push_str(&format!("✗ {}\n", error));
+            }
+        }
+
+        output.push_str("\n");
+    }
+
+    if verbose {
+        output.push_str(&format!("Validation summary: {}/{} checks passed\n", 
+            result.passed_checks(), result.total_checks()));
+        if !result.errors.is_empty() {
+            output.push_str(&format!("Errors found: {}\n", result.errors.len()));
+        }
+    } else {
+        if result.is_valid() {
+            output.push_str(&format!("Validation passed: {}/{} checks\n", 
+                result.passed_checks(), result.total_checks()));
+        } else {
+            output.push_str(&format!("Validation failed: {} error(s) found\n", result.errors.len()));
+        }
+    }
+
+    output
 }
 
 /// Parse a hex string to NodeID

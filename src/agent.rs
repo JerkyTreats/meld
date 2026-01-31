@@ -8,6 +8,7 @@ use crate::error::ApiError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::path::PathBuf;
 use toml;
 
 /// Agent role defining what operations an agent can perform
@@ -148,6 +149,11 @@ impl AgentRegistry {
     /// Get all registered agents
     pub fn list_all(&self) -> Vec<&AgentIdentity> {
         self.agents.values().collect()
+    }
+
+    /// Remove an agent from the registry
+    pub fn remove(&mut self, agent_id: &str) {
+        self.agents.remove(agent_id);
     }
 
     /// Load agents from configuration
@@ -323,6 +329,232 @@ impl AgentRegistry {
         
         Ok(())
     }
+
+    /// List agents filtered by role
+    pub fn list_by_role(&self, role: Option<AgentRole>) -> Vec<&AgentIdentity> {
+        if let Some(filter_role) = role {
+            self.agents.values()
+                .filter(|agent| agent.role == filter_role)
+                .collect()
+        } else {
+            self.list_all()
+        }
+    }
+
+    /// Get the XDG config file path for an agent
+    pub fn get_agent_config_path(agent_id: &str) -> Result<PathBuf, ApiError> {
+        let agents_dir = crate::config::xdg::agents_dir()?;
+        Ok(agents_dir.join(format!("{}.toml", agent_id)))
+    }
+
+    /// Save agent configuration to XDG directory
+    pub fn save_agent_config(agent_id: &str, config: &crate::config::AgentConfig) -> Result<(), ApiError> {
+        let config_path = Self::get_agent_config_path(agent_id)?;
+        
+        // Ensure agents directory exists
+        let agents_dir = crate::config::xdg::agents_dir()?;
+        std::fs::create_dir_all(&agents_dir).map_err(|e| {
+            ApiError::ConfigError(format!(
+                "Failed to create agents directory {}: {}",
+                agents_dir.display(), e
+            ))
+        })?;
+
+        // Serialize config to TOML
+        let toml_content = toml::to_string_pretty(config).map_err(|e| {
+            ApiError::ConfigError(format!("Failed to serialize agent config: {}", e))
+        })?;
+
+        // Write to file
+        std::fs::write(&config_path, toml_content).map_err(|e| {
+            ApiError::ConfigError(format!(
+                "Failed to write agent config to {}: {}",
+                config_path.display(), e
+            ))
+        })?;
+
+        Ok(())
+    }
+
+    /// Delete agent configuration file
+    pub fn delete_agent_config(agent_id: &str) -> Result<(), ApiError> {
+        let config_path = Self::get_agent_config_path(agent_id)?;
+        
+        if !config_path.exists() {
+            return Err(ApiError::ConfigError(format!(
+                "Agent config file not found: {}",
+                config_path.display()
+            )));
+        }
+
+        std::fs::remove_file(&config_path).map_err(|e| {
+            ApiError::ConfigError(format!(
+                "Failed to delete agent config file {}: {}",
+                config_path.display(), e
+            ))
+        })?;
+
+        Ok(())
+    }
+
+    /// Validate agent configuration and prompt file
+    pub fn validate_agent(&self, agent_id: &str) -> Result<ValidationResult, ApiError> {
+        let mut result = ValidationResult::new(agent_id.to_string());
+
+        // Check if agent exists in registry
+        let agent = match self.get(agent_id) {
+            Some(a) => a,
+            None => {
+                result.add_error("Agent not found in registry".to_string());
+                return Ok(result);
+            }
+        };
+
+        // Get config file path
+        let config_path = Self::get_agent_config_path(agent_id)?;
+
+        // Check if config file exists
+        if !config_path.exists() {
+            result.add_error(format!("Config file not found: {}", config_path.display()));
+            return Ok(result);
+        }
+
+        // Validate agent ID matches filename
+        let expected_filename = format!("{}.toml", agent_id);
+        if config_path.file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == expected_filename)
+            .unwrap_or(false) {
+            result.add_check("Agent ID matches filename", true);
+        } else {
+            result.add_error(format!(
+                "Agent ID '{}' doesn't match filename '{}'",
+                agent_id,
+                config_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+            ));
+        }
+
+        // Validate role is valid (should always be valid if loaded)
+        result.add_check("Role is valid", true);
+
+        // Load and validate config file
+        let content = match std::fs::read_to_string(&config_path) {
+            Ok(c) => c,
+            Err(e) => {
+                result.add_error(format!("Failed to read config file: {}", e));
+                return Ok(result);
+            }
+        };
+
+        let agent_config: crate::config::AgentConfig = match toml::from_str(&content) {
+            Ok(config) => config,
+            Err(e) => {
+                result.add_error(format!("Failed to parse config file: {}", e));
+                return Ok(result);
+            }
+        };
+
+        // Validate prompt file if needed
+        if agent.role != AgentRole::Reader {
+            if let Some(ref prompt_path) = agent_config.system_prompt_path {
+                let base_dir = crate::config::xdg::config_home()?
+                    .join("merkle");
+                
+                match crate::config::resolve_prompt_path(prompt_path, &base_dir) {
+                    Ok(resolved_path) => {
+                        // Check if file exists
+                        if resolved_path.exists() {
+                            result.add_check("Prompt file exists", true);
+                            
+                            // Check if file is readable
+                            match std::fs::metadata(&resolved_path) {
+                                Ok(_) => result.add_check("Prompt file is readable", true),
+                                Err(e) => result.add_error(format!(
+                                    "Prompt file not readable: {}",
+                                    e
+                                )),
+                            }
+
+                            // Check if file is valid UTF-8
+                            match std::fs::read_to_string(&resolved_path) {
+                                Ok(_) => result.add_check("Prompt file is valid UTF-8", true),
+                                Err(e) => result.add_error(format!(
+                                    "Prompt file is not valid UTF-8: {}",
+                                    e
+                                )),
+                            }
+                        } else {
+                            result.add_error(format!(
+                                "Prompt file not found: {}",
+                                resolved_path.display()
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        result.add_error(format!("Failed to resolve prompt path: {}", e));
+                    }
+                }
+            } else {
+                result.add_error("Missing system_prompt_path (required for Writer/Synthesis)".to_string());
+            }
+
+            // Check for user prompt templates in metadata
+            if agent.metadata.get("user_prompt_file").is_some() {
+                result.add_check("user_prompt_file template present", true);
+            } else {
+                result.add_error("Missing user_prompt_file in metadata (required for Writer/Synthesis)".to_string());
+            }
+
+            if agent.metadata.get("user_prompt_directory").is_some() {
+                result.add_check("user_prompt_directory template present", true);
+            } else {
+                result.add_error("Missing user_prompt_directory in metadata (required for Writer/Synthesis)".to_string());
+            }
+        } else {
+            // Reader agents don't need prompts
+            result.add_check("Reader agent (no prompt required)", true);
+        }
+
+        Ok(result)
+    }
+}
+
+/// Validation result for agent configuration
+#[derive(Debug, Clone)]
+pub struct ValidationResult {
+    pub agent_id: String,
+    pub checks: Vec<(String, bool)>,
+    pub errors: Vec<String>,
+}
+
+impl ValidationResult {
+    pub fn new(agent_id: String) -> Self {
+        Self {
+            agent_id,
+            checks: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    pub fn add_check(&mut self, description: &str, passed: bool) {
+        self.checks.push((description.to_string(), passed));
+    }
+
+    pub fn add_error(&mut self, error: String) {
+        self.errors.push(error);
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.errors.is_empty() && self.checks.iter().all(|(_, passed)| *passed)
+    }
+
+    pub fn total_checks(&self) -> usize {
+        self.checks.len()
+    }
+
+    pub fn passed_checks(&self) -> usize {
+        self.checks.iter().filter(|(_, passed)| *passed).count()
+    }
 }
 
 impl Default for AgentRegistry {
@@ -408,5 +640,74 @@ mod tests {
         assert!(agent_ids.contains(&"agent-1".to_string()));
         assert!(agent_ids.contains(&"agent-2".to_string()));
         assert!(agent_ids.contains(&"agent-3".to_string()));
+    }
+
+    #[test]
+    fn test_list_by_role() {
+        let mut registry = AgentRegistry::new();
+
+        let agent1 = AgentIdentity::new("agent-1".to_string(), AgentRole::Reader);
+        let agent2 = AgentIdentity::new("agent-2".to_string(), AgentRole::Writer);
+        let agent3 = AgentIdentity::new("agent-3".to_string(), AgentRole::Writer);
+        let agent4 = AgentIdentity::new("agent-4".to_string(), AgentRole::Synthesis);
+
+        registry.register(agent1);
+        registry.register(agent2);
+        registry.register(agent3);
+        registry.register(agent4);
+
+        // Test filtering by Reader
+        let readers = registry.list_by_role(Some(AgentRole::Reader));
+        assert_eq!(readers.len(), 1);
+        assert_eq!(readers[0].agent_id, "agent-1");
+
+        // Test filtering by Writer
+        let writers = registry.list_by_role(Some(AgentRole::Writer));
+        assert_eq!(writers.len(), 2);
+        let writer_ids: Vec<String> = writers.iter().map(|a| a.agent_id.clone()).collect();
+        assert!(writer_ids.contains(&"agent-2".to_string()));
+        assert!(writer_ids.contains(&"agent-3".to_string()));
+
+        // Test filtering by Synthesis
+        let synthesis = registry.list_by_role(Some(AgentRole::Synthesis));
+        assert_eq!(synthesis.len(), 1);
+        assert_eq!(synthesis[0].agent_id, "agent-4");
+
+        // Test no filter (all agents)
+        let all = registry.list_by_role(None);
+        assert_eq!(all.len(), 4);
+    }
+
+    #[test]
+    fn test_get_agent_config_path() {
+        // This test requires XDG_CONFIG_HOME to be set, so we'll test the path format
+        // The actual path will depend on the environment
+        let path = AgentRegistry::get_agent_config_path("test-agent");
+        assert!(path.is_ok());
+        let path = path.unwrap();
+        assert!(path.to_string_lossy().contains("test-agent"));
+        assert!(path.to_string_lossy().ends_with(".toml"));
+    }
+
+    #[test]
+    fn test_validation_result() {
+        let mut result = ValidationResult::new("test-agent".to_string());
+        
+        assert_eq!(result.agent_id, "test-agent");
+        assert!(result.is_valid());
+        assert_eq!(result.total_checks(), 0);
+        assert_eq!(result.passed_checks(), 0);
+
+        result.add_check("Test check 1", true);
+        result.add_check("Test check 2", true);
+        result.add_check("Test check 3", false);
+        
+        assert!(!result.is_valid());
+        assert_eq!(result.total_checks(), 3);
+        assert_eq!(result.passed_checks(), 2);
+
+        result.add_error("Test error".to_string());
+        assert!(!result.is_valid());
+        assert_eq!(result.errors.len(), 1);
     }
 }

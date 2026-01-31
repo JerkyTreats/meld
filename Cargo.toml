@@ -49,6 +49,7 @@ futures = "0.3"
 
 # CLI support
 clap = { version = "4.0", features = ["derive"] }
+dialoguer = "0.11"
 
 # File watching for editor integration
 notify = "6.0"

@@ -128,20 +128,22 @@ The implementation follows a logical progression: first decoupling providers fro
 
 **Goal**: Implement CLI commands for managing agents stored in XDG directories.
 
+**Status**: ✅ **COMPLETED**
+
 | Task | Status |
 |------|--------|
-| Implement `merkle agent list` command | Pending |
-| Implement `merkle agent show <agent_id>` command | Pending |
-| Implement `merkle agent validate <agent_id>` command | Pending |
-| Implement `merkle agent create <agent_id>` command (interactive) | Pending |
-| Implement `merkle agent edit <agent_id>` command | Pending |
-| Implement `merkle agent remove <agent_id>` command | Pending |
-| Add agent filtering (by role, by source) | Pending |
-| Add output formatting (text, JSON) | Pending |
-| Implement prompt file content display (--include-prompt) | Pending |
-| Implement agent validation logic (config + prompt file checks) | Pending |
-| Add editor integration for `agent edit` | Pending |
-| Agent CLI tests | Pending |
+| Implement `merkle agent list` command | ✅ Completed |
+| Implement `merkle agent show <agent_id>` command | ✅ Completed |
+| Implement `merkle agent validate <agent_id>` command | ✅ Completed |
+| Implement `merkle agent create <agent_id>` command (interactive) | ✅ Completed |
+| Implement `merkle agent edit <agent_id>` command | ✅ Completed |
+| Implement `merkle agent remove <agent_id>` command | ✅ Completed |
+| Add agent filtering (by role, by source) | ✅ Completed |
+| Add output formatting (text, JSON) | ✅ Completed |
+| Implement prompt file content display (--include-prompt) | ✅ Completed |
+| Implement agent validation logic (config + prompt file checks) | ✅ Completed |
+| Add editor integration for `agent edit` | ✅ Completed |
+| Agent CLI tests | ✅ Completed (16 integration tests, 3 unit tests, all passing) |
 
 **Exit Criteria:**
 - ✅ `merkle agent list` shows all agents from XDG directory
@@ -160,6 +162,30 @@ The implementation follows a logical progression: first decoupling providers fro
 - `merkle agent create <agent_id> [--role <role>] [--prompt-path <path>] [--interactive|--non-interactive]`
 - `merkle agent edit <agent_id> [--prompt-path <path>] [--role <role>] [--editor <editor>]`
 - `merkle agent remove <agent_id> [--force]`
+
+**Phase 3 Completion Summary:**
+- ✅ CLI command structure implemented with `Agent` subcommand and 6 subcommands
+- ✅ `AgentRegistry` extended with management methods: `list_by_role()`, `get_agent_config_path()`, `save_agent_config()`, `delete_agent_config()`, `validate_agent()`
+- ✅ `ValidationResult` type implemented with comprehensive validation checks
+- ✅ Text and JSON output formatters for all commands
+- ✅ `merkle agent list` command with role filtering and format options
+- ✅ `merkle agent show` command with optional prompt content display
+- ✅ `merkle agent validate` command with verbose output option
+- ✅ `merkle agent create` command with interactive and non-interactive modes
+- ✅ `merkle agent edit` command with flag-based and editor-based editing
+- ✅ `merkle agent remove` command with confirmation prompt
+- ✅ Helpful error messages with suggestions for common issues
+- ✅ 16 integration tests covering all commands and scenarios (all passing)
+- ✅ 3 unit tests for filtering, validation, and config path resolution (all passing)
+- ✅ `dialoguer` dependency added for interactive prompts
+
+**Key Changes:**
+- New CLI subcommand: `merkle agent` with 6 subcommands (list, show, validate, create, edit, remove)
+- `AgentRegistry` extended with management operations
+- Validation system with structured `ValidationResult` type
+- Interactive agent creation using `dialoguer` crate
+- Editor integration for config editing
+- Comprehensive error handling with actionable suggestions
 
 **Dependencies:**
 - Phase 2 (XDG Configuration System) - Agents must load from XDG directories
@@ -290,9 +316,10 @@ The implementation follows a logical progression: first decoupling providers fro
    - Depends on Phase 1 (registry structures)
    - **Status**: All tasks completed, 20 XDG config tests passing, all 124 integration tests passing
 
-3. **Phase 3: Agent Management CLI** (Agent Tooling)
+3. **Phase 3: Agent Management CLI** (Agent Tooling) ✅ **COMPLETED**
    - CLI for managing agents
    - Depends on Phase 2 (XDG loading)
+   - **Status**: All tasks completed, 16 integration tests and 3 unit tests passing
 
 4. **Phase 4: Provider Management CLI** (Provider Tooling)
    - CLI for managing providers
@@ -333,11 +360,11 @@ The refactor is complete when:
 1. ✅ Providers and agents are completely separated **(Phase 1 - COMPLETED)**
 2. ✅ Agents and providers stored in XDG directories **(Phase 2 - COMPLETED)**
 3. ✅ Agents use markdown prompt files **(Phase 2 - COMPLETED)**
-4. ⏳ All CLI commands implemented and tested (Phases 3-5)
-5. ⏳ Clear error messages and user guidance (Phases 3-5)
+4. ⏳ All CLI commands implemented and tested (Phases 3-5) - **Phase 3 COMPLETED**
+5. ⏳ Clear error messages and user guidance (Phases 3-5) - **Phase 3 COMPLETED**
 6. ⏳ Documentation updated (Ongoing)
-7. ✅ All existing tests pass **(Phase 1 - COMPLETED: 246 tests passing; Phase 2 - COMPLETED: 124 integration tests passing)**
-8. ✅ New tests cover all functionality **(Phase 1 - COMPLETED; Phase 2 - COMPLETED: 20 XDG config tests)**
+7. ✅ All existing tests pass **(Phase 1 - COMPLETED: 246 tests passing; Phase 2 - COMPLETED: 124 integration tests passing; Phase 3 - COMPLETED: 16 integration + 3 unit tests passing)**
+8. ✅ New tests cover all functionality **(Phase 1 - COMPLETED; Phase 2 - COMPLETED: 20 XDG config tests; Phase 3 - COMPLETED: 16 agent CLI tests)**
 
 ---
 

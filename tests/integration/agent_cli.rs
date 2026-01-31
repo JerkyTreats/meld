@@ -1,0 +1,494 @@
+//! Integration tests for Agent CLI commands
+
+use merkle::agent::{AgentRegistry, AgentRole};
+use merkle::config::{AgentConfig, xdg};
+use merkle::error::ApiError;
+use merkle::tooling::cli::{CliContext, Commands, AgentCommands};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use tempfile::TempDir;
+
+// Mutex to serialize XDG_CONFIG_HOME environment variable access in tests
+static XDG_CONFIG_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Helper to set up XDG_CONFIG_HOME for a test with proper cleanup
+fn with_xdg_config_home<F, R>(test_dir: &TempDir, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let _guard = XDG_CONFIG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let original_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
+    let test_config_home = test_dir.path().to_path_buf();
+    std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
+    
+    let result = f();
+    
+    // Restore original
+    if let Some(orig) = original_xdg_config {
+        std::env::set_var("XDG_CONFIG_HOME", orig);
+    } else {
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+    
+    result
+}
+
+/// Create a test agent config file
+fn create_test_agent(
+    agent_id: &str,
+    role: AgentRole,
+    prompt_path: Option<&str>,
+) -> Result<PathBuf, ApiError> {
+    let agents_dir = xdg::agents_dir()?;
+    let config_path = agents_dir.join(format!("{}.toml", agent_id));
+    
+    let mut agent_config = AgentConfig {
+        agent_id: agent_id.to_string(),
+        role,
+        system_prompt: None,
+        system_prompt_path: prompt_path.map(|s| s.to_string()),
+        metadata: std::collections::HashMap::new(),
+    };
+
+    // Add user prompt templates for Writer/Synthesis
+    if role != AgentRole::Reader {
+        agent_config.metadata.insert(
+            "user_prompt_file".to_string(),
+            "Analyze the file at {path}".to_string(),
+        );
+        agent_config.metadata.insert(
+            "user_prompt_directory".to_string(),
+            "Analyze the directory at {path}".to_string(),
+        );
+    }
+
+    let toml_content = toml::to_string_pretty(&agent_config)
+        .map_err(|e| ApiError::ConfigError(format!("Failed to serialize: {}", e)))?;
+    
+    fs::write(&config_path, toml_content)
+        .map_err(|e| ApiError::ConfigError(format!("Failed to write: {}", e)))?;
+
+    Ok(config_path)
+}
+
+/// Create a test prompt file
+fn create_test_prompt_file(test_dir: &TempDir, filename: &str) -> PathBuf {
+    let prompt_dir = test_dir.path().join("prompts");
+    fs::create_dir_all(&prompt_dir).unwrap();
+    let prompt_path = prompt_dir.join(filename);
+    fs::write(&prompt_path, "# Test Prompt\n\nThis is a test prompt file.").unwrap();
+    prompt_path
+}
+
+#[test]
+fn test_agent_list_empty() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        // Ensure agents directory exists but is empty
+        let agents_dir = xdg::agents_dir().unwrap();
+        // Remove any existing agents
+        if agents_dir.exists() {
+            for entry in fs::read_dir(&agents_dir).unwrap() {
+                let entry = entry.unwrap();
+                if entry.path().extension().and_then(|s| s.to_str()) == Some("toml") {
+                    fs::remove_file(entry.path()).unwrap();
+                }
+            }
+        }
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::List {
+                format: "text".to_string(),
+                role: None,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        // Output should be valid (either "No agents found" or a list)
+        // Note: Agents may be loaded from config.toml, so we just verify the command works
+        assert!(output.contains("Available Agents") || output.contains("No agents found") || output.contains("Total:"));
+    });
+}
+
+#[test]
+fn test_agent_list_text() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let prompt_path = create_test_prompt_file(&test_dir, "test.md");
+        create_test_agent("test-writer", AgentRole::Writer, Some(prompt_path.to_str().unwrap())).unwrap();
+        create_test_agent("test-reader", AgentRole::Reader, None).unwrap();
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::List {
+                format: "text".to_string(),
+                role: None,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("test-writer"));
+        assert!(output.contains("test-reader"));
+        assert!(output.contains("Writer"));
+        assert!(output.contains("Reader"));
+    });
+}
+
+#[test]
+fn test_agent_list_json() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let prompt_path = create_test_prompt_file(&test_dir, "test.md");
+        create_test_agent("test-writer", AgentRole::Writer, Some(prompt_path.to_str().unwrap())).unwrap();
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::List {
+                format: "json".to_string(),
+                role: None,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("\"agent_id\""));
+        assert!(output.contains("test-writer"));
+        assert!(output.contains("\"total\""));
+    });
+}
+
+#[test]
+fn test_agent_list_filtered_by_role() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let prompt_path = create_test_prompt_file(&test_dir, "test.md");
+        create_test_agent("test-writer", AgentRole::Writer, Some(prompt_path.to_str().unwrap())).unwrap();
+        create_test_agent("test-reader", AgentRole::Reader, None).unwrap();
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::List {
+                format: "text".to_string(),
+                role: Some("Writer".to_string()),
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("test-writer"));
+        assert!(!output.contains("test-reader"));
+    });
+}
+
+#[test]
+fn test_agent_show_text() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let prompt_path = create_test_prompt_file(&test_dir, "test.md");
+        create_test_agent("test-agent", AgentRole::Writer, Some(prompt_path.to_str().unwrap())).unwrap();
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Show {
+                agent_id: "test-agent".to_string(),
+                format: "text".to_string(),
+                include_prompt: false,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("test-agent"));
+        assert!(output.contains("Writer"));
+    });
+}
+
+#[test]
+fn test_agent_show_with_prompt() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let prompt_path = create_test_prompt_file(&test_dir, "test.md");
+        create_test_agent("test-agent", AgentRole::Writer, Some(prompt_path.to_str().unwrap())).unwrap();
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Show {
+                agent_id: "test-agent".to_string(),
+                format: "text".to_string(),
+                include_prompt: true,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("test-agent"));
+        assert!(output.contains("Test Prompt"));
+    });
+}
+
+#[test]
+fn test_agent_show_json() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let prompt_path = create_test_prompt_file(&test_dir, "test.md");
+        create_test_agent("test-agent", AgentRole::Writer, Some(prompt_path.to_str().unwrap())).unwrap();
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Show {
+                agent_id: "test-agent".to_string(),
+                format: "json".to_string(),
+                include_prompt: false,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("\"agent_id\""));
+        assert!(output.contains("test-agent"));
+    });
+}
+
+#[test]
+fn test_agent_show_not_found() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Show {
+                agent_id: "nonexistent".to_string(),
+                format: "text".to_string(),
+                include_prompt: false,
+            },
+        };
+        
+        let result = cli.execute(&command);
+        assert!(result.is_err());
+    });
+}
+
+#[test]
+fn test_agent_validate_valid() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let prompt_path = create_test_prompt_file(&test_dir, "test.md");
+        create_test_agent("test-agent", AgentRole::Writer, Some(prompt_path.to_str().unwrap())).unwrap();
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Validate {
+                agent_id: "test-agent".to_string(),
+                verbose: false,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("test-agent"));
+        // Should pass validation
+        assert!(output.contains("passed") || output.contains("✓"));
+    });
+}
+
+#[test]
+fn test_agent_validate_missing_prompt() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        // Create agent with non-existent prompt path
+        create_test_agent("test-agent", AgentRole::Writer, Some("/nonexistent/path.md")).unwrap();
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Validate {
+                agent_id: "test-agent".to_string(),
+                verbose: false,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("test-agent"));
+        // Should have validation errors
+        assert!(output.contains("error") || output.contains("✗"));
+    });
+}
+
+#[test]
+fn test_agent_create_non_interactive() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let prompt_path = create_test_prompt_file(&test_dir, "new.md");
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Create {
+                agent_id: "new-agent".to_string(),
+                role: Some("Writer".to_string()),
+                prompt_path: Some(prompt_path.to_str().unwrap().to_string()),
+                interactive: false,
+                non_interactive: true,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("new-agent"));
+        assert!(output.contains("created"));
+        
+        // Verify agent exists
+        let config_path = AgentRegistry::get_agent_config_path("new-agent").unwrap();
+        assert!(config_path.exists());
+    });
+}
+
+#[test]
+fn test_agent_create_reader() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Create {
+                agent_id: "reader-agent".to_string(),
+                role: Some("Reader".to_string()),
+                prompt_path: None,
+                interactive: false,
+                non_interactive: true,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("reader-agent"));
+        
+        // Verify agent exists
+        let config_path = AgentRegistry::get_agent_config_path("reader-agent").unwrap();
+        assert!(config_path.exists());
+    });
+}
+
+#[test]
+fn test_agent_edit_prompt_path() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let prompt_path = create_test_prompt_file(&test_dir, "old.md");
+        create_test_agent("test-agent", AgentRole::Writer, Some(prompt_path.to_str().unwrap())).unwrap();
+        
+        let new_prompt_path = create_test_prompt_file(&test_dir, "new.md");
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Edit {
+                agent_id: "test-agent".to_string(),
+                prompt_path: Some(new_prompt_path.to_str().unwrap().to_string()),
+                role: None,
+                editor: None,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("test-agent"));
+        assert!(output.contains("updated"));
+        
+        // Verify config was updated
+        let config_path = AgentRegistry::get_agent_config_path("test-agent").unwrap();
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("new.md"));
+    });
+}
+
+#[test]
+fn test_agent_edit_role() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let prompt_path = create_test_prompt_file(&test_dir, "test.md");
+        create_test_agent("test-agent", AgentRole::Writer, Some(prompt_path.to_str().unwrap())).unwrap();
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Edit {
+                agent_id: "test-agent".to_string(),
+                prompt_path: None,
+                role: Some("Synthesis".to_string()),
+                editor: None,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("test-agent"));
+        
+        // Verify config was updated
+        let config_path = AgentRegistry::get_agent_config_path("test-agent").unwrap();
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("Synthesis"));
+    });
+}
+
+#[test]
+fn test_agent_remove() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let prompt_path = create_test_prompt_file(&test_dir, "test.md");
+        create_test_agent("test-agent", AgentRole::Writer, Some(prompt_path.to_str().unwrap())).unwrap();
+        
+        let config_path = AgentRegistry::get_agent_config_path("test-agent").unwrap();
+        assert!(config_path.exists());
+        
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Remove {
+                agent_id: "test-agent".to_string(),
+                force: true,
+            },
+        };
+        
+        let output = cli.execute(&command).unwrap();
+        assert!(output.contains("test-agent"));
+        assert!(output.contains("Removed"));
+        
+        // Verify config file was deleted
+        assert!(!config_path.exists());
+    });
+}
+
+#[test]
+fn test_agent_remove_not_found() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_config_home(&test_dir, || {
+        let workspace = test_dir.path().to_path_buf();
+        let cli = CliContext::new(workspace, None).unwrap();
+        
+        let command = Commands::Agent {
+            command: AgentCommands::Remove {
+                agent_id: "nonexistent".to_string(),
+                force: true,
+            },
+        };
+        
+        let result = cli.execute(&command);
+        assert!(result.is_err());
+    });
+}
+

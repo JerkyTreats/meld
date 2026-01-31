@@ -1,6 +1,7 @@
 //! Integration tests for the Merkle filesystem state management system
 
 mod agent_authorization;
+mod agent_cli;
 mod blake3_verification;
 mod branch_synthesis;
 mod config_integration;
