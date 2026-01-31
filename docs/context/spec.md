@@ -58,16 +58,17 @@ merkle context generate --path <path> [options]
 - `--force`: Generate even if a head frame already exists (default: skip if exists).
 
 **Execution Mode**
-- `--sync`: Execute immediately and return the new FrameID (default).
-- `--async`: Enqueue generation with `Priority::Urgent` and return a request ID.
+- `--sync`: Enqueue with `Priority::Urgent` and wait for completion, then return the new FrameID (default).
+- `--async`: Enqueue generation with `Priority::Urgent` and return a request ID immediately.
 
 **Behavior**
 1. Resolve target (node or path).
 2. Validate agent and provider configuration.
 3. Validate required prompts (system and user templates).
 4. If `--force` is not set and an existing head frame is present, return a no-op result.
-5. Generate a frame via the configured provider.
-6. Persist the frame and return the new FrameID (sync) or queue ID (async).
+5. **All generation goes through the queue** - enqueue request (sync waits, async returns immediately).
+6. Queue processes request and calls provider directly (the only place providers are called).
+7. Persist the frame and return the new FrameID (sync) or queue ID (async).
 
 **Detailed Specification**: See [context_generate_command.md](context_generate_command.md)
 
@@ -269,7 +270,10 @@ The context management system builds on the core Context API:
 
 1. **Path Resolution**: Converts file paths to NodeIDs using the NodeRecord store
 2. **Agent Resolution**: Selects appropriate agent based on configuration and flags
-3. **Frame Generation**: Uses LLM providers via the ContextApiAdapter
+3. **Frame Generation**: All generation requests go through FrameGenerationQueue (the only path to providers)
+   - Sync mode: `ContextApiAdapter::generate_frame()` → `queue.enqueue_and_wait()`
+   - Async mode: Direct `queue.enqueue()` call
+   - Queue workers call providers directly in `process_request()`
 4. **Frame Retrieval**: Queries frames using ContextView policies
 
 All operations maintain the append-only storage model and preserve historical frames. Context frames are immutable and cannot be deleted, ensuring a complete audit trail.

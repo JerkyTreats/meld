@@ -92,10 +92,11 @@ pub enum ContextCommands {
 
 7. **Generation**:
    - **Sync mode** (default or `--sync`):
-     - Call `ContextApiAdapter::generate_frame()` directly (await)
+     - Call `ContextApiAdapter::generate_frame()` which internally uses `queue.enqueue_and_wait()` with `Priority::Urgent`
+     - This enqueues the request and waits for completion (all generation goes through the queue)
      - Return FrameID as hex string
    - **Async mode** (`--async`):
-     - Enqueue via `api.frame_queue().enqueue(node_id, agent_id, frame_type, Priority::Urgent)`
+     - Enqueue via `queue.enqueue(node_id, agent_id, frame_type, Priority::Urgent)`
      - Return queue request ID (or confirmation message)
 
 ## Required Logical Guards
@@ -215,8 +216,8 @@ pub enum ContextCommands {
 1. **Path Resolution**: Create helper function `resolve_path_to_node_id()` in `src/tooling/cli.rs`
 2. **Agent Resolution**: Create helper function `resolve_agent_id()` in `src/tooling/cli.rs`
 3. **Validation**: Reuse `FrameGenerationQueue::validate_agent_prompts()` from `src/frame/queue.rs`
-4. **Generation**: Use `ContextApiAdapter::generate_frame()` from `src/tooling/adapter.rs` for sync
-5. **Queue Enqueue**: Use `FrameGenerationQueue::enqueue()` from `src/frame/queue.rs` for async
+4. **Generation (Sync)**: Use `ContextApiAdapter::generate_frame()` from `src/tooling/adapter.rs`, which internally calls `queue.enqueue_and_wait()` - all generation goes through the queue
+5. **Generation (Async)**: Use `FrameGenerationQueue::enqueue()` from `src/frame/queue.rs` for async requests
 
 ### Components to Use
 
@@ -226,11 +227,14 @@ pub enum ContextCommands {
    - `node_store()` - Access to node record store
 
 2. **ContextApiAdapter**: LLM generation adapter (`src/tooling/adapter.rs`)
-   - `generate_frame()` - Generate frame using LLM provider
+   - `generate_frame()` - Enqueues request to queue and waits for completion (sync mode)
+   - Note: All provider calls go through the queue - adapter does not call providers directly
 
-3. **FrameGenerationQueue**: Async queue for generation (`src/frame/queue.rs`)
-   - `enqueue()` - Enqueue generation request
+3. **FrameGenerationQueue**: Queue for generation - THE ONLY PATH TO PROVIDERS (`src/frame/queue.rs`)
+   - `enqueue()` - Enqueue generation request (async, returns RequestId)
+   - `enqueue_and_wait()` - Enqueue and wait for completion (sync, returns FrameID)
    - `validate_agent_prompts()` - Validate agent prompts
+   - `process_request()` - Internal method that calls providers directly (only place providers are called)
 
 4. **AgentRegistry**: Agent management (`src/agent.rs`)
    - `get()` - Get agent by ID

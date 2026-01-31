@@ -49,25 +49,29 @@ This specification defines the batch queue system for automatically generating c
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │              Frame Generation Queue System                   │
+│         (THE ONLY PATH TO PROVIDERS)                         │
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┌──────────────┐      ┌──────────────┐      ┌──────────┐  │
-│  │ Request      │─────▶│ Queue        │─────▶│ Batch    │  │
-│  │ Enqueuer     │      │ Manager      │      │ Processor │  │
+│  │ Request      │─────▶│ Queue        │─────▶│ Worker   │  │
+│  │ Enqueuer     │      │ Manager      │      │ Pool     │  │
 │  └──────────────┘      └──────────────┘      └──────────┘  │
 │                                                               │
 │                              ▼                               │
 │                    ┌──────────────────┐                      │
-│                    │  Worker Pool     │                      │
-│                    │  (Per Agent)     │                      │
+│                    │  Rate Limiter     │                      │
+│                    │  (Per Agent)      │                      │
 │                    └──────────────────┘                      │
 │                              ▼                               │
 │                    ┌──────────────────┐                      │
-│                    │  Agent Adapter    │                      │
-│                    │  (generate_frame)│                      │
+│                    │  Provider Client │                      │
+│                    │  (ONLY CALLSITE)│                      │
 │                    └──────────────────┘                      │
 │                                                               │
 └─────────────────────────────────────────────────────────────┘
+
+Note: ContextApiAdapter.generate_frame() enqueues to queue and waits.
+      All provider.complete() calls happen ONLY in queue.process_request()
 ```
 
 ### Core Components
@@ -108,19 +112,19 @@ Thread-safe queue for managing generation requests.
 ```rust
 pub struct FrameGenerationQueue {
     /// Pending requests (priority-sorted)
-    queue: Arc<Mutex<Vec<GenerationRequest>>>,
+    queue: Arc<Mutex<BinaryHeap<GenerationRequest>>>,
     /// Active worker tasks
     workers: Arc<RwLock<Vec<tokio::task::JoinHandle<()>>>>,
     /// Configuration
     config: GenerationConfig,
     /// API for frame operations
     api: Arc<ContextApi>,
-    /// Adapter for LLM generation
-    adapter: Arc<ContextApiAdapter>,
     /// Rate limiters per agent
-    rate_limiters: Arc<RwLock<HashMap<String, RateLimiter>>>,
+    rate_limiters: Arc<RwLock<HashMap<String, AgentRateLimiter>>>,
     /// Running state
     running: Arc<RwLock<bool>>,
+    /// Statistics
+    stats: Arc<RwLock<QueueStats>>,
 }
 ```
 
@@ -173,32 +177,42 @@ impl BatchProcessor {
 ```rust
 impl FrameGenerationQueue {
     /// Create a new generation queue
+    /// NOTE: Queue is the ONLY path to providers - no adapter dependency
     pub fn new(
         api: Arc<ContextApi>,
-        adapter: Arc<ContextApiAdapter>,
         config: GenerationConfig,
     ) -> Self;
 
-    /// Enqueue a generation request
-    pub fn enqueue(
+    /// Enqueue a generation request (async - returns immediately)
+    pub async fn enqueue(
         &self,
         node_id: NodeID,
         agent_id: String,
         frame_type: Option<String>,
         priority: Priority,
-    ) -> Result<(), ApiError>;
+    ) -> Result<RequestId, ApiError>;
+
+    /// Enqueue a generation request and wait for completion (sync)
+    pub async fn enqueue_and_wait(
+        &self,
+        node_id: NodeID,
+        agent_id: String,
+        frame_type: Option<String>,
+        priority: Priority,
+        timeout: Option<Duration>,
+    ) -> Result<FrameID, ApiError>;
 
     /// Enqueue multiple requests (batch enqueue)
-    pub fn enqueue_batch(
+    pub async fn enqueue_batch(
         &self,
         requests: Vec<(NodeID, String, Option<String>, Priority)>,
-    ) -> Result<(), ApiError>;
+    ) -> Result<Vec<RequestId>, ApiError>;
 
     /// Start background workers
     pub fn start(&self) -> Result<(), ApiError>;
 
     /// Stop background workers (graceful shutdown)
-    pub fn stop(&self) -> Result<(), ApiError>;
+    pub async fn stop(&self) -> Result<(), ApiError>;
 
     /// Get queue statistics
     pub fn stats(&self) -> QueueStats;
@@ -290,14 +304,15 @@ impl ContextApi {
    b. Check for user_prompt_file or user_prompt_directory (based on node type)
    c. If any missing: Log error, skip request, continue
    d. If all present: Proceed to generation
-5. Call adapter.generate_frame():
-   a. Get node context
+5. Call provider directly (THIS IS THE ONLY PLACE PROVIDERS ARE CALLED):
+   a. Get node context from API
    b. Build prompts from agent config (see Prompt Generation)
    c. Replace placeholders in user prompt template
-   d. Call LLM provider with system and user prompts
-   e. Create frame with generated content
-   f. Store frame via put_frame()
-6. On success: Log completion
+   d. Create provider client via ProviderFactory
+   e. Call client.complete() with system and user prompts
+   f. Create frame with generated content
+   g. Store frame via api.put_frame()
+6. On success: Log completion, notify completion channel if sync request
 7. On failure: Retry if attempts < max_retries and error is retryable
 8. On permanent failure (including missing prompts): Log error, skip, continue
 ```
@@ -516,7 +531,7 @@ fn validate_agent_prompts(agent: &AgentIdentity, node_record: &NodeRecord) -> Ve
 
 async fn process_with_retry(
     request: &GenerationRequest,
-    adapter: &ContextApiAdapter,
+    api: &ContextApi,
     agent: &AgentIdentity,
     node_record: &NodeRecord,
 ) -> Result<FrameID, ApiError> {
@@ -536,11 +551,24 @@ async fn process_with_retry(
         )));
     }
 
+    // Get provider and create client
+    let provider = agent.provider.as_ref()
+        .ok_or_else(|| ApiError::ProviderNotConfigured(agent.agent_id.clone()))?;
+    let client = ProviderFactory::create_client(provider)?;
+
+    // Build prompts and call provider directly
+    let (system_prompt, user_prompt) = generate_prompts(agent, node_record)?;
+    let messages = build_messages(system_prompt, user_prompt, api, request.node_id)?;
+
     let mut last_error = None;
 
     for attempt in 0..config.max_retry_attempts {
-        match adapter.generate_frame(...).await {
-            Ok(frame_id) => return Ok(frame_id),
+        match client.complete(messages.clone(), CompletionOptions::default()).await {
+            Ok(response) => {
+                // Create and store frame
+                let frame = create_frame_from_response(response, request, agent)?;
+                return api.put_frame(request.node_id, frame, agent.agent_id.clone());
+            }
             Err(e) => {
                 last_error = Some(e);
                 // Don't retry configuration errors (like missing system_prompt)
