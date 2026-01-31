@@ -1287,7 +1287,6 @@ fn format_agent_show_text(agent: &crate::agent::AgentIdentity, prompt_content: O
         output.push_str(prompt);
     }
 
-    output.push_str("\n\nNote: Agents are provider-agnostic. No provider information in agent config.");
     output
 }
 
