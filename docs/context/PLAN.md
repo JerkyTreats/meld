@@ -73,19 +73,21 @@ The implementation follows a logical progression: first decoupling providers fro
 
 **Goal**: Move agent and provider configurations to XDG directories, supporting markdown-based prompts.
 
+**Status**: ✅ **COMPLETED**
+
 | Task | Status |
 |------|--------|
-| Implement XDG directory resolution utilities | Pending |
-| Create ProviderRegistry::load_from_xdg() implementation | Pending |
-| Create AgentRegistry::load_from_xdg() implementation | Pending |
-| Implement prompt file path resolution (absolute, tilde, relative) | Pending |
-| Implement markdown prompt file loading | Pending |
-| Update agent config schema (system_prompt_path instead of system_prompt) | Pending |
-| Implement provider config schema (XDG TOML format) | Pending |
-| Implement prompt file validation (exists, readable, UTF-8) | Pending |
-| Implement prompt content caching with modification time checks | Pending |
-| Add configuration validation for agents and providers | Pending |
-| XDG configuration loading tests | Pending |
+| Implement XDG directory resolution utilities | ✅ Completed |
+| Create ProviderRegistry::load_from_xdg() implementation | ✅ Completed |
+| Create AgentRegistry::load_from_xdg() implementation | ✅ Completed |
+| Implement prompt file path resolution (absolute, tilde, relative) | ✅ Completed |
+| Implement markdown prompt file loading | ✅ Completed |
+| Update agent config schema (system_prompt_path instead of system_prompt) | ✅ Completed |
+| Implement provider config schema (XDG TOML format) | ✅ Completed |
+| Implement prompt file validation (exists, readable, UTF-8) | ✅ Completed |
+| Implement prompt content caching with modification time checks | ✅ Completed |
+| Add configuration validation for agents and providers | ✅ Completed |
+| XDG configuration loading tests | ✅ Completed (20 tests, all passing) |
 
 **Exit Criteria:**
 - ✅ Agents load from `$XDG_CONFIG_HOME/merkle/agents/*.toml`
@@ -94,6 +96,18 @@ The implementation follows a logical progression: first decoupling providers fro
 - ✅ Prompt files can be anywhere (absolute, tilde, or relative paths)
 - ✅ Prompt files loaded and validated on agent load
 - ✅ Clear error messages for missing/invalid configs
+
+**Phase 2 Completion Summary:**
+- ✅ XDG config directory utilities implemented (`config_home()`, `agents_dir()`, `providers_dir()`)
+- ✅ Prompt file path resolution supporting absolute, tilde, relative, and base-relative paths
+- ✅ Prompt file loading and caching with modification time tracking
+- ✅ AgentConfig schema updated with `system_prompt_path` field (backward compatible with `system_prompt`)
+- ✅ `ProviderRegistry::load_from_xdg()` implemented with error handling
+- ✅ `AgentRegistry::load_from_xdg()` implemented with prompt file resolution and loading
+- ✅ CLI initialization updated to load from both config.toml and XDG (XDG overrides)
+- ✅ Comprehensive validation for XDG-loaded configs and prompt files
+- ✅ 20 integration tests covering all functionality (all passing, non-flaky)
+- ✅ All 124 integration tests passing
 
 **Key Changes:**
 - New directory structure: `$XDG_CONFIG_HOME/merkle/agents/` and `$XDG_CONFIG_HOME/merkle/providers/`
@@ -270,10 +284,11 @@ The implementation follows a logical progression: first decoupling providers fro
    - No external dependencies
    - **Status**: All tasks completed, 246 tests passing
 
-2. **Phase 2: XDG Configuration System** (Storage)
+2. **Phase 2: XDG Configuration System** (Storage) ✅ **COMPLETED**
    - Moves configs to XDG directories
    - Enables markdown prompts
    - Depends on Phase 1 (registry structures)
+   - **Status**: All tasks completed, 20 XDG config tests passing, all 124 integration tests passing
 
 3. **Phase 3: Agent Management CLI** (Agent Tooling)
    - CLI for managing agents
@@ -316,13 +331,13 @@ The implementation follows a logical progression: first decoupling providers fro
 The refactor is complete when:
 
 1. ✅ Providers and agents are completely separated **(Phase 1 - COMPLETED)**
-2. ⏳ Agents and providers stored in XDG directories (Phase 2)
-3. ⏳ Agents use markdown prompt files (Phase 2)
+2. ✅ Agents and providers stored in XDG directories **(Phase 2 - COMPLETED)**
+3. ✅ Agents use markdown prompt files **(Phase 2 - COMPLETED)**
 4. ⏳ All CLI commands implemented and tested (Phases 3-5)
 5. ⏳ Clear error messages and user guidance (Phases 3-5)
 6. ⏳ Documentation updated (Ongoing)
-7. ✅ All existing tests pass **(Phase 1 - COMPLETED: 246 tests passing)**
-8. ✅ New tests cover all functionality **(Phase 1 - COMPLETED)**
+7. ✅ All existing tests pass **(Phase 1 - COMPLETED: 246 tests passing; Phase 2 - COMPLETED: 124 integration tests passing)**
+8. ✅ New tests cover all functionality **(Phase 1 - COMPLETED; Phase 2 - COMPLETED: 20 XDG config tests)**
 
 ---
 

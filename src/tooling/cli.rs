@@ -254,9 +254,16 @@ impl CliContext {
                     BasisIndex::new()
                 })
         ));
-        let agent_registry = Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new()));
+        // Load agents and providers from config.toml first, then XDG (XDG overrides)
+        let mut agent_registry = crate::agent::AgentRegistry::new();
+        agent_registry.load_from_config(&config)?;
+        agent_registry.load_from_xdg()?;  // XDG agents override config.toml agents
+        
         let mut provider_registry = crate::provider::ProviderRegistry::new();
         provider_registry.load_from_config(&config)?;
+        provider_registry.load_from_xdg()?;  // XDG providers override config.toml providers
+        
+        let agent_registry = Arc::new(parking_lot::RwLock::new(agent_registry));
         let provider_registry = Arc::new(parking_lot::RwLock::new(provider_registry));
         let lock_manager = Arc::new(crate::concurrency::NodeLockManager::new());
 

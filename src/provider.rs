@@ -11,6 +11,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::pin::Pin;
+use toml;
 
 /// Model provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -878,6 +879,111 @@ impl ProviderRegistry {
             }
             self.providers.insert(name.clone(), config_with_name);
         }
+        Ok(())
+    }
+
+    /// Load providers from XDG directory
+    ///
+    /// Scans `$XDG_CONFIG_HOME/merkle/providers/*.toml` and loads each provider configuration.
+    /// Invalid configs are logged but don't stop loading of other providers.
+    pub fn load_from_xdg(&mut self) -> Result<(), ApiError> {
+        let providers_dir = crate::config::xdg::providers_dir()?;
+        
+        if !providers_dir.exists() {
+            // Directory doesn't exist yet - that's okay
+            return Ok(());
+        }
+        
+        let entries = std::fs::read_dir(&providers_dir)
+            .map_err(|e| ApiError::ConfigError(format!(
+                "Failed to read providers directory {}: {}", 
+                providers_dir.display(), e
+            )))?;
+        
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to read directory entry in {}: {}", 
+                        providers_dir.display(), e
+                    );
+                    continue;
+                }
+            };
+            
+            let path = entry.path();
+            
+            // Only process .toml files
+            if path.extension() != Some(std::ffi::OsStr::new("toml")) {
+                continue;
+            }
+            
+            // Extract provider name from filename
+            let provider_name = match path.file_stem()
+                .and_then(|s| s.to_str()) {
+                Some(name) => name,
+                None => {
+                    tracing::warn!(
+                        "Invalid provider filename (non-UTF8): {:?}", 
+                        path
+                    );
+                    continue;
+                }
+            };
+            
+            // Load and parse TOML
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to read provider config {}: {}", 
+                        path.display(), e
+                    );
+                    continue;
+                }
+            };
+            
+            let provider_config: crate::config::ProviderConfig = match toml::from_str(&content) {
+                Ok(config) => config,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to parse provider config {}: {}", 
+                        path.display(), e
+                    );
+                    continue;
+                }
+            };
+            
+            // Validate provider_name matches filename
+            if let Some(ref config_name) = provider_config.provider_name {
+                if config_name != provider_name {
+                    tracing::warn!(
+                        "Provider name mismatch in {}: filename={}, config={}",
+                        path.display(), provider_name, config_name
+                    );
+                }
+            }
+            
+            // Set provider_name from filename if not set
+            let mut config = provider_config;
+            if config.provider_name.is_none() {
+                config.provider_name = Some(provider_name.to_string());
+            }
+            
+            // Validate configuration
+            if let Err(e) = config.validate() {
+                tracing::error!(
+                    "Invalid provider config {}: {}", 
+                    path.display(), e
+                );
+                continue; // Skip invalid configs but continue loading others
+            }
+            
+            // Insert or override (XDG configs override config.toml)
+            self.providers.insert(provider_name.to_string(), config);
+        }
+        
         Ok(())
     }
 

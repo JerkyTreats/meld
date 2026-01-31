@@ -130,6 +130,7 @@ fn test_config_validation_errors() {
         agent_id: "".to_string(), // Empty agent_id should fail validation
         role: AgentRole::Writer,
         system_prompt: None,
+        system_prompt_path: None,
         metadata: HashMap::new(),
     });
 

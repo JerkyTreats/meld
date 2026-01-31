@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::SystemTime;
 use tracing::warn;
 
 #[cfg(test)]
@@ -90,12 +91,19 @@ pub struct AgentConfig {
     /// Agent role (Reader, Writer, Synthesis)
     pub role: AgentRole,
 
-    /// System prompt for this agent
+    /// System prompt for this agent (legacy, for backward compatibility)
     /// This is the primary behavior-defining prompt that guides agent actions when using LLM providers.
     /// The system prompt is used as the System message role when making provider API calls.
     /// If not provided, a default system prompt will be used.
+    /// Prefer `system_prompt_path` for markdown-based prompts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+
+    /// Path to markdown prompt file (new, preferred)
+    /// Path can be absolute, tilde-expanded (~/), relative to current directory (./), or relative to XDG config.
+    /// The prompt file will be loaded and cached with modification time tracking.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt_path: Option<String>,
 
     /// Agent-specific metadata
     #[serde(default)]
@@ -333,10 +341,27 @@ impl AgentConfig {
             return Err("Agent ID cannot be empty".to_string());
         }
 
-        // Validate system prompt is not empty if provided
+        // Validate system prompt is not empty if provided (legacy)
         if let Some(ref prompt) = self.system_prompt {
             if prompt.trim().is_empty() {
                 return Err("System prompt cannot be empty if provided".to_string());
+            }
+        }
+
+        // Validate that Writer/Synthesis agents have either system_prompt or system_prompt_path
+        if self.role != AgentRole::Reader {
+            if self.system_prompt.is_none() && self.system_prompt_path.is_none() {
+                return Err(format!(
+                    "Agent '{}' (role: {:?}) requires either system_prompt or system_prompt_path",
+                    self.agent_id, self.role
+                ));
+            }
+        }
+
+        // Validate system_prompt_path format if provided
+        if let Some(ref prompt_path) = self.system_prompt_path {
+            if prompt_path.trim().is_empty() {
+                return Err("system_prompt_path cannot be empty if provided".to_string());
             }
         }
 
@@ -399,6 +424,103 @@ impl MerkleConfig {
         } else {
             Err(errors)
         }
+    }
+}
+
+/// Resolve prompt file path with support for absolute, tilde, and relative paths
+/// 
+/// Path resolution priority:
+/// 1. Absolute path (if starts with `/`)
+/// 2. Tilde expansion (if starts with `~/`)
+/// 3. Relative to current directory (if starts with `./`)
+/// 4. Relative to base_dir (XDG config directory)
+pub fn resolve_prompt_path(path: &str, base_dir: &Path) -> Result<PathBuf, ApiError> {
+    // 1. Absolute path
+    if path.starts_with('/') {
+        return Ok(PathBuf::from(path));
+    }
+    
+    // 2. Tilde expansion
+    if path.starts_with("~/") {
+        let home = std::env::var("HOME")
+            .map_err(|_| ApiError::ConfigError("HOME not set".to_string()))?;
+        return Ok(PathBuf::from(home).join(&path[2..]));
+    }
+    
+    // 3. Relative to current directory
+    if path.starts_with("./") {
+        let current_dir = std::env::current_dir()
+            .map_err(|e| ApiError::ConfigError(format!("Failed to get current directory: {}", e)))?;
+        return Ok(current_dir.join(&path[2..]));
+    }
+    
+    // 4. Relative to base_dir (XDG config)
+    Ok(base_dir.join(path))
+}
+
+/// Prompt file cache with modification time tracking
+pub struct PromptCache {
+    cache: HashMap<PathBuf, (String, SystemTime)>,
+}
+
+impl PromptCache {
+    /// Create a new empty prompt cache
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Load prompt file content with caching
+    /// 
+    /// Checks modification time and reloads if file has changed.
+    /// Validates that file exists, is readable, and contains valid UTF-8.
+    pub fn load_prompt(&mut self, path: &Path) -> Result<String, ApiError> {
+        // Get file metadata to check modification time
+        let metadata = std::fs::metadata(path)
+            .map_err(|e| ApiError::ConfigError(format!(
+                "Failed to read prompt file {}: {}", 
+                path.display(), e
+            )))?;
+        
+        let mtime = metadata.modified()
+            .map_err(|e| ApiError::ConfigError(format!(
+                "Failed to get modification time for {}: {}", 
+                path.display(), e
+            )))?;
+        
+        // Check if we have a cached version and if it's still valid
+        if let Some((cached_content, cached_mtime)) = self.cache.get(path) {
+            if *cached_mtime == mtime {
+                return Ok(cached_content.clone());
+            }
+        }
+        
+        // Load file content
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| ApiError::ConfigError(format!(
+                "Failed to read prompt file {}: {}", 
+                path.display(), e
+            )))?;
+        
+        // Validate file is not empty
+        if content.trim().is_empty() {
+            return Err(ApiError::ConfigError(format!(
+                "Prompt file {} is empty", 
+                path.display()
+            )));
+        }
+        
+        // Cache the content with modification time
+        self.cache.insert(path.to_path_buf(), (content.clone(), mtime));
+        
+        Ok(content)
+    }
+}
+
+impl Default for PromptCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -465,6 +587,57 @@ pub mod xdg {
         }
         
         Ok(data_dir)
+    }
+
+    /// Get XDG config home directory
+    /// 
+    /// Returns `$XDG_CONFIG_HOME` if set, otherwise defaults to `$HOME/.config`
+    /// Follows XDG Base Directory Specification
+    pub fn config_home() -> Result<PathBuf, ApiError> {
+        if let Ok(xdg_config_home) = std::env::var("XDG_CONFIG_HOME") {
+            return Ok(PathBuf::from(xdg_config_home));
+        }
+        
+        let home = std::env::var("HOME")
+            .map_err(|_| ApiError::ConfigError("Could not determine XDG config home directory (HOME not set)".to_string()))?;
+        
+        Ok(PathBuf::from(home).join(".config"))
+    }
+
+    /// Get agents directory path
+    /// 
+    /// Returns `$XDG_CONFIG_HOME/merkle/agents/`
+    /// Creates the directory if it doesn't exist
+    pub fn agents_dir() -> Result<PathBuf, ApiError> {
+        let config_home = config_home()?;
+        let agents_dir = config_home.join("merkle").join("agents");
+        
+        // Create directory if it doesn't exist
+        if !agents_dir.exists() {
+            std::fs::create_dir_all(&agents_dir).map_err(|e| {
+                ApiError::ConfigError(format!("Failed to create agents directory {}: {}", agents_dir.display(), e))
+            })?;
+        }
+        
+        Ok(agents_dir)
+    }
+
+    /// Get providers directory path
+    /// 
+    /// Returns `$XDG_CONFIG_HOME/merkle/providers/`
+    /// Creates the directory if it doesn't exist
+    pub fn providers_dir() -> Result<PathBuf, ApiError> {
+        let config_home = config_home()?;
+        let providers_dir = config_home.join("merkle").join("providers");
+        
+        // Create directory if it doesn't exist
+        if !providers_dir.exists() {
+            std::fs::create_dir_all(&providers_dir).map_err(|e| {
+                ApiError::ConfigError(format!("Failed to create providers directory {}: {}", providers_dir.display(), e))
+            })?;
+        }
+        
+        Ok(providers_dir)
     }
 }
 
@@ -673,6 +846,7 @@ mod tests {
             agent_id: "test-agent".to_string(),
             role: AgentRole::Writer,
             system_prompt: Some("Test prompt".to_string()),
+            system_prompt_path: None,
             metadata: HashMap::new(),
         };
         assert!(agent.validate(&providers).is_ok());
@@ -682,6 +856,7 @@ mod tests {
             agent_id: "test-agent-2".to_string(),
             role: AgentRole::Writer,
             system_prompt: None,
+            system_prompt_path: None,
             metadata: HashMap::new(),
         };
         assert!(agent_bad.validate(&providers).is_ok());
@@ -706,6 +881,7 @@ mod tests {
             agent_id: "test-agent".to_string(),
             role: AgentRole::Writer,
             system_prompt: Some("Test".to_string()),
+            system_prompt_path: None,
             metadata: HashMap::new(),
         });
 
@@ -716,6 +892,7 @@ mod tests {
             agent_id: "test-agent".to_string(), // Same ID
             role: AgentRole::Reader,
             system_prompt: None,
+            system_prompt_path: None,
             metadata: HashMap::new(),
         });
 
