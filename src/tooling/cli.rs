@@ -317,8 +317,11 @@ pub enum ProviderCommands {
     },
     /// Validate provider configuration
     Validate {
-        /// Provider name
-        provider_name: String,
+        /// Provider name (required unless --all is specified)
+        provider_name: Option<String>,
+        /// Validate all providers
+        #[arg(long)]
+        all: bool,
         /// Test provider API connectivity
         #[arg(long)]
         test_connectivity: bool,
@@ -1470,8 +1473,8 @@ impl CliContext {
             ProviderCommands::Show { provider_name, format, include_credentials } => {
                 self.handle_provider_show(provider_name, format.clone(), *include_credentials)
             }
-            ProviderCommands::Validate { provider_name, test_connectivity, check_model, verbose } => {
-                self.handle_provider_validate(provider_name, *test_connectivity, *check_model, *verbose)
+            ProviderCommands::Validate { provider_name, all, test_connectivity, check_model, verbose } => {
+                self.handle_provider_validate(provider_name.as_deref(), *all, *test_connectivity, *check_model, *verbose)
             }
             ProviderCommands::Test { provider_name, model, timeout } => {
                 self.handle_provider_test(provider_name, model.as_deref(), *timeout)
@@ -1565,50 +1568,126 @@ impl CliContext {
     }
 
     /// Handle provider validate command
-    fn handle_provider_validate(&self, provider_name: &str, test_connectivity: bool, check_model: bool, verbose: bool) -> Result<String, ApiError> {
+    fn handle_provider_validate(&self, provider_name: Option<&str>, all: bool, test_connectivity: bool, check_model: bool, verbose: bool) -> Result<String, ApiError> {
         let registry = self.api.provider_registry().read();
         
-        let mut result = registry.validate_provider(provider_name)?;
-
-        // Optionally test connectivity
-        if test_connectivity || check_model {
-            match registry.create_client(provider_name) {
-                Ok(client) => {
-                    result.add_check("Provider client created", true);
-                    
-                    // Test connectivity by listing models
-                    let rt = tokio::runtime::Runtime::new()
-                        .map_err(|e| ApiError::ProviderError(format!("Failed to create runtime: {}", e)))?;
-                    
-                    match rt.block_on(client.list_models()) {
-                        Ok(available_models) => {
-                            result.add_check("API connectivity: OK", true);
-                            
-                            if check_model {
-                                let provider = registry.get_or_error(provider_name)?;
-                                if available_models.iter().any(|m| m == &provider.model) {
-                                    result.add_check(&format!("Model '{}' is available", provider.model), true);
-                                } else {
-                                    result.add_error(format!(
-                                        "Model '{}' not found. Available models: {}",
-                                        provider.model,
-                                        available_models.join(", ")
-                                    ));
+        if all {
+            // Validate all providers
+            let providers = registry.list_all();
+            if providers.is_empty() {
+                return Ok("No providers found to validate.".to_string());
+            }
+            
+            // Collect provider names (they should always be set, but handle gracefully)
+            let provider_names: Vec<String> = providers.iter()
+                .filter_map(|p| p.provider_name.clone())
+                .collect();
+            
+            if provider_names.is_empty() {
+                return Ok("No providers with names found to validate.".to_string());
+            }
+            
+            let mut results: Vec<(String, crate::provider::ValidationResult)> = Vec::new();
+            for provider_name in provider_names {
+                match registry.validate_provider(&provider_name) {
+                    Ok(mut result) => {
+                        // Optionally test connectivity for each provider
+                        if test_connectivity || check_model {
+                            match registry.create_client(&provider_name) {
+                                Ok(client) => {
+                                    result.add_check("Provider client created", true);
+                                    
+                                    // Test connectivity by listing models
+                                    let rt = tokio::runtime::Runtime::new()
+                                        .map_err(|e| ApiError::ProviderError(format!("Failed to create runtime: {}", e)))?;
+                                    
+                                    match rt.block_on(client.list_models()) {
+                                        Ok(available_models) => {
+                                            result.add_check("API connectivity: OK", true);
+                                            
+                                            if check_model {
+                                                let provider_config = registry.get_or_error(&provider_name)?;
+                                                if available_models.iter().any(|m| m == &provider_config.model) {
+                                                    result.add_check(&format!("Model '{}' is available", provider_config.model), true);
+                                                } else {
+                                                    result.add_error(format!(
+                                                        "Model '{}' not found. Available models: {}",
+                                                        provider_config.model,
+                                                        available_models.join(", ")
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            result.add_error(format!("API connectivity failed: {}", e));
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    result.add_error(format!("Failed to create provider client: {}", e));
                                 }
                             }
                         }
-                        Err(e) => {
-                            result.add_error(format!("API connectivity failed: {}", e));
-                        }
+                        results.push((provider_name.clone(), result));
+                    }
+                    Err(e) => {
+                        // Create a validation result with error
+                        let mut error_result = crate::provider::ValidationResult::new(provider_name.clone());
+                        error_result.add_error(format!("Failed to validate: {}", e));
+                        results.push((provider_name.clone(), error_result));
                     }
                 }
-                Err(e) => {
-                    result.add_error(format!("Failed to create provider client: {}", e));
+            }
+            
+            Ok(format_provider_validation_results_all(&results, verbose))
+        } else {
+            // Validate single provider
+            let provider_name = provider_name.ok_or_else(|| {
+                ApiError::ConfigError("Provider name required unless --all is specified".to_string())
+            })?;
+            
+            let mut result = registry.validate_provider(provider_name)?;
+
+            // Optionally test connectivity
+            if test_connectivity || check_model {
+                match registry.create_client(provider_name) {
+                    Ok(client) => {
+                        result.add_check("Provider client created", true);
+                        
+                        // Test connectivity by listing models
+                        let rt = tokio::runtime::Runtime::new()
+                            .map_err(|e| ApiError::ProviderError(format!("Failed to create runtime: {}", e)))?;
+                        
+                        match rt.block_on(client.list_models()) {
+                            Ok(available_models) => {
+                                result.add_check("API connectivity: OK", true);
+                                
+                                if check_model {
+                                    let provider = registry.get_or_error(provider_name)?;
+                                    if available_models.iter().any(|m| m == &provider.model) {
+                                        result.add_check(&format!("Model '{}' is available", provider.model), true);
+                                    } else {
+                                        result.add_error(format!(
+                                            "Model '{}' not found. Available models: {}",
+                                            provider.model,
+                                            available_models.join(", ")
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                result.add_error(format!("API connectivity failed: {}", e));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        result.add_error(format!("Failed to create provider client: {}", e));
+                    }
                 }
             }
-        }
 
-        Ok(format_provider_validation_result(&result, verbose))
+            Ok(format_provider_validation_result(&result, verbose))
+        }
     }
 
     /// Handle provider test command
@@ -2666,6 +2745,50 @@ fn format_provider_show_text(provider: &crate::config::ProviderConfig, api_key_s
         output.push_str(&format!("  stop: {:?}\n", stop));
     }
 
+    output
+}
+
+/// Format validation results for all providers
+fn format_provider_validation_results_all(results: &[(String, crate::provider::ValidationResult)], verbose: bool) -> String {
+    let mut output = String::from("Validating all providers:\n\n");
+    
+    let mut valid_count = 0;
+    let mut invalid_count = 0;
+    
+    for (provider_name, result) in results {
+        if result.is_valid() {
+            valid_count += 1;
+            if verbose {
+                output.push_str(&format!("✓ {}: All checks passed ({}/{} checks)\n", 
+                    provider_name, result.passed_checks(), result.total_checks()));
+            } else {
+                output.push_str(&format!("✓ {}: Valid\n", provider_name));
+            }
+        } else {
+            invalid_count += 1;
+            output.push_str(&format!("✗ {}: Validation failed\n", provider_name));
+            if verbose {
+                // Show details for invalid providers
+                for (description, passed) in &result.checks {
+                    if !passed {
+                        output.push_str(&format!("  ✗ {}\n", description));
+                    }
+                }
+                for error in &result.errors {
+                    output.push_str(&format!("  ✗ {}\n", error));
+                }
+                if !result.warnings.is_empty() {
+                    for warning in &result.warnings {
+                        output.push_str(&format!("  ⚠ {}\n", warning));
+                    }
+                }
+            }
+        }
+    }
+    
+    output.push_str(&format!("\nSummary: {} valid, {} invalid (out of {} total)\n", 
+        valid_count, invalid_count, results.len()));
+    
     output
 }
 
