@@ -1637,8 +1637,7 @@ fn format_init_summary(summary: &crate::init::InitSummary, force: bool) -> Strin
         output.push_str("Initialization complete! You can now use:\n");
         output.push_str("  - merkle agent list          # List all agents\n");
         output.push_str("  - merkle agent show <id>     # View agent details\n");
-        output.push_str("  - merkle context generate    # Generate context frames\n\n");
-        output.push_str("Note: Agents are provider-agnostic. You'll need to configure providers separately.\n");
+        output.push_str("  - merkle context generate    # Generate context frames\n");
     }
     
     output

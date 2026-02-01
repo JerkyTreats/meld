@@ -269,8 +269,6 @@ Initialization complete! You can now use:
   - merkle agent list          # List all agents
   - merkle agent show <id>     # View agent details
   - merkle context generate    # Generate context frames
-
-Note: Agents are provider-agnostic. You'll need to configure providers separately.
 ```
 
 ### Idempotent Run (No Changes)
