@@ -8,26 +8,43 @@
 # 2. Environment-specific files (config/production.toml, config/development.toml)
 # 3. Base configuration file (config/config.toml or .merkle/config.toml)
 # 4. Default values
+#
+# NOTE: Agents and providers can also be stored in XDG directories:
+#   - Agents: $XDG_CONFIG_HOME/merkle/agents/*.toml
+#   - Providers: $XDG_CONFIG_HOME/merkle/providers/*.toml
+# XDG configurations override config.toml configurations.
 
 [system]
 # Default workspace root (if not specified)
 default_workspace_root = "."
 
 [system.storage]
-# Path to node record store (relative to workspace root)
+# Path to node record store
+# Default: ".merkle/store" (resolved to $XDG_DATA_HOME/merkle/<workspace_path>/store)
+# If set to a custom path, it will be resolved relative to workspace root
 store_path = ".merkle/store"
-# Path to frame storage (relative to workspace root)
+
+# Path to frame storage
+# Default: ".merkle/frames" (resolved to $XDG_DATA_HOME/merkle/<workspace_path>/frames)
+# If set to a custom path, it will be resolved relative to workspace root
 frames_path = ".merkle/frames"
 
 # ============================================================================
 # Model Provider Configurations
 # ============================================================================
-# Define model providers that agents can use. Each provider has a unique name
-# and configuration. API keys can be set here or via environment variables.
+# Define model providers that can be used by agents at runtime. Each provider
+# has a unique name and configuration. API keys can be set here or via
+# environment variables.
+#
+# NOTE: Providers can also be stored in XDG directories:
+#   $XDG_CONFIG_HOME/merkle/providers/<provider_name>.toml
+#
+# Providers in XDG directories take precedence over config.toml providers.
+# Use 'merkle provider' commands to manage providers in XDG directories.
 #
 # IMPORTANT: The provider name is the part after "providers." in the table name.
 # For example, [providers.openai-gpt4] creates a provider with name "openai-gpt4".
-# Agents reference providers using this name in their provider_name field.
+# Providers are selected at runtime when generating frames, not in agent config.
 
 [providers.openai-gpt4]
 provider_type = "openai"
@@ -77,69 +94,6 @@ endpoint = "http://localhost:8080/v1"
 [providers.local-custom.default_options]
 temperature = 0.7
 max_tokens = 2000
-
-# ============================================================================
-# Agent Configurations
-# ============================================================================
-# Define agents that can interact with the context engine. Each agent has:
-# - agent_id: Unique identifier
-# - role: Reader, Writer, or Synthesis
-# - system_prompt: Behavior-defining prompt for LLM operations
-# - provider_name: Reference to a provider defined above (must match the provider
-#                  name exactly - the part after "providers." in the table name)
-# - completion_options: Optional override of provider default options
-# - metadata: Optional key-value pairs for agent-specific settings
-
-[agents.code-analyzer]
-agent_id = "code-analyzer"
-role = "Writer"
-system_prompt = """
-You are a code analysis assistant. Your role is to analyze code files and generate
-comprehensive analysis frames that describe the code's structure, purpose, and key
-characteristics. Focus on accuracy and clarity.
-"""
-provider_name = "openai-gpt4"
-[agents.code-analyzer.completion_options]
-temperature = 0.5
-max_tokens = 2000
-
-[agents.documentation-generator]
-agent_id = "doc-generator"
-role = "Writer"
-system_prompt = """
-You are a documentation generation assistant. Generate clear, concise documentation
-frames that explain code functionality, APIs, and usage patterns. Focus on clarity
-and completeness.
-"""
-provider_name = "openai-gpt35"
-
-[agents.synthesis-agent]
-agent_id = "synthesis-agent"
-role = "Synthesis"
-system_prompt = """
-You are a context synthesis assistant. Your role is to combine context frames from
-child nodes into coherent branch-level summaries. Maintain accuracy and preserve
-key information from child contexts.
-"""
-provider_name = "openai-gpt4"
-
-[agents.reader-agent]
-agent_id = "reader-agent"
-role = "Reader"
-# Reader agents don't need providers or system prompts
-# They can only read context, not generate frames
-
-[agents.local-dev-agent]
-agent_id = "local-dev-agent"
-role = "Writer"
-system_prompt = """
-You are a development assistant. Help with code analysis and generation tasks.
-Use local models for faster iteration during development.
-"""
-provider_name = "local-ollama"
-[agents.local-dev-agent.metadata]
-environment = "development"
-preferred_temperature = "0.7"
 
 # ============================================================================
 # Watch Mode Configuration
