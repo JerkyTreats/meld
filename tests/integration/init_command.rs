@@ -1,6 +1,5 @@
 //! Integration tests for Init CLI command
 
-use merkle::agent::AgentRegistry;
 use merkle::config::xdg;
 use merkle::init;
 use std::fs;

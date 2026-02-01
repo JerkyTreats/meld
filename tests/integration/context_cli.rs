@@ -80,20 +80,6 @@ fn create_test_provider(
     Ok(config_path)
 }
 
-/// Create a test prompt file
-fn create_test_prompt(prompt_name: &str, content: &str) -> Result<PathBuf, ApiError> {
-    let prompts_dir = xdg::prompts_dir()?;
-    // Ensure directory exists
-    fs::create_dir_all(&prompts_dir)
-        .map_err(|e| ApiError::ConfigError(format!("Failed to create prompts directory: {}", e)))?;
-    let prompt_path = prompts_dir.join(format!("{}.md", prompt_name));
-    
-    fs::write(&prompt_path, content)
-        .map_err(|e| ApiError::ConfigError(format!("Failed to write prompt file: {}", e)))?;
-    
-    Ok(prompt_path)
-}
-
 #[test]
 fn test_context_get_with_path() {
     let temp_dir = TempDir::new().unwrap();
