@@ -51,6 +51,13 @@ fn main() {
 
 /// Build logging configuration from CLI args, environment, and config file
 fn build_logging_config(cli: &Cli) -> LoggingConfig {
+    // If --verbose is not set, disable logging
+    if !cli.verbose {
+        let mut config = LoggingConfig::default();
+        config.level = "off".to_string();
+        return config;
+    }
+
     // Try to load config file first
     let mut config = if let Some(ref config_path) = cli.config {
         ConfigLoader::load_from_file(config_path)
