@@ -10,6 +10,7 @@ mod frame_queue;
 mod hasher_verification;
 mod init_command;
 mod model_providers;
+mod provider_cli;
 mod store_integration;
 mod tooling_integration;
 mod tree_determinism;

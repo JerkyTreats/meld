@@ -195,6 +195,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: AgentCommands,
     },
+    /// Manage providers
+    Provider {
+        #[command(subcommand)]
+        command: ProviderCommands,
+    },
     /// Initialize default agents and prompts
     Init {
         /// Force re-initialization (overwrite existing)
@@ -276,6 +281,103 @@ pub enum AgentCommands {
     Remove {
         /// Agent ID
         agent_id: String,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProviderCommands {
+    /// List all providers
+    List {
+        /// Output format (text or json)
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Filter by provider type (openai, anthropic, ollama, local)
+        #[arg(long)]
+        type_filter: Option<String>,
+    },
+    /// Show provider details
+    Show {
+        /// Provider name
+        provider_name: String,
+        /// Output format (text or json)
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Show API key status
+        #[arg(long)]
+        include_credentials: bool,
+    },
+    /// Validate provider configuration
+    Validate {
+        /// Provider name
+        provider_name: String,
+        /// Test provider API connectivity
+        #[arg(long)]
+        test_connectivity: bool,
+        /// Verify model is available
+        #[arg(long)]
+        check_model: bool,
+        /// Show detailed validation results
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Test provider connectivity
+    Test {
+        /// Provider name
+        provider_name: String,
+        /// Test specific model (overrides config)
+        #[arg(long)]
+        model: Option<String>,
+        /// Connection timeout in seconds (default: 10)
+        #[arg(long, default_value = "10")]
+        timeout: u64,
+    },
+    /// Create new provider
+    Create {
+        /// Provider name
+        provider_name: String,
+        /// Provider type (openai, anthropic, ollama, local)
+        #[arg(long)]
+        type_: Option<String>,
+        /// Model name
+        #[arg(long)]
+        model: Option<String>,
+        /// Endpoint URL
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// API key
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Use interactive mode (default)
+        #[arg(long)]
+        interactive: bool,
+        /// Use non-interactive mode (use flags)
+        #[arg(long)]
+        non_interactive: bool,
+    },
+    /// Edit provider configuration
+    Edit {
+        /// Provider name
+        provider_name: String,
+        /// Update model name
+        #[arg(long)]
+        model: Option<String>,
+        /// Update endpoint URL
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Update API key
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Editor to use (default: $EDITOR)
+        #[arg(long)]
+        editor: Option<String>,
+    },
+    /// Remove provider
+    Remove {
+        /// Provider name
+        provider_name: String,
         /// Skip confirmation prompt
         #[arg(long)]
         force: bool,
@@ -804,6 +906,9 @@ impl CliContext {
             Commands::Agent { command } => {
                 self.handle_agent_command(command)
             }
+            Commands::Provider { command } => {
+                self.handle_provider_command(command)
+            }
             Commands::Init { force, list } => {
                 self.handle_init(*force, *list)
             }
@@ -1241,6 +1346,546 @@ impl CliContext {
         Ok(format!("Removed agent: {}\nConfiguration file deleted: {}", agent_id, config_path.display()))
     }
 
+    /// Handle provider management commands
+    fn handle_provider_command(&self, command: &ProviderCommands) -> Result<String, ApiError> {
+        match command {
+            ProviderCommands::List { format, type_filter } => {
+                self.handle_provider_list(format.clone(), type_filter.as_deref())
+            }
+            ProviderCommands::Show { provider_name, format, include_credentials } => {
+                self.handle_provider_show(provider_name, format.clone(), *include_credentials)
+            }
+            ProviderCommands::Validate { provider_name, test_connectivity, check_model, verbose } => {
+                self.handle_provider_validate(provider_name, *test_connectivity, *check_model, *verbose)
+            }
+            ProviderCommands::Test { provider_name, model, timeout } => {
+                self.handle_provider_test(provider_name, model.as_deref(), *timeout)
+            }
+            ProviderCommands::Create { provider_name, type_, model, endpoint, api_key, interactive, non_interactive } => {
+                self.handle_provider_create(provider_name, type_.as_deref(), model.as_deref(), endpoint.as_deref(), api_key.as_deref(), *interactive, *non_interactive)
+            }
+            ProviderCommands::Edit { provider_name, model, endpoint, api_key, editor } => {
+                self.handle_provider_edit(provider_name, model.as_deref(), endpoint.as_deref(), api_key.as_deref(), editor.as_deref())
+            }
+            ProviderCommands::Remove { provider_name, force } => {
+                self.handle_provider_remove(provider_name, *force)
+            }
+        }
+    }
+
+    /// Handle provider list command
+    fn handle_provider_list(&self, format: String, type_filter: Option<&str>) -> Result<String, ApiError> {
+        let registry = self.api.provider_registry().read();
+        
+        // Parse type filter
+        let provider_type = if let Some(type_str) = type_filter {
+            match type_str {
+                "openai" => Some(crate::config::ProviderType::OpenAI),
+                "anthropic" => Some(crate::config::ProviderType::Anthropic),
+                "ollama" => Some(crate::config::ProviderType::Ollama),
+                "local" => Some(crate::config::ProviderType::LocalCustom),
+                _ => {
+                    return Err(ApiError::ConfigError(format!(
+                        "Invalid type filter: {}. Must be openai, anthropic, ollama, or local",
+                        type_str
+                    )));
+                }
+            }
+        } else {
+            None
+        };
+
+        let providers = registry.list_by_type(provider_type);
+        
+        match format.as_str() {
+            "json" => Ok(format_provider_list_json(&providers)),
+            "text" | _ => Ok(format_provider_list_text(&providers)),
+        }
+    }
+
+    /// Handle provider show command
+    fn handle_provider_show(&self, provider_name: &str, format: String, include_credentials: bool) -> Result<String, ApiError> {
+        let registry = self.api.provider_registry().read();
+        
+        let provider = registry.get_or_error(provider_name)?;
+        
+        // Resolve API key status
+        let api_key_status = if include_credentials {
+            Some(self.resolve_api_key_status(provider))
+        } else {
+            None
+        };
+
+        match format.as_str() {
+            "json" => Ok(format_provider_show_json(provider, api_key_status.as_deref())),
+            "text" | _ => Ok(format_provider_show_text(provider, api_key_status.as_deref())),
+        }
+    }
+
+    /// Resolve API key status for a provider
+    fn resolve_api_key_status(&self, provider: &crate::config::ProviderConfig) -> String {
+        match provider.provider_type {
+            crate::config::ProviderType::OpenAI => {
+                if provider.api_key.is_some() {
+                    "Set (from config)".to_string()
+                } else if std::env::var("OPENAI_API_KEY").is_ok() {
+                    "Set (from environment)".to_string()
+                } else {
+                    "Not set".to_string()
+                }
+            }
+            crate::config::ProviderType::Anthropic => {
+                if provider.api_key.is_some() {
+                    "Set (from config)".to_string()
+                } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+                    "Set (from environment)".to_string()
+                } else {
+                    "Not set".to_string()
+                }
+            }
+            crate::config::ProviderType::Ollama | crate::config::ProviderType::LocalCustom => {
+                "Not required".to_string()
+            }
+        }
+    }
+
+    /// Handle provider validate command
+    fn handle_provider_validate(&self, provider_name: &str, test_connectivity: bool, check_model: bool, verbose: bool) -> Result<String, ApiError> {
+        let registry = self.api.provider_registry().read();
+        
+        let mut result = registry.validate_provider(provider_name)?;
+
+        // Optionally test connectivity
+        if test_connectivity || check_model {
+            match registry.create_client(provider_name) {
+                Ok(client) => {
+                    result.add_check("Provider client created", true);
+                    
+                    // Test connectivity by listing models
+                    let rt = tokio::runtime::Runtime::new()
+                        .map_err(|e| ApiError::ProviderError(format!("Failed to create runtime: {}", e)))?;
+                    
+                    match rt.block_on(client.list_models()) {
+                        Ok(available_models) => {
+                            result.add_check("API connectivity: OK", true);
+                            
+                            if check_model {
+                                let provider = registry.get_or_error(provider_name)?;
+                                if available_models.iter().any(|m| m == &provider.model) {
+                                    result.add_check(&format!("Model '{}' is available", provider.model), true);
+                                } else {
+                                    result.add_error(format!(
+                                        "Model '{}' not found. Available models: {}",
+                                        provider.model,
+                                        available_models.join(", ")
+                                    ));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            result.add_error(format!("API connectivity failed: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    result.add_error(format!("Failed to create provider client: {}", e));
+                }
+            }
+        }
+
+        Ok(format_provider_validation_result(&result, verbose))
+    }
+
+    /// Handle provider test command
+    fn handle_provider_test(&self, provider_name: &str, model_override: Option<&str>, timeout: u64) -> Result<String, ApiError> {
+        let registry = self.api.provider_registry().read();
+        
+        // Get provider config
+        let provider = registry.get_or_error(provider_name)?;
+        
+        // Create client
+        let client = registry.create_client(provider_name)?;
+        
+        let mut output = format!("Testing provider: {}\n\n", provider_name);
+        
+        // Test connectivity
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| ApiError::ProviderError(format!("Failed to create runtime: {}", e)))?;
+        
+        let start = std::time::Instant::now();
+        match rt.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(timeout),
+                client.list_models()
+            ).await
+        }) {
+            Ok(Ok(available_models)) => {
+                let elapsed = start.elapsed();
+                output.push_str(&format!("✓ Provider client created\n"));
+                output.push_str(&format!("✓ API connectivity: OK ({}ms)\n", elapsed.as_millis()));
+                
+                // Check model availability
+                let model_to_check = model_override.unwrap_or(&provider.model);
+                if available_models.iter().any(|m| m == model_to_check) {
+                    output.push_str(&format!("✓ Model '{}' is available\n", model_to_check));
+                } else {
+                    output.push_str(&format!("✗ Model '{}' not found\n", model_to_check));
+                    output.push_str(&format!("Available models: {}\n", available_models.join(", ")));
+                    return Ok(output);
+                }
+            }
+            Ok(Err(e)) => {
+                output.push_str(&format!("✗ API connectivity failed: {}\n", e));
+                return Ok(output);
+            }
+            Err(_) => {
+                output.push_str(&format!("✗ API connectivity timeout ({}s)\n", timeout));
+                return Ok(output);
+            }
+        }
+
+        output.push_str(&format!("\nProvider is working correctly.\n"));
+        Ok(output)
+    }
+
+    /// Handle provider create command
+    fn handle_provider_create(
+        &self,
+        provider_name: &str,
+        type_: Option<&str>,
+        model: Option<&str>,
+        endpoint: Option<&str>,
+        api_key: Option<&str>,
+        interactive: bool,
+        non_interactive: bool,
+    ) -> Result<String, ApiError> {
+        // Determine mode
+        let is_interactive = interactive || (!non_interactive && type_.is_none());
+
+        let (provider_type, final_model, final_endpoint, final_api_key, default_options) = if is_interactive {
+            // Interactive mode
+            self.create_provider_interactive()?
+        } else {
+            // Non-interactive mode
+            let type_str = type_.ok_or_else(|| {
+                ApiError::ConfigError("Provider type is required in non-interactive mode. Use --type <type>".to_string())
+            })?;
+            
+            let parsed_type = match type_str {
+                "openai" => crate::config::ProviderType::OpenAI,
+                "anthropic" => crate::config::ProviderType::Anthropic,
+                "ollama" => crate::config::ProviderType::Ollama,
+                "local" => crate::config::ProviderType::LocalCustom,
+                _ => {
+                    return Err(ApiError::ConfigError(format!(
+                        "Invalid provider type: {}. Must be openai, anthropic, ollama, or local",
+                        type_str
+                    )));
+                }
+            };
+
+            let model_name = model.ok_or_else(|| {
+                ApiError::ConfigError("Model is required in non-interactive mode. Use --model <model>".to_string())
+            })?;
+
+            (parsed_type, model_name.to_string(), endpoint.map(|s| s.to_string()), api_key.map(|s| s.to_string()), crate::provider::CompletionOptions::default())
+        };
+
+        // Create provider config
+        let provider_config = crate::config::ProviderConfig {
+            provider_name: Some(provider_name.to_string()),
+            provider_type,
+            model: final_model,
+            api_key: final_api_key,
+            endpoint: final_endpoint,
+            default_options,
+        };
+
+        // Save config
+        crate::provider::ProviderRegistry::save_provider_config(provider_name, &provider_config)?;
+
+        // Reload registry to include new provider
+        {
+            let mut registry = self.api.provider_registry().write();
+            registry.load_from_xdg()?;
+        }
+
+        Ok(format!(
+            "Provider created: {}\nConfiguration file: {}",
+            provider_name,
+            crate::provider::ProviderRegistry::get_provider_config_path(provider_name)?.display()
+        ))
+    }
+
+    /// Interactive provider creation
+    fn create_provider_interactive(&self) -> Result<(crate::config::ProviderType, String, Option<String>, Option<String>, crate::provider::CompletionOptions), ApiError> {
+        use dialoguer::{Select, Input};
+
+        // Prompt for provider type
+        let type_selection = Select::new()
+            .with_prompt("Provider type")
+            .items(&["openai", "anthropic", "ollama", "local"])
+            .default(0)
+            .interact()
+            .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
+
+        let provider_type = match type_selection {
+            0 => crate::config::ProviderType::OpenAI,
+            1 => crate::config::ProviderType::Anthropic,
+            2 => crate::config::ProviderType::Ollama,
+            3 => crate::config::ProviderType::LocalCustom,
+            _ => unreachable!(),
+        };
+
+        // Prompt for model name
+        let model: String = Input::new()
+            .with_prompt("Model name")
+            .interact_text()
+            .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
+
+        // Prompt for endpoint (with defaults)
+        let default_endpoint = match provider_type {
+            crate::config::ProviderType::OpenAI => Some("https://api.openai.com/v1".to_string()),
+            crate::config::ProviderType::Ollama => Some("http://localhost:11434".to_string()),
+            crate::config::ProviderType::LocalCustom => None, // Required
+            crate::config::ProviderType::Anthropic => None, // No custom endpoint needed
+        };
+
+        let endpoint = if provider_type == crate::config::ProviderType::LocalCustom {
+            // Required for local
+            Some(Input::new()
+                .with_prompt("Endpoint URL (required)")
+                .interact_text()
+                .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?)
+        } else if let Some(default) = default_endpoint {
+            // Optional with default
+            let input: String = Input::new()
+                .with_prompt(format!("Endpoint URL (optional, default: {})", default))
+                .default(default)
+                .interact_text()
+                .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
+            Some(input)
+        } else {
+            None
+        };
+
+        // Prompt for API key (optional, suggest env var)
+        let env_var = match provider_type {
+            crate::config::ProviderType::OpenAI => "OPENAI_API_KEY",
+            crate::config::ProviderType::Anthropic => "ANTHROPIC_API_KEY",
+            _ => "",
+        };
+
+        let api_key = if provider_type == crate::config::ProviderType::Ollama || provider_type == crate::config::ProviderType::LocalCustom {
+            None
+        } else {
+            let prompt = if !env_var.is_empty() {
+                format!("API key (optional, will use {} env var if not set)", env_var)
+            } else {
+                "API key (optional)".to_string()
+            };
+            
+            let input: String = Input::new()
+                .with_prompt(prompt)
+                .allow_empty(true)
+                .interact_text()
+                .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
+            
+            if input.is_empty() {
+                None
+            } else {
+                Some(input)
+            }
+        };
+
+        // Prompt for default completion options
+        let temperature: f32 = Input::new()
+            .with_prompt("Default temperature (0.0-2.0, default: 1.0)")
+            .default(1.0)
+            .interact_text()
+            .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
+
+        let max_tokens: Option<u32> = {
+            let input: String = Input::new()
+                .with_prompt("Default max tokens (optional, press Enter to skip)")
+                .allow_empty(true)
+                .interact_text()
+                .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
+            
+            if input.is_empty() {
+                None
+            } else {
+                input.parse().ok()
+            }
+        };
+
+        let default_options = crate::provider::CompletionOptions {
+            temperature: Some(temperature),
+            max_tokens,
+            ..Default::default()
+        };
+
+        Ok((provider_type, model, endpoint, api_key, default_options))
+    }
+
+    /// Handle provider edit command
+    fn handle_provider_edit(
+        &self,
+        provider_name: &str,
+        model: Option<&str>,
+        endpoint: Option<&str>,
+        api_key: Option<&str>,
+        editor: Option<&str>,
+    ) -> Result<String, ApiError> {
+        // Check if provider exists
+        {
+            let registry = self.api.provider_registry().read();
+            registry.get_or_error(provider_name)?;
+        }
+
+        let config_path = crate::provider::ProviderRegistry::get_provider_config_path(provider_name)?;
+
+        // If flags provided, do flag-based editing
+        if model.is_some() || endpoint.is_some() || api_key.is_some() {
+            // Load existing config
+            let content = std::fs::read_to_string(&config_path)
+                .map_err(|e| ApiError::ConfigError(format!("Failed to read config: {}", e)))?;
+            
+            let mut provider_config: crate::config::ProviderConfig = toml::from_str(&content)
+                .map_err(|e| ApiError::ConfigError(format!("Failed to parse config: {}", e)))?;
+
+            // Update fields
+            if let Some(new_model) = model {
+                provider_config.model = new_model.to_string();
+            }
+
+            if let Some(new_endpoint) = endpoint {
+                provider_config.endpoint = Some(new_endpoint.to_string());
+            }
+
+            if let Some(new_api_key) = api_key {
+                provider_config.api_key = Some(new_api_key.to_string());
+            }
+
+            // Save updated config
+            crate::provider::ProviderRegistry::save_provider_config(provider_name, &provider_config)?;
+        } else {
+            // Editor-based editing
+            self.edit_provider_with_editor(provider_name, editor)?;
+        }
+
+        // Reload registry
+        {
+            let mut registry = self.api.provider_registry().write();
+            registry.load_from_xdg()?;
+        }
+
+        Ok(format!("Provider updated: {}", provider_name))
+    }
+
+    /// Edit provider config with external editor
+    fn edit_provider_with_editor(&self, provider_name: &str, editor: Option<&str>) -> Result<(), ApiError> {
+        use std::process::Command;
+
+        let config_path = crate::provider::ProviderRegistry::get_provider_config_path(provider_name)?;
+        
+        // Load existing config
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|e| ApiError::ConfigError(format!("Failed to read config: {}", e)))?;
+
+        // Create temp file in system temp directory
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join(format!("merkle-provider-{}.toml", provider_name));
+        
+        std::fs::write(&temp_path, content.as_bytes())
+            .map_err(|e| ApiError::ConfigError(format!("Failed to write temp file: {}", e)))?;
+
+        // Determine editor
+        let editor_cmd = if let Some(ed) = editor {
+            ed.to_string()
+        } else {
+            std::env::var("EDITOR")
+                .map_err(|_| ApiError::ConfigError(
+                    "No editor specified and $EDITOR not set. Use --editor <editor>".to_string()
+                ))?
+        };
+
+        // Open editor
+        let status = Command::new(&editor_cmd)
+            .arg(&temp_path)
+            .status()
+            .map_err(|e| ApiError::ConfigError(format!("Failed to open editor: {}", e)))?;
+
+        if !status.success() {
+            return Err(ApiError::ConfigError("Editor exited with non-zero status".to_string()));
+        }
+
+        // Read edited content
+        let edited_content = std::fs::read_to_string(&temp_path)
+            .map_err(|e| ApiError::ConfigError(format!("Failed to read edited file: {}", e)))?;
+
+        // Parse and validate
+        let provider_config: crate::config::ProviderConfig = toml::from_str(&edited_content)
+            .map_err(|e| ApiError::ConfigError(format!("Invalid config after editing: {}", e)))?;
+
+        // Validate provider_name matches
+        if let Some(ref config_name) = provider_config.provider_name {
+            if config_name != provider_name {
+                return Err(ApiError::ConfigError(format!(
+                    "Provider name mismatch: config has '{}' but expected '{}'",
+                    config_name, provider_name
+                )));
+            }
+        }
+
+        // Save
+        crate::provider::ProviderRegistry::save_provider_config(provider_name, &provider_config)?;
+
+        // Clean up temp file
+        let _ = std::fs::remove_file(&temp_path);
+
+        Ok(())
+    }
+
+    /// Handle provider remove command
+    fn handle_provider_remove(&self, provider_name: &str, force: bool) -> Result<String, ApiError> {
+        // Check if provider exists
+        {
+            let registry = self.api.provider_registry().read();
+            registry.get_or_error(provider_name)?;
+        }
+
+        // Check if provider might be in use (warn)
+        {
+            let registry = self.api.provider_registry().read();
+            let provider = registry.get_or_error(provider_name)?;
+            if provider.provider_type == crate::config::ProviderType::OpenAI || 
+               provider.provider_type == crate::config::ProviderType::Anthropic {
+                // Warn for cloud providers
+                eprintln!("Warning: Provider '{}' may be in use by agents.", provider_name);
+            }
+        }
+
+        // Confirm removal unless --force
+        if !force {
+            use dialoguer::Confirm;
+            let confirmed = Confirm::new()
+                .with_prompt(format!("Remove provider '{}'?", provider_name))
+                .interact()
+                .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
+            
+            if !confirmed {
+                return Ok("Removal cancelled".to_string());
+            }
+        }
+
+        // Delete config file
+        let config_path = crate::provider::ProviderRegistry::get_provider_config_path(provider_name)?;
+        crate::provider::ProviderRegistry::delete_provider_config(provider_name)?;
+
+        Ok(format!("Removed provider: {}\nConfiguration file deleted: {}", provider_name, config_path.display()))
+    }
+
     /// Handle init command
     fn handle_init(&self, force: bool, list: bool) -> Result<String, ApiError> {
         if list {
@@ -1469,6 +2114,198 @@ fn format_validation_results_all(results: &[(String, crate::agent::ValidationRes
     output.push_str(&format!("\nSummary: {} valid, {} invalid (out of {} total)\n", 
         valid_count, invalid_count, results.len()));
     
+    output
+}
+
+/// Format provider list as text
+fn format_provider_list_text(providers: &[&crate::config::ProviderConfig]) -> String {
+    if providers.is_empty() {
+        return "No providers found.\n\nUse 'merkle provider create' to add a provider.".to_string();
+    }
+
+    let mut output = String::from("Available Providers:\n");
+    for provider in providers {
+        let type_str = match provider.provider_type {
+            crate::config::ProviderType::OpenAI => "openai",
+            crate::config::ProviderType::Anthropic => "anthropic",
+            crate::config::ProviderType::Ollama => "ollama",
+            crate::config::ProviderType::LocalCustom => "local",
+        };
+        
+        let endpoint_str = provider.endpoint.as_deref().unwrap_or("(default endpoint)");
+        let provider_name = provider.provider_name.as_deref().unwrap_or("unknown");
+        
+        output.push_str(&format!("  {:<20} {:<10} {:<20} {}\n", 
+            provider_name, type_str, provider.model, endpoint_str));
+    }
+
+    output.push_str(&format!("\nTotal: {} provider(s)\n", providers.len()));
+    output
+}
+
+/// Format provider list as JSON
+fn format_provider_list_json(providers: &[&crate::config::ProviderConfig]) -> String {
+    use serde_json::json;
+
+    let provider_list: Vec<_> = providers.iter().map(|provider| {
+        let type_str = match provider.provider_type {
+            crate::config::ProviderType::OpenAI => "openai",
+            crate::config::ProviderType::Anthropic => "anthropic",
+            crate::config::ProviderType::Ollama => "ollama",
+            crate::config::ProviderType::LocalCustom => "local",
+        };
+        
+        json!({
+            "provider_name": provider.provider_name.as_deref().unwrap_or("unknown"),
+            "provider_type": type_str,
+            "model": provider.model,
+            "endpoint": provider.endpoint,
+        })
+    }).collect();
+
+    let result = json!({
+        "providers": provider_list,
+        "total": providers.len()
+    });
+
+    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Format provider show as text
+fn format_provider_show_text(provider: &crate::config::ProviderConfig, api_key_status: Option<&str>) -> String {
+    let mut output = format!("Provider: {}\n", provider.provider_name.as_deref().unwrap_or("unknown"));
+    
+    let type_str = match provider.provider_type {
+        crate::config::ProviderType::OpenAI => "openai",
+        crate::config::ProviderType::Anthropic => "anthropic",
+        crate::config::ProviderType::Ollama => "ollama",
+        crate::config::ProviderType::LocalCustom => "local",
+    };
+    output.push_str(&format!("Type: {}\n", type_str));
+    output.push_str(&format!("Model: {}\n", provider.model));
+    
+    if let Some(endpoint) = &provider.endpoint {
+        output.push_str(&format!("Endpoint: {}\n", endpoint));
+    } else {
+        output.push_str("Endpoint: (default endpoint)\n");
+    }
+
+    if let Some(status) = api_key_status {
+        output.push_str(&format!("API Key: {}\n", status));
+    }
+
+    output.push_str("\nDefault Completion Options:\n");
+    if let Some(temp) = provider.default_options.temperature {
+        output.push_str(&format!("  temperature: {}\n", temp));
+    }
+    if let Some(max_tokens) = provider.default_options.max_tokens {
+        output.push_str(&format!("  max_tokens: {}\n", max_tokens));
+    }
+    if let Some(top_p) = provider.default_options.top_p {
+        output.push_str(&format!("  top_p: {}\n", top_p));
+    }
+    if let Some(freq_penalty) = provider.default_options.frequency_penalty {
+        output.push_str(&format!("  frequency_penalty: {}\n", freq_penalty));
+    }
+    if let Some(pres_penalty) = provider.default_options.presence_penalty {
+        output.push_str(&format!("  presence_penalty: {}\n", pres_penalty));
+    }
+    if let Some(ref stop) = provider.default_options.stop {
+        output.push_str(&format!("  stop: {:?}\n", stop));
+    }
+
+    output
+}
+
+/// Format provider show as JSON
+fn format_provider_show_json(provider: &crate::config::ProviderConfig, api_key_status: Option<&str>) -> String {
+    use serde_json::json;
+
+    let type_str = match provider.provider_type {
+        crate::config::ProviderType::OpenAI => "openai",
+        crate::config::ProviderType::Anthropic => "anthropic",
+        crate::config::ProviderType::Ollama => "ollama",
+        crate::config::ProviderType::LocalCustom => "local",
+    };
+
+    let api_key_status_str = api_key_status.map(|s| {
+        match s {
+            s if s.contains("from config") => "set_from_config",
+            s if s.contains("from environment") => "set_from_env",
+            s if s.contains("Not set") => "not_set",
+            s if s.contains("Not required") => "not_required",
+            _ => "unknown",
+        }
+    });
+
+    let default_options = json!({
+        "temperature": provider.default_options.temperature,
+        "max_tokens": provider.default_options.max_tokens,
+        "top_p": provider.default_options.top_p,
+        "frequency_penalty": provider.default_options.frequency_penalty,
+        "presence_penalty": provider.default_options.presence_penalty,
+        "stop": provider.default_options.stop,
+    });
+
+    let result = json!({
+        "provider_name": provider.provider_name.as_deref().unwrap_or("unknown"),
+        "provider_type": type_str,
+        "model": provider.model,
+        "endpoint": provider.endpoint,
+        "api_key_status": api_key_status_str,
+        "default_options": default_options,
+    });
+
+    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Format provider validation result
+fn format_provider_validation_result(result: &crate::provider::ValidationResult, verbose: bool) -> String {
+    let mut output = format!("Validating provider: {}\n\n", result.provider_name);
+
+    if result.errors.is_empty() && result.checks.iter().all(|(_, passed)| *passed) {
+        output.push_str("✓ All validation checks passed\n\n");
+    } else {
+        // Show checks
+        for (description, passed) in &result.checks {
+            if *passed {
+                output.push_str(&format!("✓ {}\n", description));
+            } else {
+                output.push_str(&format!("✗ {}\n", description));
+            }
+        }
+
+        // Show errors
+        if !result.errors.is_empty() {
+            output.push_str("\nErrors:\n");
+            for error in &result.errors {
+                output.push_str(&format!("✗ {}\n", error));
+            }
+        }
+
+        // Show warnings
+        if !result.warnings.is_empty() {
+            output.push_str("\nWarnings:\n");
+            for warning in &result.warnings {
+                output.push_str(&format!("⚠ {}\n", warning));
+            }
+        }
+
+        output.push_str(&format!("\nValidation {}: {}/{} checks passed, {} errors found\n",
+            if result.is_valid() { "passed" } else { "failed" },
+            result.passed_checks(),
+            result.total_checks(),
+            result.errors.len()
+        ));
+    }
+
+    if verbose {
+        output.push_str(&format!("\nTotal checks: {}\n", result.total_checks()));
+        output.push_str(&format!("Passed: {}\n", result.passed_checks()));
+        output.push_str(&format!("Errors: {}\n", result.errors.len()));
+        output.push_str(&format!("Warnings: {}\n", result.warnings.len()));
+    }
+
     output
 }
 

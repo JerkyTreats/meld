@@ -1013,11 +1013,280 @@ impl ProviderRegistry {
         let model_provider = provider_config.to_model_provider()?;
         ProviderFactory::create_client(&model_provider)
     }
+
+    /// List providers filtered by type
+    pub fn list_by_type(&self, provider_type: Option<crate::config::ProviderType>) -> Vec<&crate::config::ProviderConfig> {
+        if let Some(filter_type) = provider_type {
+            self.providers.values()
+                .filter(|provider| provider.provider_type == filter_type)
+                .collect()
+        } else {
+            self.list_all()
+        }
+    }
+
+    /// Get the XDG config file path for a provider
+    pub fn get_provider_config_path(provider_name: &str) -> Result<std::path::PathBuf, ApiError> {
+        let providers_dir = crate::config::xdg::providers_dir()?;
+        Ok(providers_dir.join(format!("{}.toml", provider_name)))
+    }
+
+    /// Save provider configuration to XDG directory
+    pub fn save_provider_config(provider_name: &str, config: &crate::config::ProviderConfig) -> Result<(), ApiError> {
+        let config_path = Self::get_provider_config_path(provider_name)?;
+        
+        // Ensure providers directory exists
+        let providers_dir = crate::config::xdg::providers_dir()?;
+        std::fs::create_dir_all(&providers_dir).map_err(|e| {
+            ApiError::ConfigError(format!(
+                "Failed to create providers directory {}: {}",
+                providers_dir.display(), e
+            ))
+        })?;
+
+        // Ensure provider_name is set in config
+        let mut config = config.clone();
+        if config.provider_name.is_none() {
+            config.provider_name = Some(provider_name.to_string());
+        }
+
+        // Serialize config to TOML
+        let toml_content = toml::to_string_pretty(&config).map_err(|e| {
+            ApiError::ConfigError(format!("Failed to serialize provider config: {}", e))
+        })?;
+
+        // Write to file
+        std::fs::write(&config_path, toml_content).map_err(|e| {
+            ApiError::ConfigError(format!(
+                "Failed to write provider config to {}: {}",
+                config_path.display(), e
+            ))
+        })?;
+
+        Ok(())
+    }
+
+    /// Delete provider configuration file
+    pub fn delete_provider_config(provider_name: &str) -> Result<(), ApiError> {
+        let config_path = Self::get_provider_config_path(provider_name)?;
+        
+        if !config_path.exists() {
+            return Err(ApiError::ConfigError(format!(
+                "Provider config file not found: {}",
+                config_path.display()
+            )));
+        }
+
+        std::fs::remove_file(&config_path).map_err(|e| {
+            ApiError::ConfigError(format!(
+                "Failed to delete provider config file {}: {}",
+                config_path.display(), e
+            ))
+        })?;
+
+        Ok(())
+    }
+
+    /// Validate provider configuration
+    pub fn validate_provider(&self, provider_name: &str) -> Result<ValidationResult, ApiError> {
+        let mut result = ValidationResult::new(provider_name.to_string());
+
+        // Check if provider exists in registry
+        let _provider = match self.get(provider_name) {
+            Some(p) => p,
+            None => {
+                result.add_error("Provider not found in registry".to_string());
+                return Ok(result);
+            }
+        };
+
+        // Get config file path
+        let config_path = Self::get_provider_config_path(provider_name)?;
+
+        // Check if config file exists
+        if !config_path.exists() {
+            result.add_error(format!("Config file not found: {}", config_path.display()));
+            return Ok(result);
+        }
+
+        // Validate provider name matches filename
+        let expected_filename = format!("{}.toml", provider_name);
+        if config_path.file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == expected_filename)
+            .unwrap_or(false) {
+            result.add_check("Provider name matches filename", true);
+        } else {
+            result.add_error(format!(
+                "Provider name '{}' doesn't match filename '{}'",
+                provider_name,
+                config_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+            ));
+        }
+
+        // Validate provider type is valid (should always be valid if loaded)
+        result.add_check("Provider type is valid", true);
+
+        // Load and validate config file
+        let content = match std::fs::read_to_string(&config_path) {
+            Ok(c) => c,
+            Err(e) => {
+                result.add_error(format!("Failed to read config file: {}", e));
+                return Ok(result);
+            }
+        };
+
+        let provider_config: crate::config::ProviderConfig = match toml::from_str(&content) {
+            Ok(config) => config,
+            Err(e) => {
+                result.add_error(format!("Failed to parse config file: {}", e));
+                return Ok(result);
+            }
+        };
+
+        // Validate model is not empty
+        if provider_config.model.trim().is_empty() {
+            result.add_error("Model name cannot be empty".to_string());
+        } else {
+            result.add_check("Model is not empty", true);
+        }
+
+        // Check API key availability for cloud providers
+        match provider_config.provider_type {
+            crate::config::ProviderType::OpenAI | crate::config::ProviderType::Anthropic => {
+                let api_key_available = provider_config.api_key.is_some()
+                    || match provider_config.provider_type {
+                        crate::config::ProviderType::OpenAI => {
+                            std::env::var("OPENAI_API_KEY").is_ok()
+                        }
+                        crate::config::ProviderType::Anthropic => {
+                            std::env::var("ANTHROPIC_API_KEY").is_ok()
+                        }
+                        _ => false,
+                    };
+                
+                if api_key_available {
+                    let source = if provider_config.api_key.is_some() {
+                        "from config"
+                    } else {
+                        "from environment"
+                    };
+                    result.add_check(&format!("API key available ({})", source), true);
+                } else {
+                    let env_var = match provider_config.provider_type {
+                        crate::config::ProviderType::OpenAI => "OPENAI_API_KEY",
+                        crate::config::ProviderType::Anthropic => "ANTHROPIC_API_KEY",
+                        _ => unreachable!(),
+                    };
+                    result.add_error(format!(
+                        "API key not found (set {} or add to config)",
+                        env_var
+                    ));
+                }
+            }
+            crate::config::ProviderType::Ollama | crate::config::ProviderType::LocalCustom => {
+                result.add_check("API key not required for local provider", true);
+            }
+        }
+
+        // Validate endpoint URL if provided
+        if let Some(ref endpoint) = provider_config.endpoint {
+            if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+                result.add_check("Endpoint URL is valid", true);
+            } else {
+                result.add_error(format!("Invalid endpoint URL: {}", endpoint));
+            }
+        } else {
+            // Endpoint is optional for most providers, required for LocalCustom
+            if provider_config.provider_type == crate::config::ProviderType::LocalCustom {
+                result.add_error("Endpoint is required for local custom provider".to_string());
+            } else {
+                result.add_check("Endpoint URL (optional)", true);
+            }
+        }
+
+        // Validate completion options
+        if let Some(temp) = provider_config.default_options.temperature {
+            if temp >= 0.0 && temp <= 2.0 {
+                result.add_check("Temperature is in valid range (0.0-2.0)", true);
+            } else {
+                result.add_error(format!(
+                    "Temperature must be between 0.0 and 2.0, got {}",
+                    temp
+                ));
+            }
+        }
+
+        if let Some(max_tokens) = provider_config.default_options.max_tokens {
+            if max_tokens > 0 {
+                result.add_check("Max tokens is positive", true);
+            } else {
+                result.add_error("Max tokens must be positive".to_string());
+            }
+        }
+
+        if let Some(top_p) = provider_config.default_options.top_p {
+            if top_p >= 0.0 && top_p <= 1.0 {
+                result.add_check("Top-p is in valid range (0.0-1.0)", true);
+            } else {
+                result.add_error(format!(
+                    "Top-p must be between 0.0 and 1.0, got {}",
+                    top_p
+                ));
+            }
+        }
+
+        Ok(result)
+    }
 }
 
 impl Default for ProviderRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Validation result for provider configuration
+#[derive(Debug, Clone)]
+pub struct ValidationResult {
+    pub provider_name: String,
+    pub checks: Vec<(String, bool)>,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+impl ValidationResult {
+    pub fn new(provider_name: String) -> Self {
+        Self {
+            provider_name,
+            checks: Vec::new(),
+            errors: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    pub fn add_check(&mut self, description: &str, passed: bool) {
+        self.checks.push((description.to_string(), passed));
+    }
+
+    pub fn add_error(&mut self, error: String) {
+        self.errors.push(error);
+    }
+
+    pub fn add_warning(&mut self, warning: String) {
+        self.warnings.push(warning);
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    pub fn total_checks(&self) -> usize {
+        self.checks.len()
+    }
+
+    pub fn passed_checks(&self) -> usize {
+        self.checks.iter().filter(|(_, passed)| *passed).count()
     }
 }
 
@@ -1095,6 +1364,177 @@ impl ModelProviderClient for MockProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{ProviderConfig, ProviderType};
+    use tempfile::TempDir;
+    use std::sync::Mutex;
+
+    // Mutex to serialize XDG_CONFIG_HOME environment variable access in tests
+    static XDG_CONFIG_MUTEX: Mutex<()> = Mutex::new(());
+
+    /// Helper to set up XDG_CONFIG_HOME for a test with proper cleanup
+    fn with_xdg_config_home<F, R>(test_dir: &TempDir, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = XDG_CONFIG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let original_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let test_config_home = test_dir.path().to_path_buf();
+        std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
+        
+        let result = f();
+        
+        // Restore original
+        if let Some(orig) = original_xdg_config {
+            std::env::set_var("XDG_CONFIG_HOME", orig);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        
+        result
+    }
+
+    #[test]
+    fn test_provider_registry_list_by_type() {
+        let mut registry = ProviderRegistry::new();
+        
+        let provider1 = ProviderConfig {
+            provider_name: Some("test-openai".to_string()),
+            provider_type: ProviderType::OpenAI,
+            model: "gpt-4".to_string(),
+            api_key: None,
+            endpoint: None,
+            default_options: CompletionOptions::default(),
+        };
+        
+        let provider2 = ProviderConfig {
+            provider_name: Some("test-ollama".to_string()),
+            provider_type: ProviderType::Ollama,
+            model: "llama2".to_string(),
+            api_key: None,
+            endpoint: Some("http://localhost:11434".to_string()),
+            default_options: CompletionOptions::default(),
+        };
+        
+        let provider3 = ProviderConfig {
+            provider_name: Some("test-anthropic".to_string()),
+            provider_type: ProviderType::Anthropic,
+            model: "claude-3-opus".to_string(),
+            api_key: None,
+            endpoint: None,
+            default_options: CompletionOptions::default(),
+        };
+        
+        registry.providers.insert("test-openai".to_string(), provider1);
+        registry.providers.insert("test-ollama".to_string(), provider2);
+        registry.providers.insert("test-anthropic".to_string(), provider3);
+        
+        // Test filtering by type
+        let openai_providers = registry.list_by_type(Some(ProviderType::OpenAI));
+        assert_eq!(openai_providers.len(), 1);
+        assert_eq!(openai_providers[0].provider_name.as_deref(), Some("test-openai"));
+        
+        let ollama_providers = registry.list_by_type(Some(ProviderType::Ollama));
+        assert_eq!(ollama_providers.len(), 1);
+        assert_eq!(ollama_providers[0].provider_name.as_deref(), Some("test-ollama"));
+        
+        // Test listing all
+        let all_providers = registry.list_by_type(None);
+        assert_eq!(all_providers.len(), 3);
+    }
+
+    #[test]
+    fn test_provider_registry_get_provider_config_path() {
+        let test_dir = TempDir::new().unwrap();
+        with_xdg_config_home(&test_dir, || {
+            let path = ProviderRegistry::get_provider_config_path("test-provider").unwrap();
+            let providers_dir = crate::config::xdg::providers_dir().unwrap();
+            assert_eq!(path, providers_dir.join("test-provider.toml"));
+        });
+    }
+
+    #[test]
+    fn test_provider_registry_save_and_delete() {
+        let test_dir = TempDir::new().unwrap();
+        with_xdg_config_home(&test_dir, || {
+            let provider_config = ProviderConfig {
+                provider_name: Some("test-provider".to_string()),
+                provider_type: ProviderType::Ollama,
+                model: "llama2".to_string(),
+                api_key: None,
+                endpoint: Some("http://localhost:11434".to_string()),
+                default_options: CompletionOptions::default(),
+            };
+            
+            // Save provider config
+            ProviderRegistry::save_provider_config("test-provider", &provider_config).unwrap();
+            
+            // Verify file exists
+            let config_path = ProviderRegistry::get_provider_config_path("test-provider").unwrap();
+            assert!(config_path.exists());
+            
+            // Load and verify content
+            let content = std::fs::read_to_string(&config_path).unwrap();
+            assert!(content.contains("test-provider"));
+            assert!(content.contains("ollama"));
+            assert!(content.contains("llama2"));
+            
+            // Delete provider config
+            ProviderRegistry::delete_provider_config("test-provider").unwrap();
+            
+            // Verify file is deleted
+            assert!(!config_path.exists());
+        });
+    }
+
+    #[test]
+    fn test_provider_registry_validate_provider() {
+        let test_dir = TempDir::new().unwrap();
+        with_xdg_config_home(&test_dir, || {
+            // Create a valid provider
+            let provider_config = ProviderConfig {
+                provider_name: Some("test-provider".to_string()),
+                provider_type: ProviderType::Ollama,
+                model: "llama2".to_string(),
+                api_key: None,
+                endpoint: Some("http://localhost:11434".to_string()),
+                default_options: CompletionOptions::default(),
+            };
+            
+            ProviderRegistry::save_provider_config("test-provider", &provider_config).unwrap();
+            
+            // Load registry and validate
+            let mut registry = ProviderRegistry::new();
+            registry.load_from_xdg().unwrap();
+            
+            let result = registry.validate_provider("test-provider").unwrap();
+            
+            // Should have some checks
+            assert!(result.total_checks() > 0);
+            // Should pass basic validation (model not empty, etc.)
+            assert!(result.checks.iter().any(|(desc, _)| desc.contains("Model is not empty")));
+        });
+    }
+
+    #[test]
+    fn test_validation_result() {
+        let mut result = ValidationResult::new("test-provider".to_string());
+        
+        assert_eq!(result.provider_name, "test-provider");
+        assert_eq!(result.total_checks(), 0);
+        assert_eq!(result.passed_checks(), 0);
+        assert!(result.is_valid());
+        
+        result.add_check("Test check 1", true);
+        result.add_check("Test check 2", false);
+        result.add_error("Test error".to_string());
+        result.add_warning("Test warning".to_string());
+        
+        assert_eq!(result.total_checks(), 2);
+        assert_eq!(result.passed_checks(), 1);
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.warnings.len(), 1);
+        assert!(!result.is_valid());
+    }
 
     #[test]
     fn test_model_provider_serialization() {

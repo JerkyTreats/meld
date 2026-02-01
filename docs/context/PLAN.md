@@ -309,22 +309,24 @@ The implementation follows a logical progression: first decoupling providers fro
 
 **Goal**: Implement CLI commands for managing providers stored in XDG directories.
 
+**Status**: ✅ **COMPLETED**
+
 | Task | Status |
 |------|--------|
-| Implement `merkle provider list` command | Pending |
-| Implement `merkle provider show <provider_name>` command | Pending |
-| Implement `merkle provider validate <provider_name>` command | Pending |
-| Implement `merkle provider test <provider_name>` command | Pending |
-| Implement `merkle provider create <provider_name>` command (interactive) | Pending |
-| Implement `merkle provider edit <provider_name>` command | Pending |
-| Implement `merkle provider remove <provider_name>` command | Pending |
-| Add provider filtering (by type, by source) | Pending |
-| Add output formatting (text, JSON) | Pending |
-| Implement API key status display (without exposing keys) | Pending |
-| Implement provider validation logic (config + connectivity checks) | Pending |
-| Implement provider connectivity testing | Pending |
-| Add editor integration for `provider edit` | Pending |
-| Provider CLI tests | Pending |
+| Implement `merkle provider list` command | ✅ Completed |
+| Implement `merkle provider show <provider_name>` command | ✅ Completed |
+| Implement `merkle provider validate <provider_name>` command | ✅ Completed |
+| Implement `merkle provider test <provider_name>` command | ✅ Completed |
+| Implement `merkle provider create <provider_name>` command (interactive) | ✅ Completed |
+| Implement `merkle provider edit <provider_name>` command | ✅ Completed |
+| Implement `merkle provider remove <provider_name>` command | ✅ Completed |
+| Add provider filtering (by type, by source) | ✅ Completed |
+| Add output formatting (text, JSON) | ✅ Completed |
+| Implement API key status display (without exposing keys) | ✅ Completed |
+| Implement provider validation logic (config + connectivity checks) | ✅ Completed |
+| Implement provider connectivity testing | ✅ Completed |
+| Add editor integration for `provider edit` | ✅ Completed |
+| Provider CLI tests | ✅ Completed (18 integration tests, 5 unit tests, all passing) |
 
 **Exit Criteria:**
 - ✅ `merkle provider list` shows all providers from XDG directory
@@ -337,14 +339,42 @@ The implementation follows a logical progression: first decoupling providers fro
 - ✅ All commands support text and JSON output formats
 - ✅ Clear error messages for missing/invalid providers
 
+**Phase 4 Completion Summary:**
+- ✅ CLI command structure implemented with `Provider` subcommand and 7 subcommands
+- ✅ `ProviderRegistry` extended with management methods: `list_by_type()`, `get_provider_config_path()`, `save_provider_config()`, `delete_provider_config()`, `validate_provider()`
+- ✅ `ValidationResult` type implemented for providers with comprehensive validation checks
+- ✅ Text and JSON output formatters for all commands
+- ✅ `merkle provider list` command with type filtering and format options
+- ✅ `merkle provider show` command with optional API key status display
+- ✅ `merkle provider validate` command with optional connectivity and model checking
+- ✅ `merkle provider test` command with connectivity testing and model availability verification
+- ✅ `merkle provider create` command with interactive and non-interactive modes
+- ✅ `merkle provider edit` command with flag-based and editor-based editing
+- ✅ `merkle provider remove` command with confirmation prompt
+- ✅ API key status resolution (config vs environment) with secure display
+- ✅ Provider connectivity testing using async runtime
+- ✅ Helpful error messages with suggestions for common issues
+- ✅ 18 integration tests covering all commands and scenarios (all passing)
+- ✅ 5 unit tests for filtering, validation, and config management (all passing)
+
 **Key Commands:**
-- `merkle provider list [--format text|json] [--type openai|anthropic|ollama|local]`
+- `merkle provider list [--format text|json] [--type-filter openai|anthropic|ollama|local]`
 - `merkle provider show <provider_name> [--format text|json] [--include-credentials]`
 - `merkle provider validate <provider_name> [--test-connectivity] [--check-model] [--verbose]`
 - `merkle provider test <provider_name> [--model <model>] [--timeout <seconds>]`
 - `merkle provider create <provider_name> [--type <type>] [--model <model>] [--endpoint <url>] [--api-key <key>] [--interactive|--non-interactive]`
 - `merkle provider edit <provider_name> [--model <model>] [--endpoint <url>] [--api-key <key>] [--editor <editor>]`
 - `merkle provider remove <provider_name> [--force]`
+
+**Key Changes:**
+- New CLI subcommand: `merkle provider` with 7 subcommands (list, show, validate, test, create, edit, remove)
+- `ProviderRegistry` extended with management operations
+- Validation system with structured `ValidationResult` type
+- Interactive provider creation using `dialoguer` crate
+- Editor integration for config editing
+- Provider connectivity testing with async runtime
+- API key status resolution and secure display
+- Comprehensive error handling with actionable suggestions
 
 **Dependencies:**
 - Phase 2 (XDG Configuration System) - Providers must load from XDG directories
@@ -437,9 +467,10 @@ The implementation follows a logical progression: first decoupling providers fro
    - Depends on Phase 3 (Agent Management CLI) and Phase 2 (XDG Configuration)
    - **Status**: All tasks completed, 12 integration tests and 3 unit tests passing
 
-4. **Phase 4: Provider Management CLI** (Provider Tooling)
+4. **Phase 4: Provider Management CLI** (Provider Tooling) ✅ **COMPLETED**
    - CLI for managing providers
    - Depends on Phase 2 (XDG loading) and Phase 1 (ProviderRegistry)
+   - **Status**: All tasks completed, 18 integration tests and 5 unit tests passing
 
 5. **Phase 5: Context Commands** (User-Facing Commands)
    - Main user-facing commands
@@ -476,12 +507,12 @@ The refactor is complete when:
 1. ✅ Providers and agents are completely separated **(Phase 1 - COMPLETED)**
 2. ✅ Agents and providers stored in XDG directories **(Phase 2 - COMPLETED)**
 3. ✅ Agents use markdown prompt files **(Phase 2 - COMPLETED)**
-4. ⏳ All CLI commands implemented and tested (Phases 3-5) - **Phase 3 COMPLETED**
-5. ⏳ Clear error messages and user guidance (Phases 3-5) - **Phase 3 COMPLETED**
+4. ⏳ All CLI commands implemented and tested (Phases 3-5) - **Phase 3 COMPLETED, Phase 4 COMPLETED**
+5. ⏳ Clear error messages and user guidance (Phases 3-5) - **Phase 3 COMPLETED, Phase 4 COMPLETED**
 6. ⏳ Documentation updated (Ongoing)
 7. ✅ Default agents initialization via `merkle init` (Phase 3.5 - COMPLETED)
-8. ✅ All existing tests pass **(Phase 1 - COMPLETED: 246 tests passing; Phase 2 - COMPLETED: 124 integration tests passing; Phase 3 - COMPLETED: 16 integration + 3 unit tests passing; Phase 3.5 - COMPLETED: 12 integration + 3 unit tests passing)**
-9. ✅ New tests cover all functionality **(Phase 1 - COMPLETED; Phase 2 - COMPLETED: 20 XDG config tests; Phase 3 - COMPLETED: 16 agent CLI tests; Phase 3.5 - COMPLETED: 12 init command tests)**
+8. ✅ All existing tests pass **(Phase 1 - COMPLETED: 246 tests passing; Phase 2 - COMPLETED: 124 integration tests passing; Phase 3 - COMPLETED: 16 integration + 3 unit tests passing; Phase 3.5 - COMPLETED: 12 integration + 3 unit tests passing; Phase 4 - COMPLETED: 18 integration + 5 unit tests passing)**
+9. ✅ New tests cover all functionality **(Phase 1 - COMPLETED; Phase 2 - COMPLETED: 20 XDG config tests; Phase 3 - COMPLETED: 16 agent CLI tests; Phase 3.5 - COMPLETED: 12 init command tests; Phase 4 - COMPLETED: 18 provider CLI tests)**
 
 ---
 
