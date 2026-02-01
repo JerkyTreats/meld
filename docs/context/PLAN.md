@@ -200,40 +200,104 @@ The implementation follows a logical progression: first decoupling providers fro
 
 **Goal**: Implement `merkle init` command to initialize default required agents with their prompts.
 
-**Status**: ⏳ **PENDING**
+**Status**: ✅ **COMPLETED**
 
 | Task | Status |
 |------|--------|
-| Design default agents requirements and specifications | Pending |
-| Determine prompt storage mechanism (binary embedding vs. external files) | Pending |
-| Implement `merkle init` command structure | Pending |
-| Create default agent configurations | Pending |
-| Implement prompt file creation/copying logic | Pending |
-| Add initialization validation and idempotency checks | Pending |
-| Create initialization tests | Pending |
+| Design default agents requirements and specifications | ✅ Completed (spec docs created) |
+| Determine prompt storage mechanism (binary embedding vs. external files) | ✅ Completed (binary embedding selected) |
+| Create `prompts/` directory structure in source repository | ✅ Completed |
+| Create default prompt markdown files (code-analyzer, docs-writer, synthesis-agent) | ✅ Completed |
+| Implement prompt embedding in binary (include_str! macro) | ✅ Completed |
+| Create `src/init.rs` module with initialization logic | ✅ Completed |
+| Implement XDG directory creation utilities (prompts directory) | ✅ Completed |
+| Implement prompt file initialization logic | ✅ Completed |
+| Implement agent configuration initialization logic | ✅ Completed |
+| Implement idempotency checks (skip existing files) | ✅ Completed |
+| Implement force mode (overwrite existing files) | ✅ Completed |
+| Implement list mode (preview without creating) | ✅ Completed |
+| Add `merkle init` command to CLI structure | ✅ Completed |
+| Implement initialization validation (verify all agents valid) | ✅ Completed |
+| Add initialization output formatting (text format) | ✅ Completed |
+| Create default agent TOML templates | ✅ Completed |
+| Integration tests for init command | ✅ Completed (12 integration tests, all passing) |
+| Unit tests for initialization logic | ✅ Completed (3 unit tests, all passing) |
 
 **Exit Criteria:**
 - ✅ `merkle init` command creates default required agents
-- ✅ Default agent prompts are stored and accessible (binary or external)
-- ✅ Agents are initialized to correct XDG location
-- ✅ Command is idempotent (safe to run multiple times)
+- ✅ Default agent prompts are embedded in binary and copied to XDG location
+- ✅ Agents are initialized to correct XDG location (`$XDG_CONFIG_HOME/merkle/agents/`)
+- ✅ Prompts are initialized to `$XDG_CONFIG_HOME/merkle/prompts/`
+- ✅ Command is idempotent (safe to run multiple times, preserves user customizations)
+- ✅ `--force` flag overwrites existing default agents/prompts
+- ✅ `--list` flag shows preview without creating files
 - ✅ Clear feedback on what was created/updated
-- ✅ Validation that agents were created successfully
+- ✅ Validation that all initialized agents pass validation
+- ✅ All required XDG directories created if missing
+- ✅ Four default agents initialized (reader, code-analyzer, docs-writer, synthesis-agent)
+
+**Phase 3.5 Completion Summary:**
+- ✅ `prompts/` directory created in repository root with 3 default prompt files
+- ✅ Prompt embedding implemented using `include_str!()` macro in `src/init.rs`
+- ✅ `prompts_dir()` utility function added to XDG module
+- ✅ `src/init.rs` module created with full initialization logic
+- ✅ Default agent configurations defined (reader, code-analyzer, docs-writer, synthesis-agent)
+- ✅ Prompt initialization logic implemented with idempotency
+- ✅ Agent initialization logic implemented with idempotency
+- ✅ Force mode implemented (overwrites existing files)
+- ✅ List mode implemented (preview without creating)
+- ✅ CLI command `merkle init` added with `--force` and `--list` options
+- ✅ Output formatting implemented (text format with status indicators)
+- ✅ Validation integration using `AgentRegistry::validate_agent()`
+- ✅ All XDG directories created automatically (agents, providers, prompts)
+- ✅ 12 integration tests covering all functionality (all passing)
+- ✅ 3 unit tests for prompt embedding and config validation (all passing)
 
 **Key Commands:**
-- `merkle init` - Initialize default agents and prompts
+- `merkle init` - Initialize default agents and prompts (idempotent)
 - `merkle init --force` - Force re-initialization (overwrite existing)
 - `merkle init --list` - List what would be initialized without creating
 
-**Key Considerations:**
-- **Prompt Storage**: Decide between embedding prompts in binary vs. storing as external files
-- **Default Agents**: Define required default agents and their roles (Reader, Writer, Synthesis)
-- **Idempotency**: Ensure safe re-running without duplicating agents
-- **User Customization**: Allow users to customize default agents after initialization
-- **Location**: Initialize to `$XDG_CONFIG_HOME/merkle/agents/` directory
+**Key Changes:**
+- New CLI command: `merkle init` with `--force` and `--list` options
+- New module: `src/init.rs` with initialization logic
+- New directory: `prompts/` in source repository with default prompt files
+- Prompt embedding: Default prompts embedded in binary using `include_str!()`
+- XDG directory creation: `prompts_dir()` utility function
+- Agent initialization: Default agent TOML files created programmatically
+- Prompt initialization: Default prompt files copied from binary to XDG location
+- Idempotency logic: Skip existing files unless `--force` specified
+- Validation integration: Use existing `AgentRegistry::validate_agent()` after initialization
+
+**Implementation Details:**
+
+1. **Prompt Storage**:
+   - Source: `prompts/` directory in repository root
+   - Build-time: Embedded in binary via `include_str!("../prompts/<name>.md")`
+   - Runtime: Copied to `$XDG_CONFIG_HOME/merkle/prompts/<name>.md`
+   - Path resolution: Agent configs use relative paths (`prompts/<name>.md`)
+
+2. **Default Agents**:
+   - `reader` (Reader role) - No prompt required
+   - `code-analyzer` (Writer role) - Code analysis prompts
+   - `docs-writer` (Writer role) - Documentation generation prompts
+   - `synthesis-agent` (Synthesis role) - Context synthesis prompts
+
+3. **Initialization Flow**:
+   - Verify/create XDG directories (agents, providers, prompts)
+   - For each default prompt: Check if exists, copy if missing or `--force`
+   - For each default agent: Check if exists, create if missing or `--force`
+   - Validate all initialized agents
+   - Report results (created, skipped, errors)
+
+4. **Idempotency**:
+   - Default behavior: Skip existing files (preserve user customizations)
+   - `--force` flag: Overwrite existing files
+   - `--list` flag: Show preview without creating
 
 **Dependencies:**
 - Phase 3 (Agent Management CLI) - Agent creation and management infrastructure must exist
+- Phase 2 (XDG Configuration System) - XDG directory utilities and agent loading
 
 **Documentation:**
 - [Default Agents Requirements](agents/default_agents_requirements.md) - Specification for default required agents and their prompts
@@ -366,6 +430,13 @@ The implementation follows a logical progression: first decoupling providers fro
    - Depends on Phase 2 (XDG loading)
    - **Status**: All tasks completed, 16 integration tests and 3 unit tests passing
 
+3.5. **Phase 3.5: Initialization Command** (Default Agents) ✅ **COMPLETED**
+   - `merkle init` command for default agents
+   - Default agent prompts embedded in binary and initialized to XDG
+   - Four default agents (reader, code-analyzer, docs-writer, synthesis-agent)
+   - Depends on Phase 3 (Agent Management CLI) and Phase 2 (XDG Configuration)
+   - **Status**: All tasks completed, 12 integration tests and 3 unit tests passing
+
 4. **Phase 4: Provider Management CLI** (Provider Tooling)
    - CLI for managing providers
    - Depends on Phase 2 (XDG loading) and Phase 1 (ProviderRegistry)
@@ -408,8 +479,9 @@ The refactor is complete when:
 4. ⏳ All CLI commands implemented and tested (Phases 3-5) - **Phase 3 COMPLETED**
 5. ⏳ Clear error messages and user guidance (Phases 3-5) - **Phase 3 COMPLETED**
 6. ⏳ Documentation updated (Ongoing)
-7. ✅ All existing tests pass **(Phase 1 - COMPLETED: 246 tests passing; Phase 2 - COMPLETED: 124 integration tests passing; Phase 3 - COMPLETED: 16 integration + 3 unit tests passing)**
-8. ✅ New tests cover all functionality **(Phase 1 - COMPLETED; Phase 2 - COMPLETED: 20 XDG config tests; Phase 3 - COMPLETED: 16 agent CLI tests)**
+7. ✅ Default agents initialization via `merkle init` (Phase 3.5 - COMPLETED)
+8. ✅ All existing tests pass **(Phase 1 - COMPLETED: 246 tests passing; Phase 2 - COMPLETED: 124 integration tests passing; Phase 3 - COMPLETED: 16 integration + 3 unit tests passing; Phase 3.5 - COMPLETED: 12 integration + 3 unit tests passing)**
+9. ✅ New tests cover all functionality **(Phase 1 - COMPLETED; Phase 2 - COMPLETED: 20 XDG config tests; Phase 3 - COMPLETED: 16 agent CLI tests; Phase 3.5 - COMPLETED: 12 init command tests)**
 
 ---
 
@@ -423,6 +495,8 @@ The refactor is complete when:
 - **[context_get_command.md](context_get_command.md)** - Context get spec
 - **[agents/agent_cli_spec.md](agents/agent_cli_spec.md)** - Agent CLI spec
 - **[provider/provider_cli_spec.md](provider/provider_cli_spec.md)** - Provider CLI spec
+- **[agents/default_agents_requirements.md](agents/default_agents_requirements.md)** - Default agents specification (Phase 3.5)
+- **[init_command_spec.md](init_command_spec.md)** - Initialization command specification (Phase 3.5)
 
 ---
 

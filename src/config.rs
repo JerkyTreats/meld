@@ -639,6 +639,24 @@ pub mod xdg {
         
         Ok(providers_dir)
     }
+
+    /// Get prompts directory path
+    /// 
+    /// Returns `$XDG_CONFIG_HOME/merkle/prompts/`
+    /// Creates the directory if it doesn't exist
+    pub fn prompts_dir() -> Result<PathBuf, ApiError> {
+        let config_home = config_home()?;
+        let prompts_dir = config_home.join("merkle").join("prompts");
+        
+        // Create directory if it doesn't exist
+        if !prompts_dir.exists() {
+            std::fs::create_dir_all(&prompts_dir).map_err(|e| {
+                ApiError::ConfigError(format!("Failed to create prompts directory {}: {}", prompts_dir.display(), e))
+            })?;
+        }
+        
+        Ok(prompts_dir)
+    }
 }
 
 /// Configuration loader

@@ -8,6 +8,7 @@ mod config_integration;
 mod context_api;
 mod frame_queue;
 mod hasher_verification;
+mod init_command;
 mod model_providers;
 mod store_integration;
 mod tooling_integration;
