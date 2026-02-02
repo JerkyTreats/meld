@@ -229,7 +229,8 @@ fn test_provider_validate() {
         
         let result = cli.execute(&Commands::Provider {
             command: ProviderCommands::Validate {
-                provider_name: "test-openai".to_string(),
+                provider_name: Some("test-openai".to_string()),
+                all: false,
                 test_connectivity: false,
                 check_model: false,
                 verbose: false,
@@ -251,7 +252,8 @@ fn test_provider_validate_not_found() {
         
         let result = cli.execute(&Commands::Provider {
             command: ProviderCommands::Validate {
-                provider_name: "nonexistent".to_string(),
+                provider_name: Some("nonexistent".to_string()),
+                all: false,
                 test_connectivity: false,
                 check_model: false,
                 verbose: false,
