@@ -121,9 +121,13 @@ impl Walker {
         Ok(entries)
     }
 
-    /// Check if an entry should be ignored based on ignore patterns
+    /// Check if an entry should be ignored based on ignore patterns.
+    /// We never ignore a file named exactly ".gitignore" so it stays in the tree and can be synced to ignore_list.
     fn should_ignore(&self, entry: &DirEntry) -> bool {
         let path = entry.path();
+        if path.file_name() == Some(std::ffi::OsStr::new(".gitignore")) {
+            return false;
+        }
         let path_str = path.to_string_lossy();
 
         for pattern in &self.config.ignore_patterns {

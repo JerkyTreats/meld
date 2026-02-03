@@ -4,7 +4,7 @@ use crate::error::StorageError;
 use crate::tree::hasher;
 use crate::tree::node::{DirectoryNode, FileNode, MerkleNode};
 use crate::tree::path;
-use crate::tree::walker::{Entry, Walker};
+use crate::tree::walker::{Entry, Walker, WalkerConfig};
 use crate::types::NodeID;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -42,17 +42,43 @@ impl Tree {
             _ => vec![],
         }
     }
+
+    /// Return the NodeID of the .gitignore file node if present in the tree.
+    pub fn find_gitignore_node_id(&self) -> Option<NodeID> {
+        use std::ffi::OsStr;
+        for (node_id, node) in &self.nodes {
+            let path = match node {
+                MerkleNode::File(f) => &f.path,
+                MerkleNode::Directory(d) => &d.path,
+            };
+            if path.file_name() == Some(OsStr::new(".gitignore")) {
+                return Some(*node_id);
+            }
+        }
+        None
+    }
 }
 
 /// Tree builder for constructing filesystem Merkle trees
 pub struct TreeBuilder {
     root: PathBuf,
+    walker_config: Option<WalkerConfig>,
 }
 
 impl TreeBuilder {
     /// Create a new tree builder for the given root path
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            walker_config: None,
+        }
+    }
+
+    /// Set walker config (ignore patterns, etc.). When set, the walker uses this config
+    /// instead of the default.
+    pub fn with_walker_config(mut self, config: WalkerConfig) -> Self {
+        self.walker_config = Some(config);
+        self
     }
 
     /// Build the complete Merkle tree from the filesystem
@@ -65,7 +91,10 @@ impl TreeBuilder {
         info!("Starting tree build");
 
         // Step 1: Walk filesystem and collect entries
-        let walker = Walker::new(self.root.clone());
+        let walker = match &self.walker_config {
+            Some(config) => Walker::with_config(self.root.clone(), config.clone()),
+            None => Walker::new(self.root.clone()),
+        };
         let entries = match walker.walk() {
             Ok(e) => {
                 debug!(entry_count = e.len(), "Walked filesystem");

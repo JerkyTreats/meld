@@ -141,6 +141,16 @@ impl NodeRecordStore for SledNodeRecordStore {
         }
         Ok(records)
     }
+
+    fn flush(&self) -> Result<(), StorageError> {
+        self.db.flush().map_err(|e| {
+            StorageError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to flush database: {}", e),
+            ))
+        })?;
+        Ok(())
+    }
 }
 
 impl SledNodeRecordStore {

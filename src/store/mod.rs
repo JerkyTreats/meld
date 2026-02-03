@@ -49,6 +49,11 @@ pub trait NodeRecordStore {
     /// Used for status (total count, path breakdown, top paths). Path mappings
     /// (e.g. path:...) are not returned; only node records keyed by NodeID.
     fn list_all(&self) -> Result<Vec<NodeRecord>, StorageError>;
+
+    /// Flush any buffered writes to disk. Default implementation is a no-op.
+    fn flush(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
 }
 
 impl NodeRecord {

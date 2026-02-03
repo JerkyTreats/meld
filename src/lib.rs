@@ -10,6 +10,7 @@ pub mod config;
 pub mod concurrency;
 pub mod error;
 pub mod frame;
+pub mod ignore;
 pub mod heads;
 pub mod init;
 pub mod logging;

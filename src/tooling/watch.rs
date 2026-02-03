@@ -5,12 +5,14 @@
 
 use crate::api::ContextApi;
 use crate::error::ApiError;
+use crate::ignore;
 use crate::frame::{FrameGenerationQueue, GenerationConfig};
 use crate::heads::HeadIndex;
 use crate::regeneration::BasisIndex;
 use crate::store::{NodeRecord, NodeRecordStore};
 use crate::tree::builder::TreeBuilder;
 use crate::tree::path::canonicalize_path;
+use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
@@ -363,7 +365,12 @@ impl WatchDaemon {
 
     /// Build the initial tree from filesystem
     fn build_initial_tree(&self) -> Result<(), ApiError> {
-        let builder = TreeBuilder::new(self.config.workspace_root.clone());
+        let walker_config = WalkerConfig {
+            follow_symlinks: false,
+            ignore_patterns: self.config.ignore_patterns.clone(),
+            max_depth: None,
+        };
+        let builder = TreeBuilder::new(self.config.workspace_root.clone()).with_walker_config(walker_config);
         let tree = builder.build().map_err(ApiError::from)?;
 
         // Populate store with all nodes
@@ -371,6 +378,12 @@ impl WatchDaemon {
             self.api.node_store().as_ref() as &dyn NodeRecordStore,
             &tree,
         ).map_err(ApiError::from)?;
+
+        // When .gitignore node hash changed, sync it into ignore_list
+        let _ = ignore::maybe_sync_gitignore_after_tree(
+            &self.config.workspace_root,
+            tree.find_gitignore_node_id().as_ref(),
+        );
 
         // Create missing contextframes for all nodes and agents if enabled
         if self.config.auto_create_frames {
@@ -470,8 +483,19 @@ impl WatchDaemon {
     fn update_tree_for_paths(&self, paths: &HashSet<PathBuf>) -> Result<Vec<NodeID>, ApiError> {
         // For now, we'll rebuild the entire tree
         // TODO: Implement incremental updates for better performance
-        let builder = TreeBuilder::new(self.config.workspace_root.clone());
+        let walker_config = WalkerConfig {
+            follow_symlinks: false,
+            ignore_patterns: self.config.ignore_patterns.clone(),
+            max_depth: None,
+        };
+        let builder = TreeBuilder::new(self.config.workspace_root.clone()).with_walker_config(walker_config);
         let tree = builder.build().map_err(ApiError::from)?;
+
+        // When .gitignore node hash changed, sync it into ignore_list
+        let _ = ignore::maybe_sync_gitignore_after_tree(
+            &self.config.workspace_root,
+            tree.find_gitignore_node_id().as_ref(),
+        );
 
         // Collect affected node IDs
         let mut affected_nodes = Vec::new();

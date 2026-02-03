@@ -6,6 +6,7 @@
 use crate::api::{ContextApi, ContextView};
 use crate::config::ConfigLoader;
 use crate::error::ApiError;
+use crate::ignore;
 use crate::frame::{Basis, Frame, FrameGenerationQueue, GenerationConfig};
 use crate::heads::HeadIndex;
 use crate::regeneration::BasisIndex;
@@ -13,6 +14,7 @@ use crate::store::{NodeRecord, NodeRecordStore};
 use crate::store::persistence::SledNodeRecordStore;
 use crate::tooling::adapter::AgentAdapter;
 use crate::tree::builder::TreeBuilder;
+use crate::tree::walker::WalkerConfig;
 use crate::types::{Hash, NodeID};
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
@@ -201,9 +203,6 @@ pub enum Commands {
         /// Agent ID for regeneration
         #[arg(long, default_value = "watch-daemon")]
         agent_id: String,
-        /// Ignore pattern (can be specified multiple times)
-        #[arg(long)]
-        ignore: Vec<String>,
         /// Run in foreground (default: background daemon)
         #[arg(long)]
         foreground: bool,
@@ -247,7 +246,22 @@ pub enum WorkspaceCommands {
         breakdown: bool,
     },
     /// Validate workspace integrity
-    Validate,
+    Validate {
+        /// Output format (text or json)
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// List or add paths to the workspace ignore list
+    Ignore {
+        /// Path to add (omit to list current ignore list)
+        path: Option<PathBuf>,
+        /// When adding, report what would be added without writing
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format for list mode (text or json)
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -645,15 +659,36 @@ impl CliContext {
     }
 
     /// Run workspace validation (store, head index, basis index consistency).
-    fn run_workspace_validate(&self) -> Result<String, ApiError> {
+    fn run_workspace_validate(&self, format: &str) -> Result<String, ApiError> {
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
 
-        let builder = TreeBuilder::new(self.workspace_root.clone());
+        // Use same ignore patterns as scan when computing root
+        let ignore_patterns = ignore::load_ignore_patterns(&self.workspace_root)
+            .unwrap_or_else(|_| WalkerConfig::default().ignore_patterns);
+        let walker_config = WalkerConfig {
+            follow_symlinks: false,
+            ignore_patterns,
+            max_depth: None,
+        };
+        let builder = TreeBuilder::new(self.workspace_root.clone()).with_walker_config(walker_config);
         let root_hash = match builder.compute_root() {
             Ok(hash) => hash,
             Err(e) => {
                 errors.push(format!("Failed to compute workspace root: {}", e));
+                if format == "json" {
+                    let out = serde_json::json!({
+                        "valid": false,
+                        "root_hash": "",
+                        "node_count": 0,
+                        "frame_count": 0,
+                        "errors": errors,
+                        "warnings": warnings
+                    });
+                    return Ok(serde_json::to_string_pretty(&out).map_err(|e| {
+                        ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
+                    })?);
+                }
                 return Ok(format!("Validation failed:\n{}", errors.join("\n")));
             }
         };
@@ -667,7 +702,7 @@ impl CliContext {
                         hex::encode(root_hash)
                     ));
                 }
-                1
+                self.api.node_store().list_all().map_err(ApiError::from)?.len()
             }
             None => {
                 warnings.push("Root node not found in store - workspace may not be scanned".to_string());
@@ -710,6 +745,22 @@ impl CliContext {
         };
 
         let root_hex = hex::encode(root_hash);
+        let valid = errors.is_empty();
+
+        if format == "json" {
+            let out = serde_json::json!({
+                "valid": valid,
+                "root_hash": root_hex,
+                "node_count": node_count,
+                "frame_count": frame_count,
+                "errors": errors,
+                "warnings": warnings
+            });
+            return Ok(serde_json::to_string_pretty(&out).map_err(|e| {
+                ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
+            })?);
+        }
+
         if errors.is_empty() && warnings.is_empty() {
             Ok(format!(
                 "Validation passed:\n  Root hash: {}\n  Nodes: {}\n  Frames: {}\n  All checks passed",
@@ -733,6 +784,48 @@ impl CliContext {
                 }
             }
             Ok(result)
+        }
+    }
+
+    /// Run workspace ignore: list ignore list or add a path.
+    fn run_workspace_ignore(
+        &self,
+        path: Option<&std::path::Path>,
+        dry_run: bool,
+        format: &str,
+    ) -> Result<String, ApiError> {
+        match path {
+            None => {
+                // List mode
+                let entries = ignore::read_ignore_list(&self.workspace_root)?;
+                if entries.is_empty() {
+                    return Ok("Ignore list is empty.".to_string());
+                }
+                if format == "json" {
+                    let out = serde_json::json!({ "ignored": entries });
+                    return Ok(serde_json::to_string_pretty(&out).map_err(|e| {
+                        ApiError::StorageError(crate::error::StorageError::InvalidPath(
+                            e.to_string(),
+                        ))
+                    })?);
+                }
+                let mut lines: Vec<String> = entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| format!("  {}. {}", i + 1, p))
+                    .collect();
+                lines.insert(0, "Ignore list:".to_string());
+                Ok(lines.join("\n"))
+            }
+            Some(p) => {
+                // Add mode
+                let normalized = ignore::normalize_workspace_relative(&self.workspace_root, p)?;
+                if dry_run {
+                    return Ok(format!("Would add {} to ignore list.", normalized));
+                }
+                ignore::append_to_ignore_list(&self.workspace_root, &normalized)?;
+                Ok(format!("Added {} to ignore list.", normalized))
+            }
         }
     }
 
@@ -872,15 +965,19 @@ impl CliContext {
                 }
             }
             Commands::Scan { force } => {
-                // Build tree from filesystem
-                let builder = TreeBuilder::new(self.workspace_root.clone());
-                let tree = builder.build().map_err(|e| {
-                    ApiError::StorageError(e)
-                })?;
+                // Load ignore patterns (built-in + .gitignore + ignore_list)
+                let ignore_patterns = ignore::load_ignore_patterns(&self.workspace_root)
+                    .unwrap_or_else(|_| WalkerConfig::default().ignore_patterns);
+                let walker_config = WalkerConfig {
+                    follow_symlinks: false,
+                    ignore_patterns,
+                    max_depth: None,
+                };
+                let builder = TreeBuilder::new(self.workspace_root.clone()).with_walker_config(walker_config);
+                let tree = builder.build().map_err(|e| ApiError::StorageError(e))?;
 
-                // If force is false, check if nodes already exist
+                // If force is false, check if root node already exists
                 if !force {
-                    // Check if root node exists
                     if self.api.node_store().get(&tree.root_id).map_err(ApiError::from)?.is_some() {
                         let root_hex = hex::encode(tree.root_id);
                         return Ok(format!(
@@ -891,16 +988,16 @@ impl CliContext {
                 }
 
                 // Populate store with all nodes from tree
-                NodeRecord::populate_store_from_tree(
-                    self.api.node_store().as_ref() as &dyn NodeRecordStore,
-                    &tree,
-                ).map_err(|e| ApiError::StorageError(e))?;
+                let store = self.api.node_store().as_ref() as &dyn NodeRecordStore;
+                NodeRecord::populate_store_from_tree(store, &tree).map_err(ApiError::StorageError)?;
+                store.flush().map_err(|e| ApiError::StorageError(e))?;
 
-                // Flush store to ensure persistence (if it's a SledNodeRecordStore)
-                // We can't easily downcast Arc<dyn Trait>, so we'll skip flush for now
-                // The store will flush on drop or can be flushed manually if needed
+                // When .gitignore node hash changed, sync it into ignore_list
+                let _ = ignore::maybe_sync_gitignore_after_tree(
+                    &self.workspace_root,
+                    tree.find_gitignore_node_id().as_ref(),
+                );
 
-                // Format root NodeID as hex string for easy CLI usage
                 let root_hex = hex::encode(tree.root_id);
                 Ok(format!(
                     "Scanned {} nodes (root: {})",
@@ -931,7 +1028,10 @@ impl CliContext {
                         ))
                     }
                 }
-                WorkspaceCommands::Validate => self.run_workspace_validate(),
+                WorkspaceCommands::Validate { format } => self.run_workspace_validate(format),
+                WorkspaceCommands::Ignore { path, dry_run, format } => {
+                    self.run_workspace_ignore(path.as_deref(), *dry_run, format)
+                }
             },
             Commands::Status {
                 format,
@@ -950,7 +1050,7 @@ impl CliContext {
                     *test_connectivity,
                 )
             }
-            Commands::Validate => self.run_workspace_validate(),
+            Commands::Validate => self.run_workspace_validate("text"),
             Commands::Agent { command } => {
                 self.handle_agent_command(command)
             }
@@ -969,7 +1069,6 @@ impl CliContext {
                 recursive,
                 max_depth,
                 agent_id,
-                ignore,
                 foreground: _,
             } => {
                 use crate::tooling::watch::{WatchConfig, WatchDaemon};
@@ -992,6 +1091,10 @@ impl CliContext {
                         .map_err(|e| ApiError::ConfigError(format!("Failed to load agents from config: {}", e)))?;
                 }
 
+                // Load ignore patterns (same sources as scan: built-in + .gitignore + ignore_list)
+                let ignore_patterns = ignore::load_ignore_patterns(&self.workspace_root)
+                    .unwrap_or_else(|_| WalkerConfig::default().ignore_patterns);
+
                 // Build watch config
                 let mut watch_config = WatchConfig::default();
                 watch_config.workspace_root = self.workspace_root.clone();
@@ -1000,9 +1103,7 @@ impl CliContext {
                 watch_config.recursive = *recursive;
                 watch_config.max_depth = *max_depth;
                 watch_config.agent_id = agent_id.clone();
-                if !ignore.is_empty() {
-                    watch_config.ignore_patterns.extend(ignore.iter().cloned());
-                }
+                watch_config.ignore_patterns = ignore_patterns;
 
                 // Create watch daemon
                 let daemon = WatchDaemon::new(self.api.clone(), watch_config)?;

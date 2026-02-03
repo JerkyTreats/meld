@@ -12,8 +12,8 @@ This document outlines the phased implementation plan for the command cleanup re
 |-------|------|--------------|------------|
 | 1 | Display stack and workspace status | None | Done |
 | 2 | Agent status and provider status | Phase 1 | Done |
-| 3 | Unified merkle status | Phase 1, Phase 2 | Not started |
-| 4 | Workspace command specs and scan / validate / watch | Phase 1–3 if status touches workspace | Not started |
+| 3 | Unified merkle status | Phase 1, Phase 2 | Done |
+| 4 | Workspace command specs and scan / validate / watch | Phase 1–3 if status touches workspace | Done |
 | 5 | Node delete | Node store and head index | Not started |
 | 6 | Remove deprecated commands | Phase 2; Phases 1–5 complete | Not started |
 
@@ -83,24 +83,24 @@ This document outlines the phased implementation plan for the command cleanup re
 | Goal | Implement top-level merkle status that concatenates workspace, agents, and providers sections; support section filters. |
 | Dependencies | Phase 1, Phase 2 |
 | Docs | status_command_spec.md |
-| Completion | Not started |
+| Completion | Done |
 
 | Task | Completion |
 |------|------------|
-| Implement merkle status with optional --workspace-only, --agents-only, --providers-only; default: all three sections. | Not started |
-| Pass --breakdown and --test-connectivity through to workspace and provider sections. | Not started |
-| Prefer single status module producing all sections; top-level status and subcommands call same logic. | Not started |
-| Ensure merkle workspace status = workspace section only (alias or same logic as merkle status --workspace-only). | Not started |
+| Implement merkle status with optional --workspace-only, --agents-only, --providers-only; default: all three sections. | Done |
+| Pass --breakdown and --test-connectivity through to workspace and provider sections. | Done |
+| Prefer single status module producing all sections; top-level status and subcommands call same logic. | Done |
+| Ensure merkle workspace status = workspace section only (alias or same logic as merkle status --workspace-only). | Done |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| merkle status outputs all three sections by default; section filters work. | Not started |
-| Output of each section matches the dedicated subcommands (merkle workspace status, merkle agent status, merkle provider status). | Not started |
+| merkle status outputs all three sections by default; section filters work. | Done |
+| Output of each section matches the dedicated subcommands (merkle workspace status, merkle agent status, merkle provider status). | Done |
 
 | Key change | Completion |
 |------------|------------|
-| Top-level Status command wires to unified status handler; section selection by flags. | Not started |
-| Shared status module or coordinated handlers for workspace, agent, provider. | Not started |
+| Top-level Status command wires to unified status handler; section selection by flags. | Done |
+| Shared status module or coordinated handlers for workspace, agent, provider. | Done |
 
 ---
 
@@ -111,24 +111,26 @@ This document outlines the phased implementation plan for the command cleanup re
 | Goal | Implement or align scan, validate, and watch with detailed specs; ensure CLI and behavior match specs. |
 | Dependencies | Existing tree and store; Phase 1–3 only if status touches workspace |
 | Docs | ignore_list_spec.md, scan_command_spec.md, validate_command_spec.md, watch_command_spec.md |
-| Completion | Not started |
+| Completion | Done |
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Implement or refine ignore list per ignore_list_spec.md: .gitignore and XDG_DATA_HOME/merkle/workspace_path/ignore_list; scan reads both; merkle workspace ignore path lists or adds path; workspace delete appends path unless --no-ignore. | Not started |
-| 2 | Implement or refine merkle scan per scan_command_spec.md: load ignore list and .gitignore, pass to Walker; args, TreeBuilder, populate store, guards, output. Scan creates/refreshes the workspace tree. | Not started |
-| 3 | Implement or refine merkle workspace validate per validate_command_spec.md: store, head index, basis index consistency; errors/warnings; text and JSON. | Not started |
-| 4 | Implement or refine merkle watch per watch_command_spec.md: options (debounce, batch), daemon, file watcher, tree update, optional context regeneration; use same ignore sources as scan (no --ignore flag). | Not started |
-| 5 | Add or update tests for each command as specified in the specs. | Not started |
+| 1 | Implement or refine ignore list per ignore_list_spec.md: .gitignore and XDG_DATA_HOME/merkle/workspace_path/ignore_list; scan reads both; merkle workspace ignore path lists or adds path; workspace delete appends path unless --no-ignore. | Done |
+| 2 | Implement or refine merkle scan per scan_command_spec.md: load ignore list and .gitignore, pass to Walker; args, TreeBuilder, populate store, guards, output. Scan creates/refreshes the workspace tree. | Done |
+| 3 | Implement or refine merkle workspace validate per validate_command_spec.md: store, head index, basis index consistency; errors/warnings; text and JSON. | Done |
+| 4 | Implement or refine merkle watch per watch_command_spec.md: options (debounce, batch), daemon, file watcher, tree update, optional context regeneration; use same ignore sources as scan (no --ignore flag). | Done |
+| 5 | Add or update tests for each command as specified in the specs. | Done |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| scan, validate, and watch behavior and CLI match scan_command_spec.md, validate_command_spec.md, watch_command_spec.md. | Not started |
-| Required guards and output formats implemented; tests added. | Not started |
+| scan, validate, and watch behavior and CLI match scan_command_spec.md, validate_command_spec.md, watch_command_spec.md. | Done |
+| Required guards and output formats implemented; tests added. | Done |
 
 | Key change | Completion |
 |------------|------------|
-| CLI and handlers in src/tooling/cli.rs and related modules; tree builder, store, head index, watch daemon as specified. | Not started |
+| CLI and handlers in src/tooling/cli.rs and related modules; tree builder, store, head index, watch daemon as specified. | Done |
+
+Phase 4 notes: Ignore module in src/ignore.rs; merkle workspace ignore in WorkspaceCommands; scan, validate, and watch use shared ignore loading. TreeBuilder accepts optional WalkerConfig. NodeRecordStore::flush added; scan flushes after populate. Workspace validate has --format text or json and uses full node count from store. Watch no longer accepts --ignore; daemon loads ignore from .gitignore and ignore_list. Integration tests in tests/integration/workspace_commands.rs.
 
 ---
 
