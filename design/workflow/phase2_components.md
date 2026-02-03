@@ -488,24 +488,20 @@ Integration layer providing CLI tools, editor hooks, CI integration, and adapter
 
 #### CLI Commands
 ```bash
-# Context operations
-merkle get-node <node_id> [--view <policy>]
-merkle put-frame <node_id> <frame_file> [--agent <agent_id>]
+# Context operations (path or node ID)
+merkle context get --path <path>   # or --node <node_id>
+merkle context generate --path <path> [--agent <agent_id>]
 merkle synthesize <node_id> [--type <frame_type>] [--agent <agent_id>]
 
 # Regeneration
 merkle regenerate <node_id> [--recursive]
-merkle invalidate <node_id>
-
-# Query operations
-merkle list-frames <node_id> [--type <frame_type>]
-merkle get-head <node_id> [--type <frame_type>]
 
 # Workspace operations
 merkle scan [--force]  # Rebuild tree from filesystem
 merkle status          # Show workspace root hash, stats
 merkle validate        # Verify integrity of all data structures
 ```
+Low-level node-ID commands get-node, get-text, put-frame, list-frames, and get-head were removed; use merkle context get or merkle context generate for path-based flows. Programmatic access uses ContextApi get_node, put_frame, get_head, get_all_heads.
 
 #### Editor Integration
 - **File Watchers**: Monitor filesystem changes, trigger regeneration

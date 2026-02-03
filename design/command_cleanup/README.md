@@ -19,7 +19,7 @@ This directory contains specifications for workspace-oriented commands and the c
 | **ignore** | merkle workspace ignore [path] | With no path: pretty-list the ignore list. With path: add path so future scans skip it. Does not delete nodes. See [ignore_list_spec.md](ignore_list_spec.md). |
 | **delete** | merkle workspace delete | Remove a node and its descendants (the branch) by path or `--node <id>`. See [node_deletion_spec.md](node_deletion_spec.md). |
 
-For commands to remove or keep (get-node, get-text, put-frame, list-frames, get-head, validate-providers), see [command_list.md](command_list.md).
+For commands to remove or keep (get-node, get-text, put-frame, list-frames, get-head, validate-providers), see [command_list.md](command_list.md). As of Phase 6, the deprecated commands listed there have been removed from the CLI.
 
 ---
 

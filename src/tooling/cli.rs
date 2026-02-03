@@ -7,7 +7,7 @@ use crate::api::{ContextApi, ContextView};
 use crate::config::ConfigLoader;
 use crate::error::ApiError;
 use crate::ignore;
-use crate::frame::{Basis, Frame, FrameGenerationQueue, GenerationConfig};
+use crate::frame::{FrameGenerationQueue, GenerationConfig};
 use crate::heads::HeadIndex;
 use crate::regeneration::BasisIndex;
 use crate::store::{NodeRecord, NodeRecordStore};
@@ -64,56 +64,6 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Get node context
-    GetNode {
-        /// Node ID (hex string)
-        node_id: String,
-        /// Maximum frames to return
-        #[arg(long, default_value = "10")]
-        max_frames: usize,
-        /// Filter by frame type
-        #[arg(long)]
-        frame_type: Option<String>,
-        /// Filter by agent ID
-        #[arg(long)]
-        agent_id: Option<String>,
-        /// Show text content of frames
-        #[arg(long)]
-        show_content: bool,
-        /// Combine all frame content with separator
-        #[arg(long)]
-        combine: bool,
-    },
-    /// Get combined text content from node context
-    GetText {
-        /// Node ID (hex string)
-        node_id: String,
-        /// Separator between frames (default: "\n\n---\n\n")
-        #[arg(long, default_value = "\n\n---\n\n")]
-        separator: String,
-        /// Maximum frames to return
-        #[arg(long, default_value = "10")]
-        max_frames: usize,
-        /// Filter by frame type
-        #[arg(long)]
-        frame_type: Option<String>,
-        /// Filter by agent ID
-        #[arg(long)]
-        agent_id: Option<String>,
-    },
-    /// Put a frame to a node
-    PutFrame {
-        /// Node ID (hex string)
-        node_id: String,
-        /// Frame content file path
-        frame_file: PathBuf,
-        /// Frame type
-        #[arg(long)]
-        frame_type: String,
-        /// Agent ID
-        #[arg(long)]
-        agent_id: String,
-    },
     /// Synthesize branch context
     Synthesize {
         /// Node ID (hex string)
@@ -135,22 +85,6 @@ pub enum Commands {
         /// Agent ID
         #[arg(long)]
         agent_id: String,
-    },
-    /// List frames for a node
-    ListFrames {
-        /// Node ID (hex string)
-        node_id: String,
-        /// Filter by frame type
-        #[arg(long)]
-        frame_type: Option<String>,
-    },
-    /// Get head frame for a node
-    GetHead {
-        /// Node ID (hex string)
-        node_id: String,
-        /// Frame type
-        #[arg(long)]
-        frame_type: Option<String>,
     },
     /// Scan filesystem and rebuild tree
     Scan {
@@ -1065,91 +999,6 @@ impl CliContext {
     /// Execute a CLI command
     pub fn execute(&self, command: &Commands) -> Result<String, ApiError> {
         match command {
-            Commands::GetNode { node_id, max_frames, frame_type, agent_id, show_content, combine } => {
-                let node_id = parse_node_id(node_id)?;
-                
-                // Use builder pattern for view construction
-                let mut builder = ContextView::builder().max_frames(*max_frames).recent();
-                if let Some(ft) = frame_type {
-                    builder = builder.by_type(ft);
-                }
-                if let Some(aid) = agent_id {
-                    builder = builder.by_agent(aid);
-                }
-                let view = builder.build();
-                
-                let context = self.api.get_node(node_id, view)?;
-                
-                let mut output = format!(
-                    "Node: {}\nFrames: {}/{}\nPath: {}",
-                    hex::encode(context.node_id),
-                    context.frames.len(),
-                    context.frame_count,
-                    context.node_record.path.display()
-                );
-                
-                if *show_content || *combine {
-                    if *combine {
-                        // Use combined_text convenience method
-                        let combined = context.combined_text("\n\n---\n\n");
-                        output.push_str(&format!("\n\nCombined Content:\n{}", combined));
-                    } else {
-                        // Show individual frame contents
-                        output.push_str("\n\nFrame Contents:");
-                        for (i, frame) in context.frames.iter().enumerate() {
-                            output.push_str(&format!("\n\nFrame {} (type: {}, agent: {}):", 
-                                i + 1,
-                                frame.frame_type,
-                                frame.agent_id().unwrap_or("unknown")
-                            ));
-                            if let Ok(text) = frame.text_content() {
-                                output.push_str(&format!("\n{}", text));
-                            } else {
-                                output.push_str("\n[Binary content - not UTF-8]");
-                            }
-                        }
-                    }
-                } else {
-                    // Show frame summary
-                    output.push_str("\n\nFrames:");
-                    for (i, frame) in context.frames.iter().enumerate() {
-                        output.push_str(&format!("\n  {}: {} (agent: {})", 
-                            i + 1,
-                            frame.frame_type,
-                            frame.agent_id().unwrap_or("unknown")
-                        ));
-                    }
-                }
-                
-                Ok(output)
-            }
-            Commands::GetText { node_id, separator, max_frames, frame_type, agent_id } => {
-                let node_id = parse_node_id(node_id)?;
-                
-                // Use builder pattern for view construction
-                let mut builder = ContextView::builder().max_frames(*max_frames).recent();
-                if let Some(ft) = frame_type {
-                    builder = builder.by_type(ft);
-                }
-                if let Some(aid) = agent_id {
-                    builder = builder.by_agent(aid);
-                }
-                let view = builder.build();
-                
-                // Use convenience method for combined text
-                let combined = self.api.combined_context_text(node_id, separator, view)?;
-                Ok(combined)
-            }
-            Commands::PutFrame { node_id, frame_file, frame_type, agent_id } => {
-                let node_id = parse_node_id(node_id)?;
-                let content = std::fs::read(frame_file).map_err(|e| {
-                    ApiError::StorageError(crate::error::StorageError::IoError(e))
-                })?;
-                let basis = Basis::Node(node_id);
-                let frame = Frame::new(basis, content, frame_type.clone(), agent_id.clone(), HashMap::new())?;
-                let frame_id = self.api.put_frame(node_id, frame, agent_id.clone())?;
-                Ok(format!("Frame created: {}", hex::encode(frame_id)))
-            }
             Commands::Synthesize { node_id, frame_type, agent_id } => {
                 let node_id = parse_node_id(node_id)?;
                 let frame_id = self.api.synthesize_branch(node_id, frame_type.clone(), agent_id.clone(), None)?;
@@ -1163,39 +1012,6 @@ impl CliContext {
                     report.regenerated_count,
                     report.duration_ms
                 ))
-            }
-            Commands::ListFrames { node_id, frame_type } => {
-                let node_id = parse_node_id(node_id)?;
-                let frame_ids = if let Some(ft) = frame_type {
-                    self.api.get_head(&node_id, ft)?
-                        .into_iter()
-                        .collect()
-                } else {
-                    self.api.get_all_heads(&node_id)
-                };
-
-                if frame_ids.is_empty() {
-                    Ok("No frames found".to_string())
-                } else {
-                    Ok(format!("Found {} frame(s)", frame_ids.len()))
-                }
-            }
-            Commands::GetHead { node_id, frame_type } => {
-                let node_id = parse_node_id(node_id)?;
-                if let Some(ft) = frame_type {
-                    if let Some(frame_id) = self.api.get_head(&node_id, ft)? {
-                        Ok(format!("Head frame: {}", hex::encode(frame_id)))
-                    } else {
-                        Ok("No head frame found".to_string())
-                    }
-                } else {
-                    let all_heads = self.api.get_all_heads(&node_id);
-                    if all_heads.is_empty() {
-                        Ok("No head frames found".to_string())
-                    } else {
-                        Ok(format!("Found {} head frame(s)", all_heads.len()))
-                    }
-                }
             }
             Commands::Scan { force } => {
                 // Load ignore patterns (built-in + .gitignore + ignore_list)

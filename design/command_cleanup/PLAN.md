@@ -15,7 +15,7 @@ This document outlines the phased implementation plan for the command cleanup re
 | 3 | Unified merkle status | Phase 1, Phase 2 | Done |
 | 4 | Workspace command specs and scan / validate / watch | Phase 1–3 if status touches workspace | Done |
 | 5 | Node delete (tombstone-based) | Node store, head index, ignore_list_spec | Done |
-| 6 | Remove deprecated commands | Phase 2; Phases 1–5 complete | Not started |
+| 6 | Remove deprecated commands | Phase 2; Phases 1–5 complete | Done |
 
 ---
 
@@ -185,23 +185,23 @@ Phase 5 notes: NodeRecord and SledNodeRecordStore in src/store; HeadIndex with H
 | Goal | Remove deprecated CLI commands once all replacements are in place. See command_list.md for the full remove vs keep list. |
 | Dependencies | Phase 2 (so merkle provider validate exists); Phases 1–5 complete |
 | Docs | command_list.md |
-| Completion | Not started |
+| Completion | Done |
 
 | Task | Completion |
 |------|------------|
-| Remove top-level validate-providers; replacement is merkle provider validate (Phase 2). | Not started |
-| Remove low-level, node-ID-based commands: get-node, get-text, put-frame, list-frames, get-head. Path-based flows use merkle context get --path, merkle context generate, etc. | Not started |
-| Remove CLI variants, dispatch branches, and any handlers used only by the removed commands. Update help and docs to drop references. | Not started |
-| Optional: one release prior to removal, emit a deprecation warning when a removed command is invoked so scripts can migrate. | Not started |
+| Remove top-level validate-providers; replacement is merkle provider validate (Phase 2). | Done |
+| Remove low-level, node-ID-based commands: get-node, get-text, put-frame, list-frames, get-head. Path-based flows use merkle context get --path, merkle context generate, etc. | Done |
+| Remove CLI variants, dispatch branches, and any handlers used only by the removed commands. Update help and docs to drop references. | Done |
+| Optional: one release prior to removal, emit a deprecation warning when a removed command is invoked so scripts can migrate. | N/A (no deprecation window) |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| merkle validate-providers and the five low-level commands are no longer available. | Not started |
-| Help and documentation do not reference the removed commands. | Not started |
+| merkle validate-providers and the five low-level commands are no longer available. | Done |
+| Help and documentation do not reference the removed commands. | Done |
 
 | Key change | Completion |
 |------------|------------|
-| CLI: remove command variants and their dispatch; prune help text. No new user-facing behavior; removal only. | Not started |
+| CLI: remove command variants and their dispatch; prune help text. No new user-facing behavior; removal only. | Done |
 
 ---
 

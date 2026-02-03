@@ -26,7 +26,7 @@ The Head Index is currently an in-memory data structure (`HashMap<(NodeID, Strin
 1. Watch daemon creates frames and updates in-memory head index
 2. Watch daemon exits (or user runs separate CLI command)
 3. CLI command starts with empty head index
-4. `get-head` command returns "No head frame found" despite frames existing on disk
+4. Context get or programmatic get_head returns "No head frame found" despite frames existing on disk
 
 ## Goals
 
