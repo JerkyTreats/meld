@@ -327,6 +327,19 @@ pub struct ProviderStatusOutput {
     pub total: usize,
 }
 
+// --- Unified status (merkle status) ---
+
+/// Unified status output combining workspace, agents, and providers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedStatusOutput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agents: Option<AgentStatusOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub providers: Option<ProviderStatusOutput>,
+}
+
 /// Format provider status as human-readable text (comfy-table + section heading).
 pub fn format_provider_status_text(entries: &[ProviderStatusEntry], include_connectivity: bool) -> String {
     let mut out = String::new();
@@ -369,5 +382,30 @@ pub fn format_provider_status_text(entries: &[ProviderStatusEntry], include_conn
     }
     out.push_str(&format!("{}\n\n", table));
     out.push_str(&format!("Total: {} providers.\n", entries.len()));
+    out
+}
+
+/// Format unified status as human-readable text (all sections concatenated).
+pub fn format_unified_status_text(
+    data: &UnifiedStatusOutput,
+    include_breakdown: bool,
+    include_connectivity: bool,
+) -> String {
+    let mut out = String::new();
+
+    if let Some(ref workspace) = data.workspace {
+        out.push_str(&format_workspace_status_text(workspace, include_breakdown));
+        out.push('\n');
+    }
+
+    if let Some(ref agents) = data.agents {
+        out.push_str(&format_agent_status_text(&agents.agents));
+        out.push('\n');
+    }
+
+    if let Some(ref providers) = data.providers {
+        out.push_str(&format_provider_status_text(&providers.providers, include_connectivity));
+    }
+
     out
 }

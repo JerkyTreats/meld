@@ -17,6 +17,7 @@ mod test_utils;
 mod tooling_integration;
 mod tree_determinism;
 mod tree_structure;
+mod unified_status;
 mod workspace_isolation;
 mod xdg_config;
 

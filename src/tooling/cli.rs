@@ -161,8 +161,27 @@ pub enum Commands {
         #[command(subcommand)]
         command: WorkspaceCommands,
     },
-    /// Show workspace status
-    Status,
+    /// Show unified status (workspace, agents, providers)
+    Status {
+        /// Output format (text or json)
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Show only workspace section
+        #[arg(long)]
+        workspace_only: bool,
+        /// Show only agents section
+        #[arg(long)]
+        agents_only: bool,
+        /// Show only providers section
+        #[arg(long)]
+        providers_only: bool,
+        /// Include top-level path breakdown in workspace section
+        #[arg(long)]
+        breakdown: bool,
+        /// Test provider connectivity
+        #[arg(long)]
+        test_connectivity: bool,
+    },
     /// Validate workspace integrity
     Validate,
     /// Start watch mode daemon
@@ -914,45 +933,22 @@ impl CliContext {
                 }
                 WorkspaceCommands::Validate => self.run_workspace_validate(),
             },
-            Commands::Status => {
-                // Compute workspace root hash
-                let builder = TreeBuilder::new(self.workspace_root.clone());
-                let root_hash = builder.compute_root().map_err(|e| {
-                    ApiError::StorageError(e)
-                })?;
-
-                // Count nodes - we'll approximate by checking if root exists and scanning
-                // For a more accurate count, we'd need to iterate the store, but that's expensive
-                // So we'll just indicate if the workspace has been scanned
-                let node_count = if self.api.node_store().get(&root_hash).map_err(ApiError::from)?.is_some() {
-                    "scanned"
-                } else {
-                    "not scanned"
-                };
-
-                // Count frames by counting .frame files
-                let mut frame_count = 0;
-                if self.frame_storage_path.exists() {
-                    frame_count = count_frame_files(&self.frame_storage_path)?;
-                }
-
-                // Count head entries (unique (node, frame_type) pairs)
-                let head_count = {
-                    let head_index = self.api.head_index().read();
-                    head_index.heads.len()
-                };
-
-                // Count basis index entries
-                let basis_count = {
-                    let basis_index = self.api.basis_index().read();
-                    basis_index.len()
-                };
-
-                let root_hex = hex::encode(root_hash);
-                Ok(format!(
-                    "Workspace Status:\n  Root hash: {}\n  Nodes: {}\n  Frames: {}\n  Head entries: {}\n  Basis entries: {}",
-                    root_hex, node_count, frame_count, head_count, basis_count
-                ))
+            Commands::Status {
+                format,
+                workspace_only,
+                agents_only,
+                providers_only,
+                breakdown,
+                test_connectivity,
+            } => {
+                self.handle_unified_status(
+                    format.clone(),
+                    *workspace_only,
+                    *agents_only,
+                    *providers_only,
+                    *breakdown,
+                    *test_connectivity,
+                )
             }
             Commands::Validate => self.run_workspace_validate(),
             Commands::Agent { command } => {
@@ -1656,6 +1652,136 @@ impl CliContext {
             }).map_err(|e| ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string())))?)
         } else {
             Ok(format_provider_status_text(&entries, test_connectivity))
+        }
+    }
+
+    /// Handle unified status command (merkle status)
+    fn handle_unified_status(
+        &self,
+        format: String,
+        workspace_only: bool,
+        agents_only: bool,
+        providers_only: bool,
+        breakdown: bool,
+        test_connectivity: bool,
+    ) -> Result<String, ApiError> {
+        use crate::workspace_status::{
+            AgentStatusEntry, AgentStatusOutput, ProviderStatusEntry, ProviderStatusOutput,
+            UnifiedStatusOutput, build_workspace_status, format_unified_status_text,
+        };
+
+        // Determine which sections to include
+        // If none of the *_only flags are set, include all sections
+        let include_all = !workspace_only && !agents_only && !providers_only;
+        let include_workspace = include_all || workspace_only;
+        let include_agents = include_all || agents_only;
+        let include_providers = include_all || providers_only;
+
+        // Build workspace status if needed
+        let workspace = if include_workspace {
+            let registry = self.api.agent_registry().read();
+            let head_index = self.api.head_index().read();
+            Some(build_workspace_status(
+                self.api.node_store().as_ref() as &dyn NodeRecordStore,
+                &head_index,
+                &registry,
+                self.workspace_root.as_path(),
+                breakdown,
+            )?)
+        } else {
+            None
+        };
+
+        // Build agent status if needed
+        let agents = if include_agents {
+            let registry = self.api.agent_registry().read();
+            let agents_list = registry.list_all();
+            let total = agents_list.len();
+            let mut entries: Vec<AgentStatusEntry> = Vec::new();
+            for agent in agents_list {
+                let result = match registry.validate_agent(&agent.agent_id) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                let role_str = match agent.role {
+                    crate::agent::AgentRole::Writer => "Writer",
+                    crate::agent::AgentRole::Reader => "Reader",
+                    crate::agent::AgentRole::Synthesis => "Synthesis",
+                };
+                let prompt_path_exists = result.checks.iter()
+                    .any(|(desc, passed)| desc == "Prompt file exists" && *passed);
+                entries.push(AgentStatusEntry {
+                    agent_id: agent.agent_id.clone(),
+                    role: role_str.to_string(),
+                    valid: result.is_valid(),
+                    prompt_path_exists,
+                });
+            }
+            let valid_count = entries.iter().filter(|e| e.valid).count();
+            Some(AgentStatusOutput {
+                agents: entries,
+                total,
+                valid_count,
+            })
+        } else {
+            None
+        };
+
+        // Build provider status if needed
+        let providers = if include_providers {
+            let registry = self.api.provider_registry().read();
+            let providers_list = registry.list_all();
+            let total = providers_list.len();
+            let mut entries: Vec<ProviderStatusEntry> = Vec::new();
+            for provider in providers_list {
+                let provider_name = provider.provider_name.as_deref().unwrap_or("unknown").to_string();
+                let type_str = match provider.provider_type {
+                    crate::config::ProviderType::OpenAI => "openai",
+                    crate::config::ProviderType::Anthropic => "anthropic",
+                    crate::config::ProviderType::Ollama => "ollama",
+                    crate::config::ProviderType::LocalCustom => "local",
+                };
+                let connectivity = if test_connectivity {
+                    match registry.create_client(&provider_name) {
+                        Ok(client) => {
+                            let rt = tokio::runtime::Runtime::new()
+                                .map_err(|e| ApiError::ProviderError(format!("Failed to create runtime: {}", e)))?;
+                            match rt.block_on(client.list_models()) {
+                                Ok(_) => Some("ok".to_string()),
+                                Err(_) => Some("fail".to_string()),
+                            }
+                        }
+                        Err(_) => Some("fail".to_string()),
+                    }
+                } else {
+                    None
+                };
+                entries.push(ProviderStatusEntry {
+                    provider_name,
+                    provider_type: type_str.to_string(),
+                    model: provider.model.clone(),
+                    connectivity,
+                });
+            }
+            Some(ProviderStatusOutput {
+                providers: entries,
+                total,
+            })
+        } else {
+            None
+        };
+
+        let unified = UnifiedStatusOutput {
+            workspace,
+            agents,
+            providers,
+        };
+
+        if format == "json" {
+            serde_json::to_string_pretty(&unified)
+                .map_err(|e| ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string())))
+        } else {
+            Ok(format_unified_status_text(&unified, breakdown, test_connectivity))
         }
     }
 

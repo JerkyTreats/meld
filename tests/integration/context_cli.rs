@@ -140,12 +140,18 @@ fn test_context_get_with_node_id() {
         // Scan the workspace
         cli_context.execute(&Commands::Scan { force: true }).unwrap();
         
-        // Get root node ID from status
-        let status_output = cli_context.execute(&Commands::Status).unwrap();
-        let root_hash = status_output
-            .lines()
-            .find(|l| l.contains("Root hash:"))
-            .and_then(|l| l.split_whitespace().nth(2))
+        // Get root node ID from status (use JSON format to get full hash)
+        let status_output = cli_context.execute(&Commands::Status {
+            format: "json".to_string(),
+            workspace_only: true,
+            agents_only: false,
+            providers_only: false,
+            breakdown: false,
+            test_connectivity: false,
+        }).unwrap();
+        let status_json: serde_json::Value = serde_json::from_str(&status_output).unwrap();
+        let root_hash = status_json["workspace"]["tree"]["root_hash"]
+            .as_str()
             .unwrap();
         
         // Get context for the root node
