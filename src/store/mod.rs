@@ -32,6 +32,8 @@ pub struct NodeRecord {
     pub parent: Option<NodeID>,
     pub frame_set_root: Option<Hash>,
     pub metadata: HashMap<String, String>,
+    /// Timestamp when this node was tombstoned (Unix seconds), or None if active.
+    pub tombstoned_at: Option<u64>,
 }
 
 /// NodeRecord Store interface
@@ -49,6 +51,27 @@ pub trait NodeRecordStore {
     /// Used for status (total count, path breakdown, top paths). Path mappings
     /// (e.g. path:...) are not returned; only node records keyed by NodeID.
     fn list_all(&self) -> Result<Vec<NodeRecord>, StorageError>;
+
+    /// List node records that are not tombstoned (active only).
+    fn list_active(&self) -> Result<Vec<NodeRecord>, StorageError>;
+
+    /// Get node record by path, including tombstoned nodes.
+    /// Used for restore path resolution. Path key is only removed on purge.
+    fn get_by_path(&self, path: &Path) -> Result<Option<NodeRecord>, StorageError>;
+
+    /// Mark a node as tombstoned. Sets tombstoned_at to current timestamp.
+    /// Does not tombstone descendants; caller is responsible for cascade.
+    fn tombstone(&self, node_id: &NodeID) -> Result<NodeRecord, StorageError>;
+
+    /// Remove tombstone marker from a node (restore).
+    fn restore(&self, node_id: &NodeID) -> Result<NodeRecord, StorageError>;
+
+    /// Permanently remove a tombstoned node record (compaction).
+    /// Only succeeds if node is tombstoned and tombstoned_at is older than cutoff.
+    fn purge(&self, node_id: &NodeID, cutoff: u64) -> Result<(), StorageError>;
+
+    /// List all tombstoned node IDs, optionally filtered by age (older_than timestamp).
+    fn list_tombstoned(&self, older_than: Option<u64>) -> Result<Vec<NodeID>, StorageError>;
 
     /// Flush any buffered writes to disk. Default implementation is a no-op.
     fn flush(&self) -> Result<(), StorageError> {
@@ -78,6 +101,7 @@ impl NodeRecord {
                     parent: tree.find_parent(&node_id),
                     frame_set_root: None,
                     metadata: file.metadata.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    tombstoned_at: None,
                 })
             }
             MerkleNode::Directory(dir) => {
@@ -91,6 +115,7 @@ impl NodeRecord {
                     parent: tree.find_parent(&node_id),
                     frame_set_root: None,
                     metadata: dir.metadata.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    tombstoned_at: None,
                 })
             }
         }

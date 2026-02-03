@@ -357,6 +357,7 @@ mod tests {
             parent,
             frame_set_root: None,
             metadata: HashMap::new(),
+            tombstoned_at: None,
         }
     }
 

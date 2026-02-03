@@ -61,6 +61,7 @@ fn create_test_node_record(node_id: NodeID) -> NodeRecord {
         parent: None,
         frame_set_root: None,
         metadata: HashMap::new(),
+        tombstoned_at: None,
     }
 }
 

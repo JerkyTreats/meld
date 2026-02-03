@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document outlines the phased implementation plan for the command cleanup restructure and status command suite. It covers: display stack and workspace status; agent and provider status; unified merkle status; and detailed workspace command specs (scan, validate, watch, node delete). All specs live in design/command_cleanup/; [design/context/](../context/README.md) is reference only for agent/provider concepts.
+This document outlines the phased implementation plan for the command cleanup restructure and status command suite. It covers: display stack and workspace status; agent and provider status; unified merkle status; and detailed workspace command specs (scan, validate, watch, node delete with tombstone semantics). All specs live in design/command_cleanup/; design/context/ is reference only for agent/provider concepts.
 
 ---
 
@@ -14,7 +14,7 @@ This document outlines the phased implementation plan for the command cleanup re
 | 2 | Agent status and provider status | Phase 1 | Done |
 | 3 | Unified merkle status | Phase 1, Phase 2 | Done |
 | 4 | Workspace command specs and scan / validate / watch | Phase 1–3 if status touches workspace | Done |
-| 5 | Node delete | Node store and head index | Not started |
+| 5 | Node delete (tombstone-based) | Node store, head index, ignore_list_spec | Done |
 | 6 | Remove deprecated commands | Phase 2; Phases 1–5 complete | Not started |
 
 ---
@@ -115,7 +115,7 @@ This document outlines the phased implementation plan for the command cleanup re
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Implement or refine ignore list per ignore_list_spec.md: .gitignore and XDG_DATA_HOME/merkle/workspace_path/ignore_list; scan reads both; merkle workspace ignore path lists or adds path; workspace delete appends path unless --no-ignore. | Done |
+| 1 | Implement or refine ignore list per ignore_list_spec.md: .gitignore and XDG_DATA_HOME/merkle/workspace_path/ignore_list; scan reads both; merkle workspace ignore path lists or adds path; workspace delete (tombstone) appends path unless --no-ignore; workspace restore removes path when present. | Done |
 | 2 | Implement or refine merkle scan per scan_command_spec.md: load ignore list and .gitignore, pass to Walker; args, TreeBuilder, populate store, guards, output. Scan creates/refreshes the workspace tree. | Done |
 | 3 | Implement or refine merkle workspace validate per validate_command_spec.md: store, head index, basis index consistency; errors/warnings; text and JSON. | Done |
 | 4 | Implement or refine merkle watch per watch_command_spec.md: options (debounce, batch), daemon, file watcher, tree update, optional context regeneration; use same ignore sources as scan (no --ignore flag). | Done |
@@ -134,29 +134,47 @@ Phase 4 notes: Ignore module in src/ignore.rs; merkle workspace ignore in Worksp
 
 ---
 
-### Phase 5 — Node delete
+### Phase 5 — Node delete (tombstone-based)
 
 | Field | Value |
 |-------|--------|
-| Goal | Implement node deletion per node_deletion_spec.md and node_deletion_and_append_only.md. |
+| Goal | Implement node deletion using tombstone semantics per node_deletion_spec.md and node_deletion_and_append_only.md. Tombstoning preserves append-only semantics while enabling logical deletion, recovery, and eventual compaction. |
 | Dependencies | Node store and head index implementation |
-| Docs | node_deletion_spec.md, node_deletion_and_append_only.md |
-| Completion | Not started |
+| Docs | node_deletion_spec.md, node_deletion_and_append_only.md, ignore_list_spec.md |
+| Completion | Done |
 
-| Task | Completion |
-|------|------------|
-| Add NodeRecordStore::delete (and path cleanup as specified); HeadIndex::remove_heads_for_node; basis index and frame storage policy (delete blobs by default, --keep-frames option). | Not started |
-| Add CLI merkle workspace delete with path or --node id; cascade semantics; no confirmation prompts. | Not started |
-| Tests for cascade, head/basis index updates, and frame blob policy. | Not started |
+| Order | Task | Completion |
+|-------|------|------------|
+| 1 | Add `tombstoned_at: Option<u64>` field to NodeRecord. Update serialization. Treat missing field as None on load (backward compatible). | Done |
+| 2 | Add NodeRecordStore methods: `tombstone`, `restore`, `purge`, `list_tombstoned`. Update `find_by_path` to skip tombstoned nodes. Add `list_active`. | Done |
+| 3 | Update HeadIndex storage format to include tombstone state per entry. Add `tombstone_heads_for_node`, `restore_heads_for_node`, `purge_tombstoned`, `get_active_head`. Update persistence format with version field. | Done |
+| 4 | Add FrameStorage `purge` method for compaction (removes frame blob by FrameID). | Done |
+| 5 | Add ContextApi methods: `tombstone_node` (cascade tombstone), `restore_node` (cascade restore), `compact` (purge old tombstones and optionally frames). | Done |
+| 6 | Add CLI `merkle workspace delete <path>` and `--node <id>` with tombstone semantics; options --dry-run, --no-ignore; cascade always on. Unless --no-ignore, append path to ignore list per ignore_list_spec.md. | Done |
+| 7 | Add CLI `merkle workspace restore <path>` and `--node <id>` to clear tombstone markers; remove path from ignore list when present per ignore_list_spec.md. | Done |
+| 8 | Add CLI `merkle workspace compact` with --ttl (default 90 days), --all, --keep-frames, --dry-run options. | Done |
+| 9 | Add CLI `merkle workspace list-deleted` with --older-than filter and --format json support. | Done |
+| 10 | Integration tests: delete, restore, compact, list-deleted; cascade behavior; idempotency; ignore list append on delete and remove on restore per ignore_list_spec.md. | Done |
+| 11 | Unit tests: NodeRecordStore tombstone/restore/purge; HeadIndex tombstone methods; FrameStorage purge. | Done |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| Node delete removes node and descendants from node store and head index; frame blob policy and --keep-frames work as specified. | Not started |
-| Spec and append-only doc requirements satisfied. | Not started |
+| `merkle workspace delete` tombstones node and descendants; queries exclude tombstoned entries. | Done |
+| `merkle workspace restore` clears tombstone markers and restores nodes to active state. | Done |
+| `merkle workspace compact` purges old tombstones; --keep-frames preserves frame blobs. | Done |
+| `merkle workspace list-deleted` shows tombstoned nodes with timestamps. | Done |
+| Frame blobs preserved on delete; only purged on explicit compact (unless --keep-frames). | Done |
+| Backward compatible: existing data loads without migration. | Done |
+| Ignore list: delete appends path unless --no-ignore; restore removes path when present per ignore_list_spec.md. | Done |
 
 | Key change | Completion |
 |------------|------------|
-| Store and index APIs for deletion; new command and guards. | Not started |
+| NodeRecord gains tombstoned_at field; HeadIndex entries gain tombstone state. | Done |
+| Store and index APIs for tombstone/restore/purge; new CLI commands. | Done |
+| Append-only semantics preserved; data recoverable until explicit compaction. | Done |
+| ignore_list_spec.md: delete updates list, restore removes from list. | Done |
+
+Phase 5 notes: NodeRecord and SledNodeRecordStore in src/store; HeadIndex with HeadEntry and versioned persistence in src/heads.rs; FrameStorage::purge in src/frame/storage.rs; ContextApi tombstone_node/restore_node/compact and result types in src/api.rs; ignore::remove_from_ignore_list in src/ignore.rs; workspace_status uses list_active; CLI delete/restore/compact/list-deleted in src/tooling/cli.rs. Unit tests in store, heads, frame/storage; integration tests in tests/integration/node_deletion.rs.
 
 ---
 
@@ -195,7 +213,7 @@ Phase 4 notes: Ignore module in src/ignore.rs; merkle workspace ignore in Worksp
 | 2 | Phase 2: Agent status and provider status | Dedicated status subcommands. |
 | 3 | Phase 3: Unified merkle status | Single entry point and section filters. |
 | 4 | Phase 4: Scan, validate, watch specs | Workspace command behavior and tests. |
-| 5 | Phase 5: Node delete | Deletion API and CLI. |
+| 5 | Phase 5: Node delete (tombstone-based) | Tombstone/restore/compact APIs and CLI. |
 | 6 | Phase 6: Remove deprecated commands | Drop validate-providers and low-level get-node, get-text, put-frame, list-frames, get-head. |
 
 ---
@@ -210,6 +228,6 @@ Phase 4 notes: Ignore module in src/ignore.rs; merkle workspace ignore in Worksp
 - [status_command_spec.md](status_command_spec.md) — Unified status.
 - [agent_status_spec.md](agent_status_spec.md), [provider_status_spec.md](provider_status_spec.md) — Agent and provider status.
 - [provider_validate_spec.md](provider_validate_spec.md) — merkle provider validate; replaces top-level validate-providers.
-- [ignore_list_spec.md](ignore_list_spec.md) — Ignore list and .gitignore; XDG location; scan, workspace ignore, and workspace delete behavior.
+- [ignore_list_spec.md](ignore_list_spec.md) — Ignore list and .gitignore; XDG location; scan, workspace ignore, workspace delete (tombstone), and workspace restore behavior.
 - [scan_command_spec.md](scan_command_spec.md), [validate_command_spec.md](validate_command_spec.md), [watch_command_spec.md](watch_command_spec.md) — Workspace commands (merkle scan, merkle workspace validate, merkle watch).
-- [node_deletion_spec.md](node_deletion_spec.md), [node_deletion_and_append_only.md](node_deletion_and_append_only.md) — merkle workspace delete and append-only policy.
+- [node_deletion_spec.md](node_deletion_spec.md), [node_deletion_and_append_only.md](node_deletion_and_append_only.md) — Tombstone-based deletion: merkle workspace delete/restore/compact and append-only policy.

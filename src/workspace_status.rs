@@ -84,7 +84,7 @@ pub fn build_workspace_status(
         });
     }
 
-    let records = node_store.list_all().map_err(ApiError::from)?;
+    let records = node_store.list_active().map_err(ApiError::from)?;
     let total_nodes = records.len() as u64;
     let root_hash_hex = hex::encode(root_hash);
 

@@ -68,6 +68,7 @@ fn test_workspace_isolation_data_isolation() {
         parent: None,
         frame_set_root: None,
         metadata: std::collections::HashMap::new(),
+        tombstoned_at: None,
     };
 
     // Store node in workspace 1

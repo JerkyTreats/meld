@@ -1,48 +1,92 @@
-# Node Deletion Specification
+# Node Deletion Specification (Tombstone-Based)
 
 ## Overview
 
-This spec defines **node deletion**: removing a node and all its descendants from the node store (and related indices) so they are no longer part of the "current tree." Deletion is **cascade-by-default**: deleting a node removes that node and every descendant. **Frame blobs** for deleted nodes are **deleted by default** to avoid orphan bloat; an option preserves them for history.
+This spec defines **node deletion** using **tombstone semantics**: marking a node and all its descendants as logically deleted without destroying the underlying data. Tombstoned records remain in storage for audit, recovery, and basis chain integrity. **Compaction** is a separate operation that purges tombstoned records after a configurable TTL.
 
-**Rationale:** Users need to drop subtrees from the index (e.g. after adding `node_modules` to ignore, or to prune stale nodes without a full rescan). When the underlying file is removed and the node is removed, keeping frames can be **disruptive**: for large or long-lived trees with many iterations, orphan frame bloat is unnecessary. Allowing frame blob deletion on node delete keeps storage bounded. See [node_deletion_and_append_only.md](node_deletion_and_append_only.md) for append-only policy.
+**Rationale:** Users need to drop subtrees from the active index (e.g. after adding `node_modules` to ignore, or to prune stale nodes without a full rescan). Tombstoning provides this capability while preserving:
+
+- **Audit trail**: What context existed before deletion
+- **Basis chain integrity**: Frames referencing tombstoned nodes remain valid
+- **Recovery capability**: Accidental deletions can be reversed
+- **Append-only semantics**: No data is destroyed until explicit compaction
+
+See node_deletion_and_append_only.md for the conceptual foundation.
 
 ---
 
 ## Goals
 
-1. **Explicit delete**: Remove a node and all descendants from the node store and head index by path or node ID.
-2. **Cascade**: One delete operation removes the entire subtree; no orphan children.
-3. **Consistency**: Head index and (optionally) basis index no longer reference deleted node IDs.
-4. **Frame blobs**: **Delete by default** the frame blobs that were heads for the deleted nodes (and optionally all frames whose basis is a deleted node). Option **keep-frames** preserves blobs for history.
+1. **Logical delete**: Mark a node and all descendants as tombstoned without destroying data.
+2. **Cascade**: One delete operation tombstones the entire subtree; no orphan children in the active index.
+3. **Consistency**: Active queries for nodes, heads, and frames exclude tombstoned entries.
+4. **Recovery**: Tombstoned nodes can be restored via explicit command.
+5. **Compaction**: Explicit command to purge tombstoned records older than TTL.
 
 ---
 
 ## Scope
 
-### What is deleted (removed from indices and storage)
+### What is tombstoned (marked as logically deleted)
 
 | Component | Action |
 |-----------|--------|
-| **Node store** | Remove node record (key = `node_id`) and path→node_id mapping (key = `path:<path>`) for the node and every descendant. |
-| **Head index** | Remove every entry `(node_id, frame_type)` for the node and every descendant. |
-| **Basis index** | Remove entries for frame IDs that were heads for deleted nodes (and optionally for any frame whose basis is a deleted node). |
-| **Frame storage** | **Default:** Delete the frame blobs that are heads for the deleted node IDs (one blob per (node_id, frame_type) in head index before removal). **Optional:** Also delete any other frames whose basis is a deleted node (e.g. historical frames for that node). With `--keep-frames`, do **not** delete frame blobs; only indices are updated (legacy append-only behavior). |
+| **Node store** | Set `tombstoned_at` timestamp on node record for the node and every descendant. Path-to-node_id mapping remains but queries for active nodes skip tombstoned entries. |
+| **Head index** | Set `tombstoned_at` timestamp on every entry for the node and every descendant. Active head lookups skip tombstoned entries. |
+| **Frame storage** | No change on tombstone. Frame blobs remain in storage. Compaction may remove them after TTL. |
 
-### What is not deleted (when using default frame deletion)
+### What is NOT changed on tombstone
 
 | Component | Action |
 |-----------|--------|
-| **Frames for other nodes** | Only frames that reference a deleted node (as head or basis) are candidates for deletion; all other frame blobs remain. |
-| **Node content** | No mutation of node content or NodeID semantics; we only remove index entries and the chosen frame blobs. |
+| **Frame blobs** | Preserved. Frames are not deleted or modified when their node is tombstoned. |
+| **Basis references** | Preserved. Other frames can still reference tombstoned frames as basis. |
+| **Node content** | No mutation of node content or NodeID semantics. |
+
+---
+
+## Tombstone Record Structure
+
+### NodeRecord extension
+
+Add to `NodeRecord`:
+
+```text
+pub struct NodeRecord {
+    // ... existing fields ...
+    
+    /// Timestamp when this node was tombstoned, or None if active.
+    pub tombstoned_at: Option<u64>,  // Unix timestamp in seconds
+}
+```
+
+### HeadIndex extension
+
+Modify head index entry storage to include tombstone state:
+
+```text
+/// Head entry with optional tombstone marker
+struct HeadEntry {
+    frame_id: FrameID,
+    tombstoned_at: Option<u64>,  // Unix timestamp in seconds, or None if active
+}
+```
+
+### Tombstone metadata
+
+For audit purposes, tombstone operations should record:
+
+- `tombstoned_at`: Unix timestamp when tombstoned
+- `tombstoned_by`: Optional identifier (e.g. "user", "scan-prune", "cli")
 
 ---
 
 ## Cascade Semantics
 
 - **Target**: One node, identified by path (positional) or `--node <node_id_hex>`. Path may be to a file or directory.
-- **Scope**: That node plus **all descendants** — the entire branch. For a file, the branch is just that node. For a directory, the branch is the directory and every node in its subtree (children, grandchildren, down to leaves).
-- **Order**: Walk to bottom-leaf: collect all descendant node IDs (e.g. depth-first from children), then delete every node in the branch including the specified one. Delete descendants first (e.g. depth-first post-order) so we never leave a child in the store whose parent was already removed; or collect the full set of node IDs and delete in any order (path and head index are keyed by node_id).
-- **Root**: Deleting the workspace root node is equivalent to "clear the tree"; allowed.
+- **Scope**: That node plus **all descendants** — the entire branch. For a file, the branch is just that node. For a directory, the branch is the directory and every node in its subtree.
+- **Order**: Collect all descendant node IDs via BFS/DFS, then tombstone every node in the set. Order does not matter since we are marking, not removing.
+- **Root**: Tombstoning the workspace root node is equivalent to "tombstone entire tree"; allowed.
 
 ---
 
@@ -53,92 +97,152 @@ This spec defines **node deletion**: removing a node and all its descendants fro
 Add to the trait and implementations:
 
 ```text
-/// Remove a node record and its path→node_id mapping.
-/// Does not remove descendants; caller is responsible for cascade.
-fn delete(&self, node_id: &NodeID) -> Result<(), StorageError>;
+/// Mark a node as tombstoned. Sets tombstoned_at to current timestamp.
+/// Does not tombstone descendants; caller is responsible for cascade.
+/// Returns the updated record, or error if node not found.
+fn tombstone(&self, node_id: &NodeID) -> Result<NodeRecord, StorageError>;
+
+/// Remove tombstone marker from a node (restore).
+/// Returns the updated record, or error if node not found or not tombstoned.
+fn restore(&self, node_id: &NodeID) -> Result<NodeRecord, StorageError>;
+
+/// Permanently remove a tombstoned node record (compaction).
+/// Only succeeds if node is tombstoned and tombstoned_at is older than cutoff.
+/// Returns error if node is not tombstoned or is too recent.
+fn purge(&self, node_id: &NodeID, cutoff: u64) -> Result<(), StorageError>;
+
+/// List all tombstoned node IDs, optionally filtered by age.
+fn list_tombstoned(&self, older_than: Option<u64>) -> Result<Vec<NodeID>, StorageError>;
 ```
 
-**SledNodeRecordStore:**  
-- `db.remove(node_id.as_slice())` for the node record.  
-- Look up `record.path` (need to get the record first, or store path in a way we can recover). So: `get(node_id)` → if `Some(record)`, delete `record.node_id` key and `path:{}` key for `record.path`.  
-- If we don't have the record (e.g. already deleted), we cannot remove the path key by node_id alone. So either: (a) require that callers pass path when deleting, or (b) maintain a reverse map node_id→path, or (c) accept that path keys for deleted nodes may remain until overwritten. Spec option (a): **delete(node_id)** — implement by get(node_id), then remove node_id key and path key; if get returns None, delete is a no-op for that node (path key may still exist; optional cleanup).
+**SledNodeRecordStore implementation:**
 
-**Path key:** Use the same format as put: `path:{}` with path as string. So we must have the record to know the path; delete(node_id) = get(node_id), then remove both keys.
+- `tombstone(node_id)`: Get record, set `tombstoned_at = now()`, put record back.
+- `restore(node_id)`: Get record, clear `tombstoned_at`, put record back.
+- `purge(node_id, cutoff)`: Get record, verify tombstoned and old enough, remove key and path key.
+- `list_tombstoned(older_than)`: Iterate all records, filter by tombstoned_at.
+
+**Query behavior changes:**
+
+- `get(node_id)`: Returns record regardless of tombstone state. Caller decides whether to filter.
+- `find_by_path(path)`: Returns record only if NOT tombstoned (active lookup).
+- `list_all()`: Returns all records. Add `list_active()` that excludes tombstoned.
 
 ### 2. HeadIndex
 
 Add:
 
 ```text
-/// Remove all head entries for a node (all frame types).
-pub fn remove_heads_for_node(&mut self, node_id: &NodeID) {
-    self.heads.retain(|(nid, _), _| *nid != *node_id);
-}
+/// Tombstone all head entries for a node (all frame types).
+/// Sets tombstoned_at on each entry.
+pub fn tombstone_heads_for_node(&mut self, node_id: &NodeID);
+
+/// Restore all head entries for a node (remove tombstone marker).
+pub fn restore_heads_for_node(&mut self, node_id: &NodeID);
+
+/// Purge tombstoned head entries older than cutoff.
+pub fn purge_tombstoned(&mut self, cutoff: u64);
+
+/// Get head for node, excluding tombstoned entries.
+/// Existing get_head should skip tombstoned entries by default.
+pub fn get_active_head(&self, node_id: &NodeID, frame_type: &str) -> Option<FrameID>;
 ```
 
-(Or iterate and remove; same effect.) No return value needed; persist after batch of deletions.
+**Storage format change:**
 
-### 3. BasisIndex
+Current: `HashMap<(NodeID, String), FrameID>`
 
-Optional for v1:
+New: `HashMap<(NodeID, String), HeadEntry>` where `HeadEntry { frame_id, tombstoned_at }`
 
-```text
-/// Remove all entries for frames that are heads for the given node.
-/// Requires head index to know which frame IDs to remove.
-pub fn remove_frames_for_node(&mut self, node_id: &NodeID, head_index: &HeadIndex) { ... }
-```
+### 3. FrameStorage
 
-Or: for each (node_id, frame_type) in head_index, get frame_id, then basis_index.remove_frame(&frame_id). Defer if not needed for correctness.
+No changes for tombstone operation. Frames remain in storage.
 
-### 4. FrameStorage
-
-Add (or use existing) capability to delete a frame blob by FrameID:
+Add for compaction:
 
 ```text
-/// Remove a frame blob from storage.
+/// Remove a frame blob from storage (compaction only).
 /// Idempotent: no error if frame_id is not present.
-fn delete(&self, frame_id: &FrameID) -> Result<(), StorageError>;
+fn purge(&self, frame_id: &FrameID) -> Result<(), StorageError>;
 ```
 
-(If frame storage is content-addressed and shared, ensure we only delete when no other reference exists; for head-only frames of deleted nodes, safe to delete.)
-
-### 5. ContextApi (or equivalent)
+### 4. ContextApi (or equivalent)
 
 Add:
 
 ```text
-/// Delete a node and all descendants from the node store, head index, and (by default) frame storage.
-/// With delete_frames == false, only indices are updated; frame blobs are preserved (append-only).
-pub fn delete_node(
+/// Tombstone a node and all descendants.
+/// Marks records in node store and head index with tombstoned_at timestamp.
+/// Frame blobs are not affected.
+pub fn tombstone_node(
     &self,
     node_id: NodeID,
-    cascade: bool,       // true = delete subtree; false = delete only this node (not recommended for directories)
-    delete_frames: bool, // true = delete frame blobs for deleted nodes (default); false = keep blobs
-) -> Result<DeleteNodeResult, ApiError>;
+) -> Result<TombstoneResult, ApiError>;
+
+/// Restore a tombstoned node and all descendants.
+/// Clears tombstoned_at on records in node store and head index.
+pub fn restore_node(
+    &self,
+    node_id: NodeID,
+) -> Result<RestoreResult, ApiError>;
+
+/// Compact tombstoned records older than TTL.
+/// Purges node records, head index entries, and optionally frame blobs.
+pub fn compact(
+    &self,
+    ttl_seconds: u64,
+    purge_frames: bool,
+) -> Result<CompactResult, ApiError>;
 ```
 
-**DeleteNodeResult:** e.g. `{ nodes_removed: u64, head_entries_removed: u64, frames_deleted: u64 }`.
+**TombstoneResult:** `{ nodes_tombstoned: u64, head_entries_tombstoned: u64 }`
 
-**Algorithm (cascade = true):**
+**RestoreResult:** `{ nodes_restored: u64, head_entries_restored: u64 }`
 
-1. Get node record; if missing, return error (e.g. NodeNotFound).
-2. Collect all descendant node IDs: BFS/DFS from `record.children`, traversing via node_store.get and record.children. Build set `to_remove = { node_id } ∪ descendants`.
-3. For each node_id in to_remove:
-   - **Before** removing from head index: if `delete_frames`, collect all head frame IDs for this node_id from head index.
-   - Head index: remove all heads for this node_id.
-   - Basis index: remove entries for those frame IDs.
-   - If `delete_frames`: for each collected frame_id, call frame_storage.delete(frame_id).
-   - Node store: delete(node_id) (removes record + path key).
-4. Persist head index and basis index.
-5. Return counts (including frames_deleted).
+**CompactResult:** `{ nodes_purged: u64, head_entries_purged: u64, frames_purged: u64 }`
 
-**Concurrency:** Use existing node lock for the target node so two deletes don’t run for overlapping subtrees; or document that delete is not safe to run concurrently with scan/other structural changes.
+**Tombstone algorithm:**
+
+1. Get node record; if missing, return error (NodeNotFound).
+2. If already tombstoned, return success with zero counts (idempotent).
+3. Collect all descendant node IDs via BFS/DFS from `record.children`.
+4. Build set `to_tombstone = { node_id } ∪ descendants`.
+5. For each node_id in to_tombstone:
+   - Node store: `tombstone(node_id)`
+   - Head index: `tombstone_heads_for_node(node_id)`
+6. Persist head index.
+7. Return counts.
+
+**Restore algorithm:**
+
+1. Get node record; if missing, return error.
+2. If not tombstoned, return success with zero counts (idempotent).
+3. Collect all descendant node IDs (same as tombstone).
+4. For each node_id in set:
+   - Node store: `restore(node_id)`
+   - Head index: `restore_heads_for_node(node_id)`
+5. Persist head index.
+6. Return counts.
+
+**Compact algorithm:**
+
+1. Calculate cutoff timestamp: `now() - ttl_seconds`.
+2. Get list of tombstoned nodes older than cutoff.
+3. For each node_id:
+   - Collect head frame IDs if purge_frames is true.
+   - Head index: purge tombstoned entries for this node.
+   - If purge_frames: purge frame blobs for collected frame IDs.
+   - Node store: purge(node_id, cutoff).
+4. Persist head index.
+5. Return counts.
+
+**Concurrency:** Document that tombstone/restore/compact are not safe to run concurrently with scan or other structural changes. Use single-writer lock if needed.
 
 ---
 
 ## CLI
 
-### Command
+### Delete Command
 
 Placement under **workspace** (tree lifecycle):
 
@@ -147,9 +251,9 @@ merkle workspace delete <path>
 merkle workspace delete --node <node_id_hex>
 ```
 
-**Primary form:** `merkle workspace delete <path>` — path is a **positional argument**: workspace-relative or absolute path to a **file or directory**. The command resolves the path to the corresponding node, walks the branch to the bottom (all descendants, leaf-first), and deletes every node in that branch including the one specified. For a file, the branch is just that node; for a directory, the branch is the directory and its entire subtree.
+**Primary form:** `merkle workspace delete <path>` — path is a **positional argument**: workspace-relative or absolute path to a **file or directory**. The command resolves the path to the corresponding node, and tombstones that node and all descendants.
 
-**Alternate form:** `merkle workspace delete --node <node_id_hex>` — when the node is identified by NodeID (hex) instead of path. Same cascade: delete that node and all descendants.
+**Alternate form:** `merkle workspace delete --node <node_id_hex>` — when the node is identified by NodeID (hex) instead of path. Same cascade.
 
 **Options:**
 
@@ -157,22 +261,82 @@ merkle workspace delete --node <node_id_hex>
 |--------|-------------|
 | `<path>` | Positional: workspace-relative or absolute path to a file or directory. Mutually exclusive with `--node`. |
 | `--node <id>` | Node ID (hex). Mutually exclusive with path. |
-| `--delete-frames` | Default: true. Delete frame blobs for the removed nodes (avoids orphan bloat). |
-| `--keep-frames` | Do not delete frame blobs; only remove node store and head/basis index entries (append-only preservation; may leave orphan frames). Mutually exclusive with `--delete-frames`. |
-| `--dry-run` | Report how many nodes, head entries, and frames would be removed, without performing deletion. |
-| `--no-ignore` | Do not add the deleted path to the workspace ignore list. By default, the path is appended to the ignore list so the next scan skips it. See [ignore_list_spec.md](ignore_list_spec.md). |
+| `--dry-run` | Report how many nodes and head entries would be tombstoned, without performing the operation. |
+| `--no-ignore` | Do not add the deleted path to the workspace ignore list. By default, the path is appended to the ignore list so the next scan skips it. See ignore_list_spec.md. |
 
-Cascade is always on: the target node and all descendants are removed. There is no option to delete only the single node and leave descendants (that would leave orphan children).
+Cascade is always on: the target node and all descendants are tombstoned.
 
 **Behavior:**
 
-1. Resolve path → node_id via node_store.find_by_path (or, if `--node` given, parse node_id hex). Path must refer to a file or directory that exists in the current tree.
+1. Resolve path to node_id via node_store.find_by_path (or parse `--node` hex).
 2. If node not found, error: "Node not found" / "Path not in tree."
-3. Walk the branch: collect the target node and all descendants (bottom-leaf order or any order; implementation collects the set then deletes). This is the full branch: the specified node plus every node in its subtree.
-4. If --dry-run: compute subtree size and (if delete_frames) frame count, output "Would remove N nodes, M head entries, F frames," exit.
-5. Call api.delete_node(node_id, cascade: true, !keep_frames). Implementation deletes all nodes in the branch (target + descendants).
-6. **Unless `--no-ignore`:** Append the deleted path to the workspace ignore list. Path is normalized to workspace-relative form; file is `$XDG_DATA_HOME/merkle/<workspace_path>/ignore_list`. Create parent dir and file if needed. See [ignore_list_spec.md](ignore_list_spec.md).
-7. Output: "Removed N nodes, M head entries[, F frames]." Optionally: "Added \<path\> to ignore list."
+3. If node already tombstoned, output "Already deleted" and exit success (idempotent).
+4. If --dry-run: compute subtree size, output "Would delete N nodes, M head entries," exit.
+5. Call api.tombstone_node(node_id).
+6. **Unless `--no-ignore`:** Append the deleted path to the workspace ignore list.
+7. Output: "Deleted N nodes, M head entries." Optionally: "Added <path> to ignore list."
+
+### Restore Command
+
+```text
+merkle workspace restore <path>
+merkle workspace restore --node <node_id_hex>
+```
+
+**Behavior:**
+
+1. Resolve path to node_id. For restore, use a lookup that includes tombstoned nodes.
+2. If node not found, error.
+3. If node not tombstoned, output "Not deleted" and exit success.
+4. If --dry-run: compute subtree size, output "Would restore N nodes, M head entries," exit.
+5. Call api.restore_node(node_id).
+6. **Remove path from ignore list** if present (inverse of delete behavior).
+7. Output: "Restored N nodes, M head entries."
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `<path>` | Positional: workspace-relative or absolute path. Mutually exclusive with `--node`. |
+| `--node <id>` | Node ID (hex). Mutually exclusive with path. |
+| `--dry-run` | Report counts without performing restore. |
+
+### Compact Command
+
+```text
+merkle workspace compact
+merkle workspace compact --ttl <days>
+merkle workspace compact --all
+```
+
+**Behavior:**
+
+1. Calculate cutoff based on --ttl (default: 90 days) or --all (cutoff = now, purge everything).
+2. If --dry-run: count tombstoned records older than cutoff, output counts, exit.
+3. Call api.compact(ttl_seconds, purge_frames=true).
+4. Output: "Compacted N nodes, M head entries, F frames."
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--ttl <days>` | Tombstone age threshold in days. Default: 90. |
+| `--all` | Purge all tombstoned records regardless of age. Mutually exclusive with `--ttl`. |
+| `--keep-frames` | Do not purge frame blobs; only purge node and head index records. |
+| `--dry-run` | Report counts without performing compaction. |
+
+### List Tombstoned Command
+
+```text
+merkle workspace list-deleted
+merkle workspace list-deleted --older-than <days>
+```
+
+**Behavior:**
+
+1. Query tombstoned nodes, optionally filtered by age.
+2. Output table: Path, Node ID (truncated), Tombstoned At, Age.
+3. Support --format json.
 
 ---
 
@@ -181,13 +345,16 @@ Cascade is always on: the target node and all descendants are removed. There is 
 | Case | Behavior |
 |------|----------|
 | **Node not in store** | Return error (NodeNotFound or PathNotInTree). |
-| **Delete root** | Allowed; effectively "clear tree." |
-| **Delete file** | Cascade removes only that node (no children). |
-| **Delete directory** | Cascade removes directory and entire subtree. |
+| **Node already tombstoned** | Idempotent success; return zero counts. |
+| **Restore non-tombstoned node** | Idempotent success; return zero counts. |
+| **Delete root** | Allowed; tombstones entire tree. |
+| **Delete file** | Tombstones only that node (no children). |
+| **Delete directory** | Tombstones directory and entire subtree. |
+| **Compact with no tombstones** | Success; return zero counts. |
+| **Compact tombstone newer than TTL** | Skip that tombstone; not an error. |
 | **Path vs node_id** | Same outcome; path is resolved to node_id once. |
-| **Concurrent scan** | Document: avoid running delete and scan concurrently; or use a single writer lock for "structure" operations. |
-| **Head index persistence** | After batch removal, call head_index.save_to_disk (or equivalent) once. |
-| **Path key missing** | If get(node_id) is None, we cannot remove path key; skip path key removal for that node. |
+| **Concurrent scan** | Document: avoid concurrent structural operations. |
+| **Restore after partial cascade** | Restore uses same cascade logic; restores entire subtree. |
 
 ---
 
@@ -195,45 +362,79 @@ Cascade is always on: the target node and all descendants are removed. There is 
 
 **Unit tests**
 
-- NodeRecordStore delete: single node removed; path key for that node removed.
-- HeadIndex remove_heads_for_node: all head entries for the node removed; no orphan entries.
-- FrameStorage delete: blob removed by FrameID; idempotent when frame_id not present.
-- Path-to-workspace-relative normalization for ignore list append.
-- Ignore list append: create file and parent dir when missing; append one line when file exists.
+- NodeRecordStore tombstone: record marked with timestamp; get still returns it; find_by_path skips it.
+- NodeRecordStore restore: tombstone cleared; find_by_path finds it again.
+- NodeRecordStore purge: record removed; path key removed; fails if not tombstoned or too recent.
+- HeadIndex tombstone_heads_for_node: entries marked; get_active_head skips them.
+- HeadIndex restore_heads_for_node: entries unmarked; get_active_head finds them.
+- HeadIndex purge_tombstoned: old entries removed; recent entries preserved.
+- Path-to-workspace-relative normalization for ignore list append/remove.
 
 **Integration tests (CLI)**
 
-- Delete by path: file (single node removed); directory (cascade: node and all descendants removed); path not in tree / node not found (error, no mutation).
-- Delete by `--node <id>`: same outcomes as path (file, directory, invalid/missing node ID).
-- Root delete: tree cleared; no confirmation.
-- Large subtree: delete proceeds; no confirmation.
-- --dry-run: no store, head index, basis index, or frame storage changes; output "Would remove N nodes..." (or equivalent).
-- --keep-frames: head index and node store updated; frame blobs not deleted; basis index updated as specified.
-- Default (delete frames): head index, node store, basis index, and frame blobs updated; frame count in output.
-- --no-ignore: deleted path not appended to ignore list; next scan can re-add path if tree is rescanned.
-- Default (add to ignore): path appended to ignore_list; next scan excludes that path.
+- Delete by path: file (single node tombstoned); directory (cascade: node and all descendants tombstoned).
+- Delete by `--node <id>`: same outcomes as path.
+- Delete already-deleted node: idempotent success.
+- --dry-run: no store or head index changes; output "Would delete N nodes..."
+- --no-ignore: deleted path not appended to ignore list.
+- Default: path appended to ignore_list.
+- Restore by path: tombstoned node and descendants restored.
+- Restore non-deleted node: idempotent success.
+- Restore removes path from ignore list.
+- Compact with --ttl: only old tombstones purged.
+- Compact with --all: all tombstones purged.
+- Compact --keep-frames: frame blobs preserved.
+- Compact default: frame blobs for purged nodes removed.
+- list-deleted: shows tombstoned nodes with timestamps.
 
 **Consistency / invariants**
 
-- After delete: no head index entries for deleted node IDs; no node store records for deleted node IDs; path keys for deleted nodes removed (or documented if not); no orphan head references.
-- Optional: basis index and frame storage consistency (no references to deleted frame blobs when delete_frames is true).
+- After delete: tombstoned nodes excluded from find_by_path and active listings.
+- After delete: head index active queries skip tombstoned entries.
+- After delete: frame blobs still exist; can be retrieved by FrameID.
+- After restore: nodes and heads are active again; included in queries.
+- After compact: purged nodes truly removed; purged frame blobs removed (unless --keep-frames).
+- Basis chain: frames referencing tombstoned nodes remain valid until compaction.
 
 **Edge cases**
 
-- Delete root; delete only node in tree; path key missing for a node (get returns None); concurrent scan (document or test single-writer behavior).
+- Delete root; delete only node in tree; restore root; compact empty tombstone list.
+- Concurrent operations (document behavior or test single-writer lock).
 
 ---
 
 ## Implementation Checklist
 
-- [ ] **NodeRecordStore**: Add `delete(&self, node_id: &NodeID)`. In Sled: get(node_id), then remove node_id key and `path:{path}` key.
-- [ ] **HeadIndex**: Add `remove_heads_for_node(&mut self, node_id: &NodeID)`; collect head frame IDs before removal when deleting frames.
-- [ ] **FrameStorage**: Add `delete(&self, frame_id: &FrameID)` for blob removal.
-- [ ] **BasisIndex**: Remove entries for deleted frame IDs (required when deleting frame blobs).
-- [ ] **ContextApi**: Add `delete_node(node_id, cascade, delete_frames)` with subtree collection, head/basis removal, and frame blob deletion when delete_frames is true; persist indices after.
-- [ ] **CLI**: Add `merkle workspace delete <path>` (positional path) and `merkle workspace delete --node <id>`; options --delete-frames (default), --keep-frames, --dry-run, --no-ignore; path resolution; cascade always on; unless --no-ignore, append path to workspace ignore list (see ignore_list_spec.md).
+- [ ] **NodeRecord**: Add `tombstoned_at: Option<u64>` field.
+- [ ] **NodeRecordStore**: Add `tombstone`, `restore`, `purge`, `list_tombstoned` methods.
+- [ ] **NodeRecordStore**: Update `find_by_path` to skip tombstoned nodes. Add `list_active`.
+- [ ] **HeadIndex**: Change storage to include tombstone state per entry.
+- [ ] **HeadIndex**: Add `tombstone_heads_for_node`, `restore_heads_for_node`, `purge_tombstoned`, `get_active_head`.
+- [ ] **HeadIndex**: Update persistence format for new entry structure.
+- [ ] **FrameStorage**: Add `purge` method for compaction.
+- [ ] **ContextApi**: Add `tombstone_node`, `restore_node`, `compact` methods.
+- [ ] **CLI**: Add `merkle workspace delete` with tombstone semantics.
+- [ ] **CLI**: Add `merkle workspace restore` command.
+- [ ] **CLI**: Add `merkle workspace compact` command.
+- [ ] **CLI**: Add `merkle workspace list-deleted` command.
+- [ ] **Ignore list**: Delete appends path; restore removes path.
 - [ ] **Tests**: See Tests required section above.
-- [ ] **Docs**: Update design/command_cleanup/command_list if node delete is a top-level or workspace subcommand.
+- [ ] **Docs**: Update command_list.md with new commands.
+
+---
+
+## Migration
+
+Existing node records do not have `tombstoned_at` field. On first load after upgrade:
+
+- Treat missing `tombstoned_at` as `None` (node is active).
+- No migration needed; new field is optional and defaults to active state.
+
+Existing head index entries do not have tombstone state:
+
+- On load, deserialize old format as active (no tombstone).
+- On save, use new format with tombstone field.
+- Include version field in persistence format for future compatibility.
 
 ---
 
@@ -241,9 +442,10 @@ Cascade is always on: the target node and all descendants are removed. There is 
 
 | Item | Design |
 |------|--------|
-| **Scope** | Node store + path map + head index + basis index for the node and all descendants; **frame blobs** for those nodes when delete_frames is true. |
-| **Cascade** | Always on: delete the target node and all descendants (the entire branch). No option to delete only the single node. |
-| **Frames** | **Default:** Delete frame blobs that were heads for deleted nodes. **Option:** --keep-frames preserves blobs (append-only). |
-| **API** | NodeRecordStore.delete(node_id); HeadIndex.remove_heads_for_node(node_id); FrameStorage.delete(frame_id); ContextApi.delete_node(node_id, cascade, delete_frames). |
-| **CLI** | `merkle workspace delete <path>` (positional path to file or directory) or `merkle workspace delete --node <id>`; cascade always on; options --delete-frames (default), --keep-frames, --dry-run, --no-ignore (default: add path to ignore list). See [ignore_list_spec.md](ignore_list_spec.md). |
-| **Order** | Collect subtree IDs; for each node collect head frame IDs (if delete_frames); remove head index and basis index entries; delete frame blobs; delete node store entries; persist indices. |
+| **Scope** | Node store + head index tombstoned for node and all descendants. Frame blobs preserved until compaction. |
+| **Cascade** | Always on: tombstone target node and all descendants. |
+| **Frames** | Preserved on delete. Purged on compact (default) or preserved with --keep-frames. |
+| **Recovery** | `merkle workspace restore` clears tombstone markers. |
+| **Compaction** | `merkle workspace compact` purges old tombstones. Default TTL: 90 days. |
+| **API** | NodeRecordStore.tombstone/restore/purge; HeadIndex.tombstone_heads_for_node/restore/purge; FrameStorage.purge; ContextApi.tombstone_node/restore_node/compact. |
+| **CLI** | `merkle workspace delete <path>` (tombstones); `merkle workspace restore <path>`; `merkle workspace compact`; `merkle workspace list-deleted`. |

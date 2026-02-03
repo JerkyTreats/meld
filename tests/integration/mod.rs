@@ -11,6 +11,7 @@ mod frame_queue;
 mod hasher_verification;
 mod init_command;
 mod model_providers;
+mod node_deletion;
 mod provider_cli;
 mod store_integration;
 mod test_utils;

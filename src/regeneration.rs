@@ -804,6 +804,7 @@ mod tests {
             parent: Some(dir_node_id),
             frame_set_root: None,
             metadata: HashMap::new(),
+            tombstoned_at: None,
         };
 
         let dir_record = NodeRecord {
@@ -814,6 +815,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: HashMap::new(),
+            tombstoned_at: None,
         };
 
         node_store.put(&child_record).unwrap();

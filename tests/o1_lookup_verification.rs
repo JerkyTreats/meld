@@ -39,6 +39,7 @@ fn test_node_record_store_o1_lookup() {
                 parent: None,
                 frame_set_root: None,
                 metadata: HashMap::new(),
+                tombstoned_at: None,
             };
             records.push(record);
         }

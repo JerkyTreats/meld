@@ -173,6 +173,21 @@ impl FrameStorage {
         Ok(frame_path.exists())
     }
 
+    /// Remove a frame blob from storage (compaction only).
+    /// Idempotent: no error if frame_id is not present.
+    pub fn purge(&self, frame_id: &FrameID) -> Result<(), StorageError> {
+        let frame_path = self.frame_path(frame_id);
+        if frame_path.exists() {
+            fs::remove_file(&frame_path).map_err(|e| {
+                StorageError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to purge frame {:?}: {}", frame_path, e),
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
     /// Compute the filesystem path for a given FrameID
     ///
     /// Path structure: `{root}/frames/{hex[0..2]}/{hex[2..4]}/{frame_id}.frame`
@@ -338,5 +353,30 @@ mod tests {
             Err(StorageError::HashMismatch { .. }) => {}
             _ => panic!("Expected HashMismatch error"),
         }
+    }
+
+    #[test]
+    fn test_purge_removes_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = FrameStorage::new(temp_dir.path()).unwrap();
+        let node_id: NodeID = [1u8; 32];
+        let basis = Basis::Node(node_id);
+        let content = b"test".to_vec();
+        let frame_type = "test".to_string();
+        let agent_id = "test-agent".to_string();
+        let metadata = HashMap::new();
+        let frame = Frame::new(basis, content, frame_type, agent_id, metadata).unwrap();
+        storage.store(&frame).unwrap();
+        assert!(storage.exists(&frame.frame_id).unwrap());
+        storage.purge(&frame.frame_id).unwrap();
+        assert!(!storage.exists(&frame.frame_id).unwrap());
+    }
+
+    #[test]
+    fn test_purge_nonexistent_idempotent() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = FrameStorage::new(temp_dir.path()).unwrap();
+        let frame_id: FrameID = [0u8; 32];
+        storage.purge(&frame_id).unwrap();
     }
 }

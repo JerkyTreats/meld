@@ -262,6 +262,55 @@ pub enum WorkspaceCommands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Tombstone a node and its descendants (logical delete; reversible with restore)
+    Delete {
+        /// Path to file or directory to delete
+        path: Option<PathBuf>,
+        /// Node ID (hex) instead of path
+        #[arg(long)]
+        node: Option<String>,
+        /// Report counts without performing the operation
+        #[arg(long)]
+        dry_run: bool,
+        /// Do not add the path to the workspace ignore list
+        #[arg(long)]
+        no_ignore: bool,
+    },
+    /// Restore a tombstoned node and its descendants
+    Restore {
+        /// Path to file or directory to restore
+        path: Option<PathBuf>,
+        /// Node ID (hex) instead of path
+        #[arg(long)]
+        node: Option<String>,
+        /// Report counts without performing the operation
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Purge tombstoned records older than TTL
+    Compact {
+        /// Tombstone age threshold in days (default: 90)
+        #[arg(long)]
+        ttl: Option<u64>,
+        /// Purge all tombstoned records regardless of age
+        #[arg(long)]
+        all: bool,
+        /// Do not purge frame blobs; only purge node and head index records
+        #[arg(long)]
+        keep_frames: bool,
+        /// Report counts without performing compaction
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// List tombstoned (deleted) nodes
+    ListDeleted {
+        /// Show only nodes tombstoned longer than this many days
+        #[arg(long)]
+        older_than: Option<u64>,
+        /// Output format (text or json)
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -829,6 +878,190 @@ impl CliContext {
         }
     }
 
+    fn run_workspace_delete(
+        &self,
+        path: Option<&std::path::Path>,
+        node: Option<&str>,
+        dry_run: bool,
+        no_ignore: bool,
+    ) -> Result<String, ApiError> {
+        let node_id = resolve_workspace_node_id(
+            self.api(),
+            &self.workspace_root,
+            path,
+            node,
+            false, // active only (find_by_path)
+        )?;
+        let store = self.api().node_store();
+        let record = store.get(&node_id).map_err(ApiError::from)?.ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+        if record.tombstoned_at.is_some() {
+            return Ok("Already deleted.".to_string());
+        }
+        if dry_run {
+            let set = self.api().collect_subtree_node_ids(node_id)?;
+            let n = set.len() as u64;
+            let mut total_heads = 0u64;
+            for nid in &set {
+                total_heads += self.api().head_index().read().get_all_heads_for_node(nid).len() as u64;
+            }
+            return Ok(format!("Would delete {} nodes, {} head entries.", n, total_heads));
+        }
+        let result = self.api().tombstone_node(node_id)?;
+        let path_for_ignore = if !no_ignore {
+            let norm = ignore::normalize_workspace_relative(&self.workspace_root, &record.path)?;
+            ignore::append_to_ignore_list(&self.workspace_root, &norm)?;
+            Some(norm)
+        } else {
+            None
+        };
+        let mut msg = format!("Deleted {} nodes, {} head entries.", result.nodes_tombstoned, result.head_entries_tombstoned);
+        if let Some(p) = path_for_ignore {
+            msg.push_str(&format!(" Added {} to ignore list.", p));
+        }
+        Ok(msg)
+    }
+
+    fn run_workspace_restore(
+        &self,
+        path: Option<&std::path::Path>,
+        node: Option<&str>,
+        dry_run: bool,
+    ) -> Result<String, ApiError> {
+        let node_id = resolve_workspace_node_id(
+            self.api(),
+            &self.workspace_root,
+            path,
+            node,
+            true, // include tombstoned (get_by_path)
+        )?;
+        let store = self.api().node_store();
+        let record = store.get(&node_id).map_err(ApiError::from)?.ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+        if record.tombstoned_at.is_none() {
+            return Ok("Not deleted.".to_string());
+        }
+        if dry_run {
+            let set = self.api().collect_subtree_node_ids(node_id)?;
+            let n = set.len() as u64;
+            let mut total_heads = 0u64;
+            for nid in &set {
+                total_heads += self.api().head_index().read().get_all_heads_for_node(nid).len() as u64;
+            }
+            return Ok(format!("Would restore {} nodes, {} head entries.", n, total_heads));
+        }
+        let result = self.api().restore_node(node_id)?;
+        let norm = ignore::normalize_workspace_relative(&self.workspace_root, &record.path)?;
+        let _ = ignore::remove_from_ignore_list(&self.workspace_root, &record.path);
+        Ok(format!("Restored {} nodes, {} head entries. Removed {} from ignore list.", result.nodes_restored, result.head_entries_restored, norm))
+    }
+
+    fn run_workspace_compact(
+        &self,
+        ttl: Option<u64>,
+        all: bool,
+        keep_frames: bool,
+        dry_run: bool,
+    ) -> Result<String, ApiError> {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let ttl_seconds = if all {
+            0
+        } else {
+            let ttl_days = ttl.unwrap_or(90);
+            ttl_days * 24 * 60 * 60
+        };
+        let cutoff = now.saturating_sub(ttl_seconds);
+        let node_ids = self.api().node_store().list_tombstoned(Some(cutoff)).map_err(ApiError::from)?;
+        if dry_run {
+            let mut frames = 0u64;
+            if !keep_frames {
+                for nid in &node_ids {
+                    frames += self.api().head_index().read().get_all_heads_for_node(nid).len() as u64;
+                }
+            }
+            let head_count: usize = self.api().head_index().read().heads.iter()
+                .filter(|(_, e)| e.tombstoned_at.map_or(false, |ts| ts <= cutoff))
+                .count();
+            return Ok(format!(
+                "Would compact {} nodes, {} head entries, {} frames.",
+                node_ids.len(),
+                head_count,
+                frames
+            ));
+        }
+        let result = self.api().compact(ttl_seconds, !keep_frames)?;
+        Ok(format!(
+            "Compacted {} nodes, {} head entries, {} frames.",
+            result.nodes_purged,
+            result.head_entries_purged,
+            result.frames_purged
+        ))
+    }
+
+    fn run_workspace_list_deleted(
+        &self,
+        older_than: Option<u64>,
+        format: &str,
+    ) -> Result<String, ApiError> {
+        let cutoff = older_than.map(|days| {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            now.saturating_sub(days * 24 * 60 * 60)
+        });
+        let node_ids = self.api().node_store().list_tombstoned(cutoff).map_err(ApiError::from)?;
+        let store = self.api().node_store();
+        let mut rows: Vec<(String, String, u64, String)> = Vec::new();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        for nid in &node_ids {
+            if let Some(record) = store.get(nid).map_err(ApiError::from)? {
+                let ts = record.tombstoned_at.unwrap_or(0);
+                let age_secs = now.saturating_sub(ts);
+                let age_str = if age_secs < 60 {
+                    format!("{}s", age_secs)
+                } else if age_secs < 3600 {
+                    format!("{}m", age_secs / 60)
+                } else if age_secs < 86400 {
+                    format!("{}h", age_secs / 3600)
+                } else {
+                    format!("{}d", age_secs / 86400)
+                };
+                let node_hex = hex::encode(nid);
+                let short_id = if node_hex.len() > 12 {
+                    format!("{}...", &node_hex[..12])
+                } else {
+                    node_hex
+                };
+                rows.push((
+                    record.path.to_string_lossy().to_string(),
+                    short_id,
+                    ts,
+                    age_str,
+                ));
+            }
+        }
+        if format == "json" {
+            let arr: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|(path, node_id, ts, age)| {
+                    serde_json::json!({ "path": path, "node_id": node_id, "tombstoned_at": ts, "age": age })
+                })
+                .collect();
+            return Ok(serde_json::to_string_pretty(&arr).map_err(|e| {
+                ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
+            })?);
+        }
+        use comfy_table::Table;
+        let mut table = Table::new();
+        table.load_preset(comfy_table::presets::UTF8_FULL);
+        table.set_header(vec!["Path", "Node ID", "Tombstoned At", "Age"]);
+        for (path, node_id, ts, age) in &rows {
+            let ts_str = if *ts > 0 {
+                format!("{}", ts)
+            } else {
+                "-".to_string()
+            };
+            table.add_row(vec![path.as_str(), node_id.as_str(), &ts_str, age]);
+        }
+        Ok(table.to_string())
+    }
+
     /// Execute a CLI command
     pub fn execute(&self, command: &Commands) -> Result<String, ApiError> {
         match command {
@@ -1031,6 +1264,18 @@ impl CliContext {
                 WorkspaceCommands::Validate { format } => self.run_workspace_validate(format),
                 WorkspaceCommands::Ignore { path, dry_run, format } => {
                     self.run_workspace_ignore(path.as_deref(), *dry_run, format)
+                }
+                WorkspaceCommands::Delete { path, node, dry_run, no_ignore } => {
+                    self.run_workspace_delete(path.as_deref(), node.as_deref(), *dry_run, *no_ignore)
+                }
+                WorkspaceCommands::Restore { path, node, dry_run } => {
+                    self.run_workspace_restore(path.as_deref(), node.as_deref(), *dry_run)
+                }
+                WorkspaceCommands::Compact { ttl, all, keep_frames, dry_run } => {
+                    self.run_workspace_compact(*ttl, *all, *keep_frames, *dry_run)
+                }
+                WorkspaceCommands::ListDeleted { older_than, format } => {
+                    self.run_workspace_list_deleted(*older_than, format)
                 }
             },
             Commands::Status {
@@ -3256,6 +3501,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: std::collections::HashMap::new(),
+            tombstoned_at: None,
         };
         
         api.node_store().put(&record).unwrap();
@@ -3296,6 +3542,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: std::collections::HashMap::new(),
+            tombstoned_at: None,
         };
 
         let frame1 = crate::frame::Frame::new(
@@ -3341,6 +3588,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: std::collections::HashMap::new(),
+            tombstoned_at: None,
         };
 
         let frame = crate::frame::Frame::new(
@@ -3395,21 +3643,54 @@ fn resolve_path_to_node_id(
     path: &PathBuf,
     workspace_root: &PathBuf,
 ) -> Result<NodeID, ApiError> {
-    // Resolve path relative to workspace root
-    let resolved_path = if path.is_absolute() {
-        path.clone()
-    } else {
-        workspace_root.join(path)
-    };
+    resolve_workspace_node_id(api, workspace_root, Some(path.as_path()), None, false)
+}
 
-    // Canonicalize the path
-    let canonical_path = crate::tree::path::canonicalize_path(&resolved_path)
-        .map_err(|e| ApiError::StorageError(e))?;
-
-    // Look up NodeID in store
-    match api.node_store().find_by_path(&canonical_path).map_err(ApiError::from)? {
-        Some(record) => Ok(record.node_id),
-        None => Err(ApiError::PathNotInTree(canonical_path)),
+/// Resolve path or --node to NodeID. If include_tombstoned is true, use get_by_path (for restore).
+fn resolve_workspace_node_id(
+    api: &ContextApi,
+    workspace_root: &PathBuf,
+    path: Option<&std::path::Path>,
+    node: Option<&str>,
+    include_tombstoned: bool,
+) -> Result<NodeID, ApiError> {
+    match (path, node) {
+        (Some(p), None) => {
+            let resolved_path = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                workspace_root.join(p)
+            };
+            let canonical_path = crate::tree::path::canonicalize_path(&resolved_path)
+                .map_err(ApiError::StorageError)?;
+            let store = api.node_store();
+            let record = if include_tombstoned {
+                store.get_by_path(&canonical_path).map_err(ApiError::from)?
+            } else {
+                store.find_by_path(&canonical_path).map_err(ApiError::from)?
+            };
+            record.map(|r| r.node_id).ok_or_else(|| ApiError::PathNotInTree(canonical_path))
+        }
+        (None, Some(hex_str)) => {
+            let bytes = hex::decode(hex_str.trim_start_matches("0x")).map_err(|_| {
+                ApiError::ConfigError(format!("Invalid node ID hex: {}", hex_str))
+            })?;
+            if bytes.len() != 32 {
+                return Err(ApiError::ConfigError("Node ID must be 32 bytes (64 hex chars).".to_string()));
+            }
+            let mut node_id = [0u8; 32];
+            node_id.copy_from_slice(&bytes);
+            if api.node_store().get(&node_id).map_err(ApiError::from)?.is_none() {
+                return Err(ApiError::NodeNotFound(node_id));
+            }
+            Ok(node_id)
+        }
+        (Some(_), Some(_)) => Err(ApiError::ConfigError(
+            "Cannot specify both path and --node. Use one or the other.".to_string(),
+        )),
+        (None, None) => Err(ApiError::ConfigError(
+            "Must specify either path or --node <node_id>.".to_string(),
+        )),
     }
 }
 

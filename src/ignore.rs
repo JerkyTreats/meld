@@ -277,6 +277,61 @@ pub fn read_ignore_list(workspace_root: &Path) -> Result<Vec<String>, ApiError> 
     Ok(out)
 }
 
+/// Remove a path from the ignore list file. Path is normalized to workspace-relative for comparison.
+/// Only removes user-added lines (exact match); preserves the # .gitignore block and other lines.
+pub fn remove_from_ignore_list(workspace_root: &Path, path: &Path) -> Result<(), ApiError> {
+    let list_path = ignore_list_path(workspace_root)?;
+    if !list_path.exists() || !list_path.is_file() {
+        return Ok(());
+    }
+    let path_norm = normalize_workspace_relative(workspace_root, path)?;
+    let contents = fs::read_to_string(&list_path).map_err(|e| {
+        ApiError::ConfigError(format!("Failed to read ignore list: {}", e))
+    })?;
+    let mut in_block = false;
+    let mut out = Vec::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed == GITIGNORE_BLOCK_START {
+            in_block = true;
+            out.push(line.to_string());
+            continue;
+        }
+        if trimmed == GITIGNORE_BLOCK_END {
+            in_block = false;
+            out.push(line.to_string());
+            continue;
+        }
+        if in_block {
+            out.push(line.to_string());
+            continue;
+        }
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            out.push(line.to_string());
+            continue;
+        }
+        if trimmed == GITIGNORE_ENTRY {
+            out.push(line.to_string());
+            continue;
+        }
+        if trimmed == path_norm {
+            continue;
+        }
+        out.push(line.to_string());
+    }
+    let new_contents = out.join("\n");
+    let has_final_newline = contents.ends_with('\n');
+    let to_write = if has_final_newline && !new_contents.is_empty() && !new_contents.ends_with('\n') {
+        format!("{}\n", new_contents)
+    } else {
+        new_contents
+    };
+    fs::write(&list_path, to_write).map_err(|e| {
+        ApiError::ConfigError(format!("Failed to write ignore list: {}", e))
+    })?;
+    Ok(())
+}
+
 /// Append a path to the ignore list file. Creates parent directory and file if needed.
 /// Does not deduplicate (optional per spec).
 pub fn append_to_ignore_list(workspace_root: &Path, path: &str) -> Result<(), ApiError> {

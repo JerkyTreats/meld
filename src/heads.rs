@@ -10,9 +10,19 @@ use std::path::{Path, PathBuf};
 use bincode;
 use serde::{Deserialize, Serialize};
 
-/// Head index: (NodeID, frame_type) -> FrameID
+const HEAD_INDEX_VERSION_V1: u32 = 1;
+const HEAD_INDEX_VERSION_V2: u32 = 2;
+
+/// Head entry with optional tombstone marker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct HeadEntry {
+    pub frame_id: FrameID,
+    pub tombstoned_at: Option<u64>,
+}
+
+/// Head index: (NodeID, frame_type) -> HeadEntry
 pub struct HeadIndex {
-    pub(crate) heads: HashMap<(NodeID, String), FrameID>,
+    pub(crate) heads: HashMap<(NodeID, String), HeadEntry>,
 }
 
 impl Default for HeadIndex {
@@ -28,12 +38,26 @@ impl HeadIndex {
         }
     }
 
+    /// Get active head for node and frame type (skips tombstoned entries).
     pub fn get_head(
         &self,
         node_id: &NodeID,
         frame_type: &str,
     ) -> Result<Option<FrameID>, StorageError> {
-        Ok(self.heads.get(&(*node_id, frame_type.to_string())).copied())
+        Ok(self
+            .heads
+            .get(&(*node_id, frame_type.to_string()))
+            .filter(|e| e.tombstoned_at.is_none())
+            .map(|e| e.frame_id))
+    }
+
+    /// Get active head (alias for get_head; skips tombstoned).
+    pub fn get_active_head(
+        &self,
+        node_id: &NodeID,
+        frame_type: &str,
+    ) -> Result<Option<FrameID>, StorageError> {
+        self.get_head(node_id, frame_type)
     }
 
     pub fn update_head(
@@ -42,19 +66,51 @@ impl HeadIndex {
         frame_type: &str,
         frame_id: &FrameID,
     ) -> Result<(), StorageError> {
-        self.heads.insert((*node_id, frame_type.to_string()), *frame_id);
+        self.heads.insert(
+            (*node_id, frame_type.to_string()),
+            HeadEntry {
+                frame_id: *frame_id,
+                tombstoned_at: None,
+            },
+        );
         Ok(())
     }
 
-    /// Get all frame IDs for a given node
-    ///
-    /// Returns all FrameIDs that are heads for the specified node.
+    /// Tombstone all head entries for a node (all frame types).
+    pub fn tombstone_heads_for_node(&mut self, node_id: &NodeID) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        for ((nid, _), entry) in self.heads.iter_mut() {
+            if *nid == *node_id {
+                entry.tombstoned_at = Some(now);
+            }
+        }
+    }
+
+    /// Restore all head entries for a node (remove tombstone marker).
+    pub fn restore_heads_for_node(&mut self, node_id: &NodeID) {
+        for ((nid, _), entry) in self.heads.iter_mut() {
+            if *nid == *node_id {
+                entry.tombstoned_at = None;
+            }
+        }
+    }
+
+    /// Purge tombstoned head entries older than cutoff.
+    pub fn purge_tombstoned(&mut self, cutoff: u64) {
+        self.heads
+            .retain(|_, e| e.tombstoned_at.map_or(true, |ts| ts > cutoff));
+    }
+
+    /// Get all frame IDs for a given node (including tombstoned; used e.g. for compact).
     pub fn get_all_heads_for_node(&self, node_id: &NodeID) -> Vec<FrameID> {
         self.heads
             .iter()
-            .filter_map(|((nid, _), frame_id)| {
+            .filter_map(|((nid, _), e)| {
                 if *nid == *node_id {
-                    Some(*frame_id)
+                    Some(e.frame_id)
                 } else {
                     None
                 }
@@ -62,22 +118,22 @@ impl HeadIndex {
             .collect()
     }
 
-    /// Get all unique node IDs that have heads
+    /// Get all unique node IDs that have active (non-tombstoned) heads.
     pub fn get_all_node_ids(&self) -> Vec<NodeID> {
         let mut node_ids = std::collections::HashSet::new();
-        for ((node_id, _), _) in &self.heads {
-            node_ids.insert(*node_id);
+        for ((node_id, _), e) in &self.heads {
+            if e.tombstoned_at.is_none() {
+                node_ids.insert(*node_id);
+            }
         }
         node_ids.into_iter().collect()
     }
 
-    /// Count distinct node IDs that have a head for the given frame type.
-    ///
-    /// Used for workspace status context coverage per agent (frame type = `context-<agent_id>`).
+    /// Count distinct node IDs that have an active head for the given frame type.
     pub fn count_nodes_for_frame_type(&self, frame_type: &str) -> usize {
         let mut node_ids = std::collections::HashSet::new();
-        for ((node_id, ft), _) in &self.heads {
-            if ft.as_str() == frame_type {
+        for ((node_id, ft), e) in &self.heads {
+            if ft.as_str() == frame_type && e.tombstoned_at.is_none() {
                 node_ids.insert(*node_id);
             }
         }
@@ -116,42 +172,73 @@ impl HeadIndex {
             ))
         })?;
 
-        // Deserialize
-        let persistence: HeadIndexPersistence = bincode::deserialize(&bytes).map_err(|e| {
+        // Try legacy V1 format (single bincode blob) first.
+        if let Ok(persistence) = bincode::deserialize::<HeadIndexPersistenceV1>(&bytes) {
+            if persistence.version == HEAD_INDEX_VERSION_V1 {
+                let mut heads = HashMap::new();
+                for entry in persistence.entries {
+                    if entry.frame_id.len() != 32 || entry.node_id.len() != 32 {
+                        return Err(StorageError::IoError(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Invalid frame_id or node_id length in head index".to_string(),
+                        )));
+                    }
+                    let mut node_id = [0u8; 32];
+                    node_id.copy_from_slice(&entry.node_id);
+                    let mut frame_id = [0u8; 32];
+                    frame_id.copy_from_slice(&entry.frame_id);
+                    heads.insert(
+                        (node_id, entry.frame_type),
+                        HeadEntry {
+                            frame_id,
+                            tombstoned_at: None,
+                        },
+                    );
+                }
+                return Ok(HeadIndex { heads });
+            }
+        }
+
+        // V2 format: 4-byte version then bincode(entries).
+        if bytes.len() < 4 {
+            return Err(StorageError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Head index file too short".to_string(),
+            )));
+        }
+        let version = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        if version != HEAD_INDEX_VERSION_V2 {
+            return Err(StorageError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Unsupported head index version: {}", version),
+            )));
+        }
+        let entries: Vec<HeadIndexEntry> = bincode::deserialize(&bytes[4..]).map_err(|e| {
             StorageError::IoError(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to deserialize head index from {:?}: {}", path, e),
+                format!("Failed to deserialize head index entries: {}", e),
             ))
         })?;
 
-        // Validate version
-        if persistence.version != 1 {
-            return Err(StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "Unsupported head index version: {} (expected 1)",
-                    persistence.version
-                ),
-            )));
-        }
-
-        // Convert entries to HashMap
         let mut heads = HashMap::new();
-        for entry in persistence.entries {
-            // Validate frame_id and node_id are 32 bytes
+        for entry in entries {
             if entry.frame_id.len() != 32 || entry.node_id.len() != 32 {
                 return Err(StorageError::IoError(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Invalid frame_id or node_id length in head index"),
+                    "Invalid frame_id or node_id length in head index".to_string(),
                 )));
             }
-
             let mut node_id = [0u8; 32];
             node_id.copy_from_slice(&entry.node_id);
             let mut frame_id = [0u8; 32];
             frame_id.copy_from_slice(&entry.frame_id);
-
-            heads.insert((node_id, entry.frame_type), frame_id);
+            heads.insert(
+                (node_id, entry.frame_type),
+                HeadEntry {
+                    frame_id,
+                    tombstoned_at: entry.tombstoned_at,
+                },
+            );
         }
 
         Ok(HeadIndex { heads })
@@ -173,28 +260,26 @@ impl HeadIndex {
             })?;
         }
 
-        // Convert HashMap to persistence format
         let mut entries = Vec::new();
-        for ((node_id, frame_type), frame_id) in &self.heads {
+        for ((node_id, frame_type), head_entry) in &self.heads {
             entries.push(HeadIndexEntry {
                 node_id: node_id.to_vec(),
                 frame_type: frame_type.clone(),
-                frame_id: frame_id.to_vec(),
+                frame_id: head_entry.frame_id.to_vec(),
+                tombstoned_at: head_entry.tombstoned_at,
             });
         }
 
-        let persistence = HeadIndexPersistence {
-            version: 1,
-            entries,
-        };
-
-        // Serialize
-        let serialized = bincode::serialize(&persistence).map_err(|e| {
+        // V2 format: 4-byte version then bincode(entries).
+        let payload = bincode::serialize(&entries).map_err(|e| {
             StorageError::IoError(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to serialize head index: {}", e),
+                format!("Failed to serialize head index entries: {}", e),
             ))
         })?;
+        let mut serialized = Vec::with_capacity(4 + payload.len());
+        serialized.extend_from_slice(&HEAD_INDEX_VERSION_V2.to_le_bytes());
+        serialized.extend_from_slice(&payload);
 
         // Write to temporary file (atomic write)
         let temp_path = path.with_extension("bin.tmp");
@@ -219,19 +304,27 @@ impl HeadIndex {
     }
 }
 
-/// Persistence format for head index
+/// Persistence format for head index (version 1: legacy single-blob).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct HeadIndexPersistence {
+struct HeadIndexPersistenceV1 {
     version: u32,
-    entries: Vec<HeadIndexEntry>,
+    entries: Vec<HeadIndexEntryV1>,
 }
 
-/// Entry in the head index persistence format
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HeadIndexEntryV1 {
+    node_id: Vec<u8>,
+    frame_type: String,
+    frame_id: Vec<u8>,
+}
+
+/// Entry in the head index persistence format (version 2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HeadIndexEntry {
     node_id: Vec<u8>,
     frame_type: String,
     frame_id: Vec<u8>,
+    tombstoned_at: Option<u64>,
 }
 
 #[cfg(test)]
@@ -315,5 +408,34 @@ mod tests {
             loaded.get_head(&node_id2, "type1").unwrap(),
             Some(frame_id3)
         );
+    }
+
+    #[test]
+    fn test_tombstone_and_restore_heads() {
+        let mut index = HeadIndex::new();
+        let node_id: NodeID = [1u8; 32];
+        let frame_id: FrameID = [2u8; 32];
+        index.update_head(&node_id, "test", &frame_id).unwrap();
+        assert_eq!(index.get_head(&node_id, "test").unwrap(), Some(frame_id));
+        index.tombstone_heads_for_node(&node_id);
+        assert_eq!(index.get_head(&node_id, "test").unwrap(), None);
+        assert_eq!(index.get_active_head(&node_id, "test").unwrap(), None);
+        index.restore_heads_for_node(&node_id);
+        assert_eq!(index.get_head(&node_id, "test").unwrap(), Some(frame_id));
+    }
+
+    #[test]
+    fn test_purge_tombstoned() {
+        let mut index = HeadIndex::new();
+        let node_id: NodeID = [1u8; 32];
+        let frame_id: FrameID = [2u8; 32];
+        index.update_head(&node_id, "test", &frame_id).unwrap();
+        index.tombstone_heads_for_node(&node_id);
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        index.purge_tombstoned(ts);
+        assert_eq!(index.heads.len(), 0);
     }
 }

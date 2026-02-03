@@ -721,6 +721,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: std::collections::HashMap::new(),
+            tombstoned_at: None,
         };
         daemon.api.node_store().put(&node_record).unwrap();
 
@@ -746,6 +747,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: std::collections::HashMap::new(),
+            tombstoned_at: None,
         };
         daemon.api.node_store().put(&node_record).unwrap();
 
@@ -784,6 +786,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: std::collections::HashMap::new(),
+            tombstoned_at: None,
         };
         daemon.api.node_store().put(&node_record).unwrap();
 
@@ -823,6 +826,7 @@ mod tests {
                 parent: None,
                 frame_set_root: None,
                 metadata: std::collections::HashMap::new(),
+                tombstoned_at: None,
             };
             daemon.api.node_store().put(&node_record).unwrap();
         }

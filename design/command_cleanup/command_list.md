@@ -18,7 +18,7 @@ Low-level, node-ID-based commands. No reasonable user should need these; removin
 
 ## Keep (reorganize)
 
-**CLI placement:** Top-level: merkle scan. Workspace: merkle workspace status | validate | ignore | delete. Watch: merkle watch.
+**CLI placement:** Top-level: merkle scan. Workspace: merkle workspace status | validate | ignore | delete | restore | compact | list-deleted. Watch: merkle watch.
 
 | Command | Grouping | Use |
 |--------|----------|-----|
@@ -28,5 +28,8 @@ Low-level, node-ID-based commands. No reasonable user should need these; removin
 | **status** | workspace | Workspace summary: tree (scanned/not scanned, root hash, node count, optional breakdown), context coverage per agent, top 5 paths by node count. |
 | **validate** | workspace | Check workspace data integrity (store, head index, basis index consistency). |
 | **ignore** | workspace | With no path: list the ignore list. With path: add path so future scans skip it; does not delete nodes. |
-| **delete** | workspace | Remove a node and its descendants by path or --node id; cascade; optional --keep-frames, --no-ignore. |
+| **delete** | workspace | Tombstone a node and its descendants by path or --node id; cascade; optional --dry-run, --no-ignore. Data preserved until compact. |
+| **restore** | workspace | Clear tombstone markers for a node and its descendants; reverses delete. |
+| **compact** | workspace | Purge tombstoned records older than TTL (default 90 days); optional --all, --keep-frames, --dry-run. |
+| **list-deleted** | workspace | List tombstoned nodes with timestamps; optional --older-than filter, --format json. |
 | **watch** | top-level | Run the file-watcher daemon so the tree (and optionally context) stays updated on filesystem changes; uses same ignore sources as scan. |

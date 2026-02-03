@@ -1,11 +1,55 @@
 //! Persistence layer for NodeRecord Store
 
 use crate::error::StorageError;
-use crate::store::{NodeRecord, NodeRecordStore};
+use crate::store::{NodeRecord, NodeRecordStore, NodeType};
 use crate::types::NodeID;
 use bincode;
+use serde::{Deserialize, Serialize};
 use sled;
 use std::path::Path;
+
+/// Legacy NodeRecord without tombstoned_at for backward-compatible deserialization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NodeRecordLegacy {
+    node_id: NodeID,
+    path: std::path::PathBuf,
+    node_type: NodeType,
+    children: Vec<NodeID>,
+    parent: Option<NodeID>,
+    frame_set_root: Option<crate::types::Hash>,
+    metadata: std::collections::HashMap<String, String>,
+}
+
+fn deserialize_node_record(bytes: &[u8]) -> Result<NodeRecord, StorageError> {
+    if let Ok(record) = bincode::deserialize::<NodeRecord>(bytes) {
+        return Ok(record);
+    }
+    let legacy: NodeRecordLegacy = bincode::deserialize(bytes).map_err(|e| {
+        StorageError::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Failed to deserialize node record: {}", e),
+        ))
+    })?;
+    Ok(NodeRecord {
+        node_id: legacy.node_id,
+        path: legacy.path,
+        node_type: legacy.node_type,
+        children: legacy.children,
+        parent: legacy.parent,
+        frame_set_root: legacy.frame_set_root,
+        metadata: legacy.metadata,
+        tombstoned_at: None,
+    })
+}
+
+fn serialize_node_record(record: &NodeRecord) -> Result<Vec<u8>, StorageError> {
+    bincode::serialize(record).map_err(|e| {
+        StorageError::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Failed to serialize node record: {}", e),
+        ))
+    })
+}
 
 /// Sled-based implementation of NodeRecordStore
 pub struct SledNodeRecordStore {
@@ -43,12 +87,7 @@ impl NodeRecordStore for SledNodeRecordStore {
             ))
         })? {
             Some(value) => {
-                let record: NodeRecord = bincode::deserialize(&value).map_err(|e| {
-                    StorageError::IoError(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("Failed to deserialize node record: {}", e),
-                    ))
-                })?;
+                let record = deserialize_node_record(&value)?;
                 Ok(Some(record))
             }
             None => Ok(None),
@@ -57,12 +96,7 @@ impl NodeRecordStore for SledNodeRecordStore {
 
     fn put(&self, record: &NodeRecord) -> Result<(), StorageError> {
         let key = record.node_id.as_slice();
-        let value = bincode::serialize(record).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Failed to serialize node record: {}", e),
-            ))
-        })?;
+        let value = serialize_node_record(record)?;
 
         self.db.insert(key, value).map_err(|e| {
             StorageError::IoError(std::io::Error::new(
@@ -92,11 +126,15 @@ impl NodeRecordStore for SledNodeRecordStore {
     }
 
     fn find_by_path(&self, path: &Path) -> Result<Option<NodeRecord>, StorageError> {
-        // Convert path to string for lookup
+        let record = self.get_by_path(path)?;
+        // Active-only: skip tombstoned nodes
+        Ok(record.filter(|r| r.tombstoned_at.is_none()))
+    }
+
+    fn get_by_path(&self, path: &Path) -> Result<Option<NodeRecord>, StorageError> {
         let path_str = path.to_string_lossy();
         let path_key = format!("path:{}", path_str);
 
-        // Look up NodeID from path mapping
         match self.db.get(path_key.as_bytes()).map_err(|e| {
             StorageError::IoError(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -110,8 +148,6 @@ impl NodeRecordStore for SledNodeRecordStore {
                         format!("Failed to deserialize node ID from path mapping: {}", e),
                     ))
                 })?;
-
-                // Retrieve the full node record using the NodeID
                 self.get(&node_id)
             }
             None => Ok(None),
@@ -127,19 +163,99 @@ impl NodeRecordStore for SledNodeRecordStore {
                     format!("Failed to iterate store: {}", e),
                 ))
             })?;
-            // Only 32-byte keys are node IDs; path mappings use "path:..." prefix
             if key.len() != 32 {
                 continue;
             }
-            let record: NodeRecord = bincode::deserialize(&value).map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to deserialize node record: {}", e),
-                ))
-            })?;
+            let record = deserialize_node_record(&value)?;
             records.push(record);
         }
         Ok(records)
+    }
+
+    fn list_active(&self) -> Result<Vec<NodeRecord>, StorageError> {
+        let records = self.list_all()?;
+        Ok(records
+            .into_iter()
+            .filter(|r| r.tombstoned_at.is_none())
+            .collect())
+    }
+
+    fn tombstone(&self, node_id: &NodeID) -> Result<NodeRecord, StorageError> {
+        let mut record = self
+            .get(node_id)?
+            .ok_or_else(|| StorageError::InvalidPath("Node not found".to_string()))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| {
+                StorageError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })?
+            .as_secs();
+        record.tombstoned_at = Some(now);
+        self.put(&record)?;
+        Ok(record)
+    }
+
+    fn restore(&self, node_id: &NodeID) -> Result<NodeRecord, StorageError> {
+        let mut record = self
+            .get(node_id)?
+            .ok_or_else(|| StorageError::InvalidPath("Node not found".to_string()))?;
+        record.tombstoned_at = None;
+        self.put(&record)?;
+        Ok(record)
+    }
+
+    fn purge(&self, node_id: &NodeID, cutoff: u64) -> Result<(), StorageError> {
+        let record = self
+            .get(node_id)?
+            .ok_or_else(|| StorageError::InvalidPath("Node not found".to_string()))?;
+        let ts = record
+            .tombstoned_at
+            .ok_or_else(|| StorageError::InvalidPath("Node is not tombstoned".to_string()))?;
+        if ts > cutoff {
+            return Err(StorageError::InvalidPath(
+                "Tombstone is newer than cutoff".to_string(),
+            ));
+        }
+        let key = node_id.as_slice();
+        self.db.remove(key).map_err(|e| {
+            StorageError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to remove node record: {}", e),
+            ))
+        })?;
+        let path_key = format!("path:{}", record.path.to_string_lossy());
+        self.db.remove(path_key.as_bytes()).map_err(|e| {
+            StorageError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to remove path mapping: {}", e),
+            ))
+        })?;
+        Ok(())
+    }
+
+    fn list_tombstoned(&self, older_than: Option<u64>) -> Result<Vec<NodeID>, StorageError> {
+        let mut out = Vec::new();
+        for item in self.db.iter() {
+            let (key, value) = item.map_err(|e| {
+                StorageError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to iterate store: {}", e),
+                ))
+            })?;
+            if key.len() != 32 {
+                continue;
+            }
+            let record = deserialize_node_record(&value)?;
+            if let Some(ts) = record.tombstoned_at {
+                if older_than.map_or(true, |cutoff| ts <= cutoff) {
+                    out.push(record.node_id);
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn flush(&self) -> Result<(), StorageError> {
@@ -174,12 +290,7 @@ impl SledNodeRecordStore {
 
         for record in records {
             let key = record.node_id.as_slice();
-            let value = bincode::serialize(record).map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to serialize node record: {}", e),
-                ))
-            })?;
+            let value = serialize_node_record(record)?;
             batch.insert(key, value);
         }
 
@@ -229,6 +340,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: HashMap::new(),
+            tombstoned_at: None,
         };
 
         // Store
@@ -269,6 +381,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: HashMap::new(),
+            tombstoned_at: None,
         };
 
         store.put(&record).unwrap();
@@ -292,6 +405,7 @@ mod tests {
                 parent: None,
                 frame_set_root: None,
                 metadata: HashMap::new(),
+                tombstoned_at: None,
             },
             NodeRecord {
                 node_id: [3u8; 32],
@@ -304,6 +418,7 @@ mod tests {
                 parent: None,
                 frame_set_root: None,
                 metadata: HashMap::new(),
+                tombstoned_at: None,
             },
         ];
 
@@ -331,6 +446,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: HashMap::new(),
+            tombstoned_at: None,
         };
 
         store.put(&record1).unwrap();
@@ -347,6 +463,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: HashMap::new(),
+            tombstoned_at: None,
         };
 
         store.put(&record2).unwrap();
@@ -355,5 +472,110 @@ mod tests {
         let retrieved = store.get(&node_id).unwrap().unwrap();
         assert_eq!(retrieved.path, record2.path);
         assert_eq!(retrieved.path, std::path::PathBuf::from("/test/file_updated.txt"));
+    }
+
+    #[test]
+    fn test_tombstone_and_find_by_path_skips() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = SledNodeRecordStore::new(temp_dir.path()).unwrap();
+        let node_id = [1u8; 32];
+        let path = std::path::PathBuf::from("/test/file.txt");
+        let record = NodeRecord {
+            node_id,
+            path: path.clone(),
+            node_type: NodeType::File { size: 100, content_hash: [2u8; 32] },
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: HashMap::new(),
+            tombstoned_at: None,
+        };
+        store.put(&record).unwrap();
+        assert!(store.find_by_path(&path).unwrap().is_some());
+        let updated = store.tombstone(&node_id).unwrap();
+        assert!(updated.tombstoned_at.is_some());
+        assert!(store.get(&node_id).unwrap().unwrap().tombstoned_at.is_some());
+        assert!(store.find_by_path(&path).unwrap().is_none());
+        assert!(store.get_by_path(&path).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_restore_clears_tombstone() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = SledNodeRecordStore::new(temp_dir.path()).unwrap();
+        let node_id = [1u8; 32];
+        let path = std::path::PathBuf::from("/test/file.txt");
+        let record = NodeRecord {
+            node_id,
+            path: path.clone(),
+            node_type: NodeType::File { size: 100, content_hash: [2u8; 32] },
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: HashMap::new(),
+            tombstoned_at: None,
+        };
+        store.put(&record).unwrap();
+        store.tombstone(&node_id).unwrap();
+        store.restore(&node_id).unwrap();
+        assert!(store.get(&node_id).unwrap().unwrap().tombstoned_at.is_none());
+        assert!(store.find_by_path(&path).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_purge_removes_record() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = SledNodeRecordStore::new(temp_dir.path()).unwrap();
+        let node_id = [1u8; 32];
+        let path = std::path::PathBuf::from("/test/file.txt");
+        let record = NodeRecord {
+            node_id,
+            path: path.clone(),
+            node_type: NodeType::File { size: 100, content_hash: [2u8; 32] },
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: HashMap::new(),
+            tombstoned_at: None,
+        };
+        store.put(&record).unwrap();
+        store.tombstone(&node_id).unwrap();
+        let ts = store.get(&node_id).unwrap().unwrap().tombstoned_at.unwrap();
+        store.purge(&node_id, ts).unwrap();
+        assert!(store.get(&node_id).unwrap().is_none());
+        assert!(store.get_by_path(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_list_tombstoned_and_list_active() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = SledNodeRecordStore::new(temp_dir.path()).unwrap();
+        let r1 = NodeRecord {
+            node_id: [1u8; 32],
+            path: std::path::PathBuf::from("/a"),
+            node_type: NodeType::File { size: 0, content_hash: [0u8; 32] },
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: HashMap::new(),
+            tombstoned_at: None,
+        };
+        let r2 = NodeRecord {
+            node_id: [2u8; 32],
+            path: std::path::PathBuf::from("/b"),
+            node_type: NodeType::File { size: 0, content_hash: [0u8; 32] },
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: HashMap::new(),
+            tombstoned_at: None,
+        };
+        store.put(&r1).unwrap();
+        store.put(&r2).unwrap();
+        assert_eq!(store.list_active().unwrap().len(), 2);
+        store.tombstone(&[1u8; 32]).unwrap();
+        let tomb = store.list_tombstoned(None).unwrap();
+        assert_eq!(tomb.len(), 1);
+        assert_eq!(store.list_active().unwrap().len(), 1);
     }
 }

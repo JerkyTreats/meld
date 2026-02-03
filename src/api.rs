@@ -16,12 +16,34 @@ use crate::synthesis::{collect_child_frames, synthesize_content, SynthesisBasis,
 use crate::types::{FrameID, NodeID};
 use crate::views::{get_context_view, ViewPolicy};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, instrument, warn};
 use hex;
+
+/// Result of a tombstone operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TombstoneResult {
+    pub nodes_tombstoned: u64,
+    pub head_entries_tombstoned: u64,
+}
+
+/// Result of a restore operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreResult {
+    pub nodes_restored: u64,
+    pub head_entries_restored: u64,
+}
+
+/// Result of a compact operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactResult {
+    pub nodes_purged: u64,
+    pub head_entries_purged: u64,
+    pub frames_purged: u64,
+}
 
 /// Context view policy for frame selection
 ///
@@ -358,7 +380,7 @@ impl ContextApi {
         let start = Instant::now();
         debug!("Retrieving node context");
 
-        // Verify node exists
+        // Verify node exists and is not tombstoned (active only)
         let node_record = self
             .node_store
             .get(&node_id)
@@ -367,6 +389,9 @@ impl ContextApi {
                 warn!("Node not found");
                 ApiError::NodeNotFound(node_id)
             })?;
+        if node_record.tombstoned_at.is_some() {
+            return Err(ApiError::NodeNotFound(node_id));
+        }
 
         // Note: frame_set_root from node_record is not used in Phase 2B MVP
         // In a full implementation, we would use it to retrieve the FrameMerkleSet from storage
@@ -469,12 +494,15 @@ impl ContextApi {
         // Verify agent can write
         agent.verify_write()?;
 
-        // Verify node exists
+        // Verify node exists and is not tombstoned
         let _node_record = self
             .node_store
             .get(&node_id)
             .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+        if _node_record.tombstoned_at.is_some() {
+            return Err(ApiError::NodeNotFound(node_id));
+        }
 
         // Verify frame basis matches node_id (if basis is Node-based)
         match &frame.basis {
@@ -559,6 +587,135 @@ impl ContextApi {
         Ok(frame.frame_id)
     }
 
+    /// Collect node_id and all descendant node IDs (BFS from record.children).
+    pub fn collect_subtree_node_ids(&self, node_id: NodeID) -> Result<HashSet<NodeID>, ApiError> {
+        let mut set = HashSet::new();
+        set.insert(node_id);
+        let mut queue = VecDeque::new();
+        let record = self
+            .node_store
+            .get(&node_id)
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+        for &child_id in &record.children {
+            queue.push_back(child_id);
+        }
+        while let Some(nid) = queue.pop_front() {
+            if !set.insert(nid) {
+                continue;
+            }
+            if let Some(rec) = self.node_store.get(&nid).map_err(ApiError::from)? {
+                for &child_id in &rec.children {
+                    queue.push_back(child_id);
+                }
+            }
+        }
+        Ok(set)
+    }
+
+    /// Tombstone a node and all descendants. Marks records in node store and head index.
+    /// Frame blobs are not affected.
+    pub fn tombstone_node(&self, node_id: NodeID) -> Result<TombstoneResult, ApiError> {
+        let record = self
+            .node_store
+            .get(&node_id)
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+        if record.tombstoned_at.is_some() {
+            return Ok(TombstoneResult {
+                nodes_tombstoned: 0,
+                head_entries_tombstoned: 0,
+            });
+        }
+        let to_tombstone = self.collect_subtree_node_ids(node_id)?;
+        let mut nodes_tombstoned = 0u64;
+        let mut head_entries_tombstoned = 0u64;
+        for &nid in &to_tombstone {
+            self.node_store.tombstone(&nid).map_err(ApiError::from)?;
+            nodes_tombstoned += 1;
+            let mut head_index = self.head_index.write();
+            let before = head_index.get_all_heads_for_node(&nid).len();
+            head_index.tombstone_heads_for_node(&nid);
+            head_entries_tombstoned += before as u64;
+        }
+        self.persist_indices()?;
+        Ok(TombstoneResult {
+            nodes_tombstoned,
+            head_entries_tombstoned,
+        })
+    }
+
+    /// Restore a tombstoned node and all descendants.
+    pub fn restore_node(&self, node_id: NodeID) -> Result<RestoreResult, ApiError> {
+        let record = self
+            .node_store
+            .get(&node_id)
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+        if record.tombstoned_at.is_none() {
+            return Ok(RestoreResult {
+                nodes_restored: 0,
+                head_entries_restored: 0,
+            });
+        }
+        let to_restore = self.collect_subtree_node_ids(node_id)?;
+        let mut nodes_restored = 0u64;
+        let mut head_entries_restored = 0u64;
+        for &nid in &to_restore {
+            self.node_store.restore(&nid).map_err(ApiError::from)?;
+            nodes_restored += 1;
+            let mut head_index = self.head_index.write();
+            let before = head_index.get_all_heads_for_node(&nid).len();
+            head_index.restore_heads_for_node(&nid);
+            head_entries_restored += before as u64;
+        }
+        self.persist_indices()?;
+        Ok(RestoreResult {
+            nodes_restored,
+            head_entries_restored,
+        })
+    }
+
+    /// Compact tombstoned records older than TTL. Optionally purge frame blobs.
+    pub fn compact(
+        &self,
+        ttl_seconds: u64,
+        purge_frames: bool,
+    ) -> Result<CompactResult, ApiError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| ApiError::ConfigError(e.to_string()))?
+            .as_secs();
+        let cutoff = now.saturating_sub(ttl_seconds);
+        let node_ids = self
+            .node_store
+            .list_tombstoned(Some(cutoff))
+            .map_err(ApiError::from)?;
+        let mut nodes_purged = 0u64;
+        let mut frames_purged = 0u64;
+        for &nid in &node_ids {
+            if purge_frames {
+                let frame_ids = self.head_index.read().get_all_heads_for_node(&nid);
+                for frame_id in frame_ids {
+                    self.frame_storage.purge(&frame_id).map_err(ApiError::from)?;
+                    frames_purged += 1;
+                }
+            }
+            self.node_store.purge(&nid, cutoff).map_err(ApiError::from)?;
+            nodes_purged += 1;
+        }
+        let head_before = self.head_index.read().heads.len();
+        self.head_index.write().purge_tombstoned(cutoff);
+        let head_after = self.head_index.read().heads.len();
+        let head_entries_purged = (head_before - head_after) as u64;
+        self.persist_indices()?;
+        Ok(CompactResult {
+            nodes_purged,
+            head_entries_purged,
+            frames_purged,
+        })
+    }
+
     /// Synthesize branch: Create directory-level context from child nodes
     ///
     /// Combines context frames from child nodes into a single synthesized frame
@@ -601,12 +758,15 @@ impl ContextApi {
         // Verify agent can synthesize
         agent.verify_synthesize()?;
 
-        // Verify node exists and is a directory
+        // Verify node exists, is not tombstoned, and is a directory
         let dir_record = self
             .node_store
             .get(&node_id)
             .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+        if dir_record.tombstoned_at.is_some() {
+            return Err(ApiError::NodeNotFound(node_id));
+        }
 
         match dir_record.node_type {
             crate::store::NodeType::Directory => {}
@@ -1144,6 +1304,7 @@ mod tests {
             parent: None,
             frame_set_root: None,
             metadata: HashMap::new(),
+            tombstoned_at: None,
         }
     }
 

@@ -60,6 +60,7 @@ fn create_test_file_record(node_id: NodeID, path: &str) -> NodeRecord {
         parent: None,
         frame_set_root: None,
         metadata: HashMap::new(),
+        tombstoned_at: None,
     }
 }
 
@@ -74,6 +75,7 @@ fn create_test_directory_record(node_id: NodeID, path: &str, children: Vec<NodeI
         parent: None,
         frame_set_root: None,
         metadata: HashMap::new(),
+        tombstoned_at: None,
     }
 }
 

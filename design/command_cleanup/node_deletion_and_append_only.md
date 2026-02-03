@@ -2,52 +2,70 @@
 
 ## Current state
 
-- **Nodes are not deletable today.** The `NodeRecordStore` trait has only `get`, `put`, and `find_by_path` — no `delete`. Sled (and the path→node_id mapping in `put`) only add or overwrite; nothing removes node records or path keys.
-- **Scan does not prune.** On `merkle scan` (or `--force`), we build a new tree from the filesystem and call `populate_store_from_tree`, which **puts** every node in the new tree. We never remove nodes that are no longer in the tree. So if the user deletes a directory on disk and rescans, the old node records (and their path mappings) remain in the store — stale entries accumulate.
+- **Nodes are not deletable today.** The `NodeRecordStore` trait has only `get`, `put`, and `find_by_path` — no `delete` or `tombstone`. Sled and the path-to-node_id mapping in `put` only add or overwrite; nothing removes or marks node records as deleted.
+- **Scan does not prune.** On `merkle scan` or `--force`, we build a new tree from the filesystem and call `populate_store_from_tree`, which **puts** every node in the new tree. We never remove or tombstone nodes that are no longer in the tree. If the user deletes a directory on disk and rescans, the old node records and their path mappings remain in the store — stale entries accumulate.
 
-## What “append-only” actually applies to
+## What "append-only" actually applies to
 
 From the Phase 1 spec and README:
 
-- **Frames**: Immutable once created; no deletion or modification of existing frames. History is preserved. (“Frame Deletion: No deletion of frames (append-only).”)
-- **Nodes**: “Nodes are immutable (new state = new NodeID)” — meaning a given **NodeID** is an immutable identity for a content/structure snapshot; you don’t mutate a node in place, you get a new NodeID when the filesystem state changes.
+- **Frames**: Immutable once created; no deletion or modification of existing frames. History is preserved. "Frame Deletion: No deletion of frames (append-only)."
+- **Nodes**: "Nodes are immutable (new state = new NodeID)" — meaning a given **NodeID** is an immutable identity for a content/structure snapshot; you don't mutate a node in place, you get a new NodeID when the filesystem state changes.
 
-The **node store** is an **index** over “what is in the current tree.” It is not the same as “node content identity.” Removing a node **record** from this index when a path is removed from the tree is **updating the index to match the current tree**, not mutating node content or deleting frames.
+## Tombstones preserve append-only semantics
+
+**Hard deletion** removes data permanently, violating the spirit of append-only. **Tombstoning** preserves data while marking it as logically deleted. This approach:
+
+- **Preserves audit trail**: Tombstoned records remain queryable for history and debugging
+- **Maintains basis chain integrity**: Frames can still reference tombstoned nodes/frames as basis
+- **Enables recovery**: Accidental deletions can be reversed by removing the tombstone marker
+- **Supports eventual compaction**: Old tombstones can be purged after a grace period, with user control
+
+The **node store** is an **index** over "what is in the current tree." Tombstoning a node record marks it as "no longer in the active tree" without destroying the record. This is **updating the index to reflect current tree state** while preserving history.
 
 So:
 
-- **Append-only** = frames are never deleted or mutated; node **identities** (NodeIDs) are immutable for a given content snapshot.
-- **Node index deletion** = removing entries from the node store (and path→node_id map) when a subtree is no longer in the tree. That does **not** violate append-only.
+- **Append-only** = frames and node records are never destroyed; they may be tombstoned (marked as logically deleted)
+- **Tombstone** = a marker indicating the record is no longer part of the active tree; the underlying data remains until compaction
+- **Compaction** = optional, explicit removal of tombstoned records after a configurable grace period
 
-## Allowing node deletion
+## Tombstone design
 
-**Conclusion: Deleting nodes from the node store (with cascade to descendants) is OK. Frame blob deletion on node delete is allowed as a policy choice to avoid orphan bloat.**
+**Conclusion: Tombstoning nodes and frames preserves append-only semantics while enabling logical deletion. Compaction is a separate, explicit operation.**
 
-- **Frames**: Two policies. **Default (delete frames):** When a node is deleted, we delete the frame blobs that were heads for that node (avoids orphan bloat). **Option (--keep-frames):** We do not delete frame blobs; only indices are updated (strict append-only).
-- **Nodes**: We are only removing **index entries** for nodes that are no longer in the current tree. We are not mutating any node’s content or identity.
+- **Nodes**: Tombstone the node record in the node store. The record remains with a `tombstoned_at` timestamp. Queries for "active" nodes skip tombstoned entries. Recovery clears the tombstone marker.
+- **Head index**: Tombstone head entries for the tombstoned node. The mapping remains but is excluded from active queries.
+- **Frames**: Frame blobs are preserved by default. Head index tombstoning logically removes them from "current" context without destroying the blob. Compaction can optionally purge frame blobs for tombstoned nodes after TTL.
 
 ### Cascade semantics
 
-- **Delete node** = remove that node’s record (and its path→node_id mapping) from the node store, and **recursively remove all descendants** (so the whole subtree disappears from the index).
-- **Head index**: Remove head index entries for every removed node ID.
-- **Basis index**: Remove entries for frame IDs that were heads for deleted nodes. Required when deleting frame blobs.
-- **Frame storage**: **Default:** Delete the frame blobs that were heads for the deleted node IDs. **Option (--keep-frames):** No deletion; frames remain in storage (orphaned with respect to current tree).
+- **Tombstone node** = mark that node's record with `tombstoned_at`, and **recursively tombstone all descendants** so the whole subtree is logically removed from the active index.
+- **Head index**: Tombstone head index entries for every tombstoned node ID.
+- **Frame storage**: Frames remain in storage. They are not deleted on tombstone — only on explicit compaction after TTL.
 
-### When deletion happens
+### When tombstoning happens
 
-Two ways to get “nodes deleted”:
+Two ways to get "nodes tombstoned":
 
-1. **Explicit delete** (future): e.g. `merkle node delete --path <path>` (or by node ID). Removes that node and all descendants from the node store (and path map), and clears their head index entries. Use case: user wants to drop a subtree from the index without rescanning (e.g. “stop tracking node_modules”).
-2. **Rescan with replace** (alternative): On `merkle scan --force`, optionally **clear the node store** (and path mappings, and head index entries for nodes no longer in the new tree) then populate from the new tree. That effectively deletes any node not in the new tree. Requires a clear/replace or “replace store from tree” API.
+1. **Explicit delete** via `merkle workspace delete <path>` or `--node <id>`. Tombstones that node and all descendants. Use case: user wants to drop a subtree from the active index without rescanning (e.g. "stop tracking node_modules").
+2. **Rescan with prune** (future): On `merkle scan --force`, optionally tombstone nodes that exist in the store but not in the new tree. Requires a "diff and tombstone" API.
 
-Either way, cascade = “this node + all descendants” so the index never has a child without a parent.
+Either way, cascade = "this node + all descendants" so the active index never has a child without a parent.
+
+### When compaction happens
+
+Compaction is a separate, explicit operation:
+
+- `merkle workspace compact` removes tombstoned records older than TTL
+- `merkle workspace compact --all` removes all tombstoned records regardless of age
+- Compaction is optional; tombstoned data can remain indefinitely if desired
 
 ## Summary
 
-| Layer           | Append-only? | Deletion allowed? |
-|----------------|--------------|--------------------|
-| **Frames**     | Optional     | **Default:** Yes — delete frame blobs for deleted nodes (avoids orphan bloat). **Option:** --keep-frames preserves blobs (append-only). |
-| **Node store** | No (index)   | Yes — remove node + descendants; update index to current tree |
-| **Head index** | N/A          | Yes — remove entries for deleted node IDs so heads match the tree |
+| Layer           | Append-only | Tombstone | Compaction |
+|-----------------|-------------|-----------|------------|
+| **Frames**      | Yes         | Via head index | Optional after TTL |
+| **Node store**  | Yes         | Mark with timestamp | Optional after TTL |
+| **Head index**  | Yes         | Mark with timestamp | Optional after TTL |
 
-Deleting nodes (with cascade to descendants) is allowed. Frame blob deletion on node delete is the default to keep storage bounded; use --keep-frames to preserve history (strict append-only).
+Tombstoning nodes (with cascade to descendants) preserves append-only semantics. Frame blobs are preserved until explicit compaction. Use `merkle workspace compact` to purge old tombstones when storage bounds require it.
