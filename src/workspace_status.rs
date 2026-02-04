@@ -9,8 +9,10 @@
 use crate::agent::{AgentRegistry, AgentRole};
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
+use crate::ignore;
 use crate::store::NodeRecordStore;
 use crate::tree::builder::TreeBuilder;
+use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
 use comfy_table::presets::UTF8_BORDERS_ONLY;
 use comfy_table::Table;
@@ -69,7 +71,16 @@ pub fn build_workspace_status(
     workspace_root: &Path,
     include_breakdown: bool,
 ) -> Result<WorkspaceStatus, ApiError> {
+    // Use same ignore config as scan so computed root matches stored root
+    let ignore_patterns = ignore::load_ignore_patterns(workspace_root)
+        .unwrap_or_else(|_| WalkerConfig::default().ignore_patterns);
+    let walker_config = WalkerConfig {
+        follow_symlinks: false,
+        ignore_patterns,
+        max_depth: None,
+    };
     let root_hash: NodeID = TreeBuilder::new(workspace_root.to_path_buf())
+        .with_walker_config(walker_config)
         .compute_root()
         .map_err(ApiError::from)?;
 

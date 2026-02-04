@@ -439,12 +439,16 @@ pub enum ContextCommands {
     /// Generate context frame for a node
     Generate {
         /// Target node by NodeID (hex string)
-        #[arg(long, conflicts_with = "path")]
+        #[arg(long, conflicts_with_all = ["path", "path_positional"])]
         node: Option<String>,
         
         /// Target node by workspace-relative or absolute path
-        #[arg(long, conflicts_with = "node")]
+        #[arg(long, value_name = "PATH", conflicts_with = "node")]
         path: Option<PathBuf>,
+        
+        /// Target path (positional; same as --path)
+        #[arg(value_name = "PATH", index = 1, conflicts_with = "node")]
+        path_positional: Option<PathBuf>,
         
         /// Agent to use for generation
         #[arg(long)]
@@ -2354,6 +2358,7 @@ impl CliContext {
             ContextCommands::Generate {
                 node,
                 path,
+                path_positional,
                 agent,
                 provider,
                 frame_type,
@@ -2361,9 +2366,10 @@ impl CliContext {
                 sync,
                 r#async,
             } => {
+                let path_merged = path.as_ref().or(path_positional.as_ref());
                 self.handle_context_generate(
                     node.as_deref(),
-                    path.as_ref(),
+                    path_merged,
                     agent.as_deref(),
                     provider.as_deref(),
                     frame_type.as_deref(),
@@ -2477,7 +2483,7 @@ impl CliContext {
             }
             (None, None) => {
                 return Err(ApiError::ConfigError(
-                    "Must specify either --node <node_id> or --path <path>.".to_string()
+                    "Must specify either --node <node_id>, --path <path>, or a positional path (e.g. merkle context generate ./foo).".to_string()
                 ));
             }
         };

@@ -312,6 +312,7 @@ fn test_context_generate_requires_provider() {
             command: ContextCommands::Generate {
                 node: None,
                 path: Some(test_file),
+                path_positional: None,
                 agent: Some("test-agent".to_string()),
                 provider: None,
                 frame_type: None,
@@ -357,6 +358,7 @@ fn test_context_generate_requires_agent_or_default() {
             command: ContextCommands::Generate {
                 node: None,
                 path: Some(test_file),
+                path_positional: None,
                 agent: None,
                 provider: Some("test-provider".to_string()),
                 frame_type: None,
@@ -401,6 +403,7 @@ fn test_context_generate_multiple_agents_requires_flag() {
             command: ContextCommands::Generate {
                 node: None,
                 path: Some(test_file),
+                path_positional: None,
                 agent: None,
                 provider: Some("test-provider".to_string()),
                 frame_type: None,

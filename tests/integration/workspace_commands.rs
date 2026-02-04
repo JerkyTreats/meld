@@ -280,3 +280,39 @@ fn test_scan_respects_ignore_list() {
         assert!(!paths.iter().any(|p| p.contains("skip_me")));
     });
 }
+
+/// Regression: after `merkle scan`, `merkle status` must show the tree as scanned.
+/// Guards against status using a different root computation (e.g. ignore config) than scan,
+/// which would make the stored root not found and show "Scanned: no".
+#[test]
+fn test_scan_then_status_shows_scanned() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_data_home(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        fs::write(workspace_root.join("kept.txt"), "content").unwrap();
+        fs::write(workspace_root.join(".gitignore"), "ignored\n").unwrap();
+        fs::create_dir_all(workspace_root.join("ignored")).unwrap();
+        fs::write(workspace_root.join("ignored").join("x"), "x").unwrap();
+
+        let ctx = CliContext::new(workspace_root.clone(), None).unwrap();
+        ctx.execute(&Commands::Scan { force: true }).unwrap();
+
+        let out = ctx
+            .execute(&Commands::Status {
+                format: "text".to_string(),
+                workspace_only: true,
+                agents_only: false,
+                providers_only: false,
+                breakdown: false,
+                test_connectivity: false,
+            })
+            .unwrap();
+        assert!(
+            out.contains("Scanned: yes"),
+            "status must show tree as scanned after scan; got: {}",
+            out
+        );
+        assert!(!out.contains("Scanned: no"));
+    });
+}
