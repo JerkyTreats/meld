@@ -162,6 +162,119 @@ async fn test_enqueue_dequeue() {
 }
 
 #[tokio::test]
+async fn test_enqueue_deduplicates_pending_identity() {
+    let (queue, _temp_dir) = create_test_queue();
+    let node_id = Hash::from([9u8; 32]);
+
+    let first = queue
+        .enqueue(
+            node_id,
+            "agent1".to_string(),
+            "test-provider".to_string(),
+            Some("context-agent1".to_string()),
+            Priority::Normal,
+        )
+        .await
+        .unwrap();
+
+    let second = queue
+        .enqueue(
+            node_id,
+            "agent1".to_string(),
+            "test-provider".to_string(),
+            Some("context-agent1".to_string()),
+            Priority::Urgent,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(first, second);
+    assert_eq!(queue.stats().pending, 1);
+}
+
+#[tokio::test]
+async fn test_enqueue_and_wait_deduplicates_pending_request() {
+    let (queue, _temp_dir) = create_test_queue();
+    let node_id = Hash::from([11u8; 32]);
+
+    queue
+        .enqueue(
+            node_id,
+            "agent1".to_string(),
+            "test-provider".to_string(),
+            Some("context-agent1".to_string()),
+            Priority::Normal,
+        )
+        .await
+        .unwrap();
+
+    let result = queue
+        .enqueue_and_wait(
+            node_id,
+            "agent1".to_string(),
+            "test-provider".to_string(),
+            Some("context-agent1".to_string()),
+            Priority::Urgent,
+            Some(Duration::from_millis(20)),
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), ApiError::ConfigError(_)));
+    assert_eq!(queue.stats().pending, 1);
+}
+
+#[tokio::test]
+async fn test_enqueue_deduplicates_during_retry_backoff_window() {
+    let mut config = GenerationConfig::default();
+    config.max_retry_attempts = 1;
+    config.retry_delay_ms = 500;
+    let (queue, _temp_dir) = create_test_queue_with_config(config);
+    queue.start().unwrap();
+
+    let node_id = Hash::from([77u8; 32]);
+    let first = queue
+        .enqueue(
+            node_id,
+            "missing-agent".to_string(),
+            "test-provider".to_string(),
+            Some("context-missing-agent".to_string()),
+            Priority::Normal,
+        )
+        .await
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let stats = queue.stats();
+        if stats.pending == 0 && stats.processing == 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "request did not enter retry backoff window in time"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let second = queue
+        .enqueue(
+            node_id,
+            "missing-agent".to_string(),
+            "test-provider".to_string(),
+            Some("context-missing-agent".to_string()),
+            Priority::High,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(first, second);
+    assert_eq!(queue.stats().pending, 0);
+
+    queue.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn test_queue_size_limit() {
     let mut config = GenerationConfig::default();
     config.max_queue_size = 3;

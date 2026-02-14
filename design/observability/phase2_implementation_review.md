@@ -5,7 +5,7 @@
 | F1 | High | Async `context generate` can violate session terminal ordering and likely drop async work because command session closes before queue work lifecycle is complete. | `src/tooling/cli.rs`, `tests/integration/context_cli.rs`, `tests/integration/progress_observability.rs`, `design/observability/observability_spec.md:71` | [Q1](#q1) | Fixed |
 | F2 | High | Required command-specific summary event families are missing across most command surfaces; only generic `command_summary` is emitted. | `design/observability/feature_migration_spec.md:51`, `design/observability/feature_migration_spec.md:61`, `src/tooling/cli.rs:3177`, `src/tooling/cli.rs:3205`, `tests/integration/progress_observability.rs:135` | - | Fixed |
 | F3 | High | `provider test` command does not emit provider lifecycle events required by migration spec. | `design/observability/feature_migration_spec.md:199`, `src/tooling/cli.rs:2360`, `src/tooling/cli.rs:2385`, `src/tooling/cli.rs:2441`, `tests/integration/progress_observability.rs:315` | - | Fixed |
-| F4 | Medium | Queue dedupe is partial: checks only pending queue items and misses in-flight duplicates; sync enqueue path has no dedupe. | `src/frame/queue.rs:287`, `src/frame/queue.rs:377`, `design/observability/feature_migration_spec.md:96` | - | Not fixed |
+| F4 | Medium | Queue dedupe is partial: checks only pending queue items and misses in-flight duplicates; sync enqueue path has no dedupe. | `src/frame/queue.rs`, `tests/integration/frame_queue.rs`, `design/observability/feature_migration_spec.md:96` | - | Fixed |
 | F5 | Medium | `enqueue_batch` does not emit per-request `request_enqueued` events. | `src/frame/queue.rs:468`, `design/observability/feature_migration_spec.md:103` | - | Not fixed |
 | F6 | Medium | `scan_progress` is emitted once, not on batch cadence by node count. | `src/tooling/cli.rs:1153`, `design/observability/feature_migration_spec.md:119` | - | Not fixed |
 | F7 | Medium | Context-generate payloads omit required identity fields from spec, notably `path`. | `design/observability/feature_migration_spec.md:86`, `src/tooling/cli.rs:2673`, `src/tooling/cli.rs:2690` | - | Not fixed |
@@ -14,10 +14,10 @@
 
 ## Progress Snapshot (February 14, 2026)
 
-- Findings fixed: `3/9` (`F1`, `F2`, `F3`)
-- Findings remaining: `6/9` (`F4`, `F5`, `F6`, `F7`, `F8`, `F9`)
+- Findings fixed: `4/9` (`F1`, `F2`, `F3`, `F4`)
+- Findings remaining: `5/9` (`F5`, `F6`, `F7`, `F8`, `F9`)
 - High-severity findings: `3/3 fixed`
-- Medium-severity findings: `0/4 fixed`
+- Medium-severity findings: `1/4 fixed`
 - Low-severity findings: `0/2 fixed`
 
 ## Decisions Made

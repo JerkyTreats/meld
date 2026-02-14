@@ -22,6 +22,23 @@ pub enum StorageError {
     IoError(#[from] std::io::Error),
 }
 
+impl Clone for StorageError {
+    fn clone(&self) -> Self {
+        match self {
+            StorageError::NodeNotFound(node_id) => StorageError::NodeNotFound(*node_id),
+            StorageError::FrameNotFound(frame_id) => StorageError::FrameNotFound(*frame_id),
+            StorageError::HashMismatch { expected, actual } => StorageError::HashMismatch {
+                expected: *expected,
+                actual: *actual,
+            },
+            StorageError::InvalidPath(path) => StorageError::InvalidPath(path.clone()),
+            StorageError::IoError(err) => {
+                StorageError::IoError(std::io::Error::new(err.kind(), err.to_string()))
+            }
+        }
+    }
+}
+
 /// API-related errors for Phase 2
 #[derive(Debug, Error)]
 pub enum ApiError {
@@ -74,6 +91,35 @@ pub enum ApiError {
         "Path not found in tree: {0}. Run `merkle scan` to update tree or start `merkle watch`."
     )]
     PathNotInTree(std::path::PathBuf),
+}
+
+impl Clone for ApiError {
+    fn clone(&self) -> Self {
+        match self {
+            ApiError::NodeNotFound(node_id) => ApiError::NodeNotFound(*node_id),
+            ApiError::FrameNotFound(frame_id) => ApiError::FrameNotFound(*frame_id),
+            ApiError::Unauthorized(message) => ApiError::Unauthorized(message.clone()),
+            ApiError::InvalidFrame(message) => ApiError::InvalidFrame(message.clone()),
+            ApiError::SynthesisFailed(message) => ApiError::SynthesisFailed(message.clone()),
+            ApiError::RegenerationFailed(message) => ApiError::RegenerationFailed(message.clone()),
+            ApiError::ProviderError(message) => ApiError::ProviderError(message.clone()),
+            ApiError::ProviderNotConfigured(message) => {
+                ApiError::ProviderNotConfigured(message.clone())
+            }
+            ApiError::ProviderRequestFailed(message) => {
+                ApiError::ProviderRequestFailed(message.clone())
+            }
+            ApiError::ProviderAuthFailed(message) => ApiError::ProviderAuthFailed(message.clone()),
+            ApiError::ProviderRateLimit(message) => ApiError::ProviderRateLimit(message.clone()),
+            ApiError::ProviderModelNotFound(message) => {
+                ApiError::ProviderModelNotFound(message.clone())
+            }
+            ApiError::StorageError(err) => ApiError::StorageError(err.clone()),
+            ApiError::ConfigError(message) => ApiError::ConfigError(message.clone()),
+            ApiError::GenerationFailed(message) => ApiError::GenerationFailed(message.clone()),
+            ApiError::PathNotInTree(path) => ApiError::PathNotInTree(path.clone()),
+        }
+    }
 }
 
 impl From<config::ConfigError> for ApiError {

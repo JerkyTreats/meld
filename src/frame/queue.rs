@@ -54,6 +54,49 @@ pub struct QueueEventContext {
     pub progress: Arc<ProgressRuntime>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RequestIdentity {
+    node_id: NodeID,
+    agent_id: String,
+    provider_name: String,
+    frame_type: String,
+}
+
+impl RequestIdentity {
+    fn new(node_id: NodeID, agent_id: &str, provider_name: &str, frame_type: &str) -> Self {
+        Self {
+            node_id,
+            agent_id: agent_id.to_string(),
+            provider_name: provider_name.to_string(),
+            frame_type: frame_type.to_string(),
+        }
+    }
+
+    fn from_request(request: &GenerationRequest) -> Self {
+        Self::new(
+            request.node_id,
+            &request.agent_id,
+            &request.provider_name,
+            &request.frame_type,
+        )
+    }
+}
+
+#[derive(Debug)]
+struct DedupeEntry {
+    request_id: RequestId,
+    waiters: Vec<oneshot::Sender<Result<FrameID, ApiError>>>,
+}
+
+impl DedupeEntry {
+    fn new(request_id: RequestId) -> Self {
+        Self {
+            request_id,
+            waiters: Vec::new(),
+        }
+    }
+}
+
 /// Generation request
 #[derive(Debug)]
 pub struct GenerationRequest {
@@ -245,6 +288,8 @@ pub struct FrameGenerationQueue {
     stats: Arc<RwLock<QueueStats>>,
     /// Optional observability context for queue and provider lifecycle events
     event_context: Option<QueueEventContext>,
+    /// Index of active requests (queued or in-flight) by dedupe identity
+    dedupe_index: Arc<Mutex<HashMap<RequestIdentity, DedupeEntry>>>,
 }
 
 impl FrameGenerationQueue {
@@ -268,6 +313,7 @@ impl FrameGenerationQueue {
             running: Arc::new(RwLock::new(false)),
             stats: Arc::new(RwLock::new(QueueStats::default())),
             event_context,
+            dedupe_index: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -280,22 +326,16 @@ impl FrameGenerationQueue {
         frame_type: Option<String>,
         priority: Priority,
     ) -> Result<RequestId, ApiError> {
-        let request_id = RequestId::next();
         let mut queue = self.queue.lock().await;
+        let mut dedupe = self.dedupe_index.lock().await;
         let resolved_frame_type = frame_type
             .clone()
             .unwrap_or_else(|| format!("context-{}", agent_id));
+        let identity =
+            RequestIdentity::new(node_id, &agent_id, &provider_name, &resolved_frame_type);
 
-        if let Some(existing_id) = queue
-            .iter()
-            .find(|req| {
-                req.node_id == node_id
-                    && req.agent_id == agent_id
-                    && req.provider_name == provider_name
-                    && req.frame_type == resolved_frame_type
-            })
-            .map(|r| r.request_id)
-        {
+        if let Some(existing_entry) = dedupe.get(&identity) {
+            let existing_id = existing_entry.request_id;
             self.emit_queue_event(
                 "request_deduplicated",
                 QueueEventData {
@@ -323,6 +363,8 @@ impl FrameGenerationQueue {
             ));
         }
 
+        let request_id = RequestId::next();
+
         // Use provided frame_type or default to "context-{agent_id}"
         let frame_type = resolved_frame_type;
 
@@ -340,6 +382,7 @@ impl FrameGenerationQueue {
 
         // Push to priority queue (BinaryHeap maintains max-heap property)
         queue.push(request);
+        dedupe.insert(identity, DedupeEntry::new(request_id));
 
         // Update stats
         {
@@ -350,6 +393,9 @@ impl FrameGenerationQueue {
 
         // Notify workers that a new item is available
         self.notify.notify_one();
+        let queue_size = queue.len();
+        drop(dedupe);
+        drop(queue);
 
         debug!(
             request_id = ?request_id,
@@ -357,7 +403,7 @@ impl FrameGenerationQueue {
             agent_id = %agent_id,
             provider_name = %provider_name,
             priority = ?priority,
-            queue_size = queue.len(),
+            queue_size = queue_size,
             "Enqueued generation request"
         );
         self.emit_queue_event(
@@ -386,10 +432,33 @@ impl FrameGenerationQueue {
         priority: Priority,
         timeout: Option<Duration>,
     ) -> Result<FrameID, ApiError> {
-        let request_id = RequestId::next();
         let (tx, rx) = oneshot::channel();
-
         let mut queue = self.queue.lock().await;
+        let mut dedupe = self.dedupe_index.lock().await;
+
+        let resolved_frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
+        let identity =
+            RequestIdentity::new(node_id, &agent_id, &provider_name, &resolved_frame_type);
+
+        if let Some(existing_entry) = dedupe.get_mut(&identity) {
+            existing_entry.waiters.push(tx);
+            let existing_id = existing_entry.request_id;
+            drop(dedupe);
+            drop(queue);
+            self.emit_queue_event(
+                "request_deduplicated",
+                QueueEventData {
+                    node_id: hex::encode(node_id),
+                    agent_id,
+                    provider_name,
+                    frame_type: resolved_frame_type,
+                    request_id: Some(existing_id.as_u64()),
+                    retry_count: None,
+                    duration_ms: None,
+                },
+            );
+            return self.wait_for_generation_completion(rx, timeout).await;
+        }
 
         // Check queue size limit
         if queue.len() >= self.config.max_queue_size {
@@ -403,8 +472,8 @@ impl FrameGenerationQueue {
             ));
         }
 
-        // Use provided frame_type or default to "context-{agent_id}"
-        let frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
+        let request_id = RequestId::next();
+        let frame_type = resolved_frame_type;
 
         let request = GenerationRequest {
             request_id,
@@ -415,11 +484,14 @@ impl FrameGenerationQueue {
             priority,
             retry_count: 0,
             created_at: Instant::now(),
-            completion_tx: Some(tx),
+            completion_tx: None,
         };
 
         // Push to priority queue (BinaryHeap maintains max-heap property)
         queue.push(request);
+        let mut entry = DedupeEntry::new(request_id);
+        entry.waiters.push(tx);
+        dedupe.insert(identity, entry);
 
         // Update stats
         {
@@ -430,6 +502,7 @@ impl FrameGenerationQueue {
 
         // Notify workers that a new item is available
         self.notify.notify_one();
+        drop(dedupe);
         drop(queue);
 
         debug!(
@@ -453,16 +526,7 @@ impl FrameGenerationQueue {
             },
         );
 
-        // Wait for completion
-        match timeout {
-            Some(timeout) => tokio::time::timeout(timeout, rx)
-                .await
-                .map_err(|_| ApiError::ConfigError("Timeout waiting for generation".to_string()))?
-                .map_err(|_| ApiError::ConfigError("Completion channel closed".to_string()))?,
-            None => rx
-                .await
-                .map_err(|_| ApiError::ConfigError("Completion channel closed".to_string()))?,
-        }
+        self.wait_for_generation_completion(rx, timeout).await
     }
 
     /// Enqueue multiple requests (batch enqueue)
@@ -470,15 +534,72 @@ impl FrameGenerationQueue {
         &self,
         requests: Vec<(NodeID, String, String, Option<String>, Priority)>,
     ) -> Result<Vec<RequestId>, ApiError> {
-        let batch_size = requests.len();
         let mut queue = self.queue.lock().await;
-        let mut request_ids = Vec::new();
+        let mut dedupe = self.dedupe_index.lock().await;
+        let mut request_ids: Vec<RequestId> = Vec::new();
+        let mut new_requests = Vec::new();
+        let mut staged = HashMap::new();
+
+        for (node_id, agent_id, provider_name, frame_type, priority) in requests {
+            let frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
+            let identity = RequestIdentity::new(node_id, &agent_id, &provider_name, &frame_type);
+
+            if let Some(existing_id) = staged.get(&identity) {
+                request_ids.push(*existing_id);
+                self.emit_queue_event(
+                    "request_deduplicated",
+                    QueueEventData {
+                        node_id: hex::encode(node_id),
+                        agent_id,
+                        provider_name,
+                        frame_type,
+                        request_id: Some(existing_id.as_u64()),
+                        retry_count: None,
+                        duration_ms: None,
+                    },
+                );
+                continue;
+            }
+
+            if let Some(existing_entry) = dedupe.get(&identity) {
+                request_ids.push(existing_entry.request_id);
+                self.emit_queue_event(
+                    "request_deduplicated",
+                    QueueEventData {
+                        node_id: hex::encode(node_id),
+                        agent_id,
+                        provider_name,
+                        frame_type,
+                        request_id: Some(existing_entry.request_id.as_u64()),
+                        retry_count: None,
+                        duration_ms: None,
+                    },
+                );
+                continue;
+            }
+
+            let request_id = RequestId::next();
+            let request = GenerationRequest {
+                request_id,
+                node_id,
+                agent_id: agent_id.clone(),
+                provider_name: provider_name.clone(),
+                frame_type: frame_type.clone(),
+                priority,
+                retry_count: 0,
+                created_at: Instant::now(),
+                completion_tx: None,
+            };
+            request_ids.push(request_id);
+            staged.insert(identity.clone(), request_id);
+            new_requests.push((identity, request));
+        }
 
         // Check if batch would exceed queue size
-        if queue.len() + batch_size > self.config.max_queue_size {
+        if queue.len() + new_requests.len() > self.config.max_queue_size {
             warn!(
                 queue_size = queue.len(),
-                batch_size = batch_size,
+                batch_size = new_requests.len(),
                 max_size = self.config.max_queue_size,
                 "Batch would exceed queue size limit"
             );
@@ -487,24 +608,14 @@ impl FrameGenerationQueue {
             ));
         }
 
-        // Use provided frame_type or default to "context-{agent_id}"
-        for (node_id, agent_id, provider_name, frame_type, priority) in requests {
-            let request_id = RequestId::next();
-            let frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
-            let request = GenerationRequest {
-                request_id,
-                node_id,
-                agent_id: agent_id.clone(),
-                provider_name: provider_name.clone(),
-                frame_type,
-                priority,
-                retry_count: 0,
-                created_at: Instant::now(),
-                completion_tx: None,
-            };
-            request_ids.push(request_id);
+        let new_count = new_requests.len();
+        for (identity, request) in new_requests {
+            let request_id = request.request_id;
             queue.push(request);
+            dedupe.insert(identity, DedupeEntry::new(request_id));
         }
+
+        let batch_size = new_count;
 
         // Update stats
         {
@@ -519,6 +630,7 @@ impl FrameGenerationQueue {
             self.notify.notify_one();
         }
 
+        drop(dedupe);
         drop(queue);
 
         debug!(
@@ -552,6 +664,7 @@ impl FrameGenerationQueue {
             let running = Arc::clone(&self.running);
             let stats = Arc::clone(&self.stats);
             let event_context = self.event_context.clone();
+            let dedupe_index = Arc::clone(&self.dedupe_index);
 
             let handle = tokio::spawn(async move {
                 Self::worker_loop(
@@ -564,6 +677,7 @@ impl FrameGenerationQueue {
                     running,
                     stats,
                     event_context,
+                    dedupe_index,
                 )
                 .await;
             });
@@ -628,6 +742,22 @@ impl FrameGenerationQueue {
         }
     }
 
+    async fn wait_for_generation_completion(
+        &self,
+        receiver: oneshot::Receiver<Result<FrameID, ApiError>>,
+        timeout: Option<Duration>,
+    ) -> Result<FrameID, ApiError> {
+        match timeout {
+            Some(timeout) => tokio::time::timeout(timeout, receiver)
+                .await
+                .map_err(|_| ApiError::ConfigError("Timeout waiting for generation".to_string()))?
+                .map_err(|_| ApiError::ConfigError("Completion channel closed".to_string()))?,
+            None => receiver
+                .await
+                .map_err(|_| ApiError::ConfigError("Completion channel closed".to_string()))?,
+        }
+    }
+
     /// Worker loop for processing requests
     async fn worker_loop(
         worker_id: usize,
@@ -639,6 +769,7 @@ impl FrameGenerationQueue {
         running: Arc<RwLock<bool>>,
         stats: Arc<RwLock<QueueStats>>,
         event_context: Option<QueueEventContext>,
+        dedupe_index: Arc<Mutex<HashMap<RequestIdentity, DedupeEntry>>>,
     ) {
         debug!(worker_id, "Worker started");
 
@@ -707,9 +838,7 @@ impl FrameGenerationQueue {
                 last_request,
                 min_delay,
             };
-
-            // Extract completion channel before processing (oneshot::Sender doesn't implement Clone)
-            let completion_tx = request.completion_tx.take();
+            let request_identity = RequestIdentity::from_request(&request);
 
             // Acquire rate limiter permit
             let _permit = match rate_limiter.acquire(&request.agent_id).await {
@@ -722,11 +851,8 @@ impl FrameGenerationQueue {
                         "Failed to acquire rate limiter permit"
                     );
                     // Re-queue request (maintains priority order automatically)
-                    // Restore completion_tx if it was present
-                    let mut req = request.clone();
-                    req.completion_tx = completion_tx;
                     let mut queue_guard = queue.lock().await;
-                    queue_guard.push(req);
+                    queue_guard.push(request.clone());
                     {
                         let mut stats = stats.write();
                         stats.processing = stats.processing.saturating_sub(1);
@@ -771,11 +897,17 @@ impl FrameGenerationQueue {
             };
             Self::emit_queue_stats_event_static(stats.clone(), event_context.clone());
 
-            // Notify completion channel if present (for sync requests)
-            // Only send if not retrying (retries don't preserve completion channel)
             if !should_retry {
-                if let Some(tx) = completion_tx {
-                    let _ = tx.send(result);
+                let waiters = {
+                    let mut dedupe = dedupe_index.lock().await;
+                    dedupe
+                        .remove(&request_identity)
+                        .map(|entry| entry.waiters)
+                        .unwrap_or_default()
+                };
+
+                for tx in waiters {
+                    let _ = tx.send(result.clone());
                 }
             }
 
@@ -798,12 +930,8 @@ impl FrameGenerationQueue {
                 // Add retry delay before re-queuing
                 sleep(Duration::from_millis(config.retry_delay_ms)).await;
 
-                // Clone request for re-queuing (completion_tx already extracted above)
-                let mut retry_request = request.clone();
-                retry_request.completion_tx = None; // Don't retry sync requests - they should fail
-
                 let mut queue_guard = queue.lock().await;
-                queue_guard.push(retry_request);
+                queue_guard.push(request.clone());
                 drop(queue_guard);
 
                 // Notify workers that a retry is available
