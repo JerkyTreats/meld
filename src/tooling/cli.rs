@@ -1238,11 +1238,7 @@ impl CliContext {
                 let builder =
                     TreeBuilder::new(self.workspace_root.clone()).with_walker_config(walker_config);
                 let tree = builder.build().map_err(|e| ApiError::StorageError(e))?;
-                self.progress.emit_event_best_effort(
-                    session_id,
-                    "scan_progress",
-                    json!({ "node_count": tree.nodes.len() }),
-                );
+                let total_nodes = tree.nodes.len();
 
                 // If force is false, check if root node already exists
                 if !force {
@@ -1253,6 +1249,14 @@ impl CliContext {
                         .map_err(ApiError::from)?
                         .is_some()
                     {
+                        self.progress.emit_event_best_effort(
+                            session_id,
+                            "scan_progress",
+                            json!({
+                                "node_count": total_nodes,
+                                "total_nodes": total_nodes
+                            }),
+                        );
                         let root_hex = hex::encode(tree.root_id);
                         return Ok(format!(
                             "Tree already exists (root: {}). Use --force to rebuild.",
@@ -1263,8 +1267,36 @@ impl CliContext {
 
                 // Populate store with all nodes from tree
                 let store = self.api.node_store().as_ref() as &dyn NodeRecordStore;
-                NodeRecord::populate_store_from_tree(store, &tree)
-                    .map_err(ApiError::StorageError)?;
+                const SCAN_PROGRESS_BATCH_NODES: usize = 128;
+                let mut processed_nodes = 0usize;
+                for (node_id, node) in &tree.nodes {
+                    let record = NodeRecord::from_merkle_node(*node_id, node, &tree)
+                        .map_err(ApiError::StorageError)?;
+                    store.put(&record).map_err(ApiError::from)?;
+                    processed_nodes += 1;
+                    if processed_nodes % SCAN_PROGRESS_BATCH_NODES == 0
+                        || processed_nodes == total_nodes
+                    {
+                        self.progress.emit_event_best_effort(
+                            session_id,
+                            "scan_progress",
+                            json!({
+                                "node_count": processed_nodes,
+                                "total_nodes": total_nodes
+                            }),
+                        );
+                    }
+                }
+                if total_nodes == 0 {
+                    self.progress.emit_event_best_effort(
+                        session_id,
+                        "scan_progress",
+                        json!({
+                            "node_count": 0,
+                            "total_nodes": 0
+                        }),
+                    );
+                }
                 store.flush().map_err(|e| ApiError::StorageError(e))?;
 
                 // When .gitignore node hash changed, sync it into ignore_list
@@ -1279,14 +1311,13 @@ impl CliContext {
                     "scan_completed",
                     json!({
                         "force": force,
-                        "node_count": tree.nodes.len(),
+                        "node_count": total_nodes,
                         "duration_ms": scan_started.elapsed().as_millis(),
                     }),
                 );
                 Ok(format!(
                     "Scanned {} nodes (root: {})",
-                    tree.nodes.len(),
-                    root_hex
+                    total_nodes, root_hex
                 ))
             }
             Commands::Workspace { command } => match command {

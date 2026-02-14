@@ -7,17 +7,17 @@
 | F3 | High | `provider test` command does not emit provider lifecycle events required by migration spec. | `design/observability/feature_migration_spec.md:199`, `src/tooling/cli.rs:2360`, `src/tooling/cli.rs:2385`, `src/tooling/cli.rs:2441`, `tests/integration/progress_observability.rs:315` | - | Fixed |
 | F4 | Medium | Queue dedupe is partial: checks only pending queue items and misses in-flight duplicates; sync enqueue path has no dedupe. | `src/frame/queue.rs`, `tests/integration/frame_queue.rs`, `design/observability/feature_migration_spec.md:96` | - | Fixed |
 | F5 | Medium | `enqueue_batch` does not emit per-request `request_enqueued` events. | `src/frame/queue.rs`, `tests/integration/frame_queue.rs`, `design/observability/feature_migration_spec.md:103` | - | Fixed |
-| F6 | Medium | `scan_progress` is emitted once, not on batch cadence by node count. | `src/tooling/cli.rs:1153`, `design/observability/feature_migration_spec.md:119` | - | Not fixed |
+| F6 | Medium | `scan_progress` is emitted once, not on batch cadence by node count. | `src/tooling/cli.rs`, `tests/integration/progress_observability.rs`, `design/observability/feature_migration_spec.md:119` | - | Fixed |
 | F7 | Medium | Context-generate payloads omit required identity fields from spec, notably `path`. | `design/observability/feature_migration_spec.md:86`, `src/tooling/cli.rs:2673`, `src/tooling/cli.rs:2690` | - | Not fixed |
 | F8 | Low | Event timestamp format is numeric epoch millis, not ISO 8601 with milliseconds as specified. | `src/progress/event.rs:36`, `src/progress/event.rs:142`, `design/observability/observability_spec.md:77` | - | Not fixed |
 | F9 | Low | `command_summary` stores raw output/error text; this is not a stable metric-focused summary shape and can produce large payloads. | `src/tooling/cli.rs:2885`, `src/tooling/cli.rs:2887`, `design/observability/feature_migration_spec.md:166` | [Q2](#q2) | Not fixed |
 
 ## Progress Snapshot (February 14, 2026)
 
-- Findings fixed: `5/9` (`F1`, `F2`, `F3`, `F4`, `F5`)
-- Findings remaining: `4/9` (`F6`, `F7`, `F8`, `F9`)
+- Findings fixed: `6/9` (`F1`, `F2`, `F3`, `F4`, `F5`, `F6`)
+- Findings remaining: `3/9` (`F7`, `F8`, `F9`)
 - High-severity findings: `3/3 fixed`
-- Medium-severity findings: `2/4 fixed`
+- Medium-severity findings: `3/4 fixed`
 - Low-severity findings: `0/2 fixed`
 
 ## Decisions Made

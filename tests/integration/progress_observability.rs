@@ -62,6 +62,66 @@ fn scan_emits_session_boundary_events() {
 }
 
 #[test]
+fn scan_emits_batched_progress_events_with_monotonic_counts() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+
+        for i in 0..400 {
+            fs::write(workspace_root.join(format!("f{i}.txt")), "x").unwrap();
+        }
+
+        let cli = CliContext::new(workspace_root, None).unwrap();
+        cli.execute(&Commands::Scan { force: true }).unwrap();
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+        let scan_session = sessions
+            .iter()
+            .find(|s| s.command == "scan")
+            .expect("scan session should exist");
+        let events = runtime
+            .store()
+            .read_events(&scan_session.session_id)
+            .unwrap();
+
+        let mut progress_counts: Vec<u64> = events
+            .iter()
+            .filter(|e| e.event_type == "scan_progress")
+            .map(|e| {
+                e.data
+                    .get("node_count")
+                    .and_then(|v| v.as_u64())
+                    .expect("scan_progress.node_count should be present")
+            })
+            .collect();
+
+        assert!(
+            progress_counts.len() >= 2,
+            "expected multiple scan_progress events for large scan"
+        );
+        let mut sorted = progress_counts.clone();
+        sorted.sort_unstable();
+        assert_eq!(progress_counts, sorted, "scan_progress should be monotonic");
+
+        let completed = events
+            .iter()
+            .find(|e| e.event_type == "scan_completed")
+            .expect("scan_completed should be present");
+        let completed_count = completed
+            .data
+            .get("node_count")
+            .and_then(|v| v.as_u64())
+            .expect("scan_completed.node_count should be present");
+        let last_progress = progress_counts
+            .pop()
+            .expect("at least one scan_progress event");
+        assert_eq!(last_progress, completed_count);
+    });
+}
+
+#[test]
 fn failed_command_emits_session_end() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
