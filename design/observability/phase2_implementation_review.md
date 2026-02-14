@@ -3,7 +3,7 @@
 | ID | Severity | Finding | Evidence | Open Question | Fixed Status |
 | --- | --- | --- | --- | --- | --- |
 | F1 | High | Async `context generate` can violate session terminal ordering and likely drop async work because command session closes before queue work lifecycle is complete. | `src/tooling/cli.rs`, `tests/integration/context_cli.rs`, `tests/integration/progress_observability.rs`, `design/observability/observability_spec.md:71` | [Q1](#q1) | Fixed |
-| F2 | High | Required command-specific summary event families are missing across most command surfaces; only generic `command_summary` is emitted. | `design/observability/feature_migration_spec.md:51`, `design/observability/feature_migration_spec.md:61`, `src/tooling/cli.rs:1197`, `src/tooling/cli.rs:1262`, `src/tooling/cli.rs:2874` | - | Not fixed |
+| F2 | High | Required command-specific summary event families are missing across most command surfaces; only generic `command_summary` is emitted. | `design/observability/feature_migration_spec.md:51`, `design/observability/feature_migration_spec.md:61`, `src/tooling/cli.rs:3177`, `src/tooling/cli.rs:3205`, `tests/integration/progress_observability.rs:135` | - | Fixed |
 | F3 | High | `provider test` command does not emit provider lifecycle events required by migration spec. | `design/observability/feature_migration_spec.md:199`, `src/tooling/cli.rs:2095` | - | Not fixed |
 | F4 | Medium | Queue dedupe is partial: checks only pending queue items and misses in-flight duplicates; sync enqueue path has no dedupe. | `src/frame/queue.rs:287`, `src/frame/queue.rs:377`, `design/observability/feature_migration_spec.md:96` | - | Not fixed |
 | F5 | Medium | `enqueue_batch` does not emit per-request `request_enqueued` events. | `src/frame/queue.rs:468`, `design/observability/feature_migration_spec.md:103` | - | Not fixed |
@@ -19,7 +19,7 @@
 | D1 | Keep `context generate` as a blocking CLI call and stream progress from observability events during execution. | Prioritize minimal corrective work on existing contracts and event coverage; no workflow redesign required for this phase. | F1 | [Q1](#q1) | Implemented |
 | D2 | Remove CLI `--async` from `context generate` until durable non-blocking job/session semantics are designed and approved. | Eliminates ambiguous session lifecycle behavior and keeps implementation aligned with existing blocking orchestrator specs. | F1 | [Q1](#q1) | Implemented |
 | D3 | Keep this effort constrained to correcting and expanding what is already specified and implemented; avoid net-new architectural ground. | Focus execution on spec-alignment gaps in existing Phase 2/3 boundaries and observability payload/event completeness. | F2, F3, F4, F5, F6, F7, F8, F9 | - | Accepted |
-| D4 | Keep `command_summary` as a backward-compatible fallback and add command-family typed summary events additively. | Low-risk path: no schema break, no replay migration, and supports incremental rollout of required typed summary coverage. | F2, F9 | [Q2](#q2) | Accepted |
+| D4 | Keep `command_summary` as a backward-compatible fallback and add command-family typed summary events additively. | Low-risk path: no schema break, no replay migration, and supports incremental rollout of required typed summary coverage. | F2, F9 | [Q2](#q2) | Implemented |
 
 
 ## Open Questions

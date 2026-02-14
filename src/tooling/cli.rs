@@ -3181,9 +3181,17 @@ impl CliContext {
         result: Result<&String, &ApiError>,
         duration_ms: u128,
     ) {
+        let ok = result.is_ok();
+        let error = result.as_ref().err().map(|err| err.to_string());
+        if let Some((event_type, data)) =
+            Self::typed_summary_event(command, ok, duration_ms, error.as_deref())
+        {
+            self.progress
+                .emit_event_best_effort(session_id, event_type, data);
+        }
         let data = SummaryEventData {
             command: command_name(command),
-            ok: result.is_ok(),
+            ok,
             duration_ms,
             message: match result {
                 Ok(output) => Some(output.clone()),
@@ -3192,6 +3200,211 @@ impl CliContext {
         };
         self.progress
             .emit_event_best_effort(session_id, "command_summary", json!(data));
+    }
+
+    fn typed_summary_event(
+        command: &Commands,
+        ok: bool,
+        duration_ms: u128,
+        error: Option<&str>,
+    ) -> Option<(&'static str, serde_json::Value)> {
+        match command {
+            Commands::Workspace { command } => match command {
+                WorkspaceCommands::Status { format, breakdown } => Some((
+                    "status_summary",
+                    json!({
+                        "scope": "workspace",
+                        "format": format,
+                        "breakdown": breakdown,
+                        "ok": ok,
+                        "duration_ms": duration_ms,
+                        "error": error,
+                    }),
+                )),
+                WorkspaceCommands::Validate { format } => Some((
+                    "validate_summary",
+                    json!({
+                        "scope": "workspace",
+                        "format": format,
+                        "ok": ok,
+                        "duration_ms": duration_ms,
+                        "error": error,
+                    }),
+                )),
+                WorkspaceCommands::Delete {
+                    path,
+                    node,
+                    dry_run,
+                    no_ignore,
+                } => Some((
+                    "workspace_mutation_summary",
+                    json!({
+                        "operation": "delete",
+                        "target": if path.is_some() { "path" } else if node.is_some() { "node" } else { "unknown" },
+                        "dry_run": dry_run,
+                        "no_ignore": no_ignore,
+                        "ok": ok,
+                        "duration_ms": duration_ms,
+                        "error": error,
+                    }),
+                )),
+                WorkspaceCommands::Restore {
+                    path,
+                    node,
+                    dry_run,
+                } => Some((
+                    "workspace_mutation_summary",
+                    json!({
+                        "operation": "restore",
+                        "target": if path.is_some() { "path" } else if node.is_some() { "node" } else { "unknown" },
+                        "dry_run": dry_run,
+                        "ok": ok,
+                        "duration_ms": duration_ms,
+                        "error": error,
+                    }),
+                )),
+                WorkspaceCommands::Compact {
+                    ttl,
+                    all,
+                    keep_frames,
+                    dry_run,
+                } => Some((
+                    "workspace_maintenance_summary",
+                    json!({
+                        "operation": "compact",
+                        "ttl_days": ttl,
+                        "all": all,
+                        "keep_frames": keep_frames,
+                        "dry_run": dry_run,
+                        "ok": ok,
+                        "duration_ms": duration_ms,
+                        "error": error,
+                    }),
+                )),
+                WorkspaceCommands::ListDeleted { older_than, format } => Some((
+                    "list_summary",
+                    json!({
+                        "scope": "workspace_deleted",
+                        "older_than_days": older_than,
+                        "format": format,
+                        "ok": ok,
+                        "duration_ms": duration_ms,
+                        "error": error,
+                    }),
+                )),
+                WorkspaceCommands::Ignore {
+                    path,
+                    dry_run,
+                    format,
+                } => Some((
+                    "config_mutation_summary",
+                    json!({
+                        "scope": "workspace_ignore",
+                        "action": if path.is_some() { "add" } else { "list" },
+                        "dry_run": dry_run,
+                        "format": format,
+                        "ok": ok,
+                        "duration_ms": duration_ms,
+                        "error": error,
+                    }),
+                )),
+            },
+            Commands::Status {
+                format,
+                workspace_only,
+                agents_only,
+                providers_only,
+                breakdown,
+                test_connectivity,
+            } => {
+                let include_all = !workspace_only && !agents_only && !providers_only;
+                Some((
+                    "status_summary",
+                    json!({
+                        "scope": "unified",
+                        "format": format,
+                        "include_workspace": include_all || *workspace_only,
+                        "include_agents": include_all || *agents_only,
+                        "include_providers": include_all || *providers_only,
+                        "breakdown": breakdown,
+                        "test_connectivity": test_connectivity,
+                        "ok": ok,
+                        "duration_ms": duration_ms,
+                        "error": error,
+                    }),
+                ))
+            }
+            Commands::Validate => Some((
+                "validate_summary",
+                json!({
+                    "scope": "workspace",
+                    "format": "text",
+                    "ok": ok,
+                    "duration_ms": duration_ms,
+                    "error": error,
+                }),
+            )),
+            Commands::Agent { command } => Some((
+                "config_mutation_summary",
+                json!({
+                    "scope": "agent",
+                    "action": match command {
+                        AgentCommands::Status { .. } => "status",
+                        AgentCommands::List { .. } => "list",
+                        AgentCommands::Show { .. } => "show",
+                        AgentCommands::Validate { .. } => "validate",
+                        AgentCommands::Create { .. } => "create",
+                        AgentCommands::Edit { .. } => "edit",
+                        AgentCommands::Remove { .. } => "remove",
+                    },
+                    "mutation": matches!(
+                        command,
+                        AgentCommands::Create { .. }
+                            | AgentCommands::Edit { .. }
+                            | AgentCommands::Remove { .. }
+                    ),
+                    "ok": ok,
+                    "duration_ms": duration_ms,
+                    "error": error,
+                }),
+            )),
+            Commands::Provider { command } => Some((
+                "config_mutation_summary",
+                json!({
+                    "scope": "provider",
+                    "action": match command {
+                        ProviderCommands::Status { .. } => "status",
+                        ProviderCommands::List { .. } => "list",
+                        ProviderCommands::Show { .. } => "show",
+                        ProviderCommands::Validate { .. } => "validate",
+                        ProviderCommands::Test { .. } => "test",
+                        ProviderCommands::Create { .. } => "create",
+                        ProviderCommands::Edit { .. } => "edit",
+                        ProviderCommands::Remove { .. } => "remove",
+                    },
+                    "mutation": matches!(
+                        command,
+                        ProviderCommands::Create { .. }
+                            | ProviderCommands::Edit { .. }
+                            | ProviderCommands::Remove { .. }
+                    ),
+                    "ok": ok,
+                    "duration_ms": duration_ms,
+                    "error": error,
+                }),
+            )),
+            Commands::Init { force, list } => Some((
+                "init_summary",
+                json!({
+                    "force": force,
+                    "list_only": list,
+                    "ok": ok,
+                    "duration_ms": duration_ms,
+                    "error": error,
+                }),
+            )),
+            _ => None,
+        }
     }
 }
 

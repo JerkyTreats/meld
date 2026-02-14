@@ -1,7 +1,9 @@
 use std::fs;
 
 use merkle::progress::{PrunePolicy, SessionStatus};
-use merkle::tooling::cli::{CliContext, Commands, ContextCommands};
+use merkle::tooling::cli::{
+    AgentCommands, CliContext, Commands, ContextCommands, ProviderCommands, WorkspaceCommands,
+};
 use tempfile::TempDir;
 
 use crate::integration::with_xdg_env;
@@ -126,6 +128,135 @@ fn context_get_emits_summary_event() {
             .iter()
             .any(|e| e.event_type == "context_read_summary"));
         assert!(events.iter().any(|e| e.event_type == "command_summary"));
+    });
+}
+
+#[test]
+fn command_families_emit_typed_summaries_with_command_summary() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        fs::write(workspace_root.join("a.txt"), "hello").unwrap();
+
+        let cli = CliContext::new(workspace_root, None).unwrap();
+
+        let checks: Vec<(Commands, &str, &str)> = vec![
+            (
+                Commands::Workspace {
+                    command: WorkspaceCommands::Status {
+                        format: "text".to_string(),
+                        breakdown: false,
+                    },
+                },
+                "workspace.status",
+                "status_summary",
+            ),
+            (
+                Commands::Workspace {
+                    command: WorkspaceCommands::Validate {
+                        format: "text".to_string(),
+                    },
+                },
+                "workspace.validate",
+                "validate_summary",
+            ),
+            (
+                Commands::Workspace {
+                    command: WorkspaceCommands::Ignore {
+                        path: None,
+                        dry_run: false,
+                        format: "text".to_string(),
+                    },
+                },
+                "workspace.ignore",
+                "config_mutation_summary",
+            ),
+            (
+                Commands::Workspace {
+                    command: WorkspaceCommands::ListDeleted {
+                        older_than: None,
+                        format: "text".to_string(),
+                    },
+                },
+                "workspace.list_deleted",
+                "list_summary",
+            ),
+            (
+                Commands::Status {
+                    format: "text".to_string(),
+                    workspace_only: false,
+                    agents_only: false,
+                    providers_only: false,
+                    breakdown: false,
+                    test_connectivity: false,
+                },
+                "status",
+                "status_summary",
+            ),
+            (Commands::Validate, "validate", "validate_summary"),
+            (
+                Commands::Agent {
+                    command: AgentCommands::List {
+                        format: "text".to_string(),
+                        role: None,
+                    },
+                },
+                "agent.list",
+                "config_mutation_summary",
+            ),
+            (
+                Commands::Provider {
+                    command: ProviderCommands::List {
+                        format: "text".to_string(),
+                        type_filter: None,
+                    },
+                },
+                "provider.list",
+                "config_mutation_summary",
+            ),
+            (
+                Commands::Init {
+                    force: false,
+                    list: true,
+                },
+                "init",
+                "init_summary",
+            ),
+        ];
+
+        for (command, _, _) in &checks {
+            cli.execute(command).unwrap();
+        }
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+
+        for (_, command_name, typed_event_type) in checks {
+            let session = sessions
+                .iter()
+                .find(|s| s.command == command_name)
+                .unwrap_or_else(|| panic!("session {command_name} should exist"));
+            let events = runtime.store().read_events(&session.session_id).unwrap();
+
+            let typed_idx = events
+                .iter()
+                .position(|e| e.event_type == typed_event_type)
+                .unwrap_or_else(|| {
+                    panic!("{typed_event_type} should be emitted for {command_name}")
+                });
+            let generic_idx = events
+                .iter()
+                .position(|e| e.event_type == "command_summary")
+                .expect("command_summary should be emitted");
+            let ended_idx = events
+                .iter()
+                .position(|e| e.event_type == "session_ended")
+                .expect("session_ended should be emitted");
+
+            assert!(typed_idx < ended_idx);
+            assert!(generic_idx < ended_idx);
+        }
     });
 }
 
