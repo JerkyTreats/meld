@@ -58,8 +58,6 @@ fn failed_command_emits_session_end() {
                 provider: None,
                 frame_type: None,
                 force: false,
-                sync: true,
-                r#async: false,
             },
         });
         assert!(result.is_err());

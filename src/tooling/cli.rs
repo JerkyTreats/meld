@@ -469,14 +469,6 @@ pub enum ContextCommands {
         /// Generate even if head frame exists
         #[arg(long)]
         force: bool,
-        
-        /// Execute immediately (default)
-        #[arg(long, conflicts_with = "async")]
-        sync: bool,
-        
-        /// Enqueue generation with Priority::Urgent
-        #[arg(long, conflicts_with = "sync")]
-        r#async: bool,
     },
     /// Retrieve context frames for a node
     Get {
@@ -2503,8 +2495,6 @@ impl CliContext {
                 provider,
                 frame_type,
                 force,
-                sync,
-                r#async,
             } => {
                 let path_merged = path.as_ref().or(path_positional.as_ref());
                 self.handle_context_generate(
@@ -2514,8 +2504,6 @@ impl CliContext {
                     provider.as_deref(),
                     frame_type.as_deref(),
                     *force,
-                    *sync,
-                    *r#async,
                     session_id,
                 )
             }
@@ -2605,8 +2593,6 @@ impl CliContext {
         provider: Option<&str>,
         frame_type: Option<&str>,
         force: bool,
-        _sync: bool,
-        r#async: bool,
         session_id: &str,
     ) -> Result<String, ApiError> {
         // 1. Path/NodeID resolution (mutually exclusive)
@@ -2692,15 +2678,11 @@ impl CliContext {
                 "agent_id": agent_id,
                 "provider_name": provider_name,
                 "frame_type": frame_type,
-                "force": force,
-                "async": r#async
+                "force": force
             }),
         );
 
-        // 7. Generation (sync or async)
-        // Default is sync unless --async is explicitly specified
-        let is_async = r#async;
-        
+        // 7. Blocking generation
         // Create runtime before calling get_or_create_queue() which needs it for queue.start()
         // Check if we're already in a runtime (shouldn't happen in CLI, but can in tests)
         let rt = if let Ok(_handle) = tokio::runtime::Handle::try_current() {
@@ -2721,42 +2703,26 @@ impl CliContext {
         let queue = self.get_or_create_queue(Some(session_id))?;
         // Drop guard before using block_on (can't block while in runtime context)
         drop(_guard);
+
+        let adapter = crate::tooling::adapter::ContextApiAdapter::with_queue(
+            Arc::clone(&self.api),
+            queue,
+        );
         
-        if is_async {
-            // Async mode: enqueue and return immediately
-            let request_id = rt.block_on(async {
-                queue.enqueue(
-                    node_id,
-                    agent_id.clone(),
-                    provider_name.clone(),
-                    Some(frame_type.clone()),
-                    crate::frame::queue::Priority::Urgent,
-                ).await
-            })?;
-            
-            Ok(format!("Generation enqueued: request_id={:?}", request_id))
-        } else {
-            // Sync mode: enqueue and wait for completion
-            let adapter = crate::tooling::adapter::ContextApiAdapter::with_queue(
-                Arc::clone(&self.api),
-                queue,
-            );
-            
-            // Create a dummy prompt (queue will generate the actual prompt from agent metadata)
-            let dummy_prompt = String::new();
-            
-            let frame_id = rt.block_on(async {
-                adapter.generate_frame(
-                    node_id,
-                    dummy_prompt,
-                    frame_type.clone(),
-                    agent_id.clone(),
-                    provider_name.clone(),
-                ).await
-            })?;
-            
-            Ok(format!("Frame generated: {}", hex::encode(frame_id)))
-        }
+        // Create a dummy prompt (queue will generate the actual prompt from agent metadata)
+        let dummy_prompt = String::new();
+        
+        let frame_id = rt.block_on(async {
+            adapter.generate_frame(
+                node_id,
+                dummy_prompt,
+                frame_type.clone(),
+                agent_id.clone(),
+                provider_name.clone(),
+            ).await
+        })?;
+        
+        Ok(format!("Frame generated: {}", hex::encode(frame_id)))
     }
 
     /// Handle context get command

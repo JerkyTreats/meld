@@ -1,9 +1,10 @@
 //! Integration tests for Context CLI commands
 
+use clap::Parser;
 use merkle::agent::AgentRole;
 use merkle::config::{AgentConfig, ProviderConfig, ProviderType, xdg};
 use merkle::error::ApiError;
-use merkle::tooling::cli::{CliContext, Commands, ContextCommands};
+use merkle::tooling::cli::{Cli, CliContext, Commands, ContextCommands};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -317,8 +318,6 @@ fn test_context_generate_requires_provider() {
                 provider: None,
                 frame_type: None,
                 force: false,
-                sync: false,
-                r#async: false,
             },
         });
         
@@ -363,8 +362,6 @@ fn test_context_generate_requires_agent_or_default() {
                 provider: Some("test-provider".to_string()),
                 frame_type: None,
                 force: false,
-                sync: true,
-                r#async: false,
             },
         });
         
@@ -408,8 +405,6 @@ fn test_context_generate_multiple_agents_requires_flag() {
                 provider: Some("test-provider".to_string()),
                 frame_type: None,
                 force: false,
-                sync: true,
-                r#async: false,
             },
         });
         
@@ -486,6 +481,19 @@ fn test_context_get_invalid_format() {
     });
 }
 
+#[test]
+fn test_context_generate_rejects_async_flag() {
+    let parse_result = Cli::try_parse_from([
+        "merkle",
+        "context",
+        "generate",
+        "--path",
+        "./foo.txt",
+        "--async",
+    ]);
+    assert!(parse_result.is_err());
+}
+
     #[test]
     fn test_context_generate_mutually_exclusive_node_path() {
         let temp_dir = TempDir::new().unwrap();
@@ -500,4 +508,3 @@ fn test_context_get_invalid_format() {
             // But we handle it in code for safety
         });
     }
-
