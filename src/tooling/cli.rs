@@ -31,6 +31,8 @@ use tracing::info;
 
 use hex;
 
+const COMMAND_SUMMARY_MESSAGE_MAX_CHARS: usize = 256;
+
 /// Merkle CLI - Deterministic filesystem state management
 #[derive(Parser)]
 #[command(name = "merkle")]
@@ -3284,17 +3286,39 @@ impl CliContext {
             self.progress
                 .emit_event_best_effort(session_id, event_type, data);
         }
+
+        let (message, output_chars, error_chars, truncated) = match result {
+            Ok(output) => (None, Some(output.chars().count()), None, None),
+            Err(_) => {
+                let error_text = error
+                    .clone()
+                    .unwrap_or_else(|| "command failed".to_string());
+                let error_chars = error_text.chars().count();
+                let (preview, was_truncated) =
+                    Self::truncate_summary_message(&error_text, COMMAND_SUMMARY_MESSAGE_MAX_CHARS);
+                (Some(preview), None, Some(error_chars), Some(was_truncated))
+            }
+        };
+
         let data = SummaryEventData {
             command: command_name(command),
             ok,
             duration_ms,
-            message: match result {
-                Ok(output) => Some(output.clone()),
-                Err(err) => Some(err.to_string()),
-            },
+            message,
+            output_chars,
+            error_chars,
+            truncated,
         };
         self.progress
             .emit_event_best_effort(session_id, "command_summary", json!(data));
+    }
+
+    fn truncate_summary_message(value: &str, max_chars: usize) -> (String, bool) {
+        if value.chars().count() <= max_chars {
+            return (value.to_string(), false);
+        }
+
+        (value.chars().take(max_chars).collect(), true)
     }
 
     fn typed_summary_event(

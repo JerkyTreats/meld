@@ -92,6 +92,40 @@ fn scan_emits_session_boundary_events() {
 }
 
 #[test]
+fn emitted_event_timestamps_are_iso_8601_with_milliseconds() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        fs::write(workspace_root.join("a.txt"), "hello").unwrap();
+
+        let cli = CliContext::new(workspace_root, None).unwrap();
+        cli.execute(&Commands::Scan { force: true }).unwrap();
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+        let scan_session = sessions
+            .iter()
+            .find(|s| s.command == "scan")
+            .expect("scan session should exist");
+        let events = runtime
+            .store()
+            .read_events(&scan_session.session_id)
+            .unwrap();
+        assert!(!events.is_empty());
+
+        for event in events {
+            let ts = event.ts;
+            let _ = chrono::DateTime::parse_from_rfc3339(&ts)
+                .expect("event timestamp should parse as RFC3339");
+            assert_eq!(ts.len(), 24);
+            assert_eq!(ts.chars().nth(19), Some('.'));
+            assert!(ts.ends_with('Z'));
+        }
+    });
+}
+
+#[test]
 fn scan_emits_batched_progress_events_with_monotonic_counts() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
@@ -500,6 +534,113 @@ fn command_families_emit_typed_summaries_with_command_summary() {
             assert!(typed_idx < ended_idx);
             assert!(generic_idx < ended_idx);
         }
+    });
+}
+
+#[test]
+fn command_summary_success_is_metric_focused_and_bounded() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        fs::write(workspace_root.join("a.txt"), "hello").unwrap();
+
+        let cli = CliContext::new(workspace_root, None).unwrap();
+        cli.execute(&Commands::Status {
+            format: "text".to_string(),
+            workspace_only: false,
+            agents_only: false,
+            providers_only: false,
+            breakdown: false,
+            test_connectivity: false,
+        })
+        .unwrap();
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s.command == "status")
+            .expect("status session should exist");
+        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let summary = events
+            .iter()
+            .find(|e| e.event_type == "command_summary")
+            .expect("command_summary should be emitted");
+
+        assert!(summary.data.get("message").is_none());
+        assert!(
+            summary
+                .data
+                .get("output_chars")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                > 0
+        );
+        assert!(summary.data.get("error_chars").is_none());
+        assert!(summary.data.get("truncated").is_none());
+    });
+}
+
+#[test]
+fn command_summary_failure_message_is_bounded() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        let target = workspace_root.join("a.txt");
+        fs::write(&target, "hello").unwrap();
+
+        create_test_writer_agent("summary-agent");
+
+        let cli = CliContext::new(workspace_root.clone(), None).unwrap();
+        cli.execute(&Commands::Scan { force: true }).unwrap();
+
+        let provider_name = "p".repeat(700);
+        let result = cli.execute(&Commands::Context {
+            command: ContextCommands::Generate {
+                node: None,
+                path: Some(target),
+                path_positional: None,
+                agent: Some("summary-agent".to_string()),
+                provider: Some(provider_name),
+                frame_type: None,
+                force: false,
+            },
+        });
+        assert!(result.is_err());
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s.command == "context.generate")
+            .expect("context.generate session should exist");
+        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let summary = events
+            .iter()
+            .find(|e| e.event_type == "command_summary")
+            .expect("command_summary should be emitted");
+
+        let message = summary
+            .data
+            .get("message")
+            .and_then(|v| v.as_str())
+            .expect("failure summary should include bounded message");
+        assert!(message.chars().count() <= 256);
+        assert_eq!(summary.data.get("output_chars"), None);
+        assert!(
+            summary
+                .data
+                .get("error_chars")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                > 256
+        );
+        assert_eq!(
+            summary.data.get("truncated").and_then(|v| v.as_bool()),
+            Some(true)
+        );
     });
 }
 

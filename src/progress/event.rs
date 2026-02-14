@@ -1,5 +1,6 @@
 //! Event schema for progress observability.
 
+use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -37,7 +38,7 @@ impl ProgressEnvelope {
         data: Value,
     ) -> Self {
         Self {
-            ts: crate::progress::session::now_millis().to_string(),
+            ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             session: session.into(),
             event_type: event_type.into(),
             data,
@@ -112,6 +113,12 @@ pub struct SummaryEventData {
     pub duration_ms: u128,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_chars: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_chars: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<bool>,
 }
 
 #[cfg(test)]
@@ -122,7 +129,7 @@ mod tests {
     #[test]
     fn event_round_trip() {
         let event = ProgressEvent {
-            ts: "1710000000123".to_string(),
+            ts: "2026-02-14T12:34:56.789Z".to_string(),
             session: "s1".to_string(),
             seq: 1,
             event_type: "session_started".to_string(),
@@ -137,15 +144,18 @@ mod tests {
 
     #[test]
     fn unknown_fields_are_ignored() {
-        let raw = r#"{"ts":"1","session":"s1","seq":1,"type":"session_started","data":{"command":"scan"},"future":"ok"}"#;
+        let raw = r#"{"ts":"2026-02-14T12:34:56.789Z","session":"s1","seq":1,"type":"session_started","data":{"command":"scan"},"future":"ok"}"#;
         let parsed: ProgressEvent = serde_json::from_str(raw).unwrap();
         assert_eq!(parsed.session, "s1");
     }
 
     #[test]
-    fn timestamp_is_numeric_millis() {
+    fn timestamp_is_iso_8601_with_milliseconds() {
         let env = ProgressEnvelope::with_now("s1", "session_started", json!({}));
-        let parsed = env.ts.parse::<u128>();
-        assert!(parsed.is_ok());
+        let parsed = chrono::DateTime::parse_from_rfc3339(&env.ts).unwrap();
+        assert_eq!(env.ts.len(), 24);
+        assert_eq!(env.ts.chars().nth(19), Some('.'));
+        assert!(env.ts.ends_with('Z'));
+        assert!(parsed.timestamp_subsec_millis() <= 999);
     }
 }
