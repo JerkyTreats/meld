@@ -2,68 +2,116 @@
 
 ## 1. Overview
 
-This spec describes updates to `merkle context generate` so that generation can be driven by path (file or directory), with optional recursive generation over a subtree and checks for missing or out-of-date child context when the path is a directory. It assumes the LLM payload is built per `llm_payload_spec.md` (file content or that agent's child context in the payload).
+`merkle context generate` resolves a file system path, builds a `GenerationPlan`, and delegates execution to the `GenerationOrchestrator`.
 
-## 2. Path and target
+Recursive mode targets the full subtree rooted at the target path. Recursive ordering is leaf to trunk so directory generation always runs after all deeper file and directory nodes are complete.
 
-- **Path input:** The user may pass a path via `--path <path>` or as a positional argument, e.g. `merkle context generate ./foo`. Path is canonicalized relative to the workspace root and resolved to a node via `NodeRecordStore.find_by_path`. If not in the tree, return `PathNotInTree` and suggest `merkle scan` or `merkle watch`.
-- **Target node:** The resolved node may be a file or a directory. Behavior differs by node type and by flags below.
+All generation emits structured events to session files through the event system in [design/observability/observability_spec.md](../observability/observability_spec.md). Real time monitoring is provided by [design/tui/tui_spec.md](../tui/tui_spec.md).
 
-## 3. Single-node generation (no --recursive)
+## 2. Path resolution and target
 
-**File path:**  
-Generate one frame for that file. No descendant check. Existing flow: resolve path to node_id, resolve agent and provider, frame type default `context-{agent_id}`, head check unless `--force`, then enqueue (sync or async). The queue builds the payload using current file content per `llm_payload_spec.md`.
+- **Path input:** Path is accepted through `--path <path>` or positional path. Path is canonicalized relative to workspace root and resolved by `NodeRecordStore.find_by_path`.
+- **Path not in tree:** Return `PathNotInTree` and suggest `merkle scan` or `merkle watch`.
+- **Target type:** Target node can be a file or directory.
 
-**Directory path:**  
-Generate one frame for that directory node only.
+## 3. Required generation request fields
 
-- **Descendant check:** Before generating, collect all descendant node IDs in the subtree (see Subtree collection below). For each descendant and the chosen `frame_type`, check whether a head exists: `get_head(descendant_node_id, frame_type)`. If any descendant has no head, treat as missing (out of date: file or tree changed, context not regenerated).
-- **When check fails:** If any descendant is missing a head and `--force` is not set, do not generate. Return an error that lists the paths (or node IDs) that are missing context and tell the user to run `merkle scan` if needed, regenerate those nodes, or use `--force` to generate anyway.
-- **When check passes or --force:** Proceed to generate for the directory node only. The queue builds the payload using that agent's child context (child head frames for the same frame_type) per `llm_payload_spec.md`.
+Every generated item in a plan includes queue ready execution fields:
 
-**--force semantics (single-node):**  
-(1) Generate even if the target node already has a head for this frame type. (2) For a directory, proceed even when descendants have missing context.
+- `node_id`
+- `path`
+- `node_type`
+- `agent_id`
+- `provider_name`
+- `frame_type`
 
-## 4. Recursive generation (--recursive)
+Context Generate owns construction of these fields. The orchestrator uses these fields to submit queue requests and emit execution events.
 
-- **Flag:** Add `--recursive` to `context generate`. When set, the target is the subtree rooted at the given path, not just the single node.
-- **Ordering:** Process nodes by **folder level (depth), lowest (deepest) to highest (root)**. Example: level 1 = `dir/foo/wow.txt`, `dir/foo/baz.txt`; level 2 = `dir/foo/`, `dir/bot.txt`; level 3 = `dir/`. So directory nodes are generated only after all their descendants have frames, matching the payload rule that directory context uses that agent's child context.
-- **Enqueued only:** All LLM calls go through the generation queue. Recursive does not call the provider directly; it enqueues one or more batches.
-- **Sync:** Enqueue the deepest level; wait until every request in that level completes; then enqueue the next level; repeat until the root level. Result: after each level, all nodes at that depth have frames before any parent is enqueued.
-- **Async:** Enqueue level 1, then level 2, … then root, in order. No wait between levels. The queue processes requests; level order ensures children are available before parents when the queue runs.
-- **Descendant check:** If `--force` is not set, before enqueueing any level run the same missing-head check over the entire subtree. If any node in the subtree is missing a head for the chosen frame type, error and list them; do not enqueue. If `--force` is set, skip this check and enqueue all levels.
-- **Scope:** If the path is a file, `--recursive` still means only that single node. If the path is a directory, recursive means all nodes in the subtree (files and directories), in level order.
+## 4. Single node mode with --no-recursive
 
-## 5. Subtree collection and level grouping
+- **File target:** Generate one frame for the file node.
+- **Directory target:** Generate one frame for the directory node.
+- **Directory descendant readiness check:** For each descendant in the subtree, verify a head exists for the selected `frame_type`.
+- **Readiness failure:** If any descendant head is missing and `--force` is not set, return an error listing missing paths or node ids.
+- **Readiness success:** Submit a single item plan for the target directory.
 
-- **Subtree:** For a given node_id, the subtree is that node plus all descendants. Use `NodeRecord.children` recursively (or iteratively) via `node_store.get(node_id)`; guard against cycles (e.g. visited set).
-- **By level:** Group subtree node IDs by depth. Depth 0 = root of the subtree, depth 1 = its children, etc. For recursive generation, process levels from **max depth to 0** (deepest first). So either return a structure keyed by depth (e.g. `Vec<Vec<NodeID>>` with index 0 = deepest) or compute a post-order list and group by depth before enqueueing.
-- **Shared helper:** Subtree collection (and optionally level grouping) should live in a shared place (e.g. tree or store layer) so both the directory missing-context check and the recursive generator use it.
+## 5. Recursive subtree mode
 
-## 6. CLI surface
+- **Default mode:** Recursive is default for directory targets.
+- **Scope:** File target resolves to one node. Directory target resolves to full subtree with files and directories.
+- **Head filtering:** Without `--force`, skip nodes that already have a head for selected `frame_type`.
+- **Forced regeneration:** With `--force`, include all nodes in subtree regardless of existing head.
+- **Execution order:** Group by depth and execute deepest level first, then each parent level, ending at the subtree root. This is leaf to trunk ordering.
+- **Directory readiness by order:** Directory nodes are generated after children because level ordering guarantees child frames exist before directory payload assembly.
 
-- **Existing:** `--path`, positional path, `--node`, `--agent`, `--provider`, `--frame-type`, `--force`, `--sync`, `--async`.
-- **Add:** `--recursive` (bool). When true, generate for the whole subtree by level as above.
-- **Conflict / precedence:** Same as today: path (or positional) vs `--node` mutually exclusive; `--sync` vs `--async` mutually exclusive. `--force` applies to both “overwrite existing head” and “proceed despite missing descendant context.”
+Recursive mode does not run a separate missing subtree preflight gate. Missing heads are normal inputs for recursive generation.
 
-## 7. Error messages
+## 6. Subtree collection and level grouping
 
-- **Path not in tree:** Existing. Suggest `merkle scan` or `merkle watch`.
-- **Missing descendant context (directory, no --recursive):** List paths or node IDs that have no head for the chosen frame type. State that the directory needs child context first; suggest regenerating those paths or using `--force` to generate anyway.
-- **Missing context in subtree (--recursive, no --force):** Same idea over the full subtree; list missing paths or summarize count and example paths, and suggest `--force` or regenerating.
+- **Subtree:** Target node and all descendants, collected from `NodeRecord.children`.
+- **Cycle safety:** Track visited node ids and reject cyclic traversal.
+- **Depth groups:** Depth zero is subtree root. Max depth levels run first, then higher ancestors, ending at depth zero.
+- **Shared helper:** Subtree collection and level grouping are implemented in shared helpers used by descendant checks and plan construction.
 
-## 8. Summary
+## 7. CLI surface
 
-| Path type   | Without --recursive                          | With --recursive                                        |
-|-------------|----------------------------------------------|---------------------------------------------------------|
-| File        | Generate for that file only; no check        | Generate for that file only (single node)               |
-| Directory   | Check descendants; if ok or --force, generate for dir only | Check subtree; if ok or --force, generate by level (deepest first) |
+- `--path <path>`
+- positional path
+- `--node <node_id>`
+- `--agent <agent_id>`
+- `--provider <provider_name>`
+- `--frame-type <frame_type>`
+- `--force`
+- `--no-recursive`
 
-- **--force:** Overwrite existing head; for directories, proceed even when descendants (or subtree) have missing context.
-- **Recursive:** One batch per level, deepest to root; enqueue only; sync = wait per level, async = enqueue all levels in order.
-- **Payload:** Per `llm_payload_spec.md`: file nodes get file content; directory nodes get that agent's child context. Context is retrieved per agent; directory generation uses only that agent's child heads.
+`--path` and positional path are mutually exclusive with `--node`.
 
-## 9. Related docs
+All generation runs through orchestrator plus queue execution. CLI blocks until orchestrator returns.
 
-- **llm_payload_spec.md** — What is sent to the LLM (current file content or that agent's child context, prompt, optional response template).
-- Original command spec: `completed/design/context/context_generate_command.md`.
+## 8. Errors
+
+- **Path not in tree:** Suggest `merkle scan` or `merkle watch`.
+- **Directory single node readiness failure:** List missing descendant paths or node ids and suggest generating descendants or using `--force`.
+- **Queue rejection:** Surface queue enqueue failure and suggest retry.
+- **Plan validation failure:** Surface invalid plan structure before generation starts.
+
+## 9. Output and exit status
+
+On completion the CLI prints generated and failed totals plus session id.
+
+Context Generate uses `GenerationResult` to set exit status:
+
+- success when `total_failed` is zero
+- failure when `total_failed` is nonzero
+- failure when orchestrator returns error before any result
+
+## 10. Required tests
+
+### Unit tests
+
+- Path canonicalization and lookup resolution
+- File target with recursive default generates single node plan
+- Directory target with recursive default builds full subtree plan with deepest first levels
+- Directory target with `--no-recursive` enforces descendant readiness for selected `frame_type`
+- Head filtering skips nodes with existing heads when `--force` is not set
+- `--force` includes all nodes regardless of existing heads
+- Plan items include `node_id`, `path`, `node_type`, `agent_id`, `provider_name`, `frame_type`
+
+### Integration tests
+
+- Recursive directory generation executes leaf to trunk and produces directory frames after child frames
+- Two recursive plans for the same folder deduplicate shared nodes in queue and both callers receive completion
+- Plan B for higher branch started during Plan A subbranch execution reuses Plan A pending and completed work for shared `node_id + agent_id + frame_type` keys
+- High priority single file request for file already present in active recursive plan queue deduplicates and does not regenerate
+- Non overlapping direct single file request submitted during active plan remains queued until active plan completion
+- `--frame-type` with non default value drives both head checks and payload child frame selection
+- Mixed success run returns nonzero failed count and nonzero exit status
+
+## 11. Related docs
+
+- [generation_pipeline_spec.md](generation_pipeline_spec.md)
+- [llm_payload_spec.md](llm_payload_spec.md)
+- [generation_orchestrator_spec.md](generation_orchestrator_spec.md)
+- [design/observability/observability_spec.md](../observability/observability_spec.md)
+- [design/tui/tui_spec.md](../tui/tui_spec.md)
+- [design/completed/context/context_generate_command.md](../completed/context/context_generate_command.md)

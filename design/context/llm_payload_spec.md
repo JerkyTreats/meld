@@ -9,7 +9,7 @@
 ## 2. Definition of "current node content"
 
 - **File node:** The bytes of the file at `node_record.path`, decoded as UTF-8 for the prompt. If the file is not valid UTF-8, do not send raw bytes; see Binary files below.
-- **Directory node:** For the generating agent only, the current child context content: each child's head frame for `frame_type = context-{agent_id}`, concatenated in a deterministic order (e.g. by path or node_id). No "previous directory context" in the payload.
+- **Directory node:** For the generating agent and selected frame type, the current child context content: each child head frame for request `frame_type`, concatenated in deterministic order by path or node_id. No previous directory context in the payload.
 
 So "current" is always: for files, the file on disk; for directories, that agent's current child frames' content.
 
@@ -26,7 +26,7 @@ Unchanged: agent's `system_prompt`. No content in the system message.
 
 **User message for directory nodes:**
 
-- **Content block:** That agent's child context content only. Each child's head frame for `context-{agent_id}` included, with clear separators per child (path or id) so the model knows which block is which.
+- **Content block:** That agent child context content for request `frame_type`. Each child head frame for selected type is included, with clear separators per child path or id so model can identify each block.
 - **Task block:** The filled `user_prompt_directory`.
 - **Optional response template:** Same as for files.
 
@@ -46,7 +46,7 @@ In both cases the payload is: current content (file or that agent's child contex
 
 ## 6. Implementation location
 
-- **Single place for "content plus prompt to messages":** The frame generation queue (e.g. in `src/frame/queue.rs`) where the LLM payload is built. For file nodes: read file from `node_record.path` (UTF-8 or placeholder), build content block plus task block plus optional template. For directory nodes: for the request's agent_id and frame_type, get each child's head frame, load frame content, build content block plus task plus optional template.
+- **Single place for content plus prompt to messages:** The frame generation queue in [src/frame/queue.rs](../../src/frame/queue.rs) builds LLM payload from queue request fields `node_id`, `path`, `node_type`, `agent_id`, `provider_name`, and `frame_type`. For file nodes queue reads file from `node_record.path`, UTF-8 or placeholder, and builds content block plus task block plus optional template. For directory nodes queue resolves child head frames for request agent and frame type, then builds content block plus task plus optional template.
 - **No previous context in payload:** Do not pass existing frames for the same node as "previous context" for the model to diff against; those frames are for storage and history only. Diff-based regeneration is out of scope for this spec.
 
 ## 7. Summary
