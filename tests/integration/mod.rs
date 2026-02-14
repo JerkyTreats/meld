@@ -13,6 +13,7 @@ mod init_command;
 mod model_providers;
 mod node_deletion;
 mod provider_cli;
+mod progress_observability;
 mod store_integration;
 mod test_utils;
 mod tooling_integration;

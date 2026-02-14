@@ -9,6 +9,7 @@ use crate::error::ApiError;
 use crate::ignore;
 use crate::frame::{FrameGenerationQueue, GenerationConfig};
 use crate::heads::HeadIndex;
+use crate::progress::{command_name, PrunePolicy, ProgressRuntime};
 use crate::regeneration::BasisIndex;
 use crate::store::{NodeRecord, NodeRecordStore};
 use crate::store::persistence::SledNodeRecordStore;
@@ -530,6 +531,7 @@ pub struct CliContext {
     #[allow(dead_code)] // May be used for debugging or future features
     store_path: PathBuf,
     frame_storage_path: PathBuf,
+    progress: Arc<ProgressRuntime>,
     /// Optional generation queue (initialized on demand for context generate commands)
     #[allow(dead_code)] // Queue is created on demand, not stored
     queue: Option<Arc<FrameGenerationQueue>>,
@@ -539,6 +541,11 @@ impl CliContext {
     /// Get a reference to the underlying API
     pub fn api(&self) -> &ContextApi {
         &self.api
+    }
+
+    /// Get a handle to the progress runtime.
+    pub fn progress_runtime(&self) -> Arc<ProgressRuntime> {
+        Arc::clone(&self.progress)
     }
 
     /// Create a new CLI context
@@ -558,12 +565,14 @@ impl CliContext {
             ApiError::StorageError(crate::error::StorageError::IoError(e))
         })?;
 
-        let node_store = Arc::new(
-            SledNodeRecordStore::new(&store_path)
-                .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(
-                    std::io::Error::new(std::io::ErrorKind::Other, format!("{}", e))
-                )))?
-        );
+        let db = sled::open(&store_path).map_err(|e| {
+            ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to open sled database: {}", e),
+            )))
+        })?;
+        let node_store = Arc::new(SledNodeRecordStore::from_db(db.clone()));
+        let progress = Arc::new(ProgressRuntime::new(db).map_err(ApiError::StorageError)?);
         
         std::fs::create_dir_all(&frame_storage_path).map_err(|e| {
             ApiError::StorageError(crate::error::StorageError::IoError(e))
@@ -624,6 +633,7 @@ impl CliContext {
             config_path,
             store_path,
             frame_storage_path,
+            progress,
             queue: None, // Initialize on demand for context generate commands
         })
     }
@@ -1002,6 +1012,21 @@ impl CliContext {
 
     /// Execute a CLI command
     pub fn execute(&self, command: &Commands) -> Result<String, ApiError> {
+        let session_id = self
+            .progress
+            .start_command_session(command_name(command))?;
+        let result = self.execute_inner(command);
+        let (ok, err) = match &result {
+            Ok(_) => (true, None),
+            Err(e) => (false, Some(e.to_string())),
+        };
+        self.progress.finish_command_session(&session_id, ok, err)?;
+        // Best-effort hygiene so stale completed sessions do not grow unbounded.
+        let _ = self.progress.prune(PrunePolicy::default());
+        result
+    }
+
+    fn execute_inner(&self, command: &Commands) -> Result<String, ApiError> {
         match command {
             Commands::Synthesize { node_id, frame_type, agent_id } => {
                 let node_id = parse_node_id(node_id)?;

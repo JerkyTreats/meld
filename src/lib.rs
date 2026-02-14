@@ -15,6 +15,7 @@ pub mod heads;
 pub mod init;
 pub mod logging;
 pub mod provider;
+pub mod progress;
 pub mod regeneration;
 pub mod store;
 pub mod synthesis;

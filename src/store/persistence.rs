@@ -71,6 +71,11 @@ impl SledNodeRecordStore {
         Ok(Self { db })
     }
 
+    /// Create a new SledNodeRecordStore from an existing sled database handle.
+    pub fn from_db(db: sled::Db) -> Self {
+        Self { db }
+    }
+
     /// Get the underlying sled database (for advanced operations)
     pub fn db(&self) -> &sled::Db {
         &self.db
