@@ -1203,6 +1203,7 @@ impl CliContext {
                         &head_index,
                         &registry,
                         self.workspace_root.as_path(),
+                        self.store_path.as_path(),
                         *breakdown,
                     )?;
                     if format == "json" {
@@ -1990,6 +1991,7 @@ impl CliContext {
                 &head_index,
                 &registry,
                 self.workspace_root.as_path(),
+                self.store_path.as_path(),
                 breakdown,
             )?)
         } else {
