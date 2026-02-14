@@ -623,6 +623,63 @@ async fn test_enqueue_emits_observability_events() {
     assert!(events.iter().any(|e| e.event_type == "queue_stats"));
 }
 
+#[tokio::test]
+async fn test_batch_enqueue_emits_request_enqueued_per_item() {
+    let (api, temp_dir) = create_test_api();
+    let db_path = temp_dir.path().join("progress_db");
+    std::fs::create_dir_all(&db_path).unwrap();
+    let db = sled::open(&db_path).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(db).unwrap());
+    let session_id = progress
+        .start_command_session("queue.batch.test".to_string())
+        .unwrap();
+
+    let queue = FrameGenerationQueue::with_event_context(
+        Arc::new(api),
+        GenerationConfig::default(),
+        Some(QueueEventContext {
+            session_id: session_id.clone(),
+            progress: Arc::clone(&progress),
+        }),
+    );
+
+    let requests = vec![
+        (
+            Hash::from([21u8; 32]),
+            "agent1".to_string(),
+            "test-provider".to_string(),
+            Some("context-agent1".to_string()),
+            Priority::Normal,
+        ),
+        (
+            Hash::from([22u8; 32]),
+            "agent1".to_string(),
+            "test-provider".to_string(),
+            Some("context-agent1".to_string()),
+            Priority::High,
+        ),
+        (
+            Hash::from([23u8; 32]),
+            "agent2".to_string(),
+            "test-provider".to_string(),
+            Some("context-agent2".to_string()),
+            Priority::Urgent,
+        ),
+    ];
+
+    queue.enqueue_batch(requests).await.unwrap();
+
+    progress
+        .finish_command_session(&session_id, true, None)
+        .unwrap();
+    let events = progress.store().read_events(&session_id).unwrap();
+    let enqueued_count = events
+        .iter()
+        .filter(|e| e.event_type == "request_enqueued")
+        .count();
+    assert_eq!(enqueued_count, 3);
+}
+
 // Note: Full integration tests with actual frame generation would require
 // mocking the adapter and API, which is more complex. These tests focus
 // on the queue structure and operations themselves.

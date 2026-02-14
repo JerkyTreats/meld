@@ -539,6 +539,7 @@ impl FrameGenerationQueue {
         let mut request_ids: Vec<RequestId> = Vec::new();
         let mut new_requests = Vec::new();
         let mut staged = HashMap::new();
+        let mut enqueue_events = Vec::new();
 
         for (node_id, agent_id, provider_name, frame_type, priority) in requests {
             let frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
@@ -611,6 +612,15 @@ impl FrameGenerationQueue {
         let new_count = new_requests.len();
         for (identity, request) in new_requests {
             let request_id = request.request_id;
+            enqueue_events.push(QueueEventData {
+                node_id: hex::encode(request.node_id),
+                agent_id: request.agent_id.clone(),
+                provider_name: request.provider_name.clone(),
+                frame_type: request.frame_type.clone(),
+                request_id: Some(request_id.as_u64()),
+                retry_count: Some(request.retry_count),
+                duration_ms: None,
+            });
             queue.push(request);
             dedupe.insert(identity, DedupeEntry::new(request_id));
         }
@@ -637,6 +647,10 @@ impl FrameGenerationQueue {
             batch_size = batch_size,
             "Enqueued batch of generation requests"
         );
+
+        for payload in enqueue_events {
+            self.emit_queue_event("request_enqueued", payload);
+        }
 
         Ok(request_ids)
     }
