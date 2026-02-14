@@ -3069,12 +3069,13 @@ impl CliContext {
         }
 
         // Verify node exists
-        let _node_record = self
+        let node_record = self
             .api
             .node_store()
             .get(&node_id)
             .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+        let node_path = node_record.path.to_string_lossy().to_string();
 
         // Check if agent has system_prompt in metadata
         if !agent.metadata.contains_key("system_prompt") {
@@ -3092,6 +3093,7 @@ impl CliContext {
                     "node_skipped",
                     json!({
                         "node_id": hex::encode(node_id),
+                        "path": node_path,
                         "agent_id": agent_id,
                         "provider_name": provider_name,
                         "frame_type": frame_type,
@@ -3109,6 +3111,7 @@ impl CliContext {
             "plan_constructed",
             json!({
                 "node_id": hex::encode(node_id),
+                "path": node_path,
                 "agent_id": agent_id,
                 "provider_name": provider_name,
                 "frame_type": frame_type,

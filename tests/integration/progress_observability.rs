@@ -1,6 +1,9 @@
 use std::fs;
 
+use merkle::agent::AgentRole;
+use merkle::config::AgentConfig;
 use merkle::config::{xdg, ProviderConfig, ProviderType};
+use merkle::frame::{Basis, Frame};
 use merkle::progress::{PrunePolicy, SessionStatus};
 use merkle::provider::CompletionOptions;
 use merkle::tooling::cli::{
@@ -23,6 +26,33 @@ fn create_test_openai_provider(provider_name: &str, model: &str, endpoint: &str)
         default_options: CompletionOptions::default(),
     };
     let toml = toml::to_string_pretty(&provider_config).unwrap();
+    fs::write(config_path, toml).unwrap();
+}
+
+fn create_test_writer_agent(agent_id: &str) {
+    let agents_dir = xdg::agents_dir().unwrap();
+    fs::create_dir_all(&agents_dir).unwrap();
+    let config_path = agents_dir.join(format!("{}.toml", agent_id));
+
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert(
+        "user_prompt_file".to_string(),
+        "Summarize {path}".to_string(),
+    );
+    metadata.insert(
+        "user_prompt_directory".to_string(),
+        "Summarize directory {path}".to_string(),
+    );
+
+    let agent_config = AgentConfig {
+        agent_id: agent_id.to_string(),
+        role: AgentRole::Writer,
+        system_prompt: Some("You are a test writer.".to_string()),
+        system_prompt_path: None,
+        metadata,
+    };
+
+    let toml = toml::to_string_pretty(&agent_config).unwrap();
     fs::write(config_path, toml).unwrap();
 }
 
@@ -160,6 +190,141 @@ fn failed_command_emits_session_end() {
         assert_eq!(events.first().unwrap().event_type, "session_started");
         assert_eq!(events.last().unwrap().event_type, "session_ended");
         assert!(events.iter().any(|e| e.event_type == "command_summary"));
+    });
+}
+
+#[test]
+fn context_generate_plan_constructed_includes_path_field() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        let target = workspace_root.join("a.txt");
+        fs::write(&target, "hello").unwrap();
+
+        create_test_writer_agent("obs-agent");
+        create_test_openai_provider("obs-provider", "gpt-4-test", "http://127.0.0.1:9");
+
+        let cli = CliContext::new(workspace_root.clone(), None).unwrap();
+        cli.execute(&Commands::Scan { force: true }).unwrap();
+
+        let result = cli.execute(&Commands::Context {
+            command: ContextCommands::Generate {
+                node: None,
+                path: Some(target.clone()),
+                path_positional: None,
+                agent: Some("obs-agent".to_string()),
+                provider: Some("obs-provider".to_string()),
+                frame_type: Some("context-obs-agent".to_string()),
+                force: true,
+            },
+        });
+        assert!(result.is_err());
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s.command == "context.generate")
+            .expect("context.generate session should exist");
+        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let plan = events
+            .iter()
+            .find(|e| e.event_type == "plan_constructed")
+            .expect("plan_constructed should be emitted");
+
+        let expected_path = fs::canonicalize(&target)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            plan.data.get("path").and_then(|v| v.as_str()),
+            Some(expected_path.as_str())
+        );
+        assert_eq!(
+            plan.data.get("agent_id").and_then(|v| v.as_str()),
+            Some("obs-agent")
+        );
+        assert_eq!(
+            plan.data.get("provider_name").and_then(|v| v.as_str()),
+            Some("obs-provider")
+        );
+        assert_eq!(
+            plan.data.get("frame_type").and_then(|v| v.as_str()),
+            Some("context-obs-agent")
+        );
+    });
+}
+
+#[test]
+fn context_generate_node_skipped_includes_path_field() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        let target = workspace_root.join("a.txt");
+        fs::write(&target, "hello").unwrap();
+
+        create_test_writer_agent("skip-agent");
+        create_test_openai_provider("skip-provider", "gpt-4-test", "http://127.0.0.1:9");
+
+        let cli = CliContext::new(workspace_root.clone(), None).unwrap();
+        cli.execute(&Commands::Scan { force: true }).unwrap();
+
+        let canonical_target = fs::canonicalize(&target).unwrap();
+        let record = cli
+            .api()
+            .node_store()
+            .find_by_path(&canonical_target)
+            .unwrap()
+            .expect("target node should exist");
+        let node_id = record.node_id;
+        let frame_type = "context-skip-agent".to_string();
+        let frame = Frame::new(
+            Basis::Node(node_id),
+            b"existing".to_vec(),
+            frame_type.clone(),
+            "skip-agent".to_string(),
+            std::collections::HashMap::new(),
+        )
+        .unwrap();
+        cli.api()
+            .put_frame(node_id, frame, "skip-agent".to_string())
+            .unwrap();
+
+        let result = cli.execute(&Commands::Context {
+            command: ContextCommands::Generate {
+                node: None,
+                path: Some(target.clone()),
+                path_positional: None,
+                agent: Some("skip-agent".to_string()),
+                provider: Some("skip-provider".to_string()),
+                frame_type: Some(frame_type),
+                force: false,
+            },
+        });
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("Frame already exists"));
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s.command == "context.generate")
+            .expect("context.generate session should exist");
+        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let skipped = events
+            .iter()
+            .find(|e| e.event_type == "node_skipped")
+            .expect("node_skipped should be emitted");
+        assert_eq!(
+            skipped.data.get("path").and_then(|v| v.as_str()),
+            Some(canonical_target.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            skipped.data.get("reason").and_then(|v| v.as_str()),
+            Some("head_reuse")
+        );
     });
 }
 
