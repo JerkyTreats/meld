@@ -3096,7 +3096,8 @@ impl CliContext {
             )));
         }
 
-        let is_directory_target = matches!(node_record.node_type, crate::store::NodeType::Directory);
+        let is_directory_target =
+            matches!(node_record.node_type, crate::store::NodeType::Directory);
         let recursive = is_directory_target && !no_recursive;
         let plan = self.build_generation_plan(
             node_id,
@@ -4498,6 +4499,32 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_path_to_node_id_fallback_for_relative_stored_path() {
+        let (api, temp_dir) = create_test_api();
+        let workspace_root = temp_dir.path().to_path_buf();
+
+        let dir_path = workspace_root.join("src").join("generation");
+        std::fs::create_dir_all(&dir_path).unwrap();
+
+        let node_id: NodeID = [7u8; 32];
+        let record = crate::store::NodeRecord {
+            node_id,
+            // Simulate legacy relative paths stored in the node index.
+            path: std::path::PathBuf::from("./src/generation"),
+            node_type: crate::store::NodeType::Directory,
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: std::collections::HashMap::new(),
+            tombstoned_at: None,
+        };
+        api.node_store().put(&record).unwrap();
+
+        let resolved = resolve_path_to_node_id(&api, &dir_path, &workspace_root).unwrap();
+        assert_eq!(resolved, node_id);
+    }
+
+    #[test]
     fn test_format_context_text_output_combine() {
         let node_id: NodeID = [1u8; 32];
         let node_record = crate::store::NodeRecord {
@@ -4642,9 +4669,24 @@ fn resolve_workspace_node_id(
                     .find_by_path(&canonical_path)
                     .map_err(ApiError::from)?
             };
-            record
-                .map(|r| r.node_id)
-                .ok_or_else(|| ApiError::PathNotInTree(canonical_path))
+            if let Some(record) = record {
+                return Ok(record.node_id);
+            }
+
+            // Backward-compatibility fallback:
+            // Older scans (and relative workspace roots) can persist record paths as
+            // relative values such as "./src/foo". If direct path-index lookup misses,
+            // compare canonicalized record paths to the requested canonical path.
+            if let Some(node_id) = resolve_node_id_by_canonical_fallback(
+                store.as_ref(),
+                workspace_root.as_path(),
+                &canonical_path,
+                include_tombstoned,
+            )? {
+                return Ok(node_id);
+            }
+
+            Err(ApiError::PathNotInTree(canonical_path))
         }
         (None, Some(hex_str)) => {
             let bytes = hex::decode(hex_str.trim_start_matches("0x"))
@@ -4673,6 +4715,40 @@ fn resolve_workspace_node_id(
             "Must specify either path or --node <node_id>.".to_string(),
         )),
     }
+}
+
+fn resolve_node_id_by_canonical_fallback(
+    store: &dyn NodeRecordStore,
+    workspace_root: &std::path::Path,
+    canonical_target: &std::path::Path,
+    include_tombstoned: bool,
+) -> Result<Option<NodeID>, ApiError> {
+    let records = if include_tombstoned {
+        store.list_all().map_err(ApiError::from)?
+    } else {
+        store.list_active().map_err(ApiError::from)?
+    };
+
+    for record in records {
+        let candidate = if record.path.is_absolute() {
+            record.path.clone()
+        } else {
+            workspace_root.join(&record.path)
+        };
+
+        // Skip entries that cannot be canonicalized (for example stale records
+        // pointing at missing filesystem paths).
+        let canonical_candidate = match crate::tree::path::canonicalize_path(&candidate) {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+
+        if canonical_candidate == canonical_target {
+            return Ok(Some(record.node_id));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Count frame files in the frame storage directory
