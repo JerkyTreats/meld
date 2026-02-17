@@ -7,6 +7,7 @@ Date: 2026-02-17
 Capture the staged migration from broad `tooling` ownership into sharp domain homes.
 
 Related specs:
+- [CLI Migration Plan](cli_migration_plan.md)
 - [CLI Shell Parse Route Help Spec](cli_shell_parse_route_help_spec.md)
 - [CLI Presentation Formatting Spec](cli_presentation_formatting.md)
 - [Context Generation Orchestration Spec](../context/context_generation_orchestration.md)

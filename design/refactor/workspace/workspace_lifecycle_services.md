@@ -7,7 +7,10 @@ Date: 2026-02-16
 Define a focused extraction for workspace lifecycle so command handlers stop owning lifecycle orchestration and become thin routes.
 
 Related ownership spec: [God Module Detangling Spec](../god_module_detangling_spec.md).
+Related CLI plan: [CLI Migration Plan](../cli/cli_migration_plan.md).
 Related watch runtime spec: [Workspace Watch Runtime Spec](workspace_watch_runtime_spec.md).
+Related migration guide: [Workspace Migration Guide](workspace_migration_guide.md).
+Related telemetry plan: [Telemetry Migration Plan](../telemetry/telemetry_migration_plan.md).
 
 ## Scope
 

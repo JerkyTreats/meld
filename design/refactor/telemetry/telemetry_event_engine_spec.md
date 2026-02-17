@@ -7,6 +7,8 @@ Date: 2026-02-17
 Define a focused extraction for telemetry event emission so CLI execution stops owning session policy and summary mapping.
 
 Related ownership spec: [God Module Detangling Spec](../god_module_detangling_spec.md).
+Related migration plan: [Telemetry Migration Plan](telemetry_migration_plan.md).
+Related CLI plan: [CLI Migration Plan](../cli/cli_migration_plan.md).
 
 ## Scope
 

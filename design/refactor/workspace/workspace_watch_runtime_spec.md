@@ -8,6 +8,9 @@ Define extraction for workspace watch runtime and editor bridge so watch behavio
 
 Related ownership specs:
 - [Workspace Lifecycle Services Spec](workspace_lifecycle_services.md)
+- [Workspace Migration Guide](workspace_migration_guide.md)
+- [CLI Migration Plan](../cli/cli_migration_plan.md)
+- [Telemetry Migration Plan](../telemetry/telemetry_migration_plan.md)
 - [Tooling Diffusion Map](../cli/tooling_diffusion_map.md)
 - [Telemetry Event Engine Spec](../telemetry/telemetry_event_engine_spec.md)
 - [Context Domain Structure Spec](../context/context_domain_structure.md)

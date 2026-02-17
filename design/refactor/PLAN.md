@@ -1,0 +1,361 @@
+# Refactor Migration Phased Development Plan
+
+Date: 2026-02-17
+
+## Overview
+
+This plan converts the per domain migration docs into one durable execution order.
+
+The order is dependency driven, not folder driven.
+
+- First establish contract foundations and repository ownership
+- Then complete shared composition and telemetry policy ownership
+- Then move context and workspace orchestration owners
+- Then cut over CLI routes in planned waves
+- Then remove legacy surfaces in the same phase window
+
+Related docs:
+- [God Module Detangling Spec](god_module_detangling_spec.md)
+- [Src Module Structure Map](src_module_structure_map.md)
+- [CLI Migration Plan](cli/cli_migration_plan.md)
+- [Provider Migration Plan](provider/provider_migration_plan.md)
+- [Agent Migration Plan](agent/agent_migration_plan.md)
+- [Config Migration Plan](config/config_migration_plan.md)
+- [Context Migration Plan](context/context_migration_plan.md)
+- [Workspace Migration Guide](workspace/workspace_migration_guide.md)
+- [Telemetry Migration Plan](telemetry/telemetry_migration_plan.md)
+
+---
+
+## Development phases
+
+| Phase | Goal | Dependencies | Completion |
+|-------|------|--------------|------------|
+| 1 | Characterization baseline and shared gates | None | Planned |
+| 2 | Provider foundation and repository ownership | Phase 1 | Planned |
+| 3 | Agent foundation and repository ownership | Phase 1, Phase 2 | Planned |
+| 4 | Config composition root and path ownership | Phase 2, Phase 3 | Planned |
+| 5 | Telemetry foundation and policy services | Phase 1 | Planned |
+| 6 | Context query mutation orchestration and queue ownership | Phase 2, Phase 4, Phase 5 | Planned |
+| 7 | Provider and agent command workflows plus adapter cutover | Phase 2, Phase 3, Phase 4, Phase 6 | Planned |
+| 8 | Workspace lifecycle status and watch ownership | Phase 4, Phase 5, Phase 6, Phase 7 | Planned |
+| 9 | CLI route waves and startup execution cutover | Phase 4, Phase 5, Phase 6, Phase 7, Phase 8 | Planned |
+| 10 | Legacy removal and boundary seal | Phase 1 to Phase 9 | Planned |
+
+---
+
+### Phase 1 — Characterization baseline and shared gates
+
+| Field | Value |
+|-------|--------|
+| Goal | Lock behavior and output contracts before extraction work. |
+| Dependencies | None |
+| Docs | All migration plans in this folder |
+| Completion | Planned |
+
+| Task | Completion |
+|------|------------|
+| Add parity suites for parse help route output and command summaries. | Planned |
+| Add parity suites for provider agent context workspace telemetry command families in text and json. | Planned |
+| Add deterministic ordering checks for status list watch and generation outputs. | Planned |
+| Publish one dependency gate checklist used by every phase below. | Planned |
+
+| Exit criterion | Completion |
+|----------------|------------|
+| Baseline parity suites are green and stable in CI. | Planned |
+| Dependency gate checklist is published and referenced by all migration streams. | Planned |
+
+| Dependency closure solved | Completion |
+|---------------------------|------------|
+| Unblocks safe extraction work by freezing current behavior and output contracts. | Planned |
+
+---
+
+### Phase 2 — Provider foundation and repository ownership
+
+| Field | Value |
+|-------|--------|
+| Goal | Make provider domain the owner of provider schema validation repository and client ports. |
+| Dependencies | Phase 1 |
+| Docs | provider/provider_migration_plan.md |
+| Completion | Planned |
+
+| Order | Task | Completion |
+|-------|------|------------|
+| 1 | Move provider schema and validation ownership from config into provider domain modules. | Planned |
+| 2 | Extract provider repository port and XDG adapter, and route persistence through that port. | Planned |
+| 3 | Extract diagnostics and command services for status validate test create edit remove flows. | Planned |
+| 4 | Extract provider client port and generation service contracts for context use. | Planned |
+| 5 | Remove legacy provider persistence and diagnostics ownership from old paths in the same phase window. | Planned |
+
+| Exit criterion | Completion |
+|----------------|------------|
+| Provider contracts required by config context workspace and CLI are available and tested. | Planned |
+| Provider persistence and diagnostics no longer rely on mixed legacy ownership. | Planned |
+
+| Dependency closure solved | Completion |
+|---------------------------|------------|
+| Satisfies provider prerequisites required by config adoption and context generation integration. | Planned |
+
+---
+
+### Phase 3 — Agent foundation and repository ownership
+
+| Field | Value |
+|-------|--------|
+| Goal | Make agent domain the owner of agent schema validation and repository policy. |
+| Dependencies | Phase 1, Phase 2 |
+| Docs | agent/agent_migration_plan.md |
+| Completion | Planned |
+
+| Order | Task | Completion |
+|-------|------|------------|
+| 1 | Move agent schema and validation ownership from config into agent domain modules. | Planned |
+| 2 | Extract agent repository port and XDG adapter for load save delete and prompt path policy. | Planned |
+| 3 | Keep registry focused on in memory aggregate behavior only. | Planned |
+| 4 | Remove legacy mixed ownership from old paths in the same phase window. | Planned |
+
+| Exit criterion | Completion |
+|----------------|------------|
+| Agent contracts required by config and CLI migration are available and tested. | Planned |
+| Agent persistence paths are owned by agent repository port and adapter modules. | Planned |
+
+| Dependency closure solved | Completion |
+|---------------------------|------------|
+| Satisfies agent prerequisites required by config composition adoption. | Planned |
+
+---
+
+### Phase 4 — Config composition root and path ownership
+
+| Field | Value |
+|-------|--------|
+| Goal | Reduce config domain to one composition root with source precedence merge and path composition only. |
+| Dependencies | Phase 2, Phase 3 |
+| Docs | config/config_migration_plan.md |
+| Completion | Planned |
+
+| Order | Task | Completion |
+|-------|------|------------|
+| 1 | Adopt provider and agent domain contracts in config composition paths. | Planned |
+| 2 | Extract config sources by behavior for workspace file global file and environment. | Planned |
+| 3 | Extract composition service and merge policy modules. | Planned |
+| 4 | Extract workspace storage path and XDG root modules. | Planned |
+| 5 | Remove direct config policy ownership from CLI and non config modules in the same phase window. | Planned |
+
+| Exit criterion | Completion |
+|----------------|------------|
+| One config composition facade is available for startup and command paths. | Planned |
+| Provider and agent validation policy is no longer owned by config modules. | Planned |
+
+| Dependency closure solved | Completion |
+|---------------------------|------------|
+| Provides config facade and path contracts required by context workspace and CLI cutovers. | Planned |
+
+---
+
+### Phase 5 — Telemetry foundation and policy services
+
+| Field | Value |
+|-------|--------|
+| Goal | Move telemetry contracts routing sinks sessions and summary mapping into telemetry domain ownership. |
+| Dependencies | Phase 1 |
+| Docs | telemetry/telemetry_migration_plan.md |
+| Completion | Planned |
+
+| Order | Task | Completion |
+|-------|------|------------|
+| 1 | Add telemetry domain root facade and shared types. | Planned |
+| 2 | Extract event and summary contracts. | Planned |
+| 3 | Extract routing and sink ownership from legacy progress modules. | Planned |
+| 4 | Extract session lifecycle service and policy from CLI execution paths. | Planned |
+| 5 | Extract emission engine and summary mapper from CLI handlers. | Planned |
+| 6 | Remove legacy telemetry policy ownership in the same phase window. | Planned |
+
+| Exit criterion | Completion |
+|----------------|------------|
+| Telemetry contracts and services are stable and consumed through telemetry facade only. | Planned |
+| CLI execute path no longer owns session lifecycle or summary mapping policy. | Planned |
+
+| Dependency closure solved | Completion |
+|---------------------------|------------|
+| Provides telemetry contracts needed by context generation hooks workspace watch hooks and CLI cutover. | Planned |
+
+---
+
+### Phase 6 — Context query mutation orchestration and queue ownership
+
+| Field | Value |
+|-------|--------|
+| Goal | Move context query mutation generation orchestration and queue lifecycle into context domain ownership. |
+| Dependencies | Phase 2, Phase 4, Phase 5 |
+| Docs | context/context_migration_plan.md |
+| Completion | Planned |
+
+| Order | Task | Completion |
+|-------|------|------------|
+| 1 | Add context domain root facade and shared types. | Planned |
+| 2 | Extract query service view policy composition and head queries. | Planned |
+| 3 | Extract mutation and lifecycle service from legacy API paths with deterministic update order. | Planned |
+| 4 | Extract orchestration service plan and queue runtime ownership from CLI and legacy modules. | Planned |
+| 5 | Route provider dependent generation through provider contracts and services from Phase 2. | Planned |
+| 6 | Route telemetry generation events through telemetry contracts from Phase 5. | Planned |
+| 7 | Remove legacy context policy from old modules in the same phase window. | Planned |
+
+| Exit criterion | Completion |
+|----------------|------------|
+| Context contracts consumed by agent adapter and workspace watch are available and tested. | Planned |
+| Context orchestration and queue policy are no longer owned by CLI or mixed legacy paths. | Planned |
+
+| Dependency closure solved | Completion |
+|---------------------------|------------|
+| Provides context facade queue and orchestration contracts required by agent and workspace cutovers. | Planned |
+
+---
+
+### Phase 7 — Provider and agent command workflows plus adapter cutover
+
+| Field | Value |
+|-------|--------|
+| Goal | Complete provider and agent command service ownership and move adapter boundary to domain contracts. |
+| Dependencies | Phase 2, Phase 3, Phase 4, Phase 6 |
+| Docs | provider/provider_migration_plan.md, agent/agent_migration_plan.md |
+| Completion | Planned |
+
+| Order | Task | Completion |
+|-------|------|------------|
+| 1 | Finalize provider command workflow ownership and diagnostics ownership in provider application services. | Planned |
+| 2 | Finalize agent command workflow ownership in agent application services. | Planned |
+| 3 | Move adapter contract and implementation to agent ports and adapters using context facade contracts. | Planned |
+| 4 | Ensure config loads and validation in both domains flow through composition facade and domain contracts only. | Planned |
+| 5 | Remove legacy adapter and command orchestration ownership from tooling paths in the same phase window. | Planned |
+
+| Exit criterion | Completion |
+|----------------|------------|
+| Provider and agent command routes are ready for CLI wave cutover with one service call per variant. | Planned |
+| Adapter paths use explicit context contracts with no cross domain internal access. | Planned |
+
+| Dependency closure solved | Completion |
+|---------------------------|------------|
+| Satisfies provider and agent service readiness gates required by CLI route wave sequencing. | Planned |
+
+---
+
+### Phase 8 — Workspace lifecycle status and watch ownership
+
+| Field | Value |
+|-------|--------|
+| Goal | Move workspace lifecycle status and watch runtime to workspace domain and complete cross domain hook integration. |
+| Dependencies | Phase 4, Phase 5, Phase 6, Phase 7 |
+| Docs | workspace/workspace_migration_guide.md |
+| Completion | Planned |
+
+| Order | Task | Completion |
+|-------|------|------------|
+| 1 | Add workspace domain root facade and shared types. | Planned |
+| 2 | Extract lifecycle service for validate delete restore compact list deleted and ignore flows. | Planned |
+| 3 | Extract workspace status service for workspace section assembly. | Planned |
+| 4 | Extract watch events runtime and editor bridge ownership into workspace watch modules. | Planned |
+| 5 | Route watch queue hooks through context contracts and watch telemetry hooks through telemetry contracts. | Planned |
+| 6 | Route status fan in through agent and provider status contracts from domain services. | Planned |
+| 7 | Remove legacy workspace watch editor and status ownership from old modules in the same phase window. | Planned |
+
+| Exit criterion | Completion |
+|----------------|------------|
+| Workspace services satisfy CLI workspace route wave readiness gates. | Planned |
+| Watch runtime and status assembly no longer rely on mixed legacy ownership. | Planned |
+
+| Dependency closure solved | Completion |
+|---------------------------|------------|
+| Satisfies workspace lifecycle status watch and unified status dependencies required by CLI cutover. | Planned |
+
+---
+
+### Phase 9 — CLI route waves and startup execution cutover
+
+| Field | Value |
+|-------|--------|
+| Goal | Slim CLI to parse route help output and boundary error mapping only. |
+| Dependencies | Phase 4, Phase 5, Phase 6, Phase 7, Phase 8 |
+| Docs | cli/cli_migration_plan.md |
+| Completion | Planned |
+
+| Order | Task | Completion |
+|-------|------|------------|
+| 1 | Complete CLI foundation modules for parse help route output and presentation ownership. | Planned |
+| 2 | Execute route wave one for workspace commands using workspace services from Phase 8. | Planned |
+| 3 | Execute route wave two for agent and provider commands using services from Phase 7. | Planned |
+| 4 | Execute route wave three for context commands using context facade contracts from Phase 6. | Planned |
+| 5 | Execute route wave four for unified status assembly using workspace agent and provider status contracts. | Planned |
+| 6 | Execute route wave five for watch and init using workspace watch and config composition contracts. | Planned |
+| 7 | Cut over startup and execution policy so CLI uses config composition facade and telemetry services only. | Planned |
+| 8 | Remove legacy route tables and orchestration code from old CLI surfaces in the same phase window. | Planned |
+
+| Exit criterion | Completion |
+|----------------|------------|
+| CLI owns only boundary responsibilities and one route table. | Planned |
+| No domain orchestration policy remains in CLI modules. | Planned |
+
+| Dependency closure solved | Completion |
+|---------------------------|------------|
+| Completes shared shell cutover gates across provider agent config context workspace and telemetry plans. | Planned |
+
+---
+
+### Phase 10 — Legacy removal and boundary seal
+
+| Field | Value |
+|-------|--------|
+| Goal | Remove temporary migration surfaces and enforce final domain boundaries. |
+| Dependencies | Phase 1 to Phase 9 |
+| Docs | god_module_detangling_spec.md, src_module_structure_map.md |
+| Completion | Planned |
+
+| Order | Task | Completion |
+|-------|------|------------|
+| 1 | Remove legacy `src/tooling` ownership paths after all route waves are complete. | Planned |
+| 2 | Remove legacy context policy ownership from `src/api.rs` and related old helper surfaces. | Planned |
+| 3 | Remove legacy `src/progress` ownership once telemetry ownership is complete. | Planned |
+| 4 | Remove stale exports and stale helper code paths that bypass domain contracts. | Planned |
+| 5 | Enforce boundary guard tests for no cross domain internal reach through. | Planned |
+
+| Exit criterion | Completion |
+|----------------|------------|
+| Final module structure matches domain first ownership targets. | Planned |
+| No old mixed ownership surfaces remain active. | Planned |
+
+| Dependency closure solved | Completion |
+|---------------------------|------------|
+| Delivers final durable architecture and prevents dependency regressions. | Planned |
+
+---
+
+## Implementation order summary
+
+| Order | Phase | Summary |
+|-------|-------|---------|
+| 1 | Phase 1 | Freeze behavior contracts and establish shared gates. |
+| 2 | Phase 2 | Establish provider contracts and repository ownership. |
+| 3 | Phase 3 | Establish agent contracts and repository ownership. |
+| 4 | Phase 4 | Establish config composition facade and path contracts. |
+| 5 | Phase 5 | Establish telemetry contracts and policy services. |
+| 6 | Phase 6 | Establish context query mutation orchestration and queue contracts. |
+| 7 | Phase 7 | Complete provider and agent workflow ownership and adapter cutover. |
+| 8 | Phase 8 | Complete workspace lifecycle status and watch ownership. |
+| 9 | Phase 9 | Execute CLI route waves and startup execution cutover. |
+| 10 | Phase 10 | Remove legacy surfaces and seal boundaries. |
+
+---
+
+## Dependency resolution map
+
+| Dependency need | Solved in phase |
+|-----------------|-----------------|
+| Config needs provider and agent contract readiness | Phase 2 and Phase 3 |
+| Context generation needs provider services | Phase 2 then consumed in Phase 6 |
+| Context and workspace telemetry hooks need telemetry contracts | Phase 5 then consumed in Phase 6 and Phase 8 |
+| Agent adapter needs context contracts | Phase 6 then consumed in Phase 7 |
+| Workspace watch needs config path context queue and telemetry contracts | Phase 4 and Phase 5 and Phase 6 then consumed in Phase 8 |
+| Unified status needs workspace agent and provider status contracts | Phase 7 and Phase 8 then consumed in Phase 9 |
+| CLI thin shell requires all domain service contracts | Phase 4 to Phase 8 then executed in Phase 9 |
+| Final boundary seal requires all migrations complete | Phase 10 |

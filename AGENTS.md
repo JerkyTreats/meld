@@ -10,3 +10,7 @@
 - Do not reach into another domain internal modules.
 - Avoid generic primary folders named by technical layer.
 - For migrations, use compatibility wrappers and require characterization and parity tests before removing old paths.
+
+## Avoid Backwards Compatibility
+
+Maintaining backwards compatibility tends to clutter codebases, and its not a requirement for this project. 
