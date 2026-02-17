@@ -17,6 +17,8 @@ The order is dependency driven, not folder driven.
 Related docs:
 - [God Module Detangling Spec](god_module_detangling_spec.md)
 - [Src Module Structure Map](src_module_structure_map.md)
+- [Phase 1 Implementation Plan](phase1_implementation_plan.md)
+- [Dependency Gate Checklist](dependency_gate_checklist.md)
 - [CLI Migration Plan](cli/cli_migration_plan.md)
 - [Provider Migration Plan](provider/provider_migration_plan.md)
 - [Agent Migration Plan](agent/agent_migration_plan.md)
@@ -31,7 +33,7 @@ Related docs:
 
 | Phase | Goal | Dependencies | Completion |
 |-------|------|--------------|------------|
-| 1 | Characterization baseline and shared gates | None | Planned |
+| 1 | Characterization baseline and shared gates | None | Completed local |
 | 2 | Provider foundation and repository ownership | Phase 1 | Planned |
 | 3 | Agent foundation and repository ownership | Phase 1, Phase 2 | Planned |
 | 4 | Config composition root and path ownership | Phase 2, Phase 3 | Planned |
@@ -50,24 +52,24 @@ Related docs:
 |-------|--------|
 | Goal | Lock behavior and output contracts before extraction work. |
 | Dependencies | None |
-| Docs | All migration plans in this folder |
-| Completion | Planned |
+| Docs | phase1_implementation_plan.md and all migration plans in this folder |
+| Completion | Completed local |
 
 | Task | Completion |
 |------|------------|
-| Add parity suites for parse help route output and command summaries. | Planned |
-| Add parity suites for provider agent context workspace telemetry command families in text and json. | Planned |
-| Add deterministic ordering checks for status list watch and generation outputs. | Planned |
-| Publish one dependency gate checklist used by every phase below. | Planned |
+| Add parity suites for parse help route output and command summaries. | Completed |
+| Add parity suites for provider agent context workspace telemetry command families in text and json. | Completed |
+| Add deterministic ordering checks for status list watch and generation outputs. | Completed |
+| Publish one dependency gate checklist used by every phase below. | Completed |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| Baseline parity suites are green and stable in CI. | Planned |
-| Dependency gate checklist is published and referenced by all migration streams. | Planned |
+| Baseline parity suites are green and stable in CI. | Pending CI |
+| Dependency gate checklist is published and referenced by all migration streams. | Completed |
 
 | Dependency closure solved | Completion |
 |---------------------------|------------|
-| Unblocks safe extraction work by freezing current behavior and output contracts. | Planned |
+| Unblocks safe extraction work by freezing current behavior and output contracts. | Completed local |
 
 ---
 
