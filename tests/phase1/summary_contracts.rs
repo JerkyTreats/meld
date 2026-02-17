@@ -113,16 +113,12 @@ fn command_families_emit_typed_and_command_summary_events() {
         .unwrap();
 
         let context_events = latest_session_events(&cli.progress_runtime(), "context.get");
-        assert!(
-            context_events
-                .iter()
-                .any(|e| e.event_type == "context_read_summary")
-        );
-        assert!(
-            context_events
-                .iter()
-                .any(|e| e.event_type == "command_summary")
-        );
+        assert!(context_events
+            .iter()
+            .any(|e| e.event_type == "context_read_summary"));
+        assert!(context_events
+            .iter()
+            .any(|e| e.event_type == "command_summary"));
     });
 }
 
@@ -165,13 +161,11 @@ fn failing_command_summary_payload_is_bounded() {
             .expect("failed summary should include a message");
 
         assert!(message.chars().count() <= 256);
-        assert!(
-            summary
-                .data
-                .get("error_chars")
-                .and_then(|v| v.as_u64())
-                .is_some()
-        );
+        assert!(summary
+            .data
+            .get("error_chars")
+            .and_then(|v| v.as_u64())
+            .is_some());
         assert!(summary.data.get("output_chars").is_none());
     });
 }

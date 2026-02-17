@@ -282,8 +282,14 @@ fn watch_contract_is_stable_for_defaults_and_startup_event_sequence() {
         .unwrap();
 
     let events = latest_session_events(&progress, "watch");
-    assert_eq!(events.first().map(|e| e.event_type.as_str()), Some("session_started"));
+    assert_eq!(
+        events.first().map(|e| e.event_type.as_str()),
+        Some("session_started")
+    );
     assert!(events.iter().any(|e| e.event_type == "watch_started"));
-    assert_eq!(events.last().map(|e| e.event_type.as_str()), Some("session_ended"));
+    assert_eq!(
+        events.last().map(|e| e.event_type.as_str()),
+        Some("session_ended")
+    );
     assert!(events.windows(2).all(|w| w[1].seq == w[0].seq + 1));
 }

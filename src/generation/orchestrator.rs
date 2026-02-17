@@ -196,7 +196,8 @@ impl GenerationOrchestrator {
                 )));
             }
 
-            if failed_count > 0 && matches!(plan.failure_policy, FailurePolicy::StopOnLevelFailure) {
+            if failed_count > 0 && matches!(plan.failure_policy, FailurePolicy::StopOnLevelFailure)
+            {
                 self.emit_event(
                     session_id.as_deref(),
                     "generation_failed",
@@ -325,4 +326,3 @@ mod tests {
         assert_eq!(result.total_failed, 1);
     }
 }
-

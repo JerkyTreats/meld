@@ -64,7 +64,9 @@ fn agent_status_json_contract_has_required_fields() {
 
         let entry = agents
             .iter()
-            .find(|item| item.get("agent_id") == Some(&serde_json::Value::String("phase1-agent".to_string())))
+            .find(|item| {
+                item.get("agent_id") == Some(&serde_json::Value::String("phase1-agent".to_string()))
+            })
             .expect("phase1-agent should appear in status output");
         assert!(entry.get("role").and_then(|v| v.as_str()).is_some());
         assert!(entry.get("valid").and_then(|v| v.as_bool()).is_some());

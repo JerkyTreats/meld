@@ -91,7 +91,6 @@ impl AgentIdentity {
         }
         Ok(())
     }
-
 }
 
 /// Agent registry for managing agent identities
@@ -481,9 +480,7 @@ impl AgentRegistry {
                     }
                 }
             } else {
-                result.add_error(
-                    "Missing system_prompt_path for non-reader role".to_string(),
-                );
+                result.add_error("Missing system_prompt_path for non-reader role".to_string());
             }
 
             // Check for user prompt templates in metadata

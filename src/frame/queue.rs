@@ -152,7 +152,11 @@ impl Ord for GenerationRequest {
     /// For same priority, older items (smaller timestamp) should be Greater (processed first)
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let self_plan_rank = if self.options.plan_id.is_some() { 1 } else { 0 };
-        let other_plan_rank = if other.options.plan_id.is_some() { 1 } else { 0 };
+        let other_plan_rank = if other.options.plan_id.is_some() {
+            1
+        } else {
+            0
+        };
         match self_plan_rank.cmp(&other_plan_rank) {
             std::cmp::Ordering::Equal => {}
             ordering => return ordering,

@@ -63,7 +63,9 @@ pub struct GenerationPlan {
 impl GenerationPlan {
     pub fn validate(&self) -> Result<(), ApiError> {
         if self.plan_id.trim().is_empty() {
-            return Err(ApiError::ConfigError("Generation plan id cannot be empty".to_string()));
+            return Err(ApiError::ConfigError(
+                "Generation plan id cannot be empty".to_string(),
+            ));
         }
         if self.levels.is_empty() {
             return Err(ApiError::ConfigError(
@@ -184,4 +186,3 @@ mod tests {
         assert_eq!(decoded.total_levels, plan.total_levels);
     }
 }
-

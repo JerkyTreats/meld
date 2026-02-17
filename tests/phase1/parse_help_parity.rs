@@ -13,7 +13,14 @@ fn parse_valid_command_matrix() {
         vec!["merkle", "validate"],
         vec!["merkle", "agent", "list"],
         vec!["merkle", "provider", "list"],
-        vec!["merkle", "watch", "--debounce-ms", "120", "--batch-window-ms", "80"],
+        vec![
+            "merkle",
+            "watch",
+            "--debounce-ms",
+            "120",
+            "--batch-window-ms",
+            "80",
+        ],
         vec!["merkle", "init", "--list"],
         vec!["merkle", "context", "get", "--path", "./foo.txt"],
         vec!["merkle", "context", "generate", "--path", "./foo.txt"],
@@ -88,5 +95,8 @@ fn context_generate_help_tokens_match_snapshot_fixture() {
     generate.write_long_help(&mut output).unwrap();
     let output = String::from_utf8(output).unwrap();
 
-    assert_tokens_from_fixture(&output, "tests/fixtures/phase1/help/context_generate.tokens");
+    assert_tokens_from_fixture(
+        &output,
+        "tests/fixtures/phase1/help/context_generate.tokens",
+    );
 }

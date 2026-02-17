@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use merkle::agent::{AgentIdentity, AgentRole, AgentRegistry};
+use merkle::agent::{AgentIdentity, AgentRegistry, AgentRole};
 use merkle::api::ContextApi;
 use merkle::concurrency::NodeLockManager;
 use merkle::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
@@ -102,17 +102,18 @@ pub fn create_test_agent(agent_id: &str) {
     let prompts_dir = xdg::prompts_dir().unwrap();
     fs::create_dir_all(&prompts_dir).unwrap();
     let prompt_path = prompts_dir.join(format!("{agent_id}.md"));
-    fs::write(&prompt_path, "# Test Prompt\n\nStable prompt for phase1 tests.").unwrap();
+    fs::write(
+        &prompt_path,
+        "# Test Prompt\n\nStable prompt for phase1 tests.",
+    )
+    .unwrap();
 
     let agents_dir = xdg::agents_dir().unwrap();
     fs::create_dir_all(&agents_dir).unwrap();
     let config_path = agents_dir.join(format!("{agent_id}.toml"));
 
     let mut metadata = HashMap::new();
-    metadata.insert(
-        "user_prompt_file".to_string(),
-        "Analyze {path}".to_string(),
-    );
+    metadata.insert("user_prompt_file".to_string(), "Analyze {path}".to_string());
     metadata.insert(
         "user_prompt_directory".to_string(),
         "Analyze directory {path}".to_string(),
@@ -148,7 +149,10 @@ pub fn create_test_provider(provider_name: &str) {
     fs::write(config_path, toml).unwrap();
 }
 
-pub fn latest_session_events(runtime: &ProgressRuntime, command: &str) -> Vec<merkle::progress::ProgressEvent> {
+pub fn latest_session_events(
+    runtime: &ProgressRuntime,
+    command: &str,
+) -> Vec<merkle::progress::ProgressEvent> {
     let sessions = runtime.store().list_sessions().unwrap();
     let session = sessions
         .iter()
