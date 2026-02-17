@@ -18,6 +18,7 @@ Related docs:
 - [God Module Detangling Spec](god_module_detangling_spec.md)
 - [Src Module Structure Map](src_module_structure_map.md)
 - [Phase 1 Implementation Plan](phase1_implementation_plan.md)
+- [Phase 2 Implementation Plan](phase2_implementation_plan.md)
 - [Dependency Gate Checklist](dependency_gate_checklist.md)
 - [CLI Migration Plan](cli/cli_migration_plan.md)
 - [Provider Migration Plan](provider/provider_migration_plan.md)
@@ -34,7 +35,7 @@ Related docs:
 | Phase | Goal | Dependencies | Completion |
 |-------|------|--------------|------------|
 | 1 | Characterization baseline and shared gates | None | Completed local |
-| 2 | Provider foundation and repository ownership | Phase 1 | Planned |
+| 2 | Provider foundation and repository ownership | Phase 1 | Completed local |
 | 3 | Agent foundation and repository ownership | Phase 1, Phase 2 | Planned |
 | 4 | Config composition root and path ownership | Phase 2, Phase 3 | Planned |
 | 5 | Telemetry foundation and policy services | Phase 1 | Planned |
@@ -79,25 +80,25 @@ Related docs:
 |-------|--------|
 | Goal | Make provider domain the owner of provider schema validation repository and client ports. |
 | Dependencies | Phase 1 |
-| Docs | provider/provider_migration_plan.md |
-| Completion | Planned |
+| Docs | provider/provider_migration_plan.md and phase2_implementation_plan.md |
+| Completion | Completed local |
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Move provider schema and validation ownership from config into provider domain modules. | Planned |
-| 2 | Extract provider repository port and XDG adapter, and route persistence through that port. | Planned |
-| 3 | Extract diagnostics and command services for status validate test create edit remove flows. | Planned |
-| 4 | Extract provider client port and generation service contracts for context use. | Planned |
-| 5 | Remove legacy provider persistence and diagnostics ownership from old paths in the same phase window. | Planned |
+| 1 | Move provider schema and validation ownership from config into provider domain modules. | Completed local |
+| 2 | Extract provider repository port and XDG adapter, and route persistence through that port. | Completed local |
+| 3 | Extract diagnostics and command services for status validate test create edit remove flows. | Completed local |
+| 4 | Extract provider client port and generation service contracts for context use. | Completed local |
+| 5 | Remove legacy provider persistence and diagnostics ownership from old paths in the same phase window. | Completed local |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| Provider contracts required by config context workspace and CLI are available and tested. | Planned |
-| Provider persistence and diagnostics no longer rely on mixed legacy ownership. | Planned |
+| Provider contracts required by config context workspace and CLI are available and tested. | Completed local |
+| Provider persistence and diagnostics no longer rely on mixed legacy ownership. | Completed local |
 
 | Dependency closure solved | Completion |
 |---------------------------|------------|
-| Satisfies provider prerequisites required by config adoption and context generation integration. | Planned |
+| Satisfies provider prerequisites required by config adoption and context generation integration. | Completed local |
 
 ---
 

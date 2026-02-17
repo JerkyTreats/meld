@@ -7,7 +7,10 @@
 use crate::agent::AgentRole;
 use crate::error::ApiError;
 use crate::logging::LoggingConfig;
-use crate::provider::{CompletionOptions, ModelProvider};
+#[cfg(test)]
+use crate::provider::CompletionOptions;
+#[cfg(test)]
+use crate::provider::ModelProvider;
 use config::{Config, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -18,6 +21,8 @@ use tracing::warn;
 
 #[cfg(test)]
 use std::sync::Mutex;
+
+pub use crate::provider::{ProviderConfig, ProviderType};
 
 /// Root configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,46 +45,6 @@ pub struct MerkleConfig {
     /// Logging configuration
     #[serde(default)]
     pub logging: LoggingConfig,
-}
-
-/// Model provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderConfig {
-    /// Provider name (unique identifier)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider_name: Option<String>,
-
-    /// Provider type (OpenAI, Anthropic, Ollama, LocalCustom)
-    pub provider_type: ProviderType,
-
-    /// Model identifier (e.g., "gpt-4", "claude-3-opus", "llama2")
-    pub model: String,
-
-    /// API key (optional, can be loaded from environment)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
-
-    /// Base URL or endpoint (provider-specific)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub endpoint: Option<String>,
-
-    /// Default completion options for this provider
-    #[serde(default)]
-    pub default_options: CompletionOptions,
-}
-
-/// Provider type enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ProviderType {
-    #[serde(rename = "openai")]
-    OpenAI,
-    #[serde(rename = "anthropic")]
-    Anthropic,
-    #[serde(rename = "ollama")]
-    Ollama,
-    #[serde(rename = "local")]
-    LocalCustom,
 }
 
 /// Agent configuration
@@ -239,100 +204,6 @@ impl std::fmt::Display for ValidationError {
 }
 
 impl std::error::Error for ValidationError {}
-
-impl ProviderConfig {
-    /// Validate provider configuration
-    pub fn validate(&self) -> Result<(), String> {
-        // Validate model is not empty
-        if self.model.trim().is_empty() {
-            return Err("Model name cannot be empty".to_string());
-        }
-
-        // Validate API key for cloud providers
-        match self.provider_type {
-            ProviderType::OpenAI | ProviderType::Anthropic => {
-                // API key can be in config or environment, so we don't require it here
-                // It will be checked when creating the client
-            }
-            ProviderType::Ollama | ProviderType::LocalCustom => {
-                // Local providers don't require API keys
-            }
-        }
-
-        // Validate endpoint URL if provided
-        if let Some(endpoint) = &self.endpoint {
-            if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
-                return Err(format!("Invalid endpoint URL: {}", endpoint));
-            }
-        }
-
-        // Validate completion options
-        if let Some(temp) = self.default_options.temperature {
-            if temp < 0.0 || temp > 2.0 {
-                return Err(format!(
-                    "Temperature must be between 0.0 and 2.0, got {}",
-                    temp
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Convert ProviderConfig to ModelProvider
-    pub fn to_model_provider(&self) -> Result<ModelProvider, ApiError> {
-        // Try to get API key from config or environment
-        let api_key = self.api_key.clone().or_else(|| match self.provider_type {
-            ProviderType::OpenAI => std::env::var("OPENAI_API_KEY").ok(),
-            ProviderType::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
-            _ => None,
-        });
-
-        match self.provider_type {
-            ProviderType::OpenAI => {
-                let api_key = api_key.ok_or_else(|| {
-                    ApiError::ProviderNotConfigured(
-                        "OpenAI API key required (set in config or OPENAI_API_KEY env var)"
-                            .to_string(),
-                    )
-                })?;
-                Ok(ModelProvider::OpenAI {
-                    model: self.model.clone(),
-                    api_key,
-                    base_url: self.endpoint.clone(),
-                })
-            }
-            ProviderType::Anthropic => {
-                let api_key = api_key.ok_or_else(|| {
-                    ApiError::ProviderNotConfigured(
-                        "Anthropic API key required (set in config or ANTHROPIC_API_KEY env var)"
-                            .to_string(),
-                    )
-                })?;
-                Ok(ModelProvider::Anthropic {
-                    model: self.model.clone(),
-                    api_key,
-                })
-            }
-            ProviderType::Ollama => Ok(ModelProvider::Ollama {
-                model: self.model.clone(),
-                base_url: self.endpoint.clone(),
-            }),
-            ProviderType::LocalCustom => {
-                let endpoint = self.endpoint.clone().ok_or_else(|| {
-                    ApiError::ProviderNotConfigured(
-                        "LocalCustom provider requires endpoint".to_string(),
-                    )
-                })?;
-                Ok(ModelProvider::LocalCustom {
-                    model: self.model.clone(),
-                    endpoint,
-                    api_key: api_key,
-                })
-            }
-        }
-    }
-}
 
 impl AgentConfig {
     /// Validate agent configuration

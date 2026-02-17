@@ -1933,29 +1933,7 @@ impl CliContext {
 
     /// Resolve API key status for a provider
     fn resolve_api_key_status(&self, provider: &crate::config::ProviderConfig) -> String {
-        match provider.provider_type {
-            crate::config::ProviderType::OpenAI => {
-                if provider.api_key.is_some() {
-                    "Set (from config)".to_string()
-                } else if std::env::var("OPENAI_API_KEY").is_ok() {
-                    "Set (from environment)".to_string()
-                } else {
-                    "Not set".to_string()
-                }
-            }
-            crate::config::ProviderType::Anthropic => {
-                if provider.api_key.is_some() {
-                    "Set (from config)".to_string()
-                } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-                    "Set (from environment)".to_string()
-                } else {
-                    "Not set".to_string()
-                }
-            }
-            crate::config::ProviderType::Ollama | crate::config::ProviderType::LocalCustom => {
-                "Not required".to_string()
-            }
-        }
+        crate::provider::diagnostics::ProviderDiagnosticsService::resolve_api_key_status(provider)
     }
 
     /// Handle provider validate command (single provider per provider_validate_spec)
@@ -1967,41 +1945,38 @@ impl CliContext {
         verbose: bool,
     ) -> Result<String, ApiError> {
         let registry = self.api.provider_registry().read();
-        let mut result = registry.validate_provider(provider_name)?;
+        let mut result =
+            crate::provider::diagnostics::ProviderDiagnosticsService::validate_provider(
+                &registry,
+                provider_name,
+            )?;
 
         if test_connectivity || check_model {
-            match registry.create_client(provider_name) {
-                Ok(client) => {
-                    result.add_check("Provider client created", true);
-                    let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                        ApiError::ProviderError(format!("Failed to create runtime: {}", e))
-                    })?;
-                    match rt.block_on(client.list_models()) {
-                        Ok(available_models) => {
-                            result.add_check("API connectivity: OK", true);
-                            if check_model {
-                                let provider = registry.get_or_error(provider_name)?;
-                                if available_models.iter().any(|m| m == &provider.model) {
-                                    result.add_check(
-                                        &format!("Model '{}' is available", provider.model),
-                                        true,
-                                    );
-                                } else {
-                                    result.add_error(format!(
-                                        "Model '{}' not found. Available models: {}",
-                                        provider.model,
-                                        available_models.join(", ")
-                                    ));
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            result.add_error(format!("API connectivity failed: {}", e));
+            result.add_check("Provider client created", true);
+            match crate::provider::diagnostics::ProviderDiagnosticsService::list_available_models(
+                &registry,
+                provider_name,
+            ) {
+                Ok(available_models) => {
+                    result.add_check("API connectivity: OK", true);
+                    if check_model {
+                        let provider = registry.get_or_error(provider_name)?;
+                        if available_models.iter().any(|m| m == &provider.model) {
+                            result.add_check(
+                                &format!("Model '{}' is available", provider.model),
+                                true,
+                            );
+                        } else {
+                            result.add_error(format!(
+                                "Model '{}' not found. Available models: {}",
+                                provider.model,
+                                available_models.join(", ")
+                            ));
                         }
                     }
                 }
                 Err(e) => {
-                    result.add_error(format!("Failed to create provider client: {}", e));
+                    result.add_error(format!("API connectivity failed: {}", e));
                 }
             }
         }
@@ -2042,23 +2017,10 @@ impl CliContext {
                 .as_deref()
                 .unwrap_or("unknown")
                 .to_string();
-            let type_str = match provider.provider_type {
-                crate::config::ProviderType::OpenAI => "openai",
-                crate::config::ProviderType::Anthropic => "anthropic",
-                crate::config::ProviderType::Ollama => "ollama",
-                crate::config::ProviderType::LocalCustom => "local",
-            };
+            let type_str = crate::provider::profile::provider_type_slug(provider.provider_type);
             let connectivity = if test_connectivity {
-                match registry.create_client(&provider_name) {
-                    Ok(client) => {
-                        let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                            ApiError::ProviderError(format!("Failed to create runtime: {}", e))
-                        })?;
-                        match rt.block_on(client.list_models()) {
-                            Ok(_) => Some("ok".to_string()),
-                            Err(_) => Some("fail".to_string()),
-                        }
-                    }
+                match crate::provider::diagnostics::ProviderDiagnosticsService::list_available_models(&registry, &provider_name) {
+                    Ok(_) => Some("ok".to_string()),
                     Err(_) => Some("fail".to_string()),
                 }
             } else {
@@ -2170,23 +2132,10 @@ impl CliContext {
                     .as_deref()
                     .unwrap_or("unknown")
                     .to_string();
-                let type_str = match provider.provider_type {
-                    crate::config::ProviderType::OpenAI => "openai",
-                    crate::config::ProviderType::Anthropic => "anthropic",
-                    crate::config::ProviderType::Ollama => "ollama",
-                    crate::config::ProviderType::LocalCustom => "local",
-                };
+                let type_str = crate::provider::profile::provider_type_slug(provider.provider_type);
                 let connectivity = if test_connectivity {
-                    match registry.create_client(&provider_name) {
-                        Ok(client) => {
-                            let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                                ApiError::ProviderError(format!("Failed to create runtime: {}", e))
-                            })?;
-                            match rt.block_on(client.list_models()) {
-                                Ok(_) => Some("ok".to_string()),
-                                Err(_) => Some("fail".to_string()),
-                            }
-                        }
+                    match crate::provider::diagnostics::ProviderDiagnosticsService::list_available_models(&registry, &provider_name) {
+                        Ok(_) => Some("ok".to_string()),
                         Err(_) => Some("fail".to_string()),
                     }
                 } else {
@@ -2372,18 +2321,10 @@ impl CliContext {
                     )
                 })?;
 
-                let parsed_type = match type_str {
-                    "openai" => crate::config::ProviderType::OpenAI,
-                    "anthropic" => crate::config::ProviderType::Anthropic,
-                    "ollama" => crate::config::ProviderType::Ollama,
-                    "local" => crate::config::ProviderType::LocalCustom,
-                    _ => {
-                        return Err(ApiError::ConfigError(format!(
-                        "Invalid provider type: {}. Must be openai, anthropic, ollama, or local",
-                        type_str
-                    )));
-                    }
-                };
+                let parsed_type =
+                    crate::provider::commands::ProviderCommandService::parse_provider_type(
+                        type_str,
+                    )?;
 
                 let model_name = model.ok_or_else(|| {
                     ApiError::ConfigError(
@@ -2402,28 +2343,29 @@ impl CliContext {
             };
 
         // Create provider config
-        let provider_config = crate::config::ProviderConfig {
-            provider_name: Some(provider_name.to_string()),
-            provider_type,
-            model: final_model,
-            api_key: final_api_key,
-            endpoint: final_endpoint,
-            default_options,
-        };
+        let provider_config =
+            crate::provider::commands::ProviderCommandService::build_provider_config(
+                provider_name,
+                provider_type,
+                final_model,
+                final_endpoint,
+                final_api_key,
+                default_options,
+            );
 
-        // Save config
-        crate::provider::ProviderRegistry::save_provider_config(provider_name, &provider_config)?;
-
-        // Reload registry to include new provider
-        {
+        let config_path = {
             let mut registry = self.api.provider_registry().write();
-            registry.load_from_xdg()?;
-        }
+            crate::provider::commands::ProviderCommandService::persist_provider_config(
+                &mut registry,
+                provider_name,
+                &provider_config,
+            )?
+        };
 
         Ok(format!(
             "Provider created: {}\nConfiguration file: {}",
             provider_name,
-            crate::provider::ProviderRegistry::get_provider_config_path(provider_name)?.display()
+            config_path.display()
         ))
     }
 
@@ -2465,12 +2407,8 @@ impl CliContext {
             .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
 
         // Prompt for endpoint (with defaults)
-        let default_endpoint = match provider_type {
-            crate::config::ProviderType::OpenAI => Some("https://api.openai.com/v1".to_string()),
-            crate::config::ProviderType::Ollama => Some("http://localhost:11434".to_string()),
-            crate::config::ProviderType::LocalCustom => None, // Required
-            crate::config::ProviderType::Anthropic => None,   // No custom endpoint needed
-        };
+        let default_endpoint =
+            crate::provider::commands::ProviderCommandService::default_endpoint(provider_type);
 
         let endpoint = if provider_type == crate::config::ProviderType::LocalCustom {
             // Required for local
@@ -2495,11 +2433,10 @@ impl CliContext {
         };
 
         // Prompt for API key (optional, suggest env var)
-        let env_var = match provider_type {
-            crate::config::ProviderType::OpenAI => "OPENAI_API_KEY",
-            crate::config::ProviderType::Anthropic => "ANTHROPIC_API_KEY",
-            _ => "",
-        };
+        let env_var = crate::provider::commands::ProviderCommandService::required_api_key_env_var(
+            provider_type,
+        )
+        .unwrap_or("");
 
         let api_key = if provider_type == crate::config::ProviderType::Ollama
             || provider_type == crate::config::ProviderType::LocalCustom
@@ -2573,17 +2510,20 @@ impl CliContext {
             registry.get_or_error(provider_name)?;
         }
 
-        let config_path =
-            crate::provider::ProviderRegistry::get_provider_config_path(provider_name)?;
+        let config_path = {
+            let registry = self.api.provider_registry().read();
+            crate::provider::commands::ProviderCommandService::provider_config_path(
+                &registry,
+                provider_name,
+            )?
+        };
 
         // If flags provided, do flag-based editing
         if model.is_some() || endpoint.is_some() || api_key.is_some() {
-            // Load existing config
-            let content = std::fs::read_to_string(&config_path)
-                .map_err(|e| ApiError::ConfigError(format!("Failed to read config: {}", e)))?;
-
-            let mut provider_config: crate::config::ProviderConfig = toml::from_str(&content)
-                .map_err(|e| ApiError::ConfigError(format!("Failed to parse config: {}", e)))?;
+            let mut provider_config =
+                crate::provider::commands::ProviderCommandService::load_provider_config_from_path(
+                    &config_path,
+                )?;
 
             // Update fields
             if let Some(new_model) = model {
@@ -2598,20 +2538,17 @@ impl CliContext {
                 provider_config.api_key = Some(new_api_key.to_string());
             }
 
-            // Save updated config
-            crate::provider::ProviderRegistry::save_provider_config(
-                provider_name,
-                &provider_config,
-            )?;
+            {
+                let mut registry = self.api.provider_registry().write();
+                crate::provider::commands::ProviderCommandService::persist_provider_config(
+                    &mut registry,
+                    provider_name,
+                    &provider_config,
+                )?;
+            }
         } else {
             // Editor-based editing
             self.edit_provider_with_editor(provider_name, editor)?;
-        }
-
-        // Reload registry
-        {
-            let mut registry = self.api.provider_registry().write();
-            registry.load_from_xdg()?;
         }
 
         Ok(format!("Provider updated: {}", provider_name))
@@ -2625,8 +2562,13 @@ impl CliContext {
     ) -> Result<(), ApiError> {
         use std::process::Command;
 
-        let config_path =
-            crate::provider::ProviderRegistry::get_provider_config_path(provider_name)?;
+        let config_path = {
+            let registry = self.api.provider_registry().read();
+            crate::provider::commands::ProviderCommandService::provider_config_path(
+                &registry,
+                provider_name,
+            )?
+        };
 
         // Load existing config
         let content = std::fs::read_to_string(&config_path)
@@ -2680,8 +2622,14 @@ impl CliContext {
             }
         }
 
-        // Save
-        crate::provider::ProviderRegistry::save_provider_config(provider_name, &provider_config)?;
+        {
+            let mut registry = self.api.provider_registry().write();
+            crate::provider::commands::ProviderCommandService::persist_provider_config(
+                &mut registry,
+                provider_name,
+                &provider_config,
+            )?;
+        }
 
         // Clean up temp file
         let _ = std::fs::remove_file(&temp_path);
@@ -2725,10 +2673,13 @@ impl CliContext {
             }
         }
 
-        // Delete config file
-        let config_path =
-            crate::provider::ProviderRegistry::get_provider_config_path(provider_name)?;
-        crate::provider::ProviderRegistry::delete_provider_config(provider_name)?;
+        let config_path = {
+            let mut registry = self.api.provider_registry().write();
+            crate::provider::commands::ProviderCommandService::delete_provider_config(
+                &mut registry,
+                provider_name,
+            )?
+        };
 
         Ok(format!(
             "Removed provider: {}\nConfiguration file deleted: {}",

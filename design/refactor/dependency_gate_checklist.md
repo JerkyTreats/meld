@@ -21,3 +21,12 @@ This checklist is the shared Phase 1 gate contract used by every migration strea
 - each migration stream references this checklist in its related docs section
 - each stream updates status when a gate is complete
 - no stream moves into extraction work before all Phase 1 gates are green
+
+## Phase 2 Local Verification
+
+- `cargo test provider::tests:: -- --nocapture`
+- `cargo test --test integration_tests integration::provider_cli`
+- `cargo test --test integration_tests integration::model_providers`
+- `cargo test --test integration_tests integration::config_integration`
+- `cargo test --test integration_tests integration::unified_status`
+- `cargo test --test phase1_tests`
