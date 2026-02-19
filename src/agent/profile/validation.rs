@@ -1,7 +1,7 @@
 //! Agent configuration validation owned by the agent domain.
 
 use super::config::AgentConfig;
-use crate::agent::registry::AgentRole;
+use crate::agent::identity::AgentRole;
 use std::collections::HashMap;
 
 /// Validate agent configuration.

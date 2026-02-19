@@ -4,14 +4,14 @@
 //! boundaries between read and write operations, ensuring agents can safely
 //! operate concurrently while maintaining data integrity.
 
-pub mod domain;
-mod prompt;
-pub mod repository;
-mod registry;
+pub mod identity;
+pub mod profile;
+pub mod prompt;
+pub mod registry;
+pub mod storage;
 
-pub use domain::AgentConfig;
+pub use identity::{AgentIdentity, AgentRole, Capability, ValidationResult};
+pub use profile::AgentConfig;
 pub use prompt::{resolve_prompt_path, PromptCache};
-pub use registry::{
-    AgentIdentity, AgentRegistry, AgentRole, Capability, ValidationResult,
-};
-pub use repository::{AgentRepository, StoredAgentConfig, XdgAgentRepository};
+pub use registry::AgentRegistry;
+pub use storage::{AgentStorage, StoredAgentConfig, XdgAgentStorage};

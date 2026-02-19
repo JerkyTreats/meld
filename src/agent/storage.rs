@@ -1,4 +1,8 @@
-use crate::agent::domain::AgentConfig;
+//! Agent storage: persist and load agent configs.
+
+pub mod xdg;
+
+use crate::agent::profile::AgentConfig;
 use crate::error::ApiError;
 use std::path::PathBuf;
 
@@ -11,7 +15,7 @@ pub struct StoredAgentConfig {
     pub resolved_system_prompt: Option<String>,
 }
 
-pub trait AgentRepository: Send + Sync {
+pub trait AgentStorage: Send + Sync {
     fn list(&self) -> Result<Vec<StoredAgentConfig>, ApiError>;
     fn path_for(&self, agent_id: &str) -> Result<PathBuf, ApiError>;
     fn save(&self, agent_id: &str, config: &AgentConfig) -> Result<(), ApiError>;
@@ -19,3 +23,5 @@ pub trait AgentRepository: Send + Sync {
     /// Agents directory path for init/cli when they need the directory
     fn agents_dir(&self) -> Result<PathBuf, ApiError>;
 }
+
+pub use xdg::XdgAgentStorage;

@@ -1,3 +1,5 @@
+//! Agent profile: config shape and validation.
+
 pub mod config;
 pub mod validation;
 

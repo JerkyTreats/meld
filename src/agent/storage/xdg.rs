@@ -1,21 +1,21 @@
-use super::{AgentRepository, StoredAgentConfig};
-use crate::agent::domain::AgentConfig;
+use super::{AgentStorage, StoredAgentConfig};
+use crate::agent::identity::AgentRole;
+use crate::agent::profile::AgentConfig;
 use crate::agent::prompt::{resolve_prompt_path, PromptCache};
-use crate::agent::registry::AgentRole;
 use crate::error::ApiError;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use toml;
 
-pub struct XdgAgentRepository;
+pub struct XdgAgentStorage;
 
-impl XdgAgentRepository {
+impl XdgAgentStorage {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for XdgAgentRepository {
+impl Default for XdgAgentStorage {
     fn default() -> Self {
         Self::new()
     }
@@ -36,7 +36,7 @@ fn agents_dir() -> Result<PathBuf, ApiError> {
     Ok(dir)
 }
 
-impl AgentRepository for XdgAgentRepository {
+impl AgentStorage for XdgAgentStorage {
     fn list(&self) -> Result<Vec<StoredAgentConfig>, ApiError> {
         let agents_dir = agents_dir()?;
         if !agents_dir.exists() {

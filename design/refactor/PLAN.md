@@ -30,6 +30,21 @@ Related docs:
 
 ---
 
+## Migration rules
+
+Apply these rules when implementing domain extraction and refactors.
+
+| Rule | Statement |
+|------|-----------|
+| Behavior over layer | Name submodules by what they do, not by technical layer. Prefer `profile`, `storage`, `identity`, `registry` over `domain`, `repository`, `infra`, `ports`. |
+| Behavior over pattern | Name modules and types by behavior, not by design pattern. Prefer `storage` over `repository`, `XdgAgentStorage` over `XdgAgentRepository`. |
+| Model separate from aggregate | Extract shared types into a dedicated module. Keep aggregates focused on their behavior. Example: `identity` holds AgentRole, AgentIdentity; `registry` holds the in-memory aggregate. |
+| Domain owns schema | The domain that defines a concept owns its schema. Config consumes via re-export; it does not define or duplicate domain types. |
+| Parent file convention | Use `parent.rs` plus `parent/child.rs` instead of `parent/mod.rs`. Rust 2018+ module style. |
+| Align with sibling domains | When naming, match sibling domains for consistency. Example: `profile` for config shape aligns provider and agent. |
+
+---
+
 ## Development phases
 
 | Phase | Goal | Dependencies | Completion |
@@ -126,6 +141,10 @@ Related docs:
 | Dependency closure solved | Completion |
 |---------------------------|------------|
 | Satisfies agent prerequisites required by config composition adoption. | Completed local |
+
+#### Phase 3 — Agent implementation notes
+
+Applied Migration rules. Resulting structure: `agent.rs` plus `agent/profile.rs`, `agent/identity.rs`, `agent/storage.rs`, `agent/prompt.rs`, `agent/registry.rs`. Config re-exports AgentConfig from agent; profile owns the schema.
 
 ---
 

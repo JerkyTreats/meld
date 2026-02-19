@@ -3,7 +3,7 @@
 //! Command-line interface for all Merkle operations. Provides workspace-scoped
 //! operations with idempotent execution.
 
-use crate::agent::AgentRepository;
+use crate::agent::AgentStorage;
 use crate::api::{ContextApi, ContextView};
 use crate::config::ConfigLoader;
 use crate::error::ApiError;
@@ -3567,7 +3567,7 @@ fn format_agent_list_text(agents: &[&crate::agent::AgentIdentity]) -> String {
             .metadata
             .get("system_prompt")
             .and_then(|_| {
-                let repo = crate::agent::XdgAgentRepository::new();
+                let repo = crate::agent::XdgAgentStorage::new();
                 let config_path = repo.path_for(&agent.agent_id).ok()?;
                 let content = std::fs::read_to_string(&config_path).ok()?;
                 let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
@@ -3596,7 +3596,7 @@ fn format_agent_list_json(agents: &[&crate::agent::AgentIdentity]) -> String {
                 .metadata
                 .get("system_prompt")
                 .and_then(|_| {
-                    let repo = crate::agent::XdgAgentRepository::new();
+                    let repo = crate::agent::XdgAgentStorage::new();
                     let config_path = repo.path_for(&agent.agent_id).ok()?;
                     let content = std::fs::read_to_string(&config_path).ok()?;
                     let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
@@ -3635,7 +3635,7 @@ fn format_agent_show_text(
         .metadata
         .get("system_prompt")
         .and_then(|_| {
-            let repo = crate::agent::XdgAgentRepository::new();
+            let repo = crate::agent::XdgAgentStorage::new();
             let config_path = repo.path_for(&agent.agent_id).ok()?;
             let content = std::fs::read_to_string(&config_path).ok()?;
             let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
@@ -3673,7 +3673,7 @@ fn format_agent_show_json(
         .metadata
         .get("system_prompt")
         .and_then(|_| {
-            let repo = crate::agent::XdgAgentRepository::new();
+            let repo = crate::agent::XdgAgentStorage::new();
             let config_path = repo.path_for(&agent.agent_id).ok()?;
             let content = std::fs::read_to_string(&config_path).ok()?;
             let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
@@ -4613,7 +4613,7 @@ fn format_init_summary(summary: &crate::init::InitSummary, force: bool) -> Strin
 
     // Agents section
     if !summary.agents.created.is_empty() || !summary.agents.skipped.is_empty() {
-        let agents_dir = crate::agent::XdgAgentRepository::new()
+        let agents_dir = crate::agent::XdgAgentStorage::new()
             .agents_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "~/.config/merkle/agents/".to_string());

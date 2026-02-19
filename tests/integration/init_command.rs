@@ -1,6 +1,6 @@
 //! Integration tests for Init CLI command
 
-use merkle::agent::{AgentRepository, XdgAgentRepository};
+use merkle::agent::{AgentStorage, XdgAgentStorage};
 use merkle::config::xdg;
 use merkle::init;
 use std::fs;
@@ -24,7 +24,7 @@ fn test_init_creates_default_agents() {
         assert!(summary.agents.created.contains(&"docs-writer".to_string()));
 
         // Verify files exist
-        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
+        let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
         assert!(agents_dir.join("reader.toml").exists());
         assert!(agents_dir.join("code-analyzer.toml").exists());
         assert!(agents_dir.join("docs-writer.toml").exists());
@@ -80,7 +80,7 @@ fn test_init_force_overwrites() {
         assert_eq!(summary1.agents.created.len(), 3);
 
         // Modify a file
-        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
+        let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
         fs::write(
             agents_dir.join("reader.toml"),
             "# Modified content\nagent_id = \"reader\"\nrole = \"Reader\"",
@@ -165,7 +165,7 @@ fn test_init_handles_existing_files() {
     let test_dir = TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
         // Create a custom agent file
-        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
+        let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
         fs::write(
             agents_dir.join("reader.toml"),
             "# Custom content\nagent_id = \"reader\"\nrole = \"Reader\"",
@@ -258,7 +258,7 @@ fn test_init_agent_configs_valid() {
     with_xdg_env(&test_dir, || {
         init::initialize_all(false).unwrap();
 
-        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
+        let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
 
         // Verify each agent config is valid TOML
         for agent_id in &["reader", "code-analyzer", "docs-writer"] {

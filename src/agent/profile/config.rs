@@ -1,6 +1,6 @@
 //! Agent configuration schema owned by the agent domain.
 
-use crate::agent::registry::AgentRole;
+use crate::agent::identity::AgentRole;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -38,6 +38,6 @@ impl AgentConfig {
         &self,
         _providers: &HashMap<String, crate::provider::ProviderConfig>,
     ) -> Result<(), String> {
-        crate::agent::domain::validation::validate_agent_config(self, _providers)
+        crate::agent::profile::validation::validate_agent_config(self, _providers)
     }
 }

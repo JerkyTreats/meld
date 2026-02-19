@@ -1,6 +1,6 @@
 //! Integration tests for Agent CLI commands
 
-use merkle::agent::{AgentRegistry, AgentRole};
+use merkle::agent::{AgentRole, AgentStorage, XdgAgentStorage};
 use merkle::config::{xdg, AgentConfig};
 use merkle::error::ApiError;
 use merkle::tooling::cli::{AgentCommands, CliContext, Commands};
@@ -594,7 +594,7 @@ fn test_agent_create_non_interactive() {
         assert!(output.contains("created"));
 
         // Verify agent exists
-        let config_path = AgentRegistry::get_agent_config_path("new-agent").unwrap();
+        let config_path = XdgAgentStorage::new().path_for("new-agent").unwrap();
         assert!(config_path.exists());
     });
 }
@@ -620,7 +620,7 @@ fn test_agent_create_reader() {
         assert!(output.contains("reader-agent"));
 
         // Verify agent exists
-        let config_path = AgentRegistry::get_agent_config_path("reader-agent").unwrap();
+        let config_path = XdgAgentStorage::new().path_for("reader-agent").unwrap();
         assert!(config_path.exists());
     });
 }
@@ -656,7 +656,7 @@ fn test_agent_edit_prompt_path() {
         assert!(output.contains("updated"));
 
         // Verify config was updated
-        let config_path = AgentRegistry::get_agent_config_path("test-agent").unwrap();
+        let config_path = XdgAgentStorage::new().path_for("test-agent").unwrap();
         let content = fs::read_to_string(&config_path).unwrap();
         assert!(content.contains("new.md"));
     });
@@ -690,7 +690,7 @@ fn test_agent_edit_role() {
         assert!(output.contains("test-agent"));
 
         // Verify config was updated
-        let config_path = AgentRegistry::get_agent_config_path("test-agent").unwrap();
+        let config_path = XdgAgentStorage::new().path_for("test-agent").unwrap();
         let content = fs::read_to_string(&config_path).unwrap();
         assert!(content.contains("Reader"));
     });
@@ -708,7 +708,7 @@ fn test_agent_remove() {
         )
         .unwrap();
 
-        let config_path = AgentRegistry::get_agent_config_path("test-agent").unwrap();
+        let config_path = XdgAgentStorage::new().path_for("test-agent").unwrap();
         assert!(config_path.exists());
 
         let workspace = test_dir.path().to_path_buf();

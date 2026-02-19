@@ -4,6 +4,7 @@
 //! management. Supports hierarchical configuration with environment variable overrides and
 //! runtime validation.
 
+#[cfg(test)]
 use crate::agent::AgentRole;
 use crate::error::ApiError;
 use crate::logging::LoggingConfig;
@@ -22,6 +23,7 @@ use tracing::warn;
 #[cfg(test)]
 use std::sync::Mutex;
 
+pub use crate::agent::AgentConfig;
 pub use crate::provider::{ProviderConfig, ProviderType};
 
 /// Root configuration structure
@@ -45,34 +47,6 @@ pub struct MerkleConfig {
     /// Logging configuration
     #[serde(default)]
     pub logging: LoggingConfig,
-}
-
-/// Agent configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentConfig {
-    /// Unique agent identifier
-    pub agent_id: String,
-
-    /// Agent role (Reader or Writer)
-    pub role: AgentRole,
-
-    /// System prompt for this agent (legacy, for backward compatibility)
-    /// This is the primary behavior-defining prompt that guides agent actions when using LLM providers.
-    /// The system prompt is used as the System message role when making provider API calls.
-    /// If not provided, a default system prompt will be used.
-    /// Prefer `system_prompt_path` for markdown-based prompts.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-
-    /// Path to markdown prompt file (new, preferred)
-    /// Path can be absolute, tilde-expanded (~/), relative to current directory (./), or relative to XDG config.
-    /// The prompt file will be loaded and cached with modification time tracking.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_prompt_path: Option<String>,
-
-    /// Agent-specific metadata
-    #[serde(default)]
-    pub metadata: HashMap<String, String>,
 }
 
 /// System-wide configuration
@@ -204,42 +178,6 @@ impl std::fmt::Display for ValidationError {
 }
 
 impl std::error::Error for ValidationError {}
-
-impl AgentConfig {
-    /// Validate agent configuration
-    pub fn validate(&self, _providers: &HashMap<String, ProviderConfig>) -> Result<(), String> {
-        // Validate agent_id is not empty
-        if self.agent_id.trim().is_empty() {
-            return Err("Agent ID cannot be empty".to_string());
-        }
-
-        // Validate system prompt is not empty if provided (legacy)
-        if let Some(ref prompt) = self.system_prompt {
-            if prompt.trim().is_empty() {
-                return Err("System prompt cannot be empty if provided".to_string());
-            }
-        }
-
-        // Validate that non-reader agents have either system_prompt or system_prompt_path
-        if self.role != AgentRole::Reader {
-            if self.system_prompt.is_none() && self.system_prompt_path.is_none() {
-                return Err(format!(
-                    "Agent '{}' (role: {:?}) requires either system_prompt or system_prompt_path",
-                    self.agent_id, self.role
-                ));
-            }
-        }
-
-        // Validate system_prompt_path format if provided
-        if let Some(ref prompt_path) = self.system_prompt_path {
-            if prompt_path.trim().is_empty() {
-                return Err("system_prompt_path cannot be empty if provided".to_string());
-            }
-        }
-
-        Ok(())
-    }
-}
 
 impl SystemConfig {
     /// Validate system configuration
