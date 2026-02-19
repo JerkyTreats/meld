@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use merkle::agent::{AgentIdentity, AgentRegistry, AgentRole};
+use merkle::agent::{AgentIdentity, AgentRepository, AgentRegistry, AgentRole, XdgAgentRepository};
 use merkle::api::ContextApi;
 use merkle::concurrency::NodeLockManager;
 use merkle::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
@@ -108,7 +108,7 @@ pub fn create_test_agent(agent_id: &str) {
     )
     .unwrap();
 
-    let agents_dir = xdg::agents_dir().unwrap();
+    let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
     fs::create_dir_all(&agents_dir).unwrap();
     let config_path = agents_dir.join(format!("{agent_id}.toml"));
 

@@ -1,7 +1,7 @@
 //! Integration tests for Context CLI commands
 
 use clap::Parser;
-use merkle::agent::AgentRole;
+use merkle::agent::{AgentRepository, AgentRole, XdgAgentRepository};
 use merkle::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
 use merkle::error::ApiError;
 use merkle::tooling::cli::{Cli, CliContext, Commands, ContextCommands};
@@ -17,7 +17,7 @@ fn create_test_agent(
     role: AgentRole,
     prompt_path: Option<&str>,
 ) -> Result<PathBuf, ApiError> {
-    let agents_dir = xdg::agents_dir()?;
+    let agents_dir = XdgAgentRepository::new().agents_dir()?;
     // Ensure directory exists
     fs::create_dir_all(&agents_dir)
         .map_err(|e| ApiError::ConfigError(format!("Failed to create agents directory: {}", e)))?;

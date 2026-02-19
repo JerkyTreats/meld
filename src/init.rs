@@ -4,7 +4,7 @@
 //! prompt files via the `merkle init` command. Prompts are embedded in the
 //! binary at build time and copied to XDG config directories at runtime.
 
-use crate::agent::{AgentRegistry, AgentRole};
+use crate::agent::{AgentRepository, AgentRegistry, AgentRole, XdgAgentRepository};
 use crate::config::{xdg, AgentConfig};
 use crate::error::ApiError;
 use std::collections::HashMap;
@@ -122,7 +122,7 @@ pub fn initialize_prompts(force: bool) -> Result<InitResult, ApiError> {
 
 /// Initialize all default agents
 pub fn initialize_agents(force: bool) -> Result<InitResult, ApiError> {
-    let agents_dir = xdg::agents_dir()?;
+    let agents_dir = XdgAgentRepository::new().agents_dir()?;
     let mut result = InitResult::new();
 
     for agent in DEFAULT_AGENTS {
@@ -188,7 +188,7 @@ pub fn initialize_agents(force: bool) -> Result<InitResult, ApiError> {
 /// Initialize all default agents and prompts
 pub fn initialize_all(force: bool) -> Result<InitSummary, ApiError> {
     // Ensure all XDG directories exist
-    xdg::agents_dir()?;
+    XdgAgentRepository::new().agents_dir()?;
     xdg::providers_dir()?;
     xdg::prompts_dir()?;
 
@@ -211,7 +211,7 @@ pub fn initialize_all(force: bool) -> Result<InitSummary, ApiError> {
 /// List what would be initialized without actually creating files
 pub fn list_initialization() -> Result<InitPreview, ApiError> {
     let prompts_dir = xdg::prompts_dir()?;
-    let agents_dir = xdg::agents_dir()?;
+    let agents_dir = XdgAgentRepository::new().agents_dir()?;
 
     let mut prompts = Vec::new();
     let mut agents = Vec::new();

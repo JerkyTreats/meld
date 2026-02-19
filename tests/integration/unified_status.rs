@@ -1,6 +1,6 @@
 //! Integration tests for unified status command (merkle status)
 
-use merkle::agent::AgentRole;
+use merkle::agent::{AgentRepository, AgentRole, XdgAgentRepository};
 use merkle::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
 use merkle::error::ApiError;
 use merkle::tooling::cli::{CliContext, Commands};
@@ -16,7 +16,7 @@ fn create_test_agent(
     role: AgentRole,
     prompt_path: Option<&str>,
 ) -> Result<PathBuf, ApiError> {
-    let agents_dir = xdg::agents_dir()?;
+    let agents_dir = XdgAgentRepository::new().agents_dir()?;
     let config_path = agents_dir.join(format!("{}.toml", agent_id));
 
     let mut agent_config = AgentConfig {
@@ -89,7 +89,7 @@ fn create_test_provider(
 
 /// Clear all agent and provider configs
 fn clear_configs() {
-    if let Ok(agents_dir) = xdg::agents_dir() {
+    if let Ok(agents_dir) = XdgAgentRepository::new().agents_dir() {
         if agents_dir.exists() {
             for entry in fs::read_dir(&agents_dir).unwrap() {
                 let entry = entry.unwrap();

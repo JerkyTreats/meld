@@ -36,7 +36,7 @@ Related docs:
 |-------|------|--------------|------------|
 | 1 | Characterization baseline and shared gates | None | Completed local |
 | 2 | Provider foundation and repository ownership | Phase 1 | Completed local |
-| 3 | Agent foundation and repository ownership | Phase 1, Phase 2 | Planned |
+| 3 | Agent foundation and repository ownership | Phase 1, Phase 2 | Completed local |
 | 4 | Config composition root and path ownership | Phase 2, Phase 3 | Planned |
 | 5 | Telemetry foundation and policy services | Phase 1 | Planned |
 | 6 | Context query mutation orchestration and queue ownership | Phase 2, Phase 4, Phase 5 | Planned |
@@ -109,23 +109,23 @@ Related docs:
 | Goal | Make agent domain the owner of agent schema validation and repository policy. |
 | Dependencies | Phase 1, Phase 2 |
 | Docs | agent/agent_migration_plan.md |
-| Completion | Planned |
+| Completion | Completed local |
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Move agent schema and validation ownership from config into agent domain modules. | Planned |
-| 2 | Extract agent repository port and XDG adapter for load save delete and prompt path policy. | Planned |
-| 3 | Keep registry focused on in memory aggregate behavior only. | Planned |
-| 4 | Remove legacy mixed ownership from old paths in the same phase window. | Planned |
+| 1 | Move agent schema and validation ownership from config into agent domain modules. | Completed local |
+| 2 | Extract agent repository port and XDG adapter for load save delete and prompt path policy. | Completed local |
+| 3 | Keep registry focused on in memory aggregate behavior only. | Completed local |
+| 4 | Remove legacy mixed ownership from old paths in the same phase window. | Completed local |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| Agent contracts required by config and CLI migration are available and tested. | Planned |
-| Agent persistence paths are owned by agent repository port and adapter modules. | Planned |
+| Agent contracts required by config and CLI migration are available and tested. | Completed local |
+| Agent persistence paths are owned by agent repository port and adapter modules. | Completed local |
 
 | Dependency closure solved | Completion |
 |---------------------------|------------|
-| Satisfies agent prerequisites required by config composition adoption. | Planned |
+| Satisfies agent prerequisites required by config composition adoption. | Completed local |
 
 ---
 

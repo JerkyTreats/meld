@@ -1,6 +1,6 @@
 use std::fs;
 
-use merkle::agent::AgentRole;
+use merkle::agent::{AgentRepository, AgentRole, XdgAgentRepository};
 use merkle::config::AgentConfig;
 use merkle::config::{xdg, ProviderConfig, ProviderType};
 use merkle::frame::{Basis, Frame};
@@ -30,7 +30,7 @@ fn create_test_openai_provider(provider_name: &str, model: &str, endpoint: &str)
 }
 
 fn create_test_writer_agent(agent_id: &str) {
-    let agents_dir = xdg::agents_dir().unwrap();
+    let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
     fs::create_dir_all(&agents_dir).unwrap();
     let config_path = agents_dir.join(format!("{}.toml", agent_id));
 

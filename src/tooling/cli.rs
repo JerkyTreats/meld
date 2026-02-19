@@ -3,6 +3,7 @@
 //! Command-line interface for all Merkle operations. Provides workspace-scoped
 //! operations with idempotent execution.
 
+use crate::agent::AgentRepository;
 use crate::api::{ContextApi, ContextView};
 use crate::config::ConfigLoader;
 use crate::error::ApiError;
@@ -1525,7 +1526,10 @@ impl CliContext {
         }
 
         // Save config
-        crate::agent::AgentRegistry::save_agent_config(agent_id, &agent_config)?;
+        {
+            let registry = self.api.agent_registry().read();
+            registry.save_agent_config(agent_id, &agent_config)?;
+        }
 
         // Reload registry to include new agent
         {
@@ -1536,7 +1540,7 @@ impl CliContext {
         Ok(format!(
             "Agent created: {}\nConfiguration file: {}",
             agent_id,
-            crate::agent::AgentRegistry::get_agent_config_path(agent_id)?.display()
+            self.api.agent_registry().read().agent_config_path(agent_id)?.display()
         ))
     }
 
@@ -1583,13 +1587,12 @@ impl CliContext {
         role: Option<&str>,
         editor: Option<&str>,
     ) -> Result<String, ApiError> {
-        // Check if agent exists
-        {
+        // Check if agent exists and get config path
+        let config_path = {
             let registry = self.api.agent_registry().read();
             registry.get_or_error(agent_id)?;
-        }
-
-        let config_path = crate::agent::AgentRegistry::get_agent_config_path(agent_id)?;
+            registry.agent_config_path(agent_id)?
+        };
 
         // If flags provided, do flag-based editing
         if prompt_path.is_some() || role.is_some() {
@@ -1620,7 +1623,10 @@ impl CliContext {
             }
 
             // Save updated config
-            crate::agent::AgentRegistry::save_agent_config(agent_id, &agent_config)?;
+            {
+                let registry = self.api.agent_registry().read();
+                registry.save_agent_config(agent_id, &agent_config)?;
+            }
         } else {
             // Editor-based editing
             self.edit_agent_with_editor(agent_id, editor)?;
@@ -1639,7 +1645,7 @@ impl CliContext {
     fn edit_agent_with_editor(&self, agent_id: &str, editor: Option<&str>) -> Result<(), ApiError> {
         use std::process::Command;
 
-        let config_path = crate::agent::AgentRegistry::get_agent_config_path(agent_id)?;
+        let config_path = self.api.agent_registry().read().agent_config_path(agent_id)?;
 
         // Load existing config
         let content = std::fs::read_to_string(&config_path)
@@ -1692,7 +1698,10 @@ impl CliContext {
         }
 
         // Save
-        crate::agent::AgentRegistry::save_agent_config(agent_id, &agent_config)?;
+        {
+            let registry = self.api.agent_registry().read();
+            registry.save_agent_config(agent_id, &agent_config)?;
+        }
 
         // Clean up temp file
         let _ = std::fs::remove_file(&temp_path);
@@ -1722,8 +1731,12 @@ impl CliContext {
         }
 
         // Delete config file
-        let config_path = crate::agent::AgentRegistry::get_agent_config_path(agent_id)?;
-        crate::agent::AgentRegistry::delete_agent_config(agent_id)?;
+        let config_path = {
+            let registry = self.api.agent_registry().read();
+            let path = registry.agent_config_path(agent_id)?;
+            registry.delete_agent_config(agent_id)?;
+            path
+        };
 
         // Note: Agent will be removed from registry on next load_from_xdg() call
         // since the config file no longer exists
@@ -3554,9 +3567,8 @@ fn format_agent_list_text(agents: &[&crate::agent::AgentIdentity]) -> String {
             .metadata
             .get("system_prompt")
             .and_then(|_| {
-                // Try to get the original path from config
-                let config_path =
-                    crate::agent::AgentRegistry::get_agent_config_path(&agent.agent_id).ok()?;
+                let repo = crate::agent::XdgAgentRepository::new();
+                let config_path = repo.path_for(&agent.agent_id).ok()?;
                 let content = std::fs::read_to_string(&config_path).ok()?;
                 let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
                 config.system_prompt_path
@@ -3584,8 +3596,8 @@ fn format_agent_list_json(agents: &[&crate::agent::AgentIdentity]) -> String {
                 .metadata
                 .get("system_prompt")
                 .and_then(|_| {
-                    let config_path =
-                        crate::agent::AgentRegistry::get_agent_config_path(&agent.agent_id).ok()?;
+                    let repo = crate::agent::XdgAgentRepository::new();
+                    let config_path = repo.path_for(&agent.agent_id).ok()?;
                     let content = std::fs::read_to_string(&config_path).ok()?;
                     let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
                     config.system_prompt_path
@@ -3623,8 +3635,8 @@ fn format_agent_show_text(
         .metadata
         .get("system_prompt")
         .and_then(|_| {
-            let config_path =
-                crate::agent::AgentRegistry::get_agent_config_path(&agent.agent_id).ok()?;
+            let repo = crate::agent::XdgAgentRepository::new();
+            let config_path = repo.path_for(&agent.agent_id).ok()?;
             let content = std::fs::read_to_string(&config_path).ok()?;
             let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
             config.system_prompt_path
@@ -3661,8 +3673,8 @@ fn format_agent_show_json(
         .metadata
         .get("system_prompt")
         .and_then(|_| {
-            let config_path =
-                crate::agent::AgentRegistry::get_agent_config_path(&agent.agent_id).ok()?;
+            let repo = crate::agent::XdgAgentRepository::new();
+            let config_path = repo.path_for(&agent.agent_id).ok()?;
             let content = std::fs::read_to_string(&config_path).ok()?;
             let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
             config.system_prompt_path
@@ -4601,7 +4613,8 @@ fn format_init_summary(summary: &crate::init::InitSummary, force: bool) -> Strin
 
     // Agents section
     if !summary.agents.created.is_empty() || !summary.agents.skipped.is_empty() {
-        let agents_dir = crate::config::xdg::agents_dir()
+        let agents_dir = crate::agent::XdgAgentRepository::new()
+            .agents_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "~/.config/merkle/agents/".to_string());
         output.push_str(&format!("Created agents directory: {}\n", agents_dir));

@@ -1,9 +1,8 @@
 //! Integration tests for XDG configuration loading
 
-use merkle::agent::{AgentRegistry, AgentRole};
-use merkle::config::{
-    resolve_prompt_path, xdg, MerkleConfig, PromptCache, ProviderConfig, ProviderType,
-};
+use merkle::agent::{AgentRepository, AgentRegistry, AgentRole, PromptCache, XdgAgentRepository};
+use merkle::agent::resolve_prompt_path;
+use merkle::config::{xdg, MerkleConfig, ProviderConfig, ProviderType};
 use merkle::provider::ProviderRegistry;
 use std::fs;
 use std::path::PathBuf;
@@ -53,7 +52,7 @@ fn test_xdg_agents_dir() {
     let original_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
     std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
 
-    let agents_dir = xdg::agents_dir().unwrap();
+    let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
     assert_eq!(agents_dir, test_config_home.join("merkle").join("agents"));
     assert!(agents_dir.exists());
 
@@ -258,7 +257,7 @@ model = ""
 fn test_agent_registry_load_from_xdg_inline_prompt() {
     let test_dir = TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
-        let agents_dir = xdg::agents_dir().unwrap();
+        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
 
         // Create an agent config with inline prompt
         let agent_file = agents_dir.join("test-agent.toml");
@@ -288,7 +287,7 @@ system_prompt = "You are a test agent."
 fn test_agent_registry_load_from_xdg_prompt_path() {
     let test_dir = TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
-        let agents_dir = xdg::agents_dir().unwrap();
+        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
 
         // Create a prompt file
         let prompt_file = test_dir.path().join("prompt.md");
@@ -326,7 +325,7 @@ fn test_agent_registry_load_from_xdg_prompt_path_relative() {
     let test_dir = TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
         let test_config_home = test_dir.path().to_path_buf();
-        let agents_dir = xdg::agents_dir().unwrap();
+        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
         let merkle_dir = test_config_home.join("merkle");
         fs::create_dir_all(&merkle_dir.join("prompts")).unwrap();
 
@@ -369,7 +368,7 @@ fn test_agent_registry_load_from_xdg_prompt_path_tilde() {
         let prompt_file = home_prompts.join("test.md");
         fs::write(&prompt_file, "# Tilde Prompt\n\nFrom home directory.").unwrap();
 
-        let agents_dir = xdg::agents_dir().unwrap();
+        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
         let agent_file = agents_dir.join("test-agent.toml");
         fs::write(
             &agent_file,
@@ -402,7 +401,7 @@ system_prompt_path = "~/test_prompts/test.md"
 fn test_agent_registry_load_from_xdg_missing_prompt_skipped() {
     let test_dir = TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
-        let agents_dir = xdg::agents_dir().unwrap();
+        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
 
         // Create an agent config with non-existent prompt path
         let agent_file = agents_dir.join("test-agent.toml");
@@ -428,7 +427,7 @@ system_prompt_path = "/nonexistent/prompt.md"
 fn test_agent_registry_load_from_xdg_reader_no_prompt() {
     let test_dir = TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
-        let agents_dir = xdg::agents_dir().unwrap();
+        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
 
         // Create a Reader agent without prompt (should be valid)
         let agent_file = agents_dir.join("reader.toml");
@@ -455,7 +454,7 @@ role = "Reader"
 fn test_agent_registry_load_from_xdg_writer_missing_prompt_skipped() {
     let test_dir = TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
-        let agents_dir = xdg::agents_dir().unwrap();
+        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
 
         // Create a Writer agent without prompt (should be skipped)
         let agent_file = agents_dir.join("writer.toml");
@@ -521,7 +520,7 @@ model = "llama3"
 fn test_agent_id_filename_mismatch_warning() {
     let test_dir = TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
-        let agents_dir = xdg::agents_dir().unwrap();
+        let agents_dir = XdgAgentRepository::new().agents_dir().unwrap();
 
         // Create an agent config where agent_id doesn't match filename
         let agent_file = agents_dir.join("filename.toml");
