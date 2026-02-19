@@ -12,19 +12,30 @@ use crate::logging::LoggingConfig;
 use crate::provider::CompletionOptions;
 #[cfg(test)]
 use crate::provider::ModelProvider;
-use config::{Config, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::SystemTime;
-use tracing::warn;
 
 #[cfg(test)]
 use std::sync::Mutex;
 
 pub use crate::agent::AgentConfig;
 pub use crate::provider::{ProviderConfig, ProviderType};
+
+mod facade;
+mod merge;
+mod paths;
+mod sources;
+mod workspace;
+
+pub use facade::ConfigLoader;
+pub use workspace::StorageConfig;
+
+/// Backward-compatible re-export of XDG path helpers
+pub mod xdg {
+    pub use super::paths::xdg_root::*;
+}
 
 /// Root configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,66 +72,8 @@ pub struct SystemConfig {
     pub storage: StorageConfig,
 }
 
-/// Storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageConfig {
-    /// Path to node record store (relative to workspace root)
-    /// Note: If this is the default ".merkle/store", it will be resolved to XDG data directory
-    #[serde(default = "default_store_path")]
-    pub store_path: PathBuf,
-
-    /// Path to frame storage (relative to workspace root)
-    /// Note: If this is the default ".merkle/frames", it will be resolved to XDG data directory
-    #[serde(default = "default_frames_path")]
-    pub frames_path: PathBuf,
-}
-
-impl StorageConfig {
-    /// Resolve storage paths to actual filesystem locations
-    ///
-    /// If paths are the default ".merkle/*" paths, they are resolved to XDG data directories.
-    /// Otherwise, they are resolved relative to the workspace root.
-    pub fn resolve_paths(&self, workspace_root: &Path) -> Result<(PathBuf, PathBuf), ApiError> {
-        let is_default_store = self.store_path == PathBuf::from(".merkle/store");
-        let is_default_frames = self.frames_path == PathBuf::from(".merkle/frames");
-
-        let store_path = if is_default_store {
-            // Use XDG data directory
-            let data_dir = xdg::workspace_data_dir(workspace_root)?;
-            data_dir.join("store")
-        } else {
-            // Use configured path relative to workspace
-            workspace_root.join(&self.store_path)
-        };
-
-        let frames_path = if is_default_frames {
-            // Use XDG data directory
-            let data_dir = xdg::workspace_data_dir(workspace_root)?;
-            data_dir.join("frames")
-        } else {
-            // Use configured path relative to workspace
-            workspace_root.join(&self.frames_path)
-        };
-
-        Ok((store_path, frames_path))
-    }
-}
-
-// Default value functions
 fn default_workspace_root() -> PathBuf {
     PathBuf::from(".")
-}
-
-fn default_store_path() -> PathBuf {
-    // This is a placeholder - actual path is computed at runtime using XDG directories
-    // The path will be resolved to $XDG_DATA_HOME/merkle/workspaces/<hash>/store
-    PathBuf::from(".merkle/store")
-}
-
-fn default_frames_path() -> PathBuf {
-    // This is a placeholder - actual path is computed at runtime using XDG directories
-    // The path will be resolved to $XDG_DATA_HOME/merkle/workspaces/<hash>/frames
-    PathBuf::from(".merkle/frames")
 }
 
 impl Default for SystemConfig {
@@ -128,15 +81,6 @@ impl Default for SystemConfig {
         Self {
             default_workspace_root: default_workspace_root(),
             storage: StorageConfig::default(),
-        }
-    }
-}
-
-impl Default for StorageConfig {
-    fn default() -> Self {
-        Self {
-            store_path: default_store_path(),
-            frames_path: default_frames_path(),
         }
     }
 }
@@ -237,374 +181,6 @@ impl MerkleConfig {
         } else {
             Err(errors)
         }
-    }
-}
-
-/// Resolve prompt file path with support for absolute, tilde, and relative paths
-///
-/// Path resolution priority:
-/// 1. Absolute path (if starts with `/`)
-/// 2. Tilde expansion (if starts with `~/`)
-/// 3. Relative to current directory (if starts with `./`)
-/// 4. Relative to base_dir (XDG config directory)
-pub fn resolve_prompt_path(path: &str, base_dir: &Path) -> Result<PathBuf, ApiError> {
-    // 1. Absolute path
-    if path.starts_with('/') {
-        return Ok(PathBuf::from(path));
-    }
-
-    // 2. Tilde expansion
-    if path.starts_with("~/") {
-        let home =
-            std::env::var("HOME").map_err(|_| ApiError::ConfigError("HOME not set".to_string()))?;
-        return Ok(PathBuf::from(home).join(&path[2..]));
-    }
-
-    // 3. Relative to current directory
-    if path.starts_with("./") {
-        let current_dir = std::env::current_dir().map_err(|e| {
-            ApiError::ConfigError(format!("Failed to get current directory: {}", e))
-        })?;
-        return Ok(current_dir.join(&path[2..]));
-    }
-
-    // 4. Relative to base_dir (XDG config)
-    Ok(base_dir.join(path))
-}
-
-/// Prompt file cache with modification time tracking
-pub struct PromptCache {
-    cache: HashMap<PathBuf, (String, SystemTime)>,
-}
-
-impl PromptCache {
-    /// Create a new empty prompt cache
-    pub fn new() -> Self {
-        Self {
-            cache: HashMap::new(),
-        }
-    }
-
-    /// Load prompt file content with caching
-    ///
-    /// Checks modification time and reloads if file has changed.
-    /// Validates that file exists, is readable, and contains valid UTF-8.
-    pub fn load_prompt(&mut self, path: &Path) -> Result<String, ApiError> {
-        // Get file metadata to check modification time
-        let metadata = std::fs::metadata(path).map_err(|e| {
-            ApiError::ConfigError(format!(
-                "Failed to read prompt file {}: {}",
-                path.display(),
-                e
-            ))
-        })?;
-
-        let mtime = metadata.modified().map_err(|e| {
-            ApiError::ConfigError(format!(
-                "Failed to get modification time for {}: {}",
-                path.display(),
-                e
-            ))
-        })?;
-
-        // Check if we have a cached version and if it's still valid
-        if let Some((cached_content, cached_mtime)) = self.cache.get(path) {
-            if *cached_mtime == mtime {
-                return Ok(cached_content.clone());
-            }
-        }
-
-        // Load file content
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            ApiError::ConfigError(format!(
-                "Failed to read prompt file {}: {}",
-                path.display(),
-                e
-            ))
-        })?;
-
-        // Validate file is not empty
-        if content.trim().is_empty() {
-            return Err(ApiError::ConfigError(format!(
-                "Prompt file {} is empty",
-                path.display()
-            )));
-        }
-
-        // Cache the content with modification time
-        self.cache
-            .insert(path.to_path_buf(), (content.clone(), mtime));
-
-        Ok(content)
-    }
-}
-
-impl Default for PromptCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// XDG Base Directory utilities for workspace data management
-pub mod xdg {
-    use super::*;
-
-    /// Get XDG data home directory
-    ///
-    /// Returns `$XDG_DATA_HOME` if set, otherwise defaults to `$HOME/.local/share`
-    /// Follows XDG Base Directory Specification
-    pub fn data_home() -> Option<PathBuf> {
-        if let Ok(xdg_data_home) = std::env::var("XDG_DATA_HOME") {
-            return Some(PathBuf::from(xdg_data_home));
-        }
-
-        std::env::var("HOME")
-            .ok()
-            .map(|home| PathBuf::from(home).join(".local").join("share"))
-    }
-
-    /// Get the data directory for a specific workspace
-    ///
-    /// Returns `$XDG_DATA_HOME/merkle/<workspace_path>/`
-    ///
-    /// The workspace path is canonicalized and used directly as a directory structure.
-    /// For example, `/home/user/projects/myproject` becomes:
-    /// `$XDG_DATA_HOME/merkle/home/user/projects/myproject/`
-    ///
-    /// This eliminates the need for any `.merkle/` directory in the workspace.
-    pub fn workspace_data_dir(workspace_root: &Path) -> Result<PathBuf, ApiError> {
-        let data_home = data_home().ok_or_else(|| {
-            ApiError::ConfigError(
-                "Could not determine XDG data home directory (HOME not set)".to_string(),
-            )
-        })?;
-
-        // Canonicalize the workspace path to get an absolute, resolved path
-        let canonical = workspace_root.canonicalize().map_err(|e| {
-            ApiError::ConfigError(format!("Failed to canonicalize workspace path: {}", e))
-        })?;
-
-        // Build the data directory path by joining the canonical path components
-        // Remove the leading root component (/) and use the rest as directory structure
-        let mut data_dir = data_home.join("merkle");
-
-        // Iterate through path components, skipping the root
-        for component in canonical.components() {
-            match component {
-                std::path::Component::RootDir => {
-                    // Skip the root directory component
-                }
-                std::path::Component::Prefix(_) => {
-                    // Skip prefix (Windows, but we're on Linux)
-                }
-                std::path::Component::CurDir => {
-                    // Skip current directory
-                }
-                std::path::Component::ParentDir => {
-                    // Skip parent directory (shouldn't happen in canonicalized path)
-                }
-                std::path::Component::Normal(name) => {
-                    data_dir = data_dir.join(name);
-                }
-            }
-        }
-
-        Ok(data_dir)
-    }
-
-    /// Get XDG config home directory
-    ///
-    /// Returns `$XDG_CONFIG_HOME` if set, otherwise defaults to `$HOME/.config`
-    /// Follows XDG Base Directory Specification
-    pub fn config_home() -> Result<PathBuf, ApiError> {
-        if let Ok(xdg_config_home) = std::env::var("XDG_CONFIG_HOME") {
-            return Ok(PathBuf::from(xdg_config_home));
-        }
-
-        let home = std::env::var("HOME").map_err(|_| {
-            ApiError::ConfigError(
-                "Could not determine XDG config home directory (HOME not set)".to_string(),
-            )
-        })?;
-
-        Ok(PathBuf::from(home).join(".config"))
-    }
-
-    /// Get agents directory path
-    ///
-    /// Returns `$XDG_CONFIG_HOME/merkle/agents/`
-    /// Creates the directory if it doesn't exist
-    pub fn agents_dir() -> Result<PathBuf, ApiError> {
-        let config_home = config_home()?;
-        let agents_dir = config_home.join("merkle").join("agents");
-
-        // Create directory if it doesn't exist
-        if !agents_dir.exists() {
-            std::fs::create_dir_all(&agents_dir).map_err(|e| {
-                ApiError::ConfigError(format!(
-                    "Failed to create agents directory {}: {}",
-                    agents_dir.display(),
-                    e
-                ))
-            })?;
-        }
-
-        Ok(agents_dir)
-    }
-
-    /// Get providers directory path
-    ///
-    /// Returns `$XDG_CONFIG_HOME/merkle/providers/`
-    /// Creates the directory if it doesn't exist
-    pub fn providers_dir() -> Result<PathBuf, ApiError> {
-        let config_home = config_home()?;
-        let providers_dir = config_home.join("merkle").join("providers");
-
-        // Create directory if it doesn't exist
-        if !providers_dir.exists() {
-            std::fs::create_dir_all(&providers_dir).map_err(|e| {
-                ApiError::ConfigError(format!(
-                    "Failed to create providers directory {}: {}",
-                    providers_dir.display(),
-                    e
-                ))
-            })?;
-        }
-
-        Ok(providers_dir)
-    }
-
-    /// Get prompts directory path
-    ///
-    /// Returns `$XDG_CONFIG_HOME/merkle/prompts/`
-    /// Creates the directory if it doesn't exist
-    pub fn prompts_dir() -> Result<PathBuf, ApiError> {
-        let config_home = config_home()?;
-        let prompts_dir = config_home.join("merkle").join("prompts");
-
-        // Create directory if it doesn't exist
-        if !prompts_dir.exists() {
-            std::fs::create_dir_all(&prompts_dir).map_err(|e| {
-                ApiError::ConfigError(format!(
-                    "Failed to create prompts directory {}: {}",
-                    prompts_dir.display(),
-                    e
-                ))
-            })?;
-        }
-
-        Ok(prompts_dir)
-    }
-}
-
-/// Configuration loader
-pub struct ConfigLoader;
-
-impl ConfigLoader {
-    /// Get the XDG config directory path (~/.config/merkle/config.toml)
-    #[cfg(test)]
-    pub(crate) fn xdg_config_path() -> Option<PathBuf> {
-        std::env::var("HOME").ok().map(|home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("merkle")
-                .join("config.toml")
-        })
-    }
-
-    /// Get the XDG config directory path (~/.config/merkle/config.toml)
-    #[cfg(not(test))]
-    fn xdg_config_path() -> Option<PathBuf> {
-        std::env::var("HOME").ok().map(|home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("merkle")
-                .join("config.toml")
-        })
-    }
-
-    /// Load configuration from files and environment
-    pub fn load(workspace_root: &Path) -> Result<MerkleConfig, ConfigError> {
-        let config_dir = workspace_root.join("config");
-
-        let env_name = std::env::var("MERKLE_ENV").unwrap_or_else(|_| "development".to_string());
-
-        let mut builder = Config::builder()
-            // Set default values
-            .set_default("system.default_workspace_root", ".")?
-            .set_default("system.storage.store_path", ".merkle/store")?
-            .set_default("system.storage.frames_path", ".merkle/frames")?;
-
-        // Load user-level default config from ~/.config/merkle/config.toml (lowest priority)
-        // This is loaded first so workspace configs can override it
-        if let Some(xdg_config_path) = Self::xdg_config_path() {
-            if xdg_config_path.exists() {
-                // Use canonical path to avoid issues with symlinks or relative paths
-                let canonical_xdg_path = xdg_config_path
-                    .canonicalize()
-                    .unwrap_or_else(|_| xdg_config_path.clone());
-                builder = builder.add_source(
-                    File::with_name(canonical_xdg_path.to_str().unwrap()).required(false),
-                );
-            } else {
-                // Warn if the default config location doesn't exist
-                warn!(
-                    config_path = %xdg_config_path.display(),
-                    "Default configuration file not found at ~/.config/merkle/config.toml. \
-                     Consider creating it for user-level defaults."
-                );
-            }
-        }
-
-        // Load base config from config/config.toml (workspace-specific, overrides user config)
-        let base_config_path = config_dir.join("config.toml");
-        if base_config_path.exists() {
-            builder = builder
-                .add_source(File::with_name(base_config_path.to_str().unwrap()).required(false));
-        }
-
-        // Load environment-specific config (overrides base config)
-        let env_config_path = config_dir.join(format!("{}.toml", env_name));
-        if env_config_path.exists() {
-            builder = builder
-                .add_source(File::with_name(env_config_path.to_str().unwrap()).required(false));
-        }
-
-        // Override with environment variables (MERKLE_* prefix, __ separator) (highest priority)
-        builder = builder.add_source(
-            Environment::with_prefix("MERKLE")
-                .separator("__")
-                .try_parsing(true),
-        );
-
-        let config = builder.build()?;
-        config.try_deserialize()
-    }
-
-    /// Load configuration from a specific file
-    pub fn load_from_file(path: &Path) -> Result<MerkleConfig, ConfigError> {
-        let mut builder = Config::builder()
-            // Set default values
-            .set_default("system.default_workspace_root", ".")?
-            .set_default("system.storage.store_path", ".merkle/store")?
-            .set_default("system.storage.frames_path", ".merkle/frames")?;
-
-        builder = builder.add_source(File::with_name(path.to_str().unwrap()));
-
-        // Override with environment variables
-        builder = builder.add_source(
-            Environment::with_prefix("MERKLE")
-                .separator("__")
-                .try_parsing(true),
-        );
-
-        let config = builder.build()?;
-        config.try_deserialize()
-    }
-
-    /// Create default configuration
-    pub fn default() -> MerkleConfig {
-        MerkleConfig::default()
     }
 }
 

@@ -52,7 +52,7 @@ Apply these rules when implementing domain extraction and refactors.
 | 1 | Characterization baseline and shared gates | None | Completed local |
 | 2 | Provider foundation and repository ownership | Phase 1 | Completed local |
 | 3 | Agent foundation and repository ownership | Phase 1, Phase 2 | Completed local |
-| 4 | Config composition root and path ownership | Phase 2, Phase 3 | Planned |
+| 4 | Config composition root and path ownership | Phase 2, Phase 3 | Completed local |
 | 5 | Telemetry foundation and policy services | Phase 1 | Planned |
 | 6 | Context query mutation orchestration and queue ownership | Phase 2, Phase 4, Phase 5 | Planned |
 | 7 | Provider and agent command workflows plus adapter cutover | Phase 2, Phase 3, Phase 4, Phase 6 | Planned |
@@ -155,24 +155,28 @@ Applied Migration rules. Resulting structure: `agent.rs` plus `agent/profile.rs`
 | Goal | Reduce config domain to one composition root with source precedence merge and path composition only. |
 | Dependencies | Phase 2, Phase 3 |
 | Docs | config/config_migration_plan.md |
-| Completion | Planned |
+| Completion | Completed local |
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Adopt provider and agent domain contracts in config composition paths. | Planned |
-| 2 | Extract config sources by behavior for workspace file global file and environment. | Planned |
-| 3 | Extract composition service and merge policy modules. | Planned |
-| 4 | Extract workspace storage path and XDG root modules. | Planned |
-| 5 | Remove direct config policy ownership from CLI and non config modules in the same phase window. | Planned |
+| 1 | Adopt provider and agent domain contracts in config composition paths. | Completed local |
+| 2 | Extract config sources by behavior for workspace file global file and environment. | Completed local |
+| 3 | Extract composition service and merge policy modules. | Completed local |
+| 4 | Extract workspace storage path and XDG root modules. | Completed local |
+| 5 | Remove direct config policy ownership from CLI and non config modules in the same phase window. | Completed local |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| One config composition facade is available for startup and command paths. | Planned |
-| Provider and agent validation policy is no longer owned by config modules. | Planned |
+| One config composition facade is available for startup and command paths. | Completed local |
+| Provider and agent validation policy is no longer owned by config modules. | Completed local |
 
 | Dependency closure solved | Completion |
 |---------------------------|------------|
-| Provides config facade and path contracts required by context workspace and CLI cutovers. | Planned |
+| Provides config facade and path contracts required by context workspace and CLI cutovers. | Completed local |
+
+#### Phase 4 — Implementation notes
+
+Applied Migration rules. Resulting structure: `config.rs` parent plus `config/facade.rs`, `config/sources.rs` and `sources/`, `config/merge.rs` and `merge/`, `config/workspace.rs` and `workspace/`, `config/paths.rs` and `paths/`. ConfigLoader delegates to MergeService; XDG helpers in paths/xdg_root; StorageConfig in workspace/storage_paths. Duplicate resolve_prompt_path and PromptCache removed from config.
 
 ---
 
