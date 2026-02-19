@@ -1,22 +1,22 @@
 use crate::error::ApiError;
 use crate::provider::profile::ProviderConfig;
-use crate::provider::repository::{ProviderRepository, StoredProviderConfig};
+use crate::provider::storage::{ProviderStorage, StoredProviderConfig};
 
-pub struct XdgProviderRepository;
+pub struct XdgProviderStorage;
 
-impl XdgProviderRepository {
+impl XdgProviderStorage {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for XdgProviderRepository {
+impl Default for XdgProviderStorage {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ProviderRepository for XdgProviderRepository {
+impl ProviderStorage for XdgProviderStorage {
     fn list(&self) -> Result<Vec<StoredProviderConfig>, ApiError> {
         let providers_dir = crate::config::xdg::providers_dir()?;
         if !providers_dir.exists() {

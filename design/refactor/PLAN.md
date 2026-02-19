@@ -115,6 +115,10 @@ Apply these rules when implementing domain extraction and refactors.
 |---------------------------|------------|
 | Satisfies provider prerequisites required by config adoption and context generation integration. | Completed local |
 
+#### Phase 2 — Provider implementation notes
+
+Applied migration rules. Resulting structure: `provider.rs` parent plus `provider/profile.rs` and `profile/`, `provider/storage.rs` and `storage/`, `provider/clients.rs` and `clients/`, `provider/commands.rs`, `provider/diagnostics.rs`, `provider/generation.rs`. Uses `parent.rs` plus `parent/child.rs` convention throughout. Storage replaces repository per behavior-over-pattern rule. Profile owns schema; XdgProviderStorage implements ProviderStorage.
+
 ---
 
 ### Phase 3 — Agent foundation and repository ownership

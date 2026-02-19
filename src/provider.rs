@@ -18,7 +18,7 @@ pub mod commands;
 pub mod diagnostics;
 pub mod generation;
 pub mod profile;
-pub mod repository;
+pub mod storage;
 
 pub use profile::{ProviderConfig, ProviderType, ValidationResult};
 
@@ -908,19 +908,19 @@ impl ProviderFactory {
 /// runtime provider selection and reuse across multiple agents.
 pub struct ProviderRegistry {
     providers: std::collections::HashMap<String, ProviderConfig>,
-    repository: Arc<dyn repository::ProviderRepository>,
+    storage: Arc<dyn storage::ProviderStorage>,
 }
 
 impl ProviderRegistry {
     /// Create a new empty provider registry
     pub fn new() -> Self {
-        Self::with_repository(Arc::new(repository::XdgProviderRepository::new()))
+        Self::with_storage(Arc::new(storage::XdgProviderStorage::new()))
     }
 
-    pub fn with_repository(repository: Arc<dyn repository::ProviderRepository>) -> Self {
+    pub fn with_storage(storage: Arc<dyn storage::ProviderStorage>) -> Self {
         Self {
             providers: std::collections::HashMap::new(),
-            repository,
+            storage,
         }
     }
 
@@ -945,7 +945,7 @@ impl ProviderRegistry {
     /// Scans `$XDG_CONFIG_HOME/merkle/providers/*.toml` and loads each provider configuration.
     /// Invalid configs are logged but don't stop loading of other providers.
     pub fn load_from_xdg(&mut self) -> Result<(), ApiError> {
-        for loaded in self.repository.list()? {
+        for loaded in self.storage.list()? {
             self.providers.insert(loaded.provider_name, loaded.config);
         }
         Ok(())
@@ -997,7 +997,7 @@ impl ProviderRegistry {
         &self,
         provider_name: &str,
     ) -> Result<std::path::PathBuf, ApiError> {
-        self.repository.path_for(provider_name)
+        self.storage.path_for(provider_name)
     }
 
     pub fn save_provider_config(
@@ -1005,11 +1005,11 @@ impl ProviderRegistry {
         provider_name: &str,
         config: &ProviderConfig,
     ) -> Result<(), ApiError> {
-        self.repository.save(provider_name, config)
+        self.storage.save(provider_name, config)
     }
 
     pub fn delete_provider_config(&self, provider_name: &str) -> Result<(), ApiError> {
-        self.repository.delete(provider_name)
+        self.storage.delete(provider_name)
     }
 
     /// Validate provider configuration

@@ -9,7 +9,7 @@ pub struct StoredProviderConfig {
     pub path: PathBuf,
 }
 
-pub trait ProviderRepository: Send + Sync {
+pub trait ProviderStorage: Send + Sync {
     fn list(&self) -> Result<Vec<StoredProviderConfig>, ApiError>;
     fn path_for(&self, provider_name: &str) -> Result<PathBuf, ApiError>;
     fn save(&self, provider_name: &str, config: &ProviderConfig) -> Result<(), ApiError>;
