@@ -20,7 +20,7 @@ pub struct ProviderShowResult {
     pub api_key_status: Option<String>,
 }
 
-/// One row for provider status (mirrors workspace_status::ProviderStatusEntry).
+/// One row for provider status (mirrors workspace::ProviderStatusEntry).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderStatusEntryResult {
     pub provider_name: String,

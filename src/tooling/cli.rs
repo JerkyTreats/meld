@@ -7,6 +7,10 @@ use crate::agent::AgentStorage;
 use crate::api::{ContextApi, ContextView};
 use crate::config::ConfigLoader;
 use crate::error::ApiError;
+use crate::workspace::{
+    format_unified_status_text, format_workspace_status_text, IgnoreResult, ListDeletedResult,
+    ValidateResult, WorkspaceCommandService, WorkspaceStatusRequest,
+};
 use crate::context::generation::{
     FailurePolicy, GenerationExecutor, GenerationItem, GenerationNodeType, GenerationPlan,
     PlanPriority,
@@ -27,7 +31,6 @@ use crate::types::{Hash, NodeID};
 use clap::{Parser, Subcommand};
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -628,421 +631,6 @@ impl CliContext {
         Ok(queue)
     }
 
-    /// Run workspace validation for store and head index consistency.
-    fn run_workspace_validate(&self, format: &str) -> Result<String, ApiError> {
-        let mut errors = Vec::new();
-        let mut warnings = Vec::new();
-
-        // Use same ignore patterns as scan when computing root
-        let ignore_patterns = ignore::load_ignore_patterns(&self.workspace_root)
-            .unwrap_or_else(|_| WalkerConfig::default().ignore_patterns);
-        let walker_config = WalkerConfig {
-            follow_symlinks: false,
-            ignore_patterns,
-            max_depth: None,
-        };
-        let builder =
-            TreeBuilder::new(self.workspace_root.clone()).with_walker_config(walker_config);
-        let root_hash = match builder.compute_root() {
-            Ok(hash) => hash,
-            Err(e) => {
-                errors.push(format!("Failed to compute workspace root: {}", e));
-                if format == "json" {
-                    let out = serde_json::json!({
-                        "valid": false,
-                        "root_hash": "",
-                        "node_count": 0,
-                        "frame_count": 0,
-                        "errors": errors,
-                        "warnings": warnings
-                    });
-                    return Ok(serde_json::to_string_pretty(&out).map_err(|e| {
-                        ApiError::StorageError(crate::error::StorageError::InvalidPath(
-                            e.to_string(),
-                        ))
-                    })?);
-                }
-                return Ok(format!("Validation failed:\n{}", errors.join("\n")));
-            }
-        };
-
-        let node_count = match self
-            .api
-            .node_store()
-            .get(&root_hash)
-            .map_err(ApiError::from)?
-        {
-            Some(record) => {
-                if record.node_id != root_hash {
-                    errors.push(format!(
-                        "Root node record has mismatched node_id: {} vs {}",
-                        hex::encode(record.node_id),
-                        hex::encode(root_hash)
-                    ));
-                }
-                self.api
-                    .node_store()
-                    .list_all()
-                    .map_err(ApiError::from)?
-                    .len()
-            }
-            None => {
-                warnings.push(
-                    "Root node not found in store - workspace may not be scanned".to_string(),
-                );
-                0
-            }
-        };
-
-        let head_index = self.api.head_index().read();
-        for node_id in head_index.get_all_node_ids() {
-            let frame_ids = head_index.get_all_heads_for_node(&node_id);
-            for frame_id in frame_ids {
-                if self
-                    .api
-                    .frame_storage()
-                    .get(&frame_id)
-                    .map_err(ApiError::from)?
-                    .is_none()
-                {
-                    warnings.push(format!(
-                        "Head frame {} for node {} not found in storage",
-                        hex::encode(frame_id),
-                        hex::encode(node_id)
-                    ));
-                }
-            }
-        }
-        drop(head_index);
-
-        let frame_count = if self.frame_storage_path.exists() {
-            count_frame_files(&self.frame_storage_path)?
-        } else {
-            0
-        };
-
-        let root_hex = hex::encode(root_hash);
-        let valid = errors.is_empty();
-
-        if format == "json" {
-            let out = serde_json::json!({
-                "valid": valid,
-                "root_hash": root_hex,
-                "node_count": node_count,
-                "frame_count": frame_count,
-                "errors": errors,
-                "warnings": warnings
-            });
-            return Ok(serde_json::to_string_pretty(&out).map_err(|e| {
-                ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
-            })?);
-        }
-
-        if errors.is_empty() && warnings.is_empty() {
-            Ok(format!(
-                "Validation passed:\n  Root hash: {}\n  Nodes: {}\n  Frames: {}\n  All checks passed",
-                root_hex, node_count, frame_count
-            ))
-        } else {
-            let mut result = format!(
-                "Validation completed with issues:\n  Root hash: {}\n  Nodes: {}\n  Frames: {}",
-                root_hex, node_count, frame_count
-            );
-            if !errors.is_empty() {
-                result.push_str(&format!("\n\nErrors ({}):", errors.len()));
-                for error in &errors {
-                    result.push_str(&format!("\n  - {}", error));
-                }
-            }
-            if !warnings.is_empty() {
-                result.push_str(&format!("\n\nWarnings ({}):", warnings.len()));
-                for warning in &warnings {
-                    result.push_str(&format!("\n  - {}", warning));
-                }
-            }
-            Ok(result)
-        }
-    }
-
-    /// Run workspace ignore: list ignore list or add a path.
-    fn run_workspace_ignore(
-        &self,
-        path: Option<&std::path::Path>,
-        dry_run: bool,
-        format: &str,
-    ) -> Result<String, ApiError> {
-        match path {
-            None => {
-                // List mode
-                let entries = ignore::read_ignore_list(&self.workspace_root)?;
-                if entries.is_empty() {
-                    return Ok("Ignore list is empty.".to_string());
-                }
-                if format == "json" {
-                    let out = serde_json::json!({ "ignored": entries });
-                    return Ok(serde_json::to_string_pretty(&out).map_err(|e| {
-                        ApiError::StorageError(crate::error::StorageError::InvalidPath(
-                            e.to_string(),
-                        ))
-                    })?);
-                }
-                let mut lines: Vec<String> = entries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| format!("  {}. {}", i + 1, p))
-                    .collect();
-                lines.insert(0, "Ignore list:".to_string());
-                Ok(lines.join("\n"))
-            }
-            Some(p) => {
-                // Add mode
-                let normalized = ignore::normalize_workspace_relative(&self.workspace_root, p)?;
-                if dry_run {
-                    return Ok(format!("Would add {} to ignore list.", normalized));
-                }
-                ignore::append_to_ignore_list(&self.workspace_root, &normalized)?;
-                Ok(format!("Added {} to ignore list.", normalized))
-            }
-        }
-    }
-
-    fn run_workspace_delete(
-        &self,
-        path: Option<&std::path::Path>,
-        node: Option<&str>,
-        dry_run: bool,
-        no_ignore: bool,
-    ) -> Result<String, ApiError> {
-        let node_id = resolve_workspace_node_id(
-            self.api(),
-            &self.workspace_root,
-            path,
-            node,
-            false, // active only (find_by_path)
-        )?;
-        let store = self.api().node_store();
-        let record = store
-            .get(&node_id)
-            .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
-        if record.tombstoned_at.is_some() {
-            return Ok("Already deleted.".to_string());
-        }
-        if dry_run {
-            let set = self.api().collect_subtree_node_ids(node_id)?;
-            let n = set.len() as u64;
-            let mut total_heads = 0u64;
-            for nid in &set {
-                total_heads += self
-                    .api()
-                    .head_index()
-                    .read()
-                    .get_all_heads_for_node(nid)
-                    .len() as u64;
-            }
-            return Ok(format!(
-                "Would delete {} nodes, {} head entries.",
-                n, total_heads
-            ));
-        }
-        let result = self.api().tombstone_node(node_id)?;
-        let path_for_ignore = if !no_ignore {
-            let norm = ignore::normalize_workspace_relative(&self.workspace_root, &record.path)?;
-            ignore::append_to_ignore_list(&self.workspace_root, &norm)?;
-            Some(norm)
-        } else {
-            None
-        };
-        let mut msg = format!(
-            "Deleted {} nodes, {} head entries.",
-            result.nodes_tombstoned, result.head_entries_tombstoned
-        );
-        if let Some(p) = path_for_ignore {
-            msg.push_str(&format!(" Added {} to ignore list.", p));
-        }
-        Ok(msg)
-    }
-
-    fn run_workspace_restore(
-        &self,
-        path: Option<&std::path::Path>,
-        node: Option<&str>,
-        dry_run: bool,
-    ) -> Result<String, ApiError> {
-        let node_id = resolve_workspace_node_id(
-            self.api(),
-            &self.workspace_root,
-            path,
-            node,
-            true, // include tombstoned (get_by_path)
-        )?;
-        let store = self.api().node_store();
-        let record = store
-            .get(&node_id)
-            .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
-        if record.tombstoned_at.is_none() {
-            return Ok("Not deleted.".to_string());
-        }
-        if dry_run {
-            let set = self.api().collect_subtree_node_ids(node_id)?;
-            let n = set.len() as u64;
-            let mut total_heads = 0u64;
-            for nid in &set {
-                total_heads += self
-                    .api()
-                    .head_index()
-                    .read()
-                    .get_all_heads_for_node(nid)
-                    .len() as u64;
-            }
-            return Ok(format!(
-                "Would restore {} nodes, {} head entries.",
-                n, total_heads
-            ));
-        }
-        let result = self.api().restore_node(node_id)?;
-        let norm = ignore::normalize_workspace_relative(&self.workspace_root, &record.path)?;
-        let _ = ignore::remove_from_ignore_list(&self.workspace_root, &record.path);
-        Ok(format!(
-            "Restored {} nodes, {} head entries. Removed {} from ignore list.",
-            result.nodes_restored, result.head_entries_restored, norm
-        ))
-    }
-
-    fn run_workspace_compact(
-        &self,
-        ttl: Option<u64>,
-        all: bool,
-        keep_frames: bool,
-        dry_run: bool,
-    ) -> Result<String, ApiError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let ttl_seconds = if all {
-            0
-        } else {
-            let ttl_days = ttl.unwrap_or(90);
-            ttl_days * 24 * 60 * 60
-        };
-        let cutoff = now.saturating_sub(ttl_seconds);
-        let node_ids = self
-            .api()
-            .node_store()
-            .list_tombstoned(Some(cutoff))
-            .map_err(ApiError::from)?;
-        if dry_run {
-            let mut frames = 0u64;
-            if !keep_frames {
-                for nid in &node_ids {
-                    frames += self
-                        .api()
-                        .head_index()
-                        .read()
-                        .get_all_heads_for_node(nid)
-                        .len() as u64;
-                }
-            }
-            let head_count: usize = self
-                .api()
-                .head_index()
-                .read()
-                .heads
-                .iter()
-                .filter(|(_, e)| e.tombstoned_at.map_or(false, |ts| ts <= cutoff))
-                .count();
-            return Ok(format!(
-                "Would compact {} nodes, {} head entries, {} frames.",
-                node_ids.len(),
-                head_count,
-                frames
-            ));
-        }
-        let result = self.api().compact(ttl_seconds, !keep_frames)?;
-        Ok(format!(
-            "Compacted {} nodes, {} head entries, {} frames.",
-            result.nodes_purged, result.head_entries_purged, result.frames_purged
-        ))
-    }
-
-    fn run_workspace_list_deleted(
-        &self,
-        older_than: Option<u64>,
-        format: &str,
-    ) -> Result<String, ApiError> {
-        let cutoff = older_than.map(|days| {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            now.saturating_sub(days * 24 * 60 * 60)
-        });
-        let node_ids = self
-            .api()
-            .node_store()
-            .list_tombstoned(cutoff)
-            .map_err(ApiError::from)?;
-        let store = self.api().node_store();
-        let mut rows: Vec<(String, String, u64, String)> = Vec::new();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        for nid in &node_ids {
-            if let Some(record) = store.get(nid).map_err(ApiError::from)? {
-                let ts = record.tombstoned_at.unwrap_or(0);
-                let age_secs = now.saturating_sub(ts);
-                let age_str = if age_secs < 60 {
-                    format!("{}s", age_secs)
-                } else if age_secs < 3600 {
-                    format!("{}m", age_secs / 60)
-                } else if age_secs < 86400 {
-                    format!("{}h", age_secs / 3600)
-                } else {
-                    format!("{}d", age_secs / 86400)
-                };
-                let node_hex = hex::encode(nid);
-                let short_id = if node_hex.len() > 12 {
-                    format!("{}...", &node_hex[..12])
-                } else {
-                    node_hex
-                };
-                rows.push((
-                    record.path.to_string_lossy().to_string(),
-                    short_id,
-                    ts,
-                    age_str,
-                ));
-            }
-        }
-        if format == "json" {
-            let arr: Vec<serde_json::Value> = rows
-                .iter()
-                .map(|(path, node_id, ts, age)| {
-                    serde_json::json!({ "path": path, "node_id": node_id, "tombstoned_at": ts, "age": age })
-                })
-                .collect();
-            return Ok(serde_json::to_string_pretty(&arr).map_err(|e| {
-                ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
-            })?);
-        }
-        use comfy_table::Table;
-        let mut table = Table::new();
-        table.load_preset(comfy_table::presets::UTF8_FULL);
-        table.set_header(vec!["Path", "Node ID", "Tombstoned At", "Age"]);
-        for (path, node_id, ts, age) in &rows {
-            let ts_str = if *ts > 0 {
-                format!("{}", ts)
-            } else {
-                "-".to_string()
-            };
-            table.add_row(vec![path.as_str(), node_id.as_str(), &ts_str, age]);
-        }
-        Ok(table.to_string())
-    }
-
     /// Execute a CLI command
     pub fn execute(&self, command: &Commands) -> Result<String, ApiError> {
         let started = Instant::now();
@@ -1166,62 +754,7 @@ impl CliContext {
                     total_nodes, root_hex
                 ))
             }
-            Commands::Workspace { command } => match command {
-                WorkspaceCommands::Status { format, breakdown } => {
-                    let registry = self.api.agent_registry().read();
-                    let head_index = self.api.head_index().read();
-                    let status = crate::workspace_status::build_workspace_status(
-                        self.api.node_store().as_ref() as &dyn NodeRecordStore,
-                        &head_index,
-                        &registry,
-                        self.workspace_root.as_path(),
-                        self.store_path.as_path(),
-                        *breakdown,
-                    )?;
-                    if format == "json" {
-                        serde_json::to_string_pretty(&status).map_err(|e| {
-                            ApiError::StorageError(crate::error::StorageError::InvalidPath(
-                                e.to_string(),
-                            ))
-                        })
-                    } else {
-                        Ok(crate::workspace_status::format_workspace_status_text(
-                            &status, *breakdown,
-                        ))
-                    }
-                }
-                WorkspaceCommands::Validate { format } => self.run_workspace_validate(format),
-                WorkspaceCommands::Ignore {
-                    path,
-                    dry_run,
-                    format,
-                } => self.run_workspace_ignore(path.as_deref(), *dry_run, format),
-                WorkspaceCommands::Delete {
-                    path,
-                    node,
-                    dry_run,
-                    no_ignore,
-                } => self.run_workspace_delete(
-                    path.as_deref(),
-                    node.as_deref(),
-                    *dry_run,
-                    *no_ignore,
-                ),
-                WorkspaceCommands::Restore {
-                    path,
-                    node,
-                    dry_run,
-                } => self.run_workspace_restore(path.as_deref(), node.as_deref(), *dry_run),
-                WorkspaceCommands::Compact {
-                    ttl,
-                    all,
-                    keep_frames,
-                    dry_run,
-                } => self.run_workspace_compact(*ttl, *all, *keep_frames, *dry_run),
-                WorkspaceCommands::ListDeleted { older_than, format } => {
-                    self.run_workspace_list_deleted(*older_than, format)
-                }
-            },
+            Commands::Workspace { command } => self.handle_workspace_command(command),
             Commands::Status {
                 format,
                 workspace_only,
@@ -1229,15 +762,48 @@ impl CliContext {
                 providers_only,
                 breakdown,
                 test_connectivity,
-            } => self.handle_unified_status(
-                format.clone(),
-                *workspace_only,
-                *agents_only,
-                *providers_only,
-                *breakdown,
-                *test_connectivity,
-            ),
-            Commands::Validate => self.run_workspace_validate("text"),
+            } => {
+                let include_all =
+                    !*workspace_only && !*agents_only && !*providers_only;
+                let include_workspace = include_all || *workspace_only;
+                let include_agents = include_all || *agents_only;
+                let include_providers = include_all || *providers_only;
+                let registry_agent = self.api.agent_registry().read();
+                let registry_provider = self.api.provider_registry().read();
+                let unified = WorkspaceCommandService::unified_status(
+                    self.api.as_ref(),
+                    self.workspace_root.as_path(),
+                    self.store_path.as_path(),
+                    &registry_agent,
+                    &registry_provider,
+                    include_workspace,
+                    include_agents,
+                    include_providers,
+                    *breakdown,
+                    *test_connectivity,
+                )?;
+                if format == "json" {
+                    serde_json::to_string_pretty(&unified).map_err(|e| {
+                        ApiError::StorageError(crate::error::StorageError::InvalidPath(
+                            e.to_string(),
+                        ))
+                    })
+                } else {
+                    Ok(format_unified_status_text(
+                        &unified,
+                        *breakdown,
+                        *test_connectivity,
+                    ))
+                }
+            }
+            Commands::Validate => {
+                let result = WorkspaceCommandService::validate(
+                    self.api.as_ref(),
+                    &self.workspace_root,
+                    &self.frame_storage_path,
+                )?;
+                Ok(format_validate_result_text(&result))
+            }
             Commands::Agent { command } => self.handle_agent_command(command),
             Commands::Provider { command } => self.handle_provider_command(command, session_id),
             Commands::Init { force, list } => self.handle_init(*force, *list),
@@ -1247,7 +813,7 @@ impl CliContext {
                 batch_window_ms,
                 foreground: _,
             } => {
-                use crate::tooling::watch::{WatchConfig, WatchDaemon};
+                use crate::workspace::{WatchConfig, WatchDaemon};
 
                 // Load configuration to register agents
                 let config = if let Some(ref config_path) = self.config_path {
@@ -1295,6 +861,108 @@ impl CliContext {
                 daemon.start()?;
 
                 Ok("Watch daemon stopped".to_string())
+            }
+        }
+    }
+
+    /// Handle workspace subcommands
+    fn handle_workspace_command(
+        &self,
+        command: &WorkspaceCommands,
+    ) -> Result<String, ApiError> {
+        match command {
+            WorkspaceCommands::Status { format, breakdown } => {
+                let registry = self.api.agent_registry().read();
+                let request = WorkspaceStatusRequest {
+                    workspace_root: self.workspace_root.clone(),
+                    store_path: self.store_path.clone(),
+                    include_breakdown: *breakdown,
+                };
+                let status = WorkspaceCommandService::status(
+                    self.api.as_ref(),
+                    &request,
+                    &registry,
+                )?;
+                if format == "json" {
+                    serde_json::to_string_pretty(&status).map_err(|e| {
+                        ApiError::StorageError(crate::error::StorageError::InvalidPath(
+                            e.to_string(),
+                        ))
+                    })
+                } else {
+                    Ok(format_workspace_status_text(&status, request.include_breakdown))
+                }
+            }
+            WorkspaceCommands::Validate { format } => {
+                let result = WorkspaceCommandService::validate(
+                    self.api.as_ref(),
+                    &self.workspace_root,
+                    &self.frame_storage_path,
+                )?;
+                if format == "json" {
+                    serde_json::to_string_pretty(&result).map_err(|e| {
+                        ApiError::StorageError(crate::error::StorageError::InvalidPath(
+                            e.to_string(),
+                        ))
+                    })
+                } else {
+                    Ok(format_validate_result_text(&result))
+                }
+            }
+            WorkspaceCommands::Ignore {
+                path,
+                dry_run,
+                format,
+            } => {
+                let result = WorkspaceCommandService::ignore(
+                    &self.workspace_root,
+                    path.as_deref(),
+                    *dry_run,
+                )?;
+                format_ignore_result(&result, format)
+            }
+            WorkspaceCommands::Delete {
+                path,
+                node,
+                dry_run,
+                no_ignore,
+            } => WorkspaceCommandService::delete(
+                self.api.as_ref(),
+                &self.workspace_root,
+                path.as_deref(),
+                node.as_deref(),
+                *dry_run,
+                *no_ignore,
+            ),
+            WorkspaceCommands::Restore {
+                path,
+                node,
+                dry_run,
+            } => WorkspaceCommandService::restore(
+                self.api.as_ref(),
+                &self.workspace_root,
+                path.as_deref(),
+                node.as_deref(),
+                *dry_run,
+            ),
+            WorkspaceCommands::Compact {
+                ttl,
+                all,
+                keep_frames,
+                dry_run,
+            } => WorkspaceCommandService::compact(
+                self.api.as_ref(),
+                *ttl,
+                *all,
+                *keep_frames,
+                *dry_run,
+            ),
+            WorkspaceCommands::ListDeleted { older_than, format } => {
+                let result = WorkspaceCommandService::list_deleted(
+                    self.api.as_ref(),
+                    *older_than,
+                )?;
+                format_list_deleted_result(&result, format)
             }
         }
     }
@@ -1590,7 +1258,7 @@ impl CliContext {
 
     /// Handle agent status command
     fn handle_agent_status(&self, format: String) -> Result<String, ApiError> {
-        use crate::workspace_status::{
+        use crate::workspace::{
             format_agent_status_text, AgentStatusEntry, AgentStatusOutput,
         };
 
@@ -1751,7 +1419,7 @@ impl CliContext {
         format: String,
         test_connectivity: bool,
     ) -> Result<String, ApiError> {
-        use crate::workspace_status::{
+        use crate::workspace::{
             format_provider_status_text, ProviderStatusEntry, ProviderStatusOutput,
         };
 
@@ -1777,135 +1445,6 @@ impl CliContext {
             })?)
         } else {
             Ok(format_provider_status_text(&entries, test_connectivity))
-        }
-    }
-
-    /// Handle unified status command (merkle status)
-    fn handle_unified_status(
-        &self,
-        format: String,
-        workspace_only: bool,
-        agents_only: bool,
-        providers_only: bool,
-        breakdown: bool,
-        test_connectivity: bool,
-    ) -> Result<String, ApiError> {
-        use crate::workspace_status::{
-            build_workspace_status, format_unified_status_text, AgentStatusEntry,
-            AgentStatusOutput, ProviderStatusEntry, ProviderStatusOutput, UnifiedStatusOutput,
-        };
-
-        // Determine which sections to include
-        // If none of the *_only flags are set, include all sections
-        let include_all = !workspace_only && !agents_only && !providers_only;
-        let include_workspace = include_all || workspace_only;
-        let include_agents = include_all || agents_only;
-        let include_providers = include_all || providers_only;
-
-        // Build workspace status if needed
-        let workspace = if include_workspace {
-            let registry = self.api.agent_registry().read();
-            let head_index = self.api.head_index().read();
-            Some(build_workspace_status(
-                self.api.node_store().as_ref() as &dyn NodeRecordStore,
-                &head_index,
-                &registry,
-                self.workspace_root.as_path(),
-                self.store_path.as_path(),
-                breakdown,
-            )?)
-        } else {
-            None
-        };
-
-        // Build agent status if needed
-        let agents = if include_agents {
-            let registry = self.api.agent_registry().read();
-            let agents_list = registry.list_all();
-            let total = agents_list.len();
-            let mut entries: Vec<AgentStatusEntry> = Vec::new();
-            for agent in agents_list {
-                let result = match registry.validate_agent(&agent.agent_id) {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
-                let role_str = match agent.role {
-                    crate::agent::AgentRole::Writer => "Writer",
-                    crate::agent::AgentRole::Reader => "Reader",
-                };
-                let prompt_path_exists = result
-                    .checks
-                    .iter()
-                    .any(|(desc, passed)| desc == "Prompt file exists" && *passed);
-                entries.push(AgentStatusEntry {
-                    agent_id: agent.agent_id.clone(),
-                    role: role_str.to_string(),
-                    valid: result.is_valid(),
-                    prompt_path_exists,
-                });
-            }
-            let valid_count = entries.iter().filter(|e| e.valid).count();
-            Some(AgentStatusOutput {
-                agents: entries,
-                total,
-                valid_count,
-            })
-        } else {
-            None
-        };
-
-        // Build provider status if needed
-        let providers = if include_providers {
-            let registry = self.api.provider_registry().read();
-            let providers_list = registry.list_all();
-            let total = providers_list.len();
-            let mut entries: Vec<ProviderStatusEntry> = Vec::new();
-            for provider in providers_list {
-                let provider_name = provider
-                    .provider_name
-                    .as_deref()
-                    .unwrap_or("unknown")
-                    .to_string();
-                let type_str = crate::provider::profile::provider_type_slug(provider.provider_type);
-                let connectivity = if test_connectivity {
-                    match crate::provider::diagnostics::ProviderDiagnosticsService::list_available_models(&registry, &provider_name) {
-                        Ok(_) => Some("ok".to_string()),
-                        Err(_) => Some("fail".to_string()),
-                    }
-                } else {
-                    None
-                };
-                entries.push(ProviderStatusEntry {
-                    provider_name,
-                    provider_type: type_str.to_string(),
-                    model: provider.model.clone(),
-                    connectivity,
-                });
-            }
-            Some(ProviderStatusOutput {
-                providers: entries,
-                total,
-            })
-        } else {
-            None
-        };
-
-        let unified = UnifiedStatusOutput {
-            workspace,
-            agents,
-            providers,
-        };
-
-        if format == "json" {
-            serde_json::to_string_pretty(&unified).map_err(|e| {
-                ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
-            })
-        } else {
-            Ok(format_unified_status_text(
-                &unified,
-                breakdown,
-                test_connectivity,
-            ))
         }
     }
 
@@ -2447,7 +1986,13 @@ impl CliContext {
             }
             (None, Some(path)) => {
                 // Resolve path to NodeID
-                resolve_path_to_node_id(&self.api, path, &self.workspace_root)?
+                crate::workspace::resolve_workspace_node_id(
+                    self.api.as_ref(),
+                    &self.workspace_root,
+                    Some(path.as_path()),
+                    None,
+                    false,
+                )?
             }
             (Some(_), Some(_)) => {
                 return Err(ApiError::ConfigError(
@@ -2817,7 +2362,13 @@ impl CliContext {
         // 1. Path/NodeID resolution
         let node_id = match (node, path) {
             (Some(node_str), None) => parse_node_id(node_str)?,
-            (None, Some(path)) => resolve_path_to_node_id(&self.api, path, &self.workspace_root)?,
+            (None, Some(path)) => crate::workspace::resolve_workspace_node_id(
+                self.api.as_ref(),
+                &self.workspace_root,
+                Some(path.as_path()),
+                None,
+                false,
+            )?,
             (Some(_), Some(_)) => {
                 return Err(ApiError::ConfigError(
                     "Cannot specify both --node and --path. Use one or the other.".to_string(),
@@ -3727,7 +3278,10 @@ mod tests {
         api.node_store().put(&record).unwrap();
 
         // Test path resolution
-        let resolved = resolve_path_to_node_id(&api, &test_path, &workspace_root).unwrap();
+        let resolved = crate::workspace::resolve_workspace_node_id(
+            &api, &workspace_root, Some(test_path.as_path()), None, false,
+        )
+        .unwrap();
         assert_eq!(resolved, node_id);
     }
 
@@ -3740,7 +3294,9 @@ mod tests {
         let test_path = workspace_root.join("nonexistent.txt");
         std::fs::write(&test_path, "test content").unwrap();
 
-        let result = resolve_path_to_node_id(&api, &test_path, &workspace_root);
+        let result = crate::workspace::resolve_workspace_node_id(
+            &api, &workspace_root, Some(test_path.as_path()), None, false,
+        );
         assert!(result.is_err());
         match result {
             Err(ApiError::PathNotInTree(_)) => {}
@@ -3770,7 +3326,10 @@ mod tests {
         };
         api.node_store().put(&record).unwrap();
 
-        let resolved = resolve_path_to_node_id(&api, &dir_path, &workspace_root).unwrap();
+        let resolved = crate::workspace::resolve_workspace_node_id(
+            &api, &workspace_root, Some(dir_path.as_path()), None, false,
+        )
+        .unwrap();
         assert_eq!(resolved, node_id);
     }
 
@@ -3883,143 +3442,92 @@ fn parse_node_id(s: &str) -> Result<NodeID, ApiError> {
     Ok(Hash::from(hash))
 }
 
-/// Resolve a path to a NodeID
-///
-/// Canonicalizes the path relative to the workspace root and looks it up in the node store.
-fn resolve_path_to_node_id(
-    api: &ContextApi,
-    path: &PathBuf,
-    workspace_root: &PathBuf,
-) -> Result<NodeID, ApiError> {
-    resolve_workspace_node_id(api, workspace_root, Some(path.as_path()), None, false)
-}
-
-/// Resolve path or --node to NodeID. If include_tombstoned is true, use get_by_path (for restore).
-fn resolve_workspace_node_id(
-    api: &ContextApi,
-    workspace_root: &PathBuf,
-    path: Option<&std::path::Path>,
-    node: Option<&str>,
-    include_tombstoned: bool,
-) -> Result<NodeID, ApiError> {
-    match (path, node) {
-        (Some(p), None) => {
-            let resolved_path = if p.is_absolute() {
-                p.to_path_buf()
-            } else {
-                workspace_root.join(p)
-            };
-            let canonical_path = crate::tree::path::canonicalize_path(&resolved_path)
-                .map_err(ApiError::StorageError)?;
-            let store = api.node_store();
-            let record = if include_tombstoned {
-                store.get_by_path(&canonical_path).map_err(ApiError::from)?
-            } else {
-                store
-                    .find_by_path(&canonical_path)
-                    .map_err(ApiError::from)?
-            };
-            if let Some(record) = record {
-                return Ok(record.node_id);
-            }
-
-            // Backward-compatibility fallback:
-            // Older scans (and relative workspace roots) can persist record paths as
-            // relative values such as "./src/foo". If direct path-index lookup misses,
-            // compare canonicalized record paths to the requested canonical path.
-            if let Some(node_id) = resolve_node_id_by_canonical_fallback(
-                store.as_ref(),
-                workspace_root.as_path(),
-                &canonical_path,
-                include_tombstoned,
-            )? {
-                return Ok(node_id);
-            }
-
-            Err(ApiError::PathNotInTree(canonical_path))
-        }
-        (None, Some(hex_str)) => {
-            let bytes = hex::decode(hex_str.trim_start_matches("0x"))
-                .map_err(|_| ApiError::ConfigError(format!("Invalid node ID hex: {}", hex_str)))?;
-            if bytes.len() != 32 {
-                return Err(ApiError::ConfigError(
-                    "Node ID must be 32 bytes (64 hex chars).".to_string(),
-                ));
-            }
-            let mut node_id = [0u8; 32];
-            node_id.copy_from_slice(&bytes);
-            if api
-                .node_store()
-                .get(&node_id)
-                .map_err(ApiError::from)?
-                .is_none()
-            {
-                return Err(ApiError::NodeNotFound(node_id));
-            }
-            Ok(node_id)
-        }
-        (Some(_), Some(_)) => Err(ApiError::ConfigError(
-            "Cannot specify both path and --node. Use one or the other.".to_string(),
-        )),
-        (None, None) => Err(ApiError::ConfigError(
-            "Must specify either path or --node <node_id>.".to_string(),
-        )),
-    }
-}
-
-fn resolve_node_id_by_canonical_fallback(
-    store: &dyn NodeRecordStore,
-    workspace_root: &std::path::Path,
-    canonical_target: &std::path::Path,
-    include_tombstoned: bool,
-) -> Result<Option<NodeID>, ApiError> {
-    let records = if include_tombstoned {
-        store.list_all().map_err(ApiError::from)?
+fn format_validate_result_text(result: &ValidateResult) -> String {
+    if result.errors.is_empty() && result.warnings.is_empty() {
+        format!(
+            "Validation passed:\n  Root hash: {}\n  Nodes: {}\n  Frames: {}\n  All checks passed",
+            result.root_hash, result.node_count, result.frame_count
+        )
     } else {
-        store.list_active().map_err(ApiError::from)?
-    };
-
-    for record in records {
-        let candidate = if record.path.is_absolute() {
-            record.path.clone()
-        } else {
-            workspace_root.join(&record.path)
-        };
-
-        // Skip entries that cannot be canonicalized (for example stale records
-        // pointing at missing filesystem paths).
-        let canonical_candidate = match crate::tree::path::canonicalize_path(&candidate) {
-            Ok(path) => path,
-            Err(_) => continue,
-        };
-
-        if canonical_candidate == canonical_target {
-            return Ok(Some(record.node_id));
-        }
-    }
-
-    Ok(None)
-}
-
-/// Count frame files in the frame storage directory
-fn count_frame_files(path: &PathBuf) -> Result<usize, ApiError> {
-    let mut count = 0;
-    if path.is_dir() {
-        for entry in fs::read_dir(path)
-            .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?
-        {
-            let entry = entry
-                .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
-            let path = entry.path();
-            if path.is_dir() {
-                // Recursively count in subdirectories
-                count += count_frame_files(&path)?;
-            } else if path.extension().and_then(|s| s.to_str()) == Some("frame") {
-                count += 1;
+        let mut s = format!(
+            "Validation completed with issues:\n  Root hash: {}\n  Nodes: {}\n  Frames: {}",
+            result.root_hash, result.node_count, result.frame_count
+        );
+        if !result.errors.is_empty() {
+            s.push_str(&format!("\n\nErrors ({}):", result.errors.len()));
+            for e in &result.errors {
+                s.push_str(&format!("\n  - {}", e));
             }
         }
+        if !result.warnings.is_empty() {
+            s.push_str(&format!("\n\nWarnings ({}):", result.warnings.len()));
+            for w in &result.warnings {
+                s.push_str(&format!("\n  - {}", w));
+            }
+        }
+        s
     }
-    Ok(count)
+}
+
+fn format_ignore_result(result: &IgnoreResult, format: &str) -> Result<String, ApiError> {
+    match (result, format) {
+        (IgnoreResult::List { entries }, "json") => {
+            let out = serde_json::json!({ "ignored": entries });
+            serde_json::to_string_pretty(&out).map_err(|e| {
+                ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
+            })
+        }
+        (IgnoreResult::List { entries }, _) => {
+            if entries.is_empty() {
+                Ok("Ignore list is empty.".to_string())
+            } else {
+                let mut lines: Vec<String> = entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| format!("  {}. {}", i + 1, p))
+                    .collect();
+                lines.insert(0, "Ignore list:".to_string());
+                Ok(lines.join("\n"))
+            }
+        }
+        (IgnoreResult::Added { path }, _) => Ok(path.clone()),
+    }
+}
+
+fn format_list_deleted_result(
+    result: &ListDeletedResult,
+    format: &str,
+) -> Result<String, ApiError> {
+    if format == "json" {
+        let arr: Vec<serde_json::Value> = result
+            .rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "path": r.path,
+                    "node_id": r.node_id_short,
+                    "tombstoned_at": r.tombstoned_at,
+                    "age": r.age
+                })
+            })
+            .collect();
+        return serde_json::to_string_pretty(&arr).map_err(|e| {
+            ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
+        });
+    }
+    use comfy_table::Table;
+    let mut table = Table::new();
+    table.load_preset(comfy_table::presets::UTF8_FULL);
+    table.set_header(vec!["Path", "Node ID", "Tombstoned At", "Age"]);
+    for r in &result.rows {
+        let ts_str = if r.tombstoned_at > 0 {
+            format!("{}", r.tombstoned_at)
+        } else {
+            "-".to_string()
+        };
+        table.add_row(vec![&r.path, &r.node_id_short, &ts_str, &r.age]);
+    }
+    Ok(table.to_string())
 }
 
 /// Format initialization preview

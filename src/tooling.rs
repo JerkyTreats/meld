@@ -6,11 +6,8 @@
 
 pub mod ci;
 pub mod cli;
-pub mod editor;
-pub mod watch;
 
 pub use crate::agent::{AgentAdapter, ContextApiAdapter};
 pub use ci::{BatchOperation, BatchReport, CiIntegration};
 pub use cli::{Cli, CliContext, Commands};
-pub use editor::EditorHooks;
-pub use watch::{WatchConfig, WatchDaemon};
+pub use crate::workspace::{EditorHooks, WatchConfig, WatchDaemon};

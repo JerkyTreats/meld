@@ -60,7 +60,7 @@ Apply these rules when implementing domain extraction and refactors.
 | 5 | Telemetry foundation and policy services | Phase 1 | Completed local |
 | 6 | Context query mutation generation and queue ownership | Phase 2, Phase 4, Phase 5 | In progress |
 | 7 | Provider and agent command workflows plus adapter cutover | Phase 2, Phase 3, Phase 4, Phase 6 | Completed local |
-| 8 | Workspace lifecycle status and watch ownership | Phase 4, Phase 5, Phase 6, Phase 7 | Planned |
+| 8 | Workspace lifecycle status and watch ownership | Phase 4, Phase 5, Phase 6, Phase 7 | Completed local |
 | 9 | CLI route waves and startup execution cutover | Phase 4, Phase 5, Phase 6, Phase 7, Phase 8 | Planned |
 | 10 | Legacy removal and boundary seal | Phase 1 to Phase 9 | Planned |
 
@@ -297,27 +297,30 @@ Provider command service in `src/provider/commands.rs` exposes one entry point p
 |-------|--------|
 | Goal | Move workspace lifecycle status and watch runtime to workspace domain and complete cross domain hook integration. |
 | Dependencies | Phase 4, Phase 5, Phase 6, Phase 7 |
-| Docs | workspace/workspace_migration_guide.md |
-| Completion | Planned |
+| Docs | workspace/workspace_migration_guide.md, [Phase 8 Implementation Plan](phase8_implementation_plan.md) |
+| Completion | Completed local |
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Add workspace domain root facade and shared types. | Planned |
-| 2 | Extract lifecycle service for validate delete restore compact list deleted and ignore flows. | Planned |
-| 3 | Extract workspace status service for workspace section assembly. | Planned |
-| 4 | Extract watch events runtime and editor bridge ownership into workspace watch modules. | Planned |
-| 5 | Route watch queue hooks through context contracts and watch telemetry hooks through telemetry contracts. | Planned |
-| 6 | Route status fan in through agent and provider status contracts from domain services. | Planned |
-| 7 | Remove legacy workspace watch editor and status ownership from old modules in the same phase window. | Planned |
+| 1 | Add workspace domain root facade and shared types. | Completed local |
+| 2 | Extract WorkspaceCommandService for status validate ignore delete restore compact list_deleted and unified_status. | Completed local |
+| 3 | Extract watch events runtime and editor bridge; route queue and telemetry through context and telemetry contracts. | Completed local |
+| 4 | Extract watch runtime and editor bridge; route watch queue and telemetry through context and telemetry contracts. | Completed local |
+| 5 | Route status fan-in through WorkspaceCommandService::unified_status and agent and provider command services. | Completed local |
+| 6 | Remove legacy workspace watch editor and status ownership from tooling and workspace_status. | Completed local |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| Workspace services satisfy CLI workspace route wave readiness gates. | Planned |
-| Watch runtime and status assembly no longer rely on mixed legacy ownership. | Planned |
+| Workspace services satisfy CLI workspace route wave readiness gates. | Completed local |
+| Watch runtime and status assembly no longer rely on mixed legacy ownership. | Completed local |
 
 | Dependency closure solved | Completion |
 |---------------------------|------------|
-| Satisfies workspace lifecycle status watch and unified status dependencies required by CLI cutover. | Planned |
+| Satisfies workspace lifecycle status watch and unified status dependencies required by CLI cutover. | Completed local |
+
+#### Phase 8 — Implementation notes
+
+Workspace domain under `src/workspace.rs` plus `src/workspace/` with commands, facade, format, section, types, watch. No `mod.rs`; parent.rs and parent/child.rs convention. WorkspaceCommandService in `commands.rs` exposes status, validate, ignore, delete, restore, compact, list_deleted, unified_status; no run_ prefix; status takes WorkspaceStatusRequest and returns WorkspaceStatusResult, aligned with agent and provider status pattern. Resolve helpers and section build live in workspace; CLI parses, calls one method per variant, formats. Watch under `workspace/watch.rs` with events, editor_bridge, runtime; WatchConfig, ChangeEvent, EventBatcher, EditorHooks, WatchDaemon; depends on ContextApi, FrameGenerationQueue, ProgressRuntime. Unified status calls WorkspaceCommandService::status for workspace section and AgentCommandService::status and ProviderCommandService::run_status for agents and providers. Legacy `src/tooling/watch.rs`, `src/tooling/editor.rs`, and top-level `src/workspace_status.rs` removed; workspace_status was briefly a submodule then removed as unnecessary; all status types and formatters re-exported from workspace facade.
 
 ---
 
