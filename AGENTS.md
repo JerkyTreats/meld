@@ -2,6 +2,7 @@
 
 ## Domain Architecture Rule
 
+- Do not use `mod.rs`. Use the modern Rust convention: a module is either a single file `parent.rs` or a file `parent.rs` that declares submodules with `mod child;` and children live in `parent/child.rs`. Prefer `parent.rs` plus `parent/child.rs` over `parent/mod.rs` plus `parent/child.rs`.
 - Organize code by domain first.
 - Keep each domain concern under `src/<domain>/`.
 - Inside a domain, name submodules by behavior, for example `query`, `mutation`, `orchestration`, `queue`, `sessions`, `sinks`.

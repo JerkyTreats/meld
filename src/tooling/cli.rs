@@ -1351,28 +1351,10 @@ impl CliContext {
         role_filter: Option<&str>,
     ) -> Result<String, ApiError> {
         let registry = self.api.agent_registry().read();
-
-        // Parse role filter
-        let role = if let Some(role_str) = role_filter {
-            match role_str {
-                "Reader" => Some(crate::agent::AgentRole::Reader),
-                "Writer" => Some(crate::agent::AgentRole::Writer),
-                _ => {
-                    return Err(ApiError::ConfigError(format!(
-                        "Invalid role filter: {}. Must be Reader or Writer",
-                        role_str
-                    )));
-                }
-            }
-        } else {
-            None
-        };
-
-        let agents = registry.list_by_role(role);
-
+        let result = crate::agent::AgentCommandService::list(&registry, role_filter)?;
         match format.as_str() {
-            "json" => Ok(format_agent_list_json(&agents)),
-            "text" | _ => Ok(format_agent_list_text(&agents)),
+            "json" => Ok(format_agent_list_result_json(&result)),
+            "text" | _ => Ok(format_agent_list_result_text(&result)),
         }
     }
 
@@ -1384,19 +1366,11 @@ impl CliContext {
         include_prompt: bool,
     ) -> Result<String, ApiError> {
         let registry = self.api.agent_registry().read();
-
-        let agent = registry.get_or_error(agent_id)?;
-
-        // Load prompt content if requested
-        let prompt_content = if include_prompt {
-            agent.metadata.get("system_prompt").cloned()
-        } else {
-            None
-        };
-
+        let result =
+            crate::agent::AgentCommandService::show(&registry, agent_id, include_prompt)?;
         match format.as_str() {
-            "json" => Ok(format_agent_show_json(agent, prompt_content.as_deref())),
-            "text" | _ => Ok(format_agent_show_text(agent, prompt_content.as_deref())),
+            "json" => Ok(format_agent_show_result_json(&result)),
+            "text" | _ => Ok(format_agent_show_result_text(&result)),
         }
     }
 
@@ -1408,36 +1382,18 @@ impl CliContext {
         verbose: bool,
     ) -> Result<String, ApiError> {
         let registry = self.api.agent_registry().read();
-
         if all {
-            // Validate all agents
-            let agents = registry.list_all();
-            if agents.is_empty() {
+            let result = crate::agent::AgentCommandService::validate_all(&registry)?;
+            if result.results.is_empty() {
                 return Ok("No agents found to validate.".to_string());
             }
-
-            let mut results: Vec<(String, crate::agent::ValidationResult)> = Vec::new();
-            for agent in agents {
-                match registry.validate_agent(&agent.agent_id) {
-                    Ok(result) => results.push((agent.agent_id.clone(), result)),
-                    Err(e) => {
-                        // Create a validation result with error
-                        let mut error_result =
-                            crate::agent::ValidationResult::new(agent.agent_id.clone());
-                        error_result.add_error(format!("Failed to validate: {}", e));
-                        results.push((agent.agent_id.clone(), error_result));
-                    }
-                }
-            }
-
-            Ok(format_validation_results_all(&results, verbose))
+            Ok(format_validation_results_all(&result.results, verbose))
         } else {
-            // Validate single agent
-            let agent_id = agent_id.ok_or_else(|| {
+            let id = agent_id.ok_or_else(|| {
                 ApiError::ConfigError("Agent ID required unless --all is specified".to_string())
             })?;
-            let result = registry.validate_agent(agent_id)?;
-            Ok(format_validation_result(&result, verbose))
+            let result = crate::agent::AgentCommandService::validate_single(&registry, id)?;
+            Ok(format_validation_result(&result.result, verbose))
         }
     }
 
@@ -1450,100 +1406,41 @@ impl CliContext {
         interactive: bool,
         non_interactive: bool,
     ) -> Result<String, ApiError> {
-        // Determine mode
         let is_interactive = interactive || (!non_interactive && role.is_none());
 
         let (final_role, final_prompt_path) = if is_interactive {
-            // Interactive mode
             self.create_agent_interactive(agent_id)?
         } else {
-            // Non-interactive mode
-            let role = role.ok_or_else(|| {
+            let role_str = role.ok_or_else(|| {
                 ApiError::ConfigError(
                     "Role is required in non-interactive mode. Use --role <role>".to_string(),
                 )
             })?;
-
-            let parsed_role = match role {
-                "Reader" => crate::agent::AgentRole::Reader,
-                "Writer" => crate::agent::AgentRole::Writer,
-                _ => {
-                    return Err(ApiError::ConfigError(format!(
-                        "Invalid role: {}. Must be Reader or Writer",
-                        role
-                    )));
-                }
-            };
-
-            // Prompt path required for Writer
+            let parsed_role = crate::agent::AgentCommandService::parse_role(role_str)?;
             let prompt = if parsed_role != crate::agent::AgentRole::Reader {
                 Some(
                     prompt_path
                         .ok_or_else(|| {
                             ApiError::ConfigError(
-                        "Prompt path is required for Writer agents. Use --prompt-path <path>"
-                            .to_string()
-                    )
+                                "Prompt path is required for Writer agents. Use --prompt-path <path>"
+                                    .to_string(),
+                            )
                         })?
                         .to_string(),
                 )
             } else {
                 None
             };
-
             (parsed_role, prompt)
         };
 
-        // Create agent config
-        let mut agent_config = crate::config::AgentConfig {
-            agent_id: agent_id.to_string(),
-            role: final_role,
-            system_prompt: None,
-            system_prompt_path: final_prompt_path.clone(),
-            metadata: HashMap::new(),
-        };
-
-        // Add user prompt templates for Writer
-        if final_role != crate::agent::AgentRole::Reader {
-            if let Some(ref prompt_path) = final_prompt_path {
-                // Add default templates if not provided
-                agent_config.metadata.insert(
-                    "user_prompt_file".to_string(),
-                    format!(
-                        "Analyze the file at {{path}} using the system prompt from {}",
-                        prompt_path
-                    ),
-                );
-                agent_config.metadata.insert(
-                    "user_prompt_directory".to_string(),
-                    format!(
-                        "Analyze the directory at {{path}} using the system prompt from {}",
-                        prompt_path
-                    ),
-                );
-            }
-        }
-
-        // Save config
-        {
-            let registry = self.api.agent_registry().read();
-            registry.save_agent_config(agent_id, &agent_config)?;
-        }
-
-        // Reload registry to include new agent
-        {
-            let mut registry = self.api.agent_registry().write();
-            registry.load_from_xdg()?;
-        }
-
+        let mut registry = self.api.agent_registry().write();
+        let result =
+            crate::agent::AgentCommandService::create(&mut registry, agent_id, final_role, final_prompt_path)?;
         Ok(format!(
             "Agent created: {}\nConfiguration file: {}",
-            agent_id,
-            self.api
-                .agent_registry()
-                .read()
-                .agent_config_path(agent_id)?
-                .display()
+            result.agent_id,
+            result.config_path.display()
         ))
     }
 
@@ -1590,57 +1487,17 @@ impl CliContext {
         role: Option<&str>,
         editor: Option<&str>,
     ) -> Result<String, ApiError> {
-        // Check if agent exists and get config path
-        let config_path = {
-            let registry = self.api.agent_registry().read();
-            registry.get_or_error(agent_id)?;
-            registry.agent_config_path(agent_id)?
-        };
-
-        // If flags provided, do flag-based editing
         if prompt_path.is_some() || role.is_some() {
-            // Load existing config
-            let content = std::fs::read_to_string(&config_path)
-                .map_err(|e| ApiError::ConfigError(format!("Failed to read config: {}", e)))?;
-
-            let mut agent_config: crate::config::AgentConfig = toml::from_str(&content)
-                .map_err(|e| ApiError::ConfigError(format!("Failed to parse config: {}", e)))?;
-
-            // Update fields
-            if let Some(new_prompt_path) = prompt_path {
-                agent_config.system_prompt_path = Some(new_prompt_path.to_string());
-            }
-
-            if let Some(new_role_str) = role {
-                let new_role = match new_role_str {
-                    "Reader" => crate::agent::AgentRole::Reader,
-                    "Writer" => crate::agent::AgentRole::Writer,
-                    _ => {
-                        return Err(ApiError::ConfigError(format!(
-                            "Invalid role: {}. Must be Reader or Writer",
-                            new_role_str
-                        )));
-                    }
-                };
-                agent_config.role = new_role;
-            }
-
-            // Save updated config
-            {
-                let registry = self.api.agent_registry().read();
-                registry.save_agent_config(agent_id, &agent_config)?;
-            }
+            let mut registry = self.api.agent_registry().write();
+            let _ = crate::agent::AgentCommandService::update_flags(
+                &mut registry,
+                agent_id,
+                prompt_path,
+                role,
+            )?;
         } else {
-            // Editor-based editing
             self.edit_agent_with_editor(agent_id, editor)?;
         }
-
-        // Reload registry
-        {
-            let mut registry = self.api.agent_registry().write();
-            registry.load_from_xdg()?;
-        }
-
         Ok(format!("Agent updated: {}", agent_id))
     }
 
@@ -1692,23 +1549,15 @@ impl CliContext {
         let edited_content = std::fs::read_to_string(&temp_path)
             .map_err(|e| ApiError::ConfigError(format!("Failed to read edited file: {}", e)))?;
 
-        // Parse and validate
-        let agent_config: crate::config::AgentConfig = toml::from_str(&edited_content)
+        let agent_config: crate::agent::AgentConfig = toml::from_str(&edited_content)
             .map_err(|e| ApiError::ConfigError(format!("Invalid config after editing: {}", e)))?;
 
-        // Validate agent_id matches
-        if agent_config.agent_id != agent_id {
-            return Err(ApiError::ConfigError(format!(
-                "Agent ID mismatch: config has '{}' but expected '{}'",
-                agent_config.agent_id, agent_id
-            )));
-        }
-
-        // Save
-        {
-            let registry = self.api.agent_registry().read();
-            registry.save_agent_config(agent_id, &agent_config)?;
-        }
+        let mut registry = self.api.agent_registry().write();
+        crate::agent::AgentCommandService::persist_edited_config(
+            &mut registry,
+            agent_id,
+            agent_config,
+        )?;
 
         // Clean up temp file
         let _ = std::fs::remove_file(&temp_path);
@@ -1718,13 +1567,6 @@ impl CliContext {
 
     /// Handle agent remove command
     fn handle_agent_remove(&self, agent_id: &str, force: bool) -> Result<String, ApiError> {
-        // Check if agent exists
-        {
-            let registry = self.api.agent_registry().read();
-            registry.get_or_error(agent_id)?;
-        }
-
-        // Confirm removal unless --force
         if !force {
             use dialoguer::Confirm;
             let confirmed = Confirm::new()
@@ -1737,21 +1579,12 @@ impl CliContext {
             }
         }
 
-        // Delete config file
-        let config_path = {
-            let registry = self.api.agent_registry().read();
-            let path = registry.agent_config_path(agent_id)?;
-            registry.delete_agent_config(agent_id)?;
-            path
-        };
-
-        // Note: Agent will be removed from registry on next load_from_xdg() call
-        // since the config file no longer exists
-
+        let mut registry = self.api.agent_registry().write();
+        let result = crate::agent::AgentCommandService::remove(&mut registry, agent_id)?;
         Ok(format!(
             "Removed agent: {}\nConfiguration file deleted: {}",
-            agent_id,
-            config_path.display()
+            result.agent_id,
+            result.config_path.display()
         ))
     }
 
@@ -1762,43 +1595,16 @@ impl CliContext {
         };
 
         let registry = self.api.agent_registry().read();
-        let agents = registry.list_all();
-        if agents.is_empty() {
-            let empty: Vec<AgentStatusEntry> = Vec::new();
-            return if format == "json" {
-                Ok(serde_json::to_string_pretty(&AgentStatusOutput {
-                    agents: empty,
-                    total: 0,
-                    valid_count: 0,
-                })
-                .map_err(|e| {
-                    ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
-                })?)
-            } else {
-                Ok(format_agent_status_text(&empty))
-            };
-        }
-        let mut entries: Vec<AgentStatusEntry> = Vec::new();
-        for agent in agents {
-            let result = match registry.validate_agent(&agent.agent_id) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            let role_str = match agent.role {
-                crate::agent::AgentRole::Reader => "Reader",
-                crate::agent::AgentRole::Writer => "Writer",
-            };
-            let prompt_path_exists = result
-                .checks
-                .iter()
-                .any(|(desc, passed)| desc == "Prompt file exists" && *passed);
-            entries.push(AgentStatusEntry {
-                agent_id: agent.agent_id.clone(),
-                role: role_str.to_string(),
-                valid: result.is_valid(),
-                prompt_path_exists,
-            });
-        }
+        let entries_result = crate::agent::AgentCommandService::status(&registry)?;
+        let entries: Vec<AgentStatusEntry> = entries_result
+            .into_iter()
+            .map(|e| AgentStatusEntry {
+                agent_id: e.agent_id,
+                role: e.role,
+                valid: e.valid,
+                prompt_path_exists: e.prompt_path_exists,
+            })
+            .collect();
         let valid_count = entries.iter().filter(|e| e.valid).count();
         if format == "json" {
             Ok(serde_json::to_string_pretty(&AgentStatusOutput {
@@ -1894,30 +1700,11 @@ impl CliContext {
         type_filter: Option<&str>,
     ) -> Result<String, ApiError> {
         let registry = self.api.provider_registry().read();
-
-        // Parse type filter
-        let provider_type = if let Some(type_str) = type_filter {
-            match type_str {
-                "openai" => Some(crate::config::ProviderType::OpenAI),
-                "anthropic" => Some(crate::config::ProviderType::Anthropic),
-                "ollama" => Some(crate::config::ProviderType::Ollama),
-                "local" => Some(crate::config::ProviderType::LocalCustom),
-                _ => {
-                    return Err(ApiError::ConfigError(format!(
-                        "Invalid type filter: {}. Must be openai, anthropic, ollama, or local",
-                        type_str
-                    )));
-                }
-            }
-        } else {
-            None
-        };
-
-        let providers = registry.list_by_type(provider_type);
-
+        let result =
+            crate::provider::commands::ProviderCommandService::run_list(&registry, type_filter)?;
         match format.as_str() {
-            "json" => Ok(format_provider_list_json(&providers)),
-            "text" | _ => Ok(format_provider_list_text(&providers)),
+            "json" => Ok(format_provider_list_result_json(&result)),
+            "text" | _ => Ok(format_provider_list_result_text(&result)),
         }
     }
 
@@ -1929,34 +1716,18 @@ impl CliContext {
         include_credentials: bool,
     ) -> Result<String, ApiError> {
         let registry = self.api.provider_registry().read();
-
-        let provider = registry.get_or_error(provider_name)?;
-
-        // Resolve API key status
-        let api_key_status = if include_credentials {
-            Some(self.resolve_api_key_status(provider))
-        } else {
-            None
-        };
-
+        let result = crate::provider::commands::ProviderCommandService::run_show(
+            &registry,
+            provider_name,
+            include_credentials,
+        )?;
         match format.as_str() {
-            "json" => Ok(format_provider_show_json(
-                provider,
-                api_key_status.as_deref(),
-            )),
-            "text" | _ => Ok(format_provider_show_text(
-                provider,
-                api_key_status.as_deref(),
-            )),
+            "json" => Ok(format_provider_show_result_json(&result)),
+            "text" | _ => Ok(format_provider_show_result_text(&result)),
         }
     }
 
-    /// Resolve API key status for a provider
-    fn resolve_api_key_status(&self, provider: &crate::config::ProviderConfig) -> String {
-        crate::provider::diagnostics::ProviderDiagnosticsService::resolve_api_key_status(provider)
-    }
-
-    /// Handle provider validate command (single provider per provider_validate_spec)
+    /// Handle provider validate command
     fn handle_provider_validate(
         &self,
         provider_name: &str,
@@ -1965,42 +1736,12 @@ impl CliContext {
         verbose: bool,
     ) -> Result<String, ApiError> {
         let registry = self.api.provider_registry().read();
-        let mut result =
-            crate::provider::diagnostics::ProviderDiagnosticsService::validate_provider(
-                &registry,
-                provider_name,
-            )?;
-
-        if test_connectivity || check_model {
-            result.add_check("Provider client created", true);
-            match crate::provider::diagnostics::ProviderDiagnosticsService::list_available_models(
-                &registry,
-                provider_name,
-            ) {
-                Ok(available_models) => {
-                    result.add_check("API connectivity: OK", true);
-                    if check_model {
-                        let provider = registry.get_or_error(provider_name)?;
-                        if available_models.iter().any(|m| m == &provider.model) {
-                            result.add_check(
-                                &format!("Model '{}' is available", provider.model),
-                                true,
-                            );
-                        } else {
-                            result.add_error(format!(
-                                "Model '{}' not found. Available models: {}",
-                                provider.model,
-                                available_models.join(", ")
-                            ));
-                        }
-                    }
-                }
-                Err(e) => {
-                    result.add_error(format!("API connectivity failed: {}", e));
-                }
-            }
-        }
-
+        let result = crate::provider::commands::ProviderCommandService::run_validate(
+            &registry,
+            provider_name,
+            test_connectivity,
+            check_model,
+        )?;
         Ok(format_provider_validation_result(&result, verbose))
     }
 
@@ -2015,44 +1756,17 @@ impl CliContext {
         };
 
         let registry = self.api.provider_registry().read();
-        let providers = registry.list_all();
-        if providers.is_empty() {
-            let empty: Vec<ProviderStatusEntry> = Vec::new();
-            return if format == "json" {
-                Ok(serde_json::to_string_pretty(&ProviderStatusOutput {
-                    providers: empty,
-                    total: 0,
-                })
-                .map_err(|e| {
-                    ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
-                })?)
-            } else {
-                Ok(format_provider_status_text(&empty, false))
-            };
-        }
-        let mut entries: Vec<ProviderStatusEntry> = Vec::new();
-        for provider in providers {
-            let provider_name = provider
-                .provider_name
-                .as_deref()
-                .unwrap_or("unknown")
-                .to_string();
-            let type_str = crate::provider::profile::provider_type_slug(provider.provider_type);
-            let connectivity = if test_connectivity {
-                match crate::provider::diagnostics::ProviderDiagnosticsService::list_available_models(&registry, &provider_name) {
-                    Ok(_) => Some("ok".to_string()),
-                    Err(_) => Some("fail".to_string()),
-                }
-            } else {
-                None
-            };
-            entries.push(ProviderStatusEntry {
-                provider_name,
-                provider_type: type_str.to_string(),
-                model: provider.model.clone(),
-                connectivity,
-            });
-        }
+        let entries_result =
+            crate::provider::commands::ProviderCommandService::run_status(&registry, test_connectivity)?;
+        let entries: Vec<ProviderStatusEntry> = entries_result
+            .into_iter()
+            .map(|e| ProviderStatusEntry {
+                provider_name: e.provider_name,
+                provider_type: e.provider_type,
+                model: e.model,
+                connectivity: e.connectivity,
+            })
+            .collect();
         if format == "json" {
             Ok(serde_json::to_string_pretty(&ProviderStatusOutput {
                 providers: entries.clone(),
@@ -2204,21 +1918,12 @@ impl CliContext {
         session_id: &str,
     ) -> Result<String, ApiError> {
         let registry = self.api.provider_registry().read();
-
-        // Get provider config
-        let provider = registry.get_or_error(provider_name)?;
-        let model_to_check = model_override.unwrap_or(&provider.model).to_string();
-
-        // Create client
-        let client = registry.create_client(provider_name)?;
-        drop(registry);
-
-        let mut output = format!("Testing provider: {}\n\n", provider_name);
-
-        // Test connectivity
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| ApiError::ProviderError(format!("Failed to create runtime: {}", e)))?;
-
+        let model_for_event = model_override.unwrap_or_else(|| {
+            registry
+                .get(provider_name)
+                .map(|p| p.model.as_str())
+                .unwrap_or("")
+        });
         self.progress.emit_event_best_effort(
             session_id,
             "provider_request_sent",
@@ -2226,92 +1931,50 @@ impl CliContext {
                 node_id: "provider_test".to_string(),
                 agent_id: "provider_test".to_string(),
                 provider_name: provider_name.to_string(),
-                frame_type: model_to_check.clone(),
+                frame_type: model_for_event.to_string(),
                 duration_ms: None,
                 error: None,
                 retry_count: Some(0),
             }),
         );
-
         let start = std::time::Instant::now();
-        match rt.block_on(async {
-            tokio::time::timeout(
-                std::time::Duration::from_secs(timeout),
-                client.list_models(),
-            )
-            .await
-        }) {
-            Ok(Ok(available_models)) => {
-                let elapsed = start.elapsed();
-                self.progress.emit_event_best_effort(
-                    session_id,
-                    "provider_response_received",
-                    json!(ProviderLifecycleEventData {
-                        node_id: "provider_test".to_string(),
-                        agent_id: "provider_test".to_string(),
-                        provider_name: provider_name.to_string(),
-                        frame_type: model_to_check.clone(),
-                        duration_ms: Some(elapsed.as_millis()),
-                        error: None,
-                        retry_count: Some(0),
-                    }),
-                );
-                output.push_str(&format!("✓ Provider client created\n"));
-                output.push_str(&format!(
-                    "✓ API connectivity: OK ({}ms)\n",
-                    elapsed.as_millis()
-                ));
-
-                // Check model availability
-                if available_models.iter().any(|m| m == &model_to_check) {
-                    output.push_str(&format!("✓ Model '{}' is available\n", model_to_check));
-                } else {
-                    output.push_str(&format!("✗ Model '{}' not found\n", model_to_check));
-                    output.push_str(&format!(
-                        "Available models: {}\n",
-                        available_models.join(", ")
-                    ));
-                    return Ok(output);
-                }
-            }
-            Ok(Err(e)) => {
-                self.progress.emit_event_best_effort(
-                    session_id,
-                    "provider_request_failed",
-                    json!(ProviderLifecycleEventData {
-                        node_id: "provider_test".to_string(),
-                        agent_id: "provider_test".to_string(),
-                        provider_name: provider_name.to_string(),
-                        frame_type: model_to_check.clone(),
-                        duration_ms: Some(start.elapsed().as_millis()),
-                        error: Some(e.to_string()),
-                        retry_count: Some(0),
-                    }),
-                );
-                output.push_str(&format!("✗ API connectivity failed: {}\n", e));
-                return Ok(output);
-            }
-            Err(_) => {
-                self.progress.emit_event_best_effort(
-                    session_id,
-                    "provider_request_failed",
-                    json!(ProviderLifecycleEventData {
-                        node_id: "provider_test".to_string(),
-                        agent_id: "provider_test".to_string(),
-                        provider_name: provider_name.to_string(),
-                        frame_type: model_to_check.clone(),
-                        duration_ms: Some(start.elapsed().as_millis()),
-                        error: Some(format!("API connectivity timeout ({}s)", timeout)),
-                        retry_count: Some(0),
-                    }),
-                );
-                output.push_str(&format!("✗ API connectivity timeout ({}s)\n", timeout));
-                return Ok(output);
-            }
+        let result = crate::provider::commands::ProviderCommandService::run_test(
+            &registry,
+            provider_name,
+            model_override,
+            timeout,
+        )?;
+        let elapsed_ms = start.elapsed().as_millis();
+        if result.connectivity_ok {
+            self.progress.emit_event_best_effort(
+                session_id,
+                "provider_response_received",
+                json!(ProviderLifecycleEventData {
+                    node_id: "provider_test".to_string(),
+                    agent_id: "provider_test".to_string(),
+                    provider_name: result.provider_name.clone(),
+                    frame_type: result.model_checked.clone(),
+                    duration_ms: Some(elapsed_ms),
+                    error: None,
+                    retry_count: Some(0),
+                }),
+            );
+        } else {
+            self.progress.emit_event_best_effort(
+                session_id,
+                "provider_request_failed",
+                json!(ProviderLifecycleEventData {
+                    node_id: "provider_test".to_string(),
+                    agent_id: "provider_test".to_string(),
+                    provider_name: result.provider_name.clone(),
+                    frame_type: result.model_checked.clone(),
+                    duration_ms: Some(elapsed_ms),
+                    error: result.error_message.clone(),
+                    retry_count: Some(0),
+                }),
+            );
         }
-
-        output.push_str(&format!("\nProvider is working correctly.\n"));
-        Ok(output)
+        Ok(format_provider_test_result(&result, Some(elapsed_ms)))
     }
 
     /// Handle provider create command
@@ -2362,30 +2025,20 @@ impl CliContext {
                 )
             };
 
-        // Create provider config
-        let provider_config =
-            crate::provider::commands::ProviderCommandService::build_provider_config(
-                provider_name,
-                provider_type,
-                final_model,
-                final_endpoint,
-                final_api_key,
-                default_options,
-            );
-
-        let config_path = {
-            let mut registry = self.api.provider_registry().write();
-            crate::provider::commands::ProviderCommandService::persist_provider_config(
-                &mut registry,
-                provider_name,
-                &provider_config,
-            )?
-        };
-
+        let mut registry = self.api.provider_registry().write();
+        let result = crate::provider::commands::ProviderCommandService::run_create(
+            &mut registry,
+            provider_name,
+            provider_type,
+            final_model,
+            final_endpoint,
+            final_api_key,
+            default_options,
+        )?;
         Ok(format!(
             "Provider created: {}\nConfiguration file: {}",
-            provider_name,
-            config_path.display()
+            result.provider_name,
+            result.config_path.display()
         ))
     }
 
@@ -2524,53 +2177,18 @@ impl CliContext {
         api_key: Option<&str>,
         editor: Option<&str>,
     ) -> Result<String, ApiError> {
-        // Check if provider exists
-        {
-            let registry = self.api.provider_registry().read();
-            registry.get_or_error(provider_name)?;
-        }
-
-        let config_path = {
-            let registry = self.api.provider_registry().read();
-            crate::provider::commands::ProviderCommandService::provider_config_path(
-                &registry,
-                provider_name,
-            )?
-        };
-
-        // If flags provided, do flag-based editing
         if model.is_some() || endpoint.is_some() || api_key.is_some() {
-            let mut provider_config =
-                crate::provider::commands::ProviderCommandService::load_provider_config_from_path(
-                    &config_path,
-                )?;
-
-            // Update fields
-            if let Some(new_model) = model {
-                provider_config.model = new_model.to_string();
-            }
-
-            if let Some(new_endpoint) = endpoint {
-                provider_config.endpoint = Some(new_endpoint.to_string());
-            }
-
-            if let Some(new_api_key) = api_key {
-                provider_config.api_key = Some(new_api_key.to_string());
-            }
-
-            {
-                let mut registry = self.api.provider_registry().write();
-                crate::provider::commands::ProviderCommandService::persist_provider_config(
-                    &mut registry,
-                    provider_name,
-                    &provider_config,
-                )?;
-            }
+            let mut registry = self.api.provider_registry().write();
+            crate::provider::commands::ProviderCommandService::run_update_flags(
+                &mut registry,
+                provider_name,
+                model,
+                endpoint,
+                api_key,
+            )?;
         } else {
-            // Editor-based editing
             self.edit_provider_with_editor(provider_name, editor)?;
         }
-
         Ok(format!("Provider updated: {}", provider_name))
     }
 
@@ -2659,20 +2277,12 @@ impl CliContext {
 
     /// Handle provider remove command
     fn handle_provider_remove(&self, provider_name: &str, force: bool) -> Result<String, ApiError> {
-        // Check if provider exists
-        {
-            let registry = self.api.provider_registry().read();
-            registry.get_or_error(provider_name)?;
-        }
-
-        // Check if provider might be in use (warn)
         {
             let registry = self.api.provider_registry().read();
             let provider = registry.get_or_error(provider_name)?;
-            if provider.provider_type == crate::config::ProviderType::OpenAI
-                || provider.provider_type == crate::config::ProviderType::Anthropic
+            if provider.provider_type == crate::provider::ProviderType::OpenAI
+                || provider.provider_type == crate::provider::ProviderType::Anthropic
             {
-                // Warn for cloud providers
                 eprintln!(
                     "Warning: Provider '{}' may be in use by agents.",
                     provider_name
@@ -2680,7 +2290,6 @@ impl CliContext {
             }
         }
 
-        // Confirm removal unless --force
         if !force {
             use dialoguer::Confirm;
             let confirmed = Confirm::new()
@@ -2693,18 +2302,13 @@ impl CliContext {
             }
         }
 
-        let config_path = {
-            let mut registry = self.api.provider_registry().write();
-            crate::provider::commands::ProviderCommandService::delete_provider_config(
-                &mut registry,
-                provider_name,
-            )?
-        };
-
+        let mut registry = self.api.provider_registry().write();
+        let result =
+            crate::provider::commands::ProviderCommandService::run_remove(&mut registry, provider_name)?;
         Ok(format!(
             "Removed provider: {}\nConfiguration file deleted: {}",
-            provider_name,
-            config_path.display()
+            result.provider_name,
+            result.config_path.display()
         ))
     }
 
@@ -3338,159 +2942,73 @@ impl CliContext {
     }
 }
 
-/// Format agent list as text
-fn format_agent_list_text(agents: &[&crate::agent::AgentIdentity]) -> String {
+/// Format agent list result as text
+fn format_agent_list_result_text(result: &crate::agent::AgentListResult) -> String {
+    let agents = &result.agents;
     if agents.is_empty() {
         return "No agents found.\n\nNote: Agents are provider-agnostic. Providers are selected at runtime.".to_string();
     }
-
     let mut output = String::from("Available Agents:\n");
-    for agent in agents {
-        let role_str = match agent.role {
+    for item in agents {
+        let role_str = match item.role {
             crate::agent::AgentRole::Reader => "Reader",
             crate::agent::AgentRole::Writer => "Writer",
         };
-
-        let prompt_path = agent
-            .metadata
-            .get("system_prompt")
-            .and_then(|_| {
-                let repo = crate::agent::XdgAgentStorage::new();
-                let config_path = repo.path_for(&agent.agent_id).ok()?;
-                let content = std::fs::read_to_string(&config_path).ok()?;
-                let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
-                config.system_prompt_path
-            })
-            .unwrap_or_else(|| "[inline prompt]".to_string());
-
-        output.push_str(&format!(
-            "  {:<20} {:<10} {}\n",
-            agent.agent_id, role_str, prompt_path
-        ));
+        output.push_str(&format!("  {:<20} {:<10}\n", item.agent_id, role_str));
     }
-
     output.push_str(&format!("\nTotal: {} agent(s)\n\nNote: Agents are provider-agnostic. Providers are selected at runtime.", agents.len()));
     output
 }
 
-/// Format agent list as JSON
-fn format_agent_list_json(agents: &[&crate::agent::AgentIdentity]) -> String {
-    use serde_json::json;
-
-    let agent_list: Vec<_> = agents
+/// Format agent list result as JSON
+fn format_agent_list_result_json(result: &crate::agent::AgentListResult) -> String {
+    let agent_list: Vec<_> = result
+        .agents
         .iter()
-        .map(|agent| {
-            let prompt_path = agent
-                .metadata
-                .get("system_prompt")
-                .and_then(|_| {
-                    let repo = crate::agent::XdgAgentStorage::new();
-                    let config_path = repo.path_for(&agent.agent_id).ok()?;
-                    let content = std::fs::read_to_string(&config_path).ok()?;
-                    let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
-                    config.system_prompt_path
-                })
-                .unwrap_or_else(|| "[inline prompt]".to_string());
-
+        .map(|item| {
             json!({
-                "agent_id": agent.agent_id,
-                "role": match agent.role {
+                "agent_id": item.agent_id,
+                "role": match item.role {
                     crate::agent::AgentRole::Reader => "Reader",
                     crate::agent::AgentRole::Writer => "Writer",
                 },
-                "system_prompt_path": prompt_path,
             })
         })
         .collect();
-
-    let result = json!({
-        "agents": agent_list,
-        "total": agents.len(),
-    });
-
-    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+    let out = json!({ "agents": agent_list, "total": result.agents.len() });
+    serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
 }
 
-/// Format agent show as text
-fn format_agent_show_text(
-    agent: &crate::agent::AgentIdentity,
-    prompt_content: Option<&str>,
-) -> String {
-    let mut output = format!("Agent: {}\n", agent.agent_id);
-    output.push_str(&format!("Role: {:?}\n", agent.role));
-
-    let prompt_path = agent
-        .metadata
-        .get("system_prompt")
-        .and_then(|_| {
-            let repo = crate::agent::XdgAgentStorage::new();
-            let config_path = repo.path_for(&agent.agent_id).ok()?;
-            let content = std::fs::read_to_string(&config_path).ok()?;
-            let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
-            config.system_prompt_path
-        })
-        .unwrap_or_else(|| "[inline prompt]".to_string());
-
-    output.push_str(&format!("Prompt File: {}\n", prompt_path));
-
-    if !agent.metadata.is_empty() {
-        output.push_str("\nMetadata:\n");
-        for (key, value) in &agent.metadata {
-            if key != "system_prompt" {
-                output.push_str(&format!("  {}: {}\n", key, value));
-            }
-        }
-    }
-
-    if let Some(prompt) = prompt_content {
+/// Format agent show result as text
+fn format_agent_show_result_text(result: &crate::agent::AgentShowResult) -> String {
+    let role_str = match result.role {
+        crate::agent::AgentRole::Reader => "Reader",
+        crate::agent::AgentRole::Writer => "Writer",
+    };
+    let mut output = format!("Agent: {}\n", result.agent_id);
+    output.push_str(&format!("Role: {}\n", role_str));
+    output.push_str("Prompt: [see config]\n");
+    if let Some(prompt) = &result.prompt_content {
         output.push_str("\nPrompt Content:\n");
         output.push_str(prompt);
     }
-
     output
 }
 
-/// Format agent show as JSON
-fn format_agent_show_json(
-    agent: &crate::agent::AgentIdentity,
-    prompt_content: Option<&str>,
-) -> String {
-    use serde_json::json;
-
-    let prompt_path = agent
-        .metadata
-        .get("system_prompt")
-        .and_then(|_| {
-            let repo = crate::agent::XdgAgentStorage::new();
-            let config_path = repo.path_for(&agent.agent_id).ok()?;
-            let content = std::fs::read_to_string(&config_path).ok()?;
-            let config: crate::config::AgentConfig = toml::from_str(&content).ok()?;
-            config.system_prompt_path
-        })
-        .unwrap_or_else(|| "[inline prompt]".to_string());
-
-    let mut metadata = json!({});
-    for (key, value) in &agent.metadata {
-        if key != "system_prompt" {
-            metadata[key] = json!(value);
-        }
-    }
-
-    let mut result = json!({
-        "agent_id": agent.agent_id,
-        "role": match agent.role {
-            crate::agent::AgentRole::Reader => "Reader",
-            crate::agent::AgentRole::Writer => "Writer",
-        },
-        "system_prompt_path": prompt_path,
-        "metadata": metadata,
+/// Format agent show result as JSON
+fn format_agent_show_result_json(result: &crate::agent::AgentShowResult) -> String {
+    let role_str = match result.role {
+        crate::agent::AgentRole::Reader => "Reader",
+        crate::agent::AgentRole::Writer => "Writer",
+    };
+    let mut out = json!({
+        "agent_id": result.agent_id,
+        "role": role_str,
     });
-
-    if let Some(prompt) = prompt_content {
-        result["prompt_content"] = json!(prompt);
+    if let Some(p) = &result.prompt_content {
+        out["prompt_content"] = json!(p);
     }
-
-    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// Format validation result
@@ -3597,49 +3115,38 @@ fn format_validation_results_all(
     output
 }
 
-/// Format provider list as text
-fn format_provider_list_text(providers: &[&crate::config::ProviderConfig]) -> String {
+/// Format provider list result as text
+fn format_provider_list_result_text(
+    result: &crate::provider::commands::ProviderListResult,
+) -> String {
+    let providers = &result.providers;
     if providers.is_empty() {
         return "No providers found.\n\nUse 'merkle provider create' to add a provider."
             .to_string();
     }
-
     let mut output = String::from("Available Providers:\n");
     for provider in providers {
-        let type_str = match provider.provider_type {
-            crate::config::ProviderType::OpenAI => "openai",
-            crate::config::ProviderType::Anthropic => "anthropic",
-            crate::config::ProviderType::Ollama => "ollama",
-            crate::config::ProviderType::LocalCustom => "local",
-        };
-
+        let type_str = crate::provider::profile::provider_type_slug(provider.provider_type);
         let endpoint_str = provider.endpoint.as_deref().unwrap_or("(default endpoint)");
         let provider_name = provider.provider_name.as_deref().unwrap_or("unknown");
-
         output.push_str(&format!(
             "  {:<20} {:<10} {:<20} {}\n",
             provider_name, type_str, provider.model, endpoint_str
         ));
     }
-
     output.push_str(&format!("\nTotal: {} provider(s)\n", providers.len()));
     output
 }
 
-/// Format provider list as JSON
-fn format_provider_list_json(providers: &[&crate::config::ProviderConfig]) -> String {
-    use serde_json::json;
-
-    let provider_list: Vec<_> = providers
+/// Format provider list result as JSON
+fn format_provider_list_result_json(
+    result: &crate::provider::commands::ProviderListResult,
+) -> String {
+    let provider_list: Vec<_> = result
+        .providers
         .iter()
         .map(|provider| {
-            let type_str = match provider.provider_type {
-                crate::config::ProviderType::OpenAI => "openai",
-                crate::config::ProviderType::Anthropic => "anthropic",
-                crate::config::ProviderType::Ollama => "ollama",
-                crate::config::ProviderType::LocalCustom => "local",
-            };
-
+            let type_str = crate::provider::profile::provider_type_slug(provider.provider_type);
             json!({
                 "provider_name": provider.provider_name.as_deref().unwrap_or("unknown"),
                 "provider_type": type_str,
@@ -3648,44 +3155,30 @@ fn format_provider_list_json(providers: &[&crate::config::ProviderConfig]) -> St
             })
         })
         .collect();
-
-    let result = json!({
-        "providers": provider_list,
-        "total": providers.len()
-    });
-
-    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+    let out = json!({ "providers": provider_list, "total": result.providers.len() });
+    serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
 }
 
-/// Format provider show as text
-fn format_provider_show_text(
-    provider: &crate::config::ProviderConfig,
-    api_key_status: Option<&str>,
+/// Format provider show result as text
+fn format_provider_show_result_text(
+    result: &crate::provider::commands::ProviderShowResult,
 ) -> String {
+    let provider = &result.config;
     let mut output = format!(
         "Provider: {}\n",
         provider.provider_name.as_deref().unwrap_or("unknown")
     );
-
-    let type_str = match provider.provider_type {
-        crate::config::ProviderType::OpenAI => "openai",
-        crate::config::ProviderType::Anthropic => "anthropic",
-        crate::config::ProviderType::Ollama => "ollama",
-        crate::config::ProviderType::LocalCustom => "local",
-    };
+    let type_str = crate::provider::profile::provider_type_slug(provider.provider_type);
     output.push_str(&format!("Type: {}\n", type_str));
     output.push_str(&format!("Model: {}\n", provider.model));
-
     if let Some(endpoint) = &provider.endpoint {
         output.push_str(&format!("Endpoint: {}\n", endpoint));
     } else {
         output.push_str("Endpoint: (default endpoint)\n");
     }
-
-    if let Some(status) = api_key_status {
+    if let Some(status) = &result.api_key_status {
         output.push_str(&format!("API Key: {}\n", status));
     }
-
     output.push_str("\nDefault Completion Options:\n");
     if let Some(temp) = provider.default_options.temperature {
         output.push_str(&format!("  temperature: {}\n", temp));
@@ -3709,28 +3202,19 @@ fn format_provider_show_text(
     output
 }
 
-/// Format provider show as JSON
-fn format_provider_show_json(
-    provider: &crate::config::ProviderConfig,
-    api_key_status: Option<&str>,
+/// Format provider show result as JSON
+fn format_provider_show_result_json(
+    result: &crate::provider::commands::ProviderShowResult,
 ) -> String {
-    use serde_json::json;
-
-    let type_str = match provider.provider_type {
-        crate::config::ProviderType::OpenAI => "openai",
-        crate::config::ProviderType::Anthropic => "anthropic",
-        crate::config::ProviderType::Ollama => "ollama",
-        crate::config::ProviderType::LocalCustom => "local",
-    };
-
-    let api_key_status_str = api_key_status.map(|s| match s {
+    let provider = &result.config;
+    let type_str = crate::provider::profile::provider_type_slug(provider.provider_type);
+    let api_key_status_str = result.api_key_status.as_deref().map(|s| match s {
         s if s.contains("from config") => "set_from_config",
         s if s.contains("from environment") => "set_from_env",
         s if s.contains("Not set") => "not_set",
         s if s.contains("Not required") => "not_required",
         _ => "unknown",
     });
-
     let default_options = json!({
         "temperature": provider.default_options.temperature,
         "max_tokens": provider.default_options.max_tokens,
@@ -3739,8 +3223,7 @@ fn format_provider_show_json(
         "presence_penalty": provider.default_options.presence_penalty,
         "stop": provider.default_options.stop,
     });
-
-    let result = json!({
+    let out = json!({
         "provider_name": provider.provider_name.as_deref().unwrap_or("unknown"),
         "provider_type": type_str,
         "model": provider.model,
@@ -3748,8 +3231,7 @@ fn format_provider_show_json(
         "api_key_status": api_key_status_str,
         "default_options": default_options,
     });
-
-    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// Format provider validation result
@@ -3807,6 +3289,38 @@ fn format_provider_validation_result(
         output.push_str(&format!("Warnings: {}\n", result.warnings.len()));
     }
 
+    output
+}
+
+/// Format provider test result as text
+fn format_provider_test_result(
+    result: &crate::provider::commands::ProviderTestResult,
+    elapsed_ms: Option<u128>,
+) -> String {
+    let mut output = format!("Testing provider: {}\n\n", result.provider_name);
+    output.push_str("✓ Provider client created\n");
+    if result.connectivity_ok {
+        output.push_str(&match elapsed_ms {
+            Some(ms) => format!("✓ API connectivity: OK ({}ms)\n", ms),
+            None => "✓ API connectivity: OK\n".to_string(),
+        });
+        if result.model_available {
+            output.push_str(&format!("✓ Model '{}' is available\n", result.model_checked));
+        } else {
+            output.push_str(&format!("✗ Model '{}' not found\n", result.model_checked));
+            output.push_str(&format!(
+                "Available models: {}\n",
+                result.available_models.join(", ")
+            ));
+            return output;
+        }
+    } else {
+        if let Some(ref msg) = result.error_message {
+            output.push_str(&format!("✗ API connectivity failed: {}\n", msg));
+        }
+        return output;
+    }
+    output.push_str("\nProvider is working correctly.\n");
     output
 }
 

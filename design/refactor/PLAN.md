@@ -28,6 +28,10 @@ Related docs:
 - [Workspace Migration Guide](workspace/workspace_migration_guide.md)
 - [Telemetry Migration Plan](telemetry/telemetry_migration_plan.md)
 
+Agent–context boundary: the following docs define and reflect on the adapter boundary moved in Phase 7. They are a useful source for refactor post-mortem: they capture intent, naming rationale, and what was in scope versus out of scope.
+- [Agent Context Adapter Boundary Spec](agent/agent_context_adapter_boundary_spec.md) — contract shape, read/write/generate flows, queue wait policy, and dependency boundaries.
+- [Agent Integration Naming](agent/agent_integration_naming.md) — pros/cons of the original "integration" name, behavior-driven alternatives, and the decision to rename to `context_access` for alignment with domain rules.
+
 ---
 
 ## Migration rules
@@ -55,7 +59,7 @@ Apply these rules when implementing domain extraction and refactors.
 | 4 | Config composition root and path ownership | Phase 2, Phase 3 | Completed local |
 | 5 | Telemetry foundation and policy services | Phase 1 | Completed local |
 | 6 | Context query mutation generation and queue ownership | Phase 2, Phase 4, Phase 5 | In progress |
-| 7 | Provider and agent command workflows plus adapter cutover | Phase 2, Phase 3, Phase 4, Phase 6 | Planned |
+| 7 | Provider and agent command workflows plus adapter cutover | Phase 2, Phase 3, Phase 4, Phase 6 | Completed local |
 | 8 | Workspace lifecycle status and watch ownership | Phase 4, Phase 5, Phase 6, Phase 7 | Planned |
 | 9 | CLI route waves and startup execution cutover | Phase 4, Phase 5, Phase 6, Phase 7, Phase 8 | Planned |
 | 10 | Legacy removal and boundary seal | Phase 1 to Phase 9 | Planned |
@@ -259,25 +263,31 @@ Context domain under `src/context` with `mod.rs`, `facade.rs`, `types.rs`. Frame
 |-------|--------|
 | Goal | Complete provider and agent command service ownership and move adapter boundary to domain contracts. |
 | Dependencies | Phase 2, Phase 3, Phase 4, Phase 6 |
-| Docs | provider/provider_migration_plan.md, agent/agent_migration_plan.md |
-| Completion | Planned |
+| Docs | provider/provider_migration_plan.md, agent/agent_migration_plan.md. For post-mortem reflection on the agent–context boundary: [Agent Context Adapter Boundary Spec](agent/agent_context_adapter_boundary_spec.md), [Agent Integration Naming](agent/agent_integration_naming.md). |
+| Completion | Completed local |
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Finalize provider command workflow ownership and diagnostics ownership in provider application services. | Planned |
-| 2 | Finalize agent command workflow ownership in agent application services. | Planned |
-| 3 | Move adapter contract and implementation to agent ports and adapters using context facade contracts. | Planned |
-| 4 | Ensure config loads and validation in both domains flow through composition facade and domain contracts only. | Planned |
-| 5 | Remove legacy adapter and command orchestration ownership from tooling paths in the same phase window. | Planned |
+| 1 | Finalize provider command workflow and diagnostics ownership in provider command service. | Completed local |
+| 2 | Finalize agent command workflow ownership in agent command service. | Completed local |
+| 3 | Move adapter contract and implementation to agent context_access module using context facade contracts. | Completed local |
+| 4 | Ensure config loads and validation in both domains flow through composition facade and domain contracts only. | Completed local |
+| 5 | Remove legacy adapter and command orchestration ownership from tooling paths in the same phase window. | Completed local |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| Provider and agent command routes are ready for CLI wave cutover with one service call per variant. | Planned |
-| Adapter paths use explicit context contracts with no cross domain internal access. | Planned |
+| Provider and agent command routes are ready for CLI wave cutover with one service call per variant. | Completed local |
+| Adapter paths use explicit context contracts with no cross domain internal access. | Completed local |
 
 | Dependency closure solved | Completion |
 |---------------------------|------------|
-| Satisfies provider and agent service readiness gates required by CLI route wave sequencing. | Planned |
+| Satisfies provider and agent service readiness gates required by CLI route wave sequencing. | Completed local |
+
+#### Phase 7 — Implementation notes
+
+Provider command service in `src/provider/commands.rs` exposes one entry point per variant: run_list, run_show, run_status, run_validate, run_test, run_create, run_remove, run_update_flags; each returns structured DTOs and CLI only parses, calls once, and formats. Agent command service in `src/agent/commands.rs` mirrors with list, show, validate_single, validate_all, status, create, update_flags, persist_edited_config, remove. Adapter lives under `src/agent/context_access/` with contract in `contract.rs` and ContextApiAdapter in `context_api.rs`; uses context facade types only. Tooling no longer owns adapter; `src/tooling/adapter.rs` removed; tooling re-exports from `crate::agent`. Context queue uses `crate::provider::profile::provider_type_slug` so context does not depend on config for provider type. Config load via ConfigLoader only; validation through provider and agent domain services.
+
+**Post-mortem reflection:** Compare outcomes to [Agent Context Adapter Boundary Spec](agent/agent_context_adapter_boundary_spec.md) for contract shape, ownership, and dependency boundaries; and to [Agent Integration Naming](agent/agent_integration_naming.md) for the naming decision from "integration" to "context_access" and behavior-driven alignment.
 
 ---
 

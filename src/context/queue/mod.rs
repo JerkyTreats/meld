@@ -1047,12 +1047,7 @@ impl FrameGenerationQueue {
         let (provider_config, provider_type_str) = {
             let provider_registry = api.provider_registry().read();
             let config = provider_registry.get_or_error(&request.provider_name)?;
-            let provider_type_str = match config.provider_type {
-                crate::config::ProviderType::OpenAI => "openai",
-                crate::config::ProviderType::Anthropic => "anthropic",
-                crate::config::ProviderType::Ollama => "ollama",
-                crate::config::ProviderType::LocalCustom => "local",
-            };
+            let provider_type_str = crate::provider::profile::provider_type_slug(config.provider_type);
             (config.clone(), provider_type_str)
         };
 
