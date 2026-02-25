@@ -23,7 +23,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::cli::parse::{
-    AgentCommands, Commands, ContextCommands, ProviderCommands, WorkspaceCommands,
+    AgentCommands, AgentPromptCommands, Commands, ContextCommands, ProviderCommands,
+    WorkspaceCommands,
 };
 use crate::cli::{command_name, summary_descriptor};
 
@@ -370,8 +371,23 @@ impl RunContext {
                 role.as_deref(),
                 editor.as_deref(),
             ),
+            AgentCommands::Prompt { command } => self.handle_agent_prompt_command(command),
             AgentCommands::Remove { agent_id, force } => {
                 self.handle_agent_remove(agent_id, *force)
+            }
+        }
+    }
+
+    fn handle_agent_prompt_command(
+        &self,
+        command: &AgentPromptCommands,
+    ) -> Result<String, ApiError> {
+        match command {
+            AgentPromptCommands::Show { agent_id } => {
+                self.handle_agent_prompt_show(agent_id)
+            }
+            AgentPromptCommands::Edit { agent_id, editor } => {
+                self.handle_agent_prompt_edit(agent_id, editor.as_deref())
             }
         }
     }
@@ -540,8 +556,6 @@ impl RunContext {
         agent_id: &str,
         editor: Option<&str>,
     ) -> Result<(), ApiError> {
-        use std::process::Command;
-
         let config_path = self
             .api
             .agent_registry()
@@ -556,26 +570,7 @@ impl RunContext {
 
         std::fs::write(&temp_path, content.as_bytes())
             .map_err(|e| ApiError::ConfigError(format!("Failed to write temp file: {}", e)))?;
-
-        let editor_cmd = match editor {
-            Some(ed) => ed.to_string(),
-            None => std::env::var("EDITOR").map_err(|_| {
-                ApiError::ConfigError(
-                    "No editor specified and $EDITOR not set. Use --editor <editor>".to_string(),
-                )
-            })?,
-        };
-
-        let status = Command::new(&editor_cmd)
-            .arg(&temp_path)
-            .status()
-            .map_err(|e| ApiError::ConfigError(format!("Failed to open editor: {}", e)))?;
-
-        if !status.success() {
-            return Err(ApiError::ConfigError(
-                "Editor exited with non-zero status".to_string(),
-            ));
-        }
+        self.open_editor_for_path(&temp_path, editor)?;
 
         let edited_content = std::fs::read_to_string(&temp_path)
             .map_err(|e| ApiError::ConfigError(format!("Failed to read edited file: {}", e)))?;
@@ -587,6 +582,100 @@ impl RunContext {
         AgentCommandService::persist_edited_config(&mut registry, agent_id, agent_config)?;
 
         let _ = std::fs::remove_file(&temp_path);
+        Ok(())
+    }
+
+    fn resolve_agent_prompt_file_path(
+        &self,
+        agent_id: &str,
+    ) -> Result<PathBuf, ApiError> {
+        let prompt_path = {
+            let registry = self.api.agent_registry().read();
+            let result = AgentCommandService::show(&registry, agent_id, false)?;
+            result.prompt_path.ok_or_else(|| {
+                ApiError::ConfigError(format!(
+                    "Agent '{}' has no prompt file path configured",
+                    agent_id
+                ))
+            })?
+        };
+        Ok(PathBuf::from(prompt_path))
+    }
+
+    fn handle_agent_prompt_show(&self, agent_id: &str) -> Result<String, ApiError> {
+        let prompt_path = self.resolve_agent_prompt_file_path(agent_id)?;
+        let content = std::fs::read_to_string(&prompt_path).map_err(|e| {
+            ApiError::ConfigError(format!(
+                "Failed to read prompt file {}: {}",
+                prompt_path.display(),
+                e
+            ))
+        })?;
+
+        Ok(format!(
+            "Agent: {}\nPrompt file: {}\n\n{}",
+            agent_id,
+            prompt_path.display(),
+            content
+        ))
+    }
+
+    fn handle_agent_prompt_edit(
+        &self,
+        agent_id: &str,
+        editor: Option<&str>,
+    ) -> Result<String, ApiError> {
+        let prompt_path = self.resolve_agent_prompt_file_path(agent_id)?;
+        if let Some(parent) = prompt_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                ApiError::ConfigError(format!(
+                    "Failed to create prompt directory {}: {}",
+                    parent.display(),
+                    e
+                ))
+            })?;
+        }
+        if !prompt_path.exists() {
+            std::fs::write(&prompt_path, b"").map_err(|e| {
+                ApiError::ConfigError(format!(
+                    "Failed to create prompt file {}: {}",
+                    prompt_path.display(),
+                    e
+                ))
+            })?;
+        }
+
+        self.open_editor_for_path(&prompt_path, editor)?;
+        Ok(format!("Prompt updated: {}", prompt_path.display()))
+    }
+
+    fn open_editor_for_path(
+        &self,
+        path: &std::path::Path,
+        editor: Option<&str>,
+    ) -> Result<(), ApiError> {
+        use std::process::Command;
+
+        let editor_cmd = match editor {
+            Some(ed) => ed.to_string(),
+            None => std::env::var("EDITOR").map_err(|_| {
+                ApiError::ConfigError(
+                    "No editor specified and $EDITOR not set. Use --editor <editor>".to_string(),
+                )
+            })?,
+        };
+
+        let status = Command::new(&editor_cmd)
+            .arg(path)
+            .status()
+            .map_err(|e| ApiError::ConfigError(format!("Failed to open editor: {}", e)))?;
+
+        if !status.success() {
+            return Err(ApiError::ConfigError(
+                "Editor exited with non-zero status".to_string(),
+            ));
+        }
+
         Ok(())
     }
 

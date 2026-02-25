@@ -265,6 +265,11 @@ pub enum AgentCommands {
         #[arg(long)]
         editor: Option<String>,
     },
+    /// Edit agent prompt files
+    Prompt {
+        #[command(subcommand)]
+        command: AgentPromptCommands,
+    },
     /// Remove agent
     Remove {
         /// Agent ID
@@ -272,6 +277,23 @@ pub enum AgentCommands {
         /// Skip confirmation prompt
         #[arg(long)]
         force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AgentPromptCommands {
+    /// Show the prompt file for an agent
+    Show {
+        /// Agent ID
+        agent_id: String,
+    },
+    /// Edit the prompt file for an agent
+    Edit {
+        /// Agent ID
+        agent_id: String,
+        /// Editor to use (default: $EDITOR)
+        #[arg(long)]
+        editor: Option<String>,
     },
 }
 

@@ -1,7 +1,8 @@
 //! CLI help and command-name contract for telemetry and routing.
 
 use crate::cli::parse::{
-    AgentCommands, Commands, ContextCommands, ProviderCommands, WorkspaceCommands,
+    AgentCommands, AgentPromptCommands, Commands, ContextCommands, ProviderCommands,
+    WorkspaceCommands,
 };
 use crate::telemetry::emission::SummaryCommandDescriptor;
 
@@ -59,6 +60,10 @@ pub fn agent_command_name(command: &AgentCommands) -> &'static str {
         AgentCommands::Show { .. } => "show",
         AgentCommands::Create { .. } => "create",
         AgentCommands::Edit { .. } => "edit",
+        AgentCommands::Prompt { command } => match command {
+            AgentPromptCommands::Show { .. } => "prompt_show",
+            AgentPromptCommands::Edit { .. } => "prompt_edit",
+        },
         AgentCommands::Remove { .. } => "remove",
         AgentCommands::Validate { .. } => "validate",
     }
@@ -149,6 +154,9 @@ pub fn summary_descriptor(command: &Commands) -> SummaryCommandDescriptor {
                 command,
                 AgentCommands::Create { .. }
                     | AgentCommands::Edit { .. }
+                    | AgentCommands::Prompt {
+                        command: AgentPromptCommands::Edit { .. },
+                    }
                     | AgentCommands::Remove { .. }
             ),
         },
