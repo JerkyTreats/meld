@@ -1085,12 +1085,27 @@ impl FrameGenerationQueue {
         };
 
         // Get node context to build prompt
-        let view = ContextView {
-            max_frames: 10,
-            ordering: crate::views::OrderingPolicy::Recency,
-            filters: vec![],
+        let context = api.get_node(
+            request.node_id,
+            ContextView::builder().max_frames(10).recent().build(),
+        )?;
+        let node_context_text = context
+            .frames
+            .iter()
+            .map(|f| String::from_utf8_lossy(&f.content))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let child_context_text =
+            Self::collect_directory_child_context_text(api, &node_record, request)?;
+        let prompt_context = match (node_context_text.is_empty(), child_context_text.is_empty()) {
+            (true, true) => None,
+            (false, true) => Some(node_context_text),
+            (true, false) => Some(child_context_text),
+            (false, false) => Some(format!(
+                "Node Context:\n{}\n\nChild Context:\n{}",
+                node_context_text, child_context_text
+            )),
         };
-        let context = api.get_node(request.node_id, view)?;
 
         // Build messages for LLM
         let mut messages = vec![ChatMessage {
@@ -1099,13 +1114,7 @@ impl FrameGenerationQueue {
         }];
 
         // Add context from existing frames
-        if !context.frames.is_empty() {
-            let context_text: String = context
-                .frames
-                .iter()
-                .map(|f| String::from_utf8_lossy(&f.content))
-                .collect::<Vec<_>>()
-                .join("\n\n");
+        if let Some(context_text) = prompt_context {
             messages.push(ChatMessage {
                 role: crate::provider::MessageRole::User,
                 content: format!("Context:\n{}\n\nTask: {}", context_text, user_prompt),
@@ -1125,6 +1134,16 @@ impl FrameGenerationQueue {
 
         // Generate completion - THIS IS THE ONLY PLACE PROVIDERS ARE CALLED
         let start = Instant::now();
+        info!(
+            request_id = ?request.request_id,
+            node_id = %hex::encode(request.node_id),
+            agent_id = %request.agent_id,
+            provider_name = %request.provider_name,
+            frame_type = %request.frame_type,
+            attempt = request.retry_count + 1,
+            message_count = messages.len(),
+            "Provider request sent"
+        );
         Self::emit_provider_event_static(
             event_context.clone(),
             "provider_request_sent",
@@ -1180,6 +1199,17 @@ impl FrameGenerationQueue {
         }?;
 
         let duration = start.elapsed();
+        info!(
+            request_id = ?request.request_id,
+            node_id = %hex::encode(request.node_id),
+            agent_id = %request.agent_id,
+            provider_name = %request.provider_name,
+            frame_type = %request.frame_type,
+            attempt = request.retry_count + 1,
+            duration_ms = duration.as_millis(),
+            response_chars = response.content.chars().count(),
+            "Provider response received"
+        );
         Self::emit_provider_event_static(
             event_context,
             "provider_response_received",
@@ -1224,6 +1254,62 @@ impl FrameGenerationQueue {
         );
 
         Ok(frame_id)
+    }
+
+    fn collect_directory_child_context_text(
+        api: &ContextApi,
+        node_record: &NodeRecord,
+        request: &GenerationRequest,
+    ) -> Result<String, ApiError> {
+        if !matches!(node_record.node_type, crate::store::NodeType::Directory) {
+            return Ok(String::new());
+        }
+
+        let child_view = ContextView::builder()
+            .max_frames(1)
+            .recent()
+            .by_type(request.frame_type.clone())
+            .by_agent(request.agent_id.clone())
+            .build();
+
+        let mut child_sections = Vec::new();
+        for child_id in &node_record.children {
+            let child_context = api.get_node(*child_id, child_view.clone())?;
+            if child_context.frames.is_empty() {
+                continue;
+            }
+
+            let child_kind = match child_context.node_record.node_type {
+                crate::store::NodeType::File { .. } => "File",
+                crate::store::NodeType::Directory => "Directory",
+            };
+            let child_text = child_context
+                .frames
+                .iter()
+                .map(|f| String::from_utf8_lossy(&f.content))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+
+            child_sections.push(format!(
+                "Path: {}\nType: {}\nContent:\n{}",
+                child_context.node_record.path.display(),
+                child_kind,
+                child_text
+            ));
+        }
+
+        if !child_sections.is_empty() {
+            debug!(
+                node_id = %hex::encode(node_record.node_id),
+                direct_children = node_record.children.len(),
+                child_context_nodes = child_sections.len(),
+                frame_type = %request.frame_type,
+                agent_id = %request.agent_id,
+                "Collected directory child context for generation"
+            );
+        }
+
+        Ok(child_sections.join("\n\n---\n\n"))
     }
 
     /// Validate that agent has all required prompts
