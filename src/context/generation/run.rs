@@ -17,6 +17,31 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+fn format_failure_samples(
+    result: &crate::context::generation::plan::GenerationResult,
+    max_samples: usize,
+) -> String {
+    let mut messages: Vec<&str> = result
+        .failures
+        .values()
+        .map(|detail| detail.message.as_str())
+        .collect();
+    messages.sort_unstable();
+    messages.dedup();
+
+    let samples: Vec<&str> = messages.into_iter().take(max_samples).collect();
+    if samples.is_empty() {
+        return String::new();
+    }
+
+    let mut out = format!(" Sample errors: {}", samples.join(" | "));
+    let remaining = result.failures.len().saturating_sub(samples.len());
+    if remaining > 0 {
+        out.push_str(&format!(" | ... and {} more", remaining));
+    }
+    out
+}
+
 fn parse_node_id(s: &str) -> Result<NodeID, ApiError> {
     let s = s.strip_prefix("0x").unwrap_or(s);
     let bytes = hex::decode(s)
@@ -441,9 +466,10 @@ pub fn run_generate(
     let result = rt.block_on(async { executor.execute(queue.as_ref(), plan).await })?;
 
     if result.total_failed > 0 {
+        let failure_samples = format_failure_samples(&result, 3);
         return Err(ApiError::GenerationFailed(format!(
-            "Generation completed with failures. generated={}, failed={}",
-            result.total_generated, result.total_failed
+            "Generation completed with failures. generated={}, failed={}.{}",
+            result.total_generated, result.total_failed, failure_samples
         )));
     }
     Ok(format!(

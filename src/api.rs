@@ -173,7 +173,16 @@ impl ContextApi {
     /// * Append-only: Creates new frame, never mutates existing
     /// * Atomic: Frame creation and head update are transactional
     /// * Deterministic: Same inputs → same FrameID
-    #[instrument(skip(self), fields(node_id = %hex::encode(node_id), agent_id = %agent_id, frame_type = %frame.frame_type))]
+    #[instrument(
+        skip(self, frame, agent_id),
+        fields(
+            node_id = %hex::encode(node_id),
+            agent_id = %agent_id,
+            frame_id = %hex::encode(frame.frame_id),
+            frame_type = %frame.frame_type,
+            content_bytes = frame.content.len()
+        )
+    )]
     pub fn put_frame(
         &self,
         node_id: NodeID,

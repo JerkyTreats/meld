@@ -118,7 +118,10 @@ pub fn format_provider_validation_result(
 ) -> String {
     let mut output = format!("Validating provider: {}\n\n", result.provider_name);
 
-    if result.errors.is_empty() && result.checks.iter().all(|(_, passed)| *passed) {
+    if result.errors.is_empty()
+        && result.warnings.is_empty()
+        && result.checks.iter().all(|(_, passed)| *passed)
+    {
         output.push_str("✓ All validation checks passed\n\n");
     } else {
         for (description, passed) in &result.checks {

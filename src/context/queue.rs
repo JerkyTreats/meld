@@ -945,10 +945,10 @@ impl FrameGenerationQueue {
                         stats_guard.completed += 1;
                         false
                     }
-                    Err(_) => {
+                    Err(err) => {
                         // Check if we should retry
                         let retry = request.retry_count < config.max_retry_attempts
-                            && Self::is_retryable_error(result.as_ref().unwrap_err());
+                            && Self::is_retryable_error(err);
                         if retry {
                             // Will update stats after re-queuing
                         } else {
@@ -958,6 +958,7 @@ impl FrameGenerationQueue {
                                 node_id = %hex::encode(request.node_id),
                                 agent_id = %request.agent_id,
                                 retry_count = request.retry_count,
+                                error = %err,
                                 "Generation request failed permanently"
                             );
                         }

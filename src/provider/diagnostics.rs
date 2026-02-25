@@ -152,8 +152,17 @@ impl ProviderDiagnosticsService {
                     ));
                 }
             }
-            ProviderType::Ollama | ProviderType::LocalCustom => {
+            ProviderType::Ollama => {
                 result.add_check("API key not required for local provider", true);
+            }
+            ProviderType::LocalCustom => {
+                if provider.api_key.is_some() {
+                    result.add_check("API key configured for local custom provider", true);
+                } else {
+                    result.add_warning(
+                        "No API key configured for local custom provider. Some OpenAI-compatible endpoints require authentication.".to_string(),
+                    );
+                }
             }
         }
 
