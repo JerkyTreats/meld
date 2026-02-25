@@ -1287,6 +1287,42 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_provider_reports_file_errors_when_registry_skips_invalid_config() {
+        let test_dir = TempDir::new().unwrap();
+        with_xdg_config_home(&test_dir, || {
+            let invalid_local_provider = ProviderConfig {
+                provider_name: Some("local".to_string()),
+                provider_type: ProviderType::LocalCustom,
+                model: "llama3".to_string(),
+                api_key: None,
+                endpoint: Some("localhost:8080/v1".to_string()),
+                default_options: CompletionOptions::default(),
+            };
+
+            let registry = ProviderRegistry::new();
+            registry
+                .save_provider_config("local", &invalid_local_provider)
+                .unwrap();
+
+            let mut registry = ProviderRegistry::new();
+            registry.load_from_xdg().unwrap();
+
+            assert!(registry.get("local").is_none());
+
+            let result = registry.validate_provider("local").unwrap();
+
+            assert!(result
+                .errors
+                .iter()
+                .any(|error| error.contains("Invalid endpoint URL")));
+            assert!(!result
+                .errors
+                .iter()
+                .any(|error| error.contains("Provider not found in registry")));
+        });
+    }
+
+    #[test]
     fn test_validation_result() {
         let mut result = ValidationResult::new("test-provider".to_string());
 

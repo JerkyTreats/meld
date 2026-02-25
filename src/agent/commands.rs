@@ -3,6 +3,7 @@
 //! Owns all agent workflow logic; CLI parses, calls one method per variant, and formats output.
 
 use crate::agent::identity::{AgentRole, ValidationResult};
+use crate::agent::prompt::resolve_prompt_path;
 use crate::agent::profile::AgentConfig;
 use crate::agent::registry::AgentRegistry;
 use crate::error::ApiError;
@@ -58,6 +59,7 @@ pub struct AgentStatusEntryResult {
 pub struct AgentCreateResult {
     pub agent_id: String,
     pub config_path: PathBuf,
+    pub prompt_path: Option<PathBuf>,
 }
 
 /// Result of agent edit command.
@@ -74,6 +76,43 @@ pub struct AgentRemoveResult {
 }
 
 impl AgentCommandService {
+    fn normalize_and_copy_prompt_path(
+        agent_id: &str,
+        prompt_path: &str,
+    ) -> Result<String, ApiError> {
+        let base_dir = crate::config::xdg::config_home()?.join("merkle");
+        let source_path = resolve_prompt_path(prompt_path, &base_dir)?;
+
+        let prompt_content = std::fs::read_to_string(&source_path).map_err(|e| {
+            ApiError::ConfigError(format!(
+                "Failed to read prompt file {}: {}",
+                source_path.display(),
+                e
+            ))
+        })?;
+
+        if prompt_content.trim().is_empty() {
+            return Err(ApiError::ConfigError(format!(
+                "Prompt file {} is empty",
+                source_path.display()
+            )));
+        }
+
+        let prompts_dir = crate::config::xdg::prompts_dir()?;
+        let stored_filename = format!("{}.md", agent_id);
+        let stored_path = prompts_dir.join(&stored_filename);
+
+        std::fs::write(&stored_path, prompt_content).map_err(|e| {
+            ApiError::ConfigError(format!(
+                "Failed to write prompt file {}: {}",
+                stored_path.display(),
+                e
+            ))
+        })?;
+
+        Ok(format!("prompts/{}", stored_filename))
+    }
+
     /// Parse role string to AgentRole.
     pub fn parse_role(role_str: &str) -> Result<AgentRole, ApiError> {
         match role_str {
@@ -191,15 +230,25 @@ impl AgentCommandService {
                 "Prompt path is required for Writer agents.".to_string(),
             ));
         }
+        let normalized_prompt_path = if role != AgentRole::Reader {
+            Some(Self::normalize_and_copy_prompt_path(
+                agent_id,
+                prompt_path
+                    .as_deref()
+                    .expect("writer agents require prompt path"),
+            )?)
+        } else {
+            None
+        };
         let mut agent_config = AgentConfig {
             agent_id: agent_id.to_string(),
             role,
             system_prompt: None,
-            system_prompt_path: prompt_path.clone(),
+            system_prompt_path: normalized_prompt_path.clone(),
             metadata: HashMap::new(),
         };
         if role != AgentRole::Reader {
-            if let Some(ref path) = prompt_path {
+            if let Some(ref path) = normalized_prompt_path {
                 agent_config.metadata.insert(
                     "user_prompt_file".to_string(),
                     format!("Analyze the file at {{path}} using the system prompt from {}", path),
@@ -213,9 +262,15 @@ impl AgentCommandService {
         registry.save_agent_config(agent_id, &agent_config)?;
         registry.load_from_xdg()?;
         let config_path = registry.agent_config_path(agent_id)?;
+        let prompt_path = if role != AgentRole::Reader {
+            Some(crate::config::xdg::prompts_dir()?.join(format!("{}.md", agent_id)))
+        } else {
+            None
+        };
         Ok(AgentCreateResult {
             agent_id: agent_id.to_string(),
             config_path,
+            prompt_path,
         })
     }
 
@@ -231,11 +286,30 @@ impl AgentCommandService {
             .map_err(|e| ApiError::ConfigError(format!("Failed to read config: {}", e)))?;
         let mut agent_config: AgentConfig = toml::from_str(&content)
             .map_err(|e| ApiError::ConfigError(format!("Failed to parse config: {}", e)))?;
-        if let Some(p) = prompt_path {
-            agent_config.system_prompt_path = Some(p.to_string());
-        }
         if let Some(r) = role {
             agent_config.role = Self::parse_role(r)?;
+        }
+        if let Some(p) = prompt_path {
+            if agent_config.role == AgentRole::Reader {
+                agent_config.system_prompt_path = None;
+            } else {
+                let normalized = Self::normalize_and_copy_prompt_path(agent_id, p)?;
+                agent_config.system_prompt_path = Some(normalized.clone());
+                agent_config.metadata.insert(
+                    "user_prompt_file".to_string(),
+                    format!(
+                        "Analyze the file at {{path}} using the system prompt from {}",
+                        normalized
+                    ),
+                );
+                agent_config.metadata.insert(
+                    "user_prompt_directory".to_string(),
+                    format!(
+                        "Analyze the directory at {{path}} using the system prompt from {}",
+                        normalized
+                    ),
+                );
+            }
         }
         registry.save_agent_config(agent_id, &agent_config)?;
         registry.load_from_xdg()?;
@@ -276,5 +350,127 @@ impl AgentCommandService {
             agent_id: agent_id.to_string(),
             config_path,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    static XDG_CONFIG_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn with_xdg_config_home<F, R>(test_dir: &TempDir, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = XDG_CONFIG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let original_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
+        std::env::set_var("XDG_CONFIG_HOME", test_dir.path());
+
+        let result = f();
+
+        if let Some(orig) = original_xdg_config {
+            std::env::set_var("XDG_CONFIG_HOME", orig);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        result
+    }
+
+    #[test]
+    fn create_writer_agent_copies_prompt_to_xdg_prompts() {
+        let test_dir = TempDir::new().unwrap();
+        with_xdg_config_home(&test_dir, || {
+            let source_prompt = test_dir.path().join("source-prompt.md");
+            std::fs::write(&source_prompt, "# Semantic\nPrompt body").unwrap();
+
+            let mut registry = AgentRegistry::new();
+            let result = AgentCommandService::create(
+                &mut registry,
+                "semantic",
+                AgentRole::Writer,
+                Some(source_prompt.display().to_string()),
+            )
+            .unwrap();
+
+            assert_eq!(result.agent_id, "semantic");
+            assert!(result.config_path.exists());
+            assert_eq!(
+                result
+                    .prompt_path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str()),
+                Some("semantic.md")
+            );
+
+            let config_content = std::fs::read_to_string(&result.config_path).unwrap();
+            assert!(config_content.contains("system_prompt_path = \"prompts/semantic.md\""));
+
+            let copied_prompt = crate::config::xdg::prompts_dir()
+                .unwrap()
+                .join("semantic.md");
+            assert!(copied_prompt.exists());
+            let copied_content = std::fs::read_to_string(copied_prompt).unwrap();
+            assert!(copied_content.contains("Prompt body"));
+
+            assert!(registry.get("semantic").is_some());
+        });
+    }
+
+    #[test]
+    fn create_writer_agent_rejects_unresolvable_prompt_path() {
+        let test_dir = TempDir::new().unwrap();
+        with_xdg_config_home(&test_dir, || {
+            let mut registry = AgentRegistry::new();
+            let err = AgentCommandService::create(
+                &mut registry,
+                "semantic",
+                AgentRole::Writer,
+                Some("missing-prompt.md".to_string()),
+            )
+            .unwrap_err();
+
+            let msg = err.to_string();
+            assert!(msg.contains("Failed to read prompt file") || msg.contains("Failed to"));
+
+            let config_path = registry.agent_config_path("semantic").unwrap();
+            assert!(!config_path.exists());
+        });
+    }
+
+    #[test]
+    fn xdg_load_keeps_agent_when_prompt_file_is_missing() {
+        let test_dir = TempDir::new().unwrap();
+        with_xdg_config_home(&test_dir, || {
+            let registry = AgentRegistry::new();
+            let mut metadata = HashMap::new();
+            metadata.insert(
+                "user_prompt_file".to_string(),
+                "Analyze the file at {path}".to_string(),
+            );
+            metadata.insert(
+                "user_prompt_directory".to_string(),
+                "Analyze the directory at {path}".to_string(),
+            );
+
+            let config = AgentConfig {
+                agent_id: "semantic".to_string(),
+                role: AgentRole::Writer,
+                system_prompt: None,
+                system_prompt_path: Some("prompts/missing.md".to_string()),
+                metadata,
+            };
+
+            registry.save_agent_config("semantic", &config).unwrap();
+
+            let mut loaded_registry = AgentRegistry::new();
+            loaded_registry.load_from_xdg().unwrap();
+
+            assert!(loaded_registry.get("semantic").is_some());
+        });
     }
 }

@@ -5,6 +5,52 @@ use crate::provider::ProviderRegistry;
 pub struct ProviderDiagnosticsService;
 
 impl ProviderDiagnosticsService {
+    fn load_provider_for_validation(
+        registry: &ProviderRegistry,
+        provider_name: &str,
+        config_path: &std::path::Path,
+        result: &mut ValidationResult,
+    ) -> Result<Option<ProviderConfig>, ApiError> {
+        if let Some(provider) = registry.get(provider_name) {
+            return Ok(Some(provider.clone()));
+        }
+
+        if !config_path.exists() {
+            result.add_error("Provider not found in registry".to_string());
+            return Ok(None);
+        }
+
+        let content = match std::fs::read_to_string(config_path) {
+            Ok(content) => content,
+            Err(e) => {
+                result.add_error(format!(
+                    "Failed to read config file {}: {}",
+                    config_path.display(),
+                    e
+                ));
+                return Ok(None);
+            }
+        };
+
+        let mut provider: ProviderConfig = match toml::from_str(&content) {
+            Ok(config) => config,
+            Err(e) => {
+                result.add_error(format!(
+                    "Failed to parse config file {}: {}",
+                    config_path.display(),
+                    e
+                ));
+                return Ok(None);
+            }
+        };
+
+        if provider.provider_name.is_none() {
+            provider.provider_name = Some(provider_name.to_string());
+        }
+
+        Ok(Some(provider))
+    }
+
     pub fn resolve_api_key_status(provider: &ProviderConfig) -> String {
         match provider.provider_type {
             ProviderType::OpenAI => {
@@ -35,15 +81,17 @@ impl ProviderDiagnosticsService {
     ) -> Result<ValidationResult, ApiError> {
         let mut result = ValidationResult::new(provider_name.to_string());
 
-        let provider = match registry.get(provider_name) {
-            Some(p) => p,
-            None => {
-                result.add_error("Provider not found in registry".to_string());
-                return Ok(result);
-            }
+        let config_path = registry.provider_config_path(provider_name)?;
+        let provider = match Self::load_provider_for_validation(
+            registry,
+            provider_name,
+            &config_path,
+            &mut result,
+        )? {
+            Some(provider) => provider,
+            None => return Ok(result),
         };
 
-        let config_path = registry.provider_config_path(provider_name)?;
         if !config_path.exists() {
             result.add_error(format!("Config file not found: {}", config_path.display()));
             return Ok(result);

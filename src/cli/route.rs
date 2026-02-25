@@ -471,11 +471,15 @@ impl RunContext {
             final_role,
             final_prompt_path,
         )?;
-        Ok(format!(
+        let mut output = format!(
             "Agent created: {}\nConfiguration file: {}",
             result.agent_id,
             result.config_path.display()
-        ))
+        );
+        if let Some(prompt_path) = result.prompt_path {
+            output.push_str(&format!("\nPrompt file: {}", prompt_path.display()));
+        }
+        Ok(output)
     }
 
     fn create_agent_interactive(
