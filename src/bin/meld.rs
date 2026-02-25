@@ -1,11 +1,11 @@
-//! Merkle CLI Binary
+//! Meld CLI Binary
 //!
-//! Command-line interface for the Merkle filesystem state management system.
+//! Command-line interface for the Meld filesystem state management system.
 
 use clap::Parser;
-use merkle::config::ConfigLoader;
-use merkle::logging::{init_logging, LoggingConfig};
-use merkle::cli::{Cli, RunContext};
+use meld::config::ConfigLoader;
+use meld::logging::{init_logging, LoggingConfig};
+use meld::cli::{Cli, RunContext};
 use std::path::PathBuf;
 use std::process;
 use tracing::{error, info};
@@ -22,7 +22,7 @@ fn main() {
         process::exit(1);
     }
 
-    info!("Merkle CLI starting");
+    info!("Meld CLI starting");
 
     // Create CLI context
     let context = match RunContext::new(cli.workspace.clone(), cli.config.clone()) {
@@ -32,7 +32,7 @@ fn main() {
         }
         Err(e) => {
             error!("Error initializing workspace: {}", e);
-            eprintln!("{}", merkle::cli::map_error(&e));
+            eprintln!("{}", meld::cli::map_error(&e));
             process::exit(1);
         }
     };
@@ -45,7 +45,7 @@ fn main() {
         }
         Err(e) => {
             error!("Command failed: {}", e);
-            eprintln!("{}", merkle::cli::map_error(&e));
+            eprintln!("{}", meld::cli::map_error(&e));
             process::exit(1);
         }
     }
@@ -85,10 +85,10 @@ fn build_logging_config(cli: &Cli) -> LoggingConfig {
     }
     if let Some(ref file) = cli.log_file {
         config.file = file.clone();
-    } else if config.file == PathBuf::from(".merkle/merkle.log") {
+    } else if config.file == PathBuf::from(".meld/meld.log") {
         // Resolve default log file path to XDG data directory
-        if let Ok(data_dir) = merkle::config::xdg::workspace_data_dir(&cli.workspace) {
-            config.file = data_dir.join("merkle.log");
+        if let Ok(data_dir) = meld::config::xdg::workspace_data_dir(&cli.workspace) {
+            config.file = data_dir.join("meld.log");
         }
     }
 

@@ -23,7 +23,7 @@ impl Default for XdgAgentStorage {
 
 fn agents_dir() -> Result<PathBuf, ApiError> {
     let config_home = crate::config::xdg::config_home()?;
-    let dir = config_home.join("merkle").join("agents");
+    let dir = config_home.join("meld").join("agents");
     if !dir.exists() {
         std::fs::create_dir_all(&dir).map_err(|e| {
             ApiError::ConfigError(format!(
@@ -51,7 +51,7 @@ impl AgentStorage for XdgAgentStorage {
             ))
         })?;
 
-        let base_dir = crate::config::xdg::config_home()?.join("merkle");
+        let base_dir = crate::config::xdg::config_home()?.join("meld");
         let mut prompt_cache = PromptCache::new();
         let mut loaded = Vec::new();
 

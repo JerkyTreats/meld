@@ -26,7 +26,7 @@ pub fn format_init_preview(preview: &InitPreview) -> String {
     if preview.prompts.is_empty() && preview.agents.is_empty() {
         output.push_str("All default agents and prompts already exist.\n");
     } else {
-        output.push_str("Run 'merkle init' to perform initialization.\n");
+        output.push_str("Run 'meld init' to perform initialization.\n");
     }
     output
 }
@@ -37,7 +37,7 @@ pub fn format_init_summary(summary: &InitSummary, force: bool) -> String {
     if !summary.prompts.created.is_empty() || !summary.prompts.skipped.is_empty() {
         let prompts_dir = crate::config::xdg::prompts_dir()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "~/.config/merkle/prompts/".to_string());
+            .unwrap_or_else(|_| "~/.config/meld/prompts/".to_string());
         output.push_str(&format!("Created prompts directory: {}\n", prompts_dir));
         for prompt in &summary.prompts.created {
             if force {
@@ -56,7 +56,7 @@ pub fn format_init_summary(summary: &InitSummary, force: bool) -> String {
         let agents_dir = crate::agent::XdgAgentStorage::new()
             .agents_dir()
             .map(|p: PathBuf| p.display().to_string())
-            .unwrap_or_else(|_| "~/.config/merkle/agents/".to_string());
+            .unwrap_or_else(|_| "~/.config/meld/agents/".to_string());
         output.push_str(&format!("Created agents directory: {}\n", agents_dir));
         for agent in &summary.agents.created {
             let role_str = match agent.as_str() {
@@ -127,9 +127,9 @@ pub fn format_init_summary(summary: &InitSummary, force: bool) -> String {
         output.push_str("All default agents already exist. Use --force to re-initialize.\n");
     } else {
         output.push_str("Initialization complete! You can now use:\n");
-        output.push_str("  - merkle agent list          # List all agents\n");
-        output.push_str("  - merkle agent show <id>     # View agent details\n");
-        output.push_str("  - merkle context generate    # Generate context frames\n");
+        output.push_str("  - meld agent list          # List all agents\n");
+        output.push_str("  - meld agent show <id>     # View agent details\n");
+        output.push_str("  - meld context generate    # Generate context frames\n");
     }
     output
 }

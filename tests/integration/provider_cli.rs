@@ -1,8 +1,8 @@
 //! Integration tests for Provider CLI commands
 
-use merkle::config::{xdg, ProviderConfig, ProviderType};
-use merkle::error::ApiError;
-use merkle::cli::{Commands, ProviderCommands, RunContext};
+use meld::config::{xdg, ProviderConfig, ProviderType};
+use meld::error::ApiError;
+use meld::cli::{Commands, ProviderCommands, RunContext};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -29,7 +29,7 @@ fn create_test_provider(
         model: model.to_string(),
         api_key: None,
         endpoint: endpoint.map(|s| s.to_string()),
-        default_options: merkle::provider::CompletionOptions::default(),
+        default_options: meld::provider::CompletionOptions::default(),
     };
 
     let toml_content = toml::to_string_pretty(&provider_config)

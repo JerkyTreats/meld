@@ -199,7 +199,7 @@ impl AgentRegistry {
         // Validate prompt file if needed
         if agent.role != AgentRole::Reader {
             if let Some(ref prompt_path) = agent_config.system_prompt_path {
-                let base_dir = crate::config::xdg::config_home()?.join("merkle");
+                let base_dir = crate::config::xdg::config_home()?.join("meld");
 
                 match crate::agent::prompt::resolve_prompt_path(prompt_path, &base_dir) {
                     Ok(resolved_path) => {

@@ -46,7 +46,7 @@ impl Default for WatchConfig {
             max_batch_size: 100,
             ignore_patterns: vec![
                 "**/.git/**".to_string(),
-                "**/.merkle/**".to_string(),
+                "**/.meld/**".to_string(),
                 "**/target/**".to_string(),
                 "**/node_modules/**".to_string(),
                 "**/.DS_Store".to_string(),

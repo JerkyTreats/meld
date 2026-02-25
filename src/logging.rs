@@ -64,9 +64,9 @@ fn default_output() -> String {
 
 fn default_log_file() -> PathBuf {
     // This is a placeholder - actual path is computed at runtime
-    // The path will be resolved to $XDG_DATA_HOME/merkle/workspaces/<hash>/merkle.log
+    // The path will be resolved to $XDG_DATA_HOME/meld/workspaces/<hash>/meld.log
     // when logging is initialized with a workspace root
-    PathBuf::from(".merkle/merkle.log")
+    PathBuf::from(".meld/meld.log")
 }
 
 fn default_true() -> bool {

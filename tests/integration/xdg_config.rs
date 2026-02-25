@@ -1,9 +1,9 @@
 //! Integration tests for XDG configuration loading
 
-use merkle::agent::resolve_prompt_path;
-use merkle::agent::{AgentRegistry, AgentRole, AgentStorage, PromptCache, XdgAgentStorage};
-use merkle::config::{xdg, MerkleConfig, ProviderConfig, ProviderType};
-use merkle::provider::ProviderRegistry;
+use meld::agent::resolve_prompt_path;
+use meld::agent::{AgentRegistry, AgentRole, AgentStorage, PromptCache, XdgAgentStorage};
+use meld::config::{xdg, MerkleConfig, ProviderConfig, ProviderType};
+use meld::provider::ProviderRegistry;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -53,7 +53,7 @@ fn test_xdg_agents_dir() {
     std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
 
     let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
-    assert_eq!(agents_dir, test_config_home.join("merkle").join("agents"));
+    assert_eq!(agents_dir, test_config_home.join("meld").join("agents"));
     assert!(agents_dir.exists());
 
     // Restore original
@@ -76,7 +76,7 @@ fn test_xdg_providers_dir() {
     let providers_dir = xdg::providers_dir().unwrap();
     assert_eq!(
         providers_dir,
-        test_config_home.join("merkle").join("providers")
+        test_config_home.join("meld").join("providers")
     );
     assert!(providers_dir.exists());
 
@@ -119,7 +119,7 @@ fn test_resolve_prompt_path_relative_current_dir() {
 
 #[test]
 fn test_resolve_prompt_path_relative_base() {
-    let base_dir = PathBuf::from("/tmp/merkle");
+    let base_dir = PathBuf::from("/tmp/meld");
     let path = "prompts/test.md";
     let resolved = resolve_prompt_path(path, &base_dir).unwrap();
     assert_eq!(resolved, base_dir.join("prompts").join("test.md"));
@@ -326,11 +326,11 @@ fn test_agent_registry_load_from_xdg_prompt_path_relative() {
     with_xdg_env(&test_dir, || {
         let test_config_home = test_dir.path().to_path_buf();
         let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
-        let merkle_dir = test_config_home.join("merkle");
-        fs::create_dir_all(&merkle_dir.join("prompts")).unwrap();
+        let meld_dir = test_config_home.join("meld");
+        fs::create_dir_all(&meld_dir.join("prompts")).unwrap();
 
         // Create a prompt file relative to XDG config
-        let prompt_file = merkle_dir.join("prompts").join("test.md");
+        let prompt_file = meld_dir.join("prompts").join("test.md");
         fs::write(&prompt_file, "# Relative Prompt\n\nTest content.").unwrap();
 
         // Create an agent config with relative prompt path

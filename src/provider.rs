@@ -942,7 +942,7 @@ impl ProviderRegistry {
 
     /// Load providers from XDG directory
     ///
-    /// Scans `$XDG_CONFIG_HOME/merkle/providers/*.toml` and loads each provider configuration.
+    /// Scans `$XDG_CONFIG_HOME/meld/providers/*.toml` and loads each provider configuration.
     /// Invalid configs are logged but don't stop loading of other providers.
     pub fn load_from_xdg(&mut self) -> Result<(), ApiError> {
         for loaded in self.storage.list()? {

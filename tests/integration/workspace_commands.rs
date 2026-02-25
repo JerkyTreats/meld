@@ -1,11 +1,11 @@
 //! Integration tests for workspace commands: ignore list, scan, validate.
 //!
-//! Covers merkle workspace ignore (list/add), merkle scan (idempotency, force,
-//! ignore list and .gitignore sync), and merkle workspace validate (passed,
+//! Covers meld workspace ignore (list/add), meld scan (idempotency, force,
+//! ignore list and .gitignore sync), and meld workspace validate (passed,
 //! not scanned, JSON format).
 
-use merkle::ignore;
-use merkle::cli::{Commands, RunContext, WorkspaceCommands};
+use meld::ignore;
+use meld::cli::{Commands, RunContext, WorkspaceCommands};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -249,7 +249,7 @@ fn test_scan_syncs_gitignore_to_ignore_list() {
         fs::create_dir_all(workspace_root.join("synced_ignore")).unwrap();
         let ctx = RunContext::new(workspace_root.clone(), None).unwrap();
         ctx.execute(&Commands::Scan { force: true }).unwrap();
-        let list_path = merkle::ignore::ignore_list_path(&workspace_root).unwrap();
+        let list_path = meld::ignore::ignore_list_path(&workspace_root).unwrap();
         let contents = fs::read_to_string(&list_path).unwrap();
         assert!(contents.contains("# .gitignore"));
         assert!(contents.contains("# end .gitignore"));
@@ -294,7 +294,7 @@ fn test_scan_respects_ignore_list() {
     });
 }
 
-/// Regression: after `merkle scan`, `merkle status` must show the tree as scanned.
+/// Regression: after `meld scan`, `meld status` must show the tree as scanned.
 /// Guards against status using a different root computation (e.g. ignore config) than scan,
 /// which would make the stored root not found and show "Scanned: no".
 #[test]

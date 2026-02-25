@@ -71,7 +71,7 @@ fn resolve_agent_id(api: &ContextApi, agent_id: Option<&str>) -> Result<String, 
     };
     match agent_count {
         0 => Err(ApiError::ConfigError(
-            "No Writer agents found. Use `merkle agent list` to see available agents, or use `--agent <agent_id>` to specify an agent.".to_string()
+            "No Writer agents found. Use `meld agent list` to see available agents, or use `--agent <agent_id>` to specify an agent.".to_string()
         )),
         1 => Ok(agent_ids[0].clone()),
         _ => Err(ApiError::ConfigError(format!(
@@ -84,7 +84,7 @@ fn resolve_agent_id(api: &ContextApi, agent_id: Option<&str>) -> Result<String, 
 fn resolve_provider_name(api: &ContextApi, provider_name: Option<&str>) -> Result<String, ApiError> {
     let provider_name = provider_name.ok_or_else(|| {
         ApiError::ProviderNotConfigured(
-            "Provider is required. Use `--provider <provider_name>` to specify a provider. Use `merkle provider list` to see available providers.".to_string()
+            "Provider is required. Use `--provider <provider_name>` to specify a provider. Use `meld provider list` to see available providers.".to_string()
         )
     })?;
     let registry = api.provider_registry().read();
@@ -359,7 +359,7 @@ pub fn run_generate(
         }
         (None, None) => {
             return Err(ApiError::ConfigError(
-                "Must specify either --node <node_id>, --path <path>, or a positional path (e.g. merkle context generate ./foo).".to_string()
+                "Must specify either --node <node_id>, --path <path>, or a positional path (e.g. meld context generate ./foo).".to_string()
             ));
         }
     };
@@ -388,7 +388,7 @@ pub fn run_generate(
 
     if !agent.metadata.contains_key("system_prompt") {
         return Err(ApiError::ConfigError(format!(
-            "Agent '{}' is missing system_prompt. Use `merkle agent validate {}` to check agent configuration.",
+            "Agent '{}' is missing system_prompt. Use `meld agent validate {}` to check agent configuration.",
             agent_id, agent_id
         )));
     }

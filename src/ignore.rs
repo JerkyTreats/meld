@@ -1,7 +1,7 @@
 //! Ignore list for scan and watch.
 //!
 //! The ignore_list is the single source of ignore rules. It lives at
-//! `$XDG_DATA_HOME/merkle/<workspace_path>/ignore_list`. Its default value is
+//! `$XDG_DATA_HOME/meld/<workspace_path>/ignore_list`. Its default value is
 //! .gitignore: when the file does not exist, we behave as if it contained
 //! ".gitignore", so workspace .gitignore is only read because it is the default
 //! entity in the ignore_list. A line ".gitignore" in the file expands to the

@@ -7,11 +7,11 @@
 //! - Concurrent access safety
 //! - Agent identity preserved in frames
 
-use merkle::agent::{AgentIdentity, AgentRegistry, AgentRole};
-use merkle::concurrency::NodeLockManager;
-use merkle::error::ApiError;
-use merkle::context::frame::{Basis, Frame, FrameStorage};
-use merkle::types::NodeID;
+use meld::agent::{AgentIdentity, AgentRegistry, AgentRole};
+use meld::concurrency::NodeLockManager;
+use meld::error::ApiError;
+use meld::context::frame::{Basis, Frame, FrameStorage};
+use meld::types::NodeID;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;

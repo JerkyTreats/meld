@@ -6,15 +6,15 @@
 //! - Error handling
 //! - Concurrent request handling
 
-use merkle::agent::{AgentIdentity, AgentRegistry, AgentRole};
-use merkle::api::{ContextApi, ContextView};
-use merkle::concurrency::NodeLockManager;
-use merkle::error::ApiError;
-use merkle::context::frame::{Basis, Frame, FrameStorage};
-use merkle::heads::HeadIndex;
-use merkle::store::{NodeRecord, NodeType, SledNodeRecordStore};
-use merkle::types::NodeID;
-use merkle::views::OrderingPolicy;
+use meld::agent::{AgentIdentity, AgentRegistry, AgentRole};
+use meld::api::{ContextApi, ContextView};
+use meld::concurrency::NodeLockManager;
+use meld::error::ApiError;
+use meld::context::frame::{Basis, Frame, FrameStorage};
+use meld::heads::HeadIndex;
+use meld::store::{NodeRecord, NodeType, SledNodeRecordStore};
+use meld::types::NodeID;
+use meld::views::OrderingPolicy;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;
@@ -30,7 +30,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
     let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
     let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
     let provider_registry = Arc::new(parking_lot::RwLock::new(
-        merkle::provider::ProviderRegistry::new(),
+        meld::provider::ProviderRegistry::new(),
     ));
     let lock_manager = Arc::new(NodeLockManager::new());
 

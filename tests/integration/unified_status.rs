@@ -1,9 +1,9 @@
-//! Integration tests for unified status command (merkle status)
+//! Integration tests for unified status command (meld status)
 
-use merkle::agent::{AgentRole, AgentStorage, XdgAgentStorage};
-use merkle::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
-use merkle::error::ApiError;
-use merkle::cli::{Commands, RunContext};
+use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
+use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
+use meld::error::ApiError;
+use meld::cli::{Commands, RunContext};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -75,7 +75,7 @@ fn create_test_provider(
         model: model.to_string(),
         api_key: None,
         endpoint: endpoint.map(|s| s.to_string()),
-        default_options: merkle::provider::CompletionOptions::default(),
+        default_options: meld::provider::CompletionOptions::default(),
     };
 
     let toml_content = toml::to_string_pretty(&provider_config)

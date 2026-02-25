@@ -45,7 +45,7 @@ pub fn build_workspace_status(
         return Ok(WorkspaceStatus {
             scanned: false,
             store_path: normalize_display_path(store_path),
-            message: Some("Run merkle scan to build the tree.".to_string()),
+            message: Some("Run meld scan to build the tree.".to_string()),
             tree: None,
             context_coverage: None,
             top_paths_by_node_count: None,

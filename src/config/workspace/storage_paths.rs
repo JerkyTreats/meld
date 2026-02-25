@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 fn default_store_path() -> PathBuf {
-    PathBuf::from(".merkle/store")
+    PathBuf::from(".meld/store")
 }
 
 fn default_frames_path() -> PathBuf {
-    PathBuf::from(".merkle/frames")
+    PathBuf::from(".meld/frames")
 }
 
 /// Storage configuration
@@ -28,8 +28,8 @@ pub struct StorageConfig {
 impl StorageConfig {
     /// Resolve storage paths to actual filesystem locations.
     pub fn resolve_paths(&self, workspace_root: &Path) -> Result<(PathBuf, PathBuf), ApiError> {
-        let is_default_store = self.store_path == PathBuf::from(".merkle/store");
-        let is_default_frames = self.frames_path == PathBuf::from(".merkle/frames");
+        let is_default_store = self.store_path == PathBuf::from(".meld/store");
+        let is_default_frames = self.frames_path == PathBuf::from(".meld/frames");
 
         let store_path = if is_default_store {
             let data_dir = xdg::workspace_data_dir(workspace_root)?;

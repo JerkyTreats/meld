@@ -1,6 +1,6 @@
 //! Integration tests for tombstone-based node deletion: delete, restore, compact, list-deleted.
 
-use merkle::cli::{Commands, RunContext, WorkspaceCommands};
+use meld::cli::{Commands, RunContext, WorkspaceCommands};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;

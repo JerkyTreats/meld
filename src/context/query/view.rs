@@ -49,7 +49,7 @@ impl ContextView {
     ///
     /// # Example
     /// ```rust
-    /// use merkle::context::query::view::ContextView;
+    /// use meld::context::query::view::ContextView;
     ///
     /// let view = ContextView::builder()
     ///     .max_frames(20)

@@ -1,12 +1,12 @@
 use std::fs;
 
-use merkle::agent::{AgentRole, AgentStorage, XdgAgentStorage};
-use merkle::config::AgentConfig;
-use merkle::config::{xdg, ProviderConfig, ProviderType};
-use merkle::context::frame::{Basis, Frame};
-use merkle::provider::CompletionOptions;
-use merkle::telemetry::{PrunePolicy, SessionStatus};
-use merkle::cli::{
+use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
+use meld::config::AgentConfig;
+use meld::config::{xdg, ProviderConfig, ProviderType};
+use meld::context::frame::{Basis, Frame};
+use meld::provider::CompletionOptions;
+use meld::telemetry::{PrunePolicy, SessionStatus};
+use meld::cli::{
     AgentCommands, Commands, ContextCommands, ProviderCommands, RunContext, WorkspaceCommands,
 };
 use tempfile::TempDir;

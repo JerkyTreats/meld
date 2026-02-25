@@ -1,7 +1,7 @@
 //! Integration tests for NodeRecord Store
 
-use merkle::store::{NodeRecord, NodeRecordStore, NodeType, SledNodeRecordStore};
-use merkle::tree::builder::TreeBuilder;
+use meld::store::{NodeRecord, NodeRecordStore, NodeType, SledNodeRecordStore};
+use meld::tree::builder::TreeBuilder;
 use std::fs;
 use tempfile::TempDir;
 
@@ -53,7 +53,7 @@ fn test_file_node_stored_correctly() {
         .nodes
         .iter()
         .find_map(|(id, node)| {
-            if let merkle::tree::node::MerkleNode::File(file) = node {
+            if let meld::tree::node::MerkleNode::File(file) = node {
                 if file.path.ends_with("test.txt") {
                     return Some(*id);
                 }
@@ -94,7 +94,7 @@ fn test_directory_node_stored_correctly() {
         .nodes
         .iter()
         .find_map(|(id, node)| {
-            if let merkle::tree::node::MerkleNode::Directory(dir) = node {
+            if let meld::tree::node::MerkleNode::Directory(dir) = node {
                 if dir.path.ends_with("dir1") {
                     return Some(*id);
                 }
@@ -225,7 +225,7 @@ fn test_store_persistence() {
 fn retry_open_store(
     path: &std::path::Path,
     max_retries: u32,
-) -> Result<SledNodeRecordStore, merkle::error::StorageError> {
+) -> Result<SledNodeRecordStore, meld::error::StorageError> {
     use std::time::Duration;
 
     for attempt in 0..max_retries {

@@ -1,8 +1,8 @@
 //! Integration tests for Init CLI command
 
-use merkle::agent::{AgentStorage, XdgAgentStorage};
-use merkle::config::xdg;
-use merkle::init;
+use meld::agent::{AgentStorage, XdgAgentStorage};
+use meld::config::xdg;
+use meld::init;
 use std::fs;
 use tempfile::TempDir;
 
@@ -143,20 +143,20 @@ fn test_init_creates_xdg_directories() {
     with_xdg_env(&test_dir, || {
         // Directories should not exist initially
         let config_home = xdg::config_home().unwrap();
-        let merkle_dir = config_home.join("merkle");
-        assert!(!merkle_dir.exists());
+        let meld_dir = config_home.join("meld");
+        assert!(!meld_dir.exists());
 
         // Initialize
         init::initialize_all(false).unwrap();
 
         // Directories should now exist
-        assert!(merkle_dir.exists());
-        assert!(merkle_dir.join("agents").exists());
-        assert!(merkle_dir.join("prompts").exists());
+        assert!(meld_dir.exists());
+        assert!(meld_dir.join("agents").exists());
+        assert!(meld_dir.join("prompts").exists());
         // Providers directory should exist (created by providers_dir() call)
         // Note: It may not exist if never accessed, but init ensures it exists
         let _ = xdg::providers_dir();
-        assert!(merkle_dir.join("providers").exists());
+        assert!(meld_dir.join("providers").exists());
     });
 }
 
@@ -222,8 +222,8 @@ fn test_init_error_handling() {
     with_xdg_env(&test_dir, || {
         // Create a read-only directory to test error handling
         let config_home = xdg::config_home().unwrap();
-        let merkle_dir = config_home.join("merkle");
-        let prompts_dir = merkle_dir.join("prompts");
+        let meld_dir = config_home.join("meld");
+        let prompts_dir = meld_dir.join("prompts");
 
         // Initialize normally first
         init::initialize_all(false).unwrap();

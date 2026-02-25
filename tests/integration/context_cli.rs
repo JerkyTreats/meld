@@ -1,10 +1,10 @@
 //! Integration tests for Context CLI commands
 
 use clap::Parser;
-use merkle::agent::{AgentRole, AgentStorage, XdgAgentStorage};
-use merkle::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
-use merkle::error::ApiError;
-use merkle::cli::{Cli, Commands, ContextCommands, RunContext};
+use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
+use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
+use meld::error::ApiError;
+use meld::cli::{Cli, Commands, ContextCommands, RunContext};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -69,7 +69,7 @@ fn create_test_provider(
         model: "test-model".to_string(),
         api_key: None,
         endpoint: None,
-        default_options: merkle::provider::CompletionOptions::default(),
+        default_options: meld::provider::CompletionOptions::default(),
     };
 
     let toml = toml::to_string(&provider_config).map_err(|e| {
@@ -511,7 +511,7 @@ fn test_context_get_invalid_format() {
 #[test]
 fn test_context_generate_rejects_async_flag() {
     let parse_result = Cli::try_parse_from([
-        "merkle",
+        "meld",
         "context",
         "generate",
         "--path",

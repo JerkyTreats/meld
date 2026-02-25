@@ -19,13 +19,13 @@ pub fn data_home() -> Option<PathBuf> {
 
 /// Get the data directory for a specific workspace
 ///
-/// Returns `$XDG_DATA_HOME/merkle/<workspace_path>/`
+/// Returns `$XDG_DATA_HOME/meld/<workspace_path>/`
 ///
 /// The workspace path is canonicalized and used directly as a directory structure.
 /// For example, `/home/user/projects/myproject` becomes:
-/// `$XDG_DATA_HOME/merkle/home/user/projects/myproject/`
+/// `$XDG_DATA_HOME/meld/home/user/projects/myproject/`
 ///
-/// This eliminates the need for any `.merkle/` directory in the workspace.
+/// This eliminates the need for any `.meld/` directory in the workspace.
 pub fn workspace_data_dir(workspace_root: &Path) -> Result<PathBuf, ApiError> {
     let data_home = data_home().ok_or_else(|| {
         ApiError::ConfigError(
@@ -40,7 +40,7 @@ pub fn workspace_data_dir(workspace_root: &Path) -> Result<PathBuf, ApiError> {
 
     // Build the data directory path by joining the canonical path components
     // Remove the leading root component (/) and use the rest as directory structure
-    let mut data_dir = data_home.join("merkle");
+    let mut data_dir = data_home.join("meld");
 
     // Iterate through path components, skipping the root
     for component in canonical.components() {
@@ -78,11 +78,11 @@ pub fn config_home() -> Result<PathBuf, ApiError> {
 
 /// Get agents directory path
 ///
-/// Returns `$XDG_CONFIG_HOME/merkle/agents/`
+/// Returns `$XDG_CONFIG_HOME/meld/agents/`
 /// Creates the directory if it doesn't exist
 pub fn agents_dir() -> Result<PathBuf, ApiError> {
     let config_home = config_home()?;
-    let agents_dir = config_home.join("merkle").join("agents");
+    let agents_dir = config_home.join("meld").join("agents");
 
     if !agents_dir.exists() {
         std::fs::create_dir_all(&agents_dir).map_err(|e| {
@@ -99,11 +99,11 @@ pub fn agents_dir() -> Result<PathBuf, ApiError> {
 
 /// Get providers directory path
 ///
-/// Returns `$XDG_CONFIG_HOME/merkle/providers/`
+/// Returns `$XDG_CONFIG_HOME/meld/providers/`
 /// Creates the directory if it doesn't exist
 pub fn providers_dir() -> Result<PathBuf, ApiError> {
     let config_home = config_home()?;
-    let providers_dir = config_home.join("merkle").join("providers");
+    let providers_dir = config_home.join("meld").join("providers");
 
     if !providers_dir.exists() {
         std::fs::create_dir_all(&providers_dir).map_err(|e| {
@@ -120,11 +120,11 @@ pub fn providers_dir() -> Result<PathBuf, ApiError> {
 
 /// Get prompts directory path
 ///
-/// Returns `$XDG_CONFIG_HOME/merkle/prompts/`
+/// Returns `$XDG_CONFIG_HOME/meld/prompts/`
 /// Creates the directory if it doesn't exist
 pub fn prompts_dir() -> Result<PathBuf, ApiError> {
     let config_home = config_home()?;
-    let prompts_dir = config_home.join("merkle").join("prompts");
+    let prompts_dir = config_home.join("meld").join("prompts");
 
     if !prompts_dir.exists() {
         std::fs::create_dir_all(&prompts_dir).map_err(|e| {

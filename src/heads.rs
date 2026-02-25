@@ -142,14 +142,14 @@ impl HeadIndex {
 
     /// Get the persistence path for a workspace root
     ///
-    /// Uses XDG data directory: $XDG_DATA_HOME/merkle/workspaces/<hash>/head_index.bin
+    /// Uses XDG data directory: $XDG_DATA_HOME/meld/workspaces/<hash>/head_index.bin
     pub fn persistence_path(workspace_root: &Path) -> PathBuf {
-        // Try to use XDG data directory, fall back to .merkle if XDG is not available
+        // Try to use XDG data directory, fall back to .meld if XDG is not available
         if let Ok(data_dir) = crate::config::xdg::workspace_data_dir(workspace_root) {
             data_dir.join("head_index.bin")
         } else {
             // Fallback to old location if XDG is not available
-            workspace_root.join(".merkle").join("head_index.bin")
+            workspace_root.join(".meld").join("head_index.bin")
         }
     }
 
@@ -367,7 +367,7 @@ mod tests {
     fn test_persistence_path() {
         let workspace_root = std::path::Path::new("/workspace");
         let path = HeadIndex::persistence_path(workspace_root);
-        assert!(path.to_string_lossy().ends_with(".merkle/head_index.bin"));
+        assert!(path.to_string_lossy().ends_with(".meld/head_index.bin"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Integration tests for tree building determinism
 
-use merkle::tree::builder::TreeBuilder;
+use meld::tree::builder::TreeBuilder;
 use std::fs;
 use tempfile::TempDir;
 

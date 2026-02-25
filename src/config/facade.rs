@@ -11,13 +11,13 @@ use std::path::PathBuf;
 pub struct ConfigLoader;
 
 impl ConfigLoader {
-    /// Get the XDG config directory path (~/.config/merkle/config.toml)
+    /// Get the XDG config directory path (~/.config/meld/config.toml)
     #[cfg(test)]
     pub(crate) fn xdg_config_path() -> Option<PathBuf> {
         std::env::var("HOME").ok().map(|home| {
             PathBuf::from(home)
                 .join(".config")
-                .join("merkle")
+                .join("meld")
                 .join("config.toml")
         })
     }

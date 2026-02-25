@@ -3,8 +3,8 @@
 //! These tests verify that lookup operations maintain constant time complexity
 //! regardless of dataset size, confirming O(1) behavior.
 
-use merkle::heads::HeadIndex;
-use merkle::store::{NodeRecord, NodeRecordStore, NodeType, SledNodeRecordStore};
+use meld::heads::HeadIndex;
+use meld::store::{NodeRecord, NodeRecordStore, NodeType, SledNodeRecordStore};
 use std::collections::HashMap;
 use std::time::Instant;
 use tempfile::TempDir;

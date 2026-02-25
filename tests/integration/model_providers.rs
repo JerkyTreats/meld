@@ -1,8 +1,8 @@
 //! Integration tests for Model Provider Integration
 
-use merkle::agent::{AgentIdentity, AgentRole};
-use merkle::config::{MerkleConfig, ProviderConfig, ProviderType};
-use merkle::provider::{
+use meld::agent::{AgentIdentity, AgentRole};
+use meld::config::{MerkleConfig, ProviderConfig, ProviderType};
+use meld::provider::{
     ChatMessage, CompletionOptions, MessageRole, ModelProvider, ProviderRegistry,
 };
 

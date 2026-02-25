@@ -1,7 +1,7 @@
 //! Integration tests for tree structure correctness
 
-use merkle::tree::builder::TreeBuilder;
-use merkle::tree::node::MerkleNode;
+use meld::tree::builder::TreeBuilder;
+use meld::tree::node::MerkleNode;
 use std::fs;
 use tempfile::TempDir;
 
@@ -155,7 +155,7 @@ fn test_file_content_hashes() {
         .unwrap();
 
     // Content hash should match
-    let expected_hash = merkle::tree::hasher::compute_content_hash(content);
+    let expected_hash = meld::tree::hasher::compute_content_hash(content);
     assert_eq!(file_node.content_hash, expected_hash);
     assert_eq!(file_node.size, content.len() as u64);
 }

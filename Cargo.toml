@@ -1,11 +1,11 @@
 [package]
-name = "merkle"
+name = "meld"
 version = "0.1.0"
 edition = "2021"
-authors = ["Merkle Contributors"]
+authors = ["Meld Contributors"]
 description = "Deterministic filesystem state management using Merkle trees"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/yourorg/merkle"
+repository = "https://github.com/yourorg/meld"
 
 [dependencies]
 # Hashing
@@ -77,8 +77,8 @@ tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
 criterion = "0.5"
 
 [[bin]]
-name = "merkle"
-path = "src/bin/merkle.rs"
+name = "meld"
+path = "src/bin/meld.rs"
 
 [[bench]]
 name = "node_lookup"

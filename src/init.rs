@@ -1,7 +1,7 @@
 //! Initialization module for default agents and prompts
 //!
 //! This module handles the initialization of default agent configurations and
-//! prompt files via the `merkle init` command. Prompts are embedded in the
+//! prompt files via the `meld init` command. Prompts are embedded in the
 //! binary at build time and copied to XDG config directories at runtime.
 
 use crate::agent::{AgentRegistry, AgentRole, AgentStorage, XdgAgentStorage};

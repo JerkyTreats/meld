@@ -1,8 +1,8 @@
 //! Integration tests for Configuration System
 
-use merkle::agent::{AgentRegistry, AgentRole};
-use merkle::config::{AgentConfig, ConfigLoader, MerkleConfig, ProviderConfig, ProviderType};
-use merkle::provider::CompletionOptions;
+use meld::agent::{AgentRegistry, AgentRole};
+use meld::config::{AgentConfig, ConfigLoader, MerkleConfig, ProviderConfig, ProviderType};
+use meld::provider::CompletionOptions;
 use std::collections::HashMap;
 use tempfile::TempDir;
 
@@ -18,8 +18,8 @@ fn test_config_loads_agents_into_registry() {
 default_workspace_root = "."
 
 [system.storage]
-store_path = ".merkle/store"
-frames_path = ".merkle/frames"
+store_path = ".meld/store"
+frames_path = ".meld/frames"
 
 [providers.test-ollama]
 provider_type = "ollama"
@@ -116,7 +116,7 @@ fn test_config_provider_conversion() {
     let openai_provider = config.providers.get("openai-test").unwrap();
     let model_provider = openai_provider.to_model_provider().unwrap();
     match model_provider {
-        merkle::provider::ModelProvider::OpenAI { model, api_key, .. } => {
+        meld::provider::ModelProvider::OpenAI { model, api_key, .. } => {
             assert_eq!(model, "gpt-4");
             assert_eq!(api_key, "test-key-123");
         }
@@ -127,7 +127,7 @@ fn test_config_provider_conversion() {
     let ollama_provider = config.providers.get("ollama-test").unwrap();
     let model_provider = ollama_provider.to_model_provider().unwrap();
     match model_provider {
-        merkle::provider::ModelProvider::Ollama {
+        meld::provider::ModelProvider::Ollama {
             model, base_url, ..
         } => {
             assert_eq!(model, "llama2");
@@ -159,7 +159,7 @@ fn test_config_validation_errors() {
     assert!(errors.len() > 0);
     assert!(errors
         .iter()
-        .any(|e| { matches!(e, merkle::config::ValidationError::Agent(_, _)) }));
+        .any(|e| { matches!(e, meld::config::ValidationError::Agent(_, _)) }));
 }
 
 #[test]
@@ -171,11 +171,11 @@ fn test_config_default_values() {
     );
     assert_eq!(
         config.system.storage.store_path,
-        std::path::PathBuf::from(".merkle/store")
+        std::path::PathBuf::from(".meld/store")
     );
     assert_eq!(
         config.system.storage.frames_path,
-        std::path::PathBuf::from(".merkle/frames")
+        std::path::PathBuf::from(".meld/frames")
     );
 }
 

@@ -3,7 +3,7 @@
 //! Tests to verify that our hasher implementation correctly uses BLAKE3
 //! and maintains determinism and correctness properties.
 
-use merkle::tree::hasher;
+use meld::tree::hasher;
 use std::collections::BTreeMap;
 use std::fs;
 use tempfile::TempDir;

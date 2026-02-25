@@ -1,9 +1,9 @@
 //! Integration tests for Agent CLI commands
 
-use merkle::agent::{AgentRole, AgentStorage, XdgAgentStorage};
-use merkle::config::{xdg, AgentConfig};
-use merkle::error::ApiError;
-use merkle::cli::{AgentCommands, Commands, RunContext};
+use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
+use meld::config::{xdg, AgentConfig};
+use meld::error::ApiError;
+use meld::cli::{AgentCommands, Commands, RunContext};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;

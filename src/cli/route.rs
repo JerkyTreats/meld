@@ -566,7 +566,7 @@ impl RunContext {
             .map_err(|e| ApiError::ConfigError(format!("Failed to read config: {}", e)))?;
 
         let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join(format!("merkle-agent-{}.toml", agent_id));
+        let temp_path = temp_dir.join(format!("meld-agent-{}.toml", agent_id));
 
         std::fs::write(&temp_path, content.as_bytes())
             .map_err(|e| ApiError::ConfigError(format!("Failed to write temp file: {}", e)))?;
@@ -1195,7 +1195,7 @@ impl RunContext {
             .map_err(|e| ApiError::ConfigError(format!("Failed to read config: {}", e)))?;
 
         let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join(format!("merkle-provider-{}.toml", provider_name));
+        let temp_path = temp_dir.join(format!("meld-provider-{}.toml", provider_name));
 
         std::fs::write(&temp_path, content.as_bytes())
             .map_err(|e| ApiError::ConfigError(format!("Failed to write temp file: {}", e)))?;

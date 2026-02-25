@@ -10,7 +10,7 @@ use serde_json::json;
 pub fn format_provider_list_result_text(result: &ProviderListResult) -> String {
     let providers = &result.providers;
     if providers.is_empty() {
-        return "No providers found.\n\nUse 'merkle provider create' to add a provider.".to_string();
+        return "No providers found.\n\nUse 'meld provider create' to add a provider.".to_string();
     }
     let mut output = String::from("Available Providers:\n");
     for provider in providers {

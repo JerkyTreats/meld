@@ -1,15 +1,15 @@
 //! Integration tests for Workspace Isolation
 //!
-//! Tests verify that multiple merkle workspaces are properly isolated:
+//! Tests verify that multiple meld workspaces are properly isolated:
 //! - Each workspace has its own XDG data directory
 //! - Data in one workspace doesn't affect another
 //! - Workspaces can have the same file structure but remain isolated
 
-use merkle::context::frame::{Basis, Frame};
-use merkle::heads::HeadIndex;
-use merkle::store::{NodeRecord, NodeType};
-use merkle::cli::RunContext;
-use merkle::types::NodeID;
+use meld::context::frame::{Basis, Frame};
+use meld::heads::HeadIndex;
+use meld::store::{NodeRecord, NodeType};
+use meld::cli::RunContext;
+use meld::types::NodeID;
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -25,8 +25,8 @@ fn test_workspace_isolation_xdg_directories() {
 
     with_xdg_data_home(&test_dir, || {
         // Get XDG data directories for each workspace
-        let data_dir1 = merkle::config::xdg::workspace_data_dir(workspace1.path()).unwrap();
-        let data_dir2 = merkle::config::xdg::workspace_data_dir(workspace2.path()).unwrap();
+        let data_dir1 = meld::config::xdg::workspace_data_dir(workspace1.path()).unwrap();
+        let data_dir2 = meld::config::xdg::workspace_data_dir(workspace2.path()).unwrap();
 
         // Verify they are different
         assert_ne!(
@@ -145,7 +145,7 @@ fn test_workspace_isolation_head_index_isolation() {
         let ctx2 = RunContext::new(workspace2.path().to_path_buf(), None).unwrap();
 
         let node_id: NodeID = [1u8; 32];
-        let frame_id = merkle::types::FrameID::from([2u8; 32]);
+        let frame_id = meld::types::FrameID::from([2u8; 32]);
 
         // Add head entry in workspace 1
         {
@@ -182,7 +182,7 @@ fn test_workspace_isolation_persistence_isolation() {
         let ctx2 = RunContext::new(workspace2.path().to_path_buf(), None).unwrap();
 
         let node_id: NodeID = [1u8; 32];
-        let frame_id = merkle::types::FrameID::from([2u8; 32]);
+        let frame_id = meld::types::FrameID::from([2u8; 32]);
 
         // Add head entry in workspace 1 and save
         {
@@ -196,7 +196,7 @@ fn test_workspace_isolation_persistence_isolation() {
         }
 
         // Add different head entry in workspace 2 and save
-        let frame_id2 = merkle::types::FrameID::from([3u8; 32]);
+        let frame_id2 = meld::types::FrameID::from([3u8; 32]);
         {
             let mut head_index = ctx2.api().head_index().write();
             head_index
@@ -277,7 +277,7 @@ fn test_workspace_isolation_same_structure() {
 
         // Build trees - they should have different root hashes because paths are different
         // (even though content is the same, the workspace paths differ)
-        use merkle::tree::builder::TreeBuilder;
+        use meld::tree::builder::TreeBuilder;
         let builder1 = TreeBuilder::new(workspace1.path().to_path_buf());
         let builder2 = TreeBuilder::new(workspace2.path().to_path_buf());
         let root1 = builder1.compute_root().unwrap();
@@ -291,8 +291,8 @@ fn test_workspace_isolation_same_structure() {
         );
 
         // But workspaces should still be isolated
-        let data_dir1 = merkle::config::xdg::workspace_data_dir(workspace1.path()).unwrap();
-        let data_dir2 = merkle::config::xdg::workspace_data_dir(workspace2.path()).unwrap();
+        let data_dir1 = meld::config::xdg::workspace_data_dir(workspace1.path()).unwrap();
+        let data_dir2 = meld::config::xdg::workspace_data_dir(workspace2.path()).unwrap();
         assert_ne!(
             data_dir1, data_dir2,
             "Workspaces should have different data directories even with same content"

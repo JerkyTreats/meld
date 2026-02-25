@@ -594,7 +594,7 @@ impl WorkspaceCommandService {
         ))
     }
 
-    /// Fan-in workspace + agent + provider status for `merkle status`.
+    /// Fan-in workspace + agent + provider status for `meld status`.
     pub fn unified_status(
         api: &ContextApi,
         workspace_root: &Path,

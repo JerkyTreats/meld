@@ -9,17 +9,17 @@
 //! - Queue size limits
 //! - Worker lifecycle
 
-use merkle::api::ContextApi;
-use merkle::error::ApiError;
-use merkle::context::frame::storage::FrameStorage;
-use merkle::context::queue::{
+use meld::api::ContextApi;
+use meld::error::ApiError;
+use meld::context::frame::storage::FrameStorage;
+use meld::context::queue::{
     FrameGenerationQueue, GenerationConfig, GenerationRequest, GenerationRequestOptions, Priority,
     QueueEventContext,
 };
-use merkle::heads::HeadIndex;
-use merkle::store::persistence::SledNodeRecordStore;
-use merkle::telemetry::ProgressRuntime;
-use merkle::types::Hash;
+use meld::heads::HeadIndex;
+use meld::store::persistence::SledNodeRecordStore;
+use meld::telemetry::ProgressRuntime;
+use meld::types::Hash;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -32,24 +32,24 @@ fn create_test_api() -> (ContextApi, TempDir) {
     std::fs::create_dir_all(&frame_storage_path).unwrap();
     let frame_storage = Arc::new(FrameStorage::new(&frame_storage_path).unwrap());
     let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
-    let agent_registry = Arc::new(parking_lot::RwLock::new(merkle::agent::AgentRegistry::new()));
-    let mut provider_registry = merkle::provider::ProviderRegistry::new();
+    let agent_registry = Arc::new(parking_lot::RwLock::new(meld::agent::AgentRegistry::new()));
+    let mut provider_registry = meld::provider::ProviderRegistry::new();
     // Add a test provider
-    let mut config = merkle::config::MerkleConfig::default();
+    let mut config = meld::config::MerkleConfig::default();
     config.providers.insert(
         "test-provider".to_string(),
-        merkle::config::ProviderConfig {
+        meld::config::ProviderConfig {
             provider_name: Some("test-provider".to_string()),
-            provider_type: merkle::config::ProviderType::Ollama,
+            provider_type: meld::config::ProviderType::Ollama,
             model: "test-model".to_string(),
             api_key: None,
             endpoint: None,
-            default_options: merkle::provider::CompletionOptions::default(),
+            default_options: meld::provider::CompletionOptions::default(),
         },
     );
     provider_registry.load_from_config(&config).unwrap();
     let provider_registry = Arc::new(parking_lot::RwLock::new(provider_registry));
-    let lock_manager = Arc::new(merkle::concurrency::NodeLockManager::new());
+    let lock_manager = Arc::new(meld::concurrency::NodeLockManager::new());
 
     let api = ContextApi::new(
         node_store,
@@ -386,7 +386,7 @@ async fn test_generation_request_ordering() {
     // Test that GenerationRequest implements Ord correctly
     let now = Instant::now();
 
-    use merkle::context::queue::RequestId;
+    use meld::context::queue::RequestId;
     let req1 = GenerationRequest {
         request_id: RequestId::next(),
         node_id: Hash::from([1u8; 32]),

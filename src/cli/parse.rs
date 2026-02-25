@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 /// Merkle CLI - Deterministic filesystem state management
 #[derive(Parser)]
-#[command(name = "merkle")]
+#[command(name = "meld")]
 #[command(about = "Deterministic filesystem state management using Merkle trees")]
 pub struct Cli {
     #[command(subcommand)]

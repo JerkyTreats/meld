@@ -1,8 +1,8 @@
 //! Property-based tests for determinism guarantees
 
-use merkle::context::frame::{id, Basis, Frame};
-use merkle::tree::hasher;
-use merkle::types::NodeID;
+use meld::context::frame::{id, Basis, Frame};
+use meld::tree::hasher;
+use meld::types::NodeID;
 use proptest::prelude::*;
 use std::collections::HashMap;
 

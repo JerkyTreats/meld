@@ -1,13 +1,13 @@
 //! Integration tests for Tooling & Integrations
 
-use merkle::api::{ContextApi, ContextView};
-use merkle::context::frame::{Basis, Frame};
-use merkle::heads::HeadIndex;
-use merkle::store::persistence::SledNodeRecordStore;
-use merkle::agent::{AgentAdapter, ContextApiAdapter};
-use merkle::workspace::{BatchOperation, CiIntegration};
-use merkle::types::Hash;
-use merkle::views::OrderingPolicy;
+use meld::api::{ContextApi, ContextView};
+use meld::context::frame::{Basis, Frame};
+use meld::heads::HeadIndex;
+use meld::store::persistence::SledNodeRecordStore;
+use meld::agent::{AgentAdapter, ContextApiAdapter};
+use meld::workspace::{BatchOperation, CiIntegration};
+use meld::types::Hash;
+use meld::views::OrderingPolicy;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -19,13 +19,13 @@ fn create_test_api() -> (ContextApi, TempDir) {
     let frame_storage_path = temp_dir.path().join("frames");
     std::fs::create_dir_all(&frame_storage_path).unwrap();
     let frame_storage =
-        Arc::new(merkle::context::frame::storage::FrameStorage::new(&frame_storage_path).unwrap());
+        Arc::new(meld::context::frame::storage::FrameStorage::new(&frame_storage_path).unwrap());
     let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
-    let agent_registry = Arc::new(parking_lot::RwLock::new(merkle::agent::AgentRegistry::new()));
+    let agent_registry = Arc::new(parking_lot::RwLock::new(meld::agent::AgentRegistry::new()));
     let provider_registry = Arc::new(parking_lot::RwLock::new(
-        merkle::provider::ProviderRegistry::new(),
+        meld::provider::ProviderRegistry::new(),
     ));
-    let lock_manager = Arc::new(merkle::concurrency::NodeLockManager::new());
+    let lock_manager = Arc::new(meld::concurrency::NodeLockManager::new());
 
     let api = ContextApi::new(
         node_store,

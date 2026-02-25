@@ -394,8 +394,8 @@ mod tests {
 default_workspace_root = "."
 
 [system.storage]
-store_path = ".merkle/store"
-frames_path = ".merkle/frames"
+store_path = ".meld/store"
+frames_path = ".meld/frames"
 
 [providers.test-ollama]
 provider_type = "ollama"
@@ -437,7 +437,7 @@ provider_name = "test-ollama"
         let test_home = "/test/home";
         std::env::set_var("HOME", test_home);
 
-        // The path should be /test/home/.config/merkle/config.toml
+        // The path should be /test/home/.config/meld/config.toml
         // We can't directly test the private function, but we can verify
         // the behavior through load() which will check for this path
 
@@ -479,7 +479,7 @@ provider_name = "test-ollama"
             .to_string();
         std::env::set_var("HOME", &mock_home_str);
 
-        let xdg_config_dir = mock_home.join(".config").join("merkle");
+        let xdg_config_dir = mock_home.join(".config").join("meld");
         std::fs::create_dir_all(&xdg_config_dir).unwrap();
         let xdg_config_file = xdg_config_dir.join("config.toml");
 
@@ -491,8 +491,8 @@ provider_name = "test-ollama"
 default_workspace_root = "."
 
 [system.storage]
-store_path = ".merkle/store"
-frames_path = ".merkle/frames"
+store_path = ".meld/store"
+frames_path = ".meld/frames"
 
 [providers.xdg-provider]
 provider_type = "ollama"
@@ -553,7 +553,7 @@ endpoint = "http://localhost:11434"
             .to_string();
         std::env::set_var("HOME", &mock_home_str);
 
-        let xdg_config_dir = mock_home.join(".config").join("merkle");
+        let xdg_config_dir = mock_home.join(".config").join("meld");
         std::fs::create_dir_all(&xdg_config_dir).unwrap();
         let xdg_config_file = xdg_config_dir.join("config.toml");
 
@@ -565,8 +565,8 @@ endpoint = "http://localhost:11434"
 default_workspace_root = "."
 
 [system.storage]
-store_path = ".merkle/store"
-frames_path = ".merkle/frames"
+store_path = ".meld/store"
+frames_path = ".meld/frames"
 
 [providers.xdg-provider]
 provider_type = "ollama"
@@ -628,7 +628,7 @@ endpoint = "http://localhost:11434"
         std::env::set_var("HOME", &mock_home_str);
 
         // Verify XDG config doesn't exist
-        let xdg_config_file = mock_home.join(".config").join("merkle").join("config.toml");
+        let xdg_config_file = mock_home.join(".config").join("meld").join("config.toml");
         assert!(
             !xdg_config_file.exists(),
             "XDG config file should not exist"

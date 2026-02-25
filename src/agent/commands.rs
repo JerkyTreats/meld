@@ -81,7 +81,7 @@ impl AgentCommandService {
         agent_id: &str,
         prompt_path: &str,
     ) -> Result<String, ApiError> {
-        let base_dir = crate::config::xdg::config_home()?.join("merkle");
+        let base_dir = crate::config::xdg::config_home()?.join("meld");
         let source_path = resolve_prompt_path(prompt_path, &base_dir)?;
 
         let prompt_content = std::fs::read_to_string(&source_path).map_err(|e| {
@@ -162,7 +162,7 @@ impl AgentCommandService {
             })?;
             agent_config.system_prompt_path.map(|path| {
                 let base_dir = crate::config::xdg::config_home()
-                    .map(|p| p.join("merkle"))
+                    .map(|p| p.join("meld"))
                     .ok();
                 if let Some(base_dir) = base_dir {
                     match resolve_prompt_path(&path, &base_dir) {
