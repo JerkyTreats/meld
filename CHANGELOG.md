@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/JerkyTreats/meld/compare/v0.1.0...v0.1.1) (2026-02-25)
+
+
+### Bug Fixes
+
+* **ci:** correct(?) release repo ([24d05ad](https://github.com/JerkyTreats/meld/commit/24d05ad9ccd18430fcfd827f01e05f54f394ca84))
+
 ## 0.1.0 (2026-02-25)
 
 
