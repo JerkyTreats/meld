@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/JerkyTreats/meld/compare/v1.0.0...v1.0.1) (2026-02-26)
+
+
+### Bug Fixes
+
+* **ci:** attempt to align crates/release-please version ([2b6eaad](https://github.com/JerkyTreats/meld/commit/2b6eaadda9c6ce97efe551e87b5e2dcf4a24f7ac))
+* **prompt:** add better prompt of docs-writer ([ba50c85](https://github.com/JerkyTreats/meld/commit/ba50c85b4a5204293018e9039edf2f7b197fbc8d))
+
 ## [0.1.1](https://github.com/JerkyTreats/meld/compare/v0.1.0...v0.1.1) (2026-02-25)
 
 
