@@ -9,7 +9,6 @@
         ".github",
         "docs",
         "design",
-        "prompts",
         "scripts",
         ".gitignore",
         ".editorconfig",
