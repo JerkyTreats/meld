@@ -43,6 +43,69 @@ pub enum ProviderType {
 }
 
 impl ProviderConfig {
+    fn endpoint_has_scheme(endpoint: &str) -> bool {
+        endpoint.starts_with("http://") || endpoint.starts_with("https://")
+    }
+
+    fn infer_endpoint_scheme(provider_type: ProviderType, endpoint: &str) -> String {
+        let endpoint = endpoint.trim();
+        if provider_type == ProviderType::LocalCustom && !Self::endpoint_has_scheme(endpoint) {
+            format!("https://{}", endpoint)
+        } else {
+            endpoint.to_string()
+        }
+    }
+
+    pub fn normalized_endpoint(&self) -> Option<String> {
+        self.endpoint
+            .as_deref()
+            .map(|endpoint| Self::infer_endpoint_scheme(self.provider_type, endpoint))
+    }
+
+    pub fn normalize_endpoint_in_place(&mut self) {
+        self.endpoint = self.normalized_endpoint();
+    }
+
+    pub fn endpoint_url_is_valid(provider_type: ProviderType, endpoint: &str) -> bool {
+        let endpoint = Self::infer_endpoint_scheme(provider_type, endpoint);
+        if !Self::endpoint_has_scheme(&endpoint) {
+            return false;
+        }
+
+        let Some(rest) = endpoint.split_once("://").map(|(_, rest)| rest) else {
+            return false;
+        };
+
+        if rest.is_empty() || rest.chars().any(char::is_whitespace) {
+            return false;
+        }
+
+        let authority = rest.split('/').next().unwrap_or_default();
+        if authority.is_empty() {
+            return false;
+        }
+
+        let host_port = authority.rsplit('@').next().unwrap_or(authority);
+        if host_port.is_empty() {
+            return false;
+        }
+
+        let host = if host_port.starts_with('[') {
+            let Some(end_bracket) = host_port.find(']') else {
+                return false;
+            };
+            &host_port[1..end_bracket]
+        } else {
+            host_port.split(':').next().unwrap_or_default()
+        };
+
+        if host.is_empty() {
+            return false;
+        }
+
+        host == "localhost" || host.contains('.') || host.parse::<std::net::IpAddr>().is_ok()
+    }
+
     /// Validate provider configuration.
     pub fn validate(&self) -> Result<(), String> {
         if self.model.trim().is_empty() {
@@ -50,7 +113,7 @@ impl ProviderConfig {
         }
 
         if let Some(endpoint) = &self.endpoint {
-            if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+            if !Self::endpoint_url_is_valid(self.provider_type, endpoint) {
                 return Err(format!("Invalid endpoint URL: {}", endpoint));
             }
         }
@@ -106,7 +169,7 @@ impl ProviderConfig {
                 base_url: self.endpoint.clone(),
             }),
             ProviderType::LocalCustom => {
-                let endpoint = self.endpoint.clone().ok_or_else(|| {
+                let endpoint = self.normalized_endpoint().ok_or_else(|| {
                     ApiError::ProviderNotConfigured(
                         "LocalCustom provider requires endpoint".to_string(),
                     )
@@ -117,6 +180,54 @@ impl ProviderConfig {
                     api_key,
                 })
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::CompletionOptions;
+    use crate::provider::ModelProvider;
+
+    #[test]
+    fn local_custom_endpoint_validation_infers_https() {
+        let provider = ProviderConfig {
+            provider_name: Some("local".to_string()),
+            provider_type: ProviderType::LocalCustom,
+            model: "llama3".to_string(),
+            api_key: None,
+            endpoint: Some("chat.internal.jerkytreats.dev".to_string()),
+            default_options: CompletionOptions::default(),
+        };
+
+        assert!(provider.validate().is_ok());
+        assert_eq!(
+            provider.normalized_endpoint().as_deref(),
+            Some("https://chat.internal.jerkytreats.dev")
+        );
+    }
+
+    #[test]
+    fn local_custom_to_model_provider_infers_https() {
+        let provider = ProviderConfig {
+            provider_name: Some("local".to_string()),
+            provider_type: ProviderType::LocalCustom,
+            model: "llama3".to_string(),
+            api_key: Some("test-key".to_string()),
+            endpoint: Some("chat.internal.jerkytreats.dev".to_string()),
+            default_options: CompletionOptions::default(),
+        };
+
+        let model_provider = provider.to_model_provider().unwrap();
+        match model_provider {
+            ModelProvider::LocalCustom {
+                endpoint, api_key, ..
+            } => {
+                assert_eq!(endpoint, "https://chat.internal.jerkytreats.dev");
+                assert_eq!(api_key.as_deref(), Some("test-key"));
+            }
+            other => panic!("Expected local custom provider, got {:?}", other),
         }
     }
 }

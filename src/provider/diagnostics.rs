@@ -167,7 +167,7 @@ impl ProviderDiagnosticsService {
         }
 
         if let Some(endpoint) = &provider.endpoint {
-            if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+            if ProviderConfig::endpoint_url_is_valid(provider.provider_type, endpoint) {
                 result.add_check("Endpoint URL is valid", true);
             } else {
                 result.add_error(format!("Invalid endpoint URL: {}", endpoint));

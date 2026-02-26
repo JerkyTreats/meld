@@ -89,6 +89,8 @@ impl ProviderStorage for XdgProviderStorage {
                 config.provider_name = Some(provider_name.clone());
             }
 
+            config.normalize_endpoint_in_place();
+
             if let Err(e) = config.validate() {
                 tracing::error!("Invalid provider config {}: {}", path.display(), e);
                 continue;
@@ -125,6 +127,7 @@ impl ProviderStorage for XdgProviderStorage {
         if config.provider_name.is_none() {
             config.provider_name = Some(provider_name.to_string());
         }
+        config.normalize_endpoint_in_place();
 
         let toml_content = toml::to_string_pretty(&config).map_err(|e| {
             ApiError::ConfigError(format!("Failed to serialize provider config: {}", e))

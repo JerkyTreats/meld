@@ -10,8 +10,8 @@ use crate::heads::HeadIndex;
 use crate::ignore;
 use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
-use crate::telemetry::{ProgressRuntime, ProviderLifecycleEventData};
 use crate::telemetry::sessions::policy::PrunePolicy;
+use crate::telemetry::{ProgressRuntime, ProviderLifecycleEventData};
 use crate::tree::walker::WalkerConfig;
 use crate::workspace::{
     format_unified_status_text, format_workspace_status_text, WatchConfig, WatchDaemon,
@@ -139,8 +139,7 @@ impl RunContext {
         );
         let ok = result.is_ok();
         let err = result.as_ref().err().map(|e| e.to_string());
-        self.progress
-            .finish_command_session(&session_id, ok, err)?;
+        self.progress.finish_command_session(&session_id, ok, err)?;
         let _ = self.progress.prune(PrunePolicy::default());
         result
     }
@@ -170,8 +169,7 @@ impl RunContext {
                 breakdown,
                 test_connectivity,
             } => {
-                let include_all =
-                    !*workspace_only && !*agents_only && !*providers_only;
+                let include_all = !*workspace_only && !*agents_only && !*providers_only;
                 let include_workspace = include_all || *workspace_only;
                 let include_agents = include_all || *agents_only;
                 let include_providers = include_all || *providers_only;
@@ -212,13 +210,9 @@ impl RunContext {
                 Ok(super::format_validate_result_text(&result))
             }
             Commands::Agent { command } => self.handle_agent_command(command),
-            Commands::Provider { command } => {
-                self.handle_provider_command(command, session_id)
-            }
+            Commands::Provider { command } => self.handle_provider_command(command, session_id),
             Commands::Init { force, list } => self.handle_init(*force, *list),
-            Commands::Context { command } => {
-                self.handle_context_command(command, session_id)
-            }
+            Commands::Context { command } => self.handle_context_command(command, session_id),
             Commands::Watch {
                 debounce_ms,
                 batch_window_ms,
@@ -227,10 +221,7 @@ impl RunContext {
         }
     }
 
-    fn handle_workspace_command(
-        &self,
-        command: &WorkspaceCommands,
-    ) -> Result<String, ApiError> {
+    fn handle_workspace_command(&self, command: &WorkspaceCommands) -> Result<String, ApiError> {
         match command {
             WorkspaceCommands::Status { format, breakdown } => {
                 let registry = self.api.agent_registry().read();
@@ -239,11 +230,8 @@ impl RunContext {
                     store_path: self.store_path.clone(),
                     include_breakdown: *breakdown,
                 };
-                let status = WorkspaceCommandService::status(
-                    self.api.as_ref(),
-                    &request,
-                    &registry,
-                )?;
+                let status =
+                    WorkspaceCommandService::status(self.api.as_ref(), &request, &registry)?;
                 if *format == "json" {
                     serde_json::to_string_pretty(&status).map_err(|e| {
                         ApiError::StorageError(crate::error::StorageError::InvalidPath(
@@ -322,8 +310,7 @@ impl RunContext {
                 *dry_run,
             ),
             WorkspaceCommands::ListDeleted { older_than, format } => {
-                let result =
-                    WorkspaceCommandService::list_deleted(self.api.as_ref(), *older_than)?;
+                let result = WorkspaceCommandService::list_deleted(self.api.as_ref(), *older_than)?;
                 super::format_list_deleted_result(&result, format.as_str())
             }
         }
@@ -331,9 +318,7 @@ impl RunContext {
 
     fn handle_agent_command(&self, command: &AgentCommands) -> Result<String, ApiError> {
         match command {
-            AgentCommands::Status { format } => {
-                self.handle_agent_status(format.clone())
-            }
+            AgentCommands::Status { format } => self.handle_agent_status(format.clone()),
             AgentCommands::List { format, role } => {
                 self.handle_agent_list(format.clone(), role.as_deref())
             }
@@ -372,9 +357,7 @@ impl RunContext {
                 editor.as_deref(),
             ),
             AgentCommands::Prompt { command } => self.handle_agent_prompt_command(command),
-            AgentCommands::Remove { agent_id, force } => {
-                self.handle_agent_remove(agent_id, *force)
-            }
+            AgentCommands::Remove { agent_id, force } => self.handle_agent_remove(agent_id, *force),
         }
     }
 
@@ -383,9 +366,7 @@ impl RunContext {
         command: &AgentPromptCommands,
     ) -> Result<String, ApiError> {
         match command {
-            AgentPromptCommands::Show { agent_id } => {
-                self.handle_agent_prompt_show(agent_id)
-            }
+            AgentPromptCommands::Show { agent_id } => self.handle_agent_prompt_show(agent_id),
             AgentPromptCommands::Edit { agent_id, editor } => {
                 self.handle_agent_prompt_edit(agent_id, editor.as_deref())
             }
@@ -412,8 +393,7 @@ impl RunContext {
         include_prompt: bool,
     ) -> Result<String, ApiError> {
         let registry = self.api.agent_registry().read();
-        let result =
-            AgentCommandService::show(&registry, agent_id, include_prompt)?;
+        let result = AgentCommandService::show(&registry, agent_id, include_prompt)?;
         match format.as_str() {
             "json" => Ok(super::format_agent_show_result_json(&result)),
             _ => Ok(super::format_agent_show_result_text(&result)),
@@ -432,12 +412,13 @@ impl RunContext {
             if result.results.is_empty() {
                 return Ok("No agents found to validate.".to_string());
             }
-            Ok(super::format_validation_results_all(&result.results, verbose))
+            Ok(super::format_validation_results_all(
+                &result.results,
+                verbose,
+            ))
         } else {
             let id = agent_id.ok_or_else(|| {
-                ApiError::ConfigError(
-                    "Agent ID required unless --all is specified".to_string(),
-                )
+                ApiError::ConfigError("Agent ID required unless --all is specified".to_string())
             })?;
             let result = AgentCommandService::validate_single(&registry, id)?;
             Ok(super::format_validation_result(&result.result, verbose))
@@ -481,12 +462,8 @@ impl RunContext {
         };
 
         let mut registry = self.api.agent_registry().write();
-        let result = AgentCommandService::create(
-            &mut registry,
-            agent_id,
-            final_role,
-            final_prompt_path,
-        )?;
+        let result =
+            AgentCommandService::create(&mut registry, agent_id, final_role, final_prompt_path)?;
         let mut output = format!(
             "Agent created: {}\nConfiguration file: {}",
             result.agent_id,
@@ -539,23 +516,14 @@ impl RunContext {
     ) -> Result<String, ApiError> {
         if prompt_path.is_some() || role.is_some() {
             let mut registry = self.api.agent_registry().write();
-            let _ = AgentCommandService::update_flags(
-                &mut registry,
-                agent_id,
-                prompt_path,
-                role,
-            )?;
+            let _ = AgentCommandService::update_flags(&mut registry, agent_id, prompt_path, role)?;
         } else {
             self.edit_agent_with_editor(agent_id, editor)?;
         }
         Ok(format!("Agent updated: {}", agent_id))
     }
 
-    fn edit_agent_with_editor(
-        &self,
-        agent_id: &str,
-        editor: Option<&str>,
-    ) -> Result<(), ApiError> {
+    fn edit_agent_with_editor(&self, agent_id: &str, editor: Option<&str>) -> Result<(), ApiError> {
         let config_path = self
             .api
             .agent_registry()
@@ -585,10 +553,7 @@ impl RunContext {
         Ok(())
     }
 
-    fn resolve_agent_prompt_file_path(
-        &self,
-        agent_id: &str,
-    ) -> Result<PathBuf, ApiError> {
+    fn resolve_agent_prompt_file_path(&self, agent_id: &str) -> Result<PathBuf, ApiError> {
         let prompt_path = {
             let registry = self.api.agent_registry().read();
             let result = AgentCommandService::show(&registry, agent_id, false)?;
@@ -702,9 +667,7 @@ impl RunContext {
     }
 
     fn handle_agent_status(&self, format: String) -> Result<String, ApiError> {
-        use crate::workspace::{
-            format_agent_status_text, AgentStatusEntry, AgentStatusOutput,
-        };
+        use crate::workspace::{format_agent_status_text, AgentStatusEntry, AgentStatusOutput};
 
         let registry = self.api.agent_registry().read();
         let entries_result = AgentCommandService::status(&registry)?;
@@ -725,9 +688,7 @@ impl RunContext {
                 valid_count,
             })
             .map_err(|e| {
-                ApiError::StorageError(crate::error::StorageError::InvalidPath(
-                    e.to_string(),
-                ))
+                ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
             })?)
         } else {
             Ok(format_agent_status_text(&entries))
@@ -752,11 +713,7 @@ impl RunContext {
                 provider_name,
                 format,
                 include_credentials,
-            } => self.handle_provider_show(
-                provider_name,
-                format.clone(),
-                *include_credentials,
-            ),
+            } => self.handle_provider_show(provider_name, format.clone(), *include_credentials),
             ProviderCommands::Validate {
                 provider_name,
                 test_connectivity,
@@ -772,12 +729,7 @@ impl RunContext {
                 provider_name,
                 model,
                 timeout,
-            } => self.handle_provider_test(
-                provider_name,
-                model.as_deref(),
-                *timeout,
-                session_id,
-            ),
+            } => self.handle_provider_test(provider_name, model.as_deref(), *timeout, session_id),
             ProviderCommands::Create {
                 provider_name,
                 type_,
@@ -839,11 +791,8 @@ impl RunContext {
         use crate::provider::commands::ProviderCommandService;
 
         let registry = self.api.provider_registry().read();
-        let result = ProviderCommandService::run_show(
-            &registry,
-            provider_name,
-            include_credentials,
-        )?;
+        let result =
+            ProviderCommandService::run_show(&registry, provider_name, include_credentials)?;
         match format.as_str() {
             "json" => Ok(super::format_provider_show_result_json(&result)),
             _ => Ok(super::format_provider_show_result_text(&result)),
@@ -880,8 +829,7 @@ impl RunContext {
         };
 
         let registry = self.api.provider_registry().read();
-        let entries_result =
-            ProviderCommandService::run_status(&registry, test_connectivity)?;
+        let entries_result = ProviderCommandService::run_status(&registry, test_connectivity)?;
         let entries: Vec<ProviderStatusEntry> = entries_result
             .into_iter()
             .map(|e| ProviderStatusEntry {
@@ -897,9 +845,7 @@ impl RunContext {
                 total: entries.len(),
             })
             .map_err(|e| {
-                ApiError::StorageError(crate::error::StorageError::InvalidPath(
-                    e.to_string(),
-                ))
+                ApiError::StorageError(crate::error::StorageError::InvalidPath(e.to_string()))
             })?)
         } else {
             Ok(format_provider_status_text(&entries, test_connectivity))
@@ -936,12 +882,8 @@ impl RunContext {
             }),
         );
         let start = std::time::Instant::now();
-        let result = ProviderCommandService::run_test(
-            &registry,
-            provider_name,
-            model_override,
-            timeout,
-        )?;
+        let result =
+            ProviderCommandService::run_test(&registry, provider_name, model_override, timeout)?;
         let elapsed_ms = start.elapsed().as_millis();
         if result.connectivity_ok {
             self.progress.emit_event_best_effort(
@@ -972,7 +914,10 @@ impl RunContext {
                 }),
             );
         }
-        Ok(super::format_provider_test_result(&result, Some(elapsed_ms)))
+        Ok(super::format_provider_test_result(
+            &result,
+            Some(elapsed_ms),
+        ))
     }
 
     fn handle_provider_create(
@@ -1000,8 +945,7 @@ impl RunContext {
                     )
                 })?;
 
-                let parsed_type =
-                    ProviderCommandService::parse_provider_type(type_str)?;
+                let parsed_type = ProviderCommandService::parse_provider_type(type_str)?;
 
                 let model_name = model.ok_or_else(|| {
                     ApiError::ConfigError(
@@ -1071,8 +1015,7 @@ impl RunContext {
             .interact_text()
             .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
 
-        let default_endpoint =
-            ProviderCommandService::default_endpoint(provider_type);
+        let default_endpoint = ProviderCommandService::default_endpoint(provider_type);
 
         let endpoint = if provider_type == crate::config::ProviderType::LocalCustom {
             Some(
@@ -1094,12 +1037,9 @@ impl RunContext {
             None
         };
 
-        let env_var = ProviderCommandService::required_api_key_env_var(provider_type)
-            .unwrap_or("");
+        let env_var = ProviderCommandService::required_api_key_env_var(provider_type).unwrap_or("");
 
-        let api_key = if provider_type == crate::config::ProviderType::Ollama
-            || provider_type == crate::config::ProviderType::LocalCustom
-        {
+        let api_key = if provider_type == crate::config::ProviderType::Ollama {
             None
         } else {
             let prompt = if !env_var.is_empty() {
@@ -1183,8 +1123,8 @@ impl RunContext {
         provider_name: &str,
         editor: Option<&str>,
     ) -> Result<(), ApiError> {
-        use std::process::Command;
         use crate::provider::commands::ProviderCommandService;
+        use std::process::Command;
 
         let config_path = {
             let registry = self.api.provider_registry().read();
@@ -1248,11 +1188,7 @@ impl RunContext {
         Ok(())
     }
 
-    fn handle_provider_remove(
-        &self,
-        provider_name: &str,
-        force: bool,
-    ) -> Result<String, ApiError> {
+    fn handle_provider_remove(&self, provider_name: &str, force: bool) -> Result<String, ApiError> {
         use crate::provider::commands::ProviderCommandService;
 
         {
@@ -1434,9 +1370,8 @@ impl RunContext {
                 ))
             })?
         } else {
-            ConfigLoader::load(&self.workspace_root).map_err(|e| {
-                ApiError::ConfigError(format!("Failed to load config: {}", e))
-            })?
+            ConfigLoader::load(&self.workspace_root)
+                .map_err(|e| ApiError::ConfigError(format!("Failed to load config: {}", e)))?
         };
 
         {

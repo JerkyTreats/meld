@@ -1287,10 +1287,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_provider_reports_file_errors_when_registry_skips_invalid_config() {
+    fn test_validate_provider_accepts_local_endpoint_without_scheme() {
         let test_dir = TempDir::new().unwrap();
         with_xdg_config_home(&test_dir, || {
-            let invalid_local_provider = ProviderConfig {
+            let local_provider = ProviderConfig {
                 provider_name: Some("local".to_string()),
                 provider_type: ProviderType::LocalCustom,
                 model: "llama3".to_string(),
@@ -1301,20 +1301,25 @@ mod tests {
 
             let registry = ProviderRegistry::new();
             registry
-                .save_provider_config("local", &invalid_local_provider)
+                .save_provider_config("local", &local_provider)
                 .unwrap();
 
             let mut registry = ProviderRegistry::new();
             registry.load_from_xdg().unwrap();
 
-            assert!(registry.get("local").is_none());
+            let loaded = registry.get("local").unwrap();
+            assert_eq!(
+                loaded.endpoint.as_deref(),
+                Some("https://localhost:8080/v1")
+            );
 
             let result = registry.validate_provider("local").unwrap();
 
+            assert!(result.errors.is_empty());
             assert!(result
-                .errors
+                .checks
                 .iter()
-                .any(|error| error.contains("Invalid endpoint URL")));
+                .any(|(desc, passed)| *passed && desc.contains("Endpoint URL is valid")));
             assert!(!result
                 .errors
                 .iter()
