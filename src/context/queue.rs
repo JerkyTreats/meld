@@ -306,6 +306,8 @@ pub struct FrameGenerationQueue {
 }
 
 impl FrameGenerationQueue {
+    const FILE_CONTEXT_MAX_BYTES: usize = 128 * 1024;
+
     /// Create a new generation queue
     pub fn new(api: Arc<ContextApi>, config: GenerationConfig) -> Self {
         Self::with_event_context(api, config, None)
@@ -1048,7 +1050,8 @@ impl FrameGenerationQueue {
         let (provider_config, provider_type_str) = {
             let provider_registry = api.provider_registry().read();
             let config = provider_registry.get_or_error(&request.provider_name)?;
-            let provider_type_str = crate::provider::profile::provider_type_slug(config.provider_type);
+            let provider_type_str =
+                crate::provider::profile::provider_type_slug(config.provider_type);
             (config.clone(), provider_type_str)
         };
 
@@ -1084,27 +1087,27 @@ impl FrameGenerationQueue {
             provider_registry.create_client(&request.provider_name)?
         };
 
-        // Get node context to build prompt
-        let context = api.get_node(
-            request.node_id,
-            ContextView::builder().max_frames(10).recent().build(),
-        )?;
-        let node_context_text = context
-            .frames
-            .iter()
-            .map(|f| String::from_utf8_lossy(&f.content))
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let child_context_text =
-            Self::collect_directory_child_context_text(api, &node_record, request)?;
-        let prompt_context = match (node_context_text.is_empty(), child_context_text.is_empty()) {
-            (true, true) => None,
-            (false, true) => Some(node_context_text),
-            (true, false) => Some(child_context_text),
-            (false, false) => Some(format!(
-                "Node Context:\n{}\n\nChild Context:\n{}",
-                node_context_text, child_context_text
-            )),
+        // Build prompt context based on node kind.
+        // File nodes are grounded on live file bytes, while directory nodes
+        // are grounded on child context frames.
+        let prompt_context = match node_record.node_type {
+            crate::store::NodeType::File { .. } => {
+                Some(Self::collect_file_source_context(&node_record)?)
+            }
+            crate::store::NodeType::Directory => {
+                let child_context_text =
+                    Self::collect_directory_child_context_text(api, &node_record, request)?;
+                if child_context_text.is_empty() {
+                    let node_context_text = Self::collect_scoped_node_frame_context(api, request)?;
+                    if node_context_text.is_empty() {
+                        None
+                    } else {
+                        Some(node_context_text)
+                    }
+                } else {
+                    Some(child_context_text)
+                }
+            }
         };
 
         // Build messages for LLM
@@ -1310,6 +1313,62 @@ impl FrameGenerationQueue {
         }
 
         Ok(child_sections.join("\n\n---\n\n"))
+    }
+
+    fn collect_scoped_node_frame_context(
+        api: &ContextApi,
+        request: &GenerationRequest,
+    ) -> Result<String, ApiError> {
+        let view = ContextView::builder()
+            .max_frames(10)
+            .recent()
+            .by_type(request.frame_type.clone())
+            .by_agent(request.agent_id.clone())
+            .build();
+        let context = api.get_node(request.node_id, view)?;
+        Ok(context
+            .frames
+            .iter()
+            .map(|f| String::from_utf8_lossy(&f.content))
+            .collect::<Vec<_>>()
+            .join("\n\n"))
+    }
+
+    fn collect_file_source_context(node_record: &NodeRecord) -> Result<String, ApiError> {
+        if !matches!(node_record.node_type, crate::store::NodeType::File { .. }) {
+            return Ok(String::new());
+        }
+
+        let bytes = std::fs::read(&node_record.path).map_err(|e| {
+            ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "Failed to read file source content for generation {}: {}",
+                    node_record.path.display(),
+                    e
+                ),
+            )))
+        })?;
+
+        let truncated = bytes.len() > Self::FILE_CONTEXT_MAX_BYTES;
+        let slice = if truncated {
+            &bytes[..Self::FILE_CONTEXT_MAX_BYTES]
+        } else {
+            &bytes
+        };
+        let mut text = String::from_utf8_lossy(slice).to_string();
+        if truncated {
+            text.push_str(&format!(
+                "\n\n[Truncated to {} bytes for prompt safety]",
+                Self::FILE_CONTEXT_MAX_BYTES
+            ));
+        }
+
+        Ok(format!(
+            "Path: {}\nType: File\nContent:\n{}",
+            node_record.path.display(),
+            text
+        ))
     }
 
     /// Validate that agent has all required prompts
