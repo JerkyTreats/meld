@@ -14,13 +14,29 @@
 
 ## Avoid Backwards Compatibility
 
-Maintaining backwards compatibility tends to clutter codebases, and its not a requirement for this project. 
+Maintaining backwards compatibility tends to clutter codebases, and its not a requirement for this project.
+
+- Backwards incompatible changes are allowed when they improve domain clarity and ownership.
+- Any backwards incompatible change must be called out to the user before commit.
+- Commit messages must reflect change severity using conventional commit rules.
+- Use `type!:` or `type(scope)!:` for breaking changes.
+- Add a `BREAKING CHANGE:` footer with a concise migration impact note.
+- Keep user facing impact explicit in PR notes, review notes, and release notes.
+
+## CLI Path Default Direction
+
+- Project intent is to make `--path` the default targeting mode for CLI flows.
+- Until that rollout is complete, always call out each command surface where path is not the default behavior.
+- When writing plans, specs, reviews, and implementation notes, include a short exception list for non default path behavior.
 
 
 ## Commits
 
 Use `conventional commits` when instructed to commit.
 
+- Approved commit `type` values include `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, and `policy`.
+- Use `policy` for repository governance updates such as standards, process rules, and enforcement workflow changes.
+- For `policy` commits, include at least one governance trace footer such as `Policy-Ref:` or `Discussion:`.
 - Write the subject as a declarative summary of what changed.
 - Describe concrete behavior or ownership changes, not process context.
 - Do not use contextual labels like phase names in the subject.
@@ -28,6 +44,9 @@ Use `conventional commits` when instructed to commit.
 - Prefer `type` and `scope` with this shape `type(scope): summary`.
 - Good example `refactor(provider): split provider ownership into profile repository diagnostics commands and generation`
 - Bad example `refactor(provider): implement phase2`
+- Breaking change example `refactor(context)!: remove legacy frame metadata compatibility path`
+- Breaking footer example `BREAKING CHANGE: frame metadata no longer accepts legacy prompt key`
+- Policy example `policy(agents): require policy trace footer for governance changes`
 
 Verify with user before push.
 
