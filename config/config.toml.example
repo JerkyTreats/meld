@@ -18,6 +18,22 @@
 # Default workspace root (if not specified)
 default_workspace_root = "."
 
+# ============================================================================
+# Logging
+# ============================================================================
+# Logging is enabled by default and writes to a file under the platform state
+# directory. Override with --log-file, MERKLE_LOG_FILE, or the options below.
+# output: file, stdout, stderr, file+stderr, or both. file path is optional;
+# when unset, the default path under the state directory is used.
+
+[logging]
+enabled = true
+level = "info"
+format = "text"
+output = "file"
+# file = null
+color = true
+
 [system.storage]
 # Path to node record store
 # Default: ".merkle/store" (resolved to $XDG_DATA_HOME/merkle/<workspace_path>/store)

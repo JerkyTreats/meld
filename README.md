@@ -85,6 +85,11 @@ Meld uses XDG directories:
 | Providers | `~/.config/meld/providers/*.toml` |
 | Prompts | `~/.config/meld/prompts/*.md` |
 | Data | `~/.local/share/meld/workspaces/<hash>/` |
+| Logs | Platform state directory, e.g. `$XDG_STATE_HOME/meld/` on Linux |
+
+### Logging
+
+Logging is on by default and writes to a file under the platform state directory (e.g. `$XDG_STATE_HOME/meld/.../meld.log` on Linux). Use `--quiet` to disable logging, or `--log-file <path>` / `MERKLE_LOG_FILE` to set the log file path. Configure level, format, and output in `[logging]` in your config file.
 
 ### Workspace config
 
@@ -96,8 +101,10 @@ store_path = ".meld/store"
 frames_path = ".meld/frames"
 
 [logging]
+enabled = true
 level = "info"
-format = "pretty"
+format = "text"
+output = "file"
 ```
 
 ## How It Works

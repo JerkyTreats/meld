@@ -6,13 +6,83 @@
 use crate::error::ApiError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing_subscriber::fmt::time::ChronoUtc;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
+
+/// Resolve the log file path with precedence: CLI, MERKLE_LOG_FILE env, config file, default.
+///
+/// Default uses `ProjectDirs` state directory and optional workspace-scoped path segment.
+pub fn resolve_log_file_path(
+    cli_file: Option<PathBuf>,
+    config_file: Option<PathBuf>,
+    workspace: Option<&Path>,
+) -> Result<PathBuf, ApiError> {
+    if let Some(p) = cli_file {
+        if !p.as_os_str().is_empty() {
+            return Ok(p);
+        }
+    }
+    if let Ok(env_path) = std::env::var("MERKLE_LOG_FILE") {
+        if !env_path.is_empty() {
+            return Ok(PathBuf::from(env_path));
+        }
+    }
+    if let Some(p) = config_file {
+        if !p.as_os_str().is_empty() {
+            return Ok(p);
+        }
+    }
+    default_log_file_path(workspace)
+}
+
+fn default_log_file_path(workspace: Option<&Path>) -> Result<PathBuf, ApiError> {
+    let project_dirs = directories::ProjectDirs::from("", "meld", "meld").ok_or_else(|| {
+        ApiError::ConfigError(
+            "Could not determine platform state directory for log file".to_string(),
+        )
+    })?;
+    let state_dir = project_dirs
+        .state_dir()
+        .ok_or_else(|| {
+            ApiError::ConfigError(
+                "Platform state directory not available for log file".to_string(),
+            )
+        })?
+        .to_path_buf();
+    let base = state_dir;
+    let dir = match workspace {
+        Some(ws) => {
+            let canonical = ws.canonicalize().map_err(|e| {
+                ApiError::ConfigError(format!("Failed to canonicalize workspace path: {}", e))
+            })?;
+            let mut path = base;
+            for component in canonical.components() {
+                match component {
+                    std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+                    | std::path::Component::CurDir
+                    | std::path::Component::ParentDir => {}
+                    std::path::Component::Normal(name) => {
+                        path = path.join(name);
+                    }
+                }
+            }
+            path
+        }
+        None => base,
+    };
+    Ok(dir.join("meld.log"))
+}
 
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
+    /// Whether logging is enabled (default: true)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
     /// Log level: trace, debug, info, warn, error, off
     #[serde(default = "default_log_level")]
     pub level: String,
@@ -21,25 +91,13 @@ pub struct LoggingConfig {
     #[serde(default = "default_format")]
     pub format: String,
 
-    /// Output destination: stdout, stderr, file, both
+    /// Output destination: stdout, stderr, file, file+stderr, both
     #[serde(default = "default_output")]
     pub output: String,
 
-    /// Log file path (if output includes "file")
-    #[serde(default = "default_log_file")]
-    pub file: PathBuf,
-
-    /// Enable log rotation
-    #[serde(default = "default_true")]
-    pub rotation: bool,
-
-    /// Maximum log file size before rotation (bytes)
-    #[serde(default = "default_max_file_size")]
-    pub max_file_size: u64,
-
-    /// Number of rotated log files to keep
-    #[serde(default = "default_max_files")]
-    pub max_files: usize,
+    /// Log file path when output includes file; None means use runtime default
+    #[serde(default)]
+    pub file: Option<PathBuf>,
 
     /// Enable colored output (text format only, stdout/stderr only)
     #[serde(default = "default_true")]
@@ -59,38 +117,21 @@ fn default_format() -> String {
 }
 
 fn default_output() -> String {
-    "stdout".to_string()
-}
-
-fn default_log_file() -> PathBuf {
-    // This is a placeholder - actual path is computed at runtime
-    // The path will be resolved to $XDG_DATA_HOME/meld/workspaces/<hash>/meld.log
-    // when logging is initialized with a workspace root
-    PathBuf::from(".meld/meld.log")
+    "file".to_string()
 }
 
 fn default_true() -> bool {
     true
 }
 
-fn default_max_file_size() -> u64 {
-    10 * 1024 * 1024 // 10 MB
-}
-
-fn default_max_files() -> usize {
-    5
-}
-
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
+            enabled: default_true(),
             level: default_log_level(),
             format: default_format(),
             output: default_output(),
-            file: default_log_file(),
-            rotation: default_true(),
-            max_file_size: default_max_file_size(),
-            max_files: default_max_files(),
+            file: None,
             color: default_true(),
             modules: HashMap::new(),
         }
@@ -105,27 +146,30 @@ impl Default for LoggingConfig {
 /// 3. Configuration file
 /// 4. Defaults
 pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
-    // Build filter from environment or config
+    let disabled = config
+        .as_ref()
+        .map(|c| !c.enabled)
+        .unwrap_or(false);
+    if disabled {
+        Registry::default()
+            .with(EnvFilter::new("off"))
+            .with(fmt::layer().with_writer(|| std::io::sink()))
+            .init();
+        return Ok(());
+    }
+
     let filter = build_env_filter(config)?;
-
-    // Determine format
     let format = determine_format(config)?;
-
-    // Determine output destinations
     let output = determine_output(config)?;
-
-    // Build subscriber - start with registry and filter
-    let base_subscriber = Registry::default().with(filter);
-
-    // Determine if we should use color
     let use_color = config.map(|c| c.color).unwrap_or(true);
 
-    // Helper to get or create log file writer
+    let log_file_path = config
+        .and_then(|c| c.file.clone())
+        .or_else(|| resolve_log_file_path(None, None, None).ok());
     let get_file_writer = || -> Result<std::fs::File, ApiError> {
-        let log_file = config
-            .map(|c| c.file.clone())
-            .unwrap_or_else(default_log_file);
-
+        let log_file = log_file_path.clone().ok_or_else(|| {
+            ApiError::ConfigError("Log file path not set and default resolution failed".to_string())
+        })?;
         if let Some(parent) = log_file.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 ApiError::ConfigError(format!("Failed to create log directory: {}", e))
@@ -140,12 +184,22 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
             })
     };
 
-    // Build subscriber based on format
-    // Support stdout (default) or file output
-    // Note: stderr and multiple outputs require more complex type handling and can be added later
+    let base_subscriber = Registry::default().with(filter);
+
     if format == "json" {
-        // JSON format
-        if output.file {
+        if output.file && output.stderr {
+            let file_writer = get_file_writer()?;
+            let writer = file_writer.and(std::io::stderr);
+            base_subscriber
+                .with(
+                    fmt::layer()
+                        .json()
+                        .with_target(true)
+                        .with_timer(ChronoUtc::rfc_3339())
+                        .with_writer(writer),
+                )
+                .init();
+        } else if output.file {
             let file_writer = get_file_writer()?;
             base_subscriber
                 .with(
@@ -156,8 +210,28 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                         .with_writer(file_writer),
                 )
                 .init();
+        } else if output.stdout && output.stderr {
+            let writer = std::io::stdout.and(std::io::stderr);
+            base_subscriber
+                .with(
+                    fmt::layer()
+                        .json()
+                        .with_target(true)
+                        .with_timer(ChronoUtc::rfc_3339())
+                        .with_writer(writer),
+                )
+                .init();
+        } else if output.stderr {
+            base_subscriber
+                .with(
+                    fmt::layer()
+                        .json()
+                        .with_target(true)
+                        .with_timer(ChronoUtc::rfc_3339())
+                        .with_writer(std::io::stderr),
+                )
+                .init();
         } else {
-            // Default to stdout
             base_subscriber
                 .with(
                     fmt::layer()
@@ -169,8 +243,19 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                 .init();
         }
     } else {
-        // Text format
-        if output.file {
+        if output.file && output.stderr {
+            let file_writer = get_file_writer()?;
+            let writer = file_writer.and(std::io::stderr);
+            base_subscriber
+                .with(
+                    fmt::layer()
+                        .with_target(true)
+                        .with_timer(ChronoUtc::rfc_3339())
+                        .with_ansi(false)
+                        .with_writer(writer),
+                )
+                .init();
+        } else if output.file {
             let file_writer = get_file_writer()?;
             base_subscriber
                 .with(
@@ -181,8 +266,28 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                         .with_writer(file_writer),
                 )
                 .init();
+        } else if output.stdout && output.stderr {
+            let writer = std::io::stdout.and(std::io::stderr);
+            base_subscriber
+                .with(
+                    fmt::layer()
+                        .with_target(true)
+                        .with_timer(ChronoUtc::rfc_3339())
+                        .with_ansi(use_color)
+                        .with_writer(writer),
+                )
+                .init();
+        } else if output.stderr {
+            base_subscriber
+                .with(
+                    fmt::layer()
+                        .with_target(true)
+                        .with_timer(ChronoUtc::rfc_3339())
+                        .with_ansi(use_color)
+                        .with_writer(std::io::stderr),
+                )
+                .init();
         } else {
-            // Default to stdout
             base_subscriber
                 .with(
                     fmt::layer()
@@ -268,23 +373,17 @@ fn determine_format(config: Option<&LoggingConfig>) -> Result<String, ApiError> 
 
 /// Output destinations
 struct OutputDestinations {
-    #[allow(dead_code)] // Planned for future use (see comment in init_logging)
     stdout: bool,
-    #[allow(dead_code)] // Planned for future use (see comment in init_logging)
     stderr: bool,
     file: bool,
 }
 
 /// Determine output destinations from config or environment
 fn determine_output(config: Option<&LoggingConfig>) -> Result<OutputDestinations, ApiError> {
-    // Check environment variable first
     if let Ok(output) = std::env::var("MERKLE_LOG_OUTPUT") {
         return parse_output_destinations(&output);
     }
-
-    // Use config
-    let output = config.map(|c| c.output.as_str()).unwrap_or("stdout");
-
+    let output = config.map(|c| c.output.as_str()).unwrap_or("file");
     parse_output_destinations(output)
 }
 
@@ -305,13 +404,18 @@ fn parse_output_destinations(output: &str) -> Result<OutputDestinations, ApiErro
             stderr: false,
             file: true,
         }),
+        "file+stderr" => Ok(OutputDestinations {
+            stdout: false,
+            stderr: true,
+            file: true,
+        }),
         "both" => Ok(OutputDestinations {
             stdout: true,
             stderr: true,
             file: false,
         }),
         _ => Err(ApiError::ConfigError(format!(
-            "Invalid log output: {} (must be 'stdout', 'stderr', 'file', or 'both')",
+            "Invalid log output: {} (must be 'stdout', 'stderr', 'file', 'file+stderr', or 'both')",
             output
         ))),
     }
@@ -324,9 +428,11 @@ mod tests {
     #[test]
     fn test_default_logging_config() {
         let config = LoggingConfig::default();
+        assert!(config.enabled);
         assert_eq!(config.level, "info");
         assert_eq!(config.format, "text");
-        assert_eq!(config.output, "stdout");
+        assert_eq!(config.output, "file");
+        assert_eq!(config.file, None);
         assert!(config.color);
     }
 
@@ -341,5 +447,56 @@ mod tests {
         assert!(out.stdout);
         assert!(out.stderr);
         assert!(!out.file);
+
+        let out = parse_output_destinations("file+stderr").unwrap();
+        assert!(!out.stdout);
+        assert!(out.stderr);
+        assert!(out.file);
+    }
+
+    #[test]
+    fn test_resolve_log_file_path_cli_wins() {
+        let cli = Some(PathBuf::from("/tmp/cli.log"));
+        let config = Some(PathBuf::from("/tmp/config.log"));
+        let path = resolve_log_file_path(cli, config, None).unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/cli.log"));
+    }
+
+    #[test]
+    fn test_resolve_log_file_path_config_when_cli_none() {
+        let config = Some(PathBuf::from("/tmp/config.log"));
+        let path = resolve_log_file_path(None, config, None).unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/config.log"));
+    }
+
+    #[test]
+    fn test_resolve_log_file_path_default_fallback() {
+        let path = resolve_log_file_path(None, None, None).unwrap();
+        assert!(path.ends_with("meld.log"));
+        assert!(path.components().count() >= 2);
+    }
+
+    #[test]
+    fn test_resolve_log_file_path_default_with_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path();
+        let path = resolve_log_file_path(None, None, Some(workspace)).unwrap();
+        assert!(path.ends_with("meld.log"));
+        let path_str = path.to_string_lossy();
+        assert!(
+            path_str.contains("meld"),
+            "path should contain meld segment: {}",
+            path_str
+        );
+    }
+
+    #[test]
+    fn test_resolve_log_file_path_env_wins_over_config() {
+        let config = Some(PathBuf::from("/tmp/config.log"));
+        std::env::set_var("MERKLE_LOG_FILE", "/env/meld.log");
+        let result = resolve_log_file_path(None, config, None);
+        std::env::remove_var("MERKLE_LOG_FILE");
+        let path = result.unwrap();
+        assert_eq!(path, PathBuf::from("/env/meld.log"));
     }
 }

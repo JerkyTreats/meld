@@ -6,7 +6,6 @@ use clap::Parser;
 use meld::config::ConfigLoader;
 use meld::logging::{init_logging, LoggingConfig};
 use meld::cli::{Cli, RunContext};
-use std::path::PathBuf;
 use std::process;
 use tracing::{error, info};
 
@@ -51,16 +50,9 @@ fn main() {
     }
 }
 
-/// Build logging configuration from CLI args, environment, and config file
+/// Build logging configuration from CLI args, environment, and config file.
+/// Precedence: CLI flags override config file override defaults.
 fn build_logging_config(cli: &Cli) -> LoggingConfig {
-    // If --verbose is not set, disable logging
-    if !cli.verbose {
-        let mut config = LoggingConfig::default();
-        config.level = "off".to_string();
-        return config;
-    }
-
-    // Try to load config file first
     let mut config = if let Some(ref config_path) = cli.config {
         ConfigLoader::load_from_file(config_path)
             .ok()
@@ -73,7 +65,12 @@ fn build_logging_config(cli: &Cli) -> LoggingConfig {
             .unwrap_or_default()
     };
 
-    // Override with CLI arguments (highest priority)
+    if cli.quiet {
+        config.enabled = false;
+    }
+    if cli.verbose {
+        config.level = "debug".to_string();
+    }
     if let Some(ref level) = cli.log_level {
         config.level = level.clone();
     }
@@ -83,14 +80,51 @@ fn build_logging_config(cli: &Cli) -> LoggingConfig {
     if let Some(ref output) = cli.log_output {
         config.output = output.clone();
     }
-    if let Some(ref file) = cli.log_file {
-        config.file = file.clone();
-    } else if config.file == PathBuf::from(".meld/meld.log") {
-        // Resolve default log file path to XDG data directory
-        if let Ok(data_dir) = meld::config::xdg::workspace_data_dir(&cli.workspace) {
-            config.file = data_dir.join("meld.log");
+
+    let output_uses_file = config.output == "file" || config.output == "file+stderr";
+    if config.enabled && output_uses_file {
+        let resolved = meld::logging::resolve_log_file_path(
+            cli.log_file.clone(),
+            config.file.clone(),
+            Some(cli.workspace.as_path()),
+        );
+        if let Ok(path) = resolved {
+            config.file = Some(path);
         }
+    } else if let Some(ref file) = cli.log_file {
+        config.file = Some(file.clone());
     }
 
     config
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use meld::cli::Cli;
+
+    #[test]
+    fn test_build_logging_config_default() {
+        let temp = tempfile::tempdir().unwrap();
+        let ws = temp.path().to_string_lossy();
+        let cli = Cli::try_parse_from(&["meld", "--workspace", ws.as_ref(), "status"]).unwrap();
+        let config = build_logging_config(&cli);
+        assert!(config.enabled, "default should have logging enabled");
+        assert_eq!(config.output, "file", "default output should be file");
+        assert_eq!(config.level, "info", "default level should be info");
+    }
+
+    #[test]
+    fn test_build_logging_config_quiet() {
+        let cli = Cli::try_parse_from(&["meld", "--quiet", "status"]).unwrap();
+        let config = build_logging_config(&cli);
+        assert!(!config.enabled, "quiet should disable logging");
+    }
+
+    #[test]
+    fn test_build_logging_config_verbose() {
+        let cli = Cli::try_parse_from(&["meld", "--verbose", "status"]).unwrap();
+        let config = build_logging_config(&cli);
+        assert_eq!(config.level, "debug", "verbose should set level to debug");
+    }
 }

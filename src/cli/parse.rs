@@ -19,9 +19,13 @@ pub struct Cli {
     #[arg(long)]
     pub config: Option<PathBuf>,
 
-    /// Enable verbose logging (default: off)
+    /// Enable verbose logging (sets level to debug)
     #[arg(long, default_value = "false")]
     pub verbose: bool,
+
+    /// Disable logging (overrides config and default)
+    #[arg(long, default_value = "false")]
+    pub quiet: bool,
 
     /// Log level (trace, debug, info, warn, error, off)
     #[arg(long)]
@@ -31,7 +35,7 @@ pub struct Cli {
     #[arg(long)]
     pub log_format: Option<String>,
 
-    /// Log output (stdout, stderr, file, both)
+    /// Log output (stdout, stderr, file, file+stderr, both)
     #[arg(long)]
     pub log_output: Option<String>,
 

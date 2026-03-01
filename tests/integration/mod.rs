@@ -9,6 +9,7 @@ mod context_cli;
 mod frame_queue;
 mod hasher_verification;
 mod init_command;
+mod logging_default;
 mod model_providers;
 mod node_deletion;
 mod progress_observability;
