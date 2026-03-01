@@ -19,8 +19,54 @@ jobs:
 
       - name: Create commitlint config
         run: |
-          echo "module.exports = { extends: ['@commitlint/config-conventional'] };" > commitlint.config.js
+          cat > commitlint.config.cjs <<'EOF'
+          module.exports = {
+            extends: ['@commitlint/config-conventional'],
+            rules: {
+              'type-enum': [
+                2,
+                'always',
+                [
+                  'build',
+                  'chore',
+                  'ci',
+                  'docs',
+                  'feat',
+                  'fix',
+                  'perf',
+                  'policy',
+                  'refactor',
+                  'revert',
+                  'style',
+                  'test',
+                ],
+              ],
+            },
+          };
+          EOF
 
       - name: Validate PR commits
         run: |
-          npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+          npx commitlint --config commitlint.config.cjs --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
+      - name: Validate policy commit trace footer
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          failed=0
+
+          while IFS= read -r sha; do
+            subject="$(git log -1 --format=%s "$sha")"
+            if [[ "$subject" =~ ^policy(\([^)]+\))?(!)?:[[:space:]] ]]; then
+              body="$(git log -1 --format=%b "$sha")"
+              if ! grep -Eq '^(Policy-Ref|Discussion):[[:space:]].+' <<<"$body"; then
+                echo "::error::policy commit $sha is missing required footer. Add Policy-Ref: or Discussion: in commit body."
+                failed=1
+              fi
+            fi
+          done < <(git rev-list --no-merges "$base..$head")
+
+          if [[ "$failed" -ne 0 ]]; then
+            exit 1
+          fi
