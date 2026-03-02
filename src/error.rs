@@ -57,6 +57,29 @@ pub enum ApiError {
     #[error("Frame metadata policy violation: {0}")]
     FrameMetadataPolicyViolation(String),
 
+    #[error("Frame metadata contains unknown key: {key}")]
+    FrameMetadataUnknownKey { key: String },
+
+    #[error("Frame metadata contains forbidden key: {key}")]
+    FrameMetadataForbiddenKey { key: String },
+
+    #[error(
+        "Frame metadata value for key '{key}' exceeds per-key budget: {actual_bytes} > {max_bytes} bytes"
+    )]
+    FrameMetadataPerKeyBudgetExceeded {
+        key: String,
+        actual_bytes: usize,
+        max_bytes: usize,
+    },
+
+    #[error(
+        "Frame metadata total payload exceeds budget: {actual_bytes} > {max_bytes} bytes"
+    )]
+    FrameMetadataTotalBudgetExceeded {
+        actual_bytes: usize,
+        max_bytes: usize,
+    },
+
     #[error("Agent '{agent_id}' missing required prompt contract field '{field}'")]
     MissingPromptContractField {
         agent_id: String,
@@ -106,6 +129,28 @@ impl Clone for ApiError {
             ApiError::FrameMetadataPolicyViolation(message) => {
                 ApiError::FrameMetadataPolicyViolation(message.clone())
             }
+            ApiError::FrameMetadataUnknownKey { key } => {
+                ApiError::FrameMetadataUnknownKey { key: key.clone() }
+            }
+            ApiError::FrameMetadataForbiddenKey { key } => {
+                ApiError::FrameMetadataForbiddenKey { key: key.clone() }
+            }
+            ApiError::FrameMetadataPerKeyBudgetExceeded {
+                key,
+                actual_bytes,
+                max_bytes,
+            } => ApiError::FrameMetadataPerKeyBudgetExceeded {
+                key: key.clone(),
+                actual_bytes: *actual_bytes,
+                max_bytes: *max_bytes,
+            },
+            ApiError::FrameMetadataTotalBudgetExceeded {
+                actual_bytes,
+                max_bytes,
+            } => ApiError::FrameMetadataTotalBudgetExceeded {
+                actual_bytes: *actual_bytes,
+                max_bytes: *max_bytes,
+            },
             ApiError::MissingPromptContractField { agent_id, field } => {
                 ApiError::MissingPromptContractField {
                     agent_id: agent_id.clone(),

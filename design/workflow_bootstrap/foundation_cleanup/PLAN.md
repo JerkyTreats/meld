@@ -100,13 +100,13 @@ This foundation cleanup plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Extend shared frame write validator as the single frame write validation service. | Not started |
-| Add structural frame identity fields for storage integrity verification. | Not started |
-| Remove storage hash dependence on metadata map lookup. | Not started |
-| Introduce typed metadata policy error variants for unknown forbidden and budget failures. | Not started |
-| Enforce allow list and forbidden key policy at write boundary. | Not started |
-| Enforce per key and total metadata size budgets at write boundary. | Not started |
-| Add direct and queue parity tests for success and failure behavior. | Not started |
+| Extend shared frame write validator as the single frame write validation service. | Complete |
+| Add structural frame identity fields for storage integrity verification. | Complete |
+| Remove storage hash dependence on metadata map lookup. | Complete |
+| Introduce typed metadata policy error variants for unknown forbidden and budget failures. | Complete |
+| Enforce allow list and forbidden key policy at write boundary. | Complete |
+| Enforce per key and total metadata size budgets at write boundary. | Complete |
+| Add direct and queue parity tests for success and failure behavior. | Complete |
 
 **Exit criteria**:
 - all frame writes flow through one shared validator path
@@ -121,6 +121,19 @@ This foundation cleanup plan does not expand non default path behavior.
 - `src/error.rs`
 - `src/api.rs`
 - `src/context/queue.rs`
+
+**Implementation evidence**:
+- compile gate passed: `cargo check`
+- storage integrity unit gate passed: `cargo test non_structural_metadata_mutation`
+- storage corruption unit gate passed: `cargo test structural_content_corruption`
+- context api integration module passed: `cargo test --test integration_tests integration::context_api`
+- frame queue integration module passed: `cargo test --test integration_tests integration::frame_queue`
+
+**Phase completion notes**:
+- shared frame metadata validation now enforces unknown key forbidden key and budget checks with typed deterministic errors
+- frame storage hash checks now recompute from structural identity fields and no longer depend on metadata map lookup for new writes
+- direct and queue write paths now assert parity on unknown forbidden and budget policy failures in integration suites
+- `prompt` metadata key remains allowed for compatibility in this phase and hard prohibition is deferred to metadata contract readiness hardening
 
 ---
 

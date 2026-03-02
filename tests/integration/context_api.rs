@@ -12,6 +12,7 @@ use meld::concurrency::NodeLockManager;
 use meld::error::ApiError;
 use meld::context::frame::{Basis, Frame, FrameStorage};
 use meld::heads::HeadIndex;
+use meld::metadata::frame_write_contract::{METADATA_PER_KEY_MAX_BYTES, METADATA_TOTAL_MAX_BYTES};
 use meld::store::{NodeRecord, NodeType, SledNodeRecordStore};
 use meld::types::NodeID;
 use meld::views::OrderingPolicy;
@@ -400,6 +401,128 @@ fn test_put_frame_rejects_non_frame_metadata_key() {
 
     assert!(matches!(
         result,
-        Err(ApiError::FrameMetadataPolicyViolation(_))
+        Err(ApiError::FrameMetadataUnknownKey { .. })
+    ));
+}
+
+#[test]
+fn test_put_frame_rejects_forbidden_metadata_key() {
+    let (api, _temp_dir) = create_test_api();
+    let node_id: NodeID = [4u8; 32];
+
+    let node_record = create_test_node_record(node_id);
+    api.node_store().put(&node_record).unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        registry.register(AgentIdentity::new("writer-1".to_string(), AgentRole::Writer));
+    }
+
+    let basis = Basis::Node(node_id);
+    let content = b"test content".to_vec();
+    let frame_type = "test".to_string();
+    let agent_id = "writer-1".to_string();
+    let mut metadata = HashMap::new();
+    metadata.insert("raw_prompt".to_string(), "raw prompt data".to_string());
+
+    let frame = Frame::new(basis, content, frame_type, agent_id.clone(), metadata).unwrap();
+    let result = api.put_frame(node_id, frame, agent_id);
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataForbiddenKey { .. })
+    ));
+}
+
+#[test]
+fn test_put_frame_allows_prompt_metadata_key_for_compatibility() {
+    let (api, _temp_dir) = create_test_api();
+    let node_id: NodeID = [9u8; 32];
+
+    let node_record = create_test_node_record(node_id);
+    api.node_store().put(&node_record).unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        registry.register(AgentIdentity::new("writer-1".to_string(), AgentRole::Writer));
+    }
+
+    let basis = Basis::Node(node_id);
+    let content = b"test content".to_vec();
+    let frame_type = "test".to_string();
+    let agent_id = "writer-1".to_string();
+    let mut metadata = HashMap::new();
+    metadata.insert("prompt".to_string(), "compat prompt".to_string());
+
+    let frame = Frame::new(basis, content, frame_type, agent_id.clone(), metadata).unwrap();
+    let result = api.put_frame(node_id, frame, agent_id);
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_put_frame_rejects_per_key_metadata_budget_overflow() {
+    let (api, _temp_dir) = create_test_api();
+    let node_id: NodeID = [5u8; 32];
+
+    let node_record = create_test_node_record(node_id);
+    api.node_store().put(&node_record).unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        registry.register(AgentIdentity::new("writer-1".to_string(), AgentRole::Writer));
+    }
+
+    let basis = Basis::Node(node_id);
+    let content = b"test content".to_vec();
+    let frame_type = "test".to_string();
+    let agent_id = "writer-1".to_string();
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "provider".to_string(),
+        "x".repeat(METADATA_PER_KEY_MAX_BYTES + 1),
+    );
+
+    let frame = Frame::new(basis, content, frame_type, agent_id.clone(), metadata).unwrap();
+    let result = api.put_frame(node_id, frame, agent_id);
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataPerKeyBudgetExceeded { .. })
+    ));
+}
+
+#[test]
+fn test_put_frame_rejects_total_metadata_budget_overflow() {
+    let (api, _temp_dir) = create_test_api();
+    let node_id: NodeID = [6u8; 32];
+
+    let node_record = create_test_node_record(node_id);
+    api.node_store().put(&node_record).unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        registry.register(AgentIdentity::new("writer-1".to_string(), AgentRole::Writer));
+    }
+
+    let basis = Basis::Node(node_id);
+    let content = b"test content".to_vec();
+    let frame_type = "test".to_string();
+    let agent_id = "writer-1".to_string();
+    let per_key = (METADATA_TOTAL_MAX_BYTES / 6).max(1);
+    let mut metadata = HashMap::new();
+    metadata.insert("provider".to_string(), "p".repeat(per_key));
+    metadata.insert("model".to_string(), "m".repeat(per_key));
+    metadata.insert("provider_type".to_string(), "t".repeat(per_key));
+    metadata.insert("prompt_digest".to_string(), "d".repeat(per_key));
+    metadata.insert("context_digest".to_string(), "c".repeat(per_key));
+    metadata.insert("prompt_link_id".to_string(), "l".repeat(per_key));
+
+    let frame = Frame::new(basis, content, frame_type, agent_id.clone(), metadata).unwrap();
+    let result = api.put_frame(node_id, frame, agent_id);
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataTotalBudgetExceeded { .. })
     ));
 }

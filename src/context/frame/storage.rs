@@ -63,10 +63,13 @@ impl FrameStorage {
     /// - The FrameID doesn't match the computed hash (corruption detection)
     pub fn store(&self, frame: &Frame) -> Result<(), StorageError> {
         // Verify FrameID matches computed hash (corruption detection)
-        // Extract agent_id from metadata (it should always be present per Phase 2A)
-        let agent_id = frame.agent_id().ok_or_else(|| {
-            StorageError::InvalidPath("Frame missing agent_id in metadata".to_string())
-        })?;
+        let agent_id = if frame.agent_id.is_empty() {
+            return Err(StorageError::InvalidPath(
+                "Frame missing structural agent_id".to_string(),
+            ));
+        } else {
+            frame.agent_id.as_str()
+        };
 
         let computed_id = id::compute_frame_id(
             &frame.basis,
@@ -151,18 +154,44 @@ impl FrameStorage {
         })?;
 
         // Deserialize frame
-        let frame: Frame = bincode::deserialize(&bytes).map_err(|e| {
+        let mut frame: Frame = bincode::deserialize(&bytes).map_err(|e| {
             StorageError::IoError(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!("Failed to deserialize frame from {:?}: {}", frame_path, e),
             ))
         })?;
 
+        // Backward compatibility: old blobs may only have metadata agent_id.
+        if frame.agent_id.is_empty() {
+            if let Some(agent_id) = frame.metadata.get("agent_id") {
+                frame.agent_id = agent_id.clone();
+            }
+        }
+        if frame.agent_id.is_empty() {
+            return Err(StorageError::InvalidPath(
+                "Frame missing structural agent_id".to_string(),
+            ));
+        }
+
         // Verify FrameID matches (corruption detection)
         if frame.frame_id != *frame_id {
             return Err(StorageError::HashMismatch {
                 expected: *frame_id,
                 actual: frame.frame_id,
+            });
+        }
+
+        // Verify on-disk frame payload integrity using structural identity fields only.
+        let computed_id = id::compute_frame_id(
+            &frame.basis,
+            &frame.content,
+            &frame.frame_type,
+            &frame.agent_id,
+        )?;
+        if computed_id != frame.frame_id {
+            return Err(StorageError::HashMismatch {
+                expected: frame.frame_id,
+                actual: computed_id,
             });
         }
 
@@ -383,5 +412,58 @@ mod tests {
         let storage = FrameStorage::new(temp_dir.path()).unwrap();
         let frame_id: FrameID = [0u8; 32];
         storage.purge(&frame_id).unwrap();
+    }
+
+    #[test]
+    fn test_get_ignores_non_structural_metadata_mutation() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = FrameStorage::new(temp_dir.path()).unwrap();
+
+        let node_id: NodeID = [1u8; 32];
+        let basis = Basis::Node(node_id);
+        let content = b"test".to_vec();
+        let frame_type = "test".to_string();
+        let agent_id = "test-agent".to_string();
+        let metadata = HashMap::new();
+        let frame = Frame::new(basis, content, frame_type, agent_id, metadata).unwrap();
+        storage.store(&frame).unwrap();
+
+        let frame_path = storage.frame_path(&frame.frame_id);
+        let bytes = fs::read(&frame_path).unwrap();
+        let mut stored_frame: Frame = bincode::deserialize(&bytes).unwrap();
+        stored_frame
+            .metadata
+            .insert("provider".to_string(), "mutated-provider".to_string());
+        let updated = bincode::serialize(&stored_frame).unwrap();
+        fs::write(&frame_path, updated).unwrap();
+
+        let loaded = storage.get(&frame.frame_id).unwrap().unwrap();
+        assert_eq!(loaded.frame_id, frame.frame_id);
+        assert_eq!(loaded.content, frame.content);
+    }
+
+    #[test]
+    fn test_get_detects_structural_content_corruption() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = FrameStorage::new(temp_dir.path()).unwrap();
+
+        let node_id: NodeID = [1u8; 32];
+        let basis = Basis::Node(node_id);
+        let content = b"test".to_vec();
+        let frame_type = "test".to_string();
+        let agent_id = "test-agent".to_string();
+        let metadata = HashMap::new();
+        let frame = Frame::new(basis, content, frame_type, agent_id, metadata).unwrap();
+        storage.store(&frame).unwrap();
+
+        let frame_path = storage.frame_path(&frame.frame_id);
+        let bytes = fs::read(&frame_path).unwrap();
+        let mut stored_frame: Frame = bincode::deserialize(&bytes).unwrap();
+        stored_frame.content = b"corrupted".to_vec();
+        let updated = bincode::serialize(&stored_frame).unwrap();
+        fs::write(&frame_path, updated).unwrap();
+
+        let result = storage.get(&frame.frame_id);
+        assert!(matches!(result, Err(StorageError::HashMismatch { .. })));
     }
 }

@@ -34,6 +34,8 @@ pub enum Basis {
 pub struct Frame {
     pub frame_id: FrameID,
     pub basis: Basis,
+    #[serde(default)]
+    pub agent_id: String,
     pub content: Vec<u8>,                  // Blob
     pub frame_type: String,                // Frame type identifier
     pub metadata: FrameMetadata, // Non-hashed
@@ -62,6 +64,7 @@ impl Frame {
         Ok(Frame {
             frame_id,
             basis,
+            agent_id,
             content,
             frame_type,
             metadata,
@@ -88,9 +91,9 @@ impl Frame {
 
     /// Get agent ID from metadata
     ///
-    /// Returns the agent_id stored in the frame's metadata, if present.
+    /// Returns the structural agent_id carried by the frame.
     pub fn agent_id(&self) -> Option<&str> {
-        self.metadata.get("agent_id").map(|s| s.as_str())
+        Some(self.agent_id.as_str())
     }
 
     /// Get metadata value by key

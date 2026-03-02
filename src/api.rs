@@ -235,6 +235,13 @@ impl ContextApi {
             }
         }
 
+        if frame.agent_id != agent_id {
+            return Err(ApiError::InvalidFrame(format!(
+                "Frame structural agent_id '{}' does not match provided agent_id '{}'",
+                frame.agent_id, agent_id
+            )));
+        }
+
         // Shared frame metadata write contract boundary.
         validate_frame_metadata(&frame.metadata, &agent_id)?;
 

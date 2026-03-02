@@ -1418,6 +1418,10 @@ impl FrameGenerationQueue {
             ApiError::ConfigError(_) => false, // Don't retry config errors
             ApiError::MissingPromptContractField { .. } => false,
             ApiError::FrameMetadataPolicyViolation(_) => false,
+            ApiError::FrameMetadataUnknownKey { .. } => false,
+            ApiError::FrameMetadataForbiddenKey { .. } => false,
+            ApiError::FrameMetadataPerKeyBudgetExceeded { .. } => false,
+            ApiError::FrameMetadataTotalBudgetExceeded { .. } => false,
             ApiError::ProviderNotConfigured(_) => false,
             ApiError::ProviderRateLimit(_) => true,
             ApiError::ProviderRequestFailed(_) => true,

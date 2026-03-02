@@ -19,6 +19,9 @@ use meld::context::queue::{
 };
 use meld::heads::HeadIndex;
 use meld::metadata::FrameMetadata;
+use meld::metadata::frame_write_contract::{
+    build_generated_metadata, METADATA_PER_KEY_MAX_BYTES, METADATA_TOTAL_MAX_BYTES,
+};
 use meld::store::persistence::SledNodeRecordStore;
 use meld::store::{NodeRecord, NodeType};
 use meld::telemetry::ProgressRuntime;
@@ -804,7 +807,284 @@ async fn test_queue_rejects_generated_metadata_policy_violation() {
 
     assert!(matches!(
         result,
-        Err(ApiError::FrameMetadataPolicyViolation(_))
+        Err(ApiError::FrameMetadataUnknownKey { .. })
+    ));
+}
+
+#[tokio::test]
+async fn test_queue_rejects_generated_forbidden_metadata_key() {
+    let (api, _temp_dir) = create_test_api();
+    let api = Arc::new(api);
+
+    let node_id = Hash::from([57u8; 32]);
+    api.node_store()
+        .put(&NodeRecord {
+            node_id,
+            path: std::path::PathBuf::from("/tmp/test-dir"),
+            node_type: NodeType::Directory,
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: Default::default(),
+            tombstoned_at: None,
+        })
+        .unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        let mut identity = AgentIdentity::new("writer-forbidden".to_string(), AgentRole::Writer);
+        identity
+            .metadata
+            .insert("system_prompt".to_string(), "system".to_string());
+        identity.metadata.insert(
+            "user_prompt_file".to_string(),
+            "Analyze file {path}".to_string(),
+        );
+        identity.metadata.insert(
+            "user_prompt_directory".to_string(),
+            "Analyze directory {path}".to_string(),
+        );
+        registry.register(identity);
+    }
+
+    let queue = FrameGenerationQueue::with_custom_metadata_builder(
+        api,
+        GenerationConfig::default(),
+        None,
+        |_, _, _, _, _| {
+            let mut metadata = FrameMetadata::new();
+            metadata.insert("raw_prompt".to_string(), "raw prompt data".to_string());
+            metadata
+        },
+    );
+    queue.start().unwrap();
+
+    let result = queue
+        .enqueue_and_wait(
+            node_id,
+            "writer-forbidden".to_string(),
+            "test-provider".to_string(),
+            Some("context-writer-forbidden".to_string()),
+            Priority::Normal,
+            Some(Duration::from_secs(2)),
+        )
+        .await;
+
+    queue.stop().await.unwrap();
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataForbiddenKey { .. })
+    ));
+}
+
+#[tokio::test]
+async fn test_queue_does_not_reject_generated_prompt_metadata_key() {
+    let (api, _temp_dir) = create_test_api();
+    let api = Arc::new(api);
+
+    let node_id = Hash::from([60u8; 32]);
+    api.node_store()
+        .put(&NodeRecord {
+            node_id,
+            path: std::path::PathBuf::from("/tmp/test-dir"),
+            node_type: NodeType::Directory,
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: Default::default(),
+            tombstoned_at: None,
+        })
+        .unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        let mut identity = AgentIdentity::new("writer-prompt".to_string(), AgentRole::Writer);
+        identity
+            .metadata
+            .insert("system_prompt".to_string(), "system".to_string());
+        identity.metadata.insert(
+            "user_prompt_file".to_string(),
+            "Analyze file {path}".to_string(),
+        );
+        identity.metadata.insert(
+            "user_prompt_directory".to_string(),
+            "Analyze directory {path}".to_string(),
+        );
+        registry.register(identity);
+    }
+
+    let queue = FrameGenerationQueue::with_custom_metadata_builder(
+        api,
+        GenerationConfig::default(),
+        None,
+        |agent_id, provider, model, provider_type, prompt| {
+            build_generated_metadata(agent_id, provider, model, provider_type, prompt)
+        },
+    );
+    queue.start().unwrap();
+
+    let result = queue
+        .enqueue_and_wait(
+            node_id,
+            "writer-prompt".to_string(),
+            "test-provider".to_string(),
+            Some("context-writer-prompt".to_string()),
+            Priority::Normal,
+            Some(Duration::from_secs(2)),
+        )
+        .await;
+
+    queue.stop().await.unwrap();
+
+    assert!(!matches!(
+        result,
+        Err(ApiError::FrameMetadataForbiddenKey { .. })
+            | Err(ApiError::FrameMetadataUnknownKey { .. })
+    ));
+}
+
+#[tokio::test]
+async fn test_queue_rejects_generated_per_key_budget_overflow() {
+    let (api, _temp_dir) = create_test_api();
+    let api = Arc::new(api);
+
+    let node_id = Hash::from([58u8; 32]);
+    api.node_store()
+        .put(&NodeRecord {
+            node_id,
+            path: std::path::PathBuf::from("/tmp/test-dir"),
+            node_type: NodeType::Directory,
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: Default::default(),
+            tombstoned_at: None,
+        })
+        .unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        let mut identity = AgentIdentity::new("writer-budget-key".to_string(), AgentRole::Writer);
+        identity
+            .metadata
+            .insert("system_prompt".to_string(), "system".to_string());
+        identity.metadata.insert(
+            "user_prompt_file".to_string(),
+            "Analyze file {path}".to_string(),
+        );
+        identity.metadata.insert(
+            "user_prompt_directory".to_string(),
+            "Analyze directory {path}".to_string(),
+        );
+        registry.register(identity);
+    }
+
+    let queue = FrameGenerationQueue::with_custom_metadata_builder(
+        api,
+        GenerationConfig::default(),
+        None,
+        |_, _, _, _, _| {
+            let mut metadata = FrameMetadata::new();
+            metadata.insert(
+                "provider".to_string(),
+                "x".repeat(METADATA_PER_KEY_MAX_BYTES + 1),
+            );
+            metadata
+        },
+    );
+    queue.start().unwrap();
+
+    let result = queue
+        .enqueue_and_wait(
+            node_id,
+            "writer-budget-key".to_string(),
+            "test-provider".to_string(),
+            Some("context-writer-budget-key".to_string()),
+            Priority::Normal,
+            Some(Duration::from_secs(2)),
+        )
+        .await;
+
+    queue.stop().await.unwrap();
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataPerKeyBudgetExceeded { .. })
+    ));
+}
+
+#[tokio::test]
+async fn test_queue_rejects_generated_total_budget_overflow() {
+    let (api, _temp_dir) = create_test_api();
+    let api = Arc::new(api);
+
+    let node_id = Hash::from([59u8; 32]);
+    api.node_store()
+        .put(&NodeRecord {
+            node_id,
+            path: std::path::PathBuf::from("/tmp/test-dir"),
+            node_type: NodeType::Directory,
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: Default::default(),
+            tombstoned_at: None,
+        })
+        .unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        let mut identity =
+            AgentIdentity::new("writer-budget-total".to_string(), AgentRole::Writer);
+        identity
+            .metadata
+            .insert("system_prompt".to_string(), "system".to_string());
+        identity.metadata.insert(
+            "user_prompt_file".to_string(),
+            "Analyze file {path}".to_string(),
+        );
+        identity.metadata.insert(
+            "user_prompt_directory".to_string(),
+            "Analyze directory {path}".to_string(),
+        );
+        registry.register(identity);
+    }
+
+    let queue = FrameGenerationQueue::with_custom_metadata_builder(
+        api,
+        GenerationConfig::default(),
+        None,
+        |_, _, _, _, _| {
+            let per_key = (METADATA_TOTAL_MAX_BYTES / 6).max(1);
+            let mut metadata = FrameMetadata::new();
+            metadata.insert("provider".to_string(), "p".repeat(per_key));
+            metadata.insert("model".to_string(), "m".repeat(per_key));
+            metadata.insert("provider_type".to_string(), "t".repeat(per_key));
+            metadata.insert("prompt_digest".to_string(), "d".repeat(per_key));
+            metadata.insert("context_digest".to_string(), "c".repeat(per_key));
+            metadata.insert("prompt_link_id".to_string(), "l".repeat(per_key));
+            metadata
+        },
+    );
+    queue.start().unwrap();
+
+    let result = queue
+        .enqueue_and_wait(
+            node_id,
+            "writer-budget-total".to_string(),
+            "test-provider".to_string(),
+            Some("context-writer-budget-total".to_string()),
+            Priority::Normal,
+            Some(Duration::from_secs(2)),
+        )
+        .await;
+
+    queue.stop().await.unwrap();
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataTotalBudgetExceeded { .. })
     ));
 }
 
