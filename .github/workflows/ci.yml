@@ -1,25 +1,27 @@
-name: Rust CI
+name: Master Pipeline
 
 on:
-  pull_request:
-    branches:
-      - master
   push:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      force_release:
+        description: Force a patch release even with no new commits since last tag
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  build-and-test:
-    name: Build and test
+  verify:
+    name: Verify
+    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -48,3 +50,309 @@ jobs:
           else
             cargo test --workspace --all-targets
           fi
+
+  release:
+    name: Release and publish
+    if: ${{ (github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]')) && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    needs: verify
+    concurrency:
+      group: release-master
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      FORCE_RELEASE: ${{ github.event.inputs.force_release || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync to latest master state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin master --tags
+          git checkout -B release-work origin/master
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Compute next release version
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          crate_name="$(sed -n 's/^name = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          if [[ -z "$crate_name" || -z "$cargo_version" ]]; then
+            echo "::error::Unable to read crate name and version from Cargo.toml"
+            exit 1
+          fi
+
+          parse_version() {
+            local value="$1"
+            IFS='.' read -r major minor patch <<<"$value"
+            if [[ -z "${major:-}" || -z "${minor:-}" || -z "${patch:-}" ]]; then
+              echo "::error::Invalid semver value: $value"
+              exit 1
+            fi
+            if ! [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]]; then
+              echo "::error::Non numeric semver value: $value"
+              exit 1
+            fi
+            printf '%s %s %s\n' "$major" "$minor" "$patch"
+          }
+
+          last_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n1)"
+          if [[ -n "$last_tag" ]]; then
+            base_version="${last_tag#v}"
+            range_expr="${last_tag}..HEAD"
+          else
+            base_version="$cargo_version"
+            range_expr="HEAD"
+          fi
+
+          required_rank=0
+          required_name="none"
+          saw_commit=false
+          while IFS= read -r sha; do
+            saw_commit=true
+            subject="$(git log -1 --format=%s "$sha")"
+            body="$(git log -1 --format=%b "$sha")"
+
+            if [[ ! "$subject" =~ ^([a-z]+)(\([^)]+\))?(!)?:[[:space:]].+ ]]; then
+              echo "::error::Commit $sha is not a valid conventional commit: $subject"
+              exit 1
+            fi
+
+            commit_type="${BASH_REMATCH[1]}"
+            breaking_marker="${BASH_REMATCH[3]}"
+            case "$commit_type" in
+              feat|fix|perf|refactor|docs|design|test|build|ci|chore|policy) ;;
+              *)
+                echo "::error::Commit $sha uses unsupported type '$commit_type'"
+                exit 1
+                ;;
+            esac
+
+            if [[ "$commit_type" == "policy" ]]; then
+              if ! grep -Eq '^(Policy-Ref|Discussion):[[:space:]].+' <<<"$body"; then
+                echo "::error::policy commit $sha is missing Policy-Ref or Discussion footer"
+                exit 1
+              fi
+            fi
+
+            if [[ -n "$breaking_marker" ]] || grep -Eq '^BREAKING CHANGE:[[:space:]].+' <<<"$body"; then
+              required_rank=3
+              required_name="major"
+            elif [[ "$required_rank" -lt 2 && "$commit_type" == "feat" ]]; then
+              required_rank=2
+              required_name="minor"
+            elif [[ "$required_rank" -lt 1 ]]; then
+              required_rank=1
+              required_name="patch"
+            fi
+          done < <(git rev-list --no-merges "$range_expr")
+
+          if [[ "$saw_commit" != "true" && "$FORCE_RELEASE" == "true" ]]; then
+            required_rank=1
+            required_name="patch"
+          fi
+
+          if [[ "$saw_commit" != "true" && "$FORCE_RELEASE" != "true" ]]; then
+            echo "release_required=false" >>"$GITHUB_OUTPUT"
+            echo "crate_name=$crate_name" >>"$GITHUB_OUTPUT"
+            echo "next_version=$cargo_version" >>"$GITHUB_OUTPUT"
+            echo "release_tag=v$cargo_version" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          read -r base_major base_minor base_patch <<<"$(parse_version "$base_version")"
+
+          effective_rank="$required_rank"
+          if [[ "$base_major" == "0" && "$required_rank" -eq 3 ]]; then
+            effective_rank=2
+            required_name="minor"
+          fi
+
+          case "$effective_rank" in
+            3)
+              next_major=$((base_major + 1))
+              next_minor=0
+              next_patch=0
+              ;;
+            2)
+              next_major=$base_major
+              next_minor=$((base_minor + 1))
+              next_patch=0
+              ;;
+            1)
+              next_major=$base_major
+              next_minor=$base_minor
+              next_patch=$((base_patch + 1))
+              ;;
+            *)
+              echo "::error::Unable to determine required version bump"
+              exit 1
+              ;;
+          esac
+
+          next_version="${next_major}.${next_minor}.${next_patch}"
+          echo "release_required=true" >>"$GITHUB_OUTPUT"
+          echo "crate_name=$crate_name" >>"$GITHUB_OUTPUT"
+          echo "next_version=$next_version" >>"$GITHUB_OUTPUT"
+          echo "release_tag=v$next_version" >>"$GITHUB_OUTPUT"
+          echo "required_bump=$required_name" >>"$GITHUB_OUTPUT"
+
+      - name: Stop when no release is needed
+        if: ${{ steps.plan.outputs.release_required != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "No release needed for current master state."
+
+      - name: Apply computed version to Cargo.toml
+        if: ${{ steps.plan.outputs.release_required == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          next_version="${{ steps.plan.outputs.next_version }}"
+          sed -i -E "0,/^version = \".*\"/s//version = \"${next_version}\"/" Cargo.toml
+
+      - name: Commit and push version bump
+        if: ${{ steps.plan.outputs.release_required == 'true' }}
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- Cargo.toml; then
+            echo "release_sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          release_tag="${{ steps.plan.outputs.release_tag }}"
+          git add Cargo.toml
+          git commit -m "ci(release): bump version to ${release_tag} [skip ci]"
+          git push origin HEAD:master
+          echo "release_sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+      - name: Check crates.io publish state
+        if: ${{ steps.plan.outputs.release_required == 'true' }}
+        id: crates
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate_name="${{ steps.plan.outputs.crate_name }}"
+          crate_version="${{ steps.plan.outputs.next_version }}"
+          crate_url="https://crates.io/api/v1/crates/${crate_name}/${crate_version}"
+
+          publish_required=""
+          for attempt in 1 2 3 4 5; do
+            status_code="$(curl -sS -o /tmp/crate-version.json -w "%{http_code}" "$crate_url" || true)"
+            if [[ "$status_code" == "200" ]]; then
+              publish_required=false
+              break
+            fi
+            if [[ "$status_code" == "404" ]]; then
+              publish_required=true
+              break
+            fi
+            echo "Unexpected crates.io status $status_code on attempt $attempt"
+            sleep $((attempt * 2))
+          done
+
+          if [[ -z "$publish_required" ]]; then
+            echo "::error::Unable to determine crates.io publish state for ${crate_name}@${crate_version}"
+            exit 1
+          fi
+
+          echo "publish_required=$publish_required" >>"$GITHUB_OUTPUT"
+
+      - name: Validate package before publish
+        if: ${{ steps.plan.outputs.release_required == 'true' && steps.crates.outputs.publish_required == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f Cargo.lock ]]; then
+            cargo publish --dry-run --locked
+          else
+            cargo publish --dry-run
+          fi
+
+      - name: Publish to crates.io
+        if: ${{ steps.plan.outputs.release_required == 'true' && steps.crates.outputs.publish_required == 'true' }}
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+            echo "::error::CARGO_REGISTRY_TOKEN is not configured"
+            exit 1
+          fi
+
+          if [[ -f Cargo.lock ]]; then
+            cargo publish --locked
+          else
+            cargo publish
+          fi
+
+      - name: Wait for crates.io version visibility
+        if: ${{ steps.plan.outputs.release_required == 'true' && steps.crates.outputs.publish_required == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate_name="${{ steps.plan.outputs.crate_name }}"
+          crate_version="${{ steps.plan.outputs.next_version }}"
+          crate_url="https://crates.io/api/v1/crates/${crate_name}/${crate_version}"
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            status_code="$(curl -sS -o /tmp/crate-published.json -w "%{http_code}" "$crate_url" || true)"
+            if [[ "$status_code" == "200" ]]; then
+              exit 0
+            fi
+            sleep 10
+            echo "Waiting for crates.io index visibility attempt $attempt"
+          done
+          echo "::error::Published version did not become visible on crates.io in time"
+          exit 1
+
+      - name: Create and push tag
+        if: ${{ steps.plan.outputs.release_required == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="${{ steps.plan.outputs.release_tag }}"
+          release_sha="${{ steps.bump.outputs.release_sha }}"
+
+          git fetch origin --tags
+          if git rev-parse -q --verify "refs/tags/${release_tag}" >/dev/null; then
+            existing_sha="$(git rev-list -n1 "${release_tag}")"
+            if [[ "$existing_sha" != "$release_sha" ]]; then
+              echo "::error::Tag ${release_tag} already exists at ${existing_sha} and does not match ${release_sha}"
+              exit 1
+            fi
+          else
+            git tag "${release_tag}" "${release_sha}"
+            git push origin "refs/tags/${release_tag}"
+          fi
+
+      - name: Ensure GitHub release exists
+        if: ${{ steps.plan.outputs.release_required == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          release_tag="${{ steps.plan.outputs.release_tag }}"
+          if gh release view "${release_tag}" >/dev/null 2>&1; then
+            exit 0
+          fi
+          gh release create "${release_tag}" --title "${release_tag}" --verify-tag --generate-notes
