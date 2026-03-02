@@ -21,6 +21,10 @@
 - [Policy Proposal Flow](governance/policy_proposal_flow.md)
 - [Complex Change Workflow Governance](governance/complex_change_workflow.md)
 
+## Commit Governance Rule
+
+- For every user request that asks for a commit, review [Commit Policy](governance/commit_policy.md) before running `git commit` or `git commit --amend`.
+
 ## Complex Workflow Note
 
 - Complex workflow mode is user triggered.
