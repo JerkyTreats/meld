@@ -33,10 +33,11 @@ This foundation cleanup plan does not expand non default path behavior.
 
 | Phase | Goal | Dependencies | Status |
 |-------|------|--------------|--------|
-| 1 | Domain metadata separation | None | active |
+| 1 | Domain metadata separation | None | complete |
 | 2 | Frame integrity boundary cleanup | Phase 1 | active |
 | 3 | Generation orchestration boundary cleanup | Phase 1 and Phase 2 | active |
 | 4 | Integrated parity and readiness gates | Phase 1 through Phase 3 | active |
+| 5 | Metadata contract readiness hardening | Phase 1 through Phase 4 | active |
 
 ---
 
@@ -52,13 +53,13 @@ This foundation cleanup plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Normalize store module layout to remove `mod.rs` usage in the targeted seam. | Not started |
-| Introduce explicit metadata domain types for frame node and agent domains. | Not started |
-| Add explicit prompt contract adapter in agent profile domain. | Not started |
-| Centralize frame metadata construction and validation contract usage through one write boundary. | Not started |
-| Replace read path raw metadata map lookups with typed accessors and projection policy. | Not started |
-| Complete node metadata cutover with direct serialization path and no compatibility wrapper track. | Not started |
-| Add isolation misuse and adapter parity coverage across integration suites. | Not started |
+| Normalize store module layout to remove `mod.rs` usage in the targeted seam. | Complete |
+| Introduce explicit metadata domain types for frame node and agent domains. | Complete |
+| Add explicit prompt contract adapter in agent profile domain. | Complete |
+| Centralize frame metadata construction and validation contract usage through one write boundary. | Complete |
+| Replace read path raw metadata map lookups with typed accessors and projection policy. | Complete |
+| Complete node metadata cutover with direct serialization path and no compatibility wrapper track. | Complete |
+| Add isolation misuse and adapter parity coverage across integration suites. | Complete |
 
 **Exit criteria**:
 - frame node and agent metadata boundaries are explicit and isolated
@@ -77,6 +78,14 @@ This foundation cleanup plan does not expand non default path behavior.
 - `src/api.rs`
 - `src/context/queue.rs`
 - `src/context/query/view_policy.rs`
+
+**Implementation evidence**:
+- compile gate passed: `cargo check`
+- context api integration module passed under `integration_tests`
+- frame queue integration module passed under `integration_tests`
+- store integration module passed under `integration_tests`
+- config integration module passed under `integration_tests`
+- context cli integration module passed under `integration_tests`
 
 ---
 
@@ -168,12 +177,39 @@ This foundation cleanup plan does not expand non default path behavior.
 
 ---
 
+### Phase 5 — Metadata contract readiness hardening
+
+**Goal**: Close remaining metadata policy and read visibility gaps so metadata contracts can start with no new foundation scope.
+
+**Source docs**:
+- [Metadata Contract Ready Cleanup](metadata_contract_ready/README.md)
+- [Metadata Contract Ready Code Review](metadata_contract_ready/code_review.md)
+- [Metadata Contract Ready Technical Specification](metadata_contract_ready/technical_spec.md)
+
+| Task | Completion |
+|------|------------|
+| Enforce forbidden key rejection for raw prompt and raw context metadata payload keys at shared write boundary. | Not started |
+| Add forward accepted keys for `prompt_digest` `context_digest` and `prompt_link_id`. | Not started |
+| Replace string policy failures with typed metadata policy failures for unknown forbidden and budget classes. | Not started |
+| Enforce registry driven metadata visibility projection on default read surfaces. | Not started |
+| Add no bypass runtime write gate for shared frame metadata validation entry. | Not started |
+| Add direct and queue parity suites for forbidden key unknown key and budget failures. | Not started |
+
+**Exit criteria**:
+- default metadata output cannot reveal forbidden payload values
+- direct and queue writes emit identical typed metadata policy failures
+- runtime frame writes cannot bypass shared metadata validator entry
+- metadata contracts phase can start without additional cleanup scope growth
+
+---
+
 ## Implementation Order Summary
 
 1. Complete Phase 1 domain metadata separation
 2. Complete Phase 2 frame integrity boundary cleanup
 3. Complete Phase 3 generation orchestration split
 4. Complete Phase 4 integrated readiness gates
+5. Complete Phase 5 metadata contract readiness hardening
 
 ## Verification Strategy
 
@@ -194,6 +230,15 @@ Generation parity gates:
 - post split artifacts match baseline for targeted success scenarios
 - retry count backoff class and terminal error class match baseline
 
+Read safety gates:
+- default metadata output hides forbidden and non visible key classes
+- projection policy is centralized in metadata domain contracts
+
+Readiness gates:
+- shared write boundary accepts required forward digest keys
+- forbidden payload key writes fail deterministically on all runtime paths
+- no runtime write path bypasses shared metadata policy enforcement
+
 CLI direction gates:
 - no new non default path command behavior is introduced
 - exception list in this plan remains accurate as command surfaces evolve
@@ -206,7 +251,8 @@ Foundation cleanup is complete when:
 2. frame integrity policy and validation are centralized typed and deterministic
 3. generation orchestration is split by ownership with queue lifecycle isolation
 4. parity and characterization coverage pass for metadata integrity and generation behavior
-5. cleanup outputs are ready inputs for metadata contracts and turned docs workflow phases
+5. metadata contract readiness hardening gates pass for write and read policy behavior
+6. cleanup outputs are ready inputs for metadata contracts and turned docs workflow phases
 
 ## Related Documentation
 
@@ -214,6 +260,7 @@ Foundation cleanup is complete when:
 - [Domain Metadata Separation Cleanup](domain_metadata/README.md)
 - [Frame Integrity Boundary Cleanup](frame_integrity/README.md)
 - [Generation Orchestration Boundary Cleanup](generation_orchestration/README.md)
+- [Metadata Contract Ready Cleanup](metadata_contract_ready/README.md)
 - [Workflow Bootstrap Roadmap](../README.md)
 - [Workflow Metadata Contracts Spec](../metadata_contracts/README.md)
 - [Turn Manager Generalized Spec](../turn_manager/README.md)

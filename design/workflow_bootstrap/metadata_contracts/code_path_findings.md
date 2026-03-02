@@ -13,9 +13,10 @@ This document is normative for R1 and R2 planning.
 Cleanup specs must be complete before metadata contracts work begins.
 
 1. [Boundary Cleanup Foundation Spec](../foundation_cleanup/README.md)
-2. [Domain Metadata Separation Spec](../foundation_cleanup/domain_metadata_separation_spec.md)
-3. [Frame Integrity Boundary Spec](../foundation_cleanup/frame_integrity_boundary_spec.md)
-4. [Generation Orchestration Split Spec](../foundation_cleanup/generation_orchestration_split_spec.md)
+2. [Domain Metadata Separation Cleanup](../foundation_cleanup/domain_metadata/README.md)
+3. [Frame Integrity Boundary Cleanup](../foundation_cleanup/frame_integrity/README.md)
+4. [Generation Orchestration Boundary Cleanup](../foundation_cleanup/generation_orchestration/README.md)
+5. [Metadata Contract Ready Cleanup](../foundation_cleanup/metadata_contract_ready/README.md)
 
 ## Post Cleanup Baseline Assertions
 

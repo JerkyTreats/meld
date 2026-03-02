@@ -19,6 +19,7 @@ This cleanup reduces blast radius by isolating boundaries and removing cross dom
 1. [Domain Metadata Cleanup](domain_metadata/README.md)
 2. [Frame Integrity Boundary Cleanup](frame_integrity/README.md)
 3. [Generation Orchestration Boundary Cleanup](generation_orchestration/README.md)
+4. [Metadata Contract Ready Cleanup](metadata_contract_ready/README.md)
 
 ## Scope
 
@@ -26,6 +27,7 @@ This cleanup reduces blast radius by isolating boundaries and removing cross dom
 - establish one shared write boundary for frame metadata validation
 - remove integrity check dependence on free form metadata lookup
 - split large generation orchestration flow into focused units
+- close metadata contract readiness gaps before metadata contracts execution
 
 ## Out Of Scope
 
@@ -38,6 +40,7 @@ This cleanup reduces blast radius by isolating boundaries and removing cross dom
 1. domain metadata separation
 2. frame integrity boundary cleanup
 3. generation orchestration split
+4. metadata contract readiness hardening
 
 ## Resolution Decisions
 
@@ -53,9 +56,11 @@ This cleanup reduces blast radius by isolating boundaries and removing cross dom
 3. activate shared frame write contract at the write entry boundary
 4. complete frame integrity structural hash decoupling and typed policy errors
 5. split generation orchestration units with parity gates and keep queue lifecycle stable
+6. harden metadata policy readiness for digest key migration and read visibility gates
 
 ## Exit Criteria
 
 - frame metadata validation is centralized and deterministic
 - storage integrity checks are independent from arbitrary metadata keys
 - generation orchestration units have clear ownership and characterization coverage
+- metadata contracts phase start does not require new foundation cleanup scope

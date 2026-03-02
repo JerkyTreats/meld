@@ -14,6 +14,7 @@ This specification synthesizes:
 
 - [Workflow Metadata Contracts Spec](README.md)
 - [Post Cleanup Findings](code_path_findings.md)
+- [Metadata Contract Ready Cleanup](../foundation_cleanup/metadata_contract_ready/README.md)
 
 ## Phase Boundary
 
@@ -29,9 +30,10 @@ End condition:
 All cleanup preconditions must be true.
 
 1. [Boundary Cleanup Foundation Spec](../foundation_cleanup/README.md)
-2. [Domain Metadata Separation Spec](../foundation_cleanup/domain_metadata_separation_spec.md)
-3. [Frame Integrity Boundary Spec](../foundation_cleanup/frame_integrity_boundary_spec.md)
-4. [Generation Orchestration Split Spec](../foundation_cleanup/generation_orchestration_split_spec.md)
+2. [Domain Metadata Separation Cleanup](../foundation_cleanup/domain_metadata/README.md)
+3. [Frame Integrity Boundary Cleanup](../foundation_cleanup/frame_integrity/README.md)
+4. [Generation Orchestration Boundary Cleanup](../foundation_cleanup/generation_orchestration/README.md)
+5. [Metadata Contract Ready Cleanup](../foundation_cleanup/metadata_contract_ready/README.md)
 
 ## Goals
 
@@ -194,4 +196,3 @@ The metadata contracts phase is complete when all of the following are true:
 3. read path visibility and redaction behavior is enforced by default
 4. tests cover direct writes queue writes and metadata output surfaces
 5. downstream workflow work can proceed without additional metadata contract redesign
-

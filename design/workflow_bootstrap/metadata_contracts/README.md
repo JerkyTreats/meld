@@ -12,6 +12,7 @@ This spec is focused on foundation quality for workflows.
 
 - [Phase Technical Specification](technical_spec.md)
 - [Boundary Cleanup Foundation Spec](../foundation_cleanup/README.md)
+- [Metadata Contract Ready Cleanup](../foundation_cleanup/metadata_contract_ready/README.md)
 - [Post Cleanup Findings](code_path_findings.md)
 
 ## Scope
