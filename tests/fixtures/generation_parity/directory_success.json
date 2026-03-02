@@ -1,0 +1,34 @@
+{
+  "frame_output": {
+    "content": "generated directory",
+    "frame_type": "context-writer",
+    "metadata": {
+      "agent_id": "writer",
+      "model": "mock-model",
+      "prompt": "summarize directory",
+      "provider": "mock-provider",
+      "provider_type": "local"
+    }
+  },
+  "provider_request": {
+    "messages": [
+      {
+        "content": "system prompt",
+        "role": "System"
+      },
+      {
+        "content": "Context:\nPath: <ROOT>/root/child.txt\nType: File\nContent:\nchild frame context\n\nTask: summarize directory",
+        "role": "User"
+      }
+    ],
+    "model": "mock-model"
+  },
+  "retry": {
+    "attempt_count": 1,
+    "backoff_class": "none",
+    "retry_event_count": 0,
+    "terminal_error_class": null
+  },
+  "scenario_id": "directory_success",
+  "schema_version": 1
+}

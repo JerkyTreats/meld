@@ -35,7 +35,7 @@ This foundation cleanup plan does not expand non default path behavior.
 |-------|------|--------------|--------|
 | 1 | Domain metadata separation | None | complete |
 | 2 | Frame integrity boundary cleanup | Phase 1 | active |
-| 3 | Generation orchestration boundary cleanup | Phase 1 and Phase 2 | active |
+| 3 | Generation orchestration boundary cleanup | Phase 1 and Phase 2 | complete |
 | 4 | Integrated parity and readiness gates | Phase 1 through Phase 3 | active |
 | 5 | Metadata contract readiness hardening | Phase 1 through Phase 4 | active |
 
@@ -148,12 +148,12 @@ This foundation cleanup plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Extract prompt and context collection logic from queue worker into generation units. | Not started |
-| Extract provider execution from queue worker into a dedicated generation unit contract. | Not started |
-| Extract frame metadata construction from queue worker and route through metadata contract boundary. | Not started |
-| Constrain queue worker to lifecycle dedupe retry ordering and telemetry concerns. | Not started |
-| Preserve generate run ownership and level policy seams in generation domain. | Not started |
-| Add characterization baseline capture and post split parity suites for generation output and retries. | Not started |
+| Extract prompt and context collection logic from queue worker into generation units. | Complete |
+| Extract provider execution from queue worker into a dedicated generation unit contract. | Complete |
+| Extract frame metadata construction from queue worker and route through metadata contract boundary. | Complete |
+| Constrain queue worker to lifecycle dedupe retry ordering and telemetry concerns. | Complete |
+| Preserve generate run ownership and level policy seams in generation domain. | Complete |
+| Add characterization baseline capture and post split parity suites for generation output and retries. | Complete |
 
 **Exit criteria**:
 - queue worker no longer performs inline prompt assembly provider calls or metadata map construction
@@ -165,9 +165,26 @@ This foundation cleanup plan does not expand non default path behavior.
 - `src/context/queue.rs`
 - `src/context/generation/run.rs`
 - `src/context/generation/executor.rs`
-- `src/context/generation/` new unit modules
+- `src/context/generation/contracts.rs`
+- `src/context/generation/orchestration.rs`
+- `src/context/generation/prompt_collection.rs`
+- `src/context/generation/provider_execution.rs`
+- `src/context/generation/metadata_construction.rs`
 - `src/metadata/frame_write_contract.rs`
 - `tests/fixtures/generation_parity/`
+
+**Implementation evidence**:
+- compile gate passed: `cargo check`
+- generation parity integration module passed: `cargo test --test integration_tests integration::generation_parity`
+- frame queue integration module passed: `cargo test --test integration_tests integration::frame_queue`
+- generation executor unit module passed: `cargo test generation::executor`
+
+**Phase completion notes**:
+- queue request processing now delegates generation content execution to `src/context/generation/orchestration.rs`
+- prompt and context collection moved to `src/context/generation/prompt_collection.rs` and queue no longer assembles prompts inline
+- provider preparation and completion execution moved to `src/context/generation/provider_execution.rs`
+- generated frame metadata construction moved to `src/context/generation/metadata_construction.rs` and validated through shared frame metadata contract checks
+- parity fixtures for file success directory success retryable failure and non retryable failure are committed under `tests/fixtures/generation_parity/`
 
 ---
 

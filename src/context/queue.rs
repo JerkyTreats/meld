@@ -3,14 +3,14 @@
 //! Batch queue system for automatically generating context frames using LLM providers.
 //! Handles large-scale operations efficiently through batching, rate limiting, and concurrent processing.
 
-use crate::api::{ContextApi, ContextView};
-use crate::agent::profile::prompt_contract::PromptContract;
-use crate::context::frame::{Basis, Frame};
+use crate::api::ContextApi;
+use crate::context::generation::contracts::{
+    GeneratedMetadataBuilder, GenerationOrchestrationRequest,
+};
+use crate::context::generation::orchestration::execute_generation_request;
 use crate::error::ApiError;
 use crate::metadata::frame_types::FrameMetadata;
-use crate::metadata::frame_write_contract::{build_generated_metadata, validate_frame_metadata};
-use crate::provider::ChatMessage;
-use crate::store::NodeRecord;
+use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::telemetry::{
     ProgressRuntime, ProviderLifecycleEventData, QueueEventData, QueueStatsEventData,
 };
@@ -24,9 +24,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, Mutex, Notify, Semaphore};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
-
-type GeneratedMetadataBuilder =
-    dyn Fn(&str, &str, &str, &str, &str) -> FrameMetadata + Send + Sync;
 
 /// Priority level for generation requests
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -314,8 +311,6 @@ pub struct FrameGenerationQueue {
 }
 
 impl FrameGenerationQueue {
-    const FILE_CONTEXT_MAX_BYTES: usize = 128 * 1024;
-
     /// Create a new generation queue
     pub fn new(api: Arc<ContextApi>, config: GenerationConfig) -> Self {
         Self::with_event_context(api, config, None)
@@ -326,12 +321,7 @@ impl FrameGenerationQueue {
         config: GenerationConfig,
         event_context: Option<QueueEventContext>,
     ) -> Self {
-        Self::with_custom_metadata_builder(
-            api,
-            config,
-            event_context,
-            build_generated_metadata,
-        )
+        Self::with_custom_metadata_builder(api, config, event_context, build_generated_metadata)
     }
 
     /// Create a queue with a custom generated metadata builder.
@@ -1057,8 +1047,8 @@ impl FrameGenerationQueue {
         debug!(worker_id, "Worker stopped");
     }
 
-    /// Process a single generation request
-    /// This is the ONLY place where providers are called
+    /// Process a single generation request by delegating generation content work
+    /// to the generation orchestration domain.
     async fn process_request(
         request: &GenerationRequest,
         api: &ContextApi,
@@ -1066,350 +1056,23 @@ impl FrameGenerationQueue {
         event_context: Option<QueueEventContext>,
         metadata_builder: &GeneratedMetadataBuilder,
     ) -> Result<FrameID, ApiError> {
-        debug!(
-            request_id = ?request.request_id,
-            node_id = %hex::encode(request.node_id),
-            agent_id = %request.agent_id,
-            attempt = request.retry_count + 1,
-            "Processing generation request"
-        );
-
-        if !request.options.force {
-            if let Some(existing_head) = api.get_head(&request.node_id, &request.frame_type)? {
-                return Ok(existing_head);
-            }
-        }
-
-        // Get agent
-        let agent = api.get_agent(&request.agent_id)?;
-
-        // Get provider config and type from registry (drop guard before await)
-        let (provider_config, provider_type_str) = {
-            let provider_registry = api.provider_registry().read();
-            let config = provider_registry.get_or_error(&request.provider_name)?;
-            let provider_type_str =
-                crate::provider::profile::provider_type_slug(config.provider_type);
-            (config.clone(), provider_type_str)
+        let orchestration_request = GenerationOrchestrationRequest {
+            request_id: request.request_id.as_u64(),
+            node_id: request.node_id,
+            agent_id: request.agent_id.clone(),
+            provider_name: request.provider_name.clone(),
+            frame_type: request.frame_type.clone(),
+            retry_count: request.retry_count,
+            force: request.options.force,
         };
 
-        // Get node record
-        let node_record = api
-            .node_store()
-            .get(&request.node_id)
-            .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(request.node_id))?;
-
-        // Resolve agent prompt contract once through the explicit adapter.
-        let prompt_contract = PromptContract::from_agent(&agent)?;
-        let (system_prompt, user_prompt) = Self::generate_prompts(&prompt_contract, &node_record);
-
-        // Create provider client (need to get registry again, but drop before await)
-        let client = {
-            let provider_registry = api.provider_registry().read();
-            provider_registry.create_client(&request.provider_name)?
-        };
-
-        // Build and validate metadata through the shared write contract before provider IO.
-        let generated_metadata = metadata_builder(
-            &request.agent_id,
-            &request.provider_name,
-            client.model_name(),
-            &provider_type_str,
-            &user_prompt,
-        );
-        validate_frame_metadata(&generated_metadata, &request.agent_id)?;
-
-        // Build prompt context based on node kind.
-        // File nodes are grounded on live file bytes, while directory nodes
-        // are grounded on child context frames.
-        let prompt_context = match node_record.node_type {
-            crate::store::NodeType::File { .. } => {
-                Some(Self::collect_file_source_context(&node_record)?)
-            }
-            crate::store::NodeType::Directory => {
-                let child_context_text =
-                    Self::collect_directory_child_context_text(api, &node_record, request)?;
-                if child_context_text.is_empty() {
-                    let node_context_text = Self::collect_scoped_node_frame_context(api, request)?;
-                    if node_context_text.is_empty() {
-                        None
-                    } else {
-                        Some(node_context_text)
-                    }
-                } else {
-                    Some(child_context_text)
-                }
-            }
-        };
-
-        // Build messages for LLM
-        let mut messages = vec![ChatMessage {
-            role: crate::provider::MessageRole::System,
-            content: system_prompt,
-        }];
-
-        // Add context from existing frames
-        if let Some(context_text) = prompt_context {
-            messages.push(ChatMessage {
-                role: crate::provider::MessageRole::User,
-                content: format!("Context:\n{}\n\nTask: {}", context_text, user_prompt),
-            });
-        } else {
-            messages.push(ChatMessage {
-                role: crate::provider::MessageRole::User,
-                content: user_prompt.clone(),
-            });
-        }
-
-        // Resolve completion options: provider defaults > agent preferences (if any)
-        let completion_options = provider_config.default_options.clone();
-
-        // Agent preferences from metadata (optional hints, not requirements)
-        // For now, we just use provider defaults. Agent preferences can be added later if needed.
-
-        // Generate completion - THIS IS THE ONLY PLACE PROVIDERS ARE CALLED
-        let start = Instant::now();
-        info!(
-            request_id = ?request.request_id,
-            node_id = %hex::encode(request.node_id),
-            agent_id = %request.agent_id,
-            provider_name = %request.provider_name,
-            frame_type = %request.frame_type,
-            attempt = request.retry_count + 1,
-            message_count = messages.len(),
-            "Provider request sent"
-        );
-        Self::emit_provider_event_static(
-            event_context.clone(),
-            "provider_request_sent",
-            ProviderLifecycleEventData {
-                node_id: hex::encode(request.node_id),
-                agent_id: request.agent_id.clone(),
-                provider_name: request.provider_name.clone(),
-                frame_type: request.frame_type.clone(),
-                duration_ms: None,
-                error: None,
-                retry_count: Some(request.retry_count),
-            },
-        );
-        let response = match client.complete(messages, completion_options).await {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                Self::emit_provider_event_static(
-                    event_context.clone(),
-                    "provider_request_failed",
-                    ProviderLifecycleEventData {
-                        node_id: hex::encode(request.node_id),
-                        agent_id: request.agent_id.clone(),
-                        provider_name: request.provider_name.clone(),
-                        frame_type: request.frame_type.clone(),
-                        duration_ms: Some(start.elapsed().as_millis()),
-                        error: Some(e.to_string()),
-                        retry_count: Some(request.retry_count),
-                    },
-                );
-                // Enhance error with available models if model not found
-                if let ApiError::ProviderModelNotFound(_) = e {
-                    match client.list_models().await {
-                        Ok(available_models) => {
-                            if available_models.is_empty() {
-                                Err(ApiError::ProviderModelNotFound(format!(
-                                    "Model '{}' not found. Unable to retrieve available models list.",
-                                    client.model_name()
-                                )))
-                            } else {
-                                Err(ApiError::ProviderModelNotFound(format!(
-                                    "Model '{}' not found. Available models: {}",
-                                    client.model_name(),
-                                    available_models.join(", ")
-                                )))
-                            }
-                        }
-                        Err(_) => Err(e),
-                    }
-                } else {
-                    Err(e)
-                }
-            }
-        }?;
-
-        let duration = start.elapsed();
-        info!(
-            request_id = ?request.request_id,
-            node_id = %hex::encode(request.node_id),
-            agent_id = %request.agent_id,
-            provider_name = %request.provider_name,
-            frame_type = %request.frame_type,
-            attempt = request.retry_count + 1,
-            duration_ms = duration.as_millis(),
-            response_chars = response.content.chars().count(),
-            "Provider response received"
-        );
-        Self::emit_provider_event_static(
-            event_context,
-            "provider_response_received",
-            ProviderLifecycleEventData {
-                node_id: hex::encode(request.node_id),
-                agent_id: request.agent_id.clone(),
-                provider_name: request.provider_name.clone(),
-                frame_type: request.frame_type.clone(),
-                duration_ms: Some(duration.as_millis()),
-                error: None,
-                retry_count: Some(request.retry_count),
-            },
-        );
-
-        // Create frame with generated content
-        let basis = Basis::Node(request.node_id);
-        let content = response.content.into_bytes();
-
-        let frame = Frame::new(
-            basis,
-            content,
-            request.frame_type.clone(),
-            request.agent_id.clone(),
-            generated_metadata,
-        )?;
-
-        // Store frame using put_frame
-        let frame_id = api.put_frame(request.node_id, frame, request.agent_id.clone())?;
-
-        info!(
-            request_id = ?request.request_id,
-            node_id = %hex::encode(request.node_id),
-            agent_id = %request.agent_id,
-            frame_id = %hex::encode(frame_id),
-            duration_ms = duration.as_millis(),
-            "Frame generation completed"
-        );
-
-        Ok(frame_id)
-    }
-
-    fn collect_directory_child_context_text(
-        api: &ContextApi,
-        node_record: &NodeRecord,
-        request: &GenerationRequest,
-    ) -> Result<String, ApiError> {
-        if !matches!(node_record.node_type, crate::store::NodeType::Directory) {
-            return Ok(String::new());
-        }
-
-        let child_view = ContextView::builder()
-            .max_frames(1)
-            .recent()
-            .by_type(request.frame_type.clone())
-            .by_agent(request.agent_id.clone())
-            .build();
-
-        let mut child_sections = Vec::new();
-        for child_id in &node_record.children {
-            let child_context = api.get_node(*child_id, child_view.clone())?;
-            if child_context.frames.is_empty() {
-                continue;
-            }
-
-            let child_kind = match child_context.node_record.node_type {
-                crate::store::NodeType::File { .. } => "File",
-                crate::store::NodeType::Directory => "Directory",
-            };
-            let child_text = child_context
-                .frames
-                .iter()
-                .map(|f| String::from_utf8_lossy(&f.content))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-
-            child_sections.push(format!(
-                "Path: {}\nType: {}\nContent:\n{}",
-                child_context.node_record.path.display(),
-                child_kind,
-                child_text
-            ));
-        }
-
-        if !child_sections.is_empty() {
-            debug!(
-                node_id = %hex::encode(node_record.node_id),
-                direct_children = node_record.children.len(),
-                child_context_nodes = child_sections.len(),
-                frame_type = %request.frame_type,
-                agent_id = %request.agent_id,
-                "Collected directory child context for generation"
-            );
-        }
-
-        Ok(child_sections.join("\n\n---\n\n"))
-    }
-
-    fn collect_scoped_node_frame_context(
-        api: &ContextApi,
-        request: &GenerationRequest,
-    ) -> Result<String, ApiError> {
-        let view = ContextView::builder()
-            .max_frames(10)
-            .recent()
-            .by_type(request.frame_type.clone())
-            .by_agent(request.agent_id.clone())
-            .build();
-        let context = api.get_node(request.node_id, view)?;
-        Ok(context
-            .frames
-            .iter()
-            .map(|f| String::from_utf8_lossy(&f.content))
-            .collect::<Vec<_>>()
-            .join("\n\n"))
-    }
-
-    fn collect_file_source_context(node_record: &NodeRecord) -> Result<String, ApiError> {
-        if !matches!(node_record.node_type, crate::store::NodeType::File { .. }) {
-            return Ok(String::new());
-        }
-
-        let bytes = std::fs::read(&node_record.path).map_err(|e| {
-            ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::new(
-                e.kind(),
-                format!(
-                    "Failed to read file source content for generation {}: {}",
-                    node_record.path.display(),
-                    e
-                ),
-            )))
-        })?;
-
-        let truncated = bytes.len() > Self::FILE_CONTEXT_MAX_BYTES;
-        let slice = if truncated {
-            &bytes[..Self::FILE_CONTEXT_MAX_BYTES]
-        } else {
-            &bytes
-        };
-        let mut text = String::from_utf8_lossy(slice).to_string();
-        if truncated {
-            text.push_str(&format!(
-                "\n\n[Truncated to {} bytes for prompt safety]",
-                Self::FILE_CONTEXT_MAX_BYTES
-            ));
-        }
-
-        Ok(format!(
-            "Path: {}\nType: File\nContent:\n{}",
-            node_record.path.display(),
-            text
-        ))
-    }
-
-    /// Generate prompts from the explicit prompt contract adapter.
-    fn generate_prompts(prompt_contract: &PromptContract, node_record: &NodeRecord) -> (String, String) {
-        let user_prompt = prompt_contract.render_user_prompt(
-            node_record.node_type.clone(),
-            &node_record.path.display().to_string(),
-            match node_record.node_type {
-                crate::store::NodeType::File { size, .. } => Some(size),
-                crate::store::NodeType::Directory => None,
-            },
-        );
-
-        (prompt_contract.system_prompt.clone(), user_prompt)
+        execute_generation_request(
+            &orchestration_request,
+            api,
+            metadata_builder,
+            event_context.as_ref(),
+        )
+        .await
     }
 
     /// Check if an error is retryable

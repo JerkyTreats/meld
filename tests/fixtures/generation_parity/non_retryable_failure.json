@@ -1,0 +1,12 @@
+{
+  "frame_output": null,
+  "provider_request": null,
+  "retry": {
+    "attempt_count": 1,
+    "backoff_class": "none",
+    "retry_event_count": 0,
+    "terminal_error_class": "MissingPromptContractField"
+  },
+  "scenario_id": "non_retryable_failure",
+  "schema_version": 1
+}

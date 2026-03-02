@@ -1,0 +1,12 @@
+{
+  "frame_output": null,
+  "provider_request": null,
+  "retry": {
+    "attempt_count": 3,
+    "backoff_class": "fixed_delay",
+    "retry_event_count": 2,
+    "terminal_error_class": "NodeNotFound"
+  },
+  "scenario_id": "retryable_failure",
+  "schema_version": 1
+}

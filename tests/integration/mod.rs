@@ -7,6 +7,7 @@ mod config_integration;
 mod context_api;
 mod context_cli;
 mod frame_queue;
+mod generation_parity;
 mod hasher_verification;
 mod init_command;
 mod logging_default;
