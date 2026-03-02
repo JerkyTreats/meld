@@ -30,7 +30,21 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --workspace --all-targets --locked
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f Cargo.lock ]]; then
+            cargo build --workspace --all-targets --locked
+          else
+            cargo build --workspace --all-targets
+          fi
 
       - name: Test
-        run: cargo test --workspace --all-targets --locked
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f Cargo.lock ]]; then
+            cargo test --workspace --all-targets --locked
+          else
+            cargo test --workspace --all-targets
+          fi
