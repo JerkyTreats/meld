@@ -125,13 +125,18 @@ jobs:
             subject="$(git log -1 --format=%s "$sha")"
             body="$(git log -1 --format=%b "$sha")"
 
-            if [[ ! "$subject" =~ ^([a-z]+)(\([^)]+\))?(!)?:[[:space:]].+ ]]; then
+            if ! grep -Eq '^[a-z]+(\([^)]+\))?(!)?:[[:space:]].+' <<<"$subject"; then
               echo "::error::Commit $sha is not a valid conventional commit: $subject"
               exit 1
             fi
 
-            commit_type="${BASH_REMATCH[1]}"
-            breaking_marker="${BASH_REMATCH[3]}"
+            commit_prefix="${subject%%:*}"
+            commit_type="${commit_prefix%%(*}"
+            commit_type="${commit_type%%!*}"
+            breaking_marker=""
+            if [[ "$commit_prefix" == *"!" ]]; then
+              breaking_marker="!"
+            fi
             case "$commit_type" in
               feat|fix|perf|refactor|docs|design|test|build|ci|chore|policy) ;;
               *)
