@@ -25,4 +25,4 @@ mod workspace_commands;
 mod workspace_isolation;
 mod xdg_config;
 
-pub use test_utils::{with_xdg_data_home, with_xdg_env};
+pub use test_utils::{with_env_lock, with_xdg_data_home, with_xdg_env};

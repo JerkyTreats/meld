@@ -6,86 +6,82 @@ use meld::config::{xdg, MerkleConfig, ProviderConfig, ProviderType};
 use meld::provider::ProviderRegistry;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
 use tempfile::TempDir;
 
-use crate::integration::with_xdg_env;
-
-// Mutex for tests that need direct environment variable manipulation
-static XDG_CONFIG_MUTEX: Mutex<()> = Mutex::new(());
+use crate::integration::{with_env_lock, with_xdg_env};
 
 #[test]
 fn test_xdg_config_home() {
-    let _guard = XDG_CONFIG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    with_env_lock(|| {
+        // Test that config_home() respects XDG_CONFIG_HOME
+        let original_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
 
-    // Test that config_home() respects XDG_CONFIG_HOME
-    let original_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
+        // Test with XDG_CONFIG_HOME set
+        let test_dir = TempDir::new().unwrap();
+        let test_config_home = test_dir.path().to_path_buf();
+        std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
 
-    // Test with XDG_CONFIG_HOME set
-    let test_dir = TempDir::new().unwrap();
-    let test_config_home = test_dir.path().to_path_buf();
-    std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
+        let config_home = xdg::config_home().unwrap();
+        assert_eq!(config_home, test_config_home);
 
-    let config_home = xdg::config_home().unwrap();
-    assert_eq!(config_home, test_config_home);
-
-    // Test without XDG_CONFIG_HOME (should default to ~/.config)
-    std::env::remove_var("XDG_CONFIG_HOME");
-    let home = std::env::var("HOME").unwrap();
-    let config_home = xdg::config_home().unwrap();
-    assert_eq!(config_home, PathBuf::from(home).join(".config"));
-
-    // Restore original
-    if let Some(orig) = original_xdg_config {
-        std::env::set_var("XDG_CONFIG_HOME", orig);
-    } else {
+        // Test without XDG_CONFIG_HOME should default to home config path
         std::env::remove_var("XDG_CONFIG_HOME");
-    }
+        let home = std::env::var("HOME").unwrap();
+        let config_home = xdg::config_home().unwrap();
+        assert_eq!(config_home, PathBuf::from(home).join(".config"));
+
+        // Restore original
+        if let Some(orig) = original_xdg_config {
+            std::env::set_var("XDG_CONFIG_HOME", orig);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+    });
 }
 
 #[test]
 fn test_xdg_agents_dir() {
-    let _guard = XDG_CONFIG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    with_env_lock(|| {
+        let test_dir = TempDir::new().unwrap();
+        let test_config_home = test_dir.path().to_path_buf();
+        let original_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
+        std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
 
-    let test_dir = TempDir::new().unwrap();
-    let test_config_home = test_dir.path().to_path_buf();
-    let original_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
-    std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
+        let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
+        assert_eq!(agents_dir, test_config_home.join("meld").join("agents"));
+        assert!(agents_dir.exists());
 
-    let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
-    assert_eq!(agents_dir, test_config_home.join("meld").join("agents"));
-    assert!(agents_dir.exists());
-
-    // Restore original
-    if let Some(orig) = original_xdg_config {
-        std::env::set_var("XDG_CONFIG_HOME", orig);
-    } else {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
+        // Restore original
+        if let Some(orig) = original_xdg_config {
+            std::env::set_var("XDG_CONFIG_HOME", orig);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+    });
 }
 
 #[test]
 fn test_xdg_providers_dir() {
-    let _guard = XDG_CONFIG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    with_env_lock(|| {
+        let test_dir = TempDir::new().unwrap();
+        let test_config_home = test_dir.path().to_path_buf();
+        let original_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
+        std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
 
-    let test_dir = TempDir::new().unwrap();
-    let test_config_home = test_dir.path().to_path_buf();
-    let original_xdg_config = std::env::var("XDG_CONFIG_HOME").ok();
-    std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
+        let providers_dir = xdg::providers_dir().unwrap();
+        assert_eq!(
+            providers_dir,
+            test_config_home.join("meld").join("providers")
+        );
+        assert!(providers_dir.exists());
 
-    let providers_dir = xdg::providers_dir().unwrap();
-    assert_eq!(
-        providers_dir,
-        test_config_home.join("meld").join("providers")
-    );
-    assert!(providers_dir.exists());
-
-    // Restore original
-    if let Some(orig) = original_xdg_config {
-        std::env::set_var("XDG_CONFIG_HOME", orig);
-    } else {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
+        // Restore original
+        if let Some(orig) = original_xdg_config {
+            std::env::set_var("XDG_CONFIG_HOME", orig);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+    });
 }
 
 #[test]

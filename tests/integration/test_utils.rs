@@ -71,29 +71,30 @@ pub fn with_xdg_env<F, R>(test_dir: &TempDir, f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    let _guard = XDG_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let env_state = EnvState::capture();
+    with_env_lock(|| {
+        let env_state = EnvState::capture();
 
-    // Set up test directories
-    let test_config_home = test_dir.path().to_path_buf();
-    let test_data_home = test_dir.path().join("data");
-    let test_home = test_dir.path().join("home");
+        // Set up test directories
+        let test_config_home = test_dir.path().to_path_buf();
+        let test_data_home = test_dir.path().join("data");
+        let test_home = test_dir.path().join("home");
 
-    std::fs::create_dir_all(&test_data_home).unwrap();
-    std::fs::create_dir_all(&test_home).unwrap();
+        std::fs::create_dir_all(&test_data_home).unwrap();
+        std::fs::create_dir_all(&test_home).unwrap();
 
-    // Set environment variables
-    std::env::set_var("HOME", test_home.to_str().unwrap());
-    std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
-    std::env::set_var("XDG_DATA_HOME", test_data_home.to_str().unwrap());
+        // Set environment variables
+        std::env::set_var("HOME", test_home.to_str().unwrap());
+        std::env::set_var("XDG_CONFIG_HOME", test_config_home.to_str().unwrap());
+        std::env::set_var("XDG_DATA_HOME", test_data_home.to_str().unwrap());
 
-    // Run test
-    let result = f();
+        // Run test
+        let result = f();
 
-    // Restore original environment
-    env_state.restore();
+        // Restore original environment
+        env_state.restore();
 
-    result
+        result
+    })
 }
 
 /// Set up only XDG_DATA_HOME (for workspace isolation tests)
@@ -104,21 +105,31 @@ pub fn with_xdg_data_home<F, R>(test_dir: &TempDir, f: F) -> R
 where
     F: FnOnce() -> R,
 {
+    with_env_lock(|| {
+        let env_state = EnvState::capture();
+
+        let test_data_home = test_dir.path().join("data");
+        let test_home = test_dir.path().join("home");
+
+        std::fs::create_dir_all(&test_data_home).unwrap();
+        std::fs::create_dir_all(&test_home).unwrap();
+
+        std::env::set_var("HOME", test_home.to_str().unwrap());
+        std::env::set_var("XDG_DATA_HOME", test_data_home.to_str().unwrap());
+
+        let result = f();
+
+        env_state.restore();
+
+        result
+    })
+}
+
+/// Serialize direct environment variable access for integration tests.
+pub fn with_env_lock<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
     let _guard = XDG_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let env_state = EnvState::capture();
-
-    let test_data_home = test_dir.path().join("data");
-    let test_home = test_dir.path().join("home");
-
-    std::fs::create_dir_all(&test_data_home).unwrap();
-    std::fs::create_dir_all(&test_home).unwrap();
-
-    std::env::set_var("HOME", test_home.to_str().unwrap());
-    std::env::set_var("XDG_DATA_HOME", test_data_home.to_str().unwrap());
-
-    let result = f();
-
-    env_state.restore();
-
-    result
+    f()
 }
