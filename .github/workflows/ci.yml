@@ -296,25 +296,6 @@ jobs:
 
           exit "$publish_status"
 
-      - name: Wait for crates.io version visibility
-        if: ${{ steps.plan.outputs.release_required == 'true' && steps.publish.outputs.published == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          crate_name="${{ steps.plan.outputs.crate_name }}"
-          crate_version="${{ steps.plan.outputs.next_version }}"
-          crate_url="https://crates.io/api/v1/crates/${crate_name}/${crate_version}"
-          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-            status_code="$(curl -sS -o /tmp/crate-published.json -w "%{http_code}" "$crate_url" || true)"
-            if [[ "$status_code" == "200" ]]; then
-              exit 0
-            fi
-            sleep 10
-            echo "Waiting for crates.io index visibility attempt $attempt"
-          done
-          echo "::error::Published version did not become visible on crates.io in time"
-          exit 1
-
       - name: Create and push tag
         if: ${{ steps.plan.outputs.release_required == 'true' }}
         shell: bash
