@@ -17,6 +17,7 @@ use std::time::Duration;
 pub mod clients;
 pub mod commands;
 pub mod diagnostics;
+pub(crate) mod frame_metadata_keys;
 pub mod generation;
 pub mod profile;
 pub mod storage;

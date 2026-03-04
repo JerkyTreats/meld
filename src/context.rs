@@ -3,6 +3,7 @@
 
 pub mod facade;
 pub mod frame;
+pub(crate) mod frame_metadata_keys;
 pub mod generation;
 pub mod query;
 pub mod queue;

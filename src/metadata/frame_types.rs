@@ -1,8 +1,6 @@
 //! Frame metadata domain types.
 
-use crate::metadata::frame_key_registry::{
-    is_key_visible_by_default,
-};
+use crate::metadata::frame_key_registry::is_key_visible_by_default;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::{Deref, DerefMut};
@@ -113,7 +111,10 @@ mod tests {
         metadata.insert("a_key".to_string(), "a".to_string());
         metadata.insert(KEY_DELETED.to_string(), "true".to_string());
         metadata.insert(KEY_PROMPT.to_string(), "raw prompt".to_string());
-        metadata.insert(FORBIDDEN_KEY_RAW_PROMPT.to_string(), "raw payload".to_string());
+        metadata.insert(
+            FORBIDDEN_KEY_RAW_PROMPT.to_string(),
+            "raw payload".to_string(),
+        );
         metadata.insert(KEY_PROMPT_DIGEST.to_string(), "digest".to_string());
 
         let projected = project_visible_metadata(&metadata);

@@ -63,13 +63,9 @@ pub fn validate_frame_metadata(metadata: &FrameMetadata, agent_id: &str) -> Resu
         }
     }
 
-    let frame_agent_id =
-        metadata
-            .get(KEY_AGENT_ID)
-            .ok_or_else(|| ApiError::InvalidFrame(format!(
-                "Frame missing {} in metadata",
-                KEY_AGENT_ID
-            )))?;
+    let frame_agent_id = metadata.get(KEY_AGENT_ID).ok_or_else(|| {
+        ApiError::InvalidFrame(format!("Frame missing {} in metadata", KEY_AGENT_ID))
+    })?;
     if frame_agent_id != agent_id {
         return Err(ApiError::InvalidFrame(format!(
             "Frame metadata {} '{}' does not match provided agent_id '{}'",
