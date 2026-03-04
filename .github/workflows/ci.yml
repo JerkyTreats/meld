@@ -249,40 +249,8 @@ jobs:
           git push origin HEAD:master
           echo "release_sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
 
-      - name: Check crates.io publish state
-        if: ${{ steps.plan.outputs.release_required == 'true' }}
-        id: crates
-        shell: bash
-        run: |
-          set -euo pipefail
-          crate_name="${{ steps.plan.outputs.crate_name }}"
-          crate_version="${{ steps.plan.outputs.next_version }}"
-          crate_url="https://crates.io/api/v1/crates/${crate_name}/${crate_version}"
-
-          publish_required=""
-          for attempt in 1 2 3 4 5; do
-            status_code="$(curl -sS -o /tmp/crate-version.json -w "%{http_code}" "$crate_url" || true)"
-            if [[ "$status_code" == "200" ]]; then
-              publish_required=false
-              break
-            fi
-            if [[ "$status_code" == "404" ]]; then
-              publish_required=true
-              break
-            fi
-            echo "Unexpected crates.io status $status_code on attempt $attempt"
-            sleep $((attempt * 2))
-          done
-
-          if [[ -z "$publish_required" ]]; then
-            echo "::error::Unable to determine crates.io publish state for ${crate_name}@${crate_version}"
-            exit 1
-          fi
-
-          echo "publish_required=$publish_required" >>"$GITHUB_OUTPUT"
-
       - name: Validate package before publish
-        if: ${{ steps.plan.outputs.release_required == 'true' && steps.crates.outputs.publish_required == 'true' }}
+        if: ${{ steps.plan.outputs.release_required == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -293,7 +261,8 @@ jobs:
           fi
 
       - name: Publish to crates.io
-        if: ${{ steps.plan.outputs.release_required == 'true' && steps.crates.outputs.publish_required == 'true' }}
+        if: ${{ steps.plan.outputs.release_required == 'true' }}
+        id: publish
         shell: bash
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -304,14 +273,31 @@ jobs:
             exit 1
           fi
 
+          set +e
           if [[ -f Cargo.lock ]]; then
-            cargo publish --locked
+            cargo publish --locked 2>&1 | tee /tmp/cargo-publish.log
+            publish_status="${PIPESTATUS[0]}"
           else
-            cargo publish
+            cargo publish 2>&1 | tee /tmp/cargo-publish.log
+            publish_status="${PIPESTATUS[0]}"
+          fi
+          set -e
+
+          if [[ "$publish_status" -eq 0 ]]; then
+            echo "published=true" >>"$GITHUB_OUTPUT"
+            exit 0
           fi
 
+          if grep -Eqi "already uploaded|already exists" /tmp/cargo-publish.log; then
+            echo "published=false" >>"$GITHUB_OUTPUT"
+            echo "Crate version already exists on crates.io. Continuing."
+            exit 0
+          fi
+
+          exit "$publish_status"
+
       - name: Wait for crates.io version visibility
-        if: ${{ steps.plan.outputs.release_required == 'true' && steps.crates.outputs.publish_required == 'true' }}
+        if: ${{ steps.plan.outputs.release_required == 'true' && steps.publish.outputs.published == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
