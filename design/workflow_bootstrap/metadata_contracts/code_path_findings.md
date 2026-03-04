@@ -1,119 +1,137 @@
-# Metadata Contracts Post Cleanup Findings
+# Metadata Contracts Code Path Findings
 
-Date: 2026-03-01
-Scope: post cleanup baseline findings for metadata contracts execution
+Date: 2026-03-04
+Status: active
+Scope: entry analysis for metadata contracts after foundation cleanup completion
 
 ## Intent
 
-Define the expected state after cleanup completion and identify only the remaining work for metadata contracts.
-This document is normative for R1 and R2 planning.
+Capture current implementation truth for metadata contracts so decomposition and technical execution stay tied to real code seams.
 
-## Cleanup Preconditions
+## Governance Context
 
-Cleanup specs must be complete before metadata contracts work begins.
+Large workflow governance is defined in [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md).
 
-1. [Boundary Cleanup Foundation Spec](../foundation_cleanup/README.md)
-2. [Domain Metadata Separation Cleanup](../foundation_cleanup/domain_metadata/README.md)
-3. [Frame Integrity Boundary Cleanup](../foundation_cleanup/frame_integrity/README.md)
-4. [Generation Orchestration Boundary Cleanup](../foundation_cleanup/generation_orchestration/README.md)
-5. [Metadata Contract Ready Cleanup](../foundation_cleanup/metadata_contract_ready/README.md)
+Current governance implications:
+- complex workflow artifacts are required only after explicit user activation
+- decomposition and synthesis specs can be prepared before activation
+- when complex workflow mode is active, verification evidence and phase gate status must be tracked in one PLAN document under the active design scope
 
-## Post Cleanup Baseline Assertions
+## Evidence Set
 
-### B1 Shared frame metadata write boundary exists
+- [Workflow Metadata Contracts Spec](README.md)
+- [Metadata Contracts Phase Technical Specification](technical_spec.md)
+- [Core Context API](../../../src/api.rs)
+- [Frame Metadata Key Registry](../../../src/metadata/frame_key_registry.rs)
+- [Frame Metadata Write Contract](../../../src/metadata/frame_write_contract.rs)
+- [Frame Metadata Types](../../../src/metadata/frame_types.rs)
+- [Generation Prompt Collection](../../../src/context/generation/prompt_collection.rs)
+- [Generation Orchestration](../../../src/context/generation/orchestration.rs)
+- [Context CLI Presentation](../../../src/cli/presentation/context.rs)
+- [Context API Integration Tests](../../../tests/integration/context_api.rs)
+- [Frame Queue Integration Tests](../../../tests/integration/frame_queue.rs)
+- [Context CLI Integration Tests](../../../tests/integration/context_cli.rs)
+- [Generation Parity Fixtures](../../../tests/fixtures/generation_parity/file_success.json)
 
-Expected state:
-- all frame writes pass through one validation boundary
-- queue and non queue writers use the same validation service
+## Findings
 
-Primary code seams:
-- `src/api.rs`
-- `src/agent/context_access/context_api.rs`
+### F1 Shared write boundary is live and enforced
 
-### B2 Storage integrity checks are metadata structure independent
+Observed state:
+- runtime frame writes call metadata validation at `src/api.rs:246`
+- queue orchestration writes through `api.put_frame` at `src/context/generation/orchestration.rs:71`
+- bypass guard exists at `tests/integration/context_api.rs:563`
 
-Expected state:
-- storage hash verification does not depend on free form metadata key lookup
-- integrity path validates structural identity inputs only
+Impact:
+- the core metadata enforcement seam is stable and test protected
 
-Primary code seams:
-- `src/context/frame/storage.rs`
-- `src/context/frame/id.rs`
+### F2 Registry exists but descriptor depth is still minimal
 
-### B3 Generation orchestration is split into focused units
+Observed state:
+- key registry provides `write_policy` and `visibility_policy` in `src/metadata/frame_key_registry.rs:16`
+- registry does not yet carry owner, mutability class, retention, redaction, or per key schema descriptors
 
-Expected state:
-- queue lifecycle and retry behavior remain in queue domain
-- prompt assembly provider execution metadata build and frame write are delegated through focused units
+Impact:
+- R2 mutability envelope and redaction requirements are not fully representable in one descriptor model yet
 
-Primary code seams:
-- `src/context/queue.rs`
-- `src/context/generation/`
+### F3 Forbidden raw payload keys are blocked with typed errors
 
-### B4 Metadata domains are separated
+Observed state:
+- validator rejects forbidden keys in `src/metadata/frame_write_contract.rs:44`
+- typed failure classes exist in `src/error.rs:60`
+- direct and queue tests cover forbidden and unknown key behavior at `tests/integration/context_api.rs:409` and `tests/integration/frame_queue.rs:815`
 
-Expected state:
-- frame metadata contracts are isolated from node metadata and agent metadata
-- cross domain metadata conversion uses explicit adapters only
+Impact:
+- readiness hardening outcomes remain in place and deterministic
 
-Primary code seams:
-- `src/context/`
-- `src/store/`
-- `src/agent/`
+### F4 Generated metadata path does not emit `context_digest` yet
 
-## Remaining Findings For Metadata Contracts
+Observed state:
+- generated metadata builder writes `prompt_digest` and `prompt_link_id` only in `src/metadata/frame_write_contract.rs:27`
+- parity fixtures confirm no `context_digest` on current generated frames in `tests/fixtures/generation_parity/file_success.json`
 
-### M1 R1 artifact placement and digest emission
+Impact:
+- required bootstrap key set is only partially emitted by the default generation path
 
-Required state:
-- prompt render and context payload are written to local CAS artifacts
-- frame metadata stores only typed references such as `prompt_digest`, `context_digest`, and `prompt_link_id`
+### F5 Prompt and context payload are still inline assembly values
 
-Primary code seams:
-- `src/context/generation/`
-- `src/context/queue.rs`
-- `src/context/frame.rs`
+Observed state:
+- prompt assembly composes raw prompt and context text into provider messages in `src/context/generation/prompt_collection.rs:48`
+- no `src/prompt_context` domain exists yet
 
-### M2 R2 key registry and mutability enforcement
+Impact:
+- R1 artifact placement contract is not implemented
+- default runtime still depends on in memory prompt and context payload composition only
 
-Required state:
-- metadata key registry governs allowed keys and mutability classes
-- invalid keys fail deterministically on write
+### F6 Default read visibility is centralized and registry driven
 
-Primary code seams:
-- `src/metadata/` planned domain
-- `src/api.rs` shared write boundary
+Observed state:
+- read projection delegates to registry policy in `src/metadata/frame_types.rs:83`
+- CLI text and json surfaces use shared projection in `src/cli/presentation/context.rs:57`
+- CLI metadata projection integration coverage exists at `tests/integration/context_cli.rs:269`
 
-### M3 R2 size budgets and typed write failures
+Impact:
+- read visibility behavior has one policy owner for default outputs
 
-Required state:
-- frame metadata total bytes and per key byte budgets are enforced
-- oversize writes fail with typed errors
+### F7 Privileged prompt and context retrieval path is missing
 
-Primary code seams:
-- `src/metadata/` planned domain
-- `src/api.rs`
+Observed state:
+- no dedicated prompt artifact lookup API exists
+- no prompt link record storage implementation exists
 
-### M4 R2 visibility and redaction policy at read boundaries
+Impact:
+- R1 read contract for privileged artifact resolution is still open
 
-Required state:
-- default read paths emit only allowed metadata visibility class data
-- privileged paths are explicit and audited
+### F8 Metadata owned workflow schema contracts are not implemented
 
-Primary code seams:
-- `src/context/query/service.rs`
-- `src/cli/presentation/context.rs`
-- `src/cli/route.rs`
+Observed state:
+- no metadata domain package exists for canonical thread turn gate and prompt link schema validators
+- no consumer contract surface exists yet for turn manager to import these schemas and validators
 
-## Metadata Contracts Order After Cleanup
+Impact:
+- turn manager and future workflow domains remain blocked on metadata contract schema delivery
 
-1. implement R1 artifact placement and digest reference writes
-2. implement R2 key registry and mutability enforcement
-3. implement R2 size budgets and typed errors
-4. implement R2 visibility and redaction policy
-5. run parity and characterization tests for write and read boundaries
+### F9 Error model still contains legacy policy bucket
 
-## Exclusions For This Document
+Observed state:
+- `ApiError::FrameMetadataPolicyViolation` remains present in `src/error.rs:57`
+- queue retry classification still branches on this legacy variant at `src/context/queue.rs:1083`
 
-This document does not track cleanup execution details.
-Cleanup verification belongs to the foundation cleanup workload.
+Impact:
+- typed variants exist and are used, but cleanup of legacy bucket is incomplete
+
+## Synthesis Summary
+
+Stable baseline:
+- write boundary centralization
+- forbidden key enforcement
+- typed unknown and budget error classes
+- default read visibility projection
+- queue and direct path parity coverage
+
+Primary gap set:
+- descriptor depth for mutability and redaction
+- `context_digest` emission on generated metadata
+- prompt and context artifact placement domain
+- privileged artifact retrieval contract
+- conversation metadata record domain

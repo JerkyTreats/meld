@@ -13,7 +13,10 @@ Execution behavior is owned by `../turn_manager/README.md`.
 
 ## Related Specs
 
-- none yet
+- [Workflow Bootstrap Roadmap](../README.md)
+- [Workflow Metadata Contracts Spec](../metadata_contracts/README.md)
+- [Metadata Contracts Phase Technical Specification](../metadata_contracts/technical_spec.md)
+- [Turn Manager Generalized Spec](../turn_manager/README.md)
 
 ## Domain Ownership And Boundaries
 
@@ -232,6 +235,11 @@ Required frame metadata keys used by this workflow:
 - `prompt_link_id`
 
 Raw prompt text and raw context payload are forbidden in frame metadata.
+
+Additional binding requirements:
+
+- prompt and context lineage must remain recoverable under retry with deterministic artifact references
+- thread turn gate and artifact link records must use canonical workflow metadata schemas
 
 ## Minimal Execution Config Example
 

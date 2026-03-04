@@ -1,198 +1,249 @@
 # Metadata Contracts Phase Technical Specification
 
-Date: 2026-03-01
+Date: 2026-03-04
 Status: active
 
 ## Intent
 
-Provide one technical execution specification for the full metadata contracts phase.
-This document defines the path from phase start to phase completion after cleanup is complete.
+Provide one synthesis execution specification for metadata contracts using governance rules for large workflows plus live codebase findings.
 
 ## Source Synthesis
 
 This specification synthesizes:
 
 - [Workflow Metadata Contracts Spec](README.md)
-- [Post Cleanup Findings](code_path_findings.md)
-- [Metadata Contract Ready Cleanup](../foundation_cleanup/metadata_contract_ready/README.md)
+- [Metadata Contracts Code Path Findings](code_path_findings.md)
+- [Metadata Contracts Requirements Decomposition](decomposition.md)
+- [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
+- [Boundary Cleanup Foundation Spec](../foundation_cleanup/README.md)
+
+## Governance Profile
+
+Large workflow governance decisions for this scope:
+- complex workflow mode is optional and user triggered
+- this technical specification is valid in default mode
+- if complex workflow mode is activated, maintain one PLAN artifact in this folder with phase status and verification evidence
+- CI does not enforce workflow artifacts, so readiness gates in this document are reviewer and author contracts
 
 ## Phase Boundary
 
 Start condition:
-- cleanup workload is complete and verified
+- C0 foundation cleanup through metadata contract readiness is complete
+- current write boundary and read projection safeguards are active
 
 End condition:
-- R1 and R2 deliverables are implemented
-- verification gates pass for write path and read path behavior
+- R1 context placement and R2 metadata contract enforcement are complete
+- write and read gates pass with deterministic behavior on direct and queue paths
+- downstream workflow runtime can consume canonical metadata contracts with no metadata contract redesign
 
 ## Entry Criteria
 
-All cleanup preconditions must be true.
+All of the following must remain true before execution:
 
 1. [Boundary Cleanup Foundation Spec](../foundation_cleanup/README.md)
-2. [Domain Metadata Separation Cleanup](../foundation_cleanup/domain_metadata/README.md)
-3. [Frame Integrity Boundary Cleanup](../foundation_cleanup/frame_integrity/README.md)
-4. [Generation Orchestration Boundary Cleanup](../foundation_cleanup/generation_orchestration/README.md)
-5. [Metadata Contract Ready Cleanup](../foundation_cleanup/metadata_contract_ready/README.md)
+2. [Metadata Contract Ready Cleanup](../foundation_cleanup/metadata_contract_ready/README.md)
+3. shared write boundary remains at `ContextApi::put_frame`
+4. queue and adapter runtime paths continue to call `put_frame`
 
 ## Goals
 
-1. move prompt and context payload out of frame metadata and into local CAS artifacts
-2. enforce metadata key registry with mutability classes and size budgets
-3. enforce metadata visibility and redaction behavior on read paths
-4. keep ownership boundaries explicit across `src/metadata`, `src/context`, `src/prompt_context`, and `src/workflow`
+1. complete R1 artifact placement by moving prompt and context payload off frame metadata
+2. complete R2 registry and policy enforcement with typed deterministic failures
+3. preserve strict default read visibility and add explicit privileged retrieval for prompt and context artifacts
+4. define canonical metadata schema contracts for workflow record consumers in conversation workflows and future features
+
+## Connected Design Requirements
+
+These requirements are inferred from the workflow bootstrap roadmap plus turn manager and docs writer specs.
+
+### CDR1 Atomic lineage commit contract
+
+- metadata contracts must define one lineage contract unit for prompt artifact write context artifact write frame metadata digest write and prompt link payload
+- partial commit behavior must be deterministic and recoverable through idempotent replay and orphan cleanup rules
+- runtime persistence of lineage unit members is implemented by downstream workflow runtime features that consume this contract
+
+### CDR2 Canonical digest contract
+
+- `prompt_digest` and `context_digest` must be derived from canonical byte streams
+- canonical encoding and normalization rules must be declared before implementation so retries preserve digest identity
+
+### CDR3 Compatibility contract for mixed states
+
+- runtime read paths must support legacy frames without full digest key set
+- runtime write paths must enforce full bootstrap key set for new writes
+- compatibility behavior must be explicit and covered by characterization tests
+
+### CDR4 Workflow record schema handshake
+
+- metadata contracts and workflow runtime must share one canonical schema for thread turn gate and prompt link records
+- schema version and field compatibility rules must be explicit before workflow runtime persistence implementation
+- workflow runtime must consume metadata owned validators and must not redefine these schemas
 
 ## Non Goals
 
 - encryption rollout
 - remote blob services
-- multi thread orchestration
-- generalized non docs workflows
+- multi workspace orchestration
+- generalized non docs workflow profiles
 
 ## Domain Contracts
 
 Ownership:
-- `src/metadata` owns key registry mutability classes validation and budgets
-- `src/prompt_context` owns prompt and context artifact storage and digest verification
-- `src/context` owns frame write and read orchestration using explicit metadata contracts
-- `src/workflow` consumes metadata contracts for thread and turn records
+- `src/metadata` owns key registry descriptors mutability policy visibility policy write validation and canonical workflow record schemas with validators
+- `src/prompt_context` owns prompt and context artifact write read and digest verification
+- `src/context` owns frame generation and query orchestration through explicit metadata contracts
+- `src/workflow` owns runtime persistence and lifecycle of thread turn gate and prompt link records that consume metadata contracts
 
 Boundary rules:
-- metadata contract logic must execute in one shared frame write boundary
-- read surfaces must not bypass visibility policy
-- cross domain calls must use explicit contracts only
+- frame metadata policy executes at one write boundary
+- default read output must use registry visibility policy only
+- privileged prompt and context retrieval is explicit and separate from default context output
+- cross domain calls use explicit contracts and do not reach internal modules of other domains
 
-## Code Seam Map
+## Code Reality Snapshot
 
-Write boundary seams:
-- `src/api.rs`
-- `src/agent/context_access/context_api.rs`
-- `src/context/queue.rs`
+Stable baseline from findings:
+- shared write boundary is active and test guarded
+- forbidden payload keys are rejected with typed errors
+- queue and direct paths enforce the same write policy
+- default metadata projection is centralized and registry driven
 
-Artifact seams:
-- `src/context/generation/`
-- `src/prompt_context/` planned domain
+Open gaps from findings:
+- generated metadata does not emit `context_digest`
+- key descriptor model is missing mutability class retention and redaction fields
+- prompt and context artifact domain is not implemented
+- privileged artifact retrieval path is not implemented
+- metadata owned canonical workflow schema and validator package does not exist
 
-Read boundary seams:
-- `src/context/query/service.rs`
-- `src/cli/presentation/context.rs`
-- `src/cli/route.rs`
+## Execution Tracks
 
-Metadata contract seams:
-- `src/metadata/` planned domain
-- `src/context/frame.rs`
-
-## Execution Plan
-
-### Step 1 Metadata Contract Skeleton
+### Track T1 Registry Descriptor Expansion
 
 Deliverables:
-- metadata key registry structure
-- key descriptor model with owner class hash impact max bytes retention redaction visibility
-- typed validation errors for key allow list and budget failures
+- extend key descriptor model to include mutability class hash impact retention redaction and per key budget metadata
+- keep bootstrap key set explicit with deterministic descriptor lookup
 
 Acceptance:
-- unknown key writes fail for identity and attested classes
-- registry lookup is deterministic
+- descriptor contract supports R2 policy evaluation without side tables
+- unknown and forbidden key behavior remains deterministic
 
-### Step 2 R1 Prompt and Context Artifact Placement
+### Track T2 Write Boundary Upgrade
 
 Deliverables:
-- local CAS writes for rendered prompt payload and context payload
-- digest emission in frame metadata using `prompt_digest` and `context_digest`
-- link emission using `prompt_link_id`
-- removal of any raw prompt metadata writes
+- upgrade write validation to enforce mutability transitions and budget contracts from T1 descriptors
+- ensure generated metadata includes required digest key set including `context_digest`
+- keep queue and direct path behavior aligned through shared validation
 
 Acceptance:
-- frame metadata contains typed references only
-- digest references resolve to artifacts
-- no raw prompt text in frame metadata output
-- no raw context payload in frame metadata output
+- generated writes include `prompt_digest` `context_digest` and `prompt_link_id`
+- invalid writes fail with typed deterministic errors on direct and queue paths
 
-### Step 3 R2 Mutability and Key Policy Enforcement
+### Track T3 Prompt Context Artifact Placement
 
 Deliverables:
-- mutability class enforcement for identity attested annotation ephemeral
-- write time class rules at shared frame write boundary
-- deterministic rejection for invalid class transitions
+- add `src/prompt_context` domain for local content addressed prompt and context artifacts
+- write rendered prompt and context payload into artifacts before frame write
+- emit artifact references and digests in frame metadata and canonical prompt link contract payloads
+- define logical commit and recovery behavior for the full lineage write unit
 
 Acceptance:
-- invalid key writes fail with typed errors
-- mutability violations fail with typed errors
+- frame metadata never stores raw prompt text or raw context payload
+- artifact reads verify digest and size
+- lineage write unit behavior is deterministic on retry and failure
 
-### Step 4 R2 Size Budgets
+### Track T4 Read Contract Upgrade
 
 Deliverables:
-- per key byte limit enforcement
-- total frame metadata byte limit enforcement
-- prompt artifact and context artifact max byte enforcement
+- preserve default read projection for visible keys only
+- add explicit privileged query contract to resolve prompt and context payload by artifact reference
+- keep CLI default output behavior unchanged for non privileged reads
+- define compatibility read behavior for legacy frames without full digest key set
+- enforce privileged authorization using authenticated identity scoped grants expiry and reason code
+- emit immutable audit events for privileged allow and deny outcomes before payload return
 
 Acceptance:
-- oversize writes fail with typed errors
-- budget checks are covered for direct writes and queue writes
+- default `context get` output remains safe by default
+- privileged query path is explicit, test covered, and digest verified
+- compatibility reads are deterministic for legacy and current frames
+- unauthorized privileged reads fail deterministically and are audit logged
+- authorized privileged reads are scope bound and audit logged
 
-### Step 5 R2 Visibility and Redaction
+### Track T5 Workflow Consumer Schema Contracts
 
 Deliverables:
-- default metadata visibility policy at query service boundary
-- redaction policy for sensitive keys
-- privileged access path for prompt payload retrieval by artifact reference
+- publish canonical metadata contracts for thread turn gate and prompt link schemas in metadata domain
+- define versioning and compatibility rules for consumer domains
+- define consumer integration seams for turn manager and future feature domains
+- provide metadata owned validators for schema payload reference integrity
 
 Acceptance:
-- default `context get` output excludes forbidden and non visible data
-- metadata json output follows visibility policy
-- privileged path is explicit and test covered
+- canonical schema contracts are stable and test covered
+- record reference rules are explicit and validated
+- consumer domains use metadata owned schema contracts and validators directly
+- workflow persistence behavior remains out of scope for this phase
 
-### Step 6 Phase Verification And Lock
+### Track T6 Verification Lock
 
 Deliverables:
-- characterization parity coverage for existing stable behavior
-- new contract tests for registry classes budgets and visibility
-- final checklist sign off
+- extend parity and integration coverage for new descriptor, artifact, read, and workflow record behavior
+- refresh fixtures where contract output intentionally changes
+- complete readiness checklist for downstream turn manager and docs writer work
 
 Acceptance:
-- all metadata contract gates pass
-- docs writer and turn manager specs can consume metadata contracts without additional contract changes
+- all gate classes in this spec pass
+- no unresolved high risk migration issues remain
 
-## Test Strategy
+## Verification Strategy
 
-Characterization coverage:
-- preserve stable behavior for valid frame writes
-- preserve queue retry and completion behavior
+Characterization gates:
+- preserve deterministic valid frame write behavior
+- preserve queue retry semantics for retryable provider failures
 
-Contract coverage:
-- key allow list failures
-- mutability rule failures
-- size budget failures
-- forbidden key exposure checks on read paths
-- digest and artifact resolution checks
+Contract gates:
+- unknown key, forbidden key, mutability, and budget failures are typed and deterministic
+- required digest key set is present on generated frame metadata
+- default read output excludes hidden and forbidden keys
+- canonical digest behavior is stable for replay with same logical input
+- privileged read authorization behavior is deterministic for allow and deny paths
 
-Integration coverage:
-- queue generated frame write path
-- direct adapter write path through shared boundary
-- context read text and json outputs with metadata enabled
+Artifact gates:
+- prompt and context artifact writes are content addressed and digest verified
+- privileged retrieval requires explicit access path
+- lineage write unit recovery path is deterministic and idempotent
+- privileged read events are immutable and persisted before payload release
 
-## Milestone Gates
+Workflow record gates:
+- canonical workflow record schema contracts are deterministic and versioned
+- gate and prompt link reference rules are validated by metadata contract tests
+- consumer conformance tests show turn manager contract import path with no schema redefinition
 
-Data safety gates:
+## Gate Matrix
+
+Data safety:
 - no raw prompt text in frame metadata
 - no raw context payload in frame metadata
-- metadata budgets enforced
+- digest and size checks pass for artifact reads
 
-Write correctness gates:
-- shared write boundary enforces all metadata contracts
-- queue and direct writes use identical validation behavior
+Write correctness:
+- one shared write boundary enforces metadata contracts
+- direct and queue writes share identical contract behavior
 
-Read correctness gates:
-- default read paths honor visibility policy
-- privileged paths require explicit opt in
+Read correctness:
+- default read policy uses registry visibility only
+- privileged retrieval is explicit and audited
+- privileged retrieval enforces authenticated scoped grant checks
+- privileged allow and deny outcomes are both audit logged
+
+Workflow readiness:
+- canonical record contracts for thread and turn state are available
+- downstream docs writer and turn manager specs consume contracts without redesign
 
 ## Completion Criteria
 
-The metadata contracts phase is complete when all of the following are true:
+The metadata contracts phase is complete when all statements are true:
 
-1. R1 artifact placement and digest reference behavior is live and verified
-2. R2 key registry mutability and size budgets are enforced on all frame writes
-3. read path visibility and redaction behavior is enforced by default
-4. tests cover direct writes queue writes and metadata output surfaces
-5. downstream workflow work can proceed without additional metadata contract redesign
+1. T1 through T6 deliverables are implemented and verified
+2. R1 and R2 requirements are enforced on all runtime paths
+3. default and privileged read behavior are both deterministic and test covered
+4. canonical workflow record contracts are available for downstream feature tracks
+5. no additional foundation cleanup scope is needed to start turn manager execution work

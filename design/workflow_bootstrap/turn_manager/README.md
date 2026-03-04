@@ -10,7 +10,10 @@ This replaces hard coded workflow logic with profile driven behavior.
 
 ## Related Specs
 
-- none yet
+- [Workflow Bootstrap Roadmap](../README.md)
+- [Workflow Metadata Contracts Spec](../metadata_contracts/README.md)
+- [Metadata Contracts Phase Technical Specification](../metadata_contracts/technical_spec.md)
+- [Docs Writer Thread Turn Configuration Spec](../docs_writer/README.md)
 
 ## Scope
 
@@ -49,6 +52,13 @@ Boundary rules:
 5. gates are declared in config and evaluated after each turn
 6. thread state and turn state are persisted durably
 7. agent can bind to zero or one workflow
+
+## Metadata Contract Binding Requirements
+
+- turn manager state records must align to thread turn gate and prompt link schemas defined by metadata contracts
+- turn manager must consume metadata owned schema validators and must not redefine these schemas in workflow domain modules
+- workflow runtime must consume prompt and context artifacts through digest and link references
+- workflow runtime must preserve deterministic retry behavior when artifact write recovery is required
 
 ## Configuration Domain
 
