@@ -300,7 +300,15 @@ fn test_context_get_json_metadata_projection_filters_internal_keys() {
         metadata.insert("provider".to_string(), "test-provider".to_string());
         metadata.insert("model".to_string(), "test-model".to_string());
         metadata.insert("provider_type".to_string(), "ollama".to_string());
-        metadata.insert("prompt".to_string(), "Summarize file".to_string());
+        metadata.insert(
+            "prompt_digest".to_string(),
+            "digest-summarize-file".to_string(),
+        );
+        metadata.insert(
+            "context_digest".to_string(),
+            "digest-context-file".to_string(),
+        );
+        metadata.insert("prompt_link_id".to_string(), "prompt-link-1".to_string());
         metadata.insert("deleted".to_string(), "true".to_string());
 
         let frame = Frame::new(
@@ -355,9 +363,18 @@ fn test_context_get_json_metadata_projection_filters_internal_keys() {
             Some("ollama")
         );
         assert_eq!(
-            metadata_obj.get("prompt").and_then(|v| v.as_str()),
-            Some("Summarize file")
+            metadata_obj.get("prompt_digest").and_then(|v| v.as_str()),
+            Some("digest-summarize-file")
         );
+        assert_eq!(
+            metadata_obj.get("context_digest").and_then(|v| v.as_str()),
+            Some("digest-context-file")
+        );
+        assert_eq!(
+            metadata_obj.get("prompt_link_id").and_then(|v| v.as_str()),
+            Some("prompt-link-1")
+        );
+        assert!(!metadata_obj.contains_key("prompt"));
     });
 }
 

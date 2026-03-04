@@ -879,7 +879,75 @@ async fn test_queue_rejects_generated_forbidden_metadata_key() {
 }
 
 #[tokio::test]
-async fn test_queue_does_not_reject_generated_prompt_metadata_key() {
+async fn test_queue_rejects_generated_forbidden_raw_context_metadata_key() {
+    let (api, _temp_dir) = create_test_api();
+    let api = Arc::new(api);
+
+    let node_id = Hash::from([61u8; 32]);
+    api.node_store()
+        .put(&NodeRecord {
+            node_id,
+            path: std::path::PathBuf::from("/tmp/test-dir"),
+            node_type: NodeType::Directory,
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: Default::default(),
+            tombstoned_at: None,
+        })
+        .unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        let mut identity =
+            AgentIdentity::new("writer-raw-context".to_string(), AgentRole::Writer);
+        identity
+            .metadata
+            .insert("system_prompt".to_string(), "system".to_string());
+        identity.metadata.insert(
+            "user_prompt_file".to_string(),
+            "Analyze file {path}".to_string(),
+        );
+        identity.metadata.insert(
+            "user_prompt_directory".to_string(),
+            "Analyze directory {path}".to_string(),
+        );
+        registry.register(identity);
+    }
+
+    let queue = FrameGenerationQueue::with_custom_metadata_builder(
+        api,
+        GenerationConfig::default(),
+        None,
+        |_, _, _, _, _| {
+            let mut metadata = FrameMetadata::new();
+            metadata.insert("raw_context".to_string(), "raw context data".to_string());
+            metadata
+        },
+    );
+    queue.start().unwrap();
+
+    let result = queue
+        .enqueue_and_wait(
+            node_id,
+            "writer-raw-context".to_string(),
+            "test-provider".to_string(),
+            Some("context-writer-raw-context".to_string()),
+            Priority::Normal,
+            Some(Duration::from_secs(2)),
+        )
+        .await;
+
+    queue.stop().await.unwrap();
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataForbiddenKey { .. })
+    ));
+}
+
+#[tokio::test]
+async fn test_queue_rejects_generated_prompt_metadata_key() {
     let (api, _temp_dir) = create_test_api();
     let api = Arc::new(api);
 
@@ -918,8 +986,10 @@ async fn test_queue_does_not_reject_generated_prompt_metadata_key() {
         api,
         GenerationConfig::default(),
         None,
-        |agent_id, provider, model, provider_type, prompt| {
-            build_generated_metadata(agent_id, provider, model, provider_type, prompt)
+        |_, _, _, _, _| {
+            let mut metadata = FrameMetadata::new();
+            metadata.insert("prompt".to_string(), "compat prompt".to_string());
+            metadata
         },
     );
     queue.start().unwrap();
@@ -930,6 +1000,71 @@ async fn test_queue_does_not_reject_generated_prompt_metadata_key() {
             "writer-prompt".to_string(),
             "test-provider".to_string(),
             Some("context-writer-prompt".to_string()),
+            Priority::Normal,
+            Some(Duration::from_secs(2)),
+        )
+        .await;
+
+    queue.stop().await.unwrap();
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataForbiddenKey { .. })
+    ));
+}
+
+#[tokio::test]
+async fn test_queue_accepts_generated_digest_metadata_keys() {
+    let (api, _temp_dir) = create_test_api();
+    let api = Arc::new(api);
+
+    let node_id = Hash::from([62u8; 32]);
+    api.node_store()
+        .put(&NodeRecord {
+            node_id,
+            path: std::path::PathBuf::from("/tmp/test-dir"),
+            node_type: NodeType::Directory,
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: Default::default(),
+            tombstoned_at: None,
+        })
+        .unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        let mut identity = AgentIdentity::new("writer-digest".to_string(), AgentRole::Writer);
+        identity
+            .metadata
+            .insert("system_prompt".to_string(), "system".to_string());
+        identity.metadata.insert(
+            "user_prompt_file".to_string(),
+            "Analyze file {path}".to_string(),
+        );
+        identity.metadata.insert(
+            "user_prompt_directory".to_string(),
+            "Analyze directory {path}".to_string(),
+        );
+        registry.register(identity);
+    }
+
+    let queue = FrameGenerationQueue::with_custom_metadata_builder(
+        api,
+        GenerationConfig::default(),
+        None,
+        |agent_id, provider, model, provider_type, prompt| {
+            build_generated_metadata(agent_id, provider, model, provider_type, prompt)
+        },
+    );
+    queue.start().unwrap();
+
+    let result = queue
+        .enqueue_and_wait(
+            node_id,
+            "writer-digest".to_string(),
+            "test-provider".to_string(),
+            Some("context-writer-digest".to_string()),
             Priority::Normal,
             Some(Duration::from_secs(2)),
         )

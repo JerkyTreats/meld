@@ -1,7 +1,7 @@
 # Foundation Cleanup Implementation Plan
 
 Date: 2026-03-01
-Status: active
+Status: complete
 Scope: workflow bootstrap foundation cleanup
 
 ## Overview
@@ -23,6 +23,7 @@ Project direction is path first targeting.
 Current command surfaces that still include non default path behavior:
 
 - `merkle context generate` accepts `--node` as an alternate selector
+- `merkle context regenerate` accepts `--node` as an alternate selector
 - `merkle context get` accepts `--node` as an alternate selector
 - `merkle workspace delete` accepts `--node` as an alternate selector
 - `merkle workspace restore` accepts `--node` as an alternate selector
@@ -34,10 +35,10 @@ This foundation cleanup plan does not expand non default path behavior.
 | Phase | Goal | Dependencies | Status |
 |-------|------|--------------|--------|
 | 1 | Domain metadata separation | None | complete |
-| 2 | Frame integrity boundary cleanup | Phase 1 | active |
+| 2 | Frame integrity boundary cleanup | Phase 1 | complete |
 | 3 | Generation orchestration boundary cleanup | Phase 1 and Phase 2 | complete |
-| 4 | Integrated parity and readiness gates | Phase 1 through Phase 3 | active |
-| 5 | Metadata contract readiness hardening | Phase 1 through Phase 4 | active |
+| 4 | Integrated parity and readiness gates | Phase 1 through Phase 3 | complete |
+| 5 | Metadata contract readiness hardening | Phase 1 through Phase 4 | complete |
 
 ---
 
@@ -133,7 +134,7 @@ This foundation cleanup plan does not expand non default path behavior.
 - shared frame metadata validation now enforces unknown key forbidden key and budget checks with typed deterministic errors
 - frame storage hash checks now recompute from structural identity fields and no longer depend on metadata map lookup for new writes
 - direct and queue write paths now assert parity on unknown forbidden and budget policy failures in integration suites
-- `prompt` metadata key remains allowed for compatibility in this phase and hard prohibition is deferred to metadata contract readiness hardening
+- `prompt` metadata key compatibility allowance in this phase is now closed by Phase 5 readiness hardening
 
 ---
 
@@ -194,16 +195,53 @@ This foundation cleanup plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Run full integration suite for context queue store config and cli surfaces impacted by cleanup. | Not started |
-| Run generation parity gates P1 P2 and P3 with committed baseline artifacts. | Not started |
-| Verify frame write policy parity for direct and queue paths under identical invalid inputs. | Not started |
-| Verify storage integrity checks remain deterministic after metadata policy hardening. | Not started |
-| Verify no new non default path behavior appears in CLI docs or specs. | Not started |
-| Publish final cleanup completion notes in foundation cleanup readme and workflow bootstrap roadmap. | Not started |
+| Run full integration suite for context queue store config and cli surfaces impacted by cleanup. | Complete |
+| Run generation parity gates P1 P2 and P3 with committed baseline artifacts. | Complete |
+| Verify frame write policy parity for direct and queue paths under identical invalid inputs. | Complete |
+| Verify storage integrity checks remain deterministic after metadata policy hardening. | Complete |
+| Verify no new non default path behavior appears in CLI docs or specs. | Complete |
+| Publish final cleanup completion notes in foundation cleanup readme and workflow bootstrap roadmap. | Complete |
 
 **Exit criteria**:
 - all phase gates pass with no unresolved behavioral drift
 - cleanup outputs are accepted by downstream metadata contracts and turn manager tracks
+
+**Implementation evidence**:
+- compile gate passed: `cargo check`
+- integration gate passed: `cargo test --test integration_tests integration::context_api`
+- integration gate passed: `cargo test --test integration_tests integration::frame_queue`
+- integration gate passed: `cargo test --test integration_tests integration::store_integration`
+- integration gate passed: `cargo test --test integration_tests integration::config_integration`
+- integration gate passed: `cargo test --test integration_tests integration::context_cli`
+- integration gate passed: `cargo test --test integration_tests integration::node_deletion`
+- integration gate passed: `cargo test --test integration_tests integration::generation_parity`
+- parity fixture gate P1 passed with tracked artifacts under `tests/fixtures/generation_parity/`
+- parity gate P2 file passed: `cargo test --test integration_tests integration::generation_parity::generation_parity_file_success_matches_fixture`
+- parity gate P2 directory passed: `cargo test --test integration_tests integration::generation_parity::generation_parity_directory_success_matches_fixture`
+- parity gate P3 retryable failure passed: `cargo test --test integration_tests integration::generation_parity::generation_parity_retryable_failure_matches_fixture`
+- parity gate P3 non retryable failure passed: `cargo test --test integration_tests integration::generation_parity::generation_parity_non_retryable_failure_matches_fixture`
+- direct and queue unknown key parity passed
+- direct gate command: `cargo test --test integration_tests integration::context_api::test_put_frame_rejects_non_frame_metadata_key`
+- queue gate command: `cargo test --test integration_tests integration::frame_queue::test_queue_rejects_generated_metadata_policy_violation`
+- direct and queue forbidden key parity passed
+- direct gate command: `cargo test --test integration_tests integration::context_api::test_put_frame_rejects_forbidden_metadata_key`
+- queue gate command: `cargo test --test integration_tests integration::frame_queue::test_queue_rejects_generated_forbidden_metadata_key`
+- direct and queue per key budget parity passed
+- direct gate command: `cargo test --test integration_tests integration::context_api::test_put_frame_rejects_per_key_metadata_budget_overflow`
+- queue gate command: `cargo test --test integration_tests integration::frame_queue::test_queue_rejects_generated_per_key_budget_overflow`
+- direct and queue total budget parity passed
+- direct gate command: `cargo test --test integration_tests integration::context_api::test_put_frame_rejects_total_metadata_budget_overflow`
+- queue gate command: `cargo test --test integration_tests integration::frame_queue::test_queue_rejects_generated_total_budget_overflow`
+- storage integrity determinism gate passed: `cargo test non_structural_metadata_mutation`
+- storage corruption determinism gate passed: `cargo test structural_content_corruption`
+
+**Phase completion notes**:
+- Phase 4 gates are complete as of 2026-03-04 with no behavioral drift
+- generation parity fixtures remain committed and unchanged for all four scenarios
+- direct and queue write paths emit matching typed policy failures for unknown forbidden and budget classes
+- storage integrity checks remain deterministic for non structural metadata mutation and structural content corruption
+- CLI non default path behavior audit now includes `context regenerate` in the exception list and no additional command exceptions were found
+- foundation cleanup and workflow bootstrap roadmap docs include Phase 4 completion status and evidence summary
 
 ---
 
@@ -218,18 +256,38 @@ This foundation cleanup plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Enforce forbidden key rejection for raw prompt and raw context metadata payload keys at shared write boundary. | Not started |
-| Add forward accepted keys for `prompt_digest` `context_digest` and `prompt_link_id`. | Not started |
-| Replace string policy failures with typed metadata policy failures for unknown forbidden and budget classes. | Not started |
-| Enforce registry driven metadata visibility projection on default read surfaces. | Not started |
-| Add no bypass runtime write gate for shared frame metadata validation entry. | Not started |
-| Add direct and queue parity suites for forbidden key unknown key and budget failures. | Not started |
+| Enforce forbidden key rejection for raw prompt and raw context metadata payload keys at shared write boundary. | Complete |
+| Add forward accepted keys for `prompt_digest` `context_digest` and `prompt_link_id`. | Complete |
+| Replace string policy failures with typed metadata policy failures for unknown forbidden and budget classes. | Complete |
+| Enforce registry driven metadata visibility projection on default read surfaces. | Complete |
+| Add no bypass runtime write gate for shared frame metadata validation entry. | Complete |
+| Add direct and queue parity suites for forbidden key unknown key and budget failures. | Complete |
 
 **Exit criteria**:
 - default metadata output cannot reveal forbidden payload values
 - direct and queue writes emit identical typed metadata policy failures
 - runtime frame writes cannot bypass shared metadata validator entry
 - metadata contracts phase can start without additional cleanup scope growth
+
+**Implementation evidence**:
+- compile gate passed: `cargo check`
+- direct write parity gate passed: `cargo test --test integration_tests integration::context_api`
+- queue write parity gate passed: `cargo test --test integration_tests integration::frame_queue`
+- read projection gate passed: `cargo test --test integration_tests integration::context_cli`
+- generation parity gate passed: `cargo test --test integration_tests integration::generation_parity`
+- storage determinism gate passed: `cargo test non_structural_metadata_mutation`
+- storage corruption gate passed: `cargo test structural_content_corruption`
+- direct forbidden key gate passed for raw prompt prompt and raw context
+- queue forbidden key gate passed for raw prompt prompt and raw context
+- no bypass runtime write guard gate passed: `cargo test --test integration_tests integration::context_api::test_runtime_write_paths_use_shared_put_frame_boundary`
+
+**Phase completion notes**:
+- Phase 5 gates are complete as of 2026-03-04 with no unresolved drift
+- shared write boundary now rejects raw prompt payload keys through forbidden key policy
+- generation metadata writer now emits digest based metadata references and no raw prompt value
+- metadata read projection now delegates visibility decisions to one metadata key registry contract
+- direct and queue invalid metadata paths keep parity for unknown forbidden and budget failures
+- metadata contracts phase can start without additional foundation cleanup scope
 
 ---
 

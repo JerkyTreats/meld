@@ -435,9 +435,38 @@ fn test_put_frame_rejects_forbidden_metadata_key() {
 }
 
 #[test]
-fn test_put_frame_allows_prompt_metadata_key_for_compatibility() {
+fn test_put_frame_rejects_forbidden_raw_context_metadata_key() {
     let (api, _temp_dir) = create_test_api();
     let node_id: NodeID = [9u8; 32];
+
+    let node_record = create_test_node_record(node_id);
+    api.node_store().put(&node_record).unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        registry.register(AgentIdentity::new("writer-1".to_string(), AgentRole::Writer));
+    }
+
+    let basis = Basis::Node(node_id);
+    let content = b"test content".to_vec();
+    let frame_type = "test".to_string();
+    let agent_id = "writer-1".to_string();
+    let mut metadata = HashMap::new();
+    metadata.insert("raw_context".to_string(), "raw context data".to_string());
+
+    let frame = Frame::new(basis, content, frame_type, agent_id.clone(), metadata).unwrap();
+    let result = api.put_frame(node_id, frame, agent_id);
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataForbiddenKey { .. })
+    ));
+}
+
+#[test]
+fn test_put_frame_rejects_prompt_metadata_key() {
+    let (api, _temp_dir) = create_test_api();
+    let node_id: NodeID = [10u8; 32];
 
     let node_record = create_test_node_record(node_id);
     api.node_store().put(&node_record).unwrap();
@@ -457,7 +486,10 @@ fn test_put_frame_allows_prompt_metadata_key_for_compatibility() {
     let frame = Frame::new(basis, content, frame_type, agent_id.clone(), metadata).unwrap();
     let result = api.put_frame(node_id, frame, agent_id);
 
-    assert!(result.is_ok());
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataForbiddenKey { .. })
+    ));
 }
 
 #[test]
@@ -525,4 +557,21 @@ fn test_put_frame_rejects_total_metadata_budget_overflow() {
         result,
         Err(ApiError::FrameMetadataTotalBudgetExceeded { .. })
     ));
+}
+
+#[test]
+fn test_runtime_write_paths_use_shared_put_frame_boundary() {
+    let queue_source = include_str!("../../src/context/queue.rs");
+    let orchestration_source = include_str!("../../src/context/generation/orchestration.rs");
+    let adapter_source = include_str!("../../src/agent/context_access/context_api.rs");
+
+    assert!(!queue_source.contains("frame_storage().store("));
+    assert!(!queue_source.contains("frame_storage.store("));
+    assert!(!orchestration_source.contains("frame_storage().store("));
+    assert!(!orchestration_source.contains("frame_storage.store("));
+    assert!(!adapter_source.contains("frame_storage().store("));
+    assert!(!adapter_source.contains("frame_storage.store("));
+
+    assert!(orchestration_source.contains("api.put_frame("));
+    assert!(adapter_source.contains("self.api.put_frame("));
 }

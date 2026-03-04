@@ -1,11 +1,11 @@
 //! Frame metadata domain types.
 
+use crate::metadata::frame_key_registry::{
+    is_key_visible_by_default,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::{Deref, DerefMut};
-
-const KEY_AGENT_ID: &str = "agent_id";
-const KEY_DELETED: &str = "deleted";
 
 /// Frame metadata contract type.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,7 +83,7 @@ pub type VisibleFrameMetadata = BTreeMap<String, String>;
 pub fn project_visible_metadata(metadata: &FrameMetadata) -> VisibleFrameMetadata {
     metadata
         .iter()
-        .filter(|(key, _)| key.as_str() != KEY_AGENT_ID && key.as_str() != KEY_DELETED)
+        .filter(|(key, _)| is_key_visible_by_default(key))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
 }
@@ -92,6 +92,9 @@ pub fn project_visible_metadata(metadata: &FrameMetadata) -> VisibleFrameMetadat
 mod tests {
     use super::*;
     use crate::agent::profile::metadata_types::AgentMetadata;
+    use crate::metadata::frame_key_registry::{
+        FORBIDDEN_KEY_RAW_PROMPT, KEY_AGENT_ID, KEY_DELETED, KEY_PROMPT, KEY_PROMPT_DIGEST,
+    };
     use crate::store::node_metadata::NodeMetadata;
     use std::any::TypeId;
 
@@ -109,11 +112,16 @@ mod tests {
         metadata.insert(KEY_AGENT_ID.to_string(), "writer".to_string());
         metadata.insert("a_key".to_string(), "a".to_string());
         metadata.insert(KEY_DELETED.to_string(), "true".to_string());
+        metadata.insert(KEY_PROMPT.to_string(), "raw prompt".to_string());
+        metadata.insert(FORBIDDEN_KEY_RAW_PROMPT.to_string(), "raw payload".to_string());
+        metadata.insert(KEY_PROMPT_DIGEST.to_string(), "digest".to_string());
 
         let projected = project_visible_metadata(&metadata);
         let keys: Vec<&str> = projected.keys().map(String::as_str).collect();
-        assert_eq!(keys, vec!["a_key", "z_key"]);
+        assert_eq!(keys, vec!["prompt_digest"]);
         assert!(!projected.contains_key(KEY_AGENT_ID));
         assert!(!projected.contains_key(KEY_DELETED));
+        assert!(!projected.contains_key(KEY_PROMPT));
+        assert!(!projected.contains_key(FORBIDDEN_KEY_RAW_PROMPT));
     }
 }

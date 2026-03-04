@@ -5,7 +5,8 @@
     "metadata": {
       "agent_id": "writer",
       "model": "mock-model",
-      "prompt": "summarize directory",
+      "prompt_digest": "150d7a728df168b621342e0e219e00bb806e355604e5b1f58613e0c663c91c1b",
+      "prompt_link_id": "prompt-link-150d7a728df168b6",
       "provider": "mock-provider",
       "provider_type": "local"
     }

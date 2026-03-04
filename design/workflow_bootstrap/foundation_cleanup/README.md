@@ -64,3 +64,31 @@ This cleanup reduces blast radius by isolating boundaries and removing cross dom
 - storage integrity checks are independent from arbitrary metadata keys
 - generation orchestration units have clear ownership and characterization coverage
 - metadata contracts phase start does not require new foundation cleanup scope
+
+## Phase 4 Readiness Gate Status
+
+Date: 2026-03-04
+Status: complete
+
+Phase 4 integrated parity and readiness gates are complete.
+Verification summary:
+
+- impacted integration gates passed for context api frame queue store config context cli node deletion and generation parity
+- generation parity gates P1 P2 and P3 passed with committed artifacts in `tests/fixtures/generation_parity/`
+- direct and queue metadata write parity passed for unknown key forbidden key and budget failure classes
+- storage integrity determinism gates passed for non structural metadata mutation and structural corruption
+- CLI exception list remains bounded and now includes `context regenerate` alongside existing non default path selectors
+
+## Phase 5 Metadata Contract Readiness Status
+
+Date: 2026-03-04
+Status: complete
+
+Phase 5 metadata contract readiness hardening gates are complete.
+Verification summary:
+
+- shared write boundary rejects raw prompt payload keys including `prompt` `raw_prompt` and `raw_context`
+- generated frame metadata writes now emit digest based references and avoid raw prompt payload storage
+- default read projection uses metadata key registry visibility policy
+- no bypass runtime write guard test confirms queue and adapter runtime writes route through shared `put_frame` boundary
+- direct and queue parity suites pass for unknown forbidden and budget failure classes
