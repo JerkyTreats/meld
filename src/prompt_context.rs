@@ -8,5 +8,8 @@ pub use contracts::{
     PromptContextArtifactKind, PromptContextArtifactRef, PromptContextLineageContract,
     MAX_CONTEXT_ARTIFACT_BYTES, MAX_PROMPT_ARTIFACT_BYTES,
 };
-pub use orchestration::{persist_prompt_context_lineage, PromptContextLineageInput};
+pub use orchestration::{
+    persist_prompt_context_lineage, prepare_generated_lineage, PreparedPromptContextLineage,
+    PromptContextLineageInput,
+};
 pub use storage::PromptContextArtifactStorage;
