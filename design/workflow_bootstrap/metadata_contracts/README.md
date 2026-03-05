@@ -248,6 +248,43 @@ Forbidden:
 3. write frame with digest references only
 4. construct prompt link contract payload using canonical schema and validator
 
+### lineage flow
+
+```mermaid
+flowchart TD
+    A[Assemble prompt payload and context payload] --> B[Write system prompt artifact to CAS]
+    B --> C[Write user prompt template artifact to CAS]
+    C --> D[Write rendered prompt artifact to CAS]
+    D --> E[Write context payload artifact to CAS]
+    E --> F[Build prompt link contract payload]
+    F --> G[Build frame metadata with prompt digest context digest prompt link id]
+    G --> H[Validate metadata at put frame boundary]
+    H --> I[Write frame]
+```
+
+### merkle id to frame lineage
+
+```mermaid
+flowchart LR
+    FS[Filesystem path tree] --> MT[Merkle node id]
+    MT --> NR[Node record lookup]
+
+    NR --> GEN[Generate frame content]
+    GEN --> FR[Frame write target node]
+
+    AG[Agent prompt contract] --> LIN[Assemble prompt lineage inputs]
+    NR --> LIN
+    LIN --> CAS[Persist artifacts in local CAS]
+    CAS --> DIG[Compute prompt and context digests]
+    DIG --> META[Build frame metadata with digests and prompt link id]
+
+    FR --> ID[Compute FrameID from node basis plus content plus type plus agent]
+    META --> VAL[Validate metadata contract]
+    ID --> PUT[Put frame]
+    VAL --> PUT
+    PUT --> HEAD[Update head index]
+```
+
 ### read path
 
 1. default context read returns frame content and digest references
