@@ -10,5 +10,6 @@ pub fn builder_with_defaults() -> Result<ConfigBuilder<config::builder::DefaultS
     Config::builder()
         .set_default("system.default_workspace_root", ".")?
         .set_default("system.storage.store_path", ".meld/store")?
-        .set_default("system.storage.frames_path", ".meld/frames")
+        .set_default("system.storage.frames_path", ".meld/frames")?
+        .set_default("system.storage.artifacts_path", ".meld/artifacts")
 }

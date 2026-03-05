@@ -107,6 +107,22 @@ pub struct ProviderLifecycleEventData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptContextLineageEventData {
+    pub node_id: String,
+    pub agent_id: String,
+    pub provider_name: String,
+    pub frame_type: String,
+    pub prompt_link_id: String,
+    pub prompt_digest: String,
+    pub context_digest: String,
+    pub system_prompt_artifact_id: String,
+    pub user_prompt_template_artifact_id: String,
+    pub rendered_prompt_artifact_id: String,
+    pub context_artifact_id: String,
+    pub lineage_failure_policy: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryEventData {
     pub command: String,
     pub ok: bool,

@@ -176,6 +176,10 @@ fn test_config_default_values() {
         config.system.storage.frames_path,
         std::path::PathBuf::from(".meld/frames")
     );
+    assert_eq!(
+        config.system.storage.artifacts_path,
+        std::path::PathBuf::from(".meld/artifacts")
+    );
 }
 
 #[test]

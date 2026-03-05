@@ -88,6 +88,37 @@ pub enum ApiError {
         class: FrameMetadataMutabilityClass,
     },
 
+    #[error("Prompt context artifact for kind '{kind}' exceeds budget: {actual_bytes} > {max_bytes} bytes")]
+    PromptContextArtifactBudgetExceeded {
+        kind: String,
+        actual_bytes: usize,
+        max_bytes: usize,
+    },
+
+    #[error("Prompt context artifact not found: {artifact_id}")]
+    PromptContextArtifactNotFound { artifact_id: String },
+
+    #[error(
+        "Prompt context artifact digest mismatch for '{artifact_id}': expected {expected_digest}, got {actual_digest}"
+    )]
+    PromptContextArtifactDigestMismatch {
+        artifact_id: String,
+        expected_digest: String,
+        actual_digest: String,
+    },
+
+    #[error(
+        "Prompt context artifact size mismatch for '{artifact_id}': expected {expected_bytes}, got {actual_bytes}"
+    )]
+    PromptContextArtifactSizeMismatch {
+        artifact_id: String,
+        expected_bytes: usize,
+        actual_bytes: usize,
+    },
+
+    #[error("Prompt link contract is invalid: {reason}")]
+    PromptLinkContractInvalid { reason: String },
+
     #[error("Agent '{agent_id}' missing required prompt contract field '{field}'")]
     MissingPromptContractField {
         agent_id: String,
@@ -166,6 +197,41 @@ impl Clone for ApiError {
                     class: *class,
                 }
             }
+            ApiError::PromptContextArtifactBudgetExceeded {
+                kind,
+                actual_bytes,
+                max_bytes,
+            } => ApiError::PromptContextArtifactBudgetExceeded {
+                kind: kind.clone(),
+                actual_bytes: *actual_bytes,
+                max_bytes: *max_bytes,
+            },
+            ApiError::PromptContextArtifactNotFound { artifact_id } => {
+                ApiError::PromptContextArtifactNotFound {
+                    artifact_id: artifact_id.clone(),
+                }
+            }
+            ApiError::PromptContextArtifactDigestMismatch {
+                artifact_id,
+                expected_digest,
+                actual_digest,
+            } => ApiError::PromptContextArtifactDigestMismatch {
+                artifact_id: artifact_id.clone(),
+                expected_digest: expected_digest.clone(),
+                actual_digest: actual_digest.clone(),
+            },
+            ApiError::PromptContextArtifactSizeMismatch {
+                artifact_id,
+                expected_bytes,
+                actual_bytes,
+            } => ApiError::PromptContextArtifactSizeMismatch {
+                artifact_id: artifact_id.clone(),
+                expected_bytes: *expected_bytes,
+                actual_bytes: *actual_bytes,
+            },
+            ApiError::PromptLinkContractInvalid { reason } => ApiError::PromptLinkContractInvalid {
+                reason: reason.clone(),
+            },
             ApiError::MissingPromptContractField { agent_id, field } => {
                 ApiError::MissingPromptContractField {
                     agent_id: agent_id.clone(),

@@ -7,10 +7,10 @@ use crate::metadata::frame_key_registry::{
     KEY_PROMPT_LINK_ID, KEY_PROVIDER, KEY_PROVIDER_TYPE,
 };
 use crate::metadata::frame_types::FrameMetadata;
+use crate::metadata::prompt_link_contract::build_prompt_link_id;
 
 pub const METADATA_PER_KEY_MAX_BYTES: usize = 16 * 1024;
 pub const METADATA_TOTAL_MAX_BYTES: usize = 64 * 1024;
-const PROMPT_LINK_PREFIX_BYTES: usize = 16;
 const REQUIRED_FRAME_METADATA_KEYS: [&str; 7] = [
     KEY_AGENT_ID,
     KEY_PROVIDER,
@@ -27,32 +27,58 @@ pub struct FrameMetadataValidationInput<'a> {
     pub previous_metadata: Option<&'a FrameMetadata>,
 }
 
+#[derive(Debug, Clone)]
+pub struct GeneratedFrameMetadataInput {
+    pub agent_id: String,
+    pub provider: String,
+    pub model: String,
+    pub provider_type: String,
+    pub prompt_digest: String,
+    pub context_digest: String,
+    pub prompt_link_id: String,
+}
+
 /// Build frame metadata for generation queue writes.
-pub fn build_generated_metadata(
+pub fn build_generated_metadata(input: &GeneratedFrameMetadataInput) -> FrameMetadata {
+    let mut metadata = FrameMetadata::new();
+    metadata.insert(KEY_AGENT_ID.to_string(), input.agent_id.clone());
+    metadata.insert(KEY_PROVIDER.to_string(), input.provider.clone());
+    metadata.insert(KEY_MODEL.to_string(), input.model.clone());
+    metadata.insert(KEY_PROVIDER_TYPE.to_string(), input.provider_type.clone());
+    metadata.insert(KEY_PROMPT_DIGEST.to_string(), input.prompt_digest.clone());
+    metadata.insert(KEY_CONTEXT_DIGEST.to_string(), input.context_digest.clone());
+    let prompt_link_id = if input.prompt_link_id.is_empty() {
+        build_prompt_link_id(&input.prompt_digest)
+    } else {
+        input.prompt_link_id.clone()
+    };
+    metadata.insert(KEY_PROMPT_LINK_ID.to_string(), prompt_link_id);
+
+    metadata
+}
+
+pub fn generated_metadata_input_from_payload(
     agent_id: &str,
     provider: &str,
     model: &str,
     provider_type: &str,
     prompt: &str,
     context_payload: &str,
-) -> FrameMetadata {
-    let mut metadata = FrameMetadata::new();
-    metadata.insert(KEY_AGENT_ID.to_string(), agent_id.to_string());
-    metadata.insert(KEY_PROVIDER.to_string(), provider.to_string());
-    metadata.insert(KEY_MODEL.to_string(), model.to_string());
-    metadata.insert(KEY_PROVIDER_TYPE.to_string(), provider_type.to_string());
-
+) -> GeneratedFrameMetadataInput {
     let prompt_digest = blake3::hash(prompt.as_bytes()).to_hex().to_string();
     let context_digest = blake3::hash(context_payload.as_bytes())
         .to_hex()
         .to_string();
-    let prompt_link_suffix_len = PROMPT_LINK_PREFIX_BYTES.min(prompt_digest.len());
-    let prompt_link_id = format!("prompt-link-{}", &prompt_digest[..prompt_link_suffix_len]);
-    metadata.insert(KEY_PROMPT_DIGEST.to_string(), prompt_digest);
-    metadata.insert(KEY_CONTEXT_DIGEST.to_string(), context_digest);
-    metadata.insert(KEY_PROMPT_LINK_ID.to_string(), prompt_link_id);
 
-    metadata
+    GeneratedFrameMetadataInput {
+        agent_id: agent_id.to_string(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+        provider_type: provider_type.to_string(),
+        prompt_link_id: build_prompt_link_id(&prompt_digest),
+        prompt_digest,
+        context_digest,
+    }
 }
 
 /// Validate frame metadata at the shared write boundary.
@@ -200,14 +226,15 @@ mod tests {
 
     #[test]
     fn build_generated_metadata_includes_context_digest() {
-        let metadata = build_generated_metadata(
-            "writer-a",
-            "provider-a",
-            "model-a",
-            "local",
-            "task prompt",
-            "prompt context",
-        );
+        let metadata = build_generated_metadata(&GeneratedFrameMetadataInput {
+            agent_id: "writer-a".to_string(),
+            provider: "provider-a".to_string(),
+            model: "model-a".to_string(),
+            provider_type: "local".to_string(),
+            prompt_digest: "prompt-a".to_string(),
+            context_digest: "context-a".to_string(),
+            prompt_link_id: "prompt-link-a".to_string(),
+        });
         assert!(metadata.contains_key(KEY_PROMPT_DIGEST));
         assert!(metadata.contains_key(KEY_CONTEXT_DIGEST));
         assert!(metadata.contains_key(KEY_PROMPT_LINK_ID));

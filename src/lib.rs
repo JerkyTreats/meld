@@ -15,6 +15,7 @@ pub mod ignore;
 pub mod init;
 pub mod logging;
 pub mod metadata;
+pub mod prompt_context;
 pub mod provider;
 pub mod store;
 pub mod telemetry;

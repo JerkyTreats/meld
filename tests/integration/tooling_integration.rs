@@ -4,6 +4,7 @@ use meld::agent::{AgentAdapter, ContextApiAdapter};
 use meld::api::{ContextApi, ContextView};
 use meld::context::frame::{Basis, Frame};
 use meld::heads::HeadIndex;
+use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::persistence::SledNodeRecordStore;
 use meld::types::Hash;
 use meld::views::OrderingPolicy;
@@ -17,9 +18,13 @@ fn create_test_api() -> (ContextApi, TempDir) {
     let store_path = temp_dir.path().join("store");
     let node_store = Arc::new(SledNodeRecordStore::new(&store_path).unwrap());
     let frame_storage_path = temp_dir.path().join("frames");
+    let artifact_storage_path = temp_dir.path().join("artifacts");
     std::fs::create_dir_all(&frame_storage_path).unwrap();
+    std::fs::create_dir_all(&artifact_storage_path).unwrap();
     let frame_storage =
         Arc::new(meld::context::frame::storage::FrameStorage::new(&frame_storage_path).unwrap());
+    let prompt_context_storage =
+        Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
     let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
     let agent_registry = Arc::new(parking_lot::RwLock::new(meld::agent::AgentRegistry::new()));
     let provider_registry = Arc::new(parking_lot::RwLock::new(
@@ -31,6 +36,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
         node_store,
         frame_storage,
         head_index,
+        prompt_context_storage,
         agent_registry,
         provider_registry,
         lock_manager,

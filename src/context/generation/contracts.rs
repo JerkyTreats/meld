@@ -1,9 +1,10 @@
 use crate::metadata::frame_types::FrameMetadata;
+use crate::metadata::frame_write_contract::GeneratedFrameMetadataInput;
 use crate::provider::ChatMessage;
 use crate::types::NodeID;
 
 pub type GeneratedMetadataBuilder =
-    dyn Fn(&str, &str, &str, &str, &str, &str) -> FrameMetadata + Send + Sync;
+    dyn Fn(&GeneratedFrameMetadataInput) -> FrameMetadata + Send + Sync;
 
 #[derive(Debug, Clone)]
 pub struct GenerationOrchestrationRequest {
@@ -18,7 +19,9 @@ pub struct GenerationOrchestrationRequest {
 
 #[derive(Debug, Clone)]
 pub struct PromptAssemblyOutput {
-    pub user_prompt: String,
+    pub system_prompt: String,
+    pub user_prompt_template: String,
+    pub rendered_prompt: String,
     pub context_payload: String,
     pub messages: Vec<ChatMessage>,
 }

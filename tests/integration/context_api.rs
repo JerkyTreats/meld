@@ -17,6 +17,7 @@ use meld::metadata::frame_key_registry::{
     KEY_PROVIDER_TYPE,
 };
 use meld::metadata::frame_write_contract::{METADATA_PER_KEY_MAX_BYTES, METADATA_TOTAL_MAX_BYTES};
+use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::{NodeRecord, NodeType, SledNodeRecordStore};
 use meld::types::NodeID;
 use meld::views::OrderingPolicy;
@@ -29,9 +30,12 @@ fn create_test_api() -> (ContextApi, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let store_path = temp_dir.path().join("store");
     let frame_storage_path = temp_dir.path().join("frames");
+    let artifact_storage_path = temp_dir.path().join("artifacts");
 
     let node_store = Arc::new(SledNodeRecordStore::new(&store_path).unwrap());
     let frame_storage = Arc::new(FrameStorage::new(&frame_storage_path).unwrap());
+    let prompt_context_storage =
+        Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
     let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
     let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
     let provider_registry = Arc::new(parking_lot::RwLock::new(
@@ -43,6 +47,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
         node_store,
         frame_storage,
         head_index,
+        prompt_context_storage,
         agent_registry,
         provider_registry,
         lock_manager,

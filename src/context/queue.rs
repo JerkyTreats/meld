@@ -10,7 +10,9 @@ use crate::context::generation::contracts::{
 use crate::context::generation::orchestration::execute_generation_request;
 use crate::error::ApiError;
 use crate::metadata::frame_types::FrameMetadata;
-use crate::metadata::frame_write_contract::build_generated_metadata;
+use crate::metadata::frame_write_contract::{
+    build_generated_metadata, GeneratedFrameMetadataInput,
+};
 use crate::telemetry::{
     ProgressRuntime, ProviderLifecycleEventData, QueueEventData, QueueStatsEventData,
 };
@@ -332,7 +334,7 @@ impl FrameGenerationQueue {
         metadata_builder: F,
     ) -> Self
     where
-        F: Fn(&str, &str, &str, &str, &str, &str) -> FrameMetadata + Send + Sync + 'static,
+        F: Fn(&GeneratedFrameMetadataInput) -> FrameMetadata + Send + Sync + 'static,
     {
         Self {
             queue: Arc::new(Mutex::new(BinaryHeap::new())),
@@ -1087,6 +1089,11 @@ impl FrameGenerationQueue {
             ApiError::FrameMetadataPerKeyBudgetExceeded { .. } => false,
             ApiError::FrameMetadataTotalBudgetExceeded { .. } => false,
             ApiError::FrameMetadataMutabilityViolation { .. } => false,
+            ApiError::PromptContextArtifactBudgetExceeded { .. } => false,
+            ApiError::PromptContextArtifactNotFound { .. } => false,
+            ApiError::PromptContextArtifactDigestMismatch { .. } => false,
+            ApiError::PromptContextArtifactSizeMismatch { .. } => false,
+            ApiError::PromptLinkContractInvalid { .. } => false,
             ApiError::ProviderNotConfigured(_) => false,
             ApiError::ProviderRateLimit(_) => true,
             ApiError::ProviderRequestFailed(_) => true,

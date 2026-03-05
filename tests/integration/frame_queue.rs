@@ -20,9 +20,11 @@ use meld::context::queue::{
 use meld::error::ApiError;
 use meld::heads::HeadIndex;
 use meld::metadata::frame_write_contract::{
-    build_generated_metadata, METADATA_PER_KEY_MAX_BYTES, METADATA_TOTAL_MAX_BYTES,
+    build_generated_metadata, generated_metadata_input_from_payload, METADATA_PER_KEY_MAX_BYTES,
+    METADATA_TOTAL_MAX_BYTES,
 };
 use meld::metadata::FrameMetadata;
+use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::persistence::SledNodeRecordStore;
 use meld::store::{NodeRecord, NodeType};
 use meld::telemetry::ProgressRuntime;
@@ -36,8 +38,12 @@ fn create_test_api() -> (ContextApi, TempDir) {
     let store_path = temp_dir.path().join("store");
     let node_store = Arc::new(SledNodeRecordStore::new(&store_path).unwrap());
     let frame_storage_path = temp_dir.path().join("frames");
+    let artifact_storage_path = temp_dir.path().join("artifacts");
     std::fs::create_dir_all(&frame_storage_path).unwrap();
+    std::fs::create_dir_all(&artifact_storage_path).unwrap();
     let frame_storage = Arc::new(FrameStorage::new(&frame_storage_path).unwrap());
+    let prompt_context_storage =
+        Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
     let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
     let agent_registry = Arc::new(parking_lot::RwLock::new(meld::agent::AgentRegistry::new()));
     let mut provider_registry = meld::provider::ProviderRegistry::new();
@@ -62,6 +68,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
         node_store,
         frame_storage,
         head_index,
+        prompt_context_storage,
         agent_registry,
         provider_registry,
         lock_manager,
@@ -785,7 +792,7 @@ async fn test_queue_rejects_generated_metadata_policy_violation() {
         api,
         GenerationConfig::default(),
         None,
-        |_, _, _, _, _, _| {
+        |_| {
             let mut metadata = FrameMetadata::new();
             metadata.insert("leaked_key".to_string(), "value".to_string());
             metadata
@@ -852,7 +859,7 @@ async fn test_queue_rejects_generated_forbidden_metadata_key() {
         api,
         GenerationConfig::default(),
         None,
-        |_, _, _, _, _, _| {
+        |_| {
             let mut metadata = FrameMetadata::new();
             metadata.insert("raw_prompt".to_string(), "raw prompt data".to_string());
             metadata
@@ -919,7 +926,7 @@ async fn test_queue_rejects_generated_forbidden_raw_context_metadata_key() {
         api,
         GenerationConfig::default(),
         None,
-        |_, _, _, _, _, _| {
+        |_| {
             let mut metadata = FrameMetadata::new();
             metadata.insert("raw_context".to_string(), "raw context data".to_string());
             metadata
@@ -986,7 +993,7 @@ async fn test_queue_rejects_generated_prompt_metadata_key() {
         api,
         GenerationConfig::default(),
         None,
-        |_, _, _, _, _, _| {
+        |_| {
             let mut metadata = FrameMetadata::new();
             metadata.insert("prompt".to_string(), "compat prompt".to_string());
             metadata
@@ -1054,9 +1061,9 @@ async fn test_queue_rejects_generated_missing_required_metadata_key() {
         api,
         GenerationConfig::default(),
         None,
-        |agent_id, _, _, _, _, _| {
+        |input| {
             let mut metadata = FrameMetadata::new();
-            metadata.insert("agent_id".to_string(), agent_id.to_string());
+            metadata.insert("agent_id".to_string(), input.agent_id.to_string());
             metadata.insert("provider".to_string(), "p".to_string());
             metadata.insert("model".to_string(), "m".to_string());
             metadata.insert("provider_type".to_string(), "t".to_string());
@@ -1122,14 +1129,14 @@ async fn test_queue_rejects_generated_mutability_transition_violation() {
         registry.register(identity);
     }
 
-    let initial_metadata = build_generated_metadata(
+    let initial_metadata = build_generated_metadata(&generated_metadata_input_from_payload(
         "writer-mutability",
         "provider-a",
         "model-a",
         "local",
         "prompt-a",
         "context-a",
-    );
+    ));
     let initial_frame = Frame::new(
         Basis::Node(node_id),
         b"baseline".to_vec(),
@@ -1145,15 +1152,10 @@ async fn test_queue_rejects_generated_mutability_transition_violation() {
         api,
         GenerationConfig::default(),
         None,
-        |agent_id, provider, _, provider_type, prompt, context_payload| {
-            build_generated_metadata(
-                agent_id,
-                provider,
-                "model-b",
-                provider_type,
-                prompt,
-                context_payload,
-            )
+        |input| {
+            let mut next = input.clone();
+            next.model = "model-b".to_string();
+            build_generated_metadata(&next)
         },
     );
     queue.start().unwrap();
@@ -1221,16 +1223,7 @@ async fn test_queue_accepts_generated_digest_metadata_keys() {
         api,
         GenerationConfig::default(),
         None,
-        |agent_id, provider, model, provider_type, prompt, context_payload| {
-            build_generated_metadata(
-                agent_id,
-                provider,
-                model,
-                provider_type,
-                prompt,
-                context_payload,
-            )
-        },
+        |input| build_generated_metadata(input),
     );
     queue.start().unwrap();
 
@@ -1294,9 +1287,9 @@ async fn test_queue_rejects_generated_per_key_budget_overflow() {
         api,
         GenerationConfig::default(),
         None,
-        |agent_id, _, _, _, _, _| {
+        |input| {
             let mut metadata = FrameMetadata::new();
-            metadata.insert("agent_id".to_string(), agent_id.to_string());
+            metadata.insert("agent_id".to_string(), input.agent_id.to_string());
             metadata.insert(
                 "provider".to_string(),
                 "x".repeat(METADATA_PER_KEY_MAX_BYTES + 1),
@@ -1370,10 +1363,10 @@ async fn test_queue_rejects_generated_total_budget_overflow() {
         api,
         GenerationConfig::default(),
         None,
-        |agent_id, _, _, _, _, _| {
+        |input| {
             let per_key = (METADATA_TOTAL_MAX_BYTES / 6).max(1);
             let mut metadata = FrameMetadata::new();
-            metadata.insert("agent_id".to_string(), agent_id.to_string());
+            metadata.insert("agent_id".to_string(), input.agent_id.to_string());
             metadata.insert("provider".to_string(), "p".repeat(per_key));
             metadata.insert("model".to_string(), "m".repeat(per_key));
             metadata.insert("provider_type".to_string(), "t".repeat(per_key));

@@ -13,6 +13,10 @@ fn default_frames_path() -> PathBuf {
     PathBuf::from(".meld/frames")
 }
 
+fn default_artifacts_path() -> PathBuf {
+    PathBuf::from(".meld/artifacts")
+}
+
 /// Storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
@@ -23,13 +27,21 @@ pub struct StorageConfig {
     /// Path to frame storage (relative to workspace root)
     #[serde(default = "default_frames_path")]
     pub frames_path: PathBuf,
+
+    /// Path to prompt context artifact storage (relative to workspace root)
+    #[serde(default = "default_artifacts_path")]
+    pub artifacts_path: PathBuf,
 }
 
 impl StorageConfig {
     /// Resolve storage paths to actual filesystem locations.
-    pub fn resolve_paths(&self, workspace_root: &Path) -> Result<(PathBuf, PathBuf), ApiError> {
+    pub fn resolve_paths(
+        &self,
+        workspace_root: &Path,
+    ) -> Result<(PathBuf, PathBuf, PathBuf), ApiError> {
         let is_default_store = self.store_path == PathBuf::from(".meld/store");
         let is_default_frames = self.frames_path == PathBuf::from(".meld/frames");
+        let is_default_artifacts = self.artifacts_path == PathBuf::from(".meld/artifacts");
 
         let store_path = if is_default_store {
             let data_dir = xdg::workspace_data_dir(workspace_root)?;
@@ -45,7 +57,14 @@ impl StorageConfig {
             workspace_root.join(&self.frames_path)
         };
 
-        Ok((store_path, frames_path))
+        let artifacts_path = if is_default_artifacts {
+            let data_dir = xdg::workspace_data_dir(workspace_root)?;
+            data_dir.join("artifacts")
+        } else {
+            workspace_root.join(&self.artifacts_path)
+        };
+
+        Ok((store_path, frames_path, artifacts_path))
     }
 }
 
@@ -54,6 +73,7 @@ impl Default for StorageConfig {
         Self {
             store_path: default_store_path(),
             frames_path: default_frames_path(),
+            artifacts_path: default_artifacts_path(),
         }
     }
 }

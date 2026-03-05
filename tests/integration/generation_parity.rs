@@ -8,7 +8,10 @@ use meld::context::generation::prompt_collection::build_prompt_messages;
 use meld::context::queue::{FrameGenerationQueue, GenerationConfig, Priority, QueueEventContext};
 use meld::error::ApiError;
 use meld::heads::HeadIndex;
-use meld::metadata::frame_write_contract::build_generated_metadata;
+use meld::metadata::frame_write_contract::{
+    build_generated_metadata, generated_metadata_input_from_payload,
+};
+use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::persistence::SledNodeRecordStore;
 use meld::store::{NodeRecord, NodeType};
 use meld::telemetry::ProgressRuntime;
@@ -51,8 +54,12 @@ fn create_test_api() -> (ContextApi, TempDir) {
     let store_path = temp_dir.path().join("store");
     let node_store = Arc::new(SledNodeRecordStore::new(&store_path).unwrap());
     let frame_storage_path = temp_dir.path().join("frames");
+    let artifact_storage_path = temp_dir.path().join("artifacts");
     fs::create_dir_all(&frame_storage_path).unwrap();
+    fs::create_dir_all(&artifact_storage_path).unwrap();
     let frame_storage = Arc::new(FrameStorage::new(&frame_storage_path).unwrap());
+    let prompt_context_storage =
+        Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
     let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
     let agent_registry = Arc::new(parking_lot::RwLock::new(meld::agent::AgentRegistry::new()));
     let provider_registry = Arc::new(parking_lot::RwLock::new(
@@ -64,6 +71,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
         node_store,
         frame_storage,
         head_index,
+        prompt_context_storage,
         agent_registry,
         provider_registry,
         lock_manager,
@@ -141,6 +149,15 @@ fn terminal_error_class(error: &ApiError) -> String {
         ApiError::FrameMetadataPerKeyBudgetExceeded { .. } => "FrameMetadataPerKeyBudgetExceeded",
         ApiError::FrameMetadataTotalBudgetExceeded { .. } => "FrameMetadataTotalBudgetExceeded",
         ApiError::FrameMetadataMutabilityViolation { .. } => "FrameMetadataMutabilityViolation",
+        ApiError::PromptContextArtifactBudgetExceeded { .. } => {
+            "PromptContextArtifactBudgetExceeded"
+        }
+        ApiError::PromptContextArtifactNotFound { .. } => "PromptContextArtifactNotFound",
+        ApiError::PromptContextArtifactDigestMismatch { .. } => {
+            "PromptContextArtifactDigestMismatch"
+        }
+        ApiError::PromptContextArtifactSizeMismatch { .. } => "PromptContextArtifactSizeMismatch",
+        ApiError::PromptLinkContractInvalid { .. } => "PromptLinkContractInvalid",
         ApiError::MissingPromptContractField { .. } => "MissingPromptContractField",
         ApiError::ProviderError(_) => "ProviderError",
         ApiError::ProviderNotConfigured(_) => "ProviderNotConfigured",
@@ -266,13 +283,18 @@ fn direct_generation_artifact(
     let prompt_output =
         build_prompt_messages(api, request, &node_record, &prompt_contract).unwrap();
 
+    let metadata_input = generated_metadata_input_from_payload(
+        &request.agent_id,
+        &request.provider_name,
+        "mock-model",
+        "local",
+        &prompt_output.rendered_prompt,
+        &prompt_output.context_payload,
+    );
     let metadata = build_and_validate_generated_metadata(
         api,
         request,
-        "mock-model",
-        "local",
-        &prompt_output.user_prompt,
-        &prompt_output.context_payload,
+        &metadata_input,
         &build_generated_metadata,
     )
     .unwrap();
@@ -351,14 +373,14 @@ fn generation_parity_directory_success_matches_fixture() {
         b"child frame context".to_vec(),
         "context-writer".to_string(),
         "writer".to_string(),
-        build_generated_metadata(
+        build_generated_metadata(&generated_metadata_input_from_payload(
             "writer",
             "mock-provider",
             "mock-model",
             "local",
             "seed-prompt",
             "seed-context",
-        ),
+        )),
     )
     .unwrap();
     api.put_frame(child_node, seed_frame, "writer".to_string())

@@ -37,6 +37,8 @@ pub struct RunContext {
     #[allow(dead_code)]
     store_path: PathBuf,
     frame_storage_path: PathBuf,
+    #[allow(dead_code)]
+    artifact_storage_path: PathBuf,
     progress: Arc<ProgressRuntime>,
 }
 
@@ -59,7 +61,7 @@ impl RunContext {
             ConfigLoader::load(&workspace_root)?
         };
 
-        let (store_path, frame_storage_path) =
+        let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(&workspace_root)?;
 
         std::fs::create_dir_all(&store_path)
@@ -76,9 +78,15 @@ impl RunContext {
 
         std::fs::create_dir_all(&frame_storage_path)
             .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
+        std::fs::create_dir_all(&artifact_storage_path)
+            .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
         let frame_storage = Arc::new(
             crate::context::frame::open_storage(&frame_storage_path)
                 .map_err(|e| ApiError::StorageError(e))?,
+        );
+        let prompt_context_storage = Arc::new(
+            crate::prompt_context::PromptContextArtifactStorage::new(&artifact_storage_path)
+                .map_err(ApiError::StorageError)?,
         );
         let head_index_path = HeadIndex::persistence_path(&workspace_root);
         let head_index = Arc::new(parking_lot::RwLock::new(
@@ -107,13 +115,14 @@ impl RunContext {
             node_store,
             frame_storage,
             head_index,
+            prompt_context_storage,
             agent_registry,
             provider_registry,
             lock_manager,
             workspace_root.clone(),
         );
 
-        let (store_path, frame_storage_path) =
+        let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(&workspace_root)?;
 
         Ok(Self {
@@ -122,6 +131,7 @@ impl RunContext {
             config_path,
             store_path,
             frame_storage_path,
+            artifact_storage_path,
             progress,
         })
     }

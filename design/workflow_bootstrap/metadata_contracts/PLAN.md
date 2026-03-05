@@ -1,7 +1,7 @@
 # Workflow Metadata Contracts Implementation Plan
 
 Date: 2026-03-04
-Status: active
+Status: active with Phase 1 through Phase 3 complete and Phase 4 next
 Scope: workflow bootstrap metadata contracts
 
 ## Overview
@@ -49,10 +49,10 @@ This metadata contracts plan does not expand non default path behavior.
 |-------|------|--------------|--------|
 | 1 | Registry descriptor expansion | None | complete |
 | 2 | Write boundary contract upgrade | Phase 1 | complete |
-| 3 | Prompt context artifact placement | Phase 2 | pending |
+| 3 | Prompt context artifact placement | Phase 2 | complete |
 | 4 | Read visibility and privileged query contract | Phase 2 and Phase 3 | pending |
 | 5 | Workflow consumer schema contracts | Phase 4 | pending |
-| 6 | Verification lock and readiness signoff | Phase 1 through Phase 5 | pending |
+| 6 | Verification lock and readiness signoff | Phase 1 through Phase 5 | in progress |
 
 ---
 
@@ -107,6 +107,11 @@ This metadata contracts plan does not expand non default path behavior.
 
 **Goal**: Upgrade shared write validation to enforce descriptor driven mutability and budget rules and require full digest key output.
 
+**Completion snapshot**:
+- completion date: 2026-03-05
+- implementation commit: `24dc847`
+- result: all planned Phase 2 tasks are complete and validated
+
 **Source docs**:
 - [Metadata Contracts Requirements Decomposition](decomposition.md)
 - [Metadata Contracts Phase Technical Specification](technical_spec.md)
@@ -134,10 +139,12 @@ This metadata contracts plan does not expand non default path behavior.
 - `tests/integration/frame_queue.rs`
 
 **Implementation evidence**:
+- compile gate passed: `cargo check`
 - contract gate passed: `cargo test frame_write_contract`
 - integration gate passed: `cargo test --test integration_tests integration::context_api::`
 - integration gate passed: `cargo test --test integration_tests integration::frame_queue::`
 - parity gate passed: `cargo test --test integration_tests integration::generation_parity::`
+- full suite gate passed: `cargo test`
 
 **Phase completion notes**:
 - shared write validator now enforces required key presence descriptor max bytes global budget and cross frame mutability transitions
@@ -145,12 +152,17 @@ This metadata contracts plan does not expand non default path behavior.
 - generated metadata now emits `context_digest` with `prompt_digest` and `prompt_link_id`
 - queue metadata prevalidation now resolves previous head metadata so mutability failures are deterministic before provider execution
 - direct and queue metadata failure classes are parity covered by integration gates
+- parity fixtures for generation were updated to include full digest and link metadata output
 
 ---
 
 ### Phase 3 - Prompt context artifact placement
 
 **Goal**: Move prompt and context payload storage to local content addressed artifacts and link lineage metadata through canonical contracts.
+
+**Completion snapshot**:
+- completion date: 2026-03-05
+- implementation state: local working tree implementation complete with all verification gates passing
 
 **Source docs**:
 - [Workflow Metadata Contracts Spec](README.md)
@@ -159,11 +171,11 @@ This metadata contracts plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Create `src/prompt_context` domain for prompt and context artifact write read and digest verification behavior. | Pending |
-| Write rendered prompt payload and context payload into local CAS artifacts before frame write. | Pending |
-| Replace raw payload metadata values with typed identifiers digests and prompt link references only. | Pending |
-| Define deterministic lineage unit behavior for retry orphan handling and idempotent replay. | Pending |
-| Add artifact integrity tests for digest and size verification on read. | Pending |
+| Create `src/prompt_context` domain for prompt and context artifact write read and digest verification behavior. | Complete |
+| Write rendered prompt payload and context payload into local CAS artifacts before frame write. | Complete |
+| Replace raw payload metadata values with typed identifiers digests and prompt link references only. | Complete |
+| Define deterministic lineage unit behavior for retry orphan handling and idempotent replay. | Complete |
+| Add artifact integrity tests for digest and size verification on read. | Complete |
 
 **Exit criteria**:
 - frame metadata stores no raw prompt text and no raw context payload
@@ -172,10 +184,31 @@ This metadata contracts plan does not expand non default path behavior.
 
 **Key files and seams**:
 - `src/prompt_context`
+- `src/metadata/prompt_link_contract.rs`
 - `src/context/generation/prompt_collection.rs`
 - `src/context/generation/orchestration.rs`
 - `src/context/generation/metadata_construction.rs`
+- `src/config/workspace/storage_paths.rs`
+- `src/cli/route.rs`
 - `tests/integration/generation_parity.rs`
+
+**Implementation evidence**:
+- compile gate passed: `cargo check`
+- unit gate passed: `cargo test prompt_context`
+- contract gate passed: `cargo test frame_write_contract`
+- integration gate passed: `cargo test --test integration_tests integration::generation_parity::`
+- integration gate passed: `cargo test --test integration_tests integration::frame_queue::`
+- integration gate passed: `cargo test --test integration_tests integration::context_api::`
+- integration gate passed: `cargo test --test integration_tests integration::progress_observability::`
+- integration gate passed: `cargo test --test integration_tests integration::config_integration::`
+- full suite gate passed: `cargo test`
+
+**Phase completion notes**:
+- new filesystem CAS prompt context domain is live with content addressed writes and verified reads
+- generation now persists system prompt user prompt template rendered prompt and context payload artifacts before frame write
+- typed prompt link payload validation is active for lineage assembly and telemetry emission
+- generated frame metadata now derives digest and link keys from lineage artifacts and does not require raw payload metadata keys
+- lineage partial failure policy is deterministic orphan keep and queue retryability classifies artifact and prompt link contract failures as non retryable
 
 ---
 
@@ -248,9 +281,9 @@ This metadata contracts plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Run characterization gates for deterministic write and queue retry behavior. | Pending |
-| Run contract gates for unknown forbidden mutability budget and required digest key checks. | Pending |
-| Run artifact gates for placement digest verification and lineage determinism behavior. | Pending |
+| Run characterization gates for deterministic write and queue retry behavior. | Complete |
+| Run contract gates for unknown forbidden mutability budget and required digest key checks. | Complete |
+| Run artifact gates for placement digest verification and lineage determinism behavior. | Complete |
 | Run read gates for default projection privileged allow deny and audit persistence behavior. | Pending |
 | Run workflow record gates for schema versioning and reference integrity validation behavior. | Pending |
 | Publish phase completion notes unresolved risks and evidence links in this plan. | Pending |
@@ -292,9 +325,9 @@ Workflow record gates:
 
 ## Implementation Order Summary
 
-1. Execute Phase 1 registry descriptor expansion
-2. Execute Phase 2 write boundary contract upgrade
-3. Execute Phase 3 prompt context artifact placement
+1. Completed Phase 1 registry descriptor expansion
+2. Completed Phase 2 write boundary contract upgrade
+3. Completed Phase 3 prompt context artifact placement
 4. Execute Phase 4 read visibility and privileged query contract
 5. Execute Phase 5 workflow consumer schema contracts
 6. Execute Phase 6 verification lock and readiness signoff

@@ -12,8 +12,10 @@ use crate::context::queue::FrameGenerationQueue;
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
 use crate::metadata::frame_write_contract::{
-    build_generated_metadata, validate_frame_metadata, FrameMetadataValidationInput,
+    build_generated_metadata, generated_metadata_input_from_payload, validate_frame_metadata,
+    FrameMetadataValidationInput,
 };
+use crate::prompt_context::PromptContextArtifactStorage;
 use crate::store::NodeRecordStore;
 use crate::types::{FrameID, NodeID};
 use crate::views::ViewPolicy;
@@ -38,6 +40,8 @@ pub struct ContextApi {
     frame_storage: Arc<FrameStorage>,
     /// Head index for O(1) head resolution
     head_index: Arc<parking_lot::RwLock<HeadIndex>>,
+    /// Prompt context artifact storage for filesystem CAS payload lineage.
+    prompt_context_storage: Arc<PromptContextArtifactStorage>,
     /// Agent registry for authorization
     agent_registry: Arc<parking_lot::RwLock<AgentRegistry>>,
     /// Provider registry for LLM provider management
@@ -54,6 +58,7 @@ impl ContextApi {
         node_store: Arc<dyn NodeRecordStore + Send + Sync>,
         frame_storage: Arc<FrameStorage>,
         head_index: Arc<parking_lot::RwLock<HeadIndex>>,
+        prompt_context_storage: Arc<PromptContextArtifactStorage>,
         agent_registry: Arc<parking_lot::RwLock<AgentRegistry>>,
         provider_registry: Arc<parking_lot::RwLock<crate::provider::ProviderRegistry>>,
         lock_manager: Arc<NodeLockManager>,
@@ -62,6 +67,7 @@ impl ContextApi {
             node_store,
             frame_storage,
             head_index,
+            prompt_context_storage,
             agent_registry,
             provider_registry,
             lock_manager,
@@ -74,6 +80,7 @@ impl ContextApi {
         node_store: Arc<dyn NodeRecordStore + Send + Sync>,
         frame_storage: Arc<FrameStorage>,
         head_index: Arc<parking_lot::RwLock<HeadIndex>>,
+        prompt_context_storage: Arc<PromptContextArtifactStorage>,
         agent_registry: Arc<parking_lot::RwLock<AgentRegistry>>,
         provider_registry: Arc<parking_lot::RwLock<crate::provider::ProviderRegistry>>,
         lock_manager: Arc<NodeLockManager>,
@@ -83,6 +90,7 @@ impl ContextApi {
             node_store,
             frame_storage,
             head_index,
+            prompt_context_storage,
             agent_registry,
             provider_registry,
             lock_manager,
@@ -567,7 +575,7 @@ impl ContextApi {
         // Create frame
         let basis = Basis::Node(node_id);
         let content_text = String::from_utf8_lossy(&content);
-        let metadata = build_generated_metadata(
+        let metadata_input = generated_metadata_input_from_payload(
             &agent_id,
             "internal",
             "internal",
@@ -575,6 +583,7 @@ impl ContextApi {
             &content_text,
             "",
         );
+        let metadata = build_generated_metadata(&metadata_input);
         let frame = Frame::new(
             basis,
             content,
@@ -702,6 +711,11 @@ impl ContextApi {
         &self.frame_storage
     }
 
+    /// Get access to prompt context artifact storage.
+    pub fn prompt_context_storage(&self) -> &PromptContextArtifactStorage {
+        &self.prompt_context_storage
+    }
+
     /// Get access to node store (for tooling)
     pub fn node_store(&self) -> &Arc<dyn NodeRecordStore + Send + Sync> {
         &self.node_store
@@ -739,9 +753,12 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let store_path = temp_dir.path().join("store");
         let frame_storage_path = temp_dir.path().join("frames");
+        let artifact_storage_path = temp_dir.path().join("artifacts");
 
         let node_store = Arc::new(SledNodeRecordStore::new(&store_path).unwrap());
         let frame_storage = Arc::new(FrameStorage::new(&frame_storage_path).unwrap());
+        let prompt_context_storage =
+            Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
         let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
         let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
         let lock_manager = Arc::new(NodeLockManager::new());
@@ -753,6 +770,7 @@ mod tests {
             node_store,
             frame_storage,
             head_index,
+            prompt_context_storage,
             agent_registry,
             provider_registry,
             lock_manager,

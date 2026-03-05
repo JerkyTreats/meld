@@ -94,6 +94,7 @@ impl AgentAdapter for ContextApiAdapter {
 mod tests {
     use super::*;
     use crate::heads::HeadIndex;
+    use crate::prompt_context::PromptContextArtifactStorage;
     use crate::store::persistence::SledNodeRecordStore;
     use crate::types::Hash;
     use std::sync::Arc;
@@ -104,10 +105,14 @@ mod tests {
         let store_path = temp_dir.path().join("store");
         let node_store = Arc::new(SledNodeRecordStore::new(&store_path).unwrap());
         let frame_storage_path = temp_dir.path().join("frames");
+        let artifact_storage_path = temp_dir.path().join("artifacts");
         std::fs::create_dir_all(&frame_storage_path).unwrap();
+        std::fs::create_dir_all(&artifact_storage_path).unwrap();
         let frame_storage = Arc::new(
             crate::context::frame::storage::FrameStorage::new(&frame_storage_path).unwrap(),
         );
+        let prompt_context_storage =
+            Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
         let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
         let agent_registry = Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new()));
         let provider_registry = Arc::new(parking_lot::RwLock::new(
@@ -119,6 +124,7 @@ mod tests {
             node_store,
             frame_storage,
             head_index,
+            prompt_context_storage,
             agent_registry,
             provider_registry,
             lock_manager,

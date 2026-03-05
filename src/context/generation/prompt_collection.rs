@@ -13,7 +13,12 @@ pub fn build_prompt_messages(
     node_record: &NodeRecord,
     prompt_contract: &PromptContract,
 ) -> Result<PromptAssemblyOutput, ApiError> {
-    let user_prompt = prompt_contract.render_user_prompt(
+    let user_prompt_template = match node_record.node_type {
+        NodeType::File { .. } => prompt_contract.user_prompt_file.clone(),
+        NodeType::Directory => prompt_contract.user_prompt_directory.clone(),
+    };
+
+    let rendered_prompt = prompt_contract.render_user_prompt(
         node_record.node_type.clone(),
         &node_record.path.display().to_string(),
         match node_record.node_type {
@@ -46,20 +51,28 @@ pub fn build_prompt_messages(
     }];
 
     let context_payload = prompt_context.unwrap_or_default();
+    let rendered_user_message = if context_payload.is_empty() {
+        rendered_prompt.clone()
+    } else {
+        format!("Context:\n{}\n\nTask: {}", context_payload, rendered_prompt)
+    };
+
     if context_payload.is_empty() {
         messages.push(ChatMessage {
             role: MessageRole::User,
-            content: user_prompt.clone(),
+            content: rendered_prompt.clone(),
         });
     } else {
         messages.push(ChatMessage {
             role: MessageRole::User,
-            content: format!("Context:\n{}\n\nTask: {}", context_payload, user_prompt),
+            content: rendered_user_message,
         });
     }
 
     Ok(PromptAssemblyOutput {
-        user_prompt,
+        system_prompt: prompt_contract.system_prompt.clone(),
+        user_prompt_template,
+        rendered_prompt,
         context_payload,
         messages,
     })

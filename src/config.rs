@@ -133,6 +133,9 @@ impl SystemConfig {
         if self.storage.frames_path.as_os_str().is_empty() {
             return Err("Frames path cannot be empty".to_string());
         }
+        if self.storage.artifacts_path.as_os_str().is_empty() {
+            return Err("Artifacts path cannot be empty".to_string());
+        }
 
         Ok(())
     }
