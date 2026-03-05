@@ -9,9 +9,13 @@
 use meld::agent::{AgentIdentity, AgentRegistry, AgentRole};
 use meld::api::{ContextApi, ContextView};
 use meld::concurrency::NodeLockManager;
-use meld::error::ApiError;
 use meld::context::frame::{Basis, Frame, FrameStorage};
+use meld::error::ApiError;
 use meld::heads::HeadIndex;
+use meld::metadata::frame_key_registry::{
+    KEY_CONTEXT_DIGEST, KEY_MODEL, KEY_PROMPT_DIGEST, KEY_PROMPT_LINK_ID, KEY_PROVIDER,
+    KEY_PROVIDER_TYPE,
+};
 use meld::metadata::frame_write_contract::{METADATA_PER_KEY_MAX_BYTES, METADATA_TOTAL_MAX_BYTES};
 use meld::store::{NodeRecord, NodeType, SledNodeRecordStore};
 use meld::types::NodeID;
@@ -65,6 +69,21 @@ fn create_test_node_record(node_id: NodeID) -> NodeRecord {
     }
 }
 
+fn required_frame_metadata(agent_id: &str) -> HashMap<String, String> {
+    let mut metadata = HashMap::new();
+    metadata.insert("agent_id".to_string(), agent_id.to_string());
+    metadata.insert(KEY_PROVIDER.to_string(), "provider-a".to_string());
+    metadata.insert(KEY_MODEL.to_string(), "model-a".to_string());
+    metadata.insert(KEY_PROVIDER_TYPE.to_string(), "local".to_string());
+    metadata.insert(KEY_PROMPT_DIGEST.to_string(), "prompt-digest-a".to_string());
+    metadata.insert(
+        KEY_CONTEXT_DIGEST.to_string(),
+        "context-digest-a".to_string(),
+    );
+    metadata.insert(KEY_PROMPT_LINK_ID.to_string(), "prompt-link-a".to_string());
+    metadata
+}
+
 #[test]
 fn test_get_node_deterministic() {
     let (api, _temp_dir) = create_test_api();
@@ -88,7 +107,7 @@ fn test_get_node_deterministic() {
 
     for i in 0..5 {
         let content = format!("content {}", i).into_bytes();
-        let metadata = HashMap::new();
+        let metadata = required_frame_metadata(&agent_id);
         let frame = Frame::new(
             basis.clone(),
             content,
@@ -185,7 +204,7 @@ fn test_concurrent_get_node() {
     let content = b"test content".to_vec();
     let frame_type = "test".to_string();
     let agent_id = "writer-1".to_string();
-    let metadata = HashMap::new();
+    let metadata = required_frame_metadata(&agent_id);
 
     let frame = Frame::new(basis, content, frame_type, agent_id.clone(), metadata).unwrap();
     api.put_frame(node_id, frame, agent_id).unwrap();
@@ -253,7 +272,7 @@ fn test_concurrent_put_frame() {
         let handle = thread::spawn(move || {
             let basis = Basis::Node(node_id);
             let content = format!("content from {}", agent_id).into_bytes();
-            let metadata = HashMap::new();
+            let metadata = required_frame_metadata(&agent_id);
 
             let frame = Frame::new(
                 basis,
@@ -386,7 +405,10 @@ fn test_put_frame_rejects_non_frame_metadata_key() {
 
     {
         let mut registry = api.agent_registry().write();
-        registry.register(AgentIdentity::new("writer-1".to_string(), AgentRole::Writer));
+        registry.register(AgentIdentity::new(
+            "writer-1".to_string(),
+            AgentRole::Writer,
+        ));
     }
 
     let basis = Basis::Node(node_id);
@@ -415,7 +437,10 @@ fn test_put_frame_rejects_forbidden_metadata_key() {
 
     {
         let mut registry = api.agent_registry().write();
-        registry.register(AgentIdentity::new("writer-1".to_string(), AgentRole::Writer));
+        registry.register(AgentIdentity::new(
+            "writer-1".to_string(),
+            AgentRole::Writer,
+        ));
     }
 
     let basis = Basis::Node(node_id);
@@ -444,7 +469,10 @@ fn test_put_frame_rejects_forbidden_raw_context_metadata_key() {
 
     {
         let mut registry = api.agent_registry().write();
-        registry.register(AgentIdentity::new("writer-1".to_string(), AgentRole::Writer));
+        registry.register(AgentIdentity::new(
+            "writer-1".to_string(),
+            AgentRole::Writer,
+        ));
     }
 
     let basis = Basis::Node(node_id);
@@ -473,7 +501,10 @@ fn test_put_frame_rejects_prompt_metadata_key() {
 
     {
         let mut registry = api.agent_registry().write();
-        registry.register(AgentIdentity::new("writer-1".to_string(), AgentRole::Writer));
+        registry.register(AgentIdentity::new(
+            "writer-1".to_string(),
+            AgentRole::Writer,
+        ));
     }
 
     let basis = Basis::Node(node_id);
@@ -502,14 +533,17 @@ fn test_put_frame_rejects_per_key_metadata_budget_overflow() {
 
     {
         let mut registry = api.agent_registry().write();
-        registry.register(AgentIdentity::new("writer-1".to_string(), AgentRole::Writer));
+        registry.register(AgentIdentity::new(
+            "writer-1".to_string(),
+            AgentRole::Writer,
+        ));
     }
 
     let basis = Basis::Node(node_id);
     let content = b"test content".to_vec();
     let frame_type = "test".to_string();
     let agent_id = "writer-1".to_string();
-    let mut metadata = HashMap::new();
+    let mut metadata = required_frame_metadata(&agent_id);
     metadata.insert(
         "provider".to_string(),
         "x".repeat(METADATA_PER_KEY_MAX_BYTES + 1),
@@ -534,7 +568,10 @@ fn test_put_frame_rejects_total_metadata_budget_overflow() {
 
     {
         let mut registry = api.agent_registry().write();
-        registry.register(AgentIdentity::new("writer-1".to_string(), AgentRole::Writer));
+        registry.register(AgentIdentity::new(
+            "writer-1".to_string(),
+            AgentRole::Writer,
+        ));
     }
 
     let basis = Basis::Node(node_id);
@@ -542,7 +579,7 @@ fn test_put_frame_rejects_total_metadata_budget_overflow() {
     let frame_type = "test".to_string();
     let agent_id = "writer-1".to_string();
     let per_key = (METADATA_TOTAL_MAX_BYTES / 6).max(1);
-    let mut metadata = HashMap::new();
+    let mut metadata = required_frame_metadata(&agent_id);
     metadata.insert("provider".to_string(), "p".repeat(per_key));
     metadata.insert("model".to_string(), "m".repeat(per_key));
     metadata.insert("provider_type".to_string(), "t".repeat(per_key));
@@ -556,6 +593,87 @@ fn test_put_frame_rejects_total_metadata_budget_overflow() {
     assert!(matches!(
         result,
         Err(ApiError::FrameMetadataTotalBudgetExceeded { .. })
+    ));
+}
+
+#[test]
+fn test_put_frame_rejects_missing_required_metadata_key() {
+    let (api, _temp_dir) = create_test_api();
+    let node_id: NodeID = [7u8; 32];
+
+    let node_record = create_test_node_record(node_id);
+    api.node_store().put(&node_record).unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        registry.register(AgentIdentity::new(
+            "writer-1".to_string(),
+            AgentRole::Writer,
+        ));
+    }
+
+    let basis = Basis::Node(node_id);
+    let content = b"test content".to_vec();
+    let frame_type = "test".to_string();
+    let agent_id = "writer-1".to_string();
+    let mut metadata = required_frame_metadata(&agent_id);
+    metadata.remove(KEY_CONTEXT_DIGEST);
+
+    let frame = Frame::new(basis, content, frame_type, agent_id.clone(), metadata).unwrap();
+    let result = api.put_frame(node_id, frame, agent_id);
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataMissingRequiredKey { .. })
+    ));
+}
+
+#[test]
+fn test_put_frame_rejects_mutability_transition_for_attested_key() {
+    let (api, _temp_dir) = create_test_api();
+    let node_id: NodeID = [8u8; 32];
+
+    let node_record = create_test_node_record(node_id);
+    api.node_store().put(&node_record).unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        registry.register(AgentIdentity::new(
+            "writer-1".to_string(),
+            AgentRole::Writer,
+        ));
+    }
+
+    let basis = Basis::Node(node_id);
+    let frame_type = "test".to_string();
+    let agent_id = "writer-1".to_string();
+
+    let metadata_a = required_frame_metadata(&agent_id);
+    let frame_a = Frame::new(
+        basis.clone(),
+        b"first".to_vec(),
+        frame_type.clone(),
+        agent_id.clone(),
+        metadata_a,
+    )
+    .unwrap();
+    api.put_frame(node_id, frame_a, agent_id.clone()).unwrap();
+
+    let mut metadata_b = required_frame_metadata(&agent_id);
+    metadata_b.insert(KEY_MODEL.to_string(), "model-b".to_string());
+    let frame_b = Frame::new(
+        basis,
+        b"second".to_vec(),
+        frame_type,
+        agent_id.clone(),
+        metadata_b,
+    )
+    .unwrap();
+    let result = api.put_frame(node_id, frame_b, agent_id);
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataMutabilityViolation { .. })
     ));
 }
 

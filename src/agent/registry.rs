@@ -1,10 +1,10 @@
 //! Agent registry: in-memory aggregate of loaded agents.
 
 use crate::agent::identity::{AgentIdentity, AgentRole, ValidationResult};
-use crate::agent::profile::AgentConfig;
 use crate::agent::profile::prompt_contract::{
     KEY_SYSTEM_PROMPT, KEY_USER_PROMPT_DIRECTORY, KEY_USER_PROMPT_FILE,
 };
+use crate::agent::profile::AgentConfig;
 use crate::agent::storage::AgentStorage;
 use crate::error::ApiError;
 use std::collections::HashMap;

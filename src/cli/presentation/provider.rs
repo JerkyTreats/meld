@@ -1,8 +1,6 @@
 //! Provider command presentation: list, show, validation, test text/json.
 
-use crate::provider::commands::{
-    ProviderListResult, ProviderShowResult, ProviderTestResult,
-};
+use crate::provider::commands::{ProviderListResult, ProviderShowResult, ProviderTestResult};
 use crate::provider::profile::provider_type_slug;
 use crate::provider::ValidationResult;
 use serde_json::json;
@@ -112,10 +110,7 @@ pub fn format_provider_show_result_json(result: &ProviderShowResult) -> String {
     serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
 }
 
-pub fn format_provider_validation_result(
-    result: &ValidationResult,
-    verbose: bool,
-) -> String {
+pub fn format_provider_validation_result(result: &ValidationResult, verbose: bool) -> String {
     let mut output = format!("Validating provider: {}\n\n", result.provider_name);
 
     if result.errors.is_empty()
@@ -177,7 +172,10 @@ pub fn format_provider_test_result(
             None => "✓ API connectivity: OK\n".to_string(),
         });
         if result.model_available {
-            output.push_str(&format!("✓ Model '{}' is available\n", result.model_checked));
+            output.push_str(&format!(
+                "✓ Model '{}' is available\n",
+                result.model_checked
+            ));
         } else {
             output.push_str(&format!("✗ Model '{}' not found\n", result.model_checked));
             output.push_str(&format!(

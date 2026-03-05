@@ -1,14 +1,14 @@
 use std::fs;
 
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
+use meld::cli::{
+    AgentCommands, Commands, ContextCommands, ProviderCommands, RunContext, WorkspaceCommands,
+};
 use meld::config::AgentConfig;
 use meld::config::{xdg, ProviderConfig, ProviderType};
 use meld::context::frame::{Basis, Frame};
 use meld::provider::CompletionOptions;
 use meld::telemetry::{PrunePolicy, SessionStatus};
-use meld::cli::{
-    AgentCommands, Commands, ContextCommands, ProviderCommands, RunContext, WorkspaceCommands,
-};
 use tempfile::TempDir;
 
 use crate::integration::with_xdg_env;
@@ -316,12 +316,20 @@ fn context_generate_node_skipped_includes_path_field() {
             .expect("target node should exist");
         let node_id = record.node_id;
         let frame_type = "context-skip-agent".to_string();
+        let mut frame_metadata = std::collections::HashMap::new();
+        frame_metadata.insert("agent_id".to_string(), "skip-agent".to_string());
+        frame_metadata.insert("provider".to_string(), "skip-provider".to_string());
+        frame_metadata.insert("model".to_string(), "gpt-4-test".to_string());
+        frame_metadata.insert("provider_type".to_string(), "openai".to_string());
+        frame_metadata.insert("prompt_digest".to_string(), "prompt-digest-a".to_string());
+        frame_metadata.insert("context_digest".to_string(), "context-digest-a".to_string());
+        frame_metadata.insert("prompt_link_id".to_string(), "prompt-link-a".to_string());
         let frame = Frame::new(
             Basis::Node(node_id),
             b"existing".to_vec(),
             frame_type.clone(),
             "skip-agent".to_string(),
-            std::collections::HashMap::new(),
+            frame_metadata,
         )
         .unwrap();
         cli.api()

@@ -17,8 +17,8 @@ pub use commands::{
     AgentRemoveResult, AgentShowResult, AgentStatusEntryResult, AgentValidateAllResult,
     AgentValidateSingleResult,
 };
-pub use identity::{AgentIdentity, AgentRole, Capability, ValidationResult};
 pub use context_access::{AgentAdapter, ContextApiAdapter};
+pub use identity::{AgentIdentity, AgentRole, Capability, ValidationResult};
 pub use profile::AgentConfig;
 pub use prompt::{resolve_prompt_path, PromptCache};
 pub use registry::AgentRegistry;

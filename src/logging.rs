@@ -46,9 +46,7 @@ fn default_log_file_path(workspace: Option<&Path>) -> Result<PathBuf, ApiError> 
     let state_dir = project_dirs
         .state_dir()
         .ok_or_else(|| {
-            ApiError::ConfigError(
-                "Platform state directory not available for log file".to_string(),
-            )
+            ApiError::ConfigError("Platform state directory not available for log file".to_string())
         })?
         .to_path_buf();
     let base = state_dir;
@@ -146,10 +144,7 @@ impl Default for LoggingConfig {
 /// 3. Configuration file
 /// 4. Defaults
 pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
-    let disabled = config
-        .as_ref()
-        .map(|c| !c.enabled)
-        .unwrap_or(false);
+    let disabled = config.as_ref().map(|c| !c.enabled).unwrap_or(false);
     if disabled {
         Registry::default()
             .with(EnvFilter::new("off"))

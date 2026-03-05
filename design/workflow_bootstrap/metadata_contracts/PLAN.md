@@ -48,7 +48,7 @@ This metadata contracts plan does not expand non default path behavior.
 | Phase | Goal | Dependencies | Status |
 |-------|------|--------------|--------|
 | 1 | Registry descriptor expansion | None | complete |
-| 2 | Write boundary contract upgrade | Phase 1 | pending |
+| 2 | Write boundary contract upgrade | Phase 1 | complete |
 | 3 | Prompt context artifact placement | Phase 2 | pending |
 | 4 | Read visibility and privileged query contract | Phase 2 and Phase 3 | pending |
 | 5 | Workflow consumer schema contracts | Phase 4 | pending |
@@ -114,11 +114,11 @@ This metadata contracts plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Upgrade shared write validator to consume expanded descriptor fields from Phase 1. | Pending |
-| Enforce mutability transition rules and size budget checks with typed deterministic failures. | Pending |
-| Ensure generated metadata includes `prompt_digest` `context_digest` and `prompt_link_id` on new writes. | Pending |
-| Preserve direct and queue parity through shared `put_frame` boundary usage. | Pending |
-| Add deterministic failure tests for unknown forbidden mutability and budget classes across direct and queue paths. | Pending |
+| Upgrade shared write validator to consume expanded descriptor fields from Phase 1. | Complete |
+| Enforce mutability transition rules and size budget checks with typed deterministic failures. | Complete |
+| Ensure generated metadata includes `prompt_digest` `context_digest` and `prompt_link_id` on new writes. | Complete |
+| Preserve direct and queue parity through shared `put_frame` boundary usage. | Complete |
+| Add deterministic failure tests for unknown forbidden mutability and budget classes across direct and queue paths. | Complete |
 
 **Exit criteria**:
 - generated frame metadata includes the required digest key set
@@ -132,6 +132,19 @@ This metadata contracts plan does not expand non default path behavior.
 - `src/context/queue.rs`
 - `tests/integration/context_api.rs`
 - `tests/integration/frame_queue.rs`
+
+**Implementation evidence**:
+- contract gate passed: `cargo test frame_write_contract`
+- integration gate passed: `cargo test --test integration_tests integration::context_api::`
+- integration gate passed: `cargo test --test integration_tests integration::frame_queue::`
+- parity gate passed: `cargo test --test integration_tests integration::generation_parity::`
+
+**Phase completion notes**:
+- shared write validator now enforces required key presence descriptor max bytes global budget and cross frame mutability transitions
+- new typed failures are active for missing required keys and immutable transition violations
+- generated metadata now emits `context_digest` with `prompt_digest` and `prompt_link_id`
+- queue metadata prevalidation now resolves previous head metadata so mutability failures are deterministic before provider execution
+- direct and queue metadata failure classes are parity covered by integration gates
 
 ---
 

@@ -45,20 +45,22 @@ pub fn build_prompt_messages(
         content: prompt_contract.system_prompt.clone(),
     }];
 
-    if let Some(context_text) = prompt_context {
+    let context_payload = prompt_context.unwrap_or_default();
+    if context_payload.is_empty() {
         messages.push(ChatMessage {
             role: MessageRole::User,
-            content: format!("Context:\n{}\n\nTask: {}", context_text, user_prompt),
+            content: user_prompt.clone(),
         });
     } else {
         messages.push(ChatMessage {
             role: MessageRole::User,
-            content: user_prompt.clone(),
+            content: format!("Context:\n{}\n\nTask: {}", context_payload, user_prompt),
         });
     }
 
     Ok(PromptAssemblyOutput {
         user_prompt,
+        context_payload,
         messages,
     })
 }

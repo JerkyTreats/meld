@@ -1,5 +1,6 @@
 //! Error types for the Merkle filesystem state management system.
 
+use crate::metadata::frame_key_descriptor::FrameMetadataMutabilityClass;
 use crate::types::{FrameID, Hash, NodeID};
 use thiserror::Error;
 
@@ -63,6 +64,9 @@ pub enum ApiError {
     #[error("Frame metadata contains forbidden key: {key}")]
     FrameMetadataForbiddenKey { key: String },
 
+    #[error("Frame metadata missing required key: {key}")]
+    FrameMetadataMissingRequiredKey { key: String },
+
     #[error(
         "Frame metadata value for key '{key}' exceeds per-key budget: {actual_bytes} > {max_bytes} bytes"
     )]
@@ -72,12 +76,16 @@ pub enum ApiError {
         max_bytes: usize,
     },
 
-    #[error(
-        "Frame metadata total payload exceeds budget: {actual_bytes} > {max_bytes} bytes"
-    )]
+    #[error("Frame metadata total payload exceeds budget: {actual_bytes} > {max_bytes} bytes")]
     FrameMetadataTotalBudgetExceeded {
         actual_bytes: usize,
         max_bytes: usize,
+    },
+
+    #[error("Frame metadata key '{key}' violates immutable mutability class: {class:?}")]
+    FrameMetadataMutabilityViolation {
+        key: String,
+        class: FrameMetadataMutabilityClass,
     },
 
     #[error("Agent '{agent_id}' missing required prompt contract field '{field}'")]
@@ -113,9 +121,7 @@ pub enum ApiError {
     #[error("Generation failed: {0}")]
     GenerationFailed(String),
 
-    #[error(
-        "Path not found in tree: {0}. Run `meld scan` to update tree or start `meld watch`."
-    )]
+    #[error("Path not found in tree: {0}. Run `meld scan` to update tree or start `meld watch`.")]
     PathNotInTree(std::path::PathBuf),
 }
 
@@ -135,6 +141,9 @@ impl Clone for ApiError {
             ApiError::FrameMetadataForbiddenKey { key } => {
                 ApiError::FrameMetadataForbiddenKey { key: key.clone() }
             }
+            ApiError::FrameMetadataMissingRequiredKey { key } => {
+                ApiError::FrameMetadataMissingRequiredKey { key: key.clone() }
+            }
             ApiError::FrameMetadataPerKeyBudgetExceeded {
                 key,
                 actual_bytes,
@@ -151,6 +160,12 @@ impl Clone for ApiError {
                 actual_bytes: *actual_bytes,
                 max_bytes: *max_bytes,
             },
+            ApiError::FrameMetadataMutabilityViolation { key, class } => {
+                ApiError::FrameMetadataMutabilityViolation {
+                    key: key.clone(),
+                    class: *class,
+                }
+            }
             ApiError::MissingPromptContractField { agent_id, field } => {
                 ApiError::MissingPromptContractField {
                     agent_id: agent_id.clone(),

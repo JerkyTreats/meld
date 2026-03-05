@@ -36,8 +36,8 @@ pub struct Frame {
     pub basis: Basis,
     #[serde(default)]
     pub agent_id: String,
-    pub content: Vec<u8>,                  // Blob
-    pub frame_type: String,                // Frame type identifier
+    pub content: Vec<u8>,        // Blob
+    pub frame_type: String,      // Frame type identifier
     pub metadata: FrameMetadata, // Non-hashed
     pub timestamp: std::time::SystemTime,
 }

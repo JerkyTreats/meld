@@ -2,10 +2,10 @@
 
 use clap::Parser;
 use meld::agent::{AgentIdentity, AgentRole, AgentStorage, XdgAgentStorage};
+use meld::cli::{Cli, Commands, ContextCommands, RunContext};
 use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
 use meld::context::frame::{Basis, Frame};
 use meld::error::ApiError;
-use meld::cli::{Cli, Commands, ContextCommands, RunContext};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;

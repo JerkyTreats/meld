@@ -1,8 +1,8 @@
 //! Integration tests for Provider CLI commands
 
+use meld::cli::{Commands, ProviderCommands, RunContext};
 use meld::config::{xdg, ProviderConfig, ProviderType};
 use meld::error::ApiError;
-use meld::cli::{Commands, ProviderCommands, RunContext};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;

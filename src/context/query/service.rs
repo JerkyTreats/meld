@@ -17,10 +17,13 @@ pub fn get_node(
     node_id: NodeID,
     view_policy: &ViewPolicy,
 ) -> Result<(NodeRecord, Vec<Frame>, usize), ApiError> {
-    let node_record = node_store.get(&node_id).map_err(ApiError::from)?.ok_or_else(|| {
-        warn!("Node not found");
-        ApiError::NodeNotFound(node_id)
-    })?;
+    let node_record = node_store
+        .get(&node_id)
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            warn!("Node not found");
+            ApiError::NodeNotFound(node_id)
+        })?;
     if node_record.tombstoned_at.is_some() {
         return Err(ApiError::NodeNotFound(node_id));
     }
@@ -32,8 +35,8 @@ pub fn get_node(
     let frame_set = FrameMerkleSet::from_frame_ids(frame_ids.iter().copied())
         .map_err(ApiError::StorageError)?;
 
-    let selected_frame_ids = get_context_view(&frame_set, frame_storage, view_policy)
-        .map_err(ApiError::StorageError)?;
+    let selected_frame_ids =
+        get_context_view(&frame_set, frame_storage, view_policy).map_err(ApiError::StorageError)?;
 
     let mut frames = Vec::new();
     for frame_id in selected_frame_ids {

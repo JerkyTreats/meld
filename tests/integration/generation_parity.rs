@@ -15,7 +15,7 @@ use meld::telemetry::ProgressRuntime;
 use meld::types::{FrameID, Hash, NodeID};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -137,8 +137,10 @@ fn terminal_error_class(error: &ApiError) -> String {
         ApiError::FrameMetadataPolicyViolation(_) => "FrameMetadataPolicyViolation",
         ApiError::FrameMetadataUnknownKey { .. } => "FrameMetadataUnknownKey",
         ApiError::FrameMetadataForbiddenKey { .. } => "FrameMetadataForbiddenKey",
+        ApiError::FrameMetadataMissingRequiredKey { .. } => "FrameMetadataMissingRequiredKey",
         ApiError::FrameMetadataPerKeyBudgetExceeded { .. } => "FrameMetadataPerKeyBudgetExceeded",
         ApiError::FrameMetadataTotalBudgetExceeded { .. } => "FrameMetadataTotalBudgetExceeded",
+        ApiError::FrameMetadataMutabilityViolation { .. } => "FrameMetadataMutabilityViolation",
         ApiError::MissingPromptContractField { .. } => "MissingPromptContractField",
         ApiError::ProviderError(_) => "ProviderError",
         ApiError::ProviderNotConfigured(_) => "ProviderNotConfigured",
@@ -186,7 +188,8 @@ fn fixture_path(scenario_id: &str) -> PathBuf {
 
 fn assert_matches_fixture(scenario_id: &str, artifact: &ParityArtifact) {
     let path = fixture_path(scenario_id);
-    let actual = serde_json::to_value(artifact).unwrap();
+    let mut actual = serde_json::to_value(artifact).unwrap();
+    normalize_context_digest(&mut actual);
 
     if std::env::var_os("MELD_REGEN_PARITY_FIXTURES").is_some() {
         if let Some(parent) = path.parent() {
@@ -196,7 +199,8 @@ fn assert_matches_fixture(scenario_id: &str, artifact: &ParityArtifact) {
         return;
     }
 
-    let expected: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let mut expected: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    normalize_context_digest(&mut expected);
     assert_eq!(
         actual,
         expected,
@@ -205,6 +209,22 @@ fn assert_matches_fixture(scenario_id: &str, artifact: &ParityArtifact) {
         serde_json::to_string_pretty(&actual).unwrap(),
         serde_json::to_string_pretty(&expected).unwrap(),
     );
+}
+
+fn normalize_context_digest(value: &mut Value) {
+    let metadata = value
+        .get_mut("frame_output")
+        .and_then(|frame_output| frame_output.get_mut("metadata"))
+        .and_then(Value::as_object_mut);
+
+    if let Some(metadata) = metadata {
+        if metadata.contains_key("context_digest") {
+            metadata.insert(
+                "context_digest".to_string(),
+                Value::String("<CONTEXT_DIGEST>".to_string()),
+            );
+        }
+    }
 }
 
 fn event_counts(progress: &ProgressRuntime, session_id: &str) -> (usize, usize) {
@@ -247,10 +267,12 @@ fn direct_generation_artifact(
         build_prompt_messages(api, request, &node_record, &prompt_contract).unwrap();
 
     let metadata = build_and_validate_generated_metadata(
+        api,
         request,
         "mock-model",
         "local",
         &prompt_output.user_prompt,
+        &prompt_output.context_payload,
         &build_generated_metadata,
     )
     .unwrap();
@@ -329,7 +351,14 @@ fn generation_parity_directory_success_matches_fixture() {
         b"child frame context".to_vec(),
         "context-writer".to_string(),
         "writer".to_string(),
-        HashMap::new(),
+        build_generated_metadata(
+            "writer",
+            "mock-provider",
+            "mock-model",
+            "local",
+            "seed-prompt",
+            "seed-context",
+        ),
     )
     .unwrap();
     api.put_frame(child_node, seed_frame, "writer".to_string())

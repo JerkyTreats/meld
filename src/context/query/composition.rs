@@ -262,7 +262,9 @@ pub fn compose_frames(
         .filter(|(_, frame)| {
             policy.filters.iter().all(|filter| match filter {
                 FrameFilter::ByType(filter_type) => frame.frame_type == *filter_type,
-                FrameFilter::ByAgent(filter_agent) => frame.agent_id() == Some(filter_agent.as_str()),
+                FrameFilter::ByAgent(filter_agent) => {
+                    frame.agent_id() == Some(filter_agent.as_str())
+                }
             })
         })
         .collect();

@@ -32,21 +32,24 @@ impl PromptContract {
         })
     }
 
-    pub fn render_user_prompt(&self, node_type: NodeType, path: &str, file_size: Option<u64>) -> String {
+    pub fn render_user_prompt(
+        &self,
+        node_type: NodeType,
+        path: &str,
+        file_size: Option<u64>,
+    ) -> String {
         let template = match node_type {
             NodeType::File { .. } => &self.user_prompt_file,
             NodeType::Directory => &self.user_prompt_directory,
         };
 
-        let mut rendered = template
-            .replace("{path}", path)
-            .replace(
-                "{node_type}",
-                match node_type {
-                    NodeType::File { .. } => "File",
-                    NodeType::Directory => "Directory",
-                },
-            );
+        let mut rendered = template.replace("{path}", path).replace(
+            "{node_type}",
+            match node_type {
+                NodeType::File { .. } => "File",
+                NodeType::Directory => "Directory",
+            },
+        );
 
         if let Some(size) = file_size {
             rendered = rendered.replace("{file_size}", &size.to_string());
@@ -55,7 +58,11 @@ impl PromptContract {
     }
 }
 
-fn get_required(agent_id: &str, metadata: &AgentMetadata, key: &'static str) -> Result<String, ApiError> {
+fn get_required(
+    agent_id: &str,
+    metadata: &AgentMetadata,
+    key: &'static str,
+) -> Result<String, ApiError> {
     metadata
         .get(key)
         .cloned()

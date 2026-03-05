@@ -9,8 +9,8 @@
 
 use meld::agent::{AgentIdentity, AgentRegistry, AgentRole};
 use meld::concurrency::NodeLockManager;
-use meld::error::ApiError;
 use meld::context::frame::{Basis, Frame, FrameStorage};
+use meld::error::ApiError;
 use meld::types::NodeID;
 use std::collections::HashMap;
 use std::sync::Arc;

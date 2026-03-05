@@ -71,12 +71,8 @@ impl FrameStorage {
             frame.agent_id.as_str()
         };
 
-        let computed_id = id::compute_frame_id(
-            &frame.basis,
-            &frame.content,
-            &frame.frame_type,
-            agent_id,
-        )?;
+        let computed_id =
+            id::compute_frame_id(&frame.basis, &frame.content, &frame.frame_type, agent_id)?;
 
         if computed_id != frame.frame_id {
             return Err(StorageError::HashMismatch {

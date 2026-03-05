@@ -419,12 +419,10 @@ system_prompt_path = "/nonexistent/prompt.md"
 
         let validation = registry.validate_agent("test-agent").unwrap();
         assert!(!validation.is_valid());
-        assert!(
-            validation
-                .errors
-                .iter()
-                .any(|e| e.contains("Prompt file not found"))
-        );
+        assert!(validation
+            .errors
+            .iter()
+            .any(|e| e.contains("Prompt file not found")));
     });
 }
 
@@ -480,12 +478,10 @@ role = "Writer"
 
         let validation = registry.validate_agent("writer").unwrap();
         assert!(!validation.is_valid());
-        assert!(
-            validation
-                .errors
-                .iter()
-                .any(|e| e.contains("Missing system_prompt_path"))
-        );
+        assert!(validation
+            .errors
+            .iter()
+            .any(|e| e.contains("Missing system_prompt_path")));
     });
 }
 

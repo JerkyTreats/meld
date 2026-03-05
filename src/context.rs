@@ -16,7 +16,7 @@ pub use generation::{
     GenerationResult, PlanPriority, QueueSubmitter,
 };
 pub use queue::{
-    FrameGenerationQueue, GenerationConfig, GenerationRequest, GenerationRequestOptions,
-    Priority, QueueEventContext, QueueStats,
+    FrameGenerationQueue, GenerationConfig, GenerationRequest, GenerationRequestOptions, Priority,
+    QueueEventContext, QueueStats,
 };
 pub use types::{CompactResult, RestoreResult, TombstoneResult};

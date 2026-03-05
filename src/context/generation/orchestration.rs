@@ -45,10 +45,12 @@ pub async fn execute_generation_request(
     let provider_preparation = prepare_provider(api, &request.provider_name)?;
 
     let generated_metadata = build_and_validate_generated_metadata(
+        api,
         request,
         provider_preparation.client.model_name(),
         &provider_preparation.provider_type,
         &prompt_output.user_prompt,
+        &prompt_output.context_payload,
         metadata_builder,
     )?;
 

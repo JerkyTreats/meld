@@ -4,19 +4,21 @@
 //! Implements GetNode and PutFrame APIs as specified in Phase 2B.
 
 use crate::agent::AgentRegistry;
-use crate::context::query::{compose_frames, CompositionPolicy};
 use crate::concurrency::NodeLockManager;
 use crate::context::frame::{Basis, Frame, FrameStorage};
 use crate::context::query::get_node_query;
+use crate::context::query::{compose_frames, CompositionPolicy};
 use crate::context::queue::FrameGenerationQueue;
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
-use crate::metadata::frame_write_contract::validate_frame_metadata;
+use crate::metadata::frame_write_contract::{
+    build_generated_metadata, validate_frame_metadata, FrameMetadataValidationInput,
+};
 use crate::store::NodeRecordStore;
 use crate::types::{FrameID, NodeID};
 use crate::views::ViewPolicy;
 use hex;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -242,12 +244,34 @@ impl ContextApi {
             )));
         }
 
-        // Shared frame metadata write contract boundary.
-        validate_frame_metadata(&frame.metadata, &agent_id)?;
-
         // Acquire write lock for this node (atomic operation)
         let lock = self.lock_manager.get_lock(&node_id);
         let _guard = lock.write();
+
+        let previous_metadata = {
+            let previous_head = {
+                let head_index = self.head_index.read();
+                head_index
+                    .get_head(&node_id, &frame.frame_type)
+                    .map_err(ApiError::from)?
+            };
+
+            if let Some(previous_head_id) = previous_head {
+                self.frame_storage
+                    .get(&previous_head_id)
+                    .map_err(ApiError::from)?
+                    .map(|stored_frame| stored_frame.metadata)
+            } else {
+                None
+            }
+        };
+
+        // Shared frame metadata write contract boundary.
+        validate_frame_metadata(FrameMetadataValidationInput {
+            metadata: &frame.metadata,
+            actor_agent_id: &agent_id,
+            previous_metadata: previous_metadata.as_ref(),
+        })?;
 
         // Store frame
         self.frame_storage.store(&frame).map_err(ApiError::from)?;
@@ -542,7 +566,15 @@ impl ContextApi {
 
         // Create frame
         let basis = Basis::Node(node_id);
-        let metadata = HashMap::new();
+        let content_text = String::from_utf8_lossy(&content);
+        let metadata = build_generated_metadata(
+            &agent_id,
+            "internal",
+            "internal",
+            "internal",
+            &content_text,
+            "",
+        );
         let frame = Frame::new(
             basis,
             content,
@@ -748,6 +780,18 @@ mod tests {
         }
     }
 
+    fn required_frame_metadata(agent_id: &str) -> HashMap<String, String> {
+        let mut metadata = HashMap::new();
+        metadata.insert("agent_id".to_string(), agent_id.to_string());
+        metadata.insert("provider".to_string(), "provider-a".to_string());
+        metadata.insert("model".to_string(), "model-a".to_string());
+        metadata.insert("provider_type".to_string(), "local".to_string());
+        metadata.insert("prompt_digest".to_string(), "prompt-digest-a".to_string());
+        metadata.insert("context_digest".to_string(), "context-digest-a".to_string());
+        metadata.insert("prompt_link_id".to_string(), "prompt-link-a".to_string());
+        metadata
+    }
+
     #[test]
     fn test_get_node_not_found() {
         let (api, _temp_dir) = create_test_api();
@@ -803,7 +847,7 @@ mod tests {
         let content = b"test content".to_vec();
         let frame_type = "test".to_string();
         let agent_id = "writer-1".to_string();
-        let metadata = HashMap::new();
+        let metadata = required_frame_metadata(&agent_id);
 
         let frame = Frame::new(basis, content, frame_type, agent_id.clone(), metadata).unwrap();
 
@@ -867,7 +911,7 @@ mod tests {
         let content = b"test content".to_vec();
         let frame_type = "test".to_string();
         let agent_id = "writer-1".to_string();
-        let metadata = HashMap::new();
+        let metadata = required_frame_metadata(&agent_id);
 
         let frame = Frame::new(
             basis,
@@ -910,7 +954,7 @@ mod tests {
         let content = b"test content".to_vec();
         let frame_type = "test".to_string();
         let agent_id = "writer-1".to_string();
-        let metadata = HashMap::new();
+        let metadata = required_frame_metadata(&agent_id);
 
         let frame = Frame::new(
             basis,
@@ -959,7 +1003,7 @@ mod tests {
         let content = b"test content".to_vec();
         let frame_type = "test".to_string();
         let agent_id = "writer-1".to_string();
-        let metadata = HashMap::new();
+        let metadata = required_frame_metadata(&agent_id);
 
         let frame = Frame::new(basis, content, frame_type, agent_id.clone(), metadata).unwrap();
         api.put_frame(node_id, frame, agent_id.clone()).unwrap();
@@ -1165,7 +1209,7 @@ mod tests {
             b"Frame content 0".to_vec(),
             "type1".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
         let frame2 = Frame::new(
@@ -1173,7 +1217,7 @@ mod tests {
             b"Frame content 1".to_vec(),
             "type2".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
         let frame3 = Frame::new(
@@ -1181,7 +1225,7 @@ mod tests {
             b"Frame content 2".to_vec(),
             "type3".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
         api.put_frame(node_id, frame1, agent_id.clone()).unwrap();
@@ -1228,7 +1272,7 @@ mod tests {
             b"First".to_vec(),
             "type1".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
         let frame2 = Frame::new(
@@ -1236,7 +1280,7 @@ mod tests {
             b"Second".to_vec(),
             "type2".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
         api.put_frame(node_id, frame1, agent_id.clone()).unwrap();
@@ -1281,7 +1325,7 @@ mod tests {
             b"analysis1".to_vec(),
             "analysis".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
         let frame2 = Frame::new(
@@ -1289,7 +1333,7 @@ mod tests {
             b"summary1".to_vec(),
             "summary".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
         let frame3 = Frame::new(
@@ -1297,7 +1341,7 @@ mod tests {
             b"analysis2".to_vec(),
             "analysis".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
 
@@ -1353,7 +1397,7 @@ mod tests {
             b"content1".to_vec(),
             "type1".to_string(),
             "agent-1".to_string(),
-            HashMap::new(),
+            required_frame_metadata("agent-1"),
         )
         .unwrap();
         let frame2 = Frame::new(
@@ -1361,7 +1405,7 @@ mod tests {
             b"content2".to_vec(),
             "type2".to_string(),
             "agent-2".to_string(),
-            HashMap::new(),
+            required_frame_metadata("agent-2"),
         )
         .unwrap();
         let frame3 = Frame::new(
@@ -1369,7 +1413,7 @@ mod tests {
             b"content3".to_vec(),
             "type3".to_string(),
             "agent-1".to_string(),
-            HashMap::new(),
+            required_frame_metadata("agent-1"),
         )
         .unwrap();
 
@@ -1447,7 +1491,7 @@ mod tests {
                 content,
                 "test".to_string(),
                 agent_id.clone(),
-                HashMap::new(),
+                required_frame_metadata(&agent_id),
             )
             .unwrap();
             api.put_frame(node_id, frame, agent_id.clone()).unwrap();
@@ -1482,7 +1526,7 @@ mod tests {
             b"analysis1".to_vec(),
             "analysis".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
         let frame2 = Frame::new(
@@ -1490,7 +1534,7 @@ mod tests {
             b"summary1".to_vec(),
             "summary".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
         let frame3 = Frame::new(
@@ -1498,7 +1542,7 @@ mod tests {
             b"analysis2".to_vec(),
             "analysis".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
 
@@ -1537,7 +1581,7 @@ mod tests {
             b"First".to_vec(),
             "type1".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
         let frame2 = Frame::new(
@@ -1545,7 +1589,7 @@ mod tests {
             b"Second".to_vec(),
             "type2".to_string(),
             agent_id.clone(),
-            HashMap::new(),
+            required_frame_metadata(&agent_id),
         )
         .unwrap();
         api.put_frame(node_id, frame1, agent_id.clone()).unwrap();

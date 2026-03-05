@@ -267,9 +267,10 @@ fn test_node_metadata_accepts_keys_outside_frame_policy() {
         metadata: Default::default(),
         tombstoned_at: None,
     };
-    record
-        .metadata
-        .insert("node_custom_key".to_string(), "node_custom_value".to_string());
+    record.metadata.insert(
+        "node_custom_key".to_string(),
+        "node_custom_value".to_string(),
+    );
 
     store.put(&record).unwrap();
     let stored = store.get(&node_id).unwrap().unwrap();

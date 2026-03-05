@@ -1,9 +1,9 @@
 //! Integration tests for unified status command (meld status)
 
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
+use meld::cli::{Commands, RunContext};
 use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
 use meld::error::ApiError;
-use meld::cli::{Commands, RunContext};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;

@@ -3,8 +3,8 @@
 //! Owns all agent workflow logic; CLI parses, calls one method per variant, and formats output.
 
 use crate::agent::identity::{AgentRole, ValidationResult};
-use crate::agent::prompt::resolve_prompt_path;
 use crate::agent::profile::AgentConfig;
+use crate::agent::prompt::resolve_prompt_path;
 use crate::agent::registry::AgentRegistry;
 use crate::error::ApiError;
 use serde::{Deserialize, Serialize};
@@ -130,9 +130,7 @@ impl AgentCommandService {
         registry: &AgentRegistry,
         role_filter: Option<&str>,
     ) -> Result<AgentListResult, ApiError> {
-        let role = role_filter
-            .map(Self::parse_role)
-            .transpose()?;
+        let role = role_filter.map(Self::parse_role).transpose()?;
         let agents = registry.list_by_role(role);
         let items = agents
             .iter()
@@ -153,12 +151,10 @@ impl AgentCommandService {
         let agent = registry.get_or_error(agent_id)?;
         let config_path = registry.agent_config_path(agent_id)?;
         let prompt_path = if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path).map_err(|e| {
-                ApiError::ConfigError(format!("Failed to read config: {}", e))
-            })?;
-            let agent_config: AgentConfig = toml::from_str(&content).map_err(|e| {
-                ApiError::ConfigError(format!("Failed to parse config: {}", e))
-            })?;
+            let content = std::fs::read_to_string(&config_path)
+                .map_err(|e| ApiError::ConfigError(format!("Failed to read config: {}", e)))?;
+            let agent_config: AgentConfig = toml::from_str(&content)
+                .map_err(|e| ApiError::ConfigError(format!("Failed to parse config: {}", e)))?;
             agent_config.system_prompt_path.map(|path| {
                 let base_dir = crate::config::xdg::config_home()
                     .map(|p| p.join("meld"))
@@ -198,9 +194,7 @@ impl AgentCommandService {
     }
 
     /// Validate all agents.
-    pub fn validate_all(
-        registry: &AgentRegistry,
-    ) -> Result<AgentValidateAllResult, ApiError> {
+    pub fn validate_all(registry: &AgentRegistry) -> Result<AgentValidateAllResult, ApiError> {
         let agents = registry.list_all();
         let mut results = Vec::new();
         for agent in agents {
@@ -276,11 +270,17 @@ impl AgentCommandService {
             if let Some(ref path) = normalized_prompt_path {
                 agent_config.metadata.insert(
                     "user_prompt_file".to_string(),
-                    format!("Analyze the file at {{path}} using the system prompt from {}", path),
+                    format!(
+                        "Analyze the file at {{path}} using the system prompt from {}",
+                        path
+                    ),
                 );
                 agent_config.metadata.insert(
                     "user_prompt_directory".to_string(),
-                    format!("Analyze the directory at {{path}} using the system prompt from {}", path),
+                    format!(
+                        "Analyze the directory at {{path}} using the system prompt from {}",
+                        path
+                    ),
                 );
             }
         }

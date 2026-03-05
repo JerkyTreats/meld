@@ -5,10 +5,10 @@
 //! - Data in one workspace doesn't affect another
 //! - Workspaces can have the same file structure but remain isolated
 
+use meld::cli::RunContext;
 use meld::context::frame::{Basis, Frame};
 use meld::heads::HeadIndex;
 use meld::store::{NodeRecord, NodeType};
-use meld::cli::RunContext;
 use meld::types::NodeID;
 use std::fs;
 use std::path::PathBuf;

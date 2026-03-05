@@ -13,10 +13,7 @@ pub fn format_section_heading(title: &str) -> String {
 }
 
 /// Format workspace status as human-readable text.
-pub fn format_workspace_status_text(
-    data: &WorkspaceStatus,
-    include_breakdown: bool,
-) -> String {
+pub fn format_workspace_status_text(data: &WorkspaceStatus, include_breakdown: bool) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "{}\n\n",

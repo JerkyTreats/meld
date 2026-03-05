@@ -1,8 +1,8 @@
 //! Single generate entry point: resolve, plan, queue, execute.
 //! CLI and other callers use this only; no plan/queue/executor orchestration in adapters.
 
-use crate::api::ContextApi;
 use crate::agent::profile::prompt_contract::PromptContract;
+use crate::api::ContextApi;
 use crate::context::generation::plan::{
     FailurePolicy, GenerationItem, GenerationNodeType, GenerationPlan, PlanPriority,
 };
@@ -45,8 +45,8 @@ fn format_failure_samples(
 
 fn parse_node_id(s: &str) -> Result<NodeID, ApiError> {
     let s = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = hex::decode(s)
-        .map_err(|e| ApiError::InvalidFrame(format!("Invalid hex string: {}", e)))?;
+    let bytes =
+        hex::decode(s).map_err(|e| ApiError::InvalidFrame(format!("Invalid hex string: {}", e)))?;
     if bytes.len() != 32 {
         return Err(ApiError::InvalidFrame(format!(
             "NodeID must be 32 bytes, got {} bytes",
@@ -65,8 +65,7 @@ fn resolve_agent_id(api: &ContextApi, agent_id: Option<&str>) -> Result<String, 
     }
     let (agent_count, agent_ids) = {
         let registry = api.agent_registry().read();
-        let writer_agents =
-            registry.list_by_role(Some(crate::agent::AgentRole::Writer));
+        let writer_agents = registry.list_by_role(Some(crate::agent::AgentRole::Writer));
         let agent_ids: Vec<String> = writer_agents.iter().map(|a| a.agent_id.clone()).collect();
         (agent_ids.len(), agent_ids)
     };
@@ -82,7 +81,10 @@ fn resolve_agent_id(api: &ContextApi, agent_id: Option<&str>) -> Result<String, 
     }
 }
 
-fn resolve_provider_name(api: &ContextApi, provider_name: Option<&str>) -> Result<String, ApiError> {
+fn resolve_provider_name(
+    api: &ContextApi,
+    provider_name: Option<&str>,
+) -> Result<String, ApiError> {
     let provider_name = provider_name.ok_or_else(|| {
         ApiError::ProviderNotConfigured(
             "Provider is required. Use `--provider <provider_name>` to specify a provider. Use `meld provider list` to see available providers.".to_string()
@@ -129,7 +131,10 @@ fn find_missing_descendant_heads(
     Ok(missing)
 }
 
-fn collect_subtree_levels(api: &ContextApi, target_node_id: NodeID) -> Result<Vec<Vec<NodeID>>, ApiError> {
+fn collect_subtree_levels(
+    api: &ContextApi,
+    target_node_id: NodeID,
+) -> Result<Vec<Vec<NodeID>>, ApiError> {
     let mut levels: HashMap<usize, Vec<NodeID>> = HashMap::new();
     let mut visited: HashSet<NodeID> = HashSet::new();
     let mut queue = VecDeque::new();

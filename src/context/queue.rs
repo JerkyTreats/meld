@@ -332,7 +332,7 @@ impl FrameGenerationQueue {
         metadata_builder: F,
     ) -> Self
     where
-        F: Fn(&str, &str, &str, &str, &str) -> FrameMetadata + Send + Sync + 'static,
+        F: Fn(&str, &str, &str, &str, &str, &str) -> FrameMetadata + Send + Sync + 'static,
     {
         Self {
             queue: Arc::new(Mutex::new(BinaryHeap::new())),
@@ -1083,8 +1083,10 @@ impl FrameGenerationQueue {
             ApiError::FrameMetadataPolicyViolation(_) => false,
             ApiError::FrameMetadataUnknownKey { .. } => false,
             ApiError::FrameMetadataForbiddenKey { .. } => false,
+            ApiError::FrameMetadataMissingRequiredKey { .. } => false,
             ApiError::FrameMetadataPerKeyBudgetExceeded { .. } => false,
             ApiError::FrameMetadataTotalBudgetExceeded { .. } => false,
+            ApiError::FrameMetadataMutabilityViolation { .. } => false,
             ApiError::ProviderNotConfigured(_) => false,
             ApiError::ProviderRateLimit(_) => true,
             ApiError::ProviderRequestFailed(_) => true,

@@ -8,9 +8,7 @@ use crate::store::NodeRecordStore;
 use crate::tree::builder::TreeBuilder;
 use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
-use crate::workspace::types::{
-    ContextCoverageEntry, PathCount, TreeStatus, WorkspaceStatus,
-};
+use crate::workspace::types::{ContextCoverageEntry, PathCount, TreeStatus, WorkspaceStatus};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

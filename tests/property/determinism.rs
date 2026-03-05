@@ -50,11 +50,9 @@ fn test_frameid_determinism_property() {
 
                 let agent_id = "test-agent";
                 let frame_id1 =
-                    id::compute_frame_id(&basis, &content, &frame_type, agent_id)
-                        .unwrap();
+                    id::compute_frame_id(&basis, &content, &frame_type, agent_id).unwrap();
                 let frame_id2 =
-                    id::compute_frame_id(&basis, &content, &frame_type, agent_id)
-                        .unwrap();
+                    id::compute_frame_id(&basis, &content, &frame_type, agent_id).unwrap();
 
                 // Same inputs should always produce same FrameID
                 assert_eq!(frame_id1, frame_id2);
@@ -102,10 +100,8 @@ fn test_different_inputs_different_ids() {
     let frame_type = "analysis".to_string();
 
     let agent_id = "test-agent";
-    let frame_id1 =
-        id::compute_frame_id(&basis1, &content, &frame_type, agent_id).unwrap();
-    let frame_id2 =
-        id::compute_frame_id(&basis2, &content, &frame_type, agent_id).unwrap();
+    let frame_id1 = id::compute_frame_id(&basis1, &content, &frame_type, agent_id).unwrap();
+    let frame_id2 = id::compute_frame_id(&basis2, &content, &frame_type, agent_id).unwrap();
 
     // Different basis should produce different FrameID
     assert_ne!(frame_id1, frame_id2);

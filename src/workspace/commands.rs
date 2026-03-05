@@ -13,9 +13,9 @@ use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
 use crate::workspace::section;
 use crate::workspace::types::{
-    AgentStatusEntry, AgentStatusOutput, IgnoreResult, ListDeletedResult,
-    ListDeletedRow, ProviderStatusEntry, ProviderStatusOutput,
-    UnifiedStatusOutput, ValidateResult, WorkspaceStatusRequest, WorkspaceStatusResult,
+    AgentStatusEntry, AgentStatusOutput, IgnoreResult, ListDeletedResult, ListDeletedRow,
+    ProviderStatusEntry, ProviderStatusOutput, UnifiedStatusOutput, ValidateResult,
+    WorkspaceStatusRequest, WorkspaceStatusResult,
 };
 use serde_json::json;
 use std::fs;
@@ -38,13 +38,15 @@ pub fn resolve_workspace_node_id(
             } else {
                 workspace_root.join(p)
             };
-            let canonical_path =
-                crate::tree::path::canonicalize_path(&resolved_path).map_err(ApiError::StorageError)?;
+            let canonical_path = crate::tree::path::canonicalize_path(&resolved_path)
+                .map_err(ApiError::StorageError)?;
             let store = api.node_store();
             let record = if include_tombstoned {
                 store.get_by_path(&canonical_path).map_err(ApiError::from)?
             } else {
-                store.find_by_path(&canonical_path).map_err(ApiError::from)?
+                store
+                    .find_by_path(&canonical_path)
+                    .map_err(ApiError::from)?
             };
             if let Some(record) = record {
                 return Ok(record.node_id);
@@ -176,8 +178,7 @@ impl WorkspaceCommandService {
             ignore_patterns,
             max_depth: None,
         };
-        let builder =
-            TreeBuilder::new(workspace_root.clone()).with_walker_config(walker_config);
+        let builder = TreeBuilder::new(workspace_root.clone()).with_walker_config(walker_config);
         let root_hash = match builder.compute_root() {
             Ok(hash) => hash,
             Err(e) => {
@@ -286,13 +287,7 @@ impl WorkspaceCommandService {
         dry_run: bool,
         no_ignore: bool,
     ) -> Result<String, ApiError> {
-        let node_id = resolve_workspace_node_id(
-            api,
-            workspace_root,
-            path,
-            node,
-            false,
-        )?;
+        let node_id = resolve_workspace_node_id(api, workspace_root, path, node, false)?;
         let store = api.node_store();
         let record = store
             .get(&node_id)
@@ -306,13 +301,12 @@ impl WorkspaceCommandService {
             let n = set.len() as u64;
             let mut total_heads = 0u64;
             for nid in &set {
-                total_heads += api
-                    .head_index()
-                    .read()
-                    .get_all_heads_for_node(nid)
-                    .len() as u64;
+                total_heads += api.head_index().read().get_all_heads_for_node(nid).len() as u64;
             }
-            return Ok(format!("Would delete {} nodes, {} head entries.", n, total_heads));
+            return Ok(format!(
+                "Would delete {} nodes, {} head entries.",
+                n, total_heads
+            ));
         }
         let result = api.tombstone_node(node_id)?;
         let path_for_ignore = if !no_ignore {
@@ -340,13 +334,7 @@ impl WorkspaceCommandService {
         node: Option<&str>,
         dry_run: bool,
     ) -> Result<String, ApiError> {
-        let node_id = resolve_workspace_node_id(
-            api,
-            workspace_root,
-            path,
-            node,
-            true,
-        )?;
+        let node_id = resolve_workspace_node_id(api, workspace_root, path, node, true)?;
         let store = api.node_store();
         let record = store
             .get(&node_id)
@@ -360,11 +348,7 @@ impl WorkspaceCommandService {
             let n = set.len() as u64;
             let mut total_heads = 0u64;
             for nid in &set {
-                total_heads += api
-                    .head_index()
-                    .read()
-                    .get_all_heads_for_node(nid)
-                    .len() as u64;
+                total_heads += api.head_index().read().get_all_heads_for_node(nid).len() as u64;
             }
             return Ok(format!(
                 "Would restore {} nodes, {} head entries.",
@@ -407,11 +391,7 @@ impl WorkspaceCommandService {
             let mut frames = 0u64;
             if !keep_frames {
                 for nid in &node_ids {
-                    frames += api
-                        .head_index()
-                        .read()
-                        .get_all_heads_for_node(nid)
-                        .len() as u64;
+                    frames += api.head_index().read().get_all_heads_for_node(nid).len() as u64;
                 }
             }
             let head_count: usize = api
@@ -504,8 +484,7 @@ impl WorkspaceCommandService {
             ignore_patterns,
             max_depth: None,
         };
-        let builder =
-            TreeBuilder::new(workspace_root.clone()).with_walker_config(walker_config);
+        let builder = TreeBuilder::new(workspace_root.clone()).with_walker_config(walker_config);
         let tree = builder.build().map_err(ApiError::StorageError)?;
         let total_nodes = tree.nodes.len();
 
@@ -641,11 +620,10 @@ impl WorkspaceCommandService {
         };
 
         let providers = if include_providers {
-            let entries =
-                crate::provider::commands::ProviderCommandService::run_status(
-                    provider_registry,
-                    test_connectivity,
-                )?;
+            let entries = crate::provider::commands::ProviderCommandService::run_status(
+                provider_registry,
+                test_connectivity,
+            )?;
             let total = entries.len();
             let providers_vec: Vec<ProviderStatusEntry> = entries
                 .into_iter()

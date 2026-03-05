@@ -4,8 +4,8 @@
 //! ignore list and .gitignore sync), and meld workspace validate (passed,
 //! not scanned, JSON format).
 
-use meld::ignore;
 use meld::cli::{Commands, RunContext, WorkspaceCommands};
+use meld::ignore;
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;

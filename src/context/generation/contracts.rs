@@ -3,7 +3,7 @@ use crate::provider::ChatMessage;
 use crate::types::NodeID;
 
 pub type GeneratedMetadataBuilder =
-    dyn Fn(&str, &str, &str, &str, &str) -> FrameMetadata + Send + Sync;
+    dyn Fn(&str, &str, &str, &str, &str, &str) -> FrameMetadata + Send + Sync;
 
 #[derive(Debug, Clone)]
 pub struct GenerationOrchestrationRequest {
@@ -19,5 +19,6 @@ pub struct GenerationOrchestrationRequest {
 #[derive(Debug, Clone)]
 pub struct PromptAssemblyOutput {
     pub user_prompt: String,
+    pub context_payload: String,
     pub messages: Vec<ChatMessage>,
 }

@@ -9,19 +9,20 @@
 //! - Queue size limits
 //! - Worker lifecycle
 
-use meld::api::ContextApi;
 use meld::agent::{AgentIdentity, AgentRole};
-use meld::error::ApiError;
+use meld::api::ContextApi;
 use meld::context::frame::storage::FrameStorage;
+use meld::context::frame::{Basis, Frame};
 use meld::context::queue::{
     FrameGenerationQueue, GenerationConfig, GenerationRequest, GenerationRequestOptions, Priority,
     QueueEventContext,
 };
+use meld::error::ApiError;
 use meld::heads::HeadIndex;
-use meld::metadata::FrameMetadata;
 use meld::metadata::frame_write_contract::{
     build_generated_metadata, METADATA_PER_KEY_MAX_BYTES, METADATA_TOTAL_MAX_BYTES,
 };
+use meld::metadata::FrameMetadata;
 use meld::store::persistence::SledNodeRecordStore;
 use meld::store::{NodeRecord, NodeType};
 use meld::telemetry::ProgressRuntime;
@@ -784,7 +785,7 @@ async fn test_queue_rejects_generated_metadata_policy_violation() {
         api,
         GenerationConfig::default(),
         None,
-        |_, _, _, _, _| {
+        |_, _, _, _, _, _| {
             let mut metadata = FrameMetadata::new();
             metadata.insert("leaked_key".to_string(), "value".to_string());
             metadata
@@ -851,7 +852,7 @@ async fn test_queue_rejects_generated_forbidden_metadata_key() {
         api,
         GenerationConfig::default(),
         None,
-        |_, _, _, _, _| {
+        |_, _, _, _, _, _| {
             let mut metadata = FrameMetadata::new();
             metadata.insert("raw_prompt".to_string(), "raw prompt data".to_string());
             metadata
@@ -899,8 +900,7 @@ async fn test_queue_rejects_generated_forbidden_raw_context_metadata_key() {
 
     {
         let mut registry = api.agent_registry().write();
-        let mut identity =
-            AgentIdentity::new("writer-raw-context".to_string(), AgentRole::Writer);
+        let mut identity = AgentIdentity::new("writer-raw-context".to_string(), AgentRole::Writer);
         identity
             .metadata
             .insert("system_prompt".to_string(), "system".to_string());
@@ -919,7 +919,7 @@ async fn test_queue_rejects_generated_forbidden_raw_context_metadata_key() {
         api,
         GenerationConfig::default(),
         None,
-        |_, _, _, _, _| {
+        |_, _, _, _, _, _| {
             let mut metadata = FrameMetadata::new();
             metadata.insert("raw_context".to_string(), "raw context data".to_string());
             metadata
@@ -986,7 +986,7 @@ async fn test_queue_rejects_generated_prompt_metadata_key() {
         api,
         GenerationConfig::default(),
         None,
-        |_, _, _, _, _| {
+        |_, _, _, _, _, _| {
             let mut metadata = FrameMetadata::new();
             metadata.insert("prompt".to_string(), "compat prompt".to_string());
             metadata
@@ -1010,6 +1010,174 @@ async fn test_queue_rejects_generated_prompt_metadata_key() {
     assert!(matches!(
         result,
         Err(ApiError::FrameMetadataForbiddenKey { .. })
+    ));
+}
+
+#[tokio::test]
+async fn test_queue_rejects_generated_missing_required_metadata_key() {
+    let (api, _temp_dir) = create_test_api();
+    let api = Arc::new(api);
+
+    let node_id = Hash::from([63u8; 32]);
+    api.node_store()
+        .put(&NodeRecord {
+            node_id,
+            path: std::path::PathBuf::from("/tmp/test-dir"),
+            node_type: NodeType::Directory,
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: Default::default(),
+            tombstoned_at: None,
+        })
+        .unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        let mut identity =
+            AgentIdentity::new("writer-missing-required".to_string(), AgentRole::Writer);
+        identity
+            .metadata
+            .insert("system_prompt".to_string(), "system".to_string());
+        identity.metadata.insert(
+            "user_prompt_file".to_string(),
+            "Analyze file {path}".to_string(),
+        );
+        identity.metadata.insert(
+            "user_prompt_directory".to_string(),
+            "Analyze directory {path}".to_string(),
+        );
+        registry.register(identity);
+    }
+
+    let queue = FrameGenerationQueue::with_custom_metadata_builder(
+        api,
+        GenerationConfig::default(),
+        None,
+        |agent_id, _, _, _, _, _| {
+            let mut metadata = FrameMetadata::new();
+            metadata.insert("agent_id".to_string(), agent_id.to_string());
+            metadata.insert("provider".to_string(), "p".to_string());
+            metadata.insert("model".to_string(), "m".to_string());
+            metadata.insert("provider_type".to_string(), "t".to_string());
+            metadata.insert("prompt_digest".to_string(), "d".to_string());
+            metadata.insert("prompt_link_id".to_string(), "l".to_string());
+            metadata
+        },
+    );
+    queue.start().unwrap();
+
+    let result = queue
+        .enqueue_and_wait(
+            node_id,
+            "writer-missing-required".to_string(),
+            "test-provider".to_string(),
+            Some("context-writer-missing-required".to_string()),
+            Priority::Normal,
+            Some(Duration::from_secs(2)),
+        )
+        .await;
+
+    queue.stop().await.unwrap();
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataMissingRequiredKey { .. })
+    ));
+}
+
+#[tokio::test]
+async fn test_queue_rejects_generated_mutability_transition_violation() {
+    let (api, _temp_dir) = create_test_api();
+    let api = Arc::new(api);
+
+    let node_id = Hash::from([64u8; 32]);
+    api.node_store()
+        .put(&NodeRecord {
+            node_id,
+            path: std::path::PathBuf::from("/tmp/test-dir"),
+            node_type: NodeType::Directory,
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: Default::default(),
+            tombstoned_at: None,
+        })
+        .unwrap();
+
+    {
+        let mut registry = api.agent_registry().write();
+        let mut identity = AgentIdentity::new("writer-mutability".to_string(), AgentRole::Writer);
+        identity
+            .metadata
+            .insert("system_prompt".to_string(), "system".to_string());
+        identity.metadata.insert(
+            "user_prompt_file".to_string(),
+            "Analyze file {path}".to_string(),
+        );
+        identity.metadata.insert(
+            "user_prompt_directory".to_string(),
+            "Analyze directory {path}".to_string(),
+        );
+        registry.register(identity);
+    }
+
+    let initial_metadata = build_generated_metadata(
+        "writer-mutability",
+        "provider-a",
+        "model-a",
+        "local",
+        "prompt-a",
+        "context-a",
+    );
+    let initial_frame = Frame::new(
+        Basis::Node(node_id),
+        b"baseline".to_vec(),
+        "context-writer-mutability".to_string(),
+        "writer-mutability".to_string(),
+        initial_metadata,
+    )
+    .unwrap();
+    api.put_frame(node_id, initial_frame, "writer-mutability".to_string())
+        .unwrap();
+
+    let queue = FrameGenerationQueue::with_custom_metadata_builder(
+        api,
+        GenerationConfig::default(),
+        None,
+        |agent_id, provider, _, provider_type, prompt, context_payload| {
+            build_generated_metadata(
+                agent_id,
+                provider,
+                "model-b",
+                provider_type,
+                prompt,
+                context_payload,
+            )
+        },
+    );
+    queue.start().unwrap();
+
+    let result = queue
+        .enqueue_and_wait_with_options(
+            node_id,
+            "writer-mutability".to_string(),
+            "test-provider".to_string(),
+            Some("context-writer-mutability".to_string()),
+            Priority::Normal,
+            Some(Duration::from_secs(2)),
+            GenerationRequestOptions {
+                force: true,
+                plan_id: None,
+            },
+        )
+        .await;
+
+    queue.stop().await.unwrap();
+
+    assert!(matches!(
+        result,
+        Err(ApiError::FrameMetadataMutabilityViolation { .. })
     ));
 }
 
@@ -1053,8 +1221,15 @@ async fn test_queue_accepts_generated_digest_metadata_keys() {
         api,
         GenerationConfig::default(),
         None,
-        |agent_id, provider, model, provider_type, prompt| {
-            build_generated_metadata(agent_id, provider, model, provider_type, prompt)
+        |agent_id, provider, model, provider_type, prompt, context_payload| {
+            build_generated_metadata(
+                agent_id,
+                provider,
+                model,
+                provider_type,
+                prompt,
+                context_payload,
+            )
         },
     );
     queue.start().unwrap();
@@ -1119,12 +1294,18 @@ async fn test_queue_rejects_generated_per_key_budget_overflow() {
         api,
         GenerationConfig::default(),
         None,
-        |_, _, _, _, _| {
+        |agent_id, _, _, _, _, _| {
             let mut metadata = FrameMetadata::new();
+            metadata.insert("agent_id".to_string(), agent_id.to_string());
             metadata.insert(
                 "provider".to_string(),
                 "x".repeat(METADATA_PER_KEY_MAX_BYTES + 1),
             );
+            metadata.insert("model".to_string(), "m".to_string());
+            metadata.insert("provider_type".to_string(), "t".to_string());
+            metadata.insert("prompt_digest".to_string(), "d".to_string());
+            metadata.insert("context_digest".to_string(), "c".to_string());
+            metadata.insert("prompt_link_id".to_string(), "l".to_string());
             metadata
         },
     );
@@ -1170,8 +1351,7 @@ async fn test_queue_rejects_generated_total_budget_overflow() {
 
     {
         let mut registry = api.agent_registry().write();
-        let mut identity =
-            AgentIdentity::new("writer-budget-total".to_string(), AgentRole::Writer);
+        let mut identity = AgentIdentity::new("writer-budget-total".to_string(), AgentRole::Writer);
         identity
             .metadata
             .insert("system_prompt".to_string(), "system".to_string());
@@ -1190,9 +1370,10 @@ async fn test_queue_rejects_generated_total_budget_overflow() {
         api,
         GenerationConfig::default(),
         None,
-        |_, _, _, _, _| {
+        |agent_id, _, _, _, _, _| {
             let per_key = (METADATA_TOTAL_MAX_BYTES / 6).max(1);
             let mut metadata = FrameMetadata::new();
+            metadata.insert("agent_id".to_string(), agent_id.to_string());
             metadata.insert("provider".to_string(), "p".repeat(per_key));
             metadata.insert("model".to_string(), "m".repeat(per_key));
             metadata.insert("provider_type".to_string(), "t".repeat(per_key));

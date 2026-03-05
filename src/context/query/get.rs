@@ -9,8 +9,8 @@ use std::path::Path;
 
 fn parse_node_id(s: &str) -> Result<NodeID, ApiError> {
     let s = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = hex::decode(s)
-        .map_err(|e| ApiError::InvalidFrame(format!("Invalid hex string: {}", e)))?;
+    let bytes =
+        hex::decode(s).map_err(|e| ApiError::InvalidFrame(format!("Invalid hex string: {}", e)))?;
     if bytes.len() != 32 {
         return Err(ApiError::InvalidFrame(format!(
             "NodeID must be 32 bytes, got {} bytes",
@@ -36,13 +36,9 @@ pub fn get_node_for_cli(
 ) -> Result<NodeContext, ApiError> {
     let node_id = match (node, path) {
         (Some(node_str), None) => parse_node_id(node_str)?,
-        (None, Some(p)) => workspace::resolve_workspace_node_id(
-            api,
-            workspace_root,
-            Some(p),
-            None,
-            false,
-        )?,
+        (None, Some(p)) => {
+            workspace::resolve_workspace_node_id(api, workspace_root, Some(p), None, false)?
+        }
         (Some(_), Some(_)) => {
             return Err(ApiError::ConfigError(
                 "Cannot specify both --node and --path. Use one or the other.".to_string(),

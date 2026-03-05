@@ -1,13 +1,13 @@
 //! Integration tests for Tooling & Integrations
 
+use meld::agent::{AgentAdapter, ContextApiAdapter};
 use meld::api::{ContextApi, ContextView};
 use meld::context::frame::{Basis, Frame};
 use meld::heads::HeadIndex;
 use meld::store::persistence::SledNodeRecordStore;
-use meld::agent::{AgentAdapter, ContextApiAdapter};
-use meld::workspace::{BatchOperation, CiIntegration};
 use meld::types::Hash;
 use meld::views::OrderingPolicy;
+use meld::workspace::{BatchOperation, CiIntegration};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;

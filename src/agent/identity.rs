@@ -2,8 +2,8 @@
 //!
 //! Runtime identity types used by registry, profile, and CLI.
 
-use crate::error::ApiError;
 use crate::agent::profile::metadata_types::AgentMetadata;
+use crate::error::ApiError;
 use serde::{Deserialize, Serialize};
 
 /// Agent role defining what operations an agent can perform

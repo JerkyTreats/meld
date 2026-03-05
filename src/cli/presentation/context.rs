@@ -15,11 +15,7 @@ pub fn format_context_text_output(
     let frames: Vec<&crate::context::frame::Frame> = if include_deleted {
         context.frames.iter().collect()
     } else {
-        context
-            .frames
-            .iter()
-            .filter(|f| !f.is_deleted())
-            .collect()
+        context.frames.iter().filter(|f| !f.is_deleted()).collect()
     };
 
     if frames.is_empty() {
@@ -81,11 +77,7 @@ pub fn format_context_json_output(
     let frames: Vec<&crate::context::frame::Frame> = if include_deleted {
         context.frames.iter().collect()
     } else {
-        context
-            .frames
-            .iter()
-            .filter(|f| !f.is_deleted())
-            .collect()
+        context.frames.iter().filter(|f| !f.is_deleted()).collect()
     };
 
     let frames_json: Vec<serde_json::Value> = frames

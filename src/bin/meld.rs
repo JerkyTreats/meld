@@ -3,9 +3,9 @@
 //! Command-line interface for the Meld filesystem state management system.
 
 use clap::Parser;
+use meld::cli::{Cli, RunContext};
 use meld::config::ConfigLoader;
 use meld::logging::{init_logging, LoggingConfig};
-use meld::cli::{Cli, RunContext};
 use std::process;
 use tracing::{error, info};
 
@@ -130,14 +130,8 @@ mod tests {
     fn test_build_logging_config_verbose() {
         let temp = tempfile::tempdir().unwrap();
         let ws = temp.path().to_string_lossy();
-        let cli = Cli::try_parse_from(&[
-            "meld",
-            "--workspace",
-            ws.as_ref(),
-            "--verbose",
-            "status",
-        ])
-        .unwrap();
+        let cli = Cli::try_parse_from(&["meld", "--workspace", ws.as_ref(), "--verbose", "status"])
+            .unwrap();
         let config = build_logging_config(&cli);
         assert_eq!(config.level, "debug", "verbose should set level to debug");
         assert_eq!(

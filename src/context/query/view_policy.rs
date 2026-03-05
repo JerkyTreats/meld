@@ -57,7 +57,9 @@ pub fn get_context_view(
         .filter(|(_, frame)| {
             policy.filters.iter().all(|filter| match filter {
                 FrameFilter::ByType(filter_type) => frame.frame_type == *filter_type,
-                FrameFilter::ByAgent(filter_agent) => frame.agent_id() == Some(filter_agent.as_str()),
+                FrameFilter::ByAgent(filter_agent) => {
+                    frame.agent_id() == Some(filter_agent.as_str())
+                }
             })
         })
         .collect();
@@ -81,7 +83,10 @@ pub fn get_context_view(
 
     sorted_frames.truncate(policy.max_frames);
 
-    Ok(sorted_frames.into_iter().map(|(frame_id, _)| frame_id).collect())
+    Ok(sorted_frames
+        .into_iter()
+        .map(|(frame_id, _)| frame_id)
+        .collect())
 }
 
 #[cfg(test)]
@@ -92,11 +97,7 @@ mod tests {
     use std::collections::HashMap;
     use tempfile::TempDir;
 
-    fn create_test_frame(
-        frame_id_base: u8,
-        frame_type: &str,
-        agent_id: Option<&str>,
-    ) -> Frame {
+    fn create_test_frame(frame_id_base: u8, frame_type: &str, agent_id: Option<&str>) -> Frame {
         let node_id: NodeID = [1u8; 32];
         let basis = Basis::Node(node_id);
         let content = format!("content_{}", frame_id_base).into_bytes();
