@@ -1,7 +1,7 @@
 # Turn Manager Implementation Plan
 
 Date: 2026-03-06
-Status: active with Phase 1 through Phase 5 complete
+Status: active with Phase 1 through Phase 6 complete
 Scope: workflow bootstrap turn manager
 
 ## Overview
@@ -49,7 +49,7 @@ This turn manager plan does not expand non default path behavior.
 | 3 | Workflow runtime core registry resolver executor | Phase 1 and Phase 2 | complete |
 | 4 | Durable workflow state persistence and resume | Phase 3 | complete |
 | 5 | Prompt reference and artifact read integration | Phase 3 and Phase 4 | complete |
-| 6 | CLI and watch adapter integration | Phase 2 through Phase 5 | in progress |
+| 6 | CLI and watch adapter integration | Phase 2 through Phase 5 | complete |
 | 7 | Verification lock and readiness signoff | Phase 1 through Phase 6 | planned |
 
 ---
@@ -308,6 +308,11 @@ This turn manager plan does not expand non default path behavior.
 
 **Goal**: expose workflow operator commands and integrate workflow scheduling into watch runtime.
 
+**Completion snapshot**:
+- completion date: 2026-03-06
+- implementation commit: pending
+- result: all Phase 6 tasks complete and verification gates passing
+
 **Source docs**:
 - [Turn Manager Functional Specification](README.md)
 - [Turn Manager Technical Specification](technical_spec.md)
@@ -315,11 +320,11 @@ This turn manager plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Add workflow command group for validate list inspect and execute actions. | Planned |
-| Route CLI workflow actions through thin adapters to workflow orchestration. | Planned |
-| Add watch runtime branch that schedules workflow runs for bound agents. | Planned |
-| Preserve legacy frame generation scheduling for unbound agents. | Planned |
-| Add command and watch integration tests for positive and failure paths. | Planned |
+| Add workflow command group for validate list inspect and execute actions. | Complete |
+| Route CLI workflow actions through thin adapters to workflow orchestration. | Complete |
+| Add watch runtime branch that schedules workflow runs for bound agents. | Complete |
+| Preserve legacy frame generation scheduling for unbound agents. | Complete |
+| Add command and watch integration tests for positive and failure paths. | Complete |
 
 **Exit criteria**:
 - workflow command surface executes through workflow orchestration only
@@ -334,10 +339,19 @@ This turn manager plan does not expand non default path behavior.
 - `tests/integration/context_cli.rs`
 - `tests/integration/progress_observability.rs`
 
-**Planned verification evidence**:
-- compile gate: `cargo check`
-- integration gate: `cargo test --test integration_tests integration::context_cli::`
-- integration gate: `cargo test --test integration_tests integration::progress_observability::`
+**Implementation evidence**:
+- format gate passed: `cargo fmt -- --check`
+- compile gate passed: `cargo check`
+- integration gate: `cargo test --test integration_tests integration::workflow_cli::`
+- unit gate: `cargo test workspace::watch::runtime::tests::`
+- full suite gate passed: `cargo test`
+
+**Phase completion notes**:
+- new workflow command adapters now live in `src/workflow/commands.rs`
+- CLI now supports `workflow list`, `workflow validate`, `workflow inspect`, and `workflow execute`
+- watch runtime now routes bound agents to workflow runtime when provider and registry resolution are deterministic
+- watch runtime preserves legacy context frame scheduling for unbound agents
+- new coverage includes CLI integration tests in `tests/integration/workflow_cli.rs` and watch routing tests in `src/workspace/watch/runtime.rs`
 
 ---
 

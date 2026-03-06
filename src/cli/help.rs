@@ -2,7 +2,7 @@
 
 use crate::cli::parse::{
     AgentCommands, AgentPromptCommands, Commands, ContextCommands, ProviderCommands,
-    WorkspaceCommands,
+    WorkflowCommands, WorkspaceCommands,
 };
 use crate::telemetry::emission::SummaryCommandDescriptor;
 
@@ -18,6 +18,7 @@ pub fn command_name(command: &Commands) -> String {
         Commands::Provider { command } => format!("provider.{}", provider_command_name(command)),
         Commands::Init { .. } => "init".to_string(),
         Commands::Context { command } => format!("context.{}", context_command_name(command)),
+        Commands::Workflow { command } => format!("workflow.{}", workflow_command_name(command)),
     }
 }
 
@@ -51,6 +52,15 @@ pub fn provider_command_name(command: &ProviderCommands) -> &'static str {
         ProviderCommands::Remove { .. } => "remove",
         ProviderCommands::Validate { .. } => "validate",
         ProviderCommands::Test { .. } => "test",
+    }
+}
+
+pub fn workflow_command_name(command: &WorkflowCommands) -> &'static str {
+    match command {
+        WorkflowCommands::List { .. } => "list",
+        WorkflowCommands::Validate { .. } => "validate",
+        WorkflowCommands::Inspect { .. } => "inspect",
+        WorkflowCommands::Execute { .. } => "execute",
     }
 }
 
@@ -174,6 +184,7 @@ pub fn summary_descriptor(command: &Commands) -> SummaryCommandDescriptor {
             force: *force,
             list_only: *list,
         },
+        Commands::Workflow { .. } => SummaryCommandDescriptor::None,
         _ => SummaryCommandDescriptor::None,
     }
 }

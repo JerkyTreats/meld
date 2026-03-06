@@ -117,6 +117,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: ContextCommands,
     },
+    /// Workflow operations
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -517,5 +522,62 @@ pub enum ContextCommands {
         /// Include frames marked deleted (tombstones)
         #[arg(long)]
         include_deleted: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WorkflowCommands {
+    /// List resolved workflows with source metadata
+    List {
+        /// Output format: text or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Validate workflow profile registry loading and schema
+    Validate {
+        /// Output format: text or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Inspect one workflow profile
+    Inspect {
+        /// Workflow ID
+        workflow_id: String,
+        /// Output format: text or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Execute one workflow profile for a target node
+    Execute {
+        /// Workflow ID
+        workflow_id: String,
+
+        /// Target node by NodeID hex string
+        #[arg(long, conflicts_with_all = ["path", "path_positional"])]
+        node: Option<String>,
+
+        /// Target node by workspace relative or absolute path
+        #[arg(long, value_name = "PATH", conflicts_with = "node")]
+        path: Option<PathBuf>,
+
+        /// Target path positional form same as --path
+        #[arg(value_name = "PATH", index = 1, conflicts_with = "node")]
+        path_positional: Option<PathBuf>,
+
+        /// Agent ID used for workflow execution
+        #[arg(long)]
+        agent: String,
+
+        /// Provider name used for workflow execution
+        #[arg(long)]
+        provider: String,
+
+        /// Frame type defaults to context-agent
+        #[arg(long)]
+        frame_type: Option<String>,
+
+        /// Generate even if thread state can reuse existing head
+        #[arg(long)]
+        force: bool,
     },
 }

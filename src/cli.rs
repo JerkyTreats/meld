@@ -10,7 +10,8 @@ mod route;
 pub use help::{command_name, summary_descriptor};
 pub use output::map_error;
 pub use parse::{
-    AgentCommands, Cli, Commands, ContextCommands, ProviderCommands, WorkspaceCommands,
+    AgentCommands, Cli, Commands, ContextCommands, ProviderCommands, WorkflowCommands,
+    WorkspaceCommands,
 };
 pub use presentation::{
     format_agent_list_result_json, format_agent_list_result_text, format_agent_show_result_json,

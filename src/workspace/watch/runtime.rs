@@ -1,6 +1,7 @@
 //! Watch daemon and runtime logic.
 
 use super::events::{ChangeEvent, EventBatcher, WatchConfig};
+use crate::agent::AgentIdentity;
 use crate::api::ContextApi;
 use crate::context::queue::{FrameGenerationQueue, QueueEventContext};
 use crate::error::ApiError;
@@ -11,6 +12,7 @@ use crate::tree::builder::TreeBuilder;
 use crate::tree::path::canonicalize_path;
 use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
+use crate::workflow::executor::{execute_registered_workflow, WorkflowExecutionRequest};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use serde_json::json;
@@ -347,13 +349,9 @@ impl WatchDaemon {
             return Ok(());
         }
 
-        let agents: Vec<String> = {
+        let agents: Vec<AgentIdentity> = {
             let registry = self.api.agent_registry().read();
-            registry
-                .list_all()
-                .iter()
-                .map(|a| a.agent_id.clone())
-                .collect()
+            registry.list_all().into_iter().cloned().collect()
         };
 
         if agents.is_empty() {
@@ -363,21 +361,161 @@ impl WatchDaemon {
 
         info!(
             agent_count = agents.len(),
-            agents = ?agents,
+            agents = ?agents.iter().map(|agent| &agent.agent_id).collect::<Vec<_>>(),
             "Found {} agent(s) for contextframe creation",
             agents.len()
         );
 
+        let workflow_provider_name = self.resolve_workflow_provider_name();
         let batch_size = self.config.frame_batch_size;
         let mut created_count = 0;
         let mut skipped_count = 0;
+        let mut workflow_runs = 0;
+        let mut workflow_skipped = 0;
+        let mut workflow_failed = 0;
 
         for chunk in node_ids.chunks(batch_size) {
             for node_id in chunk {
-                for agent_id in &agents {
+                for agent in &agents {
+                    if let Some(workflow_id) = agent.workflow_binding() {
+                        let Some(provider_name) = workflow_provider_name.as_deref() else {
+                            workflow_failed += 1;
+                            warn!(
+                                node_id = %hex::encode(node_id),
+                                agent_id = %agent.agent_id,
+                                workflow_id = %workflow_id,
+                                "Skipping workflow execution in watch mode because no deterministic provider was resolved"
+                            );
+                            self.emit_event_best_effort(
+                                "workflow_watch_skipped",
+                                json!({
+                                    "node_id": hex::encode(node_id),
+                                    "agent_id": agent.agent_id.clone(),
+                                    "workflow_id": workflow_id,
+                                    "reason": "provider_unresolved"
+                                }),
+                            );
+                            continue;
+                        };
+
+                        let Some(registry_lock) = &self.config.workflow_registry else {
+                            workflow_failed += 1;
+                            warn!(
+                                node_id = %hex::encode(node_id),
+                                agent_id = %agent.agent_id,
+                                workflow_id = %workflow_id,
+                                "Skipping workflow execution in watch mode because workflow registry is unavailable"
+                            );
+                            self.emit_event_best_effort(
+                                "workflow_watch_skipped",
+                                json!({
+                                    "node_id": hex::encode(node_id),
+                                    "agent_id": agent.agent_id.clone(),
+                                    "workflow_id": workflow_id,
+                                    "reason": "registry_unavailable"
+                                }),
+                            );
+                            continue;
+                        };
+
+                        let registered_profile = {
+                            let registry = registry_lock.read();
+                            registry.get(workflow_id).cloned()
+                        };
+
+                        let Some(registered_profile) = registered_profile else {
+                            workflow_failed += 1;
+                            warn!(
+                                node_id = %hex::encode(node_id),
+                                agent_id = %agent.agent_id,
+                                workflow_id = %workflow_id,
+                                "Skipping workflow execution in watch mode because bound workflow was not found in registry"
+                            );
+                            self.emit_event_best_effort(
+                                "workflow_watch_skipped",
+                                json!({
+                                    "node_id": hex::encode(node_id),
+                                    "agent_id": agent.agent_id.clone(),
+                                    "workflow_id": workflow_id,
+                                    "reason": "workflow_not_found"
+                                }),
+                            );
+                            continue;
+                        };
+
+                        let request = WorkflowExecutionRequest {
+                            node_id: *node_id,
+                            agent_id: agent.agent_id.clone(),
+                            provider_name: provider_name.to_string(),
+                            frame_type: format!("context-{}", agent.agent_id),
+                            force: false,
+                        };
+
+                        match execute_registered_workflow(
+                            self.api.as_ref(),
+                            &self.config.workspace_root,
+                            &registered_profile,
+                            &request,
+                        ) {
+                            Ok(summary) => {
+                                if summary.turns_completed == 0 {
+                                    workflow_skipped += 1;
+                                    debug!(
+                                        node_id = %hex::encode(node_id),
+                                        agent_id = %agent.agent_id,
+                                        workflow_id = %summary.workflow_id,
+                                        thread_id = %summary.thread_id,
+                                        "Skipped workflow execution in watch mode due to existing head reuse"
+                                    );
+                                } else {
+                                    workflow_runs += 1;
+                                    debug!(
+                                        node_id = %hex::encode(node_id),
+                                        agent_id = %agent.agent_id,
+                                        workflow_id = %summary.workflow_id,
+                                        thread_id = %summary.thread_id,
+                                        turns_completed = summary.turns_completed,
+                                        "Executed workflow in watch mode"
+                                    );
+                                }
+                                self.emit_event_best_effort(
+                                    "workflow_watch_result",
+                                    json!({
+                                        "node_id": hex::encode(node_id),
+                                        "agent_id": agent.agent_id.clone(),
+                                        "workflow_id": summary.workflow_id,
+                                        "thread_id": summary.thread_id,
+                                        "turns_completed": summary.turns_completed,
+                                        "skipped": summary.turns_completed == 0
+                                    }),
+                                );
+                            }
+                            Err(err) => {
+                                workflow_failed += 1;
+                                warn!(
+                                    node_id = %hex::encode(node_id),
+                                    agent_id = %agent.agent_id,
+                                    workflow_id = %workflow_id,
+                                    error = %err,
+                                    "Failed to execute workflow in watch mode"
+                                );
+                                self.emit_event_best_effort(
+                                    "workflow_watch_failed",
+                                    json!({
+                                        "node_id": hex::encode(node_id),
+                                        "agent_id": agent.agent_id.clone(),
+                                        "workflow_id": workflow_id,
+                                        "error": err.to_string()
+                                    }),
+                                );
+                            }
+                        }
+                        continue;
+                    }
+
                     match self.api.ensure_agent_frame(
                         *node_id,
-                        agent_id.clone(),
+                        agent.agent_id.clone(),
                         None,
                         self.generation_queue.as_ref().map(Arc::clone),
                     ) {
@@ -385,7 +523,7 @@ impl WatchDaemon {
                             created_count += 1;
                             debug!(
                                 node_id = %hex::encode(node_id),
-                                agent_id = %agent_id,
+                                agent_id = %agent.agent_id,
                                 frame_id = %hex::encode(frame_id),
                                 "Created contextframe"
                             );
@@ -394,14 +532,14 @@ impl WatchDaemon {
                             skipped_count += 1;
                             debug!(
                                 node_id = %hex::encode(node_id),
-                                agent_id = %agent_id,
+                                agent_id = %agent.agent_id,
                                 "Skipped contextframe (already exists or agent cannot write)"
                             );
                         }
                         Err(e) => {
                             warn!(
                                 node_id = %hex::encode(node_id),
-                                agent_id = %agent_id,
+                                agent_id = %agent.agent_id,
                                 error = %e,
                                 "Failed to create contextframe"
                             );
@@ -416,10 +554,28 @@ impl WatchDaemon {
             agent_count = agents.len(),
             created = created_count,
             skipped = skipped_count,
+            workflow_runs = workflow_runs,
+            workflow_skipped = workflow_skipped,
+            workflow_failed = workflow_failed,
             "Ensured agent contextframes"
         );
 
         Ok(())
+    }
+
+    fn resolve_workflow_provider_name(&self) -> Option<String> {
+        let registry = self.api.provider_registry().read();
+        let mut names: Vec<String> = registry
+            .list_all()
+            .into_iter()
+            .filter_map(|config| config.provider_name.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        if names.len() == 1 {
+            return Some(names[0].clone());
+        }
+        None
     }
 
     fn emit_event_best_effort(&self, event_type: &str, data: serde_json::Value) {
@@ -427,5 +583,150 @@ impl WatchDaemon {
         {
             progress.emit_event_best_effort(session_id, event_type, data);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::{AgentIdentity, AgentRegistry, AgentRole};
+    use crate::config::{MerkleConfig, ProviderConfig, ProviderType, WorkflowConfig};
+    use crate::context::frame::storage::FrameStorage;
+    use crate::heads::HeadIndex;
+    use crate::prompt_context::PromptContextArtifactStorage;
+    use crate::provider::ProviderRegistry;
+    use crate::store::persistence::SledNodeRecordStore;
+    use crate::store::{NodeRecord, NodeType};
+    use crate::workflow::registry::WorkflowRegistry;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    fn create_test_api(workspace_root: &Path) -> ContextApi {
+        let store_path = workspace_root.join("store");
+        let frame_storage_path = workspace_root.join("frames");
+        let artifact_storage_path = workspace_root.join("artifacts");
+        std::fs::create_dir_all(&frame_storage_path).unwrap();
+        std::fs::create_dir_all(&artifact_storage_path).unwrap();
+
+        let node_store = Arc::new(SledNodeRecordStore::new(&store_path).unwrap());
+        let frame_storage = Arc::new(FrameStorage::new(&frame_storage_path).unwrap());
+        let prompt_context_storage =
+            Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
+        let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
+        let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
+        let provider_registry = Arc::new(parking_lot::RwLock::new(ProviderRegistry::new()));
+        let lock_manager = Arc::new(crate::concurrency::NodeLockManager::new());
+
+        ContextApi::with_workspace_root(
+            node_store,
+            frame_storage,
+            head_index,
+            prompt_context_storage,
+            agent_registry,
+            provider_registry,
+            lock_manager,
+            workspace_root.to_path_buf(),
+        )
+    }
+
+    fn put_test_file_node(api: &ContextApi, workspace_root: &Path, node_id: NodeID) {
+        let file_path = workspace_root.join("doc.txt");
+        std::fs::write(&file_path, "hello").unwrap();
+        api.node_store()
+            .put(&NodeRecord {
+                node_id,
+                path: file_path,
+                node_type: NodeType::File {
+                    size: 5,
+                    content_hash: [1u8; 32],
+                },
+                children: Vec::new(),
+                parent: None,
+                frame_set_root: None,
+                metadata: Default::default(),
+                tombstoned_at: None,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn ensure_agent_frames_keeps_legacy_path_for_unbound_agents() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let api = Arc::new(create_test_api(&workspace_root));
+        let node_id = crate::types::Hash::from([7u8; 32]);
+        put_test_file_node(api.as_ref(), &workspace_root, node_id);
+
+        {
+            let mut agents = api.agent_registry().write();
+            agents.register(AgentIdentity::new(
+                "writer-unbound".to_string(),
+                AgentRole::Writer,
+            ));
+        }
+
+        let mut config = WatchConfig::default();
+        config.workspace_root = workspace_root;
+        let daemon = WatchDaemon::new(api.clone(), config).unwrap();
+        daemon.ensure_agent_frames_batched(&[node_id]).unwrap();
+
+        let has_frame = api
+            .has_agent_frame(&node_id, "writer-unbound")
+            .expect("frame check should succeed");
+        assert!(has_frame);
+    }
+
+    #[test]
+    fn ensure_agent_frames_skips_bound_workflow_when_provider_unresolved() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let api = Arc::new(create_test_api(&workspace_root));
+        let node_id = crate::types::Hash::from([8u8; 32]);
+        put_test_file_node(api.as_ref(), &workspace_root, node_id);
+
+        {
+            let mut agents = api.agent_registry().write();
+            let mut bound = AgentIdentity::new("writer-bound".to_string(), AgentRole::Writer);
+            bound.workflow_id = Some("docs_writer_thread_v1".to_string());
+            agents.register(bound);
+        }
+
+        let registry = WorkflowRegistry::load(&workspace_root, &WorkflowConfig::default()).unwrap();
+
+        let mut config = WatchConfig::default();
+        config.workspace_root = workspace_root;
+        config.workflow_registry = Some(Arc::new(parking_lot::RwLock::new(registry)));
+        let daemon = WatchDaemon::new(api.clone(), config).unwrap();
+        daemon.ensure_agent_frames_batched(&[node_id]).unwrap();
+
+        let has_frame = api
+            .has_agent_frame(&node_id, "writer-bound")
+            .expect("frame check should succeed");
+        assert!(!has_frame);
+
+        {
+            let mut providers = api.provider_registry().write();
+            let provider_config = ProviderConfig {
+                provider_name: Some("only-provider".to_string()),
+                provider_type: ProviderType::LocalCustom,
+                model: "test-model".to_string(),
+                api_key: None,
+                endpoint: Some("http://127.0.0.1:9".to_string()),
+                default_options: crate::provider::CompletionOptions::default(),
+            };
+            providers
+                .load_from_config(&MerkleConfig {
+                    providers: std::collections::HashMap::from([(
+                        "only-provider".to_string(),
+                        provider_config,
+                    )]),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        daemon.ensure_agent_frames_batched(&[node_id]).unwrap();
     }
 }

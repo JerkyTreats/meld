@@ -1,6 +1,7 @@
 //! Watch events, batching, and configuration.
 
 use crate::context::queue::GenerationConfig;
+use crate::workflow::registry::WorkflowRegistry;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -35,6 +36,8 @@ pub struct WatchConfig {
     pub session_id: Option<String>,
     /// Optional progress runtime for event emission
     pub progress: Option<Arc<ProgressRuntime>>,
+    /// Shared workflow registry used by watch runtime for bound agent scheduling
+    pub workflow_registry: Option<Arc<parking_lot::RwLock<WorkflowRegistry>>>,
 }
 
 impl Default for WatchConfig {
@@ -60,6 +63,7 @@ impl Default for WatchConfig {
             generation_config: None,
             session_id: None,
             progress: None,
+            workflow_registry: None,
         }
     }
 }

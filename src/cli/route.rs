@@ -14,6 +14,7 @@ use crate::telemetry::sessions::policy::PrunePolicy;
 use crate::telemetry::{ProgressRuntime, ProviderLifecycleEventData};
 use crate::tree::walker::WalkerConfig;
 use crate::workflow::binding::validate_agent_binding;
+use crate::workflow::commands::{WorkflowCommandService, WorkflowExecuteRequest};
 use crate::workflow::registry::WorkflowRegistry;
 use crate::workspace::{
     format_unified_status_text, format_workspace_status_text, WatchConfig, WatchDaemon,
@@ -26,7 +27,7 @@ use std::time::Instant;
 
 use crate::cli::parse::{
     AgentCommands, AgentPromptCommands, Commands, ContextCommands, ProviderCommands,
-    WorkspaceCommands,
+    WorkflowCommands, WorkspaceCommands,
 };
 use crate::cli::{command_name, summary_descriptor};
 
@@ -238,6 +239,7 @@ impl RunContext {
             Commands::Provider { command } => self.handle_provider_command(command, session_id),
             Commands::Init { force, list } => self.handle_init(*force, *list),
             Commands::Context { command } => self.handle_context_command(command, session_id),
+            Commands::Workflow { command } => self.handle_workflow_command(command),
             Commands::Watch {
                 debounce_ms,
                 batch_window_ms,
@@ -1380,30 +1382,161 @@ impl RunContext {
         }
     }
 
+    fn handle_workflow_command(&self, command: &WorkflowCommands) -> Result<String, ApiError> {
+        match command {
+            WorkflowCommands::List { format } => {
+                let registry = self.workflow_registry.read();
+                let result = WorkflowCommandService::run_list(&registry);
+                if format == "json" {
+                    serde_json::to_string_pretty(&result).map_err(|err| {
+                        ApiError::ConfigError(format!(
+                            "Failed to serialize workflow list result: {}",
+                            err
+                        ))
+                    })
+                } else {
+                    let mut out = String::new();
+                    for item in result.workflows {
+                        let path = item.source_path.unwrap_or_else(|| "-".to_string());
+                        out.push_str(&format!(
+                            "{} | v{} | {} | {} | {}\n",
+                            item.workflow_id, item.version, item.source_layer, item.title, path
+                        ));
+                    }
+                    if out.is_empty() {
+                        out.push_str("No workflows resolved.\n");
+                    }
+                    Ok(out.trim_end().to_string())
+                }
+            }
+            WorkflowCommands::Validate { format } => {
+                let config = self.load_runtime_config()?;
+                let result =
+                    WorkflowCommandService::run_validate(&self.workspace_root, &config.workflows)?;
+                if format == "json" {
+                    serde_json::to_string_pretty(&result).map_err(|err| {
+                        ApiError::ConfigError(format!(
+                            "Failed to serialize workflow validate result: {}",
+                            err
+                        ))
+                    })
+                } else {
+                    Ok(format!(
+                        "Workflow registry is valid with {} profile(s).",
+                        result.workflow_count
+                    ))
+                }
+            }
+            WorkflowCommands::Inspect {
+                workflow_id,
+                format,
+            } => {
+                let registry = self.workflow_registry.read();
+                let result = WorkflowCommandService::run_inspect(&registry, workflow_id)?;
+                if format == "json" {
+                    serde_json::to_string_pretty(&result).map_err(|err| {
+                        ApiError::ConfigError(format!(
+                            "Failed to serialize workflow inspect result: {}",
+                            err
+                        ))
+                    })
+                } else {
+                    let mut out = String::new();
+                    out.push_str(&format!("workflow_id: {}\n", result.workflow_id));
+                    out.push_str(&format!("source_layer: {}\n", result.source_layer));
+                    if let Some(path) = result.source_path {
+                        out.push_str(&format!("source_path: {}\n", path));
+                    }
+                    out.push_str(&format!("version: {}\n", result.profile.version));
+                    out.push_str(&format!("title: {}\n", result.profile.title));
+                    out.push_str(&format!("description: {}\n", result.profile.description));
+                    out.push_str(&format!("turn_count: {}\n", result.profile.turns.len()));
+                    out.push_str(&format!("gate_count: {}\n", result.profile.gates.len()));
+                    for turn in result.profile.ordered_turns() {
+                        out.push_str(&format!(
+                            "turn:{} seq:{} gate:{} prompt:{}\n",
+                            turn.turn_id, turn.seq, turn.gate_id, turn.prompt_ref
+                        ));
+                    }
+                    Ok(out.trim_end().to_string())
+                }
+            }
+            WorkflowCommands::Execute {
+                workflow_id,
+                node,
+                path,
+                path_positional,
+                agent,
+                provider,
+                frame_type,
+                force,
+            } => {
+                let path_merged = path.as_ref().or(path_positional.as_ref()).cloned();
+                let execute_request = WorkflowExecuteRequest {
+                    workflow_id: workflow_id.clone(),
+                    node: node.clone(),
+                    path: path_merged,
+                    agent_id: agent.clone(),
+                    provider_name: provider.clone(),
+                    frame_type: frame_type.clone(),
+                    force: *force,
+                };
+                let registry = self.workflow_registry.read();
+                let result = WorkflowCommandService::run_execute(
+                    self.api.as_ref(),
+                    self.workspace_root.as_path(),
+                    &registry,
+                    &execute_request,
+                )?;
+                Ok(format!(
+                    "Workflow execution completed: workflow_id={}, thread_id={}, turns_completed={}, final_frame_id={}, skipped={}",
+                    result.workflow_id,
+                    result.thread_id,
+                    result.turns_completed,
+                    result.final_frame_id.as_deref().unwrap_or("none"),
+                    result.skipped
+                ))
+            }
+        }
+    }
+
+    fn load_runtime_config(&self) -> Result<crate::config::MerkleConfig, ApiError> {
+        if let Some(ref config_path) = self.config_path {
+            ConfigLoader::load_from_file(config_path).map_err(|err| {
+                ApiError::ConfigError(format!(
+                    "Failed to load config from {}: {}",
+                    config_path.display(),
+                    err
+                ))
+            })
+        } else {
+            ConfigLoader::load(&self.workspace_root)
+                .map_err(|err| ApiError::ConfigError(format!("Failed to load config: {}", err)))
+        }
+    }
+
     fn handle_watch(
         &self,
         debounce_ms: u64,
         batch_window_ms: u64,
         session_id: &str,
     ) -> Result<String, ApiError> {
-        let config = if let Some(ref config_path) = self.config_path {
-            ConfigLoader::load_from_file(config_path).map_err(|e| {
-                ApiError::ConfigError(format!(
-                    "Failed to load config from {}: {}",
-                    config_path.display(),
-                    e
-                ))
-            })?
-        } else {
-            ConfigLoader::load(&self.workspace_root)
-                .map_err(|e| ApiError::ConfigError(format!("Failed to load config: {}", e)))?
-        };
+        let config = self.load_runtime_config()?;
+        let workflow_registry = WorkflowRegistry::load(&self.workspace_root, &config.workflows)?;
 
         {
             let mut registry = self.api.agent_registry().write();
             registry.load_from_config(&config).map_err(|e| {
                 ApiError::ConfigError(format!("Failed to load agents from config: {}", e))
             })?;
+            for agent in registry.list_all() {
+                validate_agent_binding(agent, &workflow_registry)?;
+            }
+        }
+
+        {
+            let mut shared = self.workflow_registry.write();
+            *shared = workflow_registry;
         }
 
         let ignore_patterns = ignore::load_ignore_patterns(&self.workspace_root)
@@ -1416,6 +1549,7 @@ impl RunContext {
         watch_config.ignore_patterns = ignore_patterns;
         watch_config.session_id = Some(session_id.to_string());
         watch_config.progress = Some(self.progress.clone());
+        watch_config.workflow_registry = Some(self.workflow_registry.clone());
 
         let daemon = WatchDaemon::new(self.api.clone(), watch_config)?;
         tracing::info!("Starting watch mode daemon");
