@@ -8,3 +8,4 @@ pub mod profile;
 pub mod record_contracts;
 pub mod registry;
 pub mod resolver;
+pub mod state_store;

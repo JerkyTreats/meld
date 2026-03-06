@@ -1,7 +1,7 @@
 # Turn Manager Implementation Plan
 
 Date: 2026-03-06
-Status: active with Phase 1 through Phase 3 complete
+Status: active with Phase 1 through Phase 4 complete
 Scope: workflow bootstrap turn manager
 
 ## Overview
@@ -47,8 +47,8 @@ This turn manager plan does not expand non default path behavior.
 | 1 | Workflow profile loader and schema validation | None | complete |
 | 2 | Agent workflow binding integration | Phase 1 | complete |
 | 3 | Workflow runtime core registry resolver executor | Phase 1 and Phase 2 | complete |
-| 4 | Durable workflow state persistence and resume | Phase 3 | in progress |
-| 5 | Prompt reference and artifact read integration | Phase 3 and Phase 4 | planned |
+| 4 | Durable workflow state persistence and resume | Phase 3 | complete |
+| 5 | Prompt reference and artifact read integration | Phase 3 and Phase 4 | in progress |
 | 6 | CLI and watch adapter integration | Phase 2 through Phase 5 | planned |
 | 7 | Verification lock and readiness signoff | Phase 1 through Phase 6 | planned |
 
@@ -209,6 +209,11 @@ This turn manager plan does not expand non default path behavior.
 
 **Goal**: persist thread turn gate and linkage records with deterministic ids and resume semantics.
 
+**Completion snapshot**:
+- completion date: 2026-03-06
+- implementation commit: pending
+- result: all Phase 4 tasks complete and verification gates passing
+
 **Source docs**:
 - [Turn Manager Functional Specification](README.md)
 - [Turn Manager Technical Specification](technical_spec.md)
@@ -216,11 +221,11 @@ This turn manager plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Add workflow state store contracts for thread turn gate and linkage records. | Planned |
-| Wire runtime writes to canonical validators in `src/workflow/record_contracts`. | Planned |
-| Implement resume from failed turn behavior using persisted deterministic state. | Planned |
-| Add idempotent write semantics for retry and replay scenarios. | Planned |
-| Add typed state store errors for missing invalid and incompatible records. | Planned |
+| Add workflow state store contracts for thread turn gate and linkage records. | Complete |
+| Wire runtime writes to canonical validators in `src/workflow/record_contracts`. | Complete |
+| Implement resume from failed turn behavior using persisted deterministic state. | Complete |
+| Add idempotent write semantics for retry and replay scenarios. | Complete |
+| Add typed state store errors for missing invalid and incompatible records. | Complete |
 
 **Exit criteria**:
 - workflow state records persist and rehydrate with canonical schema validation
@@ -234,10 +239,18 @@ This turn manager plan does not expand non default path behavior.
 - `src/workflow`
 - `tests/integration/workflow_contracts_conformance.rs`
 
-**Planned verification evidence**:
+**Implementation evidence**:
+- format gate passed: `cargo fmt -- --check`
 - compile gate: `cargo check`
 - unit gate: `cargo test workflow::record_contracts`
 - integration gate: `cargo test --test integration_tests integration::workflow_contracts_conformance::`
+- full suite gate passed: `cargo test`
+
+**Phase completion notes**:
+- new workflow state persistence contracts now live in `src/workflow/state_store.rs`
+- workflow executor now persists thread turn gate and prompt link records through canonical validators
+- failed workflow runs now persist resumable state and resume from `next_turn_seq` when policy allows
+- completed turn outputs now persist for deterministic downstream input resolution during resume
 
 ---
 
