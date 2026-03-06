@@ -1,7 +1,7 @@
 # Turn Manager Implementation Plan
 
 Date: 2026-03-06
-Status: active with Phase 1 through Phase 6 complete
+Status: implementation complete with Phase 1 through Phase 7 complete
 Scope: workflow bootstrap turn manager
 
 ## Overview
@@ -50,7 +50,7 @@ This turn manager plan does not expand non default path behavior.
 | 4 | Durable workflow state persistence and resume | Phase 3 | complete |
 | 5 | Prompt reference and artifact read integration | Phase 3 and Phase 4 | complete |
 | 6 | CLI and watch adapter integration | Phase 2 through Phase 5 | complete |
-| 7 | Verification lock and readiness signoff | Phase 1 through Phase 6 | planned |
+| 7 | Verification lock and readiness signoff | Phase 1 through Phase 6 | complete |
 
 ---
 
@@ -359,25 +359,38 @@ This turn manager plan does not expand non default path behavior.
 
 **Goal**: run end to end verification and publish readiness evidence for implementation complete state.
 
+**Completion snapshot**:
+- completion date: 2026-03-06
+- implementation commit: pending
+- result: all Phase 7 tasks complete and verification gates passing
+
 | Task | Completion |
 |------|------------|
-| Run compile and full test gates after all phase code changes. | Planned |
-| Run focused parity checks for unbound legacy and bound workflow execution paths. | Planned |
-| Validate typed deterministic error behavior for profile binding gate and state failures. | Planned |
-| Confirm CLI path exception list remains unchanged from current policy baseline. | Planned |
-| Publish phase completion notes and verification evidence in this plan. | Planned |
+| Run compile and full test gates after all phase code changes. | Complete |
+| Run focused parity checks for unbound legacy and bound workflow execution paths. | Complete |
+| Validate typed deterministic error behavior for profile binding gate and state failures. | Complete |
+| Confirm CLI path exception list remains unchanged from current policy baseline. | Complete |
+| Publish phase completion notes and verification evidence in this plan. | Complete |
 
 **Exit criteria**:
 - all required gates pass with no unresolved high severity regressions
 - workflow runtime is active for bound agents with deterministic persistence and gate behavior
 - legacy one shot behavior remains stable for unbound agents
 
-**Planned verification evidence**:
-- compile gate: `cargo check`
-- full suite gate: `cargo test`
-- targeted gate: `cargo test --test integration_tests integration::generation_parity::`
-- targeted gate: `cargo test --test integration_tests integration::workflow_contracts_conformance::`
-- targeted gate: `cargo test --test integration_tests integration::context_cli::`
+**Implementation evidence**:
+- format gate passed: `cargo fmt -- --check`
+- compile gate passed: `cargo check`
+- targeted gate passed: `cargo test --test integration_tests integration::generation_parity::`
+- targeted gate passed: `cargo test --test integration_tests integration::workflow_contracts_conformance::`
+- targeted gate passed: `cargo test --test integration_tests integration::context_cli::`
+- full suite gate passed: `cargo test`
+
+**Phase completion notes**:
+- verification lock confirms unbound legacy generation parity remains stable
+- workflow contract conformance tests confirm canonical validator behavior remains stable
+- workflow CLI and watch routing tests pass with deterministic outcomes
+- CLI path exception list in this plan remains unchanged from baseline
+- turn manager implementation scope is complete for all non deferred items
 
 ## Readiness Checklist
 
