@@ -138,6 +138,7 @@ pub fn initialize_agents(force: bool) -> Result<InitResult, ApiError> {
             role: agent.role,
             system_prompt: None,
             system_prompt_path: agent.prompt_file.map(|s| s.to_string()),
+            workflow_id: None,
             metadata: Default::default(),
         };
 
@@ -291,6 +292,7 @@ mod tests {
                 role: agent.role,
                 system_prompt: None,
                 system_prompt_path: agent.prompt_file.map(|s| s.to_string()),
+                workflow_id: None,
                 metadata: Default::default(),
             };
 

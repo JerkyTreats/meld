@@ -28,6 +28,10 @@ pub struct AgentConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt_path: Option<String>,
 
+    /// Optional workflow profile binding
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_id: Option<String>,
+
     /// Agent-specific metadata
     #[serde(default)]
     pub metadata: AgentMetadata,

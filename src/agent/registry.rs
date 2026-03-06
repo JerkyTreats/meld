@@ -67,6 +67,7 @@ impl AgentRegistry {
     ) -> Result<(), ApiError> {
         for (_, agent_config) in &config.agents {
             let mut identity = AgentIdentity::new(agent_config.agent_id.clone(), agent_config.role);
+            identity.workflow_id = agent_config.workflow_id.clone();
 
             // Store system prompt in metadata if provided
             if let Some(system_prompt) = &agent_config.system_prompt {
@@ -90,6 +91,7 @@ impl AgentRegistry {
         for stored in self.storage.list()? {
             let mut identity =
                 AgentIdentity::new(stored.config.agent_id.clone(), stored.config.role);
+            identity.workflow_id = stored.config.workflow_id.clone();
             if let Some(prompt) = stored.resolved_system_prompt {
                 if !prompt.is_empty() {
                     identity

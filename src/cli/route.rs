@@ -13,6 +13,8 @@ use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
 use crate::telemetry::sessions::policy::PrunePolicy;
 use crate::telemetry::{ProgressRuntime, ProviderLifecycleEventData};
 use crate::tree::walker::WalkerConfig;
+use crate::workflow::binding::validate_agent_binding;
+use crate::workflow::registry::WorkflowRegistry;
 use crate::workspace::{
     format_unified_status_text, format_workspace_status_text, WatchConfig, WatchDaemon,
     WorkspaceCommandService, WorkspaceStatusRequest,
@@ -39,6 +41,7 @@ pub struct RunContext {
     frame_storage_path: PathBuf,
     #[allow(dead_code)]
     artifact_storage_path: PathBuf,
+    workflow_registry: Arc<parking_lot::RwLock<WorkflowRegistry>>,
     progress: Arc<ProgressRuntime>,
 }
 
@@ -53,6 +56,11 @@ impl RunContext {
         Arc::clone(&self.progress)
     }
 
+    /// Workflow profile registry.
+    pub fn workflow_registry(&self) -> Arc<parking_lot::RwLock<WorkflowRegistry>> {
+        Arc::clone(&self.workflow_registry)
+    }
+
     /// Create run context from workspace root and optional config path. Uses ConfigLoader only.
     pub fn new(workspace_root: PathBuf, config_path: Option<PathBuf>) -> Result<Self, ApiError> {
         let config = if let Some(ref cfg_path) = config_path {
@@ -63,6 +71,7 @@ impl RunContext {
 
         let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(&workspace_root)?;
+        let workflow_registry = WorkflowRegistry::load(&workspace_root, &config.workflows)?;
 
         std::fs::create_dir_all(&store_path)
             .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
@@ -107,9 +116,14 @@ impl RunContext {
         provider_registry.load_from_config(&config)?;
         provider_registry.load_from_xdg()?;
 
+        for agent in agent_registry.list_all() {
+            validate_agent_binding(agent, &workflow_registry)?;
+        }
+
         let agent_registry = Arc::new(parking_lot::RwLock::new(agent_registry));
         let provider_registry = Arc::new(parking_lot::RwLock::new(provider_registry));
         let lock_manager = Arc::new(crate::concurrency::NodeLockManager::new());
+        let workflow_registry = Arc::new(parking_lot::RwLock::new(workflow_registry));
 
         let api = ContextApi::with_workspace_root(
             node_store,
@@ -132,6 +146,7 @@ impl RunContext {
             store_path,
             frame_storage_path,
             artifact_storage_path,
+            workflow_registry,
             progress,
         })
     }

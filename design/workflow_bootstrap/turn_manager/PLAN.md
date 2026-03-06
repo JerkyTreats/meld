@@ -1,7 +1,7 @@
 # Turn Manager Implementation Plan
 
 Date: 2026-03-06
-Status: active with Phase 1 complete
+Status: active with Phase 1 and Phase 2 complete
 Scope: workflow bootstrap turn manager
 
 ## Overview
@@ -45,8 +45,8 @@ This turn manager plan does not expand non default path behavior.
 | Phase | Goal | Dependencies | Status |
 |-------|------|--------------|--------|
 | 1 | Workflow profile loader and schema validation | None | complete |
-| 2 | Agent workflow binding integration | Phase 1 | in progress |
-| 3 | Workflow runtime core registry resolver executor | Phase 1 and Phase 2 | planned |
+| 2 | Agent workflow binding integration | Phase 1 | complete |
+| 3 | Workflow runtime core registry resolver executor | Phase 1 and Phase 2 | in progress |
 | 4 | Durable workflow state persistence and resume | Phase 3 | planned |
 | 5 | Prompt reference and artifact read integration | Phase 3 and Phase 4 | planned |
 | 6 | CLI and watch adapter integration | Phase 2 through Phase 5 | planned |
@@ -109,17 +109,22 @@ This turn manager plan does not expand non default path behavior.
 
 **Goal**: add optional workflow binding in agent profiles and validation for write capable agents.
 
+**Completion snapshot**:
+- completion date: 2026-03-06
+- implementation commit: pending
+- result: all Phase 2 tasks complete and verification gates passing
+
 **Source docs**:
 - [Turn Manager Functional Specification](README.md)
 - [Turn Manager Technical Specification](technical_spec.md)
 
 | Task | Completion |
 |------|------------|
-| Add optional `workflow_id` field in agent profile config contract. | Planned |
-| Extend agent validation to verify referenced workflow id exists in resolved registry. | Planned |
-| Preserve zero or one workflow binding rule per agent. | Planned |
-| Keep unbound agents on legacy one shot generation flow with no behavior drift. | Planned |
-| Add typed binding errors for missing workflow ids and invalid compatibility states. | Planned |
+| Add optional `workflow_id` field in agent profile config contract. | Complete |
+| Extend agent validation to verify referenced workflow id exists in resolved registry. | Complete |
+| Preserve zero or one workflow binding rule per agent. | Complete |
+| Keep unbound agents on legacy one shot generation flow with no behavior drift. | Complete |
+| Add typed binding errors for missing workflow ids and invalid compatibility states. | Complete |
 
 **Exit criteria**:
 - bound agent validation fails deterministically for unknown workflow id
@@ -134,11 +139,19 @@ This turn manager plan does not expand non default path behavior.
 - `tests/integration/config_integration.rs`
 - `tests/integration/generation_parity.rs`
 
-**Planned verification evidence**:
+**Implementation evidence**:
+- format gate passed: `cargo fmt -- --check`
 - compile gate: `cargo check`
 - unit gate: `cargo test agent::profile::validation`
 - integration gate: `cargo test --test integration_tests integration::config_integration::`
 - parity gate: `cargo test --test integration_tests integration::generation_parity::`
+- full suite gate passed: `cargo test`
+
+**Phase completion notes**:
+- agent profile schema now includes optional `workflow_id`
+- agent identity now carries optional workflow binding metadata
+- workflow binding validation now runs during `RunContext` initialization against the workflow registry
+- invalid workflow bindings fail before command execution with deterministic config errors
 
 ---
 

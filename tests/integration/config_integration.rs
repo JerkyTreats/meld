@@ -148,6 +148,7 @@ fn test_config_validation_errors() {
             role: AgentRole::Writer,
             system_prompt: None,
             system_prompt_path: None,
+            workflow_id: None,
             metadata: Default::default(),
         },
     );

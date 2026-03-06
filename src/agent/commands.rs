@@ -264,6 +264,7 @@ impl AgentCommandService {
             role,
             system_prompt: None,
             system_prompt_path: normalized_prompt_path.clone(),
+            workflow_id: None,
             metadata: Default::default(),
         };
         if role != AgentRole::Reader {
@@ -487,6 +488,7 @@ mod tests {
                 role: AgentRole::Writer,
                 system_prompt: None,
                 system_prompt_path: Some("prompts/missing.md".to_string()),
+                workflow_id: None,
                 metadata,
             };
 

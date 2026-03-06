@@ -34,5 +34,17 @@ pub fn validate_agent_config(
         }
     }
 
+    if let Some(workflow_id) = &agent.workflow_id {
+        if workflow_id.trim().is_empty() {
+            return Err("workflow_id cannot be empty if provided".to_string());
+        }
+        if agent.role != AgentRole::Writer {
+            return Err(format!(
+                "Agent '{}' has workflow_id set but role {:?} is not allowed for workflow binding",
+                agent.agent_id, agent.role
+            ));
+        }
+    }
+
     Ok(())
 }

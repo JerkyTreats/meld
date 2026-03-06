@@ -34,6 +34,9 @@ pub struct AgentIdentity {
     pub role: AgentRole,
     /// Additional capabilities (for future extensibility)
     pub capabilities: Vec<Capability>,
+    /// Optional workflow profile binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_id: Option<String>,
     /// Metadata for agent (e.g., system prompts, custom settings)
     #[serde(default)]
     pub metadata: AgentMetadata,
@@ -51,8 +54,14 @@ impl AgentIdentity {
             agent_id,
             role,
             capabilities,
+            workflow_id: None,
             metadata: AgentMetadata::new(),
         }
+    }
+
+    /// Return optional workflow binding ID.
+    pub fn workflow_binding(&self) -> Option<&str> {
+        self.workflow_id.as_deref()
     }
 
     /// Check if the agent has read capability

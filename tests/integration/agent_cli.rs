@@ -24,6 +24,7 @@ fn create_test_agent(
         role,
         system_prompt: None,
         system_prompt_path: prompt_path.map(|s| s.to_string()),
+        workflow_id: None,
         metadata: Default::default(),
     };
 
