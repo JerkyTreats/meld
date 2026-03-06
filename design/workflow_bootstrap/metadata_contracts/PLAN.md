@@ -305,7 +305,7 @@ This metadata contracts plan does not expand non default path behavior.
 | Run artifact gates for placement digest verification and lineage determinism behavior. | Complete |
 | Run read gates for default projection privileged allow deny and audit persistence behavior. | Deferred |
 | Run workflow record gates for schema versioning and reference integrity validation behavior. | Complete |
-| Publish phase completion notes unresolved risks and evidence links in this plan. | Pending |
+| Publish phase completion notes unresolved risks and evidence links in this plan. | Complete |
 
 **Exit criteria**:
 - all gate classes pass with no unresolved high risk issues
@@ -318,6 +318,25 @@ This metadata contracts plan does not expand non default path behavior.
 - `tests/integration/context_cli.rs`
 - `tests/integration/generation_parity.rs`
 - `tests/fixtures/generation_parity`
+
+**Implementation evidence**:
+- format gate passed: `cargo fmt -- --check`
+- compile gate passed: `cargo check`
+- contract gate passed: `cargo test frame_write_contract -- --nocapture`
+- artifact gate passed: `cargo test prompt_context -- --nocapture`
+- workflow record gate passed: `cargo test record_contracts -- --nocapture`
+- characterization gate passed: `cargo test --test integration_tests integration::context_api:: -- --nocapture`
+- characterization gate passed: `cargo test --test integration_tests integration::frame_queue:: -- --nocapture`
+- artifact gate passed: `cargo test --test integration_tests integration::generation_parity:: -- --nocapture`
+- workflow record gate passed: `cargo test --test integration_tests integration::workflow_contracts_conformance:: -- --nocapture`
+- readiness gate passed: `cargo test --test integration_tests integration::progress_observability:: -- --nocapture`
+- readiness gate passed: `cargo test --test integration_tests integration::config_integration:: -- --nocapture`
+- full suite gate passed: `cargo test`
+
+**Phase completion notes**:
+- Phase 6 is complete for all non deferred gate classes
+- read gate scope remains deferred by milestone policy
+- no unresolved high risk failures were observed in this gate run
 
 ## Verification Strategy
 
@@ -349,7 +368,7 @@ Workflow record gates:
 3. Completed Phase 3 prompt context artifact placement
 4. Phase 4 is permanently deferred for this milestone
 5. Completed Phase 5 workflow consumer schema contracts
-6. Execute Phase 6 verification lock and readiness signoff
+6. Completed Phase 6 verification lock and readiness signoff
 
 ## Risk Watchlist
 

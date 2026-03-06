@@ -1,12 +1,12 @@
-# Turn Manager Generalized Spec
+# Turn Manager Functional Specification
 
-Date: 2026-03-01
+Date: 2026-03-06
 
 ## Intent
 
-Define a runtime turn manager that executes user defined multi turn workflows from configuration.
+Define the desired behavior for a generalized turn manager that executes user defined multi turn workflows from configuration.
 
-This replaces hard coded workflow logic with profile driven behavior.
+This document is a target state specification.
 
 ## Related Specs
 
@@ -17,67 +17,67 @@ This replaces hard coded workflow logic with profile driven behavior.
 
 ## Scope
 
-- user defined workflow configuration
+- workflow profile configuration format
 - runtime workflow loading and validation
-- generic turn execution model
-- agent to workflow binding with zero or one workflow per agent
-
-## Domain Ownership And Boundaries
-
-Ownership:
-- `src/workflow` owns workflow registry resolver executor and state orchestration
-- `src/context` owns frame and context retrieval
-- `src/prompt_context` owns prompt render and context payload artifact storage
-- `src/metadata` owns metadata key validation size budgets and mutability rules
-
-Boundary rules:
-- turn manager components live in `src/workflow` and delegate storage and validation by contract
-- context reads are requested through `src/context` contracts only
-- prompt render and context payload writes are requested through `src/prompt_context` contracts only
-- metadata and budget enforcement is requested through `src/metadata` contracts only
-- tooling and api adapters parse route and format only, then delegate to `src/workflow`
+- generic turn execution semantics
+- explicit agent to workflow binding with zero or one workflow per agent
+- deterministic state persistence for thread, turn, gate, and artifact linkage
 
 ## Non Goals
 
 - multi workflow binding per agent
-- remote workflow distribution
-- dynamic code execution from configuration
+- remote profile distribution
+- dynamic code execution from profile content
+
+## Domain Ownership And Boundaries
+
+Ownership:
+- `src/workflow` owns workflow profile registry, resolution, execution orchestration, and workflow state records
+- `src/context` owns context read and frame retrieval contracts
+- `src/prompt_context` owns prompt render and context payload artifact storage contracts
+- `src/metadata` owns metadata key descriptors, mutability policy, and budget policy contracts
+
+Boundary rules:
+- workflow orchestration must live in `src/workflow`
+- workflow domain may consume only public contracts from other domains
+- workflow domain must not redefine metadata schemas owned by metadata contracts
+- tooling and api adapters may parse and format only, then delegate to workflow orchestration
 
 ## Core Requirements
 
-1. workflows are defined by user owned config files
-2. turn manager loads workflow definitions at runtime
-3. turns are ordered by declared sequence
-4. each turn references prompt source through path or artifact id
-5. gates are declared in config and evaluated after each turn
-6. thread state and turn state are persisted durably
-7. agent can bind to zero or one workflow
+1. Workflow profiles are user owned configuration artifacts
+2. Runtime loads workflow profiles from declared configuration sources
+3. Turn execution order is stable and deterministic by declared sequence
+4. Each turn resolves prompt input from file path or artifact id reference
+5. Gates are declared in profile config and evaluated after each turn
+6. Thread state and turn state are durably persisted as workflow records
+7. Agent binding is explicit and supports zero or one workflow id per agent
 
-## Metadata Contract Binding Requirements
+## Metadata Contract Requirements
 
-- turn manager state records must align to thread turn gate and prompt link schemas defined by metadata contracts
-- turn manager must consume metadata owned schema validators and must not redefine these schemas in workflow domain modules
-- workflow runtime must consume prompt and context artifacts through digest and link references
-- workflow runtime must preserve deterministic retry behavior when artifact write recovery is required
+- Workflow state records must align to canonical thread turn gate and prompt link contracts
+- Workflow domain must consume canonical validators and must not clone schema definitions
+- Prompt and context artifact linkage must use digest and id references
+- Retry behavior must preserve deterministic linkage semantics for all artifact references
 
-## Configuration Domain
+## Configuration Model
 
-Suggested directory layout:
+Suggested profile layout:
 
 - `config/workflows/<workflow_id>.yaml`
 - `config/workflows/prompts/<workflow_id>/<prompt_name>.md`
 
-Suggested load order:
+Suggested load priority:
 
-1. workspace scoped workflow files
-2. user config scoped workflow files
-3. built in fallback profiles
+1. workspace scoped workflow profiles
+2. user config scoped workflow profiles
+3. built in default workflow profiles
 
 Conflict rule:
 
-- first match by workflow id wins by load order priority
+- first profile by workflow id wins according to load priority
 
-## Workflow Definition Model
+## Workflow Profile Schema
 
 Top level fields:
 
@@ -130,10 +130,9 @@ Failure policy fields:
 - `resume_from_failed_turn`
 - `stop_on_gate_fail`
 
-## Profile Extension Fields
+## Optional Profile Extension Fields
 
-Some workflow profiles may define optional top level identity fields for routing and targeting.
-These fields do not change generalized turn manager execution semantics.
+Optional identity and routing fields may be present in selected profiles.
 
 Optional fields:
 
@@ -142,19 +141,21 @@ Optional fields:
 - `target_frame_type`
 - `final_artifact_type`
 
+These fields may specialize profile routing but must not change core execution semantics.
+
 ## Prompt Reference Model
 
 `prompt_ref` supports:
 
 - local file path reference
-- CAS artifact id reference
+- content addressed artifact id reference
 
-Runtime behavior:
+Required runtime behavior:
 
 - resolve prompt source
 - render prompt template with turn inputs
-- create prompt render artifact when policy allows
-- provide in memory prompt payload to provider call
+- persist prompt render artifact when policy allows
+- provide rendered prompt payload to provider calls
 
 ## Agent Binding Model
 
@@ -166,67 +167,67 @@ Agent config extension:
 
 Rules:
 
-- agent with no workflow uses one shot generation behavior
-- agent with workflow id runs through turn manager
+- agent with no workflow id uses one shot generation
+- agent with workflow id runs the configured turn workflow
 - invalid workflow id fails validation for write capable agents
 
-## Turn Manager Runtime Components
+## Runtime Components
 
 ### Registry
 
-- loads workflow config files
-- validates schemas and references
-- exposes workflow lookup by id
+- load and index workflow profiles
+- validate schema and cross reference integrity
+- expose lookup by workflow id
 
 ### Resolver
 
-- resolves agent workflow binding
-- resolves prompt references
-- resolves artifact inputs for each turn
+- resolve agent workflow binding
+- resolve prompt and input references per turn
+- resolve artifact references for downstream turn inputs
 
 ### Executor
 
-- executes turns in declared order
-- writes turn artifacts
-- runs declared gate
-- records turn and gate state
+- execute turns in declared sequence
+- persist turn output artifacts under policy rules
+- evaluate gates after turn completion
+- persist turn and gate record state
 
 ### State Store
 
-- thread record store
-- turn record store
-- gate record store
-- artifact link store
+- thread record storage
+- turn record storage
+- gate record storage
+- prompt and output link record storage
 
 ## Determinism Rules
 
-- turn order must be stable by `seq`
-- gate evaluation must be pure for same inputs
-- artifact ids must be content addressed
-- retries must preserve turn input snapshot
+- turn ordering is stable by `seq`
+- gate evaluation is pure for identical inputs
+- artifact ids are content addressed
+- retries reuse the same turn input snapshot contract
 
 ## Validation Rules
 
-Workflow load must fail when:
+Profile load must fail on:
 
-- duplicate `workflow_id` with same priority source
-- missing prompt reference
-- duplicate turn sequence
+- duplicate `workflow_id` inside the same priority layer
+- unresolved prompt reference
+- duplicate turn sequence values
 - unknown gate type
-- missing gate reference from turn
+- unresolved gate reference from a turn
 
-Runtime execution must fail when:
+Runtime execution must fail on:
 
-- turn output is missing required fields
-- gate fails with strict fail policy
-- declared size budgets are exceeded
+- turn output missing required fields
+- gate failure under strict stop policy
+- declared metadata or artifact budgets exceeded
 
-## Minimal Config Example
+## Minimal Profile Example
 
 ```yaml
 workflow_id: docs_writer_thread_v1
 version: 1
-title: Docs Writer Turned Workflow
+title: Docs Writer Turn Workflow
 thread_policy:
   start_conditions:
     require_directory_target: true
@@ -314,14 +315,6 @@ failure_policy:
   stop_on_gate_fail: true
 ```
 
-## Bootstrap Adoption Plan
-
-1. add workflow registry and schema validation
-2. add optional `workflow_id` field to agent config
-3. route generation through turn manager when workflow is bound
-4. migrate `docs_writer` to workflow profile config
-5. keep one shot generation for agents without workflow binding
-
 ## Future Work
 
-Post feature exploration items live in [Workflow Bootstrap Future Work Backlog](../future_work.md).
+Future exploration items live in [Workflow Bootstrap Future Work Backlog](../future_work.md).
