@@ -3,6 +3,7 @@
 
 use crate::agent::profile::prompt_contract::PromptContract;
 use crate::api::ContextApi;
+use crate::config::ConfigLoader;
 use crate::context::generation::plan::{
     FailurePolicy, GenerationItem, GenerationNodeType, GenerationPlan, PlanPriority,
 };
@@ -12,6 +13,8 @@ use crate::error::ApiError;
 use crate::store::NodeType;
 use crate::telemetry::{now_millis, ProgressRuntime};
 use crate::types::NodeID;
+use crate::workflow::executor::{execute_registered_workflow, WorkflowExecutionRequest};
+use crate::workflow::registry::WorkflowRegistry;
 use crate::workspace;
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -391,6 +394,46 @@ pub fn run_generate(
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
     let node_path = node_record.path.to_string_lossy().to_string();
+
+    if let Some(workflow_id) = agent.workflow_binding() {
+        let config = ConfigLoader::load(workspace_root)?;
+        let workflow_registry = WorkflowRegistry::load(workspace_root, &config.workflows)?;
+        let registered_profile = workflow_registry.get(workflow_id).ok_or_else(|| {
+            ApiError::ConfigError(format!(
+                "Agent '{}' references unknown workflow_id '{}'",
+                agent_id, workflow_id
+            ))
+        })?;
+
+        let summary = execute_registered_workflow(
+            api.as_ref(),
+            workspace_root,
+            registered_profile,
+            &WorkflowExecutionRequest {
+                node_id,
+                agent_id: agent_id.clone(),
+                provider_name: provider_name.clone(),
+                frame_type: frame_type.clone(),
+                force: request.force,
+            },
+        )?;
+
+        if summary.turns_completed == 0 {
+            return Ok(format!(
+                "Workflow '{}' skipped: existing frame head reused for thread {}.",
+                summary.workflow_id, summary.thread_id
+            ));
+        }
+
+        let final_frame = summary
+            .final_frame_id
+            .map(hex::encode)
+            .unwrap_or_else(|| "none".to_string());
+        return Ok(format!(
+            "Workflow execution completed: workflow_id={}, thread_id={}, turns_completed={}, final_frame_id={}",
+            summary.workflow_id, summary.thread_id, summary.turns_completed, final_frame
+        ));
+    }
 
     PromptContract::from_agent(&agent)?;
 

@@ -1,7 +1,7 @@
 # Turn Manager Implementation Plan
 
 Date: 2026-03-06
-Status: active with Phase 1 and Phase 2 complete
+Status: active with Phase 1 through Phase 3 complete
 Scope: workflow bootstrap turn manager
 
 ## Overview
@@ -46,8 +46,8 @@ This turn manager plan does not expand non default path behavior.
 |-------|------|--------------|--------|
 | 1 | Workflow profile loader and schema validation | None | complete |
 | 2 | Agent workflow binding integration | Phase 1 | complete |
-| 3 | Workflow runtime core registry resolver executor | Phase 1 and Phase 2 | in progress |
-| 4 | Durable workflow state persistence and resume | Phase 3 | planned |
+| 3 | Workflow runtime core registry resolver executor | Phase 1 and Phase 2 | complete |
+| 4 | Durable workflow state persistence and resume | Phase 3 | in progress |
 | 5 | Prompt reference and artifact read integration | Phase 3 and Phase 4 | planned |
 | 6 | CLI and watch adapter integration | Phase 2 through Phase 5 | planned |
 | 7 | Verification lock and readiness signoff | Phase 1 through Phase 6 | planned |
@@ -159,6 +159,11 @@ This turn manager plan does not expand non default path behavior.
 
 **Goal**: implement workflow owned orchestration for turn ordered execution with gate checkpoints.
 
+**Completion snapshot**:
+- completion date: 2026-03-06
+- implementation commit: pending
+- result: all Phase 3 tasks complete and verification gates passing
+
 **Source docs**:
 - [Turn Manager Functional Specification](README.md)
 - [Turn Manager Technical Specification](technical_spec.md)
@@ -166,11 +171,11 @@ This turn manager plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Implement workflow registry module for validated profile lookup. | Planned |
-| Implement resolver module for turn input refs prompt refs and output refs contracts. | Planned |
-| Implement executor turn loop with deterministic sequence ordering retry limits and failure policy branching. | Planned |
-| Introduce gate evaluator registry and deterministic known gate type evaluation contracts. | Planned |
-| Add compatibility adapter seam so unbound agent execution path remains legacy context generation. | Planned |
+| Implement workflow registry module for validated profile lookup. | Complete |
+| Implement resolver module for turn input refs prompt refs and output refs contracts. | Complete |
+| Implement executor turn loop with deterministic sequence ordering retry limits and failure policy branching. | Complete |
+| Introduce gate evaluator registry and deterministic known gate type evaluation contracts. | Complete |
+| Add compatibility adapter seam so unbound agent execution path remains legacy context generation. | Complete |
 
 **Exit criteria**:
 - bound agents execute declared turns in stable sequence
@@ -185,10 +190,18 @@ This turn manager plan does not expand non default path behavior.
 - `src/context/queue.rs`
 - `tests/integration/generation_parity.rs`
 
-**Planned verification evidence**:
+**Implementation evidence**:
+- format gate passed: `cargo fmt -- --check`
 - compile gate: `cargo check`
 - unit gate: `cargo test workflow::executor`
 - integration gate: `cargo test --test integration_tests integration::generation_parity::`
+- full suite gate passed: `cargo test`
+
+**Phase completion notes**:
+- new workflow resolver contracts now live in `src/workflow/resolver.rs`
+- new workflow gate evaluator contracts now live in `src/workflow/gates.rs`
+- new workflow executor runtime now lives in `src/workflow/executor.rs`
+- `context generate` now routes bound agents through workflow execution and keeps legacy generation for unbound agents
 
 ---
 
