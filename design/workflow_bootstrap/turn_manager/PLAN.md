@@ -1,7 +1,7 @@
 # Turn Manager Implementation Plan
 
 Date: 2026-03-06
-Status: active planning
+Status: active with Phase 1 complete
 Scope: workflow bootstrap turn manager
 
 ## Overview
@@ -44,8 +44,8 @@ This turn manager plan does not expand non default path behavior.
 
 | Phase | Goal | Dependencies | Status |
 |-------|------|--------------|--------|
-| 1 | Workflow profile loader and schema validation | None | planned |
-| 2 | Agent workflow binding integration | Phase 1 | planned |
+| 1 | Workflow profile loader and schema validation | None | complete |
+| 2 | Agent workflow binding integration | Phase 1 | in progress |
 | 3 | Workflow runtime core registry resolver executor | Phase 1 and Phase 2 | planned |
 | 4 | Durable workflow state persistence and resume | Phase 3 | planned |
 | 5 | Prompt reference and artifact read integration | Phase 3 and Phase 4 | planned |
@@ -58,6 +58,11 @@ This turn manager plan does not expand non default path behavior.
 
 **Goal**: introduce workflow profile discovery load priority and schema validation contracts.
 
+**Completion snapshot**:
+- completion date: 2026-03-06
+- implementation commit: pending
+- result: all Phase 1 tasks complete and verification gates passing
+
 **Source docs**:
 - [Turn Manager Functional Specification](README.md)
 - [Turn Manager Code Path Findings](code_path_findings.md)
@@ -65,11 +70,11 @@ This turn manager plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Add workflow profile source model in config domain with workspace user and default layers. | Planned |
-| Implement deterministic source priority merge with duplicate workflow id detection per priority layer. | Planned |
-| Implement profile schema decoding and validation for thread turn gate artifact and failure policy sections. | Planned |
-| Add typed deterministic errors for invalid profile payload unresolved references and duplicate sequence ids. | Planned |
-| Add inspection helper contract that exposes workflow id source and version metadata. | Planned |
+| Add workflow profile source model in config domain with workspace user and default layers. | Complete |
+| Implement deterministic source priority merge with duplicate workflow id detection per priority layer. | Complete |
+| Implement profile schema decoding and validation for thread turn gate artifact and failure policy sections. | Complete |
+| Add typed deterministic errors for invalid profile payload unresolved references and duplicate sequence ids. | Complete |
+| Add inspection helper contract that exposes workflow id source and version metadata. | Complete |
 
 **Exit criteria**:
 - runtime resolves one deterministic profile set for identical inputs
@@ -84,10 +89,19 @@ This turn manager plan does not expand non default path behavior.
 - `src/workflow`
 - `tests/integration/config_integration.rs`
 
-**Planned verification evidence**:
+**Implementation evidence**:
+- format gate passed: `cargo fmt -- --check`
 - compile gate: `cargo check`
 - unit gate: `cargo test workflow::registry`
 - integration gate: `cargo test --test integration_tests integration::config_integration::`
+- full suite gate passed: `cargo test`
+
+**Phase completion notes**:
+- new workflow profile schema and validation contracts now live in `src/workflow/profile.rs`
+- new source priority loader and registry now live in `src/workflow/registry.rs`
+- builtin docs writer profile and builtin prompts now live in `src/workflow/builtin.rs`
+- config domain now exposes workflow profile source configuration with deterministic path resolution
+- loader validates duplicate workflow ids per source layer and validates prompt refs for builtin artifact and file path forms
 
 ---
 

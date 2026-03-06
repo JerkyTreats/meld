@@ -1,5 +1,6 @@
-//! Workflow domain contract seam.
-//!
-//! Runtime workflow orchestration remains out of scope for this phase.
+//! Workflow domain modules.
 
+pub mod builtin;
+pub mod profile;
 pub mod record_contracts;
+pub mod registry;
