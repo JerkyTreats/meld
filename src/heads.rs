@@ -142,14 +142,13 @@ impl HeadIndex {
 
     /// Get the persistence path for a workspace root
     ///
-    /// Uses XDG data directory: $XDG_DATA_HOME/meld/workspaces/<hash>/head_index.bin
+    /// Uses XDG data directory path for the workspace.
+    /// If XDG resolution is unavailable, falls back to a temp data root outside the workspace.
     pub fn persistence_path(workspace_root: &Path) -> PathBuf {
-        // Try to use XDG data directory, fall back to .meld if XDG is not available
         if let Ok(data_dir) = crate::config::xdg::workspace_data_dir(workspace_root) {
             data_dir.join("head_index.bin")
         } else {
-            // Fallback to old location if XDG is not available
-            workspace_root.join(".meld").join("head_index.bin")
+            fallback_workspace_data_dir(workspace_root).join("head_index.bin")
         }
     }
 
@@ -304,6 +303,27 @@ impl HeadIndex {
     }
 }
 
+fn fallback_workspace_data_dir(workspace_root: &Path) -> PathBuf {
+    let canonical = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let mut data_dir = std::env::temp_dir().join("meld");
+
+    for component in canonical.components() {
+        match component {
+            std::path::Component::RootDir => {}
+            std::path::Component::Prefix(_) => {}
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {}
+            std::path::Component::Normal(name) => {
+                data_dir = data_dir.join(name);
+            }
+        }
+    }
+
+    data_dir
+}
+
 /// Persistence format for head index (version 1: legacy single-blob).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HeadIndexPersistenceV1 {
@@ -367,7 +387,8 @@ mod tests {
     fn test_persistence_path() {
         let workspace_root = std::path::Path::new("/workspace");
         let path = HeadIndex::persistence_path(workspace_root);
-        assert!(path.to_string_lossy().ends_with(".meld/head_index.bin"));
+        assert!(path.to_string_lossy().ends_with("head_index.bin"));
+        assert!(!path.to_string_lossy().contains("/workspace/.meld/"));
     }
 
     #[test]

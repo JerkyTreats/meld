@@ -62,19 +62,22 @@ pub struct WorkflowStateStore {
 
 impl WorkflowStateStore {
     pub fn new(workspace_root: &Path) -> Result<Self, ApiError> {
-        let root = workspace_root.join(".meld").join("workflow");
-        fs::create_dir_all(root.join("threads")).map_err(|err| {
-            ApiError::ConfigError(format!("Failed to create thread store: {}", err))
-        })?;
-        fs::create_dir_all(root.join("turns")).map_err(|err| {
-            ApiError::ConfigError(format!("Failed to create turn store: {}", err))
-        })?;
-        fs::create_dir_all(root.join("gates")).map_err(|err| {
-            ApiError::ConfigError(format!("Failed to create gate store: {}", err))
-        })?;
-        fs::create_dir_all(root.join("prompt_links")).map_err(|err| {
-            ApiError::ConfigError(format!("Failed to create prompt link store: {}", err))
-        })?;
+        let fallback_root = fallback_workspace_data_dir(workspace_root).join("workflow");
+        let root = match crate::config::xdg::workspace_data_dir(workspace_root) {
+            Ok(data_dir) => {
+                let primary = data_dir.join("workflow");
+                if ensure_root_directories(&primary).is_ok() {
+                    primary
+                } else {
+                    ensure_root_directories(&fallback_root)?;
+                    fallback_root.clone()
+                }
+            }
+            Err(_) => {
+                ensure_root_directories(&fallback_root)?;
+                fallback_root.clone()
+            }
+        };
         Ok(Self { root })
     }
 
@@ -244,6 +247,40 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), ApiError>
     fs::write(path, content).map_err(|err| {
         ApiError::ConfigError(format!("Failed to write '{}': {}", path.display(), err))
     })
+}
+
+fn ensure_root_directories(root: &Path) -> Result<(), ApiError> {
+    fs::create_dir_all(root.join("threads"))
+        .map_err(|err| ApiError::ConfigError(format!("Failed to create thread store: {}", err)))?;
+    fs::create_dir_all(root.join("turns"))
+        .map_err(|err| ApiError::ConfigError(format!("Failed to create turn store: {}", err)))?;
+    fs::create_dir_all(root.join("gates"))
+        .map_err(|err| ApiError::ConfigError(format!("Failed to create gate store: {}", err)))?;
+    fs::create_dir_all(root.join("prompt_links")).map_err(|err| {
+        ApiError::ConfigError(format!("Failed to create prompt link store: {}", err))
+    })?;
+    Ok(())
+}
+
+fn fallback_workspace_data_dir(workspace_root: &Path) -> PathBuf {
+    let canonical = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let mut data_dir = std::env::temp_dir().join("meld");
+
+    for component in canonical.components() {
+        match component {
+            std::path::Component::RootDir => {}
+            std::path::Component::Prefix(_) => {}
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {}
+            std::path::Component::Normal(name) => {
+                data_dir = data_dir.join(name);
+            }
+        }
+    }
+
+    data_dir
 }
 
 #[cfg(test)]
