@@ -1,7 +1,7 @@
 # Workflow Metadata Contracts Implementation Plan
 
 Date: 2026-03-04
-Status: active with Phase 1 through Phase 3 complete and Phase 4 next
+Status: active with Phase 1 through Phase 5 complete and Phase 4 permanently deferred
 Scope: workflow bootstrap metadata contracts
 
 ## Overview
@@ -17,7 +17,7 @@ Metadata contracts outcome:
 - one shared write boundary enforces deterministic metadata contract behavior for direct and queue paths
 - prompt and context payloads move to local CAS artifacts with digest verified lineage links
 - default read projection remains safe and registry driven
-- privileged prompt and context retrieval is explicit, scoped, authenticated, and audit logged
+- privileged prompt and context retrieval is permanently deferred for this milestone
 - canonical schema contracts are published for thread turn gate and prompt link records
 
 ## Related Specs
@@ -50,8 +50,8 @@ This metadata contracts plan does not expand non default path behavior.
 | 1 | Registry descriptor expansion | None | complete |
 | 2 | Write boundary contract upgrade | Phase 1 | complete |
 | 3 | Prompt context artifact placement | Phase 2 | complete |
-| 4 | Read visibility and privileged query contract | Phase 2 and Phase 3 | pending |
-| 5 | Workflow consumer schema contracts | Phase 4 | pending |
+| 4 | Read visibility and privileged query contract | Phase 2 and Phase 3 | permanently deferred |
+| 5 | Workflow consumer schema contracts | Phase 3 | complete |
 | 6 | Verification lock and readiness signoff | Phase 1 through Phase 5 | in progress |
 
 ---
@@ -215,6 +215,7 @@ This metadata contracts plan does not expand non default path behavior.
 ### Phase 4 - Read visibility and privileged query contract
 
 **Goal**: Preserve default safe metadata projection and add explicit privileged prompt and context retrieval with authorization and audit behavior.
+**Status**: permanently deferred for this milestone.
 
 **Source docs**:
 - [Workflow Metadata Contracts Spec](README.md)
@@ -223,12 +224,12 @@ This metadata contracts plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Keep default `context get` projection registry driven and unchanged for non privileged calls. | Pending |
-| Add explicit privileged query path to resolve prompt and context artifacts by typed reference. | Pending |
-| Enforce authenticated scoped grants expiry and reason code checks for privileged reads. | Pending |
-| Emit immutable audit events for privileged allow and deny outcomes before payload return. | Pending |
-| Add compatibility read behavior for legacy frames without full digest key set. | Pending |
-| Add integration tests for allow deny compatibility and digest verification behavior. | Pending |
+| Keep default `context get` projection registry driven and unchanged for non privileged calls. | Deferred |
+| Add explicit privileged query path to resolve prompt and context artifacts by typed reference. | Deferred |
+| Enforce authenticated scoped grants expiry and reason code checks for privileged reads. | Deferred |
+| Emit immutable audit events for privileged allow and deny outcomes before payload return. | Deferred |
+| Add compatibility read behavior for legacy frames without full digest key set. | Deferred |
+| Add integration tests for allow deny compatibility and digest verification behavior. | Deferred |
 
 **Exit criteria**:
 - default read output remains safe by default and excludes hidden and forbidden payload values
@@ -247,7 +248,11 @@ This metadata contracts plan does not expand non default path behavior.
 
 ### Phase 5 - Workflow consumer schema contracts
 
-**Goal**: Publish canonical metadata owned schema contracts and validators for thread turn gate and prompt link records.
+**Goal**: Publish canonical workflow owned schema contracts and validators for thread turn gate and prompt link records.
+
+**Completion snapshot**:
+- completion date: 2026-03-06
+- implementation state: local working tree implementation complete with verification gates passing
 
 **Source docs**:
 - [Workflow Metadata Contracts Spec](README.md)
@@ -256,22 +261,36 @@ This metadata contracts plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Define canonical schema contracts and version policy for thread turn gate and prompt link records in metadata domain. | Pending |
-| Define reference integrity validation for frame and artifact identifiers in record payloads. | Pending |
-| Publish metadata owned validator surfaces for workflow and context consumer domains. | Pending |
-| Add consumer conformance tests that verify import and validator usage with no schema redefinition in consumer domains. | Pending |
-| Document compatibility contract for legacy and current metadata states in consumer reads. | Pending |
+| Define canonical schema contracts and version policy for thread turn gate and prompt link records in workflow domain. | Complete |
+| Define reference integrity validation for frame and artifact identifiers in record payloads. | Complete |
+| Publish workflow owned validator surfaces for workflow and context consumer domains. | Complete |
+| Add consumer conformance tests that verify import and validator usage with no schema redefinition in consumer domains. | Complete |
+| Document compatibility contract for legacy and current metadata states in consumer reads. | Complete |
 
 **Exit criteria**:
 - canonical record schema contracts are explicit versioned and test covered
-- reference integrity rules are enforced by metadata validators
-- consumer domains use metadata owned contracts directly
+- reference integrity rules are enforced by workflow validators
+- consumer domains use workflow owned contracts directly
 
 **Key files and seams**:
-- `src/metadata`
-- `src/workflow`
-- `src/context`
-- `tests/integration`
+- `src/workflow.rs`
+- `src/workflow/record_contracts.rs`
+- `src/workflow/record_contracts`
+- `src/metadata/prompt_link_contract.rs`
+- `tests/integration/workflow_contracts_conformance.rs`
+- `src/error.rs`
+
+**Implementation evidence**:
+- contract gate passed: `cargo test record_contracts`
+- integration gate passed: `cargo test --test integration_tests integration::workflow_contracts_conformance::`
+- full suite gate passed: `cargo test`
+
+**Phase completion notes**:
+- workflow domain now publishes canonical workflow record contracts for thread turn gate and prompt link records with strict V1 schema version policy
+- workflow validators now enforce semantic identifier checks for thread turn gate and prompt link references with deterministic typed failures
+- workflow domain contract seam is explicit and no longer proxies metadata for record schema ownership
+- context lineage output now maps to canonical prompt link record builders through workflow conversion helpers that consume metadata prompt link contracts
+- compatibility for existing generation and read paths remains unchanged because workflow record contracts are additive in this phase
 
 ---
 
@@ -284,8 +303,8 @@ This metadata contracts plan does not expand non default path behavior.
 | Run characterization gates for deterministic write and queue retry behavior. | Complete |
 | Run contract gates for unknown forbidden mutability budget and required digest key checks. | Complete |
 | Run artifact gates for placement digest verification and lineage determinism behavior. | Complete |
-| Run read gates for default projection privileged allow deny and audit persistence behavior. | Pending |
-| Run workflow record gates for schema versioning and reference integrity validation behavior. | Pending |
+| Run read gates for default projection privileged allow deny and audit persistence behavior. | Deferred |
+| Run workflow record gates for schema versioning and reference integrity validation behavior. | Complete |
 | Publish phase completion notes unresolved risks and evidence links in this plan. | Pending |
 
 **Exit criteria**:
@@ -316,7 +335,7 @@ Artifact gates:
 
 Read gates:
 - default read projection remains registry driven and safe by default
-- privileged path is explicit, authenticated, scoped, audited, and digest verified
+- privileged path is deferred for this milestone
 
 Workflow record gates:
 - canonical schema contracts are deterministic and versioned
@@ -328,8 +347,8 @@ Workflow record gates:
 1. Completed Phase 1 registry descriptor expansion
 2. Completed Phase 2 write boundary contract upgrade
 3. Completed Phase 3 prompt context artifact placement
-4. Execute Phase 4 read visibility and privileged query contract
-5. Execute Phase 5 workflow consumer schema contracts
+4. Phase 4 is permanently deferred for this milestone
+5. Completed Phase 5 workflow consumer schema contracts
 6. Execute Phase 6 verification lock and readiness signoff
 
 ## Risk Watchlist

@@ -158,6 +158,8 @@ fn terminal_error_class(error: &ApiError) -> String {
         }
         ApiError::PromptContextArtifactSizeMismatch { .. } => "PromptContextArtifactSizeMismatch",
         ApiError::PromptLinkContractInvalid { .. } => "PromptLinkContractInvalid",
+        ApiError::WorkflowRecordContractInvalid { .. } => "WorkflowRecordContractInvalid",
+        ApiError::WorkflowRecordReferenceInvalid { .. } => "WorkflowRecordReferenceInvalid",
         ApiError::MissingPromptContractField { .. } => "MissingPromptContractField",
         ApiError::ProviderError(_) => "ProviderError",
         ApiError::ProviderNotConfigured(_) => "ProviderNotConfigured",

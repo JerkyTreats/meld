@@ -22,4 +22,5 @@ pub mod telemetry;
 pub mod tree;
 pub mod types;
 pub mod views;
+pub mod workflow;
 pub mod workspace;

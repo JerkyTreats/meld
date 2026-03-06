@@ -119,6 +119,12 @@ pub enum ApiError {
     #[error("Prompt link contract is invalid: {reason}")]
     PromptLinkContractInvalid { reason: String },
 
+    #[error("Workflow record contract is invalid for '{record_type}': {reason}")]
+    WorkflowRecordContractInvalid { record_type: String, reason: String },
+
+    #[error("Workflow record reference is invalid for '{record_type}': {reason}")]
+    WorkflowRecordReferenceInvalid { record_type: String, reason: String },
+
     #[error("Agent '{agent_id}' missing required prompt contract field '{field}'")]
     MissingPromptContractField {
         agent_id: String,
@@ -230,6 +236,20 @@ impl Clone for ApiError {
                 actual_bytes: *actual_bytes,
             },
             ApiError::PromptLinkContractInvalid { reason } => ApiError::PromptLinkContractInvalid {
+                reason: reason.clone(),
+            },
+            ApiError::WorkflowRecordContractInvalid {
+                record_type,
+                reason,
+            } => ApiError::WorkflowRecordContractInvalid {
+                record_type: record_type.clone(),
+                reason: reason.clone(),
+            },
+            ApiError::WorkflowRecordReferenceInvalid {
+                record_type,
+                reason,
+            } => ApiError::WorkflowRecordReferenceInvalid {
+                record_type: record_type.clone(),
                 reason: reason.clone(),
             },
             ApiError::MissingPromptContractField { agent_id, field } => {
