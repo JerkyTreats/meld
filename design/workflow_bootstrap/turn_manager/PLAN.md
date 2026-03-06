@@ -1,7 +1,7 @@
 # Turn Manager Implementation Plan
 
 Date: 2026-03-06
-Status: active with Phase 1 through Phase 4 complete
+Status: active with Phase 1 through Phase 5 complete
 Scope: workflow bootstrap turn manager
 
 ## Overview
@@ -48,8 +48,8 @@ This turn manager plan does not expand non default path behavior.
 | 2 | Agent workflow binding integration | Phase 1 | complete |
 | 3 | Workflow runtime core registry resolver executor | Phase 1 and Phase 2 | complete |
 | 4 | Durable workflow state persistence and resume | Phase 3 | complete |
-| 5 | Prompt reference and artifact read integration | Phase 3 and Phase 4 | in progress |
-| 6 | CLI and watch adapter integration | Phase 2 through Phase 5 | planned |
+| 5 | Prompt reference and artifact read integration | Phase 3 and Phase 4 | complete |
+| 6 | CLI and watch adapter integration | Phase 2 through Phase 5 | in progress |
 | 7 | Verification lock and readiness signoff | Phase 1 through Phase 6 | planned |
 
 ---
@@ -258,6 +258,11 @@ This turn manager plan does not expand non default path behavior.
 
 **Goal**: support per turn prompt refs by file path or artifact id and verified artifact reads for downstream turns.
 
+**Completion snapshot**:
+- completion date: 2026-03-06
+- implementation commit: pending
+- result: all Phase 5 tasks complete and verification gates passing
+
 **Source docs**:
 - [Turn Manager Functional Specification](README.md)
 - [Turn Manager Technical Specification](technical_spec.md)
@@ -265,11 +270,11 @@ This turn manager plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Implement prompt ref resolver for file path and artifact id sources. | Planned |
-| Integrate verified artifact read path from prompt context storage into workflow resolver. | Planned |
-| Persist prompt render and output linkage records with deterministic digest references. | Planned |
-| Ensure retry path reuses stable input snapshot and stable prompt linkage identity. | Planned |
-| Add deterministic failure behavior for digest mismatch missing artifact and invalid prompt ref type. | Planned |
+| Implement prompt ref resolver for file path and artifact id sources. | Complete |
+| Integrate verified artifact read path from prompt context storage into workflow resolver. | Complete |
+| Persist prompt render and output linkage records with deterministic digest references. | Complete |
+| Ensure retry path reuses stable input snapshot and stable prompt linkage identity. | Complete |
+| Add deterministic failure behavior for digest mismatch missing artifact and invalid prompt ref type. | Complete |
 
 **Exit criteria**:
 - artifact id prompt refs execute successfully under workflow runtime
@@ -283,11 +288,19 @@ This turn manager plan does not expand non default path behavior.
 - `tests/integration/generation_parity.rs`
 - `tests/integration/workflow_contracts_conformance.rs`
 
-**Planned verification evidence**:
+**Implementation evidence**:
+- format gate passed: `cargo fmt -- --check`
 - compile gate: `cargo check`
 - unit gate: `cargo test prompt_context`
 - unit gate: `cargo test workflow::resolver`
 - integration gate: `cargo test --test integration_tests integration::workflow_contracts_conformance::`
+- full suite gate passed: `cargo test`
+
+**Phase completion notes**:
+- workflow prompt resolution now supports file path builtin and artifact id prompt refs
+- prompt context storage now exposes verified artifact id reads for workflow resolver use
+- resolver now enforces digest verification through prompt context storage contracts
+- workflow executor persists deterministic prompt link records for each completed turn
 
 ---
 

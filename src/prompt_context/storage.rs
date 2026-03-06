@@ -95,6 +95,34 @@ impl PromptContextArtifactStorage {
         Ok(bytes)
     }
 
+    pub fn read_by_artifact_id_verified(&self, artifact_id: &str) -> Result<Vec<u8>, ApiError> {
+        if artifact_id.len() != 64 || !artifact_id.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return Err(ApiError::ConfigError(format!(
+                "artifact_id '{}' must be a 64 character hex digest",
+                artifact_id
+            )));
+        }
+
+        let path = self.artifact_path_for_digest(artifact_id);
+        if !path.exists() {
+            return Err(ApiError::PromptContextArtifactNotFound {
+                artifact_id: artifact_id.to_string(),
+            });
+        }
+
+        let bytes = fs::read(&path).map_err(StorageError::from)?;
+        let actual_digest = blake3::hash(&bytes).to_hex().to_string();
+        if actual_digest != artifact_id {
+            return Err(ApiError::PromptContextArtifactDigestMismatch {
+                artifact_id: artifact_id.to_string(),
+                expected_digest: artifact_id.to_string(),
+                actual_digest,
+            });
+        }
+
+        Ok(bytes)
+    }
+
     fn artifact_path_for_digest(&self, digest: &str) -> PathBuf {
         if digest.len() < 4 {
             return self.root.join("invalid").join(format!("{}.blob", digest));
@@ -144,5 +172,19 @@ mod tests {
             err,
             ApiError::PromptContextArtifactDigestMismatch { .. }
         ));
+    }
+
+    #[test]
+    fn read_by_artifact_id_verified_reads_and_verifies() {
+        let temp = TempDir::new().unwrap();
+        let storage = PromptContextArtifactStorage::new(temp.path()).unwrap();
+        let artifact = storage
+            .write_utf8(PromptContextArtifactKind::RenderedPrompt, "payload")
+            .unwrap();
+
+        let read = storage
+            .read_by_artifact_id_verified(&artifact.artifact_id)
+            .unwrap();
+        assert_eq!(read, b"payload");
     }
 }

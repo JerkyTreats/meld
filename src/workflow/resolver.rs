@@ -165,37 +165,9 @@ fn resolve_prompt_path(
 }
 
 fn read_artifact_prompt(api: &ContextApi, artifact_id: &str) -> Result<String, ApiError> {
-    if artifact_id.len() != 64 || !artifact_id.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Err(ApiError::ConfigError(format!(
-            "artifact prompt_ref id '{}' must be a 64 char hex digest",
-            artifact_id
-        )));
-    }
-
-    let artifact_path = api
+    let bytes = api
         .prompt_context_storage()
-        .root()
-        .join(&artifact_id[0..2])
-        .join(&artifact_id[2..4])
-        .join(format!("{}.blob", artifact_id));
-
-    let bytes = std::fs::read(&artifact_path).map_err(|err| {
-        ApiError::ConfigError(format!(
-            "Failed to read artifact prompt '{}' from {}: {}",
-            artifact_id,
-            artifact_path.display(),
-            err
-        ))
-    })?;
-
-    let digest = blake3::hash(&bytes).to_hex().to_string();
-    if digest != artifact_id {
-        return Err(ApiError::PromptContextArtifactDigestMismatch {
-            artifact_id: artifact_id.to_string(),
-            expected_digest: artifact_id.to_string(),
-            actual_digest: digest,
-        });
-    }
+        .read_by_artifact_id_verified(artifact_id)?;
 
     String::from_utf8(bytes).map_err(|err| {
         ApiError::ConfigError(format!(
@@ -296,5 +268,26 @@ mod tests {
         let inputs =
             resolve_turn_inputs(&api, node_id, "context-writer", &turn, &HashMap::new()).unwrap();
         assert!(inputs.context_payload.contains("target_context"));
+    }
+
+    #[test]
+    fn resolve_prompt_template_reads_artifact_prompt_ref() {
+        let (api, temp, _) = create_test_api();
+        let artifact = api
+            .prompt_context_storage()
+            .write_utf8(
+                crate::prompt_context::PromptContextArtifactKind::RenderedPrompt,
+                "artifact prompt body",
+            )
+            .unwrap();
+
+        let prompt = resolve_prompt_template(
+            &api,
+            temp.path(),
+            None,
+            &format!("artifact:{}", artifact.artifact_id),
+        )
+        .unwrap();
+        assert_eq!(prompt, "artifact prompt body");
     }
 }
