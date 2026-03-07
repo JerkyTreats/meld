@@ -1,3 +1,4 @@
+use crate::context::generation::program::TargetExecutionProgram;
 use crate::context::queue::Priority;
 use crate::error::ApiError;
 use crate::types::{FrameID, NodeID};
@@ -45,6 +46,7 @@ pub struct GenerationItem {
     pub provider_name: String,
     pub frame_type: String,
     pub force: bool,
+    pub program: TargetExecutionProgram,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +147,7 @@ mod tests {
             provider_name: "provider".to_string(),
             frame_type: "context-writer".to_string(),
             force: false,
+            program: TargetExecutionProgram::single_shot(),
         }
     }
 

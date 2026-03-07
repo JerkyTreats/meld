@@ -260,6 +260,7 @@ impl GenerationExecutor {
 mod tests {
     use super::*;
     use crate::context::generation::plan::{FailurePolicy, GenerationNodeType, PlanPriority};
+    use crate::context::generation::program::TargetExecutionProgram;
     use crate::types::Hash;
     use parking_lot::Mutex;
     use std::collections::HashMap;
@@ -303,6 +304,7 @@ mod tests {
             provider_name: "provider".to_string(),
             frame_type: "context-writer".to_string(),
             force: false,
+            program: TargetExecutionProgram::single_shot(),
         }
     }
 

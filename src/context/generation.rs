@@ -6,13 +6,20 @@ pub mod executor;
 pub mod metadata_construction;
 pub mod orchestration;
 pub mod plan;
+pub mod program;
 pub mod prompt_collection;
 pub mod provider_execution;
 pub mod run;
+pub mod selection;
 
 pub use executor::{GenerationExecutor, QueueSubmitter};
 pub use plan::{
     FailurePolicy, GenerationErrorDetail, GenerationItem, GenerationNodeType, GenerationPlan,
     GenerationResult, LevelSummary, PlanPriority,
 };
+pub use program::{
+    TargetExecutionProgram, TargetExecutionProgramKind, TargetExecutionRequest,
+    TargetExecutionResult,
+};
 pub use run::{run_generate, GenerateRequest};
+pub use selection::resolve_target_execution_program;

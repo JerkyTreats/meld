@@ -13,7 +13,8 @@ pub use facade::ContextFacade;
 pub use frame::{Basis, Frame, FrameMerkleSet, FrameStorage};
 pub use generation::{
     FailurePolicy, GenerationExecutor, GenerationItem, GenerationNodeType, GenerationPlan,
-    GenerationResult, PlanPriority, QueueSubmitter,
+    GenerationResult, PlanPriority, QueueSubmitter, TargetExecutionProgram,
+    TargetExecutionProgramKind, TargetExecutionRequest, TargetExecutionResult,
 };
 pub use queue::{
     FrameGenerationQueue, GenerationConfig, GenerationRequest, GenerationRequestOptions, Priority,

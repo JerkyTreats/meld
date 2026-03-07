@@ -7,6 +7,8 @@ use crate::config::ConfigLoader;
 use crate::context::generation::plan::{
     FailurePolicy, GenerationItem, GenerationNodeType, GenerationPlan, PlanPriority,
 };
+use crate::context::generation::program::TargetExecutionProgram;
+use crate::context::generation::selection::resolve_target_execution_program;
 use crate::context::generation::GenerationExecutor;
 use crate::context::queue::{FrameGenerationQueue, GenerationConfig, QueueEventContext};
 use crate::error::ApiError;
@@ -174,6 +176,7 @@ fn build_plan(
     agent_id: &str,
     provider_name: &str,
     frame_type: &str,
+    program: &TargetExecutionProgram,
 ) -> Result<GenerationPlan, ApiError> {
     if !recursive && is_directory_target && !force {
         if let (Some(prog), Some(sid)) = (progress, session_id) {
@@ -256,6 +259,7 @@ fn build_plan(
                     provider_name: provider_name.to_string(),
                     frame_type: frame_type.to_string(),
                     force,
+                    program: program.clone(),
                 });
             }
             if !items.is_empty() {
@@ -310,6 +314,7 @@ fn build_plan(
             provider_name: provider_name.to_string(),
             frame_type: frame_type.to_string(),
             force,
+            program: program.clone(),
         }]);
     }
 
@@ -381,6 +386,7 @@ pub fn run_generate(
         .unwrap_or_else(|| format!("context-{}", agent_id));
 
     let agent = api.get_agent(&agent_id)?;
+    let execution_program = resolve_target_execution_program(&agent);
     if agent.role != crate::agent::AgentRole::Writer {
         return Err(ApiError::Unauthorized(format!(
             "Agent '{}' has role {:?}, but only Writer agents can generate frames.",
@@ -395,7 +401,7 @@ pub fn run_generate(
         .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
     let node_path = node_record.path.to_string_lossy().to_string();
 
-    if let Some(workflow_id) = agent.workflow_binding() {
+    if let Some(workflow_id) = execution_program.workflow_id() {
         let config = ConfigLoader::load(workspace_root)?;
         let workflow_registry = WorkflowRegistry::load(workspace_root, &config.workflows)?;
         let registered_profile = workflow_registry.get(workflow_id).ok_or_else(|| {
@@ -460,6 +466,7 @@ pub fn run_generate(
         &agent_id,
         &provider_name,
         &frame_type,
+        &execution_program,
     )?;
 
     if let (Some(prog), Some(sid)) = (progress.as_deref(), session_id) {
