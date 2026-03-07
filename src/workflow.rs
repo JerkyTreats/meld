@@ -4,9 +4,14 @@ pub mod binding;
 pub mod builtin;
 pub mod commands;
 pub mod executor;
+pub mod facade;
 pub mod gates;
 pub mod profile;
 pub mod record_contracts;
 pub mod registry;
 pub mod resolver;
 pub mod state_store;
+
+pub use facade::{
+    build_target_execution_request, execute_registered_workflow_target, execute_workflow_target,
+};

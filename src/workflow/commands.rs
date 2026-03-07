@@ -2,10 +2,11 @@
 
 use crate::api::ContextApi;
 use crate::config::WorkflowConfig;
+use crate::context::generation::TargetExecutionProgram;
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::types::NodeID;
-use crate::workflow::executor::{execute_registered_workflow, WorkflowExecutionRequest};
+use crate::workflow::facade::{build_target_execution_request, execute_registered_workflow_target};
 use crate::workflow::profile::WorkflowProfile;
 use crate::workflow::registry::WorkflowRegistry;
 use crate::workspace;
@@ -157,26 +158,34 @@ impl WorkflowCommandService {
             .frame_type
             .clone()
             .unwrap_or_else(|| format!("context-{}", request.agent_id));
-        let summary = execute_registered_workflow(
+        let execution_request = build_target_execution_request(
+            api,
+            node_id,
+            request.agent_id.clone(),
+            request.provider_name.clone(),
+            frame_type,
+            request.force,
+            TargetExecutionProgram::workflow(&request.workflow_id),
+            None,
+            event_context.map(|ctx| ctx.session_id.clone()),
+            None,
+        )?;
+        let result = execute_registered_workflow_target(
             api,
             &workspace_root.to_path_buf(),
             registered_profile,
-            &WorkflowExecutionRequest {
-                node_id,
-                agent_id: request.agent_id.clone(),
-                provider_name: request.provider_name.clone(),
-                frame_type,
-                force: request.force,
-            },
+            &execution_request,
             event_context,
         )?;
 
         Ok(WorkflowExecuteResult {
-            workflow_id: summary.workflow_id,
-            thread_id: summary.thread_id,
-            turns_completed: summary.turns_completed,
-            skipped: summary.turns_completed == 0,
-            final_frame_id: summary.final_frame_id.map(hex::encode),
+            workflow_id: result
+                .workflow_id
+                .unwrap_or_else(|| request.workflow_id.clone()),
+            thread_id: result.thread_id.unwrap_or_default(),
+            turns_completed: result.turns_completed,
+            skipped: result.reused_existing_head,
+            final_frame_id: Some(hex::encode(result.final_frame_id)),
         })
     }
 }

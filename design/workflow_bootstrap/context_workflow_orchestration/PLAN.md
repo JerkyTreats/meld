@@ -35,8 +35,8 @@ This plan does not expand non default path behavior.
 | Phase | Goal | Dependencies | Status |
 |-------|------|--------------|--------|
 | 1 | Target execution contract extraction | None | complete |
-| 2 | Workflow facade and contract implementation | Phase 1 | in progress |
-| 3 | Context orchestration cutover | Phase 1 and Phase 2 | pending |
+| 2 | Workflow facade and contract implementation | Phase 1 | complete |
+| 3 | Context orchestration cutover | Phase 1 and Phase 2 | in progress |
 | 4 | Telemetry and verification hardening | Phase 1 through Phase 3 | pending |
 
 ---
@@ -103,11 +103,11 @@ This plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Add `src/workflow/facade.rs` as the only workflow entry seam consumed by `context`. | Pending |
-| Define workflow request to target execution request mapping inside the workflow domain. | Pending |
-| Return target execution result data with final frame id workflow id thread id and completed turn count. | Pending |
-| Keep thread id derivation gate evaluation and resume policy inside workflow runtime internals. | Pending |
-| Add unit and integration coverage for workflow facade behavior and completed thread reuse. | Pending |
+| Add `src/workflow/facade.rs` as the only workflow entry seam consumed by `context`. | Complete |
+| Define workflow request to target execution request mapping inside the workflow domain. | Complete |
+| Return target execution result data with final frame id workflow id thread id and completed turn count. | Complete |
+| Keep thread id derivation gate evaluation and resume policy inside workflow runtime internals. | Complete |
+| Add unit and integration coverage for workflow facade behavior and completed thread reuse. | Complete |
 
 **Exit criteria**:
 - `context` can request workflow backed target execution through one workflow facade
@@ -125,6 +125,19 @@ This plan does not expand non default path behavior.
 - compile gate: `cargo check`
 - unit gate: `cargo test workflow::executor`
 - integration gate: `cargo test --test integration_tests integration::workflow_cli::`
+
+---
+
+
+**Implementation evidence**:
+- compile gate passed: `cargo check`
+- unit gate passed: `cargo test workflow::executor -- --nocapture`
+- integration gate passed: `cargo test --test integration_tests integration::workflow_cli:: -- --nocapture`
+
+**Phase completion notes**:
+- workflow execution now has a public facade that maps target execution requests to workflow runtime requests and back to target results
+- workflow command execution now uses the workflow facade rather than calling workflow executor internals directly
+- workflow runtime still owns thread id derivation gate behavior and resume semantics behind the public facade
 
 ---
 
