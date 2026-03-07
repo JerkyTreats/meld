@@ -36,7 +36,7 @@ This plan does not expand non default path behavior.
 |-------|------|--------------|--------|
 | 1 | Target execution contract extraction | None | complete |
 | 2 | Workflow facade and contract implementation | Phase 1 | complete |
-| 3 | Context orchestration cutover | Phase 1 and Phase 2 | in progress |
+| 3 | Context orchestration cutover | Phase 1 and Phase 2 | complete |
 | 4 | Telemetry and verification hardening | Phase 1 through Phase 3 | pending |
 
 ---
@@ -151,12 +151,12 @@ This plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Remove direct workflow short circuit from `src/context/generation/run.rs`. | Pending |
-| Resolve execution program once per command and attach that program to every generation item in the plan. | Pending |
-| Route queue request processing through contract dispatch rather than direct one shot generation only. | Pending |
-| Include execution program in dedupe identity so future program kinds remain isolated. | Pending |
-| Add integration coverage for recursive directory generation with workflow backed agents. | Pending |
-| Verify parent directory generation waits for lower level workflow backed items before final parent execution. | Pending |
+| Remove direct workflow short circuit from `src/context/generation/run.rs`. | Complete |
+| Resolve execution program once per command and attach that program to every generation item in the plan. | Complete |
+| Route queue request processing through contract dispatch rather than direct one shot generation only. | Complete |
+| Include execution program in dedupe identity so future program kinds remain isolated. | Complete |
+| Add integration coverage for recursive directory generation with workflow backed agents. | Complete |
+| Verify parent directory generation waits for lower level workflow backed items before final parent execution. | Complete |
 
 **Exit criteria**:
 - workflow backed agents respect subtree batching and bottom up ordering under `context generate`
@@ -177,6 +177,21 @@ This plan does not expand non default path behavior.
 - integration gate: `cargo test --test integration_tests integration::context_cli::`
 - integration gate: `cargo test --test integration_tests integration::workflow_cli::`
 - integration gate: `cargo test --test integration_tests integration::frame_queue::`
+
+---
+
+
+**Implementation evidence**:
+- compile gate passed: `cargo check`
+- integration gate passed: `cargo test --test integration_tests integration::context_cli:: -- --nocapture`
+- integration gate passed: `cargo test --test integration_tests integration::workflow_cli:: -- --nocapture`
+- integration gate passed: `cargo test --test integration_tests integration::frame_queue:: -- --nocapture`
+- integration gate passed: `cargo test --test integration_tests integration::progress_observability::context_generate_with_workflow_agent_uses_context_plan_levels -- --nocapture`
+
+**Phase completion notes**:
+- workflow backed agents now stay inside `context generate` subtree planning and queue dispatch rather than bypassing into one root only workflow call
+- queue dedupe identity now isolates execution program kind so workflow backed items and one shot items do not collide
+- queued workflow execution uses an async workflow facade path so worker tasks do not start nested runtimes
 
 ---
 

@@ -21,6 +21,7 @@ use crate::types::{FrameID, NodeID};
 use crate::views::ViewPolicy;
 use hex;
 use std::collections::{HashSet, VecDeque};
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -96,6 +97,10 @@ impl ContextApi {
             lock_manager,
             workspace_root: Some(workspace_root),
         }
+    }
+
+    pub fn workspace_root(&self) -> Option<&Path> {
+        self.workspace_root.as_deref()
     }
 
     /// Persist indices to disk if workspace root is configured

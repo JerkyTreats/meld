@@ -13,5 +13,7 @@ pub mod resolver;
 pub mod state_store;
 
 pub use facade::{
-    build_target_execution_request, execute_registered_workflow_target, execute_workflow_target,
+    build_target_execution_request, execute_registered_workflow_target,
+    execute_registered_workflow_target_async, execute_workflow_target,
+    execute_workflow_target_async,
 };

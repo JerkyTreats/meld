@@ -2,13 +2,13 @@ use crate::context::generation::plan::GenerationNodeType;
 use crate::types::{FrameID, NodeID};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TargetExecutionProgramKind {
     SingleShot,
     Workflow,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TargetExecutionProgram {
     pub kind: TargetExecutionProgramKind,
     pub workflow_id: Option<String>,

@@ -8,6 +8,7 @@ use crate::context::generation::contracts::{
     GeneratedMetadataBuilder, GenerationOrchestrationRequest,
 };
 use crate::context::generation::orchestration::execute_generation_request;
+use crate::context::generation::{TargetExecutionProgram, TargetExecutionProgramKind};
 use crate::error::ApiError;
 use crate::metadata::frame_types::FrameMetadata;
 use crate::metadata::frame_write_contract::{
@@ -17,6 +18,7 @@ use crate::telemetry::{
     ProgressRuntime, ProviderLifecycleEventData, QueueEventData, QueueStatsEventData,
 };
 use crate::types::{FrameID, NodeID};
+use crate::workflow::{build_target_execution_request, execute_workflow_target_async};
 use hex;
 use parking_lot::RwLock;
 use serde_json::json;
@@ -70,19 +72,31 @@ struct RequestIdentity {
     node_id: NodeID,
     agent_id: String,
     frame_type: String,
+    program: TargetExecutionProgram,
 }
 
 impl RequestIdentity {
-    fn new(node_id: NodeID, agent_id: &str, frame_type: &str) -> Self {
+    fn new(
+        node_id: NodeID,
+        agent_id: &str,
+        frame_type: &str,
+        program: &TargetExecutionProgram,
+    ) -> Self {
         Self {
             node_id,
             agent_id: agent_id.to_string(),
             frame_type: frame_type.to_string(),
+            program: program.clone(),
         }
     }
 
     fn from_request(request: &GenerationRequest) -> Self {
-        Self::new(request.node_id, &request.agent_id, &request.frame_type)
+        Self::new(
+            request.node_id,
+            &request.agent_id,
+            &request.frame_type,
+            &request.program,
+        )
     }
 }
 
@@ -114,6 +128,8 @@ pub struct GenerationRequest {
     pub provider_name: String,
     /// Frame type to generate
     pub frame_type: String,
+    /// Execution program for the target item
+    pub program: TargetExecutionProgram,
     /// Priority level (higher = more important)
     pub priority: Priority,
     /// Number of retry attempts made
@@ -134,6 +150,7 @@ impl Clone for GenerationRequest {
             agent_id: self.agent_id.clone(),
             provider_name: self.provider_name.clone(),
             frame_type: self.frame_type.clone(),
+            program: self.program.clone(),
             priority: self.priority,
             retry_count: self.retry_count,
             created_at: self.created_at,
@@ -362,10 +379,11 @@ impl FrameGenerationQueue {
     ) -> Result<RequestId, ApiError> {
         let mut queue = self.queue.lock().await;
         let mut dedupe = self.dedupe_index.lock().await;
+        let program = TargetExecutionProgram::single_shot();
         let resolved_frame_type = frame_type
             .clone()
             .unwrap_or_else(|| format!("context-{}", agent_id));
-        let identity = RequestIdentity::new(node_id, &agent_id, &resolved_frame_type);
+        let identity = RequestIdentity::new(node_id, &agent_id, &resolved_frame_type, &program);
 
         if let Some(existing_entry) = dedupe.get(&identity) {
             let existing_id = existing_entry.request_id;
@@ -407,6 +425,7 @@ impl FrameGenerationQueue {
             agent_id: agent_id.clone(),
             provider_name: provider_name.clone(),
             frame_type: frame_type.clone(),
+            program,
             priority,
             retry_count: 0,
             created_at: Instant::now(),
@@ -478,12 +497,13 @@ impl FrameGenerationQueue {
         .await
     }
 
-    pub async fn enqueue_and_wait_with_options(
+    pub async fn enqueue_and_wait_with_program(
         &self,
         node_id: NodeID,
         agent_id: String,
         provider_name: String,
         frame_type: Option<String>,
+        program: TargetExecutionProgram,
         priority: Priority,
         timeout: Option<Duration>,
         options: GenerationRequestOptions,
@@ -493,7 +513,7 @@ impl FrameGenerationQueue {
         let mut dedupe = self.dedupe_index.lock().await;
 
         let resolved_frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
-        let identity = RequestIdentity::new(node_id, &agent_id, &resolved_frame_type);
+        let identity = RequestIdentity::new(node_id, &agent_id, &resolved_frame_type, &program);
 
         if let Some(existing_entry) = dedupe.get_mut(&identity) {
             existing_entry.waiters.push(tx);
@@ -535,7 +555,6 @@ impl FrameGenerationQueue {
             }
         }
 
-        // Check queue size limit
         if queue.len() >= self.config.max_queue_size {
             warn!(
                 queue_size = queue.len(),
@@ -556,6 +575,7 @@ impl FrameGenerationQueue {
             agent_id: agent_id.clone(),
             provider_name: provider_name.clone(),
             frame_type: frame_type.clone(),
+            program,
             priority,
             retry_count: 0,
             created_at: Instant::now(),
@@ -563,20 +583,17 @@ impl FrameGenerationQueue {
             options,
         };
 
-        // Push to priority queue (BinaryHeap maintains max-heap property)
         queue.push(request);
         let mut entry = DedupeEntry::new(request_id);
         entry.waiters.push(tx);
         dedupe.insert(identity, entry);
 
-        // Update stats
         {
             let mut stats = self.stats.write();
             stats.pending += 1;
         }
         self.emit_queue_stats_event();
 
-        // Notify workers that a new item is available
         self.notify.notify_one();
         drop(dedupe);
         drop(queue);
@@ -605,6 +622,29 @@ impl FrameGenerationQueue {
         self.wait_for_generation_completion(rx, timeout).await
     }
 
+    pub async fn enqueue_and_wait_with_options(
+        &self,
+        node_id: NodeID,
+        agent_id: String,
+        provider_name: String,
+        frame_type: Option<String>,
+        priority: Priority,
+        timeout: Option<Duration>,
+        options: GenerationRequestOptions,
+    ) -> Result<FrameID, ApiError> {
+        self.enqueue_and_wait_with_program(
+            node_id,
+            agent_id,
+            provider_name,
+            frame_type,
+            TargetExecutionProgram::single_shot(),
+            priority,
+            timeout,
+            options,
+        )
+        .await
+    }
+
     /// Enqueue multiple requests (batch enqueue)
     pub async fn enqueue_batch(
         &self,
@@ -616,10 +656,11 @@ impl FrameGenerationQueue {
         let mut new_requests = Vec::new();
         let mut staged = HashMap::new();
         let mut enqueue_events = Vec::new();
+        let program = TargetExecutionProgram::single_shot();
 
         for (node_id, agent_id, provider_name, frame_type, priority) in requests {
             let frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
-            let identity = RequestIdentity::new(node_id, &agent_id, &frame_type);
+            let identity = RequestIdentity::new(node_id, &agent_id, &frame_type, &program);
 
             if let Some(existing_id) = staged.get(&identity) {
                 request_ids.push(*existing_id);
@@ -662,6 +703,7 @@ impl FrameGenerationQueue {
                 agent_id: agent_id.clone(),
                 provider_name: provider_name.clone(),
                 frame_type: frame_type.clone(),
+                program: program.clone(),
                 priority,
                 retry_count: 0,
                 created_at: Instant::now(),
@@ -1058,6 +1100,34 @@ impl FrameGenerationQueue {
         event_context: Option<QueueEventContext>,
         metadata_builder: &GeneratedMetadataBuilder,
     ) -> Result<FrameID, ApiError> {
+        if request.program.kind == TargetExecutionProgramKind::Workflow {
+            let workspace_root = api.workspace_root().ok_or_else(|| {
+                ApiError::ConfigError(
+                    "Workflow target execution requires workspace root context".to_string(),
+                )
+            })?;
+            let target_request = build_target_execution_request(
+                api,
+                request.node_id,
+                request.agent_id.clone(),
+                request.provider_name.clone(),
+                request.frame_type.clone(),
+                request.options.force,
+                request.program.clone(),
+                request.options.plan_id.clone(),
+                event_context.as_ref().map(|ctx| ctx.session_id.clone()),
+                None,
+            )?;
+            let target_result = execute_workflow_target_async(
+                api,
+                workspace_root,
+                &target_request,
+                event_context.as_ref(),
+            )
+            .await?;
+            return Ok(target_result.final_frame_id);
+        }
+
         let orchestration_request = GenerationOrchestrationRequest {
             request_id: request.request_id.as_u64(),
             node_id: request.node_id,

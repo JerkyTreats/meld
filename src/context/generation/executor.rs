@@ -33,11 +33,12 @@ impl QueueSubmitter for FrameGenerationQueue {
         plan_id: &str,
         wait_timeout: Option<Duration>,
     ) -> Result<FrameID, ApiError> {
-        self.enqueue_and_wait_with_options(
+        self.enqueue_and_wait_with_program(
             item.node_id,
             item.agent_id.clone(),
             item.provider_name.clone(),
             Some(item.frame_type.clone()),
+            item.program.clone(),
             priority,
             wait_timeout,
             crate::context::queue::GenerationRequestOptions {

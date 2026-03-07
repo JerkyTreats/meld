@@ -3,7 +3,6 @@
 
 use crate::agent::profile::prompt_contract::PromptContract;
 use crate::api::ContextApi;
-use crate::config::ConfigLoader;
 use crate::context::generation::plan::{
     FailurePolicy, GenerationItem, GenerationNodeType, GenerationPlan, PlanPriority,
 };
@@ -15,8 +14,6 @@ use crate::error::ApiError;
 use crate::store::NodeType;
 use crate::telemetry::{now_millis, ProgressRuntime};
 use crate::types::NodeID;
-use crate::workflow::executor::{execute_registered_workflow, WorkflowExecutionRequest};
-use crate::workflow::registry::WorkflowRegistry;
 use crate::workspace;
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -401,55 +398,10 @@ pub fn run_generate(
         .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
     let node_path = node_record.path.to_string_lossy().to_string();
 
-    if let Some(workflow_id) = execution_program.workflow_id() {
-        let config = ConfigLoader::load(workspace_root)?;
-        let workflow_registry = WorkflowRegistry::load(workspace_root, &config.workflows)?;
-        let registered_profile = workflow_registry.get(workflow_id).ok_or_else(|| {
-            ApiError::ConfigError(format!(
-                "Agent '{}' references unknown workflow_id '{}'",
-                agent_id, workflow_id
-            ))
-        })?;
-        let workflow_event_context = match (session_id, progress.as_ref()) {
-            (Some(sid), Some(prog)) => Some(QueueEventContext {
-                session_id: sid.to_string(),
-                progress: Arc::clone(prog),
-            }),
-            _ => None,
-        };
-
-        let summary = execute_registered_workflow(
-            api.as_ref(),
-            workspace_root,
-            registered_profile,
-            &WorkflowExecutionRequest {
-                node_id,
-                agent_id: agent_id.clone(),
-                provider_name: provider_name.clone(),
-                frame_type: frame_type.clone(),
-                force: request.force,
-            },
-            workflow_event_context.as_ref(),
-        )?;
-
-        if summary.turns_completed == 0 {
-            return Ok(format!(
-                "Workflow '{}' skipped: existing frame head reused for thread {}.",
-                summary.workflow_id, summary.thread_id
-            ));
-        }
-
-        let final_frame = summary
-            .final_frame_id
-            .map(hex::encode)
-            .unwrap_or_else(|| "none".to_string());
-        return Ok(format!(
-            "Workflow execution completed: workflow_id={}, thread_id={}, turns_completed={}, final_frame_id={}",
-            summary.workflow_id, summary.thread_id, summary.turns_completed, final_frame
-        ));
+    if execution_program.kind == crate::context::generation::TargetExecutionProgramKind::SingleShot
+    {
+        PromptContract::from_agent(&agent)?;
     }
-
-    PromptContract::from_agent(&agent)?;
 
     let is_directory_target = matches!(node_record.node_type, NodeType::Directory);
     let recursive = is_directory_target && !request.no_recursive;

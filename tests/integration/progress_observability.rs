@@ -615,6 +615,84 @@ fn workflow_execute_emits_lineage_and_provider_events() {
 }
 
 #[test]
+fn context_generate_with_workflow_agent_uses_context_plan_levels() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        let target = workspace_root.join("workflow");
+        fs::create_dir_all(target.join("record_contracts")).unwrap();
+        fs::write(target.join("record_contracts").join("a.md"), "a").unwrap();
+        fs::write(target.join("record_contracts").join("b.md"), "b").unwrap();
+        fs::write(target.join("commands.md"), "c").unwrap();
+
+        create_test_writer_agent_with_workflow(
+            "workflow-plan-agent",
+            Some("docs_writer_thread_v1"),
+        );
+        create_test_openai_provider("workflow-plan-provider", "gpt-4-test", "http://127.0.0.1:9");
+
+        let cli = RunContext::new(workspace_root.clone(), None).unwrap();
+        cli.execute(&Commands::Scan { force: true }).unwrap();
+
+        let result = cli.execute(&Commands::Context {
+            command: ContextCommands::Generate {
+                node: None,
+                path: Some(target.clone()),
+                path_positional: None,
+                agent: Some("workflow-plan-agent".to_string()),
+                provider: Some("workflow-plan-provider".to_string()),
+                frame_type: Some("context-workflow-plan-agent".to_string()),
+                force: true,
+                no_recursive: false,
+            },
+        });
+        assert!(result.is_err());
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s.command == "context.generate")
+            .expect("context.generate session should exist");
+        let events = runtime.store().read_events(&session.session_id).unwrap();
+
+        let plan = events
+            .iter()
+            .find(|e| e.event_type == "plan_constructed")
+            .expect("plan_constructed should be emitted");
+        assert_eq!(
+            plan.data.get("total_nodes").and_then(|v| v.as_u64()),
+            Some(5)
+        );
+        assert_eq!(
+            plan.data.get("total_levels").and_then(|v| v.as_u64()),
+            Some(3)
+        );
+
+        let enqueued_count = events
+            .iter()
+            .filter(|e| e.event_type == "request_enqueued")
+            .count();
+        assert_eq!(enqueued_count, 2);
+
+        let level_started_count = events
+            .iter()
+            .filter(|e| e.event_type == "level_started")
+            .count();
+        assert_eq!(level_started_count, 1);
+
+        assert!(events.iter().any(|e| e.event_type == "generation_started"));
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "node_generation_failed"));
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "provider_request_failed"));
+        assert!(events.iter().any(|e| e.event_type == "command_summary"));
+    });
+}
+
+#[test]
 fn command_summary_success_is_metric_focused_and_bounded() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {

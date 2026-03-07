@@ -456,6 +456,9 @@ impl WatchDaemon {
                             provider_name: provider_name.to_string(),
                             frame_type: format!("context-{}", agent.agent_id),
                             force: false,
+                            path: None,
+                            plan_id: None,
+                            level_index: None,
                         };
 
                         match execute_registered_workflow(

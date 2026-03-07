@@ -37,6 +37,9 @@ pub struct WorkflowExecutionRequest {
     pub provider_name: String,
     pub frame_type: String,
     pub force: bool,
+    pub path: Option<String>,
+    pub plan_id: Option<String>,
+    pub level_index: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,7 +72,7 @@ pub fn execute_registered_workflow(
     })
 }
 
-async fn execute_registered_workflow_async(
+pub(crate) async fn execute_registered_workflow_async(
     api: &ContextApi,
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
