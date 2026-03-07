@@ -128,6 +128,7 @@ fn test_workspace_compact_dry_run() {
             })
             .unwrap();
         assert!(out.contains("Would compact") || out.contains("0 nodes"));
+        assert!(out.contains("artifacts"));
     });
 }
 

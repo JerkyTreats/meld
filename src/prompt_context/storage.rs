@@ -4,6 +4,8 @@ use crate::error::{ApiError, StorageError};
 use crate::prompt_context::contracts::{PromptContextArtifactKind, PromptContextArtifactRef};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
+use walkdir::WalkDir;
 
 pub struct PromptContextArtifactStorage {
     root: PathBuf,
@@ -123,6 +125,68 @@ impl PromptContextArtifactStorage {
         Ok(bytes)
     }
 
+    pub fn count_older_than(&self, cutoff_unix_secs: u64) -> Result<u64, ApiError> {
+        let mut count = 0u64;
+        for entry in WalkDir::new(&self.root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if !entry.file_type().is_file() || !is_blob_file(entry.path()) {
+                continue;
+            }
+            let modified = fs::metadata(entry.path())
+                .map_err(StorageError::from)?
+                .modified()
+                .map_err(StorageError::from)?;
+            let modified_secs = modified
+                .duration_since(UNIX_EPOCH)
+                .map_err(|err| {
+                    StorageError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Invalid file modification timestamp: {}", err),
+                    ))
+                })?
+                .as_secs();
+            if modified_secs <= cutoff_unix_secs {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    pub fn purge_older_than(&self, cutoff_unix_secs: u64) -> Result<u64, ApiError> {
+        let mut purged = 0u64;
+        for entry in WalkDir::new(&self.root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if !entry.file_type().is_file() || !is_blob_file(entry.path()) {
+                continue;
+            }
+            let modified = fs::metadata(entry.path())
+                .map_err(StorageError::from)?
+                .modified()
+                .map_err(StorageError::from)?;
+            let modified_secs = modified
+                .duration_since(UNIX_EPOCH)
+                .map_err(|err| {
+                    StorageError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Invalid file modification timestamp: {}", err),
+                    ))
+                })?
+                .as_secs();
+            if modified_secs <= cutoff_unix_secs {
+                fs::remove_file(entry.path()).map_err(StorageError::from)?;
+                purged += 1;
+            }
+        }
+        self.prune_empty_shards()?;
+        Ok(purged)
+    }
+
     fn artifact_path_for_digest(&self, digest: &str) -> PathBuf {
         if digest.len() < 4 {
             return self.root.join("invalid").join(format!("{}.blob", digest));
@@ -134,12 +198,41 @@ impl PromptContextArtifactStorage {
             .join(prefix2)
             .join(format!("{}.blob", digest))
     }
+
+    fn prune_empty_shards(&self) -> Result<(), ApiError> {
+        let mut dirs: Vec<PathBuf> = WalkDir::new(&self.root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_dir())
+            .map(|entry| entry.into_path())
+            .collect();
+        dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+        for dir in dirs {
+            if dir == self.root {
+                continue;
+            }
+            let mut entries = fs::read_dir(&dir).map_err(StorageError::from)?;
+            if entries.next().is_none() {
+                fs::remove_dir(&dir).map_err(StorageError::from)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn is_blob_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case("blob"))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::prompt_context::contracts::PromptContextArtifactKind;
+    use std::time::{Duration, UNIX_EPOCH};
     use tempfile::TempDir;
 
     #[test]
@@ -186,5 +279,47 @@ mod tests {
             .read_by_artifact_id_verified(&artifact.artifact_id)
             .unwrap();
         assert_eq!(read, b"payload");
+    }
+
+    #[test]
+    fn compact_counts_and_purges_old_artifacts() {
+        let temp = TempDir::new().unwrap();
+        let storage = PromptContextArtifactStorage::new(temp.path()).unwrap();
+        let old_artifact = storage
+            .write_utf8(PromptContextArtifactKind::RenderedPrompt, "old")
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(2100));
+        let new_artifact = storage
+            .write_utf8(PromptContextArtifactKind::RenderedPrompt, "new")
+            .unwrap();
+
+        let old_path = storage.artifact_path_for_digest(&old_artifact.artifact_id);
+        let new_path = storage.artifact_path_for_digest(&new_artifact.artifact_id);
+
+        let old_ts = old_path
+            .metadata()
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let new_ts = new_path
+            .metadata()
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(new_ts > old_ts);
+
+        let count = storage.count_older_than(old_ts).unwrap();
+        assert_eq!(count, 1);
+
+        let purged = storage.purge_older_than(old_ts).unwrap();
+        assert_eq!(purged, 1);
+        assert!(!old_path.exists());
+        assert!(new_path.exists());
     }
 }

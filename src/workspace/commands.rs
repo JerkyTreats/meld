@@ -389,10 +389,12 @@ impl WorkspaceCommandService {
             .map_err(ApiError::from)?;
         if dry_run {
             let mut frames = 0u64;
+            let mut artifacts = 0u64;
             if !keep_frames {
                 for nid in &node_ids {
                     frames += api.head_index().read().get_all_heads_for_node(nid).len() as u64;
                 }
+                artifacts = api.prompt_context_storage().count_older_than(cutoff)?;
             }
             let head_count: usize = api
                 .head_index()
@@ -402,16 +404,20 @@ impl WorkspaceCommandService {
                 .filter(|(_, e)| e.tombstoned_at.map_or(false, |ts| ts <= cutoff))
                 .count();
             return Ok(format!(
-                "Would compact {} nodes, {} head entries, {} frames.",
+                "Would compact {} nodes, {} head entries, {} frames, {} artifacts.",
                 node_ids.len(),
                 head_count,
-                frames
+                frames,
+                artifacts
             ));
         }
         let result = api.compact(ttl_seconds, !keep_frames)?;
         Ok(format!(
-            "Compacted {} nodes, {} head entries, {} frames.",
-            result.nodes_purged, result.head_entries_purged, result.frames_purged
+            "Compacted {} nodes, {} head entries, {} frames, {} artifacts.",
+            result.nodes_purged,
+            result.head_entries_purged,
+            result.frames_purged,
+            result.artifacts_purged
         ))
     }
 

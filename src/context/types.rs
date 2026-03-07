@@ -23,4 +23,5 @@ pub struct CompactResult {
     pub nodes_purged: u64,
     pub head_entries_purged: u64,
     pub frames_purged: u64,
+    pub artifacts_purged: u64,
 }

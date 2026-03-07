@@ -416,6 +416,7 @@ impl ContextApi {
             .map_err(ApiError::from)?;
         let mut nodes_purged = 0u64;
         let mut frames_purged = 0u64;
+        let mut artifacts_purged = 0u64;
         for &nid in &node_ids {
             if purge_frames {
                 let frame_ids = self.head_index.read().get_all_heads_for_node(&nid);
@@ -435,11 +436,15 @@ impl ContextApi {
         self.head_index.write().purge_tombstoned(cutoff);
         let head_after = self.head_index.read().heads.len();
         let head_entries_purged = (head_before - head_after) as u64;
+        if purge_frames {
+            artifacts_purged = self.prompt_context_storage.purge_older_than(cutoff)?;
+        }
         self.persist_indices()?;
         Ok(CompactResult {
             nodes_purged,
             head_entries_purged,
             frames_purged,
+            artifacts_purged,
         })
     }
 
