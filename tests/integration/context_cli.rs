@@ -6,6 +6,9 @@ use meld::cli::{Cli, Commands, ContextCommands, RunContext};
 use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
 use meld::context::frame::{Basis, Frame};
 use meld::error::ApiError;
+use meld::metadata::frame_write_contract::{
+    build_generated_metadata, generated_metadata_input_from_payload,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -19,6 +22,15 @@ fn create_test_agent(
     role: AgentRole,
     prompt_path: Option<&str>,
 ) -> Result<PathBuf, ApiError> {
+    create_test_agent_with_workflow(agent_id, role, prompt_path, None)
+}
+
+fn create_test_agent_with_workflow(
+    agent_id: &str,
+    role: AgentRole,
+    prompt_path: Option<&str>,
+    workflow_id: Option<&str>,
+) -> Result<PathBuf, ApiError> {
     let agents_dir = XdgAgentStorage::new().agents_dir()?;
     // Ensure directory exists
     fs::create_dir_all(&agents_dir)
@@ -30,7 +42,7 @@ fn create_test_agent(
         role,
         system_prompt: None,
         system_prompt_path: prompt_path.map(|s| s.to_string()),
-        workflow_id: None,
+        workflow_id: workflow_id.map(ToString::to_string),
         metadata: Default::default(),
     };
 
@@ -52,6 +64,20 @@ fn create_test_agent(
         .map_err(|e| ApiError::ConfigError(format!("Failed to write agent config: {}", e)))?;
 
     Ok(config_path)
+}
+
+fn generated_metadata(
+    agent_id: &str,
+    provider_name: &str,
+) -> meld::metadata::frame_types::FrameMetadata {
+    build_generated_metadata(&generated_metadata_input_from_payload(
+        agent_id,
+        provider_name,
+        "test-model",
+        "local",
+        "test prompt",
+        "test context",
+    ))
 }
 
 /// Create a test provider config file
@@ -263,6 +289,101 @@ fn test_context_get_json_format() {
         let _json: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert!(output.contains("node_id"));
         assert!(output.contains("frames"));
+    });
+}
+
+#[test]
+fn test_context_get_with_workflow_agent_prefers_final_result_frame() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+
+        let test_file = workspace_root.join("test.txt");
+        fs::write(&test_file, "test content").unwrap();
+
+        create_test_agent_with_workflow(
+            "docs-writer",
+            AgentRole::Writer,
+            None,
+            Some("docs_writer_thread_v1"),
+        )
+        .unwrap();
+        create_test_provider("test-provider", ProviderType::LocalCustom).unwrap();
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&Commands::Scan { force: true })
+            .unwrap();
+
+        let node_id = meld::workspace::resolve_workspace_node_id(
+            run_context.api(),
+            &workspace_root,
+            Some(test_file.as_path()),
+            None,
+            false,
+        )
+        .unwrap();
+
+        let intermediate_frame = Frame::new(
+            Basis::Node(node_id),
+            b"intermediate workflow output".to_vec(),
+            "context-docs-writer--workflow-turn-1-test".to_string(),
+            "docs-writer".to_string(),
+            generated_metadata("docs-writer", "test-provider"),
+        )
+        .unwrap();
+        run_context
+            .api()
+            .put_frame(node_id, intermediate_frame, "docs-writer".to_string())
+            .unwrap();
+
+        let final_frame = Frame::new(
+            Basis::Node(node_id),
+            b"final readme output".to_vec(),
+            "context-docs-writer".to_string(),
+            "docs-writer".to_string(),
+            generated_metadata("docs-writer", "test-provider"),
+        )
+        .unwrap();
+        run_context
+            .api()
+            .put_frame(node_id, final_frame, "docs-writer".to_string())
+            .unwrap();
+
+        let result = run_context.execute(&Commands::Context {
+            command: ContextCommands::Get {
+                node: None,
+                path: Some(test_file),
+                agent: Some("docs-writer".to_string()),
+                frame_type: None,
+                max_frames: 10,
+                ordering: "recency".to_string(),
+                combine: false,
+                separator: "\n\n---\n\n".to_string(),
+                format: "json".to_string(),
+                include_metadata: true,
+                include_deleted: false,
+            },
+        });
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let frames = json
+            .get("frames")
+            .and_then(|value| value.as_array())
+            .unwrap();
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(
+            frames[0].get("frame_type").and_then(|value| value.as_str()),
+            Some("context-docs-writer")
+        );
+        assert_eq!(
+            frames[0].get("content").and_then(|value| value.as_str()),
+            Some("final readme output")
+        );
     });
 }
 

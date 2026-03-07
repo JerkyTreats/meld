@@ -32,6 +32,41 @@ use crate::cli::parse::{
 };
 use crate::cli::{command_name, summary_descriptor};
 
+fn resolve_context_get_frame_type(
+    api: &ContextApi,
+    workflow_registry: &WorkflowRegistry,
+    agent_id: Option<&str>,
+    frame_type: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    if let Some(frame_type) = frame_type {
+        return Ok(Some(frame_type.to_string()));
+    }
+
+    let Some(agent_id) = agent_id else {
+        return Ok(None);
+    };
+
+    let agent = api.get_agent(agent_id)?;
+    let Some(workflow_id) = agent.workflow_binding() else {
+        return Ok(None);
+    };
+
+    let registered_workflow = workflow_registry.get(workflow_id).ok_or_else(|| {
+        ApiError::ConfigError(format!(
+            "Agent '{}' references unknown workflow_id '{}'",
+            agent_id, workflow_id
+        ))
+    })?;
+
+    Ok(Some(
+        registered_workflow
+            .profile
+            .target_frame_type
+            .clone()
+            .unwrap_or_else(|| format!("context-{}", agent_id)),
+    ))
+}
+
 /// Runtime context for CLI execution: workspace, config paths, and domain facades.
 /// Built from workspace path and optional config path using ConfigLoader only.
 pub struct RunContext {
@@ -1337,13 +1372,19 @@ impl RunContext {
                 include_metadata,
                 include_deleted,
             } => {
+                let effective_frame_type = resolve_context_get_frame_type(
+                    self.api.as_ref(),
+                    &self.workflow_registry.read(),
+                    agent.as_deref(),
+                    frame_type.as_deref(),
+                )?;
                 let context = get_node_for_cli(
                     self.api.as_ref(),
                     &self.workspace_root,
                     node.as_deref(),
                     path.as_ref().map(|p| p.as_path()),
                     agent.as_deref(),
-                    frame_type.as_deref(),
+                    effective_frame_type.as_deref(),
                     *max_frames,
                     ordering,
                     *include_deleted,
