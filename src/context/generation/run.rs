@@ -432,6 +432,8 @@ pub fn run_generate(
                 "agent_id": agent_id,
                 "provider_name": provider_name,
                 "frame_type": frame_type,
+                "program_kind": execution_program.kind_str(),
+                "workflow_id": execution_program.workflow_id(),
                 "force": request.force,
                 "recursive": recursive,
                 "total_nodes": plan.total_nodes,

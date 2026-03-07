@@ -180,6 +180,36 @@ pub fn summary_descriptor(command: &Commands) -> SummaryCommandDescriptor {
                     | ProviderCommands::Remove { .. }
             ),
         },
+        Commands::Context { command } => match command {
+            ContextCommands::Generate {
+                node,
+                path,
+                path_positional,
+                force,
+                no_recursive,
+                ..
+            } => SummaryCommandDescriptor::ContextGeneration {
+                action: context_command_name(command).to_string(),
+                target_path: path.is_some() || path_positional.is_some(),
+                target_node: node.is_some(),
+                recursive: !*no_recursive,
+                force: *force,
+            },
+            ContextCommands::Regenerate {
+                node,
+                path,
+                path_positional,
+                recursive,
+                ..
+            } => SummaryCommandDescriptor::ContextGeneration {
+                action: context_command_name(command).to_string(),
+                target_path: path.is_some() || path_positional.is_some(),
+                target_node: node.is_some(),
+                recursive: *recursive,
+                force: true,
+            },
+            ContextCommands::Get { .. } => SummaryCommandDescriptor::None,
+        },
         Commands::Init { force, list } => SummaryCommandDescriptor::Init {
             force: *force,
             list_only: *list,

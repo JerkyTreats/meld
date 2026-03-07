@@ -12,7 +12,9 @@ use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
-use crate::telemetry::{now_millis, PromptContextLineageEventData};
+use crate::telemetry::{
+    now_millis, PromptContextLineageEventData, WorkflowTargetEventData, WorkflowTurnEventData,
+};
 use crate::types::{FrameID, NodeID};
 use crate::workflow::gates::evaluate_gate;
 use crate::workflow::profile::WorkflowProfile;
@@ -82,6 +84,15 @@ pub(crate) async fn execute_registered_workflow_async(
     let profile = &registered_profile.profile;
     let thread_id = build_thread_id(profile, request.node_id, &request.frame_type);
     let state_store = WorkflowStateStore::new(workspace_root)?;
+    let node_record = api
+        .node_store()
+        .get(&request.node_id)
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::NodeNotFound(request.node_id))?;
+    let target_path = request
+        .path
+        .clone()
+        .unwrap_or_else(|| node_record.path.to_string_lossy().to_string());
 
     let mut start_seq = 1u32;
     let mut turn_outputs: HashMap<String, String> = HashMap::new();
@@ -92,6 +103,24 @@ pub(crate) async fn execute_registered_workflow_async(
             WorkflowThreadStatus::Completed => {
                 if !request.force {
                     let head = api.get_head(&request.node_id, &request.frame_type)?;
+                    emit_workflow_target_event(
+                        event_context,
+                        "workflow_target_completed",
+                        WorkflowTargetEventData {
+                            workflow_id: profile.workflow_id.clone(),
+                            thread_id: thread_id.clone(),
+                            node_id: hex::encode(request.node_id),
+                            path: target_path.clone(),
+                            agent_id: request.agent_id.clone(),
+                            provider_name: request.provider_name.clone(),
+                            frame_type: request.frame_type.clone(),
+                            plan_id: request.plan_id.clone(),
+                            level_index: request.level_index,
+                            final_frame_id: head.map(hex::encode),
+                            turns_completed: Some(0),
+                            reused_existing_head: Some(true),
+                        },
+                    );
                     return Ok(WorkflowExecutionSummary {
                         workflow_id: profile.workflow_id.clone(),
                         thread_id,
@@ -124,6 +153,25 @@ pub(crate) async fn execute_registered_workflow_async(
         next_turn_seq: start_seq,
         updated_at_ms: now_millis(),
     })?;
+
+    emit_workflow_target_event(
+        event_context,
+        "workflow_target_started",
+        WorkflowTargetEventData {
+            workflow_id: profile.workflow_id.clone(),
+            thread_id: thread_id.clone(),
+            node_id: hex::encode(request.node_id),
+            path: target_path.clone(),
+            agent_id: request.agent_id.clone(),
+            provider_name: request.provider_name.clone(),
+            frame_type: request.frame_type.clone(),
+            plan_id: request.plan_id.clone(),
+            level_index: request.level_index,
+            final_frame_id: None,
+            turns_completed: None,
+            reused_existing_head: Some(false),
+        },
+    );
 
     let agent = api.get_agent(&request.agent_id)?;
     let prompt_contract = PromptContract::from_agent(&agent)?;
@@ -171,6 +219,27 @@ pub(crate) async fn execute_registered_workflow_async(
 
         while attempt < turn.retry_limit {
             attempt += 1;
+
+            emit_workflow_turn_event(
+                event_context,
+                "workflow_turn_started",
+                WorkflowTurnEventData {
+                    workflow_id: profile.workflow_id.clone(),
+                    thread_id: thread_id.clone(),
+                    turn_id: turn.turn_id.clone(),
+                    turn_seq: turn.seq,
+                    node_id: hex::encode(request.node_id),
+                    path: target_path.clone(),
+                    agent_id: request.agent_id.clone(),
+                    provider_name: request.provider_name.clone(),
+                    frame_type: request.frame_type.clone(),
+                    attempt,
+                    plan_id: request.plan_id.clone(),
+                    level_index: request.level_index,
+                    final_frame_id: None,
+                    error: None,
+                },
+            );
 
             state_store.upsert_turn(&WorkflowTurnRecord {
                 thread_id: thread_id.clone(),
@@ -279,6 +348,26 @@ pub(crate) async fn execute_registered_workflow_async(
                         output_text: None,
                         updated_at_ms: now_millis(),
                     })?;
+                    emit_workflow_turn_event(
+                        event_context,
+                        "workflow_turn_failed",
+                        WorkflowTurnEventData {
+                            workflow_id: profile.workflow_id.clone(),
+                            thread_id: thread_id.clone(),
+                            turn_id: turn.turn_id.clone(),
+                            turn_seq: turn.seq,
+                            node_id: hex::encode(request.node_id),
+                            path: target_path.clone(),
+                            agent_id: request.agent_id.clone(),
+                            provider_name: request.provider_name.clone(),
+                            frame_type: request.frame_type.clone(),
+                            attempt,
+                            plan_id: request.plan_id.clone(),
+                            level_index: request.level_index,
+                            final_frame_id: None,
+                            error: Some(err.to_string()),
+                        },
+                    );
                     last_error = Some(err.clone());
                     if attempt < turn.retry_limit {
                         continue;
@@ -335,6 +424,26 @@ pub(crate) async fn execute_registered_workflow_async(
                     output_text: Some(response.content.clone()),
                     updated_at_ms: now_millis(),
                 })?;
+                emit_workflow_turn_event(
+                    event_context,
+                    "workflow_turn_failed",
+                    WorkflowTurnEventData {
+                        workflow_id: profile.workflow_id.clone(),
+                        thread_id: thread_id.clone(),
+                        turn_id: turn.turn_id.clone(),
+                        turn_seq: turn.seq,
+                        node_id: hex::encode(request.node_id),
+                        path: target_path.clone(),
+                        agent_id: request.agent_id.clone(),
+                        provider_name: request.provider_name.clone(),
+                        frame_type: request.frame_type.clone(),
+                        attempt,
+                        plan_id: request.plan_id.clone(),
+                        level_index: request.level_index,
+                        final_frame_id: Some(hex::encode(frame_id)),
+                        error: Some(gate_error.to_string()),
+                    },
+                );
                 last_error = Some(gate_error.clone());
                 if attempt < turn.retry_limit {
                     continue;
@@ -376,6 +485,27 @@ pub(crate) async fn execute_registered_workflow_async(
                 output_text: Some(response.content.clone()),
                 updated_at_ms: now_millis(),
             })?;
+
+            emit_workflow_turn_event(
+                event_context,
+                "workflow_turn_completed",
+                WorkflowTurnEventData {
+                    workflow_id: profile.workflow_id.clone(),
+                    thread_id: thread_id.clone(),
+                    turn_id: turn.turn_id.clone(),
+                    turn_seq: turn.seq,
+                    node_id: hex::encode(request.node_id),
+                    path: target_path.clone(),
+                    agent_id: request.agent_id.clone(),
+                    provider_name: request.provider_name.clone(),
+                    frame_type: request.frame_type.clone(),
+                    attempt,
+                    plan_id: request.plan_id.clone(),
+                    level_index: request.level_index,
+                    final_frame_id: Some(hex::encode(frame_id)),
+                    error: None,
+                },
+            );
 
             state_store.upsert_thread(&WorkflowThreadRecord {
                 thread_id: thread_id.clone(),
@@ -424,12 +554,53 @@ pub(crate) async fn execute_registered_workflow_async(
         updated_at_ms: now_millis(),
     })?;
 
+    emit_workflow_target_event(
+        event_context,
+        "workflow_target_completed",
+        WorkflowTargetEventData {
+            workflow_id: profile.workflow_id.clone(),
+            thread_id: thread_id.clone(),
+            node_id: hex::encode(request.node_id),
+            path: target_path,
+            agent_id: request.agent_id.clone(),
+            provider_name: request.provider_name.clone(),
+            frame_type: request.frame_type.clone(),
+            plan_id: request.plan_id.clone(),
+            level_index: request.level_index,
+            final_frame_id: final_frame_id.map(hex::encode),
+            turns_completed: Some(completed_turns),
+            reused_existing_head: Some(false),
+        },
+    );
+
     Ok(WorkflowExecutionSummary {
         workflow_id: profile.workflow_id.clone(),
         thread_id,
         turns_completed: completed_turns,
         final_frame_id,
     })
+}
+
+fn emit_workflow_target_event(
+    event_context: Option<&QueueEventContext>,
+    event_type: &str,
+    payload: WorkflowTargetEventData,
+) {
+    if let Some(ctx) = event_context {
+        ctx.progress
+            .emit_event_best_effort(&ctx.session_id, event_type, json!(payload));
+    }
+}
+
+fn emit_workflow_turn_event(
+    event_context: Option<&QueueEventContext>,
+    event_type: &str,
+    payload: WorkflowTurnEventData,
+) {
+    if let Some(ctx) = event_context {
+        ctx.progress
+            .emit_event_best_effort(&ctx.session_id, event_type, json!(payload));
+    }
 }
 
 fn build_thread_id(profile: &WorkflowProfile, node_id: NodeID, frame_type: &str) -> String {

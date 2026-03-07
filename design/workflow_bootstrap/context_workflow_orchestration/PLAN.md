@@ -1,7 +1,7 @@
 # Context Workflow Orchestration Plan
 
 Date: 2026-03-07
-Status: active
+Status: complete
 Scope: context generation orchestration with workflow contract consumption
 
 ## Overview
@@ -37,7 +37,7 @@ This plan does not expand non default path behavior.
 | 1 | Target execution contract extraction | None | complete |
 | 2 | Workflow facade and contract implementation | Phase 1 | complete |
 | 3 | Context orchestration cutover | Phase 1 and Phase 2 | complete |
-| 4 | Telemetry and verification hardening | Phase 1 through Phase 3 | pending |
+| 4 | Telemetry and verification hardening | Phase 1 through Phase 3 | complete |
 
 ---
 
@@ -206,11 +206,11 @@ This plan does not expand non default path behavior.
 
 | Task | Completion |
 |------|------------|
-| Add execution program markers to generation plan and node events. | Pending |
-| Add workflow target and turn progress events emitted through the workflow facade path. | Pending |
-| Add typed summary coverage for `context generate` and `context regenerate`. | Pending |
-| Add characterization coverage for workflow backed recursive generate telemetry and summary ordering. | Pending |
-| Run full regression suite for touched domains and document verification evidence. | Pending |
+| Add execution program markers to generation plan and node events. | Complete |
+| Add workflow target and turn progress events emitted through the workflow facade path. | Complete |
+| Add typed summary coverage for `context generate` and `context regenerate`. | Complete |
+| Add characterization coverage for workflow backed recursive generate telemetry and summary ordering. | Complete |
+| Run full regression suite for touched domains and document verification evidence. | Complete |
 
 **Exit criteria**:
 - one command session can reconstruct overall batch progress and workflow turn progress together
@@ -230,6 +230,19 @@ This plan does not expand non default path behavior.
 - integration gate: `cargo test --test integration_tests integration::progress_observability::`
 - integration gate: `cargo test --test integration_tests integration::generation_parity::`
 - full suite gate: `cargo test`
+
+---
+
+**Implementation evidence**:
+- compile gate passed: `cargo check`
+- integration gate passed: `cargo test --test integration_tests integration::progress_observability:: -- --nocapture`
+- integration gate passed: `cargo test --test integration_tests integration::generation_parity:: -- --nocapture`
+- full suite gate passed: `cargo test`
+
+**Phase completion notes**:
+- generation plan and node telemetry now carry execution program markers so session consumers can distinguish one shot and workflow backed execution
+- workflow facade execution now emits target and turn progress events that preserve plan id level index and target identity within the same command session
+- `context generate` and `context regenerate` now emit typed context generation summaries before `session_ended`
 
 ## Verification Strategy
 

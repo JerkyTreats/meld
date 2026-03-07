@@ -13,6 +13,7 @@ pub mod summary;
 pub use events::{
     ProgressEvent, PromptContextLineageEventData, ProviderLifecycleEventData, QueueEventData,
     QueueStatsEventData, SessionEndedData, SessionStartedData, SummaryEventData,
+    WorkflowTargetEventData, WorkflowTurnEventData,
 };
 pub use sessions::policy::{PrunePolicy, SessionStatus};
 pub use sessions::ProgressRuntime;

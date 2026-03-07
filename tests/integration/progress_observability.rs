@@ -668,6 +668,10 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
             plan.data.get("total_levels").and_then(|v| v.as_u64()),
             Some(3)
         );
+        assert_eq!(
+            plan.data.get("program_kind").and_then(|v| v.as_str()),
+            Some("workflow")
+        );
 
         let enqueued_count = events
             .iter()
@@ -684,11 +688,91 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
         assert!(events.iter().any(|e| e.event_type == "generation_started"));
         assert!(events
             .iter()
+            .any(|e| e.event_type == "workflow_target_started"));
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "workflow_turn_started"));
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "workflow_turn_failed"));
+        assert!(events
+            .iter()
             .any(|e| e.event_type == "node_generation_failed"));
         assert!(events
             .iter()
             .any(|e| e.event_type == "provider_request_failed"));
+        let typed_idx = events
+            .iter()
+            .position(|e| e.event_type == "context_generation_summary")
+            .expect("context_generation_summary should be emitted");
+        let ended_idx = events
+            .iter()
+            .position(|e| e.event_type == "session_ended")
+            .expect("session_ended should be emitted");
+        assert!(typed_idx < ended_idx);
         assert!(events.iter().any(|e| e.event_type == "command_summary"));
+    });
+}
+
+#[test]
+fn context_regenerate_emits_context_generation_summary() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        let target = workspace_root.join("workflow");
+        fs::create_dir_all(target.join("record_contracts")).unwrap();
+        fs::write(target.join("record_contracts").join("a.md"), "a").unwrap();
+        fs::write(target.join("commands.md"), "c").unwrap();
+
+        create_test_writer_agent_with_workflow(
+            "workflow-regenerate-agent",
+            Some("docs_writer_thread_v1"),
+        );
+        create_test_openai_provider(
+            "workflow-regenerate-provider",
+            "gpt-4-test",
+            "http://127.0.0.1:9",
+        );
+
+        let cli = RunContext::new(workspace_root.clone(), None).unwrap();
+        cli.execute(&Commands::Scan { force: true }).unwrap();
+
+        let result = cli.execute(&Commands::Context {
+            command: ContextCommands::Regenerate {
+                node: None,
+                path: Some(target.clone()),
+                path_positional: None,
+                agent: Some("workflow-regenerate-agent".to_string()),
+                provider: Some("workflow-regenerate-provider".to_string()),
+                frame_type: Some("context-workflow-regenerate-agent".to_string()),
+                recursive: true,
+            },
+        });
+        assert!(result.is_err());
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s.command == "context.regenerate")
+            .expect("context.regenerate session should exist");
+        let events = runtime.store().read_events(&session.session_id).unwrap();
+
+        let typed_idx = events
+            .iter()
+            .position(|e| e.event_type == "context_generation_summary")
+            .expect("context_generation_summary should be emitted");
+        let generic_idx = events
+            .iter()
+            .position(|e| e.event_type == "command_summary")
+            .expect("command_summary should be emitted");
+        let ended_idx = events
+            .iter()
+            .position(|e| e.event_type == "session_ended")
+            .expect("session_ended should be emitted");
+
+        assert!(typed_idx < ended_idx);
+        assert!(generic_idx < ended_idx);
     });
 }
 

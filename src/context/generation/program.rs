@@ -32,6 +32,19 @@ impl TargetExecutionProgram {
     pub fn workflow_id(&self) -> Option<&str> {
         self.workflow_id.as_deref()
     }
+
+    pub fn kind_str(&self) -> &'static str {
+        self.kind.as_str()
+    }
+}
+
+impl TargetExecutionProgramKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SingleShot => "single_shot",
+            Self::Workflow => "workflow",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

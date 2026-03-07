@@ -93,6 +93,17 @@ impl GenerationExecutor {
                 "total_levels": plan.total_levels,
                 "total_nodes": plan.total_nodes,
                 "target_path": plan.target_path,
+                "program_kind": plan
+                    .levels
+                    .first()
+                    .and_then(|level| level.first())
+                    .map(|item| item.program.kind_str())
+                    .unwrap_or("unknown"),
+                "workflow_id": plan
+                    .levels
+                    .first()
+                    .and_then(|level| level.first())
+                    .and_then(|item| item.program.workflow_id()),
             }),
         );
 
@@ -125,6 +136,8 @@ impl GenerationExecutor {
                         "agent_id": item.agent_id,
                         "provider_name": item.provider_name,
                         "frame_type": item.frame_type,
+                        "program_kind": item.program.kind_str(),
+                        "workflow_id": item.program.workflow_id(),
                     }),
                 );
 
@@ -153,6 +166,8 @@ impl GenerationExecutor {
                                 "node_id": hex::encode(item.node_id),
                                 "path": item.path,
                                 "frame_id": hex::encode(frame_id),
+                                "program_kind": item.program.kind_str(),
+                                "workflow_id": item.program.workflow_id(),
                             }),
                         );
                     }
@@ -173,6 +188,8 @@ impl GenerationExecutor {
                                 "node_id": hex::encode(item.node_id),
                                 "path": item.path,
                                 "error": err.to_string(),
+                                "program_kind": item.program.kind_str(),
+                                "workflow_id": item.program.workflow_id(),
                             }),
                         );
                         if matches!(plan.failure_policy, FailurePolicy::FailImmediately) {

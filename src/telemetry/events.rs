@@ -123,6 +123,49 @@ pub struct PromptContextLineageEventData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowTargetEventData {
+    pub workflow_id: String,
+    pub thread_id: String,
+    pub node_id: String,
+    pub path: String,
+    pub agent_id: String,
+    pub provider_name: String,
+    pub frame_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_frame_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turns_completed: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reused_existing_head: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowTurnEventData {
+    pub workflow_id: String,
+    pub thread_id: String,
+    pub turn_id: String,
+    pub turn_seq: u32,
+    pub node_id: String,
+    pub path: String,
+    pub agent_id: String,
+    pub provider_name: String,
+    pub frame_type: String,
+    pub attempt: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_frame_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryEventData {
     pub command: String,
     pub ok: bool,
