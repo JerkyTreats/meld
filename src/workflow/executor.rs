@@ -6,18 +6,21 @@ use crate::context::frame::{Basis, Frame};
 use crate::context::generation::contracts::{
     GeneratedMetadataBuilder, GenerationOrchestrationRequest,
 };
-use crate::context::generation::metadata_construction::build_and_validate_generated_metadata;
+use crate::context::generation::metadata_construction::{
+    build_and_validate_generated_metadata, load_previous_metadata_snapshot,
+};
 use crate::context::generation::provider_execution::{execute_completion, prepare_provider};
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
 use crate::telemetry::{
-    now_millis, PromptContextLineageEventData, WorkflowTargetEventData, WorkflowTurnEventData,
+    now_millis, FrameMetadataValidationEventData, PromptContextLineageEventData,
+    WorkflowForceResetEventData, WorkflowTargetEventData, WorkflowTurnEventData,
 };
 use crate::types::{FrameID, NodeID};
 use crate::workflow::gates::evaluate_gate;
-use crate::workflow::profile::WorkflowProfile;
+use crate::workflow::profile::{WorkflowProfile, WorkflowTurn};
 use crate::workflow::record_contracts::{
     prompt_link_record_from_contract_v1, GateOutcome, PromptLinkRecordInputV1,
     ThreadTurnGateRecordV1,
@@ -144,6 +147,28 @@ pub(crate) async fn execute_registered_workflow_async(
         }
     }
 
+    if request.force {
+        let previous_head = api.tombstone_head(request.node_id, &request.frame_type)?;
+        if let Some(previous_frame_id) = previous_head {
+            emit_workflow_force_reset_event(
+                event_context,
+                "workflow_target_force_reset",
+                WorkflowForceResetEventData {
+                    workflow_id: profile.workflow_id.clone(),
+                    thread_id: thread_id.clone(),
+                    node_id: hex::encode(request.node_id),
+                    path: target_path.clone(),
+                    agent_id: request.agent_id.clone(),
+                    provider_name: request.provider_name.clone(),
+                    frame_type: request.frame_type.clone(),
+                    previous_frame_id: Some(hex::encode(previous_frame_id)),
+                    plan_id: request.plan_id.clone(),
+                    level_index: request.level_index,
+                },
+            );
+        }
+    }
+
     state_store.upsert_thread(&WorkflowThreadRecord {
         thread_id: thread_id.clone(),
         workflow_id: profile.workflow_id.clone(),
@@ -181,8 +206,13 @@ pub(crate) async fn execute_registered_workflow_async(
 
     let mut final_frame_id: Option<FrameID> =
         api.get_head(&request.node_id, &request.frame_type)?;
+    let ordered_turns = profile.ordered_turns();
+    let final_turn_seq = ordered_turns
+        .last()
+        .map(|turn| turn.seq)
+        .unwrap_or_default();
 
-    for turn in profile.ordered_turns() {
+    for turn in ordered_turns {
         if turn.seq < start_seq {
             continue;
         }
@@ -220,6 +250,26 @@ pub(crate) async fn execute_registered_workflow_async(
         while attempt < turn.retry_limit {
             attempt += 1;
 
+            let prepared_lineage = prepare_generated_lineage(
+                api.prompt_context_storage(),
+                &PromptContextLineageInput {
+                    system_prompt: prompt_contract.system_prompt.clone(),
+                    user_prompt_template: prompt_template.clone(),
+                    rendered_prompt: rendered_prompt.clone(),
+                    context_payload: resolved_inputs.context_payload.clone(),
+                },
+                &request.agent_id,
+                &request.provider_name,
+                provider_preparation.client.model_name(),
+                &provider_preparation.provider_type,
+            )?;
+            let turn_frame_type = workflow_turn_frame_type(
+                &request.frame_type,
+                &turn,
+                &prepared_lineage.prompt_link_contract.prompt_link_id,
+                turn.seq == final_turn_seq,
+            );
+
             emit_workflow_turn_event(
                 event_context,
                 "workflow_turn_started",
@@ -232,7 +282,7 @@ pub(crate) async fn execute_registered_workflow_async(
                     path: target_path.clone(),
                     agent_id: request.agent_id.clone(),
                     provider_name: request.provider_name.clone(),
-                    frame_type: request.frame_type.clone(),
+                    frame_type: turn_frame_type.clone(),
                     attempt,
                     plan_id: request.plan_id.clone(),
                     level_index: request.level_index,
@@ -258,31 +308,17 @@ pub(crate) async fn execute_registered_workflow_async(
                 node_id: request.node_id,
                 agent_id: request.agent_id.clone(),
                 provider_name: request.provider_name.clone(),
-                frame_type: request.frame_type.clone(),
+                frame_type: turn_frame_type.clone(),
                 retry_count: attempt.saturating_sub(1),
                 force: request.force,
             };
-
-            let prepared_lineage = prepare_generated_lineage(
-                api.prompt_context_storage(),
-                &PromptContextLineageInput {
-                    system_prompt: prompt_contract.system_prompt.clone(),
-                    user_prompt_template: prompt_template.clone(),
-                    rendered_prompt: rendered_prompt.clone(),
-                    context_payload: resolved_inputs.context_payload.clone(),
-                },
-                &request.agent_id,
-                &request.provider_name,
-                provider_preparation.client.model_name(),
-                &provider_preparation.provider_type,
-            )?;
 
             if let Some(ctx) = event_context {
                 let lineage_event = PromptContextLineageEventData {
                     node_id: hex::encode(request.node_id),
                     agent_id: request.agent_id.clone(),
                     provider_name: request.provider_name.clone(),
-                    frame_type: request.frame_type.clone(),
+                    frame_type: turn_frame_type.clone(),
                     prompt_link_id: prepared_lineage.prompt_link_contract.prompt_link_id.clone(),
                     prompt_digest: prepared_lineage.prompt_link_contract.prompt_digest.clone(),
                     context_digest: prepared_lineage.prompt_link_contract.context_digest.clone(),
@@ -311,12 +347,143 @@ pub(crate) async fn execute_registered_workflow_async(
                 );
             }
 
-            let generated_metadata = build_and_validate_generated_metadata(
+            let previous_metadata = load_previous_metadata_snapshot(api, &orchestration_request)?;
+            emit_metadata_validation_event(
+                event_context,
+                "frame_metadata_validation_started",
+                FrameMetadataValidationEventData {
+                    node_id: hex::encode(request.node_id),
+                    path: target_path.clone(),
+                    agent_id: request.agent_id.clone(),
+                    provider_name: request.provider_name.clone(),
+                    frame_type: turn_frame_type.clone(),
+                    prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
+                    context_digest: prepared_lineage.metadata_input.context_digest.clone(),
+                    prompt_link_id: prepared_lineage.metadata_input.prompt_link_id.clone(),
+                    previous_frame_id: previous_metadata.frame_id.clone(),
+                    previous_prompt_digest: previous_metadata.prompt_digest.clone(),
+                    previous_context_digest: previous_metadata.context_digest.clone(),
+                    previous_prompt_link_id: previous_metadata.prompt_link_id.clone(),
+                    workflow_id: Some(profile.workflow_id.clone()),
+                    thread_id: Some(thread_id.clone()),
+                    turn_id: Some(turn.turn_id.clone()),
+                    turn_seq: Some(turn.seq),
+                    attempt: Some(attempt),
+                    plan_id: request.plan_id.clone(),
+                    level_index: request.level_index,
+                    error: None,
+                },
+            );
+
+            let generated_metadata = match build_and_validate_generated_metadata(
                 api,
                 &orchestration_request,
                 &prepared_lineage.metadata_input,
                 metadata_builder,
-            )?;
+            ) {
+                Ok(metadata) => {
+                    emit_metadata_validation_event(
+                        event_context,
+                        "frame_metadata_validation_succeeded",
+                        FrameMetadataValidationEventData {
+                            node_id: hex::encode(request.node_id),
+                            path: target_path.clone(),
+                            agent_id: request.agent_id.clone(),
+                            provider_name: request.provider_name.clone(),
+                            frame_type: turn_frame_type.clone(),
+                            prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
+                            context_digest: prepared_lineage.metadata_input.context_digest.clone(),
+                            prompt_link_id: prepared_lineage.metadata_input.prompt_link_id.clone(),
+                            previous_frame_id: previous_metadata.frame_id.clone(),
+                            previous_prompt_digest: previous_metadata.prompt_digest.clone(),
+                            previous_context_digest: previous_metadata.context_digest.clone(),
+                            previous_prompt_link_id: previous_metadata.prompt_link_id.clone(),
+                            workflow_id: Some(profile.workflow_id.clone()),
+                            thread_id: Some(thread_id.clone()),
+                            turn_id: Some(turn.turn_id.clone()),
+                            turn_seq: Some(turn.seq),
+                            attempt: Some(attempt),
+                            plan_id: request.plan_id.clone(),
+                            level_index: request.level_index,
+                            error: None,
+                        },
+                    );
+                    metadata
+                }
+                Err(err) => {
+                    state_store.upsert_turn(&WorkflowTurnRecord {
+                        thread_id: thread_id.clone(),
+                        turn_id: turn.turn_id.clone(),
+                        seq: turn.seq,
+                        output_type: turn.output_type.clone(),
+                        status: WorkflowTurnStatus::Failed,
+                        attempt_count: attempt,
+                        frame_id: None,
+                        output_text: None,
+                        updated_at_ms: now_millis(),
+                    })?;
+                    emit_metadata_validation_event(
+                        event_context,
+                        "frame_metadata_validation_failed",
+                        FrameMetadataValidationEventData {
+                            node_id: hex::encode(request.node_id),
+                            path: target_path.clone(),
+                            agent_id: request.agent_id.clone(),
+                            provider_name: request.provider_name.clone(),
+                            frame_type: turn_frame_type.clone(),
+                            prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
+                            context_digest: prepared_lineage.metadata_input.context_digest.clone(),
+                            prompt_link_id: prepared_lineage.metadata_input.prompt_link_id.clone(),
+                            previous_frame_id: previous_metadata.frame_id.clone(),
+                            previous_prompt_digest: previous_metadata.prompt_digest.clone(),
+                            previous_context_digest: previous_metadata.context_digest.clone(),
+                            previous_prompt_link_id: previous_metadata.prompt_link_id.clone(),
+                            workflow_id: Some(profile.workflow_id.clone()),
+                            thread_id: Some(thread_id.clone()),
+                            turn_id: Some(turn.turn_id.clone()),
+                            turn_seq: Some(turn.seq),
+                            attempt: Some(attempt),
+                            plan_id: request.plan_id.clone(),
+                            level_index: request.level_index,
+                            error: Some(err.to_string()),
+                        },
+                    );
+                    emit_workflow_turn_event(
+                        event_context,
+                        "workflow_turn_failed",
+                        WorkflowTurnEventData {
+                            workflow_id: profile.workflow_id.clone(),
+                            thread_id: thread_id.clone(),
+                            turn_id: turn.turn_id.clone(),
+                            turn_seq: turn.seq,
+                            node_id: hex::encode(request.node_id),
+                            path: target_path.clone(),
+                            agent_id: request.agent_id.clone(),
+                            provider_name: request.provider_name.clone(),
+                            frame_type: turn_frame_type.clone(),
+                            attempt,
+                            plan_id: request.plan_id.clone(),
+                            level_index: request.level_index,
+                            final_frame_id: None,
+                            error: Some(err.to_string()),
+                        },
+                    );
+                    last_error = Some(err.clone());
+                    if attempt < turn.retry_limit {
+                        continue;
+                    }
+                    state_store.upsert_thread(&WorkflowThreadRecord {
+                        thread_id: thread_id.clone(),
+                        workflow_id: profile.workflow_id.clone(),
+                        node_id: hex::encode(request.node_id),
+                        frame_type: request.frame_type.clone(),
+                        status: WorkflowThreadStatus::Failed,
+                        next_turn_seq: turn.seq,
+                        updated_at_ms: now_millis(),
+                    })?;
+                    return Err(err);
+                }
+            };
 
             let response = match execute_completion(
                 &orchestration_request,
@@ -360,7 +527,7 @@ pub(crate) async fn execute_registered_workflow_async(
                             path: target_path.clone(),
                             agent_id: request.agent_id.clone(),
                             provider_name: request.provider_name.clone(),
-                            frame_type: request.frame_type.clone(),
+                            frame_type: turn_frame_type.clone(),
                             attempt,
                             plan_id: request.plan_id.clone(),
                             level_index: request.level_index,
@@ -384,15 +551,6 @@ pub(crate) async fn execute_registered_workflow_async(
                     return Err(err);
                 }
             };
-
-            let frame = Frame::new(
-                Basis::Node(request.node_id),
-                response.content.as_bytes().to_vec(),
-                request.frame_type.clone(),
-                request.agent_id.clone(),
-                generated_metadata,
-            )?;
-            let frame_id = api.put_frame(request.node_id, frame, request.agent_id.clone())?;
 
             let gate_result = evaluate_gate(gate, &response.content);
             let gate_record = ThreadTurnGateRecordV1::new(
@@ -420,7 +578,7 @@ pub(crate) async fn execute_registered_workflow_async(
                     output_type: turn.output_type.clone(),
                     status: WorkflowTurnStatus::Failed,
                     attempt_count: attempt,
-                    frame_id: Some(hex::encode(frame_id)),
+                    frame_id: None,
                     output_text: Some(response.content.clone()),
                     updated_at_ms: now_millis(),
                 })?;
@@ -436,11 +594,11 @@ pub(crate) async fn execute_registered_workflow_async(
                         path: target_path.clone(),
                         agent_id: request.agent_id.clone(),
                         provider_name: request.provider_name.clone(),
-                        frame_type: request.frame_type.clone(),
+                        frame_type: turn_frame_type.clone(),
                         attempt,
                         plan_id: request.plan_id.clone(),
                         level_index: request.level_index,
-                        final_frame_id: Some(hex::encode(frame_id)),
+                        final_frame_id: None,
                         error: Some(gate_error.to_string()),
                     },
                 );
@@ -461,6 +619,15 @@ pub(crate) async fn execute_registered_workflow_async(
                     return Err(gate_error);
                 }
             }
+
+            let frame = Frame::new(
+                Basis::Node(request.node_id),
+                response.content.as_bytes().to_vec(),
+                turn_frame_type.clone(),
+                request.agent_id.clone(),
+                generated_metadata,
+            )?;
+            let frame_id = api.put_frame(request.node_id, frame, request.agent_id.clone())?;
 
             let prompt_link_record = prompt_link_record_from_contract_v1(
                 &prepared_lineage.prompt_link_contract,
@@ -498,7 +665,7 @@ pub(crate) async fn execute_registered_workflow_async(
                     path: target_path.clone(),
                     agent_id: request.agent_id.clone(),
                     provider_name: request.provider_name.clone(),
-                    frame_type: request.frame_type.clone(),
+                    frame_type: turn_frame_type.clone(),
                     attempt,
                     plan_id: request.plan_id.clone(),
                     level_index: request.level_index,
@@ -603,6 +770,28 @@ fn emit_workflow_turn_event(
     }
 }
 
+fn emit_workflow_force_reset_event(
+    event_context: Option<&QueueEventContext>,
+    event_type: &str,
+    payload: WorkflowForceResetEventData,
+) {
+    if let Some(ctx) = event_context {
+        ctx.progress
+            .emit_event_best_effort(&ctx.session_id, event_type, json!(payload));
+    }
+}
+
+fn emit_metadata_validation_event(
+    event_context: Option<&QueueEventContext>,
+    event_type: &str,
+    payload: FrameMetadataValidationEventData,
+) {
+    if let Some(ctx) = event_context {
+        ctx.progress
+            .emit_event_best_effort(&ctx.session_id, event_type, json!(payload));
+    }
+}
+
 fn build_thread_id(profile: &WorkflowProfile, node_id: NodeID, frame_type: &str) -> String {
     let payload = format!(
         "{}:{}:{}",
@@ -612,6 +801,22 @@ fn build_thread_id(profile: &WorkflowProfile, node_id: NodeID, frame_type: &str)
     );
     let digest = blake3::hash(payload.as_bytes()).to_hex().to_string();
     format!("thread-{}", &digest[..16])
+}
+
+fn workflow_turn_frame_type(
+    requested_frame_type: &str,
+    turn: &WorkflowTurn,
+    prompt_link_id: &str,
+    is_final_turn: bool,
+) -> String {
+    if is_final_turn {
+        return requested_frame_type.to_string();
+    }
+
+    format!(
+        "{}--workflow-turn-{}-{}",
+        requested_frame_type, turn.seq, prompt_link_id
+    )
 }
 
 #[cfg(test)]
@@ -632,5 +837,48 @@ mod tests {
 
         assert_eq!(left, right);
         assert!(left.starts_with("thread-"));
+    }
+
+    #[test]
+    fn intermediate_turns_use_distinct_frame_types() {
+        let turn = WorkflowTurn {
+            turn_id: "evidence_gather".to_string(),
+            seq: 1,
+            title: "Gather Evidence".to_string(),
+            prompt_ref: "builtin:docs_writer/evidence_gather".to_string(),
+            input_refs: vec!["target_context".to_string()],
+            output_type: "evidence_map".to_string(),
+            gate_id: "evidence_gate".to_string(),
+            retry_limit: 1,
+            timeout_ms: 60000,
+        };
+
+        let frame_type =
+            workflow_turn_frame_type("context-docs-writer", &turn, "prompt-link-abc", false);
+
+        assert_eq!(
+            frame_type,
+            "context-docs-writer--workflow-turn-1-prompt-link-abc"
+        );
+    }
+
+    #[test]
+    fn final_turn_uses_requested_frame_type() {
+        let turn = WorkflowTurn {
+            turn_id: "style_refine".to_string(),
+            seq: 4,
+            title: "Refine Style".to_string(),
+            prompt_ref: "builtin:docs_writer/style_refine".to_string(),
+            input_refs: vec!["readme_struct".to_string()],
+            output_type: "readme_final".to_string(),
+            gate_id: "style_gate".to_string(),
+            retry_limit: 1,
+            timeout_ms: 60000,
+        };
+
+        let frame_type =
+            workflow_turn_frame_type("context-docs-writer", &turn, "prompt-link-ignored", true);
+
+        assert_eq!(frame_type, "context-docs-writer");
     }
 }

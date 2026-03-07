@@ -58,6 +58,7 @@ pub struct GenerationExecutor {
 
 impl GenerationExecutor {
     const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(300);
+    const DEFAULT_WORKFLOW_WAIT_TIMEOUT: Duration = Duration::from_secs(900);
 
     pub fn new(progress: Option<Arc<ProgressRuntime>>) -> Self {
         Self {
@@ -142,7 +143,7 @@ impl GenerationExecutor {
                 );
 
                 let submit_plan_id = plan.plan_id.clone();
-                let wait_timeout = self.wait_timeout;
+                let wait_timeout = self.wait_timeout_for_item(item);
                 futures.push(async move {
                     let res = queue
                         .enqueue_and_wait_item(item, queue_priority, &submit_plan_id, wait_timeout)
@@ -272,6 +273,16 @@ impl GenerationExecutor {
             progress.emit_event_best_effort(session_id, event_type, payload);
         }
     }
+
+    fn wait_timeout_for_item(&self, item: &GenerationItem) -> Option<Duration> {
+        if item.program.kind == crate::context::generation::TargetExecutionProgramKind::Workflow
+            && self.wait_timeout == Some(Self::DEFAULT_WAIT_TIMEOUT)
+        {
+            return Some(Self::DEFAULT_WORKFLOW_WAIT_TIMEOUT);
+        }
+
+        self.wait_timeout
+    }
 }
 
 #[cfg(test)]
@@ -323,6 +334,19 @@ mod tests {
             frame_type: "context-writer".to_string(),
             force: false,
             program: TargetExecutionProgram::single_shot(),
+        }
+    }
+
+    fn workflow_item(id: u8) -> GenerationItem {
+        GenerationItem {
+            node_id: Hash::from([id; 32]),
+            path: format!("/tmp/{id}.txt"),
+            node_type: GenerationNodeType::File,
+            agent_id: "writer".to_string(),
+            provider_name: "provider".to_string(),
+            frame_type: "context-writer".to_string(),
+            force: false,
+            program: TargetExecutionProgram::workflow("docs_writer_thread_v1"),
         }
     }
 
@@ -404,5 +428,27 @@ mod tests {
         assert!(timeouts
             .iter()
             .all(|value| *value == Some(Duration::from_secs(2))));
+    }
+
+    #[tokio::test]
+    async fn executor_extends_default_wait_timeout_for_workflow_items() {
+        let queue = MockQueue::new(HashMap::new());
+        let executor = GenerationExecutor::new(None);
+        let workflow_plan = GenerationPlan {
+            plan_id: "plan-1".to_string(),
+            source: "test".to_string(),
+            session_id: None,
+            levels: vec![vec![workflow_item(1)]],
+            priority: PlanPriority::Urgent,
+            failure_policy: FailurePolicy::Continue,
+            target_path: "/tmp".to_string(),
+            total_nodes: 1,
+            total_levels: 1,
+        };
+
+        let _ = executor.execute(&queue, workflow_plan).await.unwrap();
+
+        let timeouts = queue.received_timeouts.lock();
+        assert_eq!(*timeouts, vec![Some(Duration::from_secs(900))]);
     }
 }

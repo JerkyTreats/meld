@@ -38,6 +38,36 @@ pub enum Priority {
     Urgent = 3, // User-initiated requests
 }
 
+#[cfg(test)]
+mod tests {
+    use super::FrameGenerationQueue;
+    use crate::context::TargetExecutionProgram;
+    use crate::error::ApiError;
+
+    #[test]
+    fn gate_failures_are_not_retryable() {
+        let error = ApiError::GenerationFailed(
+            "Workflow 'docs_writer_thread_v1' turn 'style_refine' failed gate 'style_gate': missing required section 'readme_markdown'"
+                .to_string(),
+        );
+
+        assert!(!FrameGenerationQueue::is_retryable_error(
+            &TargetExecutionProgram::workflow("docs_writer_thread_v1"),
+            &error,
+        ));
+    }
+
+    #[test]
+    fn workflow_requests_do_not_retry_provider_errors() {
+        let error = ApiError::ProviderRequestFailed("Request timeout".to_string());
+
+        assert!(!FrameGenerationQueue::is_retryable_error(
+            &TargetExecutionProgram::workflow("docs_writer_thread_v1"),
+            &error,
+        ));
+    }
+}
+
 /// Request ID for tracking completion
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RequestId(u64);
@@ -1020,7 +1050,7 @@ impl FrameGenerationQueue {
                     Err(err) => {
                         // Check if we should retry
                         let retry = request.retry_count < config.max_retry_attempts
-                            && Self::is_retryable_error(err);
+                            && Self::is_retryable_error(&request.program, err);
                         if retry {
                             // Will update stats after re-queuing
                         } else {
@@ -1148,9 +1178,14 @@ impl FrameGenerationQueue {
     }
 
     /// Check if an error is retryable
-    fn is_retryable_error(error: &ApiError) -> bool {
+    fn is_retryable_error(program: &TargetExecutionProgram, error: &ApiError) -> bool {
+        if program.kind == TargetExecutionProgramKind::Workflow {
+            return false;
+        }
+
         match error {
             ApiError::ConfigError(_) => false, // Don't retry config errors
+            ApiError::GenerationFailed(message) => !message.contains("failed gate"),
             ApiError::MissingPromptContractField { .. } => false,
             ApiError::FrameMetadataPolicyViolation(_) => false,
             ApiError::FrameMetadataUnknownKey { .. } => false,

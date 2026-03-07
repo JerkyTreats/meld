@@ -89,6 +89,19 @@ impl HeadIndex {
         }
     }
 
+    /// Tombstone a single head entry for a node and frame type.
+    pub fn tombstone_head(&mut self, node_id: &NodeID, frame_type: &str) -> Option<FrameID> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let key = (*node_id, frame_type.to_string());
+        self.heads.get_mut(&key).map(|entry| {
+            entry.tombstoned_at = Some(now);
+            entry.frame_id
+        })
+    }
+
     /// Restore all head entries for a node (remove tombstone marker).
     pub fn restore_heads_for_node(&mut self, node_id: &NodeID) {
         for ((nid, _), entry) in self.heads.iter_mut() {
@@ -440,6 +453,39 @@ mod tests {
         assert_eq!(index.get_active_head(&node_id, "test").unwrap(), None);
         index.restore_heads_for_node(&node_id);
         assert_eq!(index.get_head(&node_id, "test").unwrap(), Some(frame_id));
+    }
+
+    #[test]
+    fn test_tombstone_single_head_keeps_other_frame_types_active() {
+        let mut index = HeadIndex::new();
+        let node_id: NodeID = [1u8; 32];
+        let final_frame_id: FrameID = [2u8; 32];
+        let intermediate_frame_id: FrameID = [3u8; 32];
+
+        index
+            .update_head(&node_id, "context-docs-writer", &final_frame_id)
+            .unwrap();
+        index
+            .update_head(
+                &node_id,
+                "context-docs-writer--workflow-turn-1",
+                &intermediate_frame_id,
+            )
+            .unwrap();
+
+        let tombstoned = index.tombstone_head(&node_id, "context-docs-writer");
+
+        assert_eq!(tombstoned, Some(final_frame_id));
+        assert_eq!(
+            index.get_head(&node_id, "context-docs-writer").unwrap(),
+            None
+        );
+        assert_eq!(
+            index
+                .get_head(&node_id, "context-docs-writer--workflow-turn-1")
+                .unwrap(),
+            Some(intermediate_frame_id)
+        );
     }
 
     #[test]

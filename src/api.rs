@@ -377,6 +377,28 @@ impl ContextApi {
         })
     }
 
+    /// Tombstone a single head entry for a node and frame type.
+    /// Frame blobs are not affected.
+    pub fn tombstone_head(
+        &self,
+        node_id: NodeID,
+        frame_type: &str,
+    ) -> Result<Option<FrameID>, ApiError> {
+        let lock = self.lock_manager.get_lock(&node_id);
+        let _guard = lock.write();
+
+        let previous_head = {
+            let mut head_index = self.head_index.write();
+            head_index.tombstone_head(&node_id, frame_type)
+        };
+
+        if previous_head.is_some() {
+            self.persist_indices()?;
+        }
+
+        Ok(previous_head)
+    }
+
     /// Restore a tombstoned node and all descendants.
     pub fn restore_node(&self, node_id: NodeID) -> Result<RestoreResult, ApiError> {
         let record = self

@@ -123,6 +123,42 @@ pub struct PromptContextLineageEventData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrameMetadataValidationEventData {
+    pub node_id: String,
+    pub path: String,
+    pub agent_id: String,
+    pub provider_name: String,
+    pub frame_type: String,
+    pub prompt_digest: String,
+    pub context_digest: String,
+    pub prompt_link_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_frame_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_prompt_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_context_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_prompt_link_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_seq: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowTargetEventData {
     pub workflow_id: String,
     pub thread_id: String,
@@ -163,6 +199,23 @@ pub struct WorkflowTurnEventData {
     pub final_frame_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowForceResetEventData {
+    pub workflow_id: String,
+    pub thread_id: String,
+    pub node_id: String,
+    pub path: String,
+    pub agent_id: String,
+    pub provider_name: String,
+    pub frame_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_frame_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

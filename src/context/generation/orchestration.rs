@@ -4,13 +4,15 @@ use crate::context::frame::{Basis, Frame};
 use crate::context::generation::contracts::{
     GeneratedMetadataBuilder, GenerationOrchestrationRequest,
 };
-use crate::context::generation::metadata_construction::build_and_validate_generated_metadata;
+use crate::context::generation::metadata_construction::{
+    build_and_validate_generated_metadata, load_previous_metadata_snapshot,
+};
 use crate::context::generation::prompt_collection::build_prompt_messages;
 use crate::context::generation::provider_execution::{execute_completion, prepare_provider};
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
-use crate::telemetry::PromptContextLineageEventData;
+use crate::telemetry::{FrameMetadataValidationEventData, PromptContextLineageEventData};
 use crate::types::FrameID;
 use serde_json::json;
 use tracing::{debug, info};
@@ -94,12 +96,99 @@ pub async fn execute_generation_request(
         );
     }
 
-    let generated_metadata = build_and_validate_generated_metadata(
+    let previous_metadata = load_previous_metadata_snapshot(api, request)?;
+    emit_metadata_validation_event(
+        event_context,
+        "frame_metadata_validation_started",
+        FrameMetadataValidationEventData {
+            node_id: hex::encode(request.node_id),
+            path: node_record.path.to_string_lossy().to_string(),
+            agent_id: request.agent_id.clone(),
+            provider_name: request.provider_name.clone(),
+            frame_type: request.frame_type.clone(),
+            prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
+            context_digest: prepared_lineage.metadata_input.context_digest.clone(),
+            prompt_link_id: prepared_lineage.metadata_input.prompt_link_id.clone(),
+            previous_frame_id: previous_metadata.frame_id.clone(),
+            previous_prompt_digest: previous_metadata.prompt_digest.clone(),
+            previous_context_digest: previous_metadata.context_digest.clone(),
+            previous_prompt_link_id: previous_metadata.prompt_link_id.clone(),
+            workflow_id: None,
+            thread_id: None,
+            turn_id: None,
+            turn_seq: None,
+            attempt: Some(request.retry_count + 1),
+            plan_id: None,
+            level_index: None,
+            error: None,
+        },
+    );
+
+    let generated_metadata = match build_and_validate_generated_metadata(
         api,
         request,
         &prepared_lineage.metadata_input,
         metadata_builder,
-    )?;
+    ) {
+        Ok(metadata) => {
+            emit_metadata_validation_event(
+                event_context,
+                "frame_metadata_validation_succeeded",
+                FrameMetadataValidationEventData {
+                    node_id: hex::encode(request.node_id),
+                    path: node_record.path.to_string_lossy().to_string(),
+                    agent_id: request.agent_id.clone(),
+                    provider_name: request.provider_name.clone(),
+                    frame_type: request.frame_type.clone(),
+                    prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
+                    context_digest: prepared_lineage.metadata_input.context_digest.clone(),
+                    prompt_link_id: prepared_lineage.metadata_input.prompt_link_id.clone(),
+                    previous_frame_id: previous_metadata.frame_id.clone(),
+                    previous_prompt_digest: previous_metadata.prompt_digest.clone(),
+                    previous_context_digest: previous_metadata.context_digest.clone(),
+                    previous_prompt_link_id: previous_metadata.prompt_link_id.clone(),
+                    workflow_id: None,
+                    thread_id: None,
+                    turn_id: None,
+                    turn_seq: None,
+                    attempt: Some(request.retry_count + 1),
+                    plan_id: None,
+                    level_index: None,
+                    error: None,
+                },
+            );
+            metadata
+        }
+        Err(err) => {
+            emit_metadata_validation_event(
+                event_context,
+                "frame_metadata_validation_failed",
+                FrameMetadataValidationEventData {
+                    node_id: hex::encode(request.node_id),
+                    path: node_record.path.to_string_lossy().to_string(),
+                    agent_id: request.agent_id.clone(),
+                    provider_name: request.provider_name.clone(),
+                    frame_type: request.frame_type.clone(),
+                    prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
+                    context_digest: prepared_lineage.metadata_input.context_digest.clone(),
+                    prompt_link_id: prepared_lineage.metadata_input.prompt_link_id.clone(),
+                    previous_frame_id: previous_metadata.frame_id.clone(),
+                    previous_prompt_digest: previous_metadata.prompt_digest.clone(),
+                    previous_context_digest: previous_metadata.context_digest.clone(),
+                    previous_prompt_link_id: previous_metadata.prompt_link_id.clone(),
+                    workflow_id: None,
+                    thread_id: None,
+                    turn_id: None,
+                    turn_seq: None,
+                    attempt: Some(request.retry_count + 1),
+                    plan_id: None,
+                    level_index: None,
+                    error: Some(err.to_string()),
+                },
+            );
+            return Err(err);
+        }
+    };
 
     let response = execute_completion(
         request,
@@ -128,4 +217,15 @@ pub async fn execute_generation_request(
     );
 
     Ok(frame_id)
+}
+
+fn emit_metadata_validation_event(
+    event_context: Option<&QueueEventContext>,
+    event_type: &str,
+    payload: FrameMetadataValidationEventData,
+) {
+    if let Some(ctx) = event_context {
+        ctx.progress
+            .emit_event_best_effort(&ctx.session_id, event_type, json!(payload));
+    }
 }

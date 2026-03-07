@@ -22,7 +22,7 @@ pub fn builtin_prompt_text(prompt_ref: &str) -> Option<&'static str> {
             "Build a structured README draft using verified_claims only. Return JSON with required sections and no style polish.",
         ),
         "docs_writer/style_refine" => Some(
-            "Refine style and flow while preserving meaning. Return markdown in readme_markdown.",
+            "Refine style and flow while preserving meaning. Return markdown only and preserve the required section headings.",
         ),
         _ => None,
     }
@@ -125,7 +125,15 @@ fn docs_writer_thread_v1() -> WorkflowProfile {
             WorkflowGate {
                 gate_id: "style_gate".to_string(),
                 gate_type: "no_semantic_drift".to_string(),
-                required_fields: vec!["readme_markdown".to_string()],
+                required_fields: vec![
+                    "scope".to_string(),
+                    "purpose".to_string(),
+                    "api surface".to_string(),
+                    "behavior notes".to_string(),
+                    "usage".to_string(),
+                    "caveats".to_string(),
+                    "related components".to_string(),
+                ],
                 rules: serde_json::Value::Null,
                 fail_on_violation: true,
             },
@@ -167,5 +175,33 @@ mod tests {
         assert!(builtin_prompt_text("docs_writer/verification").is_some());
         assert!(builtin_prompt_text("docs_writer/readme_struct").is_some());
         assert!(builtin_prompt_text("docs_writer/style_refine").is_some());
+    }
+
+    #[test]
+    fn builtin_docs_writer_style_gate_targets_markdown_sections() {
+        let profile = builtin_profiles()
+            .into_iter()
+            .find(|profile| profile.workflow_id == "docs_writer_thread_v1")
+            .unwrap();
+
+        let style_gate = profile
+            .gates
+            .iter()
+            .find(|gate| gate.gate_id == "style_gate")
+            .unwrap();
+
+        assert_eq!(style_gate.gate_type, "no_semantic_drift");
+        assert!(style_gate
+            .required_fields
+            .iter()
+            .any(|field| field == "api surface"));
+        assert!(style_gate
+            .required_fields
+            .iter()
+            .any(|field| field == "behavior notes"));
+        assert!(!style_gate
+            .required_fields
+            .iter()
+            .any(|field| field == "readme_markdown"));
     }
 }

@@ -8,8 +8,12 @@ use meld::cli::{
 use meld::config::AgentConfig;
 use meld::config::{xdg, ProviderConfig, ProviderType};
 use meld::context::frame::{Basis, Frame};
+use meld::metadata::frame_write_contract::{
+    build_generated_metadata, generated_metadata_input_from_payload,
+};
 use meld::provider::CompletionOptions;
 use meld::telemetry::{PrunePolicy, SessionStatus};
+use meld::workspace::resolve_workspace_node_id;
 use tempfile::TempDir;
 
 use crate::integration::with_xdg_env;
@@ -608,6 +612,12 @@ fn workflow_execute_emits_lineage_and_provider_events() {
             .any(|e| e.event_type == "provider_request_sent"));
         assert!(events
             .iter()
+            .any(|e| e.event_type == "frame_metadata_validation_started"));
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "frame_metadata_validation_succeeded"));
+        assert!(events
+            .iter()
             .any(|e| e.event_type == "provider_request_failed"));
         assert!(events.iter().any(|e| e.event_type == "workflow_summary"));
         assert!(events.iter().any(|e| e.event_type == "command_summary"));
@@ -694,6 +704,12 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
             .any(|e| e.event_type == "workflow_turn_started"));
         assert!(events
             .iter()
+            .any(|e| e.event_type == "frame_metadata_validation_started"));
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "frame_metadata_validation_succeeded"));
+        assert!(events
+            .iter()
             .any(|e| e.event_type == "workflow_turn_failed"));
         assert!(events
             .iter()
@@ -711,6 +727,94 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
             .expect("session_ended should be emitted");
         assert!(typed_idx < ended_idx);
         assert!(events.iter().any(|e| e.event_type == "command_summary"));
+    });
+}
+
+#[test]
+fn workflow_force_generate_tombstones_stale_final_head_and_emits_reset_event() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        let target = workspace_root.join("doc.md");
+        fs::write(&target, "# hello").unwrap();
+
+        create_test_writer_agent_with_workflow(
+            "workflow-force-agent",
+            Some("docs_writer_thread_v1"),
+        );
+        create_test_openai_provider(
+            "workflow-force-provider",
+            "gpt-4-test",
+            "http://127.0.0.1:9",
+        );
+
+        let cli = RunContext::new(workspace_root.clone(), None).unwrap();
+        cli.execute(&Commands::Scan { force: true }).unwrap();
+
+        let node_id = resolve_workspace_node_id(
+            cli.api(),
+            &workspace_root,
+            Some(target.as_path()),
+            None,
+            false,
+        )
+        .unwrap();
+        let frame_type = "context-workflow-force-agent".to_string();
+        let stale_frame = Frame::new(
+            Basis::Node(node_id),
+            b"stale".to_vec(),
+            frame_type.clone(),
+            "workflow-force-agent".to_string(),
+            build_generated_metadata(&generated_metadata_input_from_payload(
+                "workflow-force-agent",
+                "workflow-force-provider",
+                "gpt-4-test",
+                "openai",
+                "stale prompt",
+                "stale context",
+            )),
+        )
+        .unwrap();
+        let stale_frame_id = cli
+            .api()
+            .put_frame(node_id, stale_frame, "workflow-force-agent".to_string())
+            .unwrap();
+
+        let result = cli.execute(&Commands::Context {
+            command: ContextCommands::Generate {
+                node: None,
+                path: Some(target.clone()),
+                path_positional: None,
+                agent: Some("workflow-force-agent".to_string()),
+                provider: Some("workflow-force-provider".to_string()),
+                frame_type: Some(frame_type.clone()),
+                force: true,
+                no_recursive: false,
+            },
+        });
+        assert!(result.is_err());
+        assert_eq!(cli.api().get_head(&node_id, &frame_type).unwrap(), None);
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s.command == "context.generate")
+            .expect("context.generate session should exist");
+        let events = runtime.store().read_events(&session.session_id).unwrap();
+
+        let reset_event = events
+            .iter()
+            .find(|e| e.event_type == "workflow_target_force_reset")
+            .expect("workflow_target_force_reset should be emitted");
+        assert_eq!(
+            reset_event
+                .data
+                .get("previous_frame_id")
+                .and_then(|value| value.as_str()),
+            Some(hex::encode(stale_frame_id).as_str())
+        );
     });
 }
 

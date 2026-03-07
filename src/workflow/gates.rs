@@ -64,11 +64,12 @@ fn evaluate_schema_required_fields(gate: &WorkflowGate, output: &str) -> GateEva
 }
 
 fn evaluate_required_sections(gate: &WorkflowGate, output: &str) -> GateEvaluationResult {
-    let lowered_output = output.to_lowercase();
+    let normalized_output = normalize_section_token(output);
     let mut reasons = Vec::new();
 
     for section in &gate.required_fields {
-        if !lowered_output.contains(&section.to_lowercase()) {
+        let normalized_section = normalize_section_token(section);
+        if !normalized_output.contains(&normalized_section) {
             reasons.push(format!("missing required section '{}'", section));
         }
     }
@@ -90,6 +91,14 @@ fn evaluate_no_semantic_drift(gate: &WorkflowGate, output: &str) -> GateEvaluati
     }
 
     evaluate_required_sections(gate, output)
+}
+
+fn normalize_section_token(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
 }
 
 #[cfg(test)]
@@ -122,5 +131,31 @@ mod tests {
         let result = evaluate_gate(&gate, "# Title\n\n## Scope");
         assert!(!result.is_pass());
         assert_eq!(result.outcome, GateOutcome::Fail);
+    }
+
+    #[test]
+    fn required_sections_accepts_spacing_and_case_variants() {
+        let gate = WorkflowGate {
+            gate_id: "g3".to_string(),
+            gate_type: "required_sections".to_string(),
+            required_fields: vec![
+                "api_surface".to_string(),
+                "behavior_notes".to_string(),
+                "related_components".to_string(),
+            ],
+            rules: Value::Null,
+            fail_on_violation: true,
+        };
+        let output = r#"{
+          "sections": {
+            "API Surface": [],
+            "Behavior Notes": [],
+            "Related Components": []
+          }
+        }"#;
+
+        let result = evaluate_gate(&gate, output);
+
+        assert!(result.is_pass());
     }
 }

@@ -11,9 +11,10 @@ pub mod sinks;
 pub mod summary;
 
 pub use events::{
-    ProgressEvent, PromptContextLineageEventData, ProviderLifecycleEventData, QueueEventData,
-    QueueStatsEventData, SessionEndedData, SessionStartedData, SummaryEventData,
-    WorkflowTargetEventData, WorkflowTurnEventData,
+    FrameMetadataValidationEventData, ProgressEvent, PromptContextLineageEventData,
+    ProviderLifecycleEventData, QueueEventData, QueueStatsEventData, SessionEndedData,
+    SessionStartedData, SummaryEventData, WorkflowForceResetEventData, WorkflowTargetEventData,
+    WorkflowTurnEventData,
 };
 pub use sessions::policy::{PrunePolicy, SessionStatus};
 pub use sessions::ProgressRuntime;
