@@ -367,6 +367,13 @@ impl WatchDaemon {
         );
 
         let workflow_provider_name = self.resolve_workflow_provider_name();
+        let workflow_event_context = match (&self.config.session_id, &self.config.progress) {
+            (Some(session_id), Some(progress)) => Some(QueueEventContext {
+                session_id: session_id.clone(),
+                progress: Arc::clone(progress),
+            }),
+            _ => None,
+        };
         let batch_size = self.config.frame_batch_size;
         let mut created_count = 0;
         let mut skipped_count = 0;
@@ -456,6 +463,7 @@ impl WatchDaemon {
                             &self.config.workspace_root,
                             &registered_profile,
                             &request,
+                            workflow_event_context.as_ref(),
                         ) {
                             Ok(summary) => {
                                 if summary.turns_completed == 0 {

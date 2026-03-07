@@ -5,6 +5,7 @@ use crate::api::ContextApi;
 use crate::config::ConfigLoader;
 use crate::context::generation::run::{run_generate, GenerateRequest};
 use crate::context::query::get_node_for_cli;
+use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
 use crate::ignore;
@@ -239,7 +240,7 @@ impl RunContext {
             Commands::Provider { command } => self.handle_provider_command(command, session_id),
             Commands::Init { force, list } => self.handle_init(*force, *list),
             Commands::Context { command } => self.handle_context_command(command, session_id),
-            Commands::Workflow { command } => self.handle_workflow_command(command),
+            Commands::Workflow { command } => self.handle_workflow_command(command, session_id),
             Commands::Watch {
                 debounce_ms,
                 batch_window_ms,
@@ -1382,7 +1383,11 @@ impl RunContext {
         }
     }
 
-    fn handle_workflow_command(&self, command: &WorkflowCommands) -> Result<String, ApiError> {
+    fn handle_workflow_command(
+        &self,
+        command: &WorkflowCommands,
+        session_id: &str,
+    ) -> Result<String, ApiError> {
         match command {
             WorkflowCommands::List { format } => {
                 let registry = self.workflow_registry.read();
@@ -1472,6 +1477,10 @@ impl RunContext {
                 force,
             } => {
                 let path_merged = path.as_ref().or(path_positional.as_ref()).cloned();
+                let event_context = QueueEventContext {
+                    session_id: session_id.to_string(),
+                    progress: Arc::clone(&self.progress),
+                };
                 let execute_request = WorkflowExecuteRequest {
                     workflow_id: workflow_id.clone(),
                     node: node.clone(),
@@ -1487,6 +1496,7 @@ impl RunContext {
                     self.workspace_root.as_path(),
                     &registry,
                     &execute_request,
+                    Some(&event_context),
                 )?;
                 Ok(format!(
                     "Workflow execution completed: workflow_id={}, thread_id={}, turns_completed={}, final_frame_id={}, skipped={}",

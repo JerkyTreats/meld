@@ -58,6 +58,9 @@ pub enum SummaryCommandDescriptor {
         action: String,
         mutation: bool,
     },
+    WorkflowAction {
+        action: String,
+    },
     Init {
         force: bool,
         list_only: bool,
@@ -227,6 +230,16 @@ pub fn typed_summary_event(
                 "scope": "provider",
                 "action": action,
                 "mutation": mutation,
+                "ok": ok,
+                "duration_ms": duration_ms,
+                "error": err,
+            }),
+        )),
+        SummaryCommandDescriptor::WorkflowAction { action } => Some((
+            "workflow_summary",
+            json!({
+                "scope": "workflow",
+                "action": action,
                 "ok": ok,
                 "duration_ms": duration_ms,
                 "error": err,

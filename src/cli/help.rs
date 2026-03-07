@@ -184,7 +184,9 @@ pub fn summary_descriptor(command: &Commands) -> SummaryCommandDescriptor {
             force: *force,
             list_only: *list,
         },
-        Commands::Workflow { .. } => SummaryCommandDescriptor::None,
+        Commands::Workflow { command } => SummaryCommandDescriptor::WorkflowAction {
+            action: workflow_command_name(command).to_string(),
+        },
         _ => SummaryCommandDescriptor::None,
     }
 }

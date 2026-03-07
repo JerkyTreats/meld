@@ -404,6 +404,13 @@ pub fn run_generate(
                 agent_id, workflow_id
             ))
         })?;
+        let workflow_event_context = match (session_id, progress.as_ref()) {
+            (Some(sid), Some(prog)) => Some(QueueEventContext {
+                session_id: sid.to_string(),
+                progress: Arc::clone(prog),
+            }),
+            _ => None,
+        };
 
         let summary = execute_registered_workflow(
             api.as_ref(),
@@ -416,6 +423,7 @@ pub fn run_generate(
                 frame_type: frame_type.clone(),
                 force: request.force,
             },
+            workflow_event_context.as_ref(),
         )?;
 
         if summary.turns_completed == 0 {

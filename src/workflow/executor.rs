@@ -8,10 +8,11 @@ use crate::context::generation::contracts::{
 };
 use crate::context::generation::metadata_construction::build_and_validate_generated_metadata;
 use crate::context::generation::provider_execution::{execute_completion, prepare_provider};
+use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
-use crate::telemetry::now_millis;
+use crate::telemetry::{now_millis, PromptContextLineageEventData};
 use crate::types::{FrameID, NodeID};
 use crate::workflow::gates::evaluate_gate;
 use crate::workflow::profile::WorkflowProfile;
@@ -25,6 +26,7 @@ use crate::workflow::state_store::{
     WorkflowStateStore, WorkflowThreadRecord, WorkflowThreadStatus, WorkflowTurnRecord,
     WorkflowTurnStatus,
 };
+use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -50,12 +52,20 @@ pub fn execute_registered_workflow(
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
+    event_context: Option<&QueueEventContext>,
 ) -> Result<WorkflowExecutionSummary, ApiError> {
     let rt = tokio::runtime::Runtime::new()
         .map_err(|err| ApiError::ProviderError(format!("Failed to create runtime: {}", err)))?;
 
     rt.block_on(async move {
-        execute_registered_workflow_async(api, workspace_root, registered_profile, request).await
+        execute_registered_workflow_async(
+            api,
+            workspace_root,
+            registered_profile,
+            request,
+            event_context,
+        )
+        .await
     })
 }
 
@@ -64,6 +74,7 @@ async fn execute_registered_workflow_async(
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
+    event_context: Option<&QueueEventContext>,
 ) -> Result<WorkflowExecutionSummary, ApiError> {
     let profile = &registered_profile.profile;
     let thread_id = build_thread_id(profile, request.node_id, &request.frame_type);
@@ -194,6 +205,40 @@ async fn execute_registered_workflow_async(
                 &provider_preparation.provider_type,
             )?;
 
+            if let Some(ctx) = event_context {
+                let lineage_event = PromptContextLineageEventData {
+                    node_id: hex::encode(request.node_id),
+                    agent_id: request.agent_id.clone(),
+                    provider_name: request.provider_name.clone(),
+                    frame_type: request.frame_type.clone(),
+                    prompt_link_id: prepared_lineage.prompt_link_contract.prompt_link_id.clone(),
+                    prompt_digest: prepared_lineage.prompt_link_contract.prompt_digest.clone(),
+                    context_digest: prepared_lineage.prompt_link_contract.context_digest.clone(),
+                    system_prompt_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .system_prompt_artifact_id
+                        .clone(),
+                    user_prompt_template_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .user_prompt_template_artifact_id
+                        .clone(),
+                    rendered_prompt_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .rendered_prompt_artifact_id
+                        .clone(),
+                    context_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .context_artifact_id
+                        .clone(),
+                    lineage_failure_policy: "deterministic_orphan_keep".to_string(),
+                };
+                ctx.progress.emit_event_best_effort(
+                    &ctx.session_id,
+                    "prompt_context_lineage_prepared",
+                    json!(lineage_event),
+                );
+            }
+
             let generated_metadata = build_and_validate_generated_metadata(
                 api,
                 &orchestration_request,
@@ -214,7 +259,7 @@ async fn execute_registered_workflow_async(
                         content: rendered_prompt.clone(),
                     },
                 ],
-                None,
+                event_context,
             )
             .await
             {

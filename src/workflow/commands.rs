@@ -2,6 +2,7 @@
 
 use crate::api::ContextApi;
 use crate::config::WorkflowConfig;
+use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::types::NodeID;
 use crate::workflow::executor::{execute_registered_workflow, WorkflowExecutionRequest};
@@ -118,6 +119,7 @@ impl WorkflowCommandService {
         workspace_root: &Path,
         registry: &WorkflowRegistry,
         request: &WorkflowExecuteRequest,
+        event_context: Option<&QueueEventContext>,
     ) -> Result<WorkflowExecuteResult, ApiError> {
         let node_id = resolve_node_id(
             api,
@@ -166,6 +168,7 @@ impl WorkflowCommandService {
                 frame_type,
                 force: request.force,
             },
+            event_context,
         )?;
 
         Ok(WorkflowExecuteResult {

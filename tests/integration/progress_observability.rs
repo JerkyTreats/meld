@@ -2,7 +2,8 @@ use std::fs;
 
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
 use meld::cli::{
-    AgentCommands, Commands, ContextCommands, ProviderCommands, RunContext, WorkspaceCommands,
+    AgentCommands, Commands, ContextCommands, ProviderCommands, RunContext, WorkflowCommands,
+    WorkspaceCommands,
 };
 use meld::config::AgentConfig;
 use meld::config::{xdg, ProviderConfig, ProviderType};
@@ -30,6 +31,10 @@ fn create_test_openai_provider(provider_name: &str, model: &str, endpoint: &str)
 }
 
 fn create_test_writer_agent(agent_id: &str) {
+    create_test_writer_agent_with_workflow(agent_id, None);
+}
+
+fn create_test_writer_agent_with_workflow(agent_id: &str, workflow_id: Option<&str>) {
     let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
     fs::create_dir_all(&agents_dir).unwrap();
     let config_path = agents_dir.join(format!("{}.toml", agent_id));
@@ -49,7 +54,7 @@ fn create_test_writer_agent(agent_id: &str) {
         role: AgentRole::Writer,
         system_prompt: Some("You are a test writer.".to_string()),
         system_prompt_path: None,
-        workflow_id: None,
+        workflow_id: workflow_id.map(ToString::to_string),
         metadata: metadata.into(),
     };
 
@@ -512,6 +517,15 @@ fn command_families_emit_typed_summaries_with_command_summary() {
                 "init",
                 "init_summary",
             ),
+            (
+                Commands::Workflow {
+                    command: WorkflowCommands::List {
+                        format: "text".to_string(),
+                    },
+                },
+                "workflow.list",
+                "workflow_summary",
+            ),
         ];
 
         for (command, _, _) in &checks {
@@ -546,6 +560,57 @@ fn command_families_emit_typed_summaries_with_command_summary() {
             assert!(typed_idx < ended_idx);
             assert!(generic_idx < ended_idx);
         }
+    });
+}
+
+#[test]
+fn workflow_execute_emits_lineage_and_provider_events() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        let target = workspace_root.join("doc.md");
+        fs::write(&target, "# hello").unwrap();
+
+        create_test_writer_agent_with_workflow("workflow-obs-agent", Some("docs_writer_thread_v1"));
+        create_test_openai_provider("workflow-obs-provider", "gpt-4-test", "http://127.0.0.1:9");
+
+        let cli = RunContext::new(workspace_root.clone(), None).unwrap();
+        cli.execute(&Commands::Scan { force: true }).unwrap();
+
+        let result = cli.execute(&Commands::Workflow {
+            command: WorkflowCommands::Execute {
+                workflow_id: "docs_writer_thread_v1".to_string(),
+                node: None,
+                path: Some(target.clone()),
+                path_positional: None,
+                agent: "workflow-obs-agent".to_string(),
+                provider: "workflow-obs-provider".to_string(),
+                frame_type: None,
+                force: false,
+            },
+        });
+        assert!(result.is_err());
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s.command == "workflow.execute")
+            .expect("workflow.execute session should exist");
+        let events = runtime.store().read_events(&session.session_id).unwrap();
+
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "prompt_context_lineage_prepared"));
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "provider_request_sent"));
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "provider_request_failed"));
+        assert!(events.iter().any(|e| e.event_type == "workflow_summary"));
+        assert!(events.iter().any(|e| e.event_type == "command_summary"));
     });
 }
 
