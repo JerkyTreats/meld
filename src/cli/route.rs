@@ -30,6 +30,7 @@ use crate::cli::parse::{
     AgentCommands, AgentPromptCommands, Commands, ContextCommands, ProviderCommands,
     WorkflowCommands, WorkspaceCommands,
 };
+use crate::cli::progress::LiveProgressHandle;
 use crate::cli::{command_name, summary_descriptor};
 
 fn resolve_context_get_frame_type(
@@ -191,7 +192,13 @@ impl RunContext {
     /// Execute a CLI command via the single route table.
     pub fn execute(&self, command: &Commands) -> Result<String, ApiError> {
         let started = Instant::now();
-        let session_id = self.progress.start_command_session(command_name(command))?;
+        let command_name = command_name(command);
+        let session_id = self.progress.start_command_session(command_name)?;
+        let mut live_progress = LiveProgressHandle::start_if_supported(
+            Arc::clone(&self.progress),
+            &session_id,
+            command,
+        );
         let result = self.execute_inner(command, &session_id);
         self.emit_command_summary(
             &session_id,
@@ -202,6 +209,9 @@ impl RunContext {
         let ok = result.is_ok();
         let err = result.as_ref().err().map(|e| e.to_string());
         self.progress.finish_command_session(&session_id, ok, err)?;
+        if let Some(handle) = live_progress.as_mut() {
+            handle.stop();
+        }
         let _ = self.progress.prune(PrunePolicy::default());
         result
     }

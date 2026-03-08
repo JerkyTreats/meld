@@ -5,6 +5,7 @@ mod help;
 mod output;
 mod parse;
 mod presentation;
+mod progress;
 mod route;
 
 pub use help::{command_name, summary_descriptor};
