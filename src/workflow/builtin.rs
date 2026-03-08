@@ -13,16 +13,16 @@ pub fn builtin_profiles() -> Vec<WorkflowProfile> {
 pub fn builtin_prompt_text(prompt_ref: &str) -> Option<&'static str> {
     match prompt_ref {
         "docs_writer/evidence_gather" => Some(
-            "You are building evidence for README generation. Return JSON with a top level claims list and evidence references for each claim.",
+            "Build evidence for README generation from the provided Context. Return JSON only with schema {\"claims\":[{\"claim_id\":\"c1\",\"statement\":\"...\",\"evidence_path\":\"...\",\"evidence_symbol\":\"...\",\"evidence_quote\":\"...\"}]}. Use only exact paths, identifiers, and quotes that appear in Context. Each claim must cite one concrete path and one concrete symbol or quote. Prefer subsystem purpose, public entry points, determinism rules, and failure behavior. For directory targets, cover the module anchor first and then add at least one supported claim for each major child path that contains useful evidence. Do not let one file dominate if other child paths contain supported identifiers. Omit unsupported claims.",
         ),
         "docs_writer/verification" => Some(
-            "Validate each claim using provided evidence and return JSON with verified_claims rejected_claims and reasons.",
+            "Validate each claim against the provided evidence. Return JSON only with keys verified_claims, rejected_claims, and reasons. Keep verified_claims as full claim objects. Keep rejected_claims as objects with claim_id, statement, and reason_code. Verify a claim only when the cited path is present and the cited symbol or quote supports the statement. Reject generic restatements and unsupported summaries.",
         ),
         "docs_writer/readme_struct" => Some(
-            "Build a structured README draft using verified_claims only. Return JSON with required sections and no style polish.",
+            "Build a structured README draft from verified_claims only. Return JSON only with keys title, scope, purpose, api_surface, behavior_notes, usage, caveats, and related_components. Use concrete module names, paths, and identifiers. For directory targets, explain module responsibilities, determinism rules, public entry points, and operational caveats when verified. In api_surface and related_components, cover the major child paths present in verified_claims rather than collapsing the README into one dominant file. Do not include an evidence_map key.",
         ),
         "docs_writer/style_refine" => Some(
-            "Refine style and flow while preserving meaning. Return markdown only and preserve the required section headings.",
+            "Refine the README for clarity and flow. Return markdown only with headings # title, ## Scope, ## Purpose, ## API Surface, ## Behavior Notes, ## Usage, ## Caveats, and ## Related Components. Preserve technical meaning. Do not add an Evidence Map section. Do not add files, symbols, or claims that are absent from the input.",
         ),
         _ => None,
     }
@@ -119,7 +119,9 @@ fn docs_writer_thread_v1() -> WorkflowProfile {
                     "caveats".to_string(),
                     "related_components".to_string(),
                 ],
-                rules: serde_json::Value::Null,
+                rules: json!({
+                    "forbidden_sections": ["evidence_map"],
+                }),
                 fail_on_violation: true,
             },
             WorkflowGate {
@@ -134,7 +136,9 @@ fn docs_writer_thread_v1() -> WorkflowProfile {
                     "caveats".to_string(),
                     "related components".to_string(),
                 ],
-                rules: serde_json::Value::Null,
+                rules: json!({
+                    "forbidden_sections": ["evidence map"],
+                }),
                 fail_on_violation: true,
             },
         ],

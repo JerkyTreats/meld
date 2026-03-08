@@ -74,6 +74,22 @@ fn evaluate_required_sections(gate: &WorkflowGate, output: &str) -> GateEvaluati
         }
     }
 
+    let forbidden_sections = gate
+        .rules
+        .get("forbidden_sections")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for section in forbidden_sections {
+        let Some(section) = section.as_str() else {
+            continue;
+        };
+        let normalized_section = normalize_section_token(section);
+        if normalized_output.contains(&normalized_section) {
+            reasons.push(format!("forbidden section '{}' present", section));
+        }
+    }
+
     if reasons.is_empty() {
         GateEvaluationResult::pass()
     } else {
@@ -157,5 +173,26 @@ mod tests {
         let result = evaluate_gate(&gate, output);
 
         assert!(result.is_pass());
+    }
+
+    #[test]
+    fn required_sections_fails_for_forbidden_sections() {
+        let gate = WorkflowGate {
+            gate_id: "g4".to_string(),
+            gate_type: "required_sections".to_string(),
+            required_fields: vec!["scope".to_string()],
+            rules: serde_json::json!({
+                "forbidden_sections": ["evidence_map"],
+            }),
+            fail_on_violation: true,
+        };
+
+        let result = evaluate_gate(&gate, r#"{"scope":"ok","evidence_map":[]}"#);
+
+        assert!(!result.is_pass());
+        assert!(result
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("forbidden section 'evidence_map' present")));
     }
 }
