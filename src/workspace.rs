@@ -2,6 +2,7 @@
 
 mod ci;
 mod commands;
+mod danger;
 mod facade;
 mod format;
 mod section;

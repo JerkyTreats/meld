@@ -3,17 +3,20 @@
 //! Command-line interface for the Meld filesystem state management system.
 
 use clap::Parser;
-use meld::cli::{Cli, RunContext};
+use meld::cli::{Cli, Commands, DangerCommands, RunContext};
 use meld::config::ConfigLoader;
 use meld::logging::{init_logging, LoggingConfig};
+use std::path::{Path, PathBuf};
 use std::process;
 use tracing::{error, info};
 
 fn main() {
     let cli = Cli::parse();
+    let logging_workspace =
+        danger_workspace_override(&cli).unwrap_or_else(|| cli.workspace.clone());
 
     // Build logging config from CLI args, env vars, and config file
-    let logging_config = build_logging_config(&cli);
+    let logging_config = build_logging_config(&cli, logging_workspace.as_path());
 
     // Initialize logging early
     if let Err(e) = init_logging(Some(&logging_config)) {
@@ -22,6 +25,21 @@ fn main() {
     }
 
     info!("Meld CLI starting");
+
+    if let Some(result) = try_execute_danger_command(&cli) {
+        match result {
+            Ok(output) => {
+                info!("Danger command completed successfully");
+                println!("{}", output);
+            }
+            Err(e) => {
+                error!("Command failed: {}", e);
+                eprintln!("{}", meld::cli::map_error(&e));
+                process::exit(1);
+            }
+        }
+        return;
+    }
 
     // Create CLI context
     let context = match RunContext::new(cli.workspace.clone(), cli.config.clone()) {
@@ -50,16 +68,56 @@ fn main() {
     }
 }
 
+fn try_execute_danger_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
+    match &cli.command {
+        Commands::Danger {
+            command:
+                DangerCommands::Flush {
+                    path,
+                    path_positional,
+                    dry_run,
+                    yes,
+                },
+        } => {
+            let workspace_root = path
+                .clone()
+                .or_else(|| path_positional.clone())
+                .unwrap_or_else(|| cli.workspace.clone());
+            Some(meld::workspace::WorkspaceDangerService::flush(
+                &workspace_root,
+                cli.config.as_deref(),
+                *dry_run,
+                *yes,
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn danger_workspace_override(cli: &Cli) -> Option<PathBuf> {
+    match &cli.command {
+        Commands::Danger {
+            command:
+                DangerCommands::Flush {
+                    path,
+                    path_positional,
+                    ..
+                },
+        } => path.clone().or_else(|| path_positional.clone()),
+        _ => None,
+    }
+}
+
 /// Build logging configuration from CLI args, environment, and config file.
 /// Precedence: CLI flags override config file override defaults.
-fn build_logging_config(cli: &Cli) -> LoggingConfig {
+fn build_logging_config(cli: &Cli, logging_workspace: &Path) -> LoggingConfig {
     let mut config = if let Some(ref config_path) = cli.config {
         ConfigLoader::load_from_file(config_path)
             .ok()
             .map(|c| c.logging)
             .unwrap_or_default()
     } else {
-        ConfigLoader::load(&cli.workspace)
+        ConfigLoader::load(logging_workspace)
             .ok()
             .map(|c| c.logging)
             .unwrap_or_default()
@@ -91,7 +149,7 @@ fn build_logging_config(cli: &Cli) -> LoggingConfig {
         let resolved = meld::logging::resolve_log_file_path(
             cli.log_file.clone(),
             config.file.clone(),
-            Some(cli.workspace.as_path()),
+            Some(logging_workspace),
         );
         if let Ok(path) = resolved {
             config.file = Some(path);
@@ -113,7 +171,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let ws = temp.path().to_string_lossy();
         let cli = Cli::try_parse_from(&["meld", "--workspace", ws.as_ref(), "status"]).unwrap();
-        let config = build_logging_config(&cli);
+        let config = build_logging_config(&cli, temp.path());
         assert!(config.enabled, "default should have logging enabled");
         assert_eq!(config.output, "file", "default output should be file");
         assert_eq!(config.level, "info", "default level should be info");
@@ -122,7 +180,8 @@ mod tests {
     #[test]
     fn test_build_logging_config_quiet() {
         let cli = Cli::try_parse_from(&["meld", "--quiet", "status"]).unwrap();
-        let config = build_logging_config(&cli);
+        let cwd = std::env::current_dir().unwrap();
+        let config = build_logging_config(&cli, cwd.as_path());
         assert!(!config.enabled, "quiet should disable logging");
     }
 
@@ -132,7 +191,7 @@ mod tests {
         let ws = temp.path().to_string_lossy();
         let cli = Cli::try_parse_from(&["meld", "--workspace", ws.as_ref(), "--verbose", "status"])
             .unwrap();
-        let config = build_logging_config(&cli);
+        let config = build_logging_config(&cli, temp.path());
         assert_eq!(config.level, "debug", "verbose should set level to debug");
         assert_eq!(
             config.output, "file+stderr",
@@ -154,7 +213,7 @@ mod tests {
             "status",
         ])
         .unwrap();
-        let config = build_logging_config(&cli);
+        let config = build_logging_config(&cli, temp.path());
         assert_eq!(config.level, "debug");
         assert_eq!(
             config.output, "stderr",

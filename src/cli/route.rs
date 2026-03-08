@@ -286,6 +286,9 @@ impl RunContext {
             Commands::Init { force, list } => self.handle_init(*force, *list),
             Commands::Context { command } => self.handle_context_command(command, session_id),
             Commands::Workflow { command } => self.handle_workflow_command(command, session_id),
+            Commands::Danger { .. } => Err(ApiError::ConfigError(
+                "Danger commands must run from the CLI entry point".to_string(),
+            )),
             Commands::Watch {
                 debounce_ms,
                 batch_window_ms,

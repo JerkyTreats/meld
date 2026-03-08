@@ -122,6 +122,33 @@ pub enum Commands {
         #[command(subcommand)]
         command: WorkflowCommands,
     },
+    /// Dangerous destructive operations for workspace runtime state
+    Danger {
+        #[command(subcommand)]
+        command: DangerCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DangerCommands {
+    /// Remove all workspace runtime state except logs
+    Flush {
+        /// Target workspace path
+        #[arg(long, value_name = "PATH", conflicts_with = "path_positional")]
+        path: Option<PathBuf>,
+
+        /// Target workspace path
+        #[arg(value_name = "PATH", index = 1, conflicts_with = "path")]
+        path_positional: Option<PathBuf>,
+
+        /// Show what would be removed without deleting
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Confirm destructive deletion of runtime state
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]

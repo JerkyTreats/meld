@@ -1,8 +1,8 @@
 //! CLI help and command-name contract for telemetry and routing.
 
 use crate::cli::parse::{
-    AgentCommands, AgentPromptCommands, Commands, ContextCommands, ProviderCommands,
-    WorkflowCommands, WorkspaceCommands,
+    AgentCommands, AgentPromptCommands, Commands, ContextCommands, DangerCommands,
+    ProviderCommands, WorkflowCommands, WorkspaceCommands,
 };
 use crate::telemetry::emission::SummaryCommandDescriptor;
 
@@ -19,6 +19,13 @@ pub fn command_name(command: &Commands) -> String {
         Commands::Init { .. } => "init".to_string(),
         Commands::Context { command } => format!("context.{}", context_command_name(command)),
         Commands::Workflow { command } => format!("workflow.{}", workflow_command_name(command)),
+        Commands::Danger { command } => format!("danger.{}", danger_command_name(command)),
+    }
+}
+
+pub fn danger_command_name(command: &DangerCommands) -> &'static str {
+    match command {
+        DangerCommands::Flush { .. } => "flush",
     }
 }
 

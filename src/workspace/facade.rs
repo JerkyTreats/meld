@@ -6,6 +6,7 @@ pub use super::ci::{
 pub use super::commands::{
     resolve_node_id_by_canonical_fallback, resolve_workspace_node_id, WorkspaceCommandService,
 };
+pub use super::danger::WorkspaceDangerService;
 pub use super::format::{
     format_agent_status_text, format_provider_status_text, format_section_heading,
     format_unified_status_text, format_workspace_status_text,

@@ -4,13 +4,155 @@
 //! ignore list and .gitignore sync), and meld workspace validate (passed,
 //! not scanned, JSON format).
 
-use meld::cli::{Commands, RunContext, WorkspaceCommands};
+use clap::Parser;
+use meld::cli::{Cli, Commands, DangerCommands, RunContext, WorkspaceCommands};
 use meld::ignore;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use tempfile::TempDir;
 
 use crate::integration::with_xdg_data_home;
+
+fn expected_workspace_log_path(state_home: &Path, workspace: &Path) -> PathBuf {
+    let canonical = workspace.canonicalize().unwrap();
+    let mut base = state_home.join("meld");
+    for component in canonical.components() {
+        match component {
+            std::path::Component::RootDir
+            | std::path::Component::Prefix(_)
+            | std::path::Component::CurDir
+            | std::path::Component::ParentDir => {}
+            std::path::Component::Normal(name) => {
+                base = base.join(name);
+            }
+        }
+    }
+    base.join("meld.log")
+}
+
+fn expected_workspace_data_root(data_home: &Path, workspace: &Path) -> PathBuf {
+    let canonical = workspace.canonicalize().unwrap();
+    let mut base = data_home.join("meld");
+    for component in canonical.components() {
+        match component {
+            std::path::Component::RootDir
+            | std::path::Component::Prefix(_)
+            | std::path::Component::CurDir
+            | std::path::Component::ParentDir => {}
+            std::path::Component::Normal(name) => {
+                base = base.join(name);
+            }
+        }
+    }
+    base
+}
+
+#[test]
+fn test_danger_flush_positional_path_parses() {
+    let cli = Cli::try_parse_from(["meld", "danger", "flush", "./workspace", "--dry-run"]).unwrap();
+
+    match cli.command {
+        Commands::Danger {
+            command:
+                DangerCommands::Flush {
+                    path,
+                    path_positional,
+                    dry_run,
+                    yes,
+                },
+        } => {
+            assert!(path.is_none());
+            assert_eq!(path_positional, Some(PathBuf::from("./workspace")));
+            assert!(dry_run);
+            assert!(!yes);
+        }
+        _ => panic!("expected danger flush command"),
+    }
+}
+
+#[test]
+fn test_danger_flush_removes_workspace_state_but_keeps_logs() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_home = temp_dir.path().join("state");
+    let data_home = temp_dir.path().join("data");
+    let config_home = temp_dir.path().join("config");
+    let home = temp_dir.path().join("home");
+    let workspace = temp_dir.path().join("workspace");
+    fs::create_dir_all(&state_home).unwrap();
+    fs::create_dir_all(&data_home).unwrap();
+    fs::create_dir_all(&config_home).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&workspace).unwrap();
+    fs::write(workspace.join("a.txt"), "a").unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_meld");
+    let status_output = Command::new(bin)
+        .env("XDG_STATE_HOME", state_home.as_os_str())
+        .env("XDG_DATA_HOME", data_home.as_os_str())
+        .env("XDG_CONFIG_HOME", config_home.as_os_str())
+        .env("HOME", home.as_os_str())
+        .arg("--workspace")
+        .arg(&workspace)
+        .arg("status")
+        .output()
+        .unwrap();
+
+    assert!(
+        status_output.status.success(),
+        "status should succeed: stderr={}",
+        String::from_utf8_lossy(&status_output.stderr)
+    );
+
+    let workspace_data_root = expected_workspace_data_root(&data_home, &workspace);
+    assert!(workspace_data_root.exists());
+    let log_path = expected_workspace_log_path(&state_home, &workspace);
+    assert!(log_path.exists());
+
+    let dry_run_output = Command::new(bin)
+        .env("XDG_STATE_HOME", state_home.as_os_str())
+        .env("XDG_DATA_HOME", data_home.as_os_str())
+        .env("XDG_CONFIG_HOME", config_home.as_os_str())
+        .env("HOME", home.as_os_str())
+        .arg("danger")
+        .arg("flush")
+        .arg("--path")
+        .arg(&workspace)
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+
+    assert!(
+        dry_run_output.status.success(),
+        "dry run should succeed: stderr={}",
+        String::from_utf8_lossy(&dry_run_output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&dry_run_output.stdout).contains("Would remove"));
+    assert!(workspace_data_root.exists());
+    assert!(log_path.exists());
+
+    let flush_output = Command::new(bin)
+        .env("XDG_STATE_HOME", state_home.as_os_str())
+        .env("XDG_DATA_HOME", data_home.as_os_str())
+        .env("XDG_CONFIG_HOME", config_home.as_os_str())
+        .env("HOME", home.as_os_str())
+        .arg("danger")
+        .arg("flush")
+        .arg("--path")
+        .arg(&workspace)
+        .arg("--yes")
+        .output()
+        .unwrap();
+
+    assert!(
+        flush_output.status.success(),
+        "flush should succeed: stderr={}",
+        String::from_utf8_lossy(&flush_output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&flush_output.stdout).contains("Logs preserved"));
+    assert!(!workspace_data_root.exists());
+    assert!(log_path.exists());
+}
 
 #[test]
 fn test_ignore_list_empty_missing_file() {
