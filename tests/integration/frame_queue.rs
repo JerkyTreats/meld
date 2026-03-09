@@ -220,19 +220,20 @@ async fn test_enqueue_and_wait_deduplicates_pending_request() {
         .await
         .unwrap();
 
-    let result = queue
-        .enqueue_and_wait(
+    let result = tokio::time::timeout(
+        Duration::from_millis(50),
+        queue.enqueue_and_wait(
             node_id,
             "agent1".to_string(),
             "test-provider".to_string(),
             Some("context-agent1".to_string()),
             Priority::Urgent,
             Some(Duration::from_millis(20)),
-        )
-        .await;
+        ),
+    )
+    .await;
 
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), ApiError::ConfigError(_)));
     assert_eq!(queue.stats().pending, 1);
 }
 

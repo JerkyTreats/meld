@@ -133,15 +133,60 @@ impl RequestIdentity {
 #[derive(Debug)]
 struct DedupeEntry {
     request_id: RequestId,
-    waiters: Vec<oneshot::Sender<Result<FrameID, ApiError>>>,
+    started: bool,
+    waiters: Vec<QueueWaiter>,
 }
 
 impl DedupeEntry {
     fn new(request_id: RequestId) -> Self {
         Self {
             request_id,
+            started: false,
             waiters: Vec::new(),
         }
+    }
+
+    fn push_waiter(&mut self, mut waiter: QueueWaiter) {
+        if self.started {
+            waiter.notify_started();
+        }
+        self.waiters.push(waiter);
+    }
+
+    fn mark_started(&mut self) {
+        self.started = true;
+        for waiter in &mut self.waiters {
+            waiter.notify_started();
+        }
+    }
+}
+
+#[derive(Debug)]
+struct QueueWaiter {
+    started_tx: Option<oneshot::Sender<()>>,
+    completion_tx: oneshot::Sender<Result<FrameID, ApiError>>,
+}
+
+impl QueueWaiter {
+    fn new(
+        started_tx: oneshot::Sender<()>,
+        completion_tx: oneshot::Sender<Result<FrameID, ApiError>>,
+    ) -> Self {
+        Self {
+            started_tx: Some(started_tx),
+            completion_tx,
+        }
+    }
+
+    fn notify_started(&mut self) {
+        if let Some(started_tx) = self.started_tx.take() {
+            let _ = started_tx.send(());
+        }
+    }
+
+    fn finish(mut self, result: Result<FrameID, ApiError>) {
+        self.notify_started();
+        let _ = self.completion_tx.send(result);
     }
 }
 
@@ -538,6 +583,7 @@ impl FrameGenerationQueue {
         timeout: Option<Duration>,
         options: GenerationRequestOptions,
     ) -> Result<FrameID, ApiError> {
+        let (started_tx, started_rx) = oneshot::channel();
         let (tx, rx) = oneshot::channel();
         let mut queue = self.queue.lock().await;
         let mut dedupe = self.dedupe_index.lock().await;
@@ -546,7 +592,7 @@ impl FrameGenerationQueue {
         let identity = RequestIdentity::new(node_id, &agent_id, &resolved_frame_type, &program);
 
         if let Some(existing_entry) = dedupe.get_mut(&identity) {
-            existing_entry.waiters.push(tx);
+            existing_entry.push_waiter(QueueWaiter::new(started_tx, tx));
             let existing_id = existing_entry.request_id;
             drop(dedupe);
             drop(queue);
@@ -562,7 +608,9 @@ impl FrameGenerationQueue {
                     duration_ms: None,
                 },
             );
-            return self.wait_for_generation_completion(rx, timeout).await;
+            return self
+                .wait_for_generation_completion(started_rx, rx, timeout)
+                .await;
         }
 
         if !options.force {
@@ -615,7 +663,7 @@ impl FrameGenerationQueue {
 
         queue.push(request);
         let mut entry = DedupeEntry::new(request_id);
-        entry.waiters.push(tx);
+        entry.push_waiter(QueueWaiter::new(started_tx, tx));
         dedupe.insert(identity, entry);
 
         {
@@ -649,7 +697,8 @@ impl FrameGenerationQueue {
             },
         );
 
-        self.wait_for_generation_completion(rx, timeout).await
+        self.wait_for_generation_completion(started_rx, rx, timeout)
+            .await
     }
 
     pub async fn enqueue_and_wait_with_options(
@@ -909,14 +958,28 @@ impl FrameGenerationQueue {
 
     async fn wait_for_generation_completion(
         &self,
+        started_rx: oneshot::Receiver<()>,
+        receiver: oneshot::Receiver<Result<FrameID, ApiError>>,
+        timeout: Option<Duration>,
+    ) -> Result<FrameID, ApiError> {
+        Self::await_completion_after_start(started_rx, receiver, timeout).await
+    }
+
+    async fn await_completion_after_start(
+        started_rx: oneshot::Receiver<()>,
         receiver: oneshot::Receiver<Result<FrameID, ApiError>>,
         timeout: Option<Duration>,
     ) -> Result<FrameID, ApiError> {
         match timeout {
-            Some(timeout) => tokio::time::timeout(timeout, receiver)
-                .await
-                .map_err(|_| ApiError::ConfigError("Timeout waiting for generation".to_string()))?
-                .map_err(|_| ApiError::ConfigError("Completion channel closed".to_string()))?,
+            Some(timeout) => {
+                let _ = started_rx.await;
+                tokio::time::timeout(timeout, receiver)
+                    .await
+                    .map_err(|_| {
+                        ApiError::ConfigError("Timeout waiting for generation".to_string())
+                    })?
+                    .map_err(|_| ApiError::ConfigError("Completion channel closed".to_string()))?
+            }
             None => receiver
                 .await
                 .map_err(|_| ApiError::ConfigError("Completion channel closed".to_string()))?,
@@ -1028,6 +1091,13 @@ impl FrameGenerationQueue {
                 }
             };
 
+            {
+                let mut dedupe = dedupe_index.lock().await;
+                if let Some(entry) = dedupe.get_mut(&request_identity) {
+                    entry.mark_started();
+                }
+            }
+
             // Process request
             let result = Self::process_request(
                 &request,
@@ -1079,8 +1149,8 @@ impl FrameGenerationQueue {
                         .unwrap_or_default()
                 };
 
-                for tx in waiters {
-                    let _ = tx.send(result.clone());
+                for waiter in waiters {
+                    waiter.finish(result.clone());
                 }
             }
 
