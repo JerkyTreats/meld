@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.2.0](https://github.com/JerkyTreats/meld/compare/v2.1.0...v2.2.0) — 2026-03-09
+
+### Features
+
+* **workspace:** add danger flush for runtime state reset [023b4ab](https://github.com/JerkyTreats/meld/commit/023b4abd2168ffa555a81b4aa39e93c3d0a4e59e)
+
+### Bug Fixes
+
+* **context:** start generation timeout at worker pickup [caa87eb](https://github.com/JerkyTreats/meld/commit/caa87eb5833daa748e84767438b2d3b88f77c53e)
+* **workspace:** treat stale scans as usable state [428fbff](https://github.com/JerkyTreats/meld/commit/428fbffe1823ac18a8a84d7d20b8022131cc01a6)
+
+### CI
+
+* **release:** automate changelog updates and backfill releases [e2a8198](https://github.com/JerkyTreats/meld/commit/e2a8198e88ea9a868d90ab29f1f89c44dd5821b0)
+
+### Design
+
+* **tui:** align specs with current meld architecture [460ed4e](https://github.com/JerkyTreats/meld/commit/460ed4eb232e1e041a597a407c56526147819077)
+
+
 ## [2.1.0](https://github.com/JerkyTreats/meld/compare/v2.0.0...v2.1.0) — 2026-03-08
 
 ### Features
