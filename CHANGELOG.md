@@ -1,5 +1,141 @@
 # Changelog
 
+## [2.1.0](https://github.com/JerkyTreats/meld/compare/v2.0.0...v2.1.0) — 2026-03-08
+
+### Features
+
+* **cli:** add live context generation feedback [2a501ee](https://github.com/JerkyTreats/meld/commit/2a501eef0a75bc0cd19b5fb4f1fdbc543e59c7a3)
+
+### Bug Fixes
+
+* **workflow:** improve docs writer readme synthesis [d99ab36](https://github.com/JerkyTreats/meld/commit/d99ab36c7543fd543af0e30d98c626f2d5ac0318)
+
+### Design
+
+* **workflow:** add publish arbiter workflow spec [50b4a85](https://github.com/JerkyTreats/meld/commit/50b4a85063e34da6359fffb5bb0d185550a5024c)
+
+
+## [2.0.0](https://github.com/JerkyTreats/meld/compare/v1.2.0...v2.0.0) — 2026-03-07
+
+### ⚠ BREAKING CHANGES
+
+* fallback runtime state paths no longer write under <workspace>/.meld and now resolve to external data roots.
+
+### Features
+
+* **workflow:** add profile schema and layered registry loader [0b41666](https://github.com/JerkyTreats/meld/commit/0b41666819800729682abe3d80a91b200dc61647)
+* **agent:** add workflow binding and registry validation [8b12782](https://github.com/JerkyTreats/meld/commit/8b127821f04f42f96b5439c0e1e5662c28cbb24a)
+* **workflow:** execute bound turn workflows in context generate [9932cdc](https://github.com/JerkyTreats/meld/commit/9932cdc2b0fef333f5a3aeafd876cef29dbbf008)
+* **workflow:** persist thread turn state and resume runs [a17ddef](https://github.com/JerkyTreats/meld/commit/a17ddeff93a8d2fa2d0eb86d90430931b5f611e6)
+* **workflow:** resolve artifact prompt refs via verified storage [879cebe](https://github.com/JerkyTreats/meld/commit/879cebe42a591fa3c10ab7cbd5dab69ff47f5ca4)
+* **workflow:** add workflow CLI surface and watch bound routing [61ae111](https://github.com/JerkyTreats/meld/commit/61ae1112947ee5d35709e3b35324caa3b8f0007b)
+* **workflow:** emit telemetry hooks across workflow execution paths [3cecfc9](https://github.com/JerkyTreats/meld/commit/3cecfc98361a6aa06466c403341a2ce8afc96989)
+* **telemetry:** report workflow progress in context generation [94d12b3](https://github.com/JerkyTreats/meld/commit/94d12b375ac13b53b040d7420c2611f4cffb1750)
+
+### Bug Fixes
+
+* **storage:** persist workflow and head index state outside workspace [46cd5f1](https://github.com/JerkyTreats/meld/commit/46cd5f174da608fbc8ce1b7da47b6bc84cb49298)
+* **prompt_context:** compact filesystem CAS artifacts with workspace cleanup [e9687ab](https://github.com/JerkyTreats/meld/commit/e9687abdca0c8e596825dd9d216ca29726657ac0)
+* **context:** stabilize workflow-backed generation reruns [1eb3a83](https://github.com/JerkyTreats/meld/commit/1eb3a83f4a63adafdcc0524632189ec4ce74cb93)
+* **context:** prefer final workflow result in context get [5cd8819](https://github.com/JerkyTreats/meld/commit/5cd88193694a93a3d83f7004a80e93b485eef0ee)
+
+### Refactors
+
+* **context:** extract target execution program contract [9663a7c](https://github.com/JerkyTreats/meld/commit/9663a7c8550b7b5caff4776cb1db4157be3098df)
+* **workflow:** add target execution facade [8037c9a](https://github.com/JerkyTreats/meld/commit/8037c9a5df48225543c7944b7e6049912e4afd3a)
+* **context:** route workflow agents through target execution queue [5ee1b95](https://github.com/JerkyTreats/meld/commit/5ee1b95b535cbe179e28705aebcf0aac66902898)
+
+### Chores
+
+* **scripts:** add release dry run helper [03e556c](https://github.com/JerkyTreats/meld/commit/03e556c78c52148f65f40e75dca68922368411f4)
+
+### Design
+
+* **workflow_bootstrap:** define turn manager spec and phased plan [2ca55a3](https://github.com/JerkyTreats/meld/commit/2ca55a3d9efcf0010494d7927c9a0c2f34cd8e98)
+* **turn_manager:** record phase seven verification lock completion [1425bc5](https://github.com/JerkyTreats/meld/commit/1425bc5a5ae8bacf8490652108b3068415328689)
+* **workflow:** define cli feedback and capture capability backlog [2d0e110](https://github.com/JerkyTreats/meld/commit/2d0e11015d28bd1d0a0eea80355f460d4fdb29e1)
+
+### Policy
+
+* **storage:** define storage governance with workspace purity first [83934dc](https://github.com/JerkyTreats/meld/commit/83934dcb4a8200d61a3ffe9107b5985a4aadcb11)
+
+
+## [1.2.0](https://github.com/JerkyTreats/meld/compare/v1.1.5...v1.2.0) — 2026-03-06
+
+### Features
+
+* **workflow:** publish canonical record contracts for turn gate and prompt link [1e47931](https://github.com/JerkyTreats/meld/commit/1e47931da37966757988c4de4e653a6dbbf6c6f3)
+
+
+## [1.1.5](https://github.com/JerkyTreats/meld/compare/v1.1.4...v1.1.5) — 2026-03-05
+
+### Refactors
+
+* **prompt_context:** persist generation lineage in filesystem CAS [9daf920](https://github.com/JerkyTreats/meld/commit/9daf9203f0dbc07fc32fdd0d53579c4ea83f32a8)
+* **prompt_context:** centralize lineage to metadata contract translation [d95bb04](https://github.com/JerkyTreats/meld/commit/d95bb04518df08945e068589a239126bf1447dc9)
+
+### Documentation
+
+* **metadata:** update design README [aeffab1](https://github.com/JerkyTreats/meld/commit/aeffab1fb827a1c0b10f219e0acff99b59325630)
+
+
+## [1.1.4](https://github.com/JerkyTreats/meld/compare/v1.1.3...v1.1.4) — 2026-03-05
+
+### Refactors
+
+* **metadata:** enforce descriptor driven frame write contracts [24dc847](https://github.com/JerkyTreats/meld/commit/24dc84723be03ebc43d90f05120d05296714c55d)
+
+
+## [1.1.3](https://github.com/JerkyTreats/meld/compare/v1.1.2...v1.1.3) — 2026-03-04
+
+### Refactors
+
+* **metadata:** split frame key descriptors by owning domain [df86145](https://github.com/JerkyTreats/meld/commit/df86145c6d11cd8107a6874d2db7be8a30c721fa)
+
+### Design
+
+* **workflow-bootstrap:** expand metadata contract specs and planning [afe7637](https://github.com/JerkyTreats/meld/commit/afe76375eee6797d9b48f2670a5cf9756dbf61f4)
+
+
+## [1.1.2](https://github.com/JerkyTreats/meld/compare/v1.1.1...v1.1.2) — 2026-03-04
+
+### Refactors
+
+* **metadata:** enforce registry-driven frame metadata policy [37df85f](https://github.com/JerkyTreats/meld/commit/37df85f194db9e183fb55015135b541f2a6d980c)
+
+
+## [1.1.1](https://github.com/JerkyTreats/meld/compare/v1.1.0...v1.1.1) — 2026-03-04
+
+### Bug Fixes
+
+* **ci:** avoid bash regex parser failure in release version scan [2bb543a](https://github.com/JerkyTreats/meld/commit/2bb543aef3e9f7789c7686cceb06a64888d20f49)
+* **ci:** remove fragile crates API precheck and make publish idempotent [93ddb97](https://github.com/JerkyTreats/meld/commit/93ddb976ec6c86b08773bcdce012d9397fb88e1b)
+* **ci:** remove post publish crates visibility gate [b305a42](https://github.com/JerkyTreats/meld/commit/b305a426bb11089ef134f762c577cf55879664bb)
+
+### Refactors
+
+* **context:** enforce typed frame metadata integrity with prompt compatibility [7deaa49](https://github.com/JerkyTreats/meld/commit/7deaa49031bfaa8cfb768718de496387ada5c8a5)
+* **generation:** split queue content processing into orchestration units [2c2088d](https://github.com/JerkyTreats/meld/commit/2c2088dfe307f5d749df085ce2710fd8d027d7e7)
+
+### Documentation
+
+* remove shortlist [e6f612b](https://github.com/JerkyTreats/meld/commit/e6f612b11c010a0ca407696e0f5162d916361381)
+
+### Tests
+
+* **integration:** serialize xdg env mutations for xdg config tests [61012a6](https://github.com/JerkyTreats/meld/commit/61012a6ae4dd8de4f526d2d463b320857413b618)
+
+### CI
+
+* **release:** run direct publish flow and fix lockfileless ci [f647536](https://github.com/JerkyTreats/meld/commit/f647536ca957857cb2ead5dc23e9bb8a9dffabcf)
+* **fix:** attempt more reliable workflow [39a202a](https://github.com/JerkyTreats/meld/commit/39a202ac14beb0202157809e0d55cf857a855fd3)
+
+### Policy
+
+* **agents:** require commit policy check before git commit [6a03934](https://github.com/JerkyTreats/meld/commit/6a039346291b2ff9b5439afa677329afb4a5d7ef)
+
+
+
 ## [1.1.0](https://github.com/JerkyTreats/meld/compare/v1.0.2...v1.1.0) (2026-03-02)
 
 
