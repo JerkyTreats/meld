@@ -15,9 +15,14 @@ pub struct WorkspaceStatusRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceStatus {
     pub scanned: bool,
+    pub scan_state: WorkspaceScanState,
     pub store_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_root_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stored_root_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tree: Option<TreeStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -28,6 +33,25 @@ pub struct WorkspaceStatus {
 
 /// Result type for workspace status command; aligns with AgentStatusEntryResult / ProviderStatusEntryResult naming.
 pub type WorkspaceStatusResult = WorkspaceStatus;
+
+/// Freshness of stored workspace scan data relative to current filesystem state.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceScanState {
+    Missing,
+    Current,
+    Stale,
+}
+
+/// Lightweight scan assessment for status and stale read warnings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceScanInfo {
+    pub scan_state: WorkspaceScanState,
+    pub current_root_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stored_root_hash: Option<String>,
+    pub active_node_count: usize,
+}
 
 /// Tree section when scanned.
 #[derive(Debug, Clone, Serialize, Deserialize)]

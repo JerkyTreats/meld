@@ -15,13 +15,115 @@ use crate::workspace::section;
 use crate::workspace::types::{
     AgentStatusEntry, AgentStatusOutput, IgnoreResult, ListDeletedResult, ListDeletedRow,
     ProviderStatusEntry, ProviderStatusOutput, UnifiedStatusOutput, ValidateResult,
-    WorkspaceStatusRequest, WorkspaceStatusResult,
+    WorkspaceScanInfo, WorkspaceScanState, WorkspaceStatusRequest, WorkspaceStatusResult,
 };
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+
+pub(crate) fn workspace_walker_config(workspace_root: &Path) -> WalkerConfig {
+    let ignore_patterns = ignore::load_ignore_patterns(workspace_root)
+        .unwrap_or_else(|_| WalkerConfig::default().ignore_patterns);
+    WalkerConfig {
+        follow_symlinks: false,
+        ignore_patterns,
+        max_depth: None,
+    }
+}
+
+pub(crate) fn current_workspace_root_hash(workspace_root: &Path) -> Result<NodeID, ApiError> {
+    TreeBuilder::new(workspace_root.to_path_buf())
+        .with_walker_config(workspace_walker_config(workspace_root))
+        .compute_root()
+        .map_err(ApiError::from)
+}
+
+fn workspace_lookup_path(workspace_root: &Path, path: &Path) -> PathBuf {
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workspace_root.join(path)
+    };
+    PathBuf::from(crate::tree::path::normalize_path_string(
+        &resolved.to_string_lossy(),
+    ))
+}
+
+fn stored_workspace_root_hash(
+    node_store: &dyn NodeRecordStore,
+    workspace_root: &Path,
+    current_root_hash: &NodeID,
+) -> Result<Option<String>, ApiError> {
+    if node_store
+        .get(current_root_hash)
+        .map_err(ApiError::from)?
+        .is_some()
+    {
+        return Ok(Some(hex::encode(current_root_hash)));
+    }
+
+    let canonical_root =
+        crate::tree::path::canonicalize_path(workspace_root).map_err(ApiError::StorageError)?;
+    let mapped = node_store
+        .find_by_path(&canonical_root)
+        .map_err(ApiError::from)?
+        .map(|record| hex::encode(record.node_id));
+    if mapped.is_some() {
+        return Ok(mapped);
+    }
+
+    let active = node_store.list_active().map_err(ApiError::from)?;
+    if let Some(record) = active
+        .iter()
+        .find(|record| record.parent.is_none() && record.path == Path::new("."))
+    {
+        return Ok(Some(hex::encode(record.node_id)));
+    }
+
+    let parentless: Vec<_> = active
+        .iter()
+        .filter(|record| record.parent.is_none())
+        .collect();
+    if parentless.len() == 1 {
+        return Ok(Some(hex::encode(parentless[0].node_id)));
+    }
+
+    Ok(None)
+}
+
+pub(crate) fn assess_workspace_scan_state(
+    node_store: &dyn NodeRecordStore,
+    workspace_root: &Path,
+) -> Result<WorkspaceScanInfo, ApiError> {
+    let current_root_hash_id = current_workspace_root_hash(workspace_root)?;
+    let current_root_hash = hex::encode(current_root_hash_id);
+    let active_node_count = node_store.list_active().map_err(ApiError::from)?.len();
+    let stored_root_hash =
+        stored_workspace_root_hash(node_store, workspace_root, &current_root_hash_id)?;
+    let scan_state = if active_node_count == 0 {
+        WorkspaceScanState::Missing
+    } else if stored_root_hash.as_deref() == Some(current_root_hash.as_str()) {
+        WorkspaceScanState::Current
+    } else {
+        WorkspaceScanState::Stale
+    };
+
+    Ok(WorkspaceScanInfo {
+        scan_state,
+        current_root_hash,
+        stored_root_hash,
+        active_node_count,
+    })
+}
+
+pub fn read_workspace_scan_state(
+    api: &ContextApi,
+    workspace_root: &Path,
+) -> Result<WorkspaceScanInfo, ApiError> {
+    assess_workspace_scan_state(api.node_store().as_ref(), workspace_root)
+}
 
 /// Resolve path or --node to NodeID. If include_tombstoned is true, use get_by_path (for restore).
 pub fn resolve_workspace_node_id(
@@ -33,33 +135,37 @@ pub fn resolve_workspace_node_id(
 ) -> Result<NodeID, ApiError> {
     match (path, node) {
         (Some(p), None) => {
-            let resolved_path = if p.is_absolute() {
-                p.to_path_buf()
-            } else {
-                workspace_root.join(p)
-            };
-            let canonical_path = crate::tree::path::canonicalize_path(&resolved_path)
-                .map_err(ApiError::StorageError)?;
+            let resolved_path = workspace_lookup_path(workspace_root.as_path(), p);
             let store = api.node_store();
             let record = if include_tombstoned {
-                store.get_by_path(&canonical_path).map_err(ApiError::from)?
+                store.get_by_path(&resolved_path).map_err(ApiError::from)?
             } else {
-                store
-                    .find_by_path(&canonical_path)
-                    .map_err(ApiError::from)?
+                store.find_by_path(&resolved_path).map_err(ApiError::from)?
             };
             if let Some(record) = record {
                 return Ok(record.node_id);
             }
-            if let Some(node_id) = resolve_node_id_by_canonical_fallback(
-                store.as_ref(),
-                workspace_root.as_path(),
-                &canonical_path,
-                include_tombstoned,
-            )? {
-                return Ok(node_id);
+            if let Ok(canonical_path) = crate::tree::path::canonicalize_path(&resolved_path) {
+                let record = if include_tombstoned {
+                    store.get_by_path(&canonical_path).map_err(ApiError::from)?
+                } else {
+                    store
+                        .find_by_path(&canonical_path)
+                        .map_err(ApiError::from)?
+                };
+                if let Some(record) = record {
+                    return Ok(record.node_id);
+                }
+                if let Some(node_id) = resolve_node_id_by_canonical_fallback(
+                    store.as_ref(),
+                    workspace_root.as_path(),
+                    &canonical_path,
+                    include_tombstoned,
+                )? {
+                    return Ok(node_id);
+                }
             }
-            Err(ApiError::PathNotInTree(canonical_path))
+            Err(ApiError::PathNotInTree(resolved_path))
         }
         (None, Some(hex_str)) => {
             let bytes = hex::decode(hex_str.trim_start_matches("0x"))
@@ -171,15 +277,7 @@ impl WorkspaceCommandService {
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
 
-        let ignore_patterns = ignore::load_ignore_patterns(workspace_root)
-            .unwrap_or_else(|_| WalkerConfig::default().ignore_patterns);
-        let walker_config = WalkerConfig {
-            follow_symlinks: false,
-            ignore_patterns,
-            max_depth: None,
-        };
-        let builder = TreeBuilder::new(workspace_root.clone()).with_walker_config(walker_config);
-        let root_hash = match builder.compute_root() {
+        let root_hash = match current_workspace_root_hash(workspace_root.as_path()) {
             Ok(hash) => hash,
             Err(e) => {
                 errors.push(format!("Failed to compute workspace root: {}", e));

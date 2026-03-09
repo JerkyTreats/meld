@@ -1404,14 +1404,16 @@ impl RunContext {
                 )?;
                 let formatted = match format.as_str() {
                     "text" => super::format_context_text_output(
-                        &context,
+                        &context.context,
+                        &context.warnings,
                         *include_metadata,
                         *combine,
                         separator,
                         *include_deleted,
                     ),
                     "json" => super::format_context_json_output(
-                        &context,
+                        &context.context,
+                        &context.warnings,
                         *include_metadata,
                         *include_deleted,
                     ),
@@ -1424,8 +1426,8 @@ impl RunContext {
                     session_id,
                     "context_read_summary",
                     json!({
-                        "node_id": hex::encode(context.node_id),
-                        "frame_count": context.frames.len(),
+                        "node_id": hex::encode(context.context.node_id),
+                        "frame_count": context.context.frames.len(),
                         "max_frames": max_frames,
                         "ordering": ordering,
                         "combine": combine,

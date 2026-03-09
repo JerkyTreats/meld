@@ -4,7 +4,8 @@ pub use super::ci::{
     BatchOperation, BatchReport, CiIntegration, DiffReport, ValidationReport, WorkspaceReport,
 };
 pub use super::commands::{
-    resolve_node_id_by_canonical_fallback, resolve_workspace_node_id, WorkspaceCommandService,
+    read_workspace_scan_state, resolve_node_id_by_canonical_fallback, resolve_workspace_node_id,
+    WorkspaceCommandService,
 };
 pub use super::danger::WorkspaceDangerService;
 pub use super::format::{
@@ -15,7 +16,7 @@ pub use super::section::build_workspace_status;
 pub use super::types::{
     AgentStatusEntry, AgentStatusOutput, ContextCoverageEntry, IgnoreResult, ListDeletedResult,
     ListDeletedRow, PathCount, ProviderStatusEntry, ProviderStatusOutput, TreeStatus,
-    UnifiedStatusOutput, ValidateResult, WorkspaceStatus, WorkspaceStatusRequest,
-    WorkspaceStatusResult,
+    UnifiedStatusOutput, ValidateResult, WorkspaceScanInfo, WorkspaceScanState, WorkspaceStatus,
+    WorkspaceStatusRequest, WorkspaceStatusResult,
 };
 pub use super::watch::{ChangeEvent, EditorHooks, WatchConfig, WatchDaemon};

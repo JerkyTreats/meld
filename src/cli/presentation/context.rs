@@ -7,6 +7,7 @@ use serde_json::json;
 
 pub fn format_context_text_output(
     context: &NodeContext,
+    warnings: &[String],
     include_metadata: bool,
     combine: bool,
     separator: &str,
@@ -19,11 +20,16 @@ pub fn format_context_text_output(
     };
 
     if frames.is_empty() {
-        return Ok(format!(
+        let mut output = String::new();
+        for warning in warnings {
+            output.push_str(&format!("Warning: {}\n", warning));
+        }
+        output.push_str(&format!(
             "Node: {}\nPath: {}\nNo frames found.",
             hex::encode(context.node_id),
             context.node_record.path.display()
         ));
+        return Ok(output);
     }
 
     if combine {
@@ -31,15 +37,24 @@ pub fn format_context_text_output(
             .iter()
             .filter_map(|f| f.text_content().ok())
             .collect();
-        Ok(texts.join(separator))
+        let mut output = String::new();
+        for warning in warnings {
+            output.push_str(&format!("Warning: {}\n", warning));
+        }
+        output.push_str(&texts.join(separator));
+        Ok(output)
     } else {
-        let mut output = format!(
+        let mut output = String::new();
+        for warning in warnings {
+            output.push_str(&format!("Warning: {}\n", warning));
+        }
+        output.push_str(&format!(
             "Node: {}\nPath: {}\nFrames: {}/{}\n\n",
             hex::encode(context.node_id),
             context.node_record.path.display(),
             frames.len(),
             context.frame_count
-        );
+        ));
         for (i, frame) in frames.iter().enumerate() {
             output.push_str(&format!("--- Frame {} ---\n", i + 1));
             if include_metadata {
@@ -71,6 +86,7 @@ pub fn format_context_text_output(
 
 pub fn format_context_json_output(
     context: &NodeContext,
+    warnings: &[String],
     include_metadata: bool,
     include_deleted: bool,
 ) -> Result<String, ApiError> {
@@ -107,6 +123,7 @@ pub fn format_context_json_output(
     let result = json!({
         "node_id": hex::encode(context.node_id),
         "path": context.node_record.path.to_string_lossy(),
+        "warnings": warnings,
         "node_type": match context.node_record.node_type {
             crate::store::NodeType::File { size, .. } => format!("file:{}", size),
             crate::store::NodeType::Directory => "directory".to_string(),

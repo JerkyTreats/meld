@@ -3,12 +3,13 @@
 use clap::Parser;
 use meld::agent::{AgentIdentity, AgentRole, AgentStorage, XdgAgentStorage};
 use meld::cli::{Cli, Commands, ContextCommands, RunContext};
-use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
+use meld::config::{xdg, AgentConfig, MerkleConfig, ProviderConfig, ProviderType};
 use meld::context::frame::{Basis, Frame};
 use meld::error::ApiError;
 use meld::metadata::frame_write_contract::{
     build_generated_metadata, generated_metadata_input_from_payload,
 };
+use meld::tree::builder::TreeBuilder;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -289,6 +290,116 @@ fn test_context_get_json_format() {
         let _json: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert!(output.contains("node_id"));
         assert!(output.contains("frames"));
+    });
+}
+
+#[test]
+fn test_context_get_path_uses_stale_scan_data_with_warning() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        let src_dir = workspace_root.join("src");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::write(src_dir.join("lib.rs"), "pub fn sample() {}\n").unwrap();
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&Commands::Scan { force: true })
+            .unwrap();
+
+        let root_hash = TreeBuilder::new(workspace_root.clone())
+            .compute_root()
+            .unwrap();
+        drop(run_context);
+        let config = MerkleConfig::default();
+        let (store_path, _, _) = config
+            .system
+            .storage
+            .resolve_paths(&workspace_root)
+            .unwrap();
+        let db = sled::open(&store_path).unwrap();
+        db.remove(root_hash.as_slice()).unwrap();
+        db.flush().unwrap();
+        drop(db);
+
+        let stale_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        let result = stale_context.execute(&Commands::Context {
+            command: ContextCommands::Get {
+                node: None,
+                path: Some(src_dir),
+                agent: None,
+                frame_type: None,
+                max_frames: 10,
+                ordering: "recency".to_string(),
+                combine: false,
+                separator: "\n\n---\n\n".to_string(),
+                format: "text".to_string(),
+                include_metadata: false,
+                include_deleted: false,
+            },
+        });
+
+        let output = result.unwrap();
+        assert!(output.contains("Warning: Workspace scan is stale."));
+        assert!(output.contains("No frames found."));
+        assert!(output.contains("Path: "));
+    });
+}
+
+#[test]
+fn test_context_generate_path_uses_stale_scan_data() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        let src_dir = workspace_root.join("src");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::write(src_dir.join("lib.rs"), "pub fn sample() {}\n").unwrap();
+
+        let prompts_dir = xdg::prompts_dir().unwrap();
+        let prompt_path = prompts_dir.join("test.md");
+        fs::write(&prompt_path, "Test prompt").unwrap();
+        create_test_agent("test-agent", AgentRole::Writer, Some("prompts/test.md")).unwrap();
+        create_test_provider("test-provider", ProviderType::Ollama).unwrap();
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&Commands::Scan { force: true })
+            .unwrap();
+
+        let root_hash = TreeBuilder::new(workspace_root.clone())
+            .compute_root()
+            .unwrap();
+        drop(run_context);
+        let config = MerkleConfig::default();
+        let (store_path, _, _) = config
+            .system
+            .storage
+            .resolve_paths(&workspace_root)
+            .unwrap();
+        let db = sled::open(&store_path).unwrap();
+        db.remove(root_hash.as_slice()).unwrap();
+        db.flush().unwrap();
+        drop(db);
+
+        let stale_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        let result = stale_context.execute(&Commands::Context {
+            command: ContextCommands::Generate {
+                node: None,
+                path: Some(src_dir),
+                path_positional: None,
+                agent: Some("test-agent".to_string()),
+                provider: Some("test-provider".to_string()),
+                frame_type: None,
+                force: false,
+                no_recursive: false,
+            },
+        });
+
+        assert!(result.is_err());
+        assert!(
+            !matches!(result, Err(ApiError::PathNotInTree(_))),
+            "stale scans should remain usable for generation"
+        );
     });
 }
 

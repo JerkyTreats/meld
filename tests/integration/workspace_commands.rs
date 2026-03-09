@@ -6,7 +6,9 @@
 
 use clap::Parser;
 use meld::cli::{Cli, Commands, DangerCommands, RunContext, WorkspaceCommands};
+use meld::config::MerkleConfig;
 use meld::ignore;
+use meld::tree::builder::TreeBuilder;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -468,6 +470,56 @@ fn test_scan_then_status_shows_scanned() {
             "status must show tree as scanned after scan; got: {}",
             out
         );
+        assert!(!out.contains("Scanned: no"));
+    });
+}
+
+#[test]
+fn test_status_reports_stale_when_root_record_is_missing() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_data_home(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        let src_dir = workspace_root.join("src");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::write(src_dir.join("lib.rs"), "pub fn sample() {}\n").unwrap();
+
+        let ctx = RunContext::new(workspace_root.clone(), None).unwrap();
+        ctx.execute(&Commands::Scan { force: true }).unwrap();
+
+        let root_hash = TreeBuilder::new(workspace_root.clone())
+            .compute_root()
+            .unwrap();
+        drop(ctx);
+
+        let config = MerkleConfig::default();
+        let (store_path, _, _) = config
+            .system
+            .storage
+            .resolve_paths(&workspace_root)
+            .unwrap();
+        let db = sled::open(&store_path).unwrap();
+        db.remove(root_hash.as_slice()).unwrap();
+        db.flush().unwrap();
+        drop(db);
+
+        let stale_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        let out = stale_context
+            .execute(&Commands::Status {
+                format: "text".to_string(),
+                workspace_only: true,
+                agents_only: false,
+                providers_only: false,
+                breakdown: false,
+                test_connectivity: false,
+            })
+            .unwrap();
+
+        assert!(
+            out.contains("Scanned: yes, stale"),
+            "unexpected status output: {}",
+            out
+        );
+        assert!(out.contains("Run meld scan to refresh tree to current workspace state."));
         assert!(!out.contains("Scanned: no"));
     });
 }

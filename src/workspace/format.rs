@@ -1,7 +1,7 @@
 //! Format workspace, agent, provider, and unified status as text.
 
 use crate::workspace::types::{
-    AgentStatusEntry, ProviderStatusEntry, UnifiedStatusOutput, WorkspaceStatus,
+    AgentStatusEntry, ProviderStatusEntry, UnifiedStatusOutput, WorkspaceScanState, WorkspaceStatus,
 };
 use comfy_table::presets::UTF8_BORDERS_ONLY;
 use comfy_table::Table;
@@ -14,13 +14,17 @@ pub fn format_section_heading(title: &str) -> String {
 
 /// Format workspace status as human-readable text.
 pub fn format_workspace_status_text(data: &WorkspaceStatus, include_breakdown: bool) -> String {
+    fn short_hash(value: &str) -> String {
+        format!("{}...", &value[..value.len().min(7)])
+    }
+
     let mut out = String::new();
     out.push_str(&format!(
         "{}\n\n",
         format_section_heading("Workspace Status")
     ));
     out.push_str(&format!("{}\n", format_section_heading("Tree")));
-    if !data.scanned {
+    if matches!(data.scan_state, WorkspaceScanState::Missing) {
         out.push_str(&format!("  Store path: {}\n", data.store_path));
         out.push_str("  Scanned: no\n\n");
         if let Some(ref msg) = data.message {
@@ -31,12 +35,34 @@ pub fn format_workspace_status_text(data: &WorkspaceStatus, include_breakdown: b
     }
     let tree = data.tree.as_ref().unwrap();
     out.push_str(&format!("  Store path: {}\n", data.store_path));
-    out.push_str(&format!(
-        "  Root hash: {}...\n",
-        &tree.root_hash[..tree.root_hash.len().min(7)]
-    ));
+    match data.scan_state {
+        WorkspaceScanState::Current => {
+            out.push_str(&format!("  Root hash: {}\n", short_hash(&tree.root_hash)));
+        }
+        WorkspaceScanState::Stale => {
+            out.push_str(&format!(
+                "  Current root hash: {}\n",
+                short_hash(&tree.root_hash)
+            ));
+            let stored_root = data
+                .stored_root_hash
+                .as_deref()
+                .map(short_hash)
+                .unwrap_or_else(|| "missing".to_string());
+            out.push_str(&format!("  Stored root hash: {}\n", stored_root));
+        }
+        WorkspaceScanState::Missing => {}
+    }
     out.push_str(&format!("  Total nodes: {}\n", tree.total_nodes));
-    out.push_str("  Scanned: yes\n\n");
+    match data.scan_state {
+        WorkspaceScanState::Current => out.push_str("  Scanned: yes\n\n"),
+        WorkspaceScanState::Stale => out.push_str("  Scanned: yes, stale\n\n"),
+        WorkspaceScanState::Missing => out.push_str("  Scanned: no\n\n"),
+    }
+    if let Some(ref msg) = data.message {
+        out.push_str(msg);
+        out.push_str("\n\n");
+    }
     if include_breakdown {
         if let Some(ref breakdown) = tree.breakdown {
             out.push_str("  Top-level breakdown\n\n");

@@ -3,13 +3,14 @@
 use crate::agent::{AgentRegistry, AgentRole};
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
-use crate::ignore;
+use crate::store::NodeRecord;
 use crate::store::NodeRecordStore;
-use crate::tree::builder::TreeBuilder;
-use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
-use crate::workspace::types::{ContextCoverageEntry, PathCount, TreeStatus, WorkspaceStatus};
-use std::collections::HashMap;
+use crate::workspace::commands::{assess_workspace_scan_state, current_workspace_root_hash};
+use crate::workspace::types::{
+    ContextCoverageEntry, PathCount, TreeStatus, WorkspaceScanState, WorkspaceStatus,
+};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 /// Build workspace status from store, head index, agent registry, and workspace root.
@@ -23,36 +24,55 @@ pub fn build_workspace_status(
     store_path: &Path,
     include_breakdown: bool,
 ) -> Result<WorkspaceStatus, ApiError> {
-    let ignore_patterns = ignore::load_ignore_patterns(workspace_root)
-        .unwrap_or_else(|_| WalkerConfig::default().ignore_patterns);
-    let walker_config = WalkerConfig {
-        follow_symlinks: false,
-        ignore_patterns,
-        max_depth: None,
-    };
-    let root_hash: NodeID = TreeBuilder::new(workspace_root.to_path_buf())
-        .with_walker_config(walker_config)
-        .compute_root()
-        .map_err(ApiError::from)?;
+    fn collect_reachable_records(
+        node_store: &dyn NodeRecordStore,
+        root_id: NodeID,
+    ) -> Result<Vec<NodeRecord>, ApiError> {
+        let mut visited: HashSet<NodeID> = HashSet::new();
+        let mut queue = VecDeque::from([root_id]);
+        let mut records = Vec::new();
 
-    let root_in_store = node_store
-        .get(&root_hash)
-        .map_err(ApiError::from)?
-        .is_some();
-    if !root_in_store {
+        while let Some(node_id) = queue.pop_front() {
+            if !visited.insert(node_id) {
+                continue;
+            }
+            let Some(record) = node_store.get(&node_id).map_err(ApiError::from)? else {
+                continue;
+            };
+            if record.tombstoned_at.is_some() {
+                continue;
+            }
+            for child in &record.children {
+                queue.push_back(*child);
+            }
+            records.push(record);
+        }
+
+        Ok(records)
+    }
+
+    let scan_info = assess_workspace_scan_state(node_store, workspace_root)?;
+    if matches!(scan_info.scan_state, WorkspaceScanState::Missing) {
         return Ok(WorkspaceStatus {
             scanned: false,
+            scan_state: scan_info.scan_state,
             store_path: normalize_display_path(store_path),
             message: Some("Run meld scan to build the tree.".to_string()),
+            current_root_hash: Some(scan_info.current_root_hash),
+            stored_root_hash: scan_info.stored_root_hash,
             tree: None,
             context_coverage: None,
             top_paths_by_node_count: None,
         });
     }
 
-    let records = node_store.list_active().map_err(ApiError::from)?;
+    let records = if matches!(scan_info.scan_state, WorkspaceScanState::Current) {
+        let root_id = current_workspace_root_hash(workspace_root)?;
+        collect_reachable_records(node_store, root_id)?
+    } else {
+        node_store.list_active().map_err(ApiError::from)?
+    };
     let total_nodes = records.len() as u64;
-    let root_hash_hex = hex::encode(root_hash);
 
     let workspace_root_buf = workspace_root.to_path_buf();
     let mut prefix_counts: HashMap<String, u64> = HashMap::new();
@@ -138,10 +158,17 @@ pub fn build_workspace_status(
 
     Ok(WorkspaceStatus {
         scanned: true,
+        scan_state: scan_info.scan_state,
         store_path: normalize_display_path(store_path),
-        message: None,
+        message: if matches!(scan_info.scan_state, WorkspaceScanState::Stale) {
+            Some("Run meld scan to refresh tree to current workspace state.".to_string())
+        } else {
+            None
+        },
+        current_root_hash: Some(scan_info.current_root_hash.clone()),
+        stored_root_hash: scan_info.stored_root_hash.clone(),
         tree: Some(TreeStatus {
-            root_hash: root_hash_hex,
+            root_hash: scan_info.current_root_hash,
             total_nodes,
             breakdown,
         }),

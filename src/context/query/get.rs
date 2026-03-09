@@ -5,6 +5,7 @@ use crate::error::ApiError;
 use crate::types::NodeID;
 use crate::views::OrderingPolicy;
 use crate::workspace;
+use crate::workspace::WorkspaceScanState;
 use std::path::Path;
 
 fn parse_node_id(s: &str) -> Result<NodeID, ApiError> {
@@ -22,6 +23,12 @@ fn parse_node_id(s: &str) -> Result<NodeID, ApiError> {
     Ok(crate::types::Hash::from(hash))
 }
 
+#[derive(Debug, Clone)]
+pub struct CliNodeContext {
+    pub context: NodeContext,
+    pub warnings: Vec<String>,
+}
+
 /// Single get entry point: resolve node_id, build ContextView, call api.get_node.
 pub fn get_node_for_cli(
     api: &ContextApi,
@@ -33,7 +40,7 @@ pub fn get_node_for_cli(
     max_frames: usize,
     ordering: &str,
     _include_deleted: bool,
-) -> Result<NodeContext, ApiError> {
+) -> Result<CliNodeContext, ApiError> {
     let node_id = match (node, path) {
         (Some(node_str), None) => parse_node_id(node_str)?,
         (None, Some(p)) => {
@@ -75,5 +82,18 @@ pub fn get_node_for_cli(
         builder = builder.by_type(ft);
     }
     let view = builder.build();
-    api.get_node(node_id, view)
+    let context = api.get_node(node_id, view)?;
+    let mut warnings = Vec::new();
+    if let Ok(scan_info) = workspace::read_workspace_scan_state(api, workspace_root.as_path()) {
+        if matches!(scan_info.scan_state, WorkspaceScanState::Stale) {
+            warnings.push(
+                "Workspace scan is stale. Showing context from stored scan data.".to_string(),
+            );
+        }
+    }
+    if !context.node_record.path.exists() {
+        warnings.push("Stored node path no longer exists on disk.".to_string());
+    }
+
+    Ok(CliNodeContext { context, warnings })
 }
