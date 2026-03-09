@@ -19,10 +19,10 @@ pub fn builtin_prompt_text(prompt_ref: &str) -> Option<&'static str> {
             "Validate each claim against the provided evidence. Return JSON only with keys verified_claims, rejected_claims, and reasons. Keep verified_claims as full claim objects. Keep rejected_claims as objects with claim_id, statement, and reason_code. Verify a claim only when the cited path is present and the cited symbol or quote supports the statement. Reject generic restatements and unsupported summaries.",
         ),
         "docs_writer/readme_struct" => Some(
-            "Build a structured README draft from verified_claims only. Return JSON only with keys title, scope, purpose, api_surface, behavior_notes, usage, caveats, and related_components. Use concrete module names, paths, and identifiers. For directory targets, explain module responsibilities, determinism rules, public entry points, and operational caveats when verified. In api_surface and related_components, cover the major child paths present in verified_claims rather than collapsing the README into one dominant file. Do not include an evidence_map key.",
+            "Build a structured README draft from verified_claims only. Return JSON only with key title and any supported keys among scope, purpose, api_surface, behavior_notes, usage, caveats, and related_components. Omit any section that is empty or lacks sufficient context. Use concrete module names, paths, and identifiers. For directory targets, explain module responsibilities, determinism rules, public entry points, and operational caveats when verified. In api_surface and related_components, cover the major child paths present in verified_claims rather than collapsing the README into one dominant file. Do not include an evidence_map key.",
         ),
         "docs_writer/style_refine" => Some(
-            "Refine the README for clarity and flow. Return markdown only with headings # title, ## Scope, ## Purpose, ## API Surface, ## Behavior Notes, ## Usage, ## Caveats, and ## Related Components. Preserve technical meaning. Do not add an Evidence Map section. Do not add files, symbols, or claims that are absent from the input.",
+            "Refine the README for clarity and flow. Return markdown only. Preserve technical meaning and preserve only the supported sections present in the input README structure. Use heading forms # title and ## Scope, ## Purpose, ## API Surface, ## Behavior Notes, ## Usage, ## Caveats, and ## Related Components for any sections you include. Omit sections that are absent or unsupported in the input. Do not add an Evidence Map section. Do not add files, symbols, or claims that are absent from the input.",
         ),
         _ => None,
     }
@@ -98,48 +98,33 @@ fn docs_writer_thread_v1() -> WorkflowProfile {
                 gate_type: "schema_required_fields".to_string(),
                 required_fields: vec!["claims".to_string()],
                 rules: serde_json::Value::Null,
-                fail_on_violation: true,
+                fail_on_violation: false,
             },
             WorkflowGate {
                 gate_id: "verification_gate".to_string(),
                 gate_type: "schema_required_fields".to_string(),
                 required_fields: vec!["verified_claims".to_string()],
                 rules: serde_json::Value::Null,
-                fail_on_violation: true,
+                fail_on_violation: false,
             },
             WorkflowGate {
                 gate_id: "struct_gate".to_string(),
                 gate_type: "required_sections".to_string(),
-                required_fields: vec![
-                    "scope".to_string(),
-                    "purpose".to_string(),
-                    "api_surface".to_string(),
-                    "behavior_notes".to_string(),
-                    "usage".to_string(),
-                    "caveats".to_string(),
-                    "related_components".to_string(),
-                ],
+                required_fields: vec!["title".to_string()],
                 rules: json!({
                     "forbidden_sections": ["evidence_map"],
                 }),
-                fail_on_violation: true,
+                fail_on_violation: false,
             },
             WorkflowGate {
                 gate_id: "style_gate".to_string(),
                 gate_type: "no_semantic_drift".to_string(),
-                required_fields: vec![
-                    "scope".to_string(),
-                    "purpose".to_string(),
-                    "api surface".to_string(),
-                    "behavior notes".to_string(),
-                    "usage".to_string(),
-                    "caveats".to_string(),
-                    "related components".to_string(),
-                ],
+                required_fields: vec![],
                 rules: json!({
                     "forbidden_sections": ["evidence map"],
+                    "required_sections_from_input": "readme_struct",
                 }),
-                fail_on_violation: true,
+                fail_on_violation: false,
             },
         ],
         artifact_policy: WorkflowArtifactPolicy {
@@ -151,7 +136,7 @@ fn docs_writer_thread_v1() -> WorkflowProfile {
         failure_policy: WorkflowFailurePolicy {
             mode: "fail_fast".to_string(),
             resume_from_failed_turn: true,
-            stop_on_gate_fail: true,
+            stop_on_gate_fail: false,
         },
         thread_profile: Some("docs_writer_default".to_string()),
         target_agent_id: Some("docs-writer".to_string()),
@@ -195,17 +180,59 @@ mod tests {
             .unwrap();
 
         assert_eq!(style_gate.gate_type, "no_semantic_drift");
-        assert!(style_gate
-            .required_fields
+        assert!(style_gate.required_fields.is_empty());
+        assert_eq!(
+            style_gate.rules["required_sections_from_input"],
+            serde_json::json!("readme_struct")
+        );
+        assert_eq!(
+            style_gate.rules["forbidden_sections"],
+            serde_json::json!(["evidence map"])
+        );
+        assert!(!style_gate.fail_on_violation);
+    }
+
+    #[test]
+    fn builtin_docs_writer_struct_gate_only_requires_title() {
+        let profile = builtin_profiles()
+            .into_iter()
+            .find(|profile| profile.workflow_id == "docs_writer_thread_v1")
+            .unwrap();
+
+        let struct_gate = profile
+            .gates
             .iter()
-            .any(|field| field == "api surface"));
-        assert!(style_gate
-            .required_fields
-            .iter()
-            .any(|field| field == "behavior notes"));
-        assert!(!style_gate
-            .required_fields
-            .iter()
-            .any(|field| field == "readme_markdown"));
+            .find(|gate| gate.gate_id == "struct_gate")
+            .unwrap();
+
+        assert_eq!(struct_gate.gate_type, "required_sections");
+        assert_eq!(struct_gate.required_fields, vec!["title".to_string()]);
+        assert!(!struct_gate.fail_on_violation);
+    }
+
+    #[test]
+    fn builtin_docs_writer_prompts_allow_omitting_unsupported_sections() {
+        let readme_struct = builtin_prompt_text("docs_writer/readme_struct").unwrap();
+        let style_refine = builtin_prompt_text("docs_writer/style_refine").unwrap();
+
+        assert!(readme_struct.contains("any supported keys among"));
+        assert!(
+            readme_struct.contains("Omit any section that is empty or lacks sufficient context")
+        );
+        assert!(style_refine.contains(
+            "preserve only the supported sections present in the input README structure"
+        ));
+        assert!(style_refine.contains("Omit sections that are absent or unsupported in the input"));
+    }
+
+    #[test]
+    fn builtin_docs_writer_gates_are_advisory() {
+        let profile = builtin_profiles()
+            .into_iter()
+            .find(|profile| profile.workflow_id == "docs_writer_thread_v1")
+            .unwrap();
+
+        assert!(!profile.failure_policy.stop_on_gate_fail);
+        assert!(profile.gates.iter().all(|gate| !gate.fail_on_violation));
     }
 }

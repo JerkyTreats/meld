@@ -112,6 +112,26 @@ fn create_test_provider(
     Ok(config_path)
 }
 
+fn retry_open_sled_db(path: &std::path::Path, max_retries: u32) -> sled::Result<sled::Db> {
+    use std::time::Duration;
+
+    for attempt in 0..max_retries {
+        match sled::open(path) {
+            Ok(db) => return Ok(db),
+            Err(err) => {
+                if attempt + 1 == max_retries {
+                    return Err(err);
+                }
+
+                let delay_ms = std::cmp::min(1 << attempt, 16);
+                std::thread::sleep(Duration::from_millis(delay_ms));
+            }
+        }
+    }
+
+    unreachable!()
+}
+
 #[test]
 fn test_context_get_with_path() {
     let temp_dir = TempDir::new().unwrap();
@@ -317,7 +337,7 @@ fn test_context_get_path_uses_stale_scan_data_with_warning() {
             .storage
             .resolve_paths(&workspace_root)
             .unwrap();
-        let db = sled::open(&store_path).unwrap();
+        let db = retry_open_sled_db(&store_path, 10).unwrap();
         db.remove(root_hash.as_slice()).unwrap();
         db.flush().unwrap();
         drop(db);
@@ -376,7 +396,7 @@ fn test_context_generate_path_uses_stale_scan_data() {
             .storage
             .resolve_paths(&workspace_root)
             .unwrap();
-        let db = sled::open(&store_path).unwrap();
+        let db = retry_open_sled_db(&store_path, 10).unwrap();
         db.remove(root_hash.as_slice()).unwrap();
         db.flush().unwrap();
         drop(db);

@@ -552,7 +552,7 @@ pub(crate) async fn execute_registered_workflow_async(
                 }
             };
 
-            let gate_result = evaluate_gate(gate, &response.content);
+            let gate_result = evaluate_gate(gate, &response.content, Some(&resolved_inputs.values));
             let gate_record = ThreadTurnGateRecordV1::new(
                 thread_id.clone(),
                 format!("turn-{}", turn.seq),

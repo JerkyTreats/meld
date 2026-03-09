@@ -6,7 +6,7 @@ Scope: context generation orchestration with workflow contract consumption
 
 ## Overview
 
-This document defines the phased implementation plan for `workflow_bootstrap/context_workflow_orchestration`.
+This document defines the phased implementation plan for `completed/workflow_bootstrap/context_workflow_orchestration`.
 The plan isolates `context` and `workflow` responsibilities, defines a clear target execution contract, and cuts `context generate` over to consume that contract without surrendering subtree orchestration.
 
 Primary objective:

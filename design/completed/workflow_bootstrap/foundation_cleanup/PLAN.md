@@ -6,7 +6,7 @@ Scope: workflow bootstrap foundation cleanup
 
 ## Overview
 
-This document defines the phased implementation plan for `workflow_bootstrap/foundation_cleanup`.
+This document defines the phased implementation plan for `completed/workflow_bootstrap/foundation_cleanup`.
 The plan follows the same execution style as the completed context plan and maps cleanup work to clear outcomes, dependencies, and verification gates.
 
 Primary objective:

@@ -6,7 +6,7 @@ Scope: workflow bootstrap metadata contracts
 
 ## Overview
 
-This document defines the phased implementation plan for `workflow_bootstrap/metadata_contracts`.
+This document defines the phased implementation plan for `completed/workflow_bootstrap/metadata_contracts`.
 The plan maps metadata contract goals to dependency ordered phases with explicit gates, ownership seams, and verification evidence.
 
 Primary objective:

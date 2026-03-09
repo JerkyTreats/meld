@@ -1,7 +1,7 @@
 # Turn Manager Code Path Findings
 
 Date: 2026-03-06
-Scope: current code path findings for turn manager target state defined in `design/workflow_bootstrap/turn_manager/README.md`
+Scope: current code path findings for turn manager target state defined in `design/completed/workflow_bootstrap/turn_manager/README.md`
 
 ## Intent
 
@@ -11,7 +11,7 @@ This document captures current behavior only.
 
 ## Source Spec
 
-1. `design/workflow_bootstrap/turn_manager/README.md`
+1. `design/completed/workflow_bootstrap/turn_manager/README.md`
 
 ## Current Execution Path Snapshot
 

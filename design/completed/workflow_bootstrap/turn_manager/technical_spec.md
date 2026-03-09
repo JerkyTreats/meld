@@ -13,9 +13,9 @@ This document is normative for implementation and verification.
 
 This specification synthesizes:
 
-- `design/workflow_bootstrap/turn_manager/README.md`
-- `design/workflow_bootstrap/turn_manager/code_path_findings.md`
-- `design/workflow_bootstrap/metadata_contracts/technical_spec.md`
+- `design/completed/workflow_bootstrap/turn_manager/README.md`
+- `design/completed/workflow_bootstrap/turn_manager/code_path_findings.md`
+- `design/completed/workflow_bootstrap/metadata_contracts/technical_spec.md`
 
 ## Scope
 

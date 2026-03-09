@@ -6,6 +6,7 @@ pub mod commands;
 pub mod executor;
 pub mod facade;
 pub mod gates;
+pub mod normalization;
 pub mod profile;
 pub mod record_contracts;
 pub mod registry;

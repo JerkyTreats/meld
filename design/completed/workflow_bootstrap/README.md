@@ -1,7 +1,7 @@
 # Workflow Bootstrap Roadmap
 
 Date: 2026-03-01
-Status: active
+Status: completed
 Scope: thread managed docs workflow foundation
 
 ## Entry Point
@@ -10,6 +10,8 @@ This is the primary entry point for the workflow bootstrap effort.
 Use this file to understand outcome targets, operation order, ownership boundaries, and verification gates.
 Each workload now lives in its own folder with a workload `README.md` as the anchor document.
 Future workload specific specs should be added inside that workload folder and linked from the workload `README.md`.
+
+Active orchestration design work now lives in [Workflow Orchestrator Roadmap](../../workflow_orchestrator/README.md).
 
 ## Milestone Outcome
 

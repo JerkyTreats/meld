@@ -6,7 +6,7 @@ Scope: workflow bootstrap turn manager
 
 ## Overview
 
-This document defines the phased implementation plan for `workflow_bootstrap/turn_manager`.
+This document defines the phased implementation plan for `completed/workflow_bootstrap/turn_manager`.
 The plan maps target behavior from the functional spec and technical spec to dependency ordered phases with explicit gates and evidence expectations.
 
 Primary objective:

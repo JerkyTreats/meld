@@ -146,9 +146,8 @@ Prompt objective:
 Output artifact:
 
 - type `readme_struct`
-- schema fields
-- `title`
-- `sections`
+- required field `title`
+- optional supported fields
 - `scope`
 - `purpose`
 - `api_surface`
@@ -156,10 +155,11 @@ Output artifact:
 - `usage`
 - `caveats`
 - `related_components`
+- omit empty or unsupported sections
 
 Gate `struct_gate`:
 
-- all required sections present
+- title present
 - no rejected claim text present
 - no evidence map section present
 
@@ -181,7 +181,8 @@ Output artifact:
 
 Gate `style_gate`:
 
-- required sections preserved
+- preserve supported sections from `readme_struct`
+- do not require unsupported omitted sections
 - semantic drift score below threshold
 - no evidence map section added
 
