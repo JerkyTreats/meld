@@ -1,284 +1,286 @@
-# merkle tui specification
+# `meld tui` specification
 
 ## 1. Purpose
 
-`merkle tui` is a feature-gated subcommand (`--features tui`) that provides a fully interactive terminal interface for merkle. It serves three roles: real-time monitoring of operations, especially LLM provider calls, browsing and reading generated context rendered markdown, and executing merkle commands without leaving the interface.
+`meld tui` is a feature gated interactive terminal interface for `meld`.
 
-The TUI consumes session events from the observability `sled` store written by the engine. It also executes commands directly through the merkle library, which emit events to new session records that the TUI follows in real time.
+It has three jobs:
 
-## 2. Feature gate
+- monitor active work in real time through telemetry sessions and events
+- browse workspace content and generated frames
+- run existing `meld` commands without leaving the interface
 
-Enabled with `--features tui` at compile time. Dependencies: `ratatui`, `crossterm`. Without the feature, `merkle tui` prints a message directing the user to rebuild with the feature enabled.
+The TUI is an adapter over the current codebase. It reads telemetry data from the durable store and delegates command execution to the same route layer the CLI already uses.
 
-## 3. Launch modes
+## 2. Product shape
 
-- `merkle tui` -- open dashboard view. If an active session exists (engine currently running), auto-follow it.
-- `merkle tui --session <id>` -- open directly to session view, following the specified session.
-- `merkle tui --list` -- open to session history view.
-- `merkle tui --replay <id>` -- replay a completed session event-by-event (useful for debugging or review).
+The first release has four primary views:
 
-## 4. Views
+- Dashboard
+- Session
+- Content
+- History
 
-The TUI has four primary views. The user switches between them with keyboard shortcuts. A persistent status bar at the bottom shows the current view name, active session (if any), and the command bar prompt.
+The TUI also has shared overlays:
 
-### 4.1 Dashboard
+- Command bar
+- Help overlay
+- Output overlay for short command results
+- Picker overlays for agent and provider selection
 
-The default landing view. Overview of the workspace and quick access to operations.
+## 3. CLI surface
 
-**Panels:**
-- **Workspace summary:** Node count, tree depth, context coverage (nodes with heads vs total), agent count, provider count. Equivalent to `merkle status` output but rendered as a structured panel.
-- **Recent sessions:** List of recent sessions from the observability store with timestamp, command, status completed failed active, and node count. Selecting a session switches to the Session view.
-- **Active operations:** If a generation or watch session is currently active, show a summary line with progress. Selecting it switches to the Session view for that session.
+When the `tui` feature is enabled, the CLI exposes `meld tui`.
 
-**Actions from dashboard:**
-- Enter on a session: switch to Session view
-- `g`: trigger a generation (opens command bar pre-filled with `context generate`)
-- `s`: trigger a scan (runs `scan` immediately)
-- `r`: refresh dashboard data
+Initial launch modes:
 
-### 4.2 Session view
+- `meld tui` opens the dashboard
+- `meld tui --session <id>` opens the session view for a known session
+- `meld tui --history` opens the history view
+- `meld tui --replay <id>` opens the session view in replay mode
 
-Real-time monitoring of an active or completed session. This is where the user watches generation progress and provider call status.
+When the feature is disabled, `meld tui` prints a short message that says the binary must be rebuilt with `--features tui`.
 
-**Panels:**
-- **Progress:** Overall progress bar, current level (N of M), nodes completed/skipped/failed, elapsed time. For non-generation sessions (scan, watch), show appropriate metrics.
-- **Activity:** Scrollable list of nodes in the current level. Each row shows:
-  - Node path
-  - Status icon: pending, sending request, waiting for provider, completed, failed, retrying, skipped
-  - Provider and model name (when request is active)
-  - Elapsed time for the current operation
-  - For completed nodes: total duration
-  - For failed nodes: error summary
-- **Detail:** When a node is selected in the Activity panel, show expanded information:
-  - Full error message (if failed)
-  - Provider request/response timing breakdown
-  - Generated content preview (rendered markdown, scrollable)
+## 4. Design constraints from current code
 
-**Provider call visibility:** The Activity panel updates in real-time as provider events arrive. When a node transitions from "sending request" to "waiting for provider," the user sees it immediately. The elapsed timer ticks while waiting. This is the most important feedback surface in the TUI -- the user can tell at a glance whether the provider is responding or stuck.
+- Command execution should go through `RunContext` rather than a TUI specific orchestration path.
+- Session and event reads should come from `ProgressRuntime` and `ProgressStore`.
+- The TUI should not add a second telemetry persistence format.
+- The TUI should not call provider clients directly.
+- The TUI should not reach across domain internals when a public facade already exists.
 
-**Completed sessions:** When replaying or reviewing a completed session, the same layout applies but all data is already present. The user can scroll through levels and nodes to review what happened.
+## 5. Core architecture
 
-### 4.3 Content browser
+```mermaid
+flowchart LR
+    User --> App
+    App --> CommandBar
+    App --> Dashboard
+    App --> SessionView
+    App --> ContentView
+    App --> HistoryView
+    CommandBar --> RunContext
+    RunContext --> Domains
+    Domains --> ProgressRuntime
+    ProgressRuntime --> ProgressStore
+    Dashboard --> ProgressStore
+    SessionView --> ProgressStore
+    HistoryView --> ProgressStore
+    ContentView --> ContextApi
+```
 
-Browse the workspace tree and read generated context as rendered markdown.
+## 6. Domain boundaries
 
-**Panels:**
-- **Tree navigator (left):** Collapsible file/directory tree mirroring the merkle node tree. Directories show context coverage indicator (e.g. 12/15 nodes have context). Nodes without context are visually distinct (dimmed or marked).
-- **Content viewer (right):** Rendered markdown content of the selected node's head frame. Scrollable. Shows the content generated by the default agent (or selected agent if multiple exist).
-- **Frame metadata (bottom or header):** Agent ID, provider, model, frame type, generation timestamp, frame ID. Shown as a compact header above the content.
+- `src/tui.rs` owns feature entry, startup, and top level wiring.
+- `src/tui/app.rs` owns event loop, focus, current view, and overlay stack.
+- `src/tui/command.rs` owns command bar input, parsing adapter, history, and dispatch.
+- `src/tui/dashboard.rs` owns dashboard state and rendering.
+- `src/tui/session.rs` owns session list, follow mode, replay mode, and view rendering.
+- `src/tui/history.rs` owns history filters, pruning actions, and rendering.
+- `src/tui/content.rs` owns content browser state and frame loading.
+- `src/tui/state.rs` owns small UI local state that is shared across views.
+- `src/tui/reader.rs` owns telemetry store reads and replay helpers.
+- `src/tui/markdown.rs` owns markdown to terminal rendering.
 
-**Markdown rendering:** Generated content is expected to be markdown. The content viewer renders it with:
-- Headers (bold, sized by level)
-- Lists (bulleted and numbered)
-- Code blocks (distinct background or border)
-- Emphasis (bold, italic)
-- Links (displayed, not clickable)
+The TUI depends on existing domains. Existing domains do not depend on the TUI.
 
-**Navigation:**
-- Arrow keys / j,k to navigate the tree
-- Enter to expand/collapse directories or select a file
-- Tab to switch focus between tree and content viewer
-- Scroll content with arrow keys, Page Up/Down when content panel is focused
+## 7. Dashboard view
 
-**Actions from content browser:**
-- `g`: generate context for the selected node (opens command bar pre-filled)
-- `f`: force-regenerate context for the selected node
-- `d`: show frame diff (if multiple frames exist for the node)
+The dashboard is the default landing view.
 
-### 4.4 Session history
+It shows:
 
-List of all past sessions with filtering and search.
+- workspace summary from the workspace status builder
+- recent sessions from telemetry storage
+- currently active sessions, if any exist
+- loaded agent and provider from UI local state
 
-**Columns:** Session ID, timestamp, command, duration, status (completed/failed), nodes processed, nodes failed.
+Dashboard actions:
 
-**Actions:**
-- Enter: open Session view for the selected session
-- `/`: search/filter sessions
-- `d`: delete session record with confirmation
-- `p`: prune old sessions
+- open a selected session
+- refresh dashboard data
+- open the command bar with `context generate` prefilled
+- run `scan` through the command route
 
-## 5. Command bar
+Dashboard data sources:
 
-Always accessible from any view by pressing `:`. Appears at the bottom of the screen, similar to vim's command mode.
+- workspace summary from the existing workspace status path
+- session metadata from `ProgressStore::list_sessions`
 
-**Behavior:**
-- Type any merkle command without the `merkle` prefix (e.g. `:context generate ./src --force`)
-- Tab completion for subcommands, flags, and file paths
-- Command history (up/down arrows to cycle through previous commands)
-- Press Enter to execute, Escape to cancel
+## 8. Session view
 
-**Execution:**
-- Commands are executed through the merkle library directly (same process, same crate)
-- A new session is created for the command. The TUI auto-switches to the Session view for that session.
-- Long-running commands (generation, scan) show real-time progress in the Session view
-- Short commands (status, agent list, context get) show output in a transient output panel that overlays the current view
+The session view is the primary real time monitoring surface.
 
-**Output panel:**
-- For commands that return text output (status, list, show, validate), display the output in a scrollable overlay panel
-- Press Escape or `q` to dismiss the output panel and return to the previous view
-- For commands that trigger long-running operations, the output panel shows "Session started: <id>" and then transitions to the Session view
+It supports two modes:
 
-## 6. Key bindings
+- follow mode for active sessions
+- replay mode for completed sessions
 
-### Global (all views)
-- `:` -- open command bar
-- `1` -- switch to Dashboard
-- `2` -- switch to Session view (latest active session, or last viewed)
-- `3` -- switch to Content browser
-- `4` -- switch to Session history
-- `q` -- quit TUI (with confirmation if active operations exist)
-- `?` -- show help overlay with all key bindings
-- `Esc` -- close overlay/command bar, or go back
+It shows:
 
-### Dashboard
-- `Enter` -- select session or action
-- `g` -- trigger generation
-- `s` -- trigger scan
-- `r` -- refresh
+- session metadata such as command, start time, status, and error
+- aggregate progress derived from event reduction
+- activity list per node or target path
+- detail pane for the selected target
 
-### Session view
-- `j`/`k` or Up/Down -- navigate node list
-- `Enter` -- expand detail for selected node
-- `Tab` -- cycle between Progress, Activity, Detail panels
-- `l` -- switch to next level, `h` -- switch to previous level
-- `Esc` -- collapse detail panel
+The first reducer should target the event set already emitted by the current engine:
 
-### Content browser
-- `j`/`k` or Up/Down -- navigate tree or scroll content
-- `Enter` -- expand/collapse directory, select file
-- `Tab` -- switch focus between tree and content
-- `g` -- generate for selected node
-- `f` -- force-regenerate for selected node
-- `a` -- cycle through agents (if multiple agents have frames for the node)
-- Page Up/Down -- scroll content
+- `session_started`
+- `session_ended`
+- `plan_constructed`
+- `level_started`
+- `node_generation_started`
+- `workflow_turn_started`
+- `workflow_turn_completed`
+- `workflow_turn_failed`
+- `node_generation_completed`
+- `node_generation_failed`
+- `file_changed`
+- summary events emitted at command completion
 
-### Session history
-- `j`/`k` or Up/Down -- navigate list
-- `Enter` -- open session
-- `/` -- search
-- `d` -- delete session
+The TUI may reuse reducer ideas from the current live progress panel, but should not reuse the terminal renderer from the CLI progress code.
 
-## 7. Event consumption
+## 9. Content view
 
-The TUI reads session events from the observability `sled` store.
+The content view is a split browser for workspace navigation and generated frame review.
 
-**Session discovery:**
-- On startup, query session records from the store
-- Sort by session start timestamp
-- A session with no `session_ended` event is active or interrupted
+It shows:
 
-**Active follow:**
-- For active sessions, read events with key order by `session_id:seq`
-- Keep `last_seen_seq` in memory per followed session
-- Poll for new committed events by `seq > last_seen_seq` on a short interval
+- a tree browser for filesystem or meld nodes
+- rendered frame content for the selected node
+- frame metadata such as agent, provider, frame type, and frame id
 
-**Event decoding:**
-- Stored events contain `ts`, `session`, `seq`, `type`, and `data`
-- Unknown event types are ignored for forward compatibility
+Frame loading should use existing APIs:
 
-**State management:**
-- The TUI maintains an in-memory model of each session state for levels, nodes, progress, and content
-- State is rebuilt from stored events using event sourcing
-- Replay mode feeds stored events into the same state model at configurable speed
+- latest frame via `ContextApi::latest_context`
+- filter by frame type via `ContextApi::context_by_type`
+- filter by agent via `ContextApi::context_by_agent`
 
-## 8. Command execution within TUI
+The content view should use loaded agent and provider defaults from TUI local state. Those defaults only shape UI choices and default command values. They do not change engine behavior.
 
-When the user runs a command from the command bar, the TUI:
+## 10. History view
 
-1. Parses the command string into the same argument structure the CLI uses
-2. Creates a new session record and event bus
-3. Executes the command through the merkle library (calls the same functions as `CliContext.execute`)
-4. The command emits events to the bus, which are ingested into the `sled` store
-5. The TUI follows the new session events and renders progress in the Session view
+The history view shows prior sessions from the telemetry store.
 
-This means the TUI is both a consumer of session events and a producer through command execution that creates sessions. The observability store contract is shared between both roles.
+It supports:
 
-**Error handling:** If a command fails immediately (bad arguments, path not in tree), the error is shown in the output panel. If a command fails during execution (provider error, queue full), the failure appears in the Session view as normal event processing.
+- sort by recency
+- filter by command and status
+- open a selected session in session view
+- prune old completed sessions through existing telemetry policy
+- delete a selected session record through the telemetry store contract
 
-## 9. Required tests
+History reads should use the durable session metadata already stored by `ProgressStore`.
+
+## 11. Command bar
+
+The command bar accepts the same subcommands a user would type after `meld`.
+
+Examples:
+
+```text
+:status
+:workspace status --breakdown
+:context generate src
+:context get src/lib.rs --agent writer
+```
+
+Command bar rules:
+
+- parse through the existing clap model with a small adapter
+- inject the current workspace root from the active `RunContext`
+- execute through `RunContext::execute`
+- capture short textual results for the output overlay
+- switch to session view when a command starts a new long running session
+
+The command bar should not create a second command model.
+
+## 12. Telemetry reading model
+
+The TUI reads persisted sessions and events from the same sled trees the CLI uses today.
+
+Read paths:
+
+- session metadata via `ProgressStore::list_sessions`
+- session events via `ProgressStore::read_events`
+- follow mode via repeated `ProgressStore::read_events_after`
+
+This means the TUI can:
+
+- resume after a restart
+- review finished sessions without special export logic
+- replay known sessions without engine involvement
+
+## 13. Feature gate and dependencies
+
+Add a `tui` feature and keep all TUI code behind it.
+
+Planned optional dependencies:
+
+- `ratatui`
+- `crossterm`
+- `tui-tree-widget`
+
+Markdown rendering can start simple and improve later. A minimal first release may render plain text with light styling before richer markdown support lands.
+
+## 14. File layout
+
+Planned files for the first implementation:
+
+- `src/tui.rs`
+- `src/tui/app.rs`
+- `src/tui/command.rs`
+- `src/tui/dashboard.rs`
+- `src/tui/session.rs`
+- `src/tui/history.rs`
+- `src/tui/content.rs`
+- `src/tui/state.rs`
+- `src/tui/reader.rs`
+- `src/tui/markdown.rs`
+- `src/tui/keymap.rs`
+
+If a subdomain grows, use `src/tui/<subdomain>.rs` with children under `src/tui/<subdomain>/`.
+
+## 15. Delivery phases
+
+### Phase 1
+
+- add feature gate and CLI entry
+- build dashboard, session, and history views
+- wire telemetry readers to durable store
+
+### Phase 2
+
+- add command bar execution through `RunContext`
+- add output overlay for short commands
+- add replay support
+
+### Phase 3
+
+- add content view and tree browser
+- add markdown rendering improvements
+- add picker overlays for agent and provider
+
+## 16. Required tests
 
 ### Unit tests
 
-**Event deserialization:**
-- Valid JSON line deserializes to correct ProgressEvent variant
-- Unknown event type is skipped without error
-- Malformed JSON line is skipped without crashing
-- Empty line is skipped
+- event reducer handles active and completed sessions
+- replay mode reproduces the same reduced state as live mode
+- command bar adapter maps text input to existing commands
+- dashboard loader handles empty and populated session stores
+- content loader handles missing frames and valid frames
 
-**State model:**
-- Feeding GenerationStarted + LevelStarted events produces correct level count and node counts
-- Feeding NodeCompleted events updates progress correctly
-- Feeding NodeFailed events increments failure count and stores error
-- Feeding NodeSkipped events increments skip count
-- ProviderRequestSent followed by ProviderResponseReceived computes correct duration
-- ProviderRequestSent without a response shows "waiting" status with elapsed time
-- SessionEnded event marks session as completed
+### Integration tests
 
-**Session discovery:**
-- Querying session records returns all sessions
-- Sessions are sorted by start timestamp, most recent first
-- Active session with no SessionEnded is identified correctly
-- Empty store returns no sessions
+- `meld tui --history` loads from a temp telemetry store
+- command bar execution creates and follows a new session
+- replay mode reads stored events in stable order
+- content view loads frame text for a selected node
 
-**Command parsing:**
-- "context generate ./src --force" parses to correct command structure
-- "status" parses to status command
-- Invalid command returns parse error
-- Tab completion for "context g" returns "context generate"
+## 17. Out of scope for first release
 
-### Integration tests (headless, no terminal)
-
-**Session follow:**
-- Insert events into store, start follow, verify all ordered events are received
-- Insert events after follow starts, verify new events are received within polling interval
-- Insert SessionEnded event, verify follow switches session to completed state
-
-**Command execution:**
-- Execute "scan" through TUI command handler, verify session record is created with ScanStarted and ScanCompleted events
-- Execute "context generate" through TUI command handler with a mock provider, verify generation events appear in store
-- Execute invalid command, verify error is returned without creating a session
-
-**State from events (round-trip):**
-- Run a real generation with mock provider, collect session events from store, feed events into state model, verify final state matches expected with correct frame count, levels, and durations
-
-### Visual tests (manual or snapshot)
-
-- Dashboard renders with correct panel layout and data
-- Session view shows progress bar, activity list, and detail panel
-- Content browser renders markdown with headers, lists, and code blocks
-- Command bar appears at bottom, accepts input, shows completion suggestions
-- Key bindings switch views correctly
-
-## 10. Implementation location
-
-All TUI code is behind `#[cfg(feature = "tui")]`:
-
-- `src/tui/mod.rs` -- module root, subcommand entry point
-- `src/tui/app.rs` -- application state, event loop, view switching
-- `src/tui/views/dashboard.rs` -- Dashboard view
-- `src/tui/views/session.rs` -- Session view
-- `src/tui/views/content.rs` -- Content browser view
-- `src/tui/views/history.rs` -- Session history view
-- `src/tui/views/mod.rs` -- view trait, shared layout
-- `src/tui/command_bar.rs` -- command bar input, parsing, tab completion
-- `src/tui/reader.rs` -- session event store reader and event deserializer
-- `src/tui/state.rs` -- session state model (built from events)
-- `src/tui/markdown.rs` -- markdown-to-ratatui widget rendering
-- `src/tui/keybindings.rs` -- key binding definitions and dispatch
-
-## 11. Dependencies (feature-gated)
-
-- `ratatui` -- terminal UI framework
-- `crossterm` -- terminal backend (raw mode, events, rendering)
-- Markdown rendering: evaluate `termimad` (renders markdown to terminal) or `pulldown-cmark` (parser) with custom ratatui widget. Decision deferred to implementation.
-
-## 12. Related docs
-
-- **design/observability/observability_spec.md** -- The event system, event types, sled storage model, and EventBus API that the TUI consumes.
-- **design/context/generation_orchestrator_spec.md** -- The orchestrator whose events drive the session view.
-- **design/context/context_generate_by_path_spec.md** -- The CLI command whose output references session IDs for TUI review.
-- **design/context/llm_payload_spec.md** -- What is sent to the LLM. Generated content is markdown, which the content browser renders.
-
-## 13. Summary
-
-The TUI is a self-contained interactive layer over the merkle engine. It reads session events from the observability store for monitoring, executes commands through the library for interaction, and renders generated markdown content for review. The engine never depends on the TUI. The observability event contract is stable between them. If the TUI outgrows the single crate, it can be extracted into a workspace member without changing the engine or event format.
+- direct provider streaming panels
+- multi workspace tabs
+- remote telemetry transport
+- editing frames inside the TUI
