@@ -1,19 +1,23 @@
 # Workflow Definition
 
-Date: 2026-03-09
+Date: 2026-03-11
 Status: active
+
+## Parent Roadmap
+
+- [Workflow Orchestrator Roadmap](../README.md)
 
 ## Intent
 
-Define workflow as the orchestration layer above individual capabilities and as the future home of HTN aligned decomposition.
+Define workflow as the composition layer above atomic tasks and as the future home of HTN aligned decomposition.
 Workflow should no longer mean only turn sequencing for one concrete docs flow.
 
 ## HTN Position
 
 - a workflow run is one compiled task network for one top level task over one declared target scope and one input snapshot
 - workflow owns compound task decomposition, method selection, dependency shaping, and task network compilation
-- capabilities are primitive tasks and do not own cross capability orchestration
-- workflow runtime owns checkpoints, repair records, and durable execution trace across primitive task execution
+- primitive tasks are atomic tasks and do not own cross task orchestration
+- workflow runtime owns checkpoints, repair records, and durable execution trace across atomic task execution
 
 ## Provisional Answers
 
@@ -26,8 +30,8 @@ Workflow should no longer mean only turn sequencing for one concrete docs flow.
 ### Planning Boundary
 
 - workflow planning owns top level intent interpretation, method choice, decomposition, target expansion, dependency edges, artifact wiring, and compile time validation
-- capability execution owns only primitive task behavior, local precondition checks, runtime observations, and declared outputs
-- workflow may reject a plan before execution starts if primitive task contracts do not compose cleanly
+- atomic task execution owns only task behavior, local precondition checks, runtime observations, and declared outputs
+- workflow may reject a plan before execution starts if task contracts do not compose cleanly
 
 ### Durable Runtime Units
 
@@ -42,7 +46,7 @@ Workflow should no longer mean only turn sequencing for one concrete docs flow.
 
 ### Resume And Repair
 
-- resume should default to preserving completed primitive task work when its inputs, scope digest, and side effect expectations remain valid
+- resume should default to preserving completed atomic task work when its inputs, scope digest, and side effect expectations remain valid
 - resume should restart from the nearest valid checkpoint rather than always from the beginning
 - partial success should produce a repair decision instead of an implicit full restart
 - repair should be explicit in durable state so migration from current turn behavior remains explainable
@@ -63,10 +67,10 @@ Workflow should no longer mean only turn sequencing for one concrete docs flow.
 - in the current foundation phase, these stages may still be represented through compatibility workflow shapes
 - in the later HTN aligned shape, this flow becomes a clear example of one compound task refined into a stable sequence of sub tasks
 
-### Capability Layer
+### Task Layer
 
-- ordering, context generation, validation, and file write should be modeled as primitive task families once their contracts are stable
-- workflow should invoke those primitive tasks through explicit contracts rather than by embedding their orchestration rules
+- ordering, context generation, validation, and file write should be modeled as atomic task families once their contracts are stable
+- workflow should invoke those tasks through explicit contracts rather than by embedding their orchestration rules
 
 ## Current Code Pressure
 
@@ -84,6 +88,7 @@ Workflow should no longer mean only turn sequencing for one concrete docs flow.
 ## Related Areas
 
 - [HTN Glossary](../htn_glossary.md)
-- [Capability Contract](../capability_contract/README.md)
+- [Task Model](../task_model/README.md)
+- [Primitive Task Contract](../primitive_task_contract/README.md)
 - [Migration Plan](../migration_plan/README.md)
 - [Completed Workflow Bootstrap](../../completed/workflow_bootstrap/README.md)

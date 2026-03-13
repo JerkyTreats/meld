@@ -1,7 +1,11 @@
 # Telemetry Model
 
-Date: 2026-03-09
+Date: 2026-03-11
 Status: active
+
+## Parent Roadmap
+
+- [Workflow Orchestrator Roadmap](../README.md)
 
 ## Intent
 
@@ -20,7 +24,7 @@ Define telemetry for HTN ready workflow execution with enough detail for plannin
 
 - planning layer records top level task selection, method selection, rejected methods, plan digest, and compile validation outcomes
 - task network layer records task instance creation, dependency resolution, artifact handoff wiring, and checkpoint creation
-- primitive task layer records start, finish, skip, retry, reuse, failure, and observation outcomes for each task instance
+- atomic task layer records start, finish, skip, retry, reuse, failure, and observation outcomes for each task instance
 - artifact layer records artifact creation, handoff, materialization, divergence, publish, and compensation outcomes
 
 ### Durable Versus Compact Records
@@ -44,7 +48,7 @@ Define telemetry for HTN ready workflow execution with enough detail for plannin
 
 ## Initial Requirements
 
-- unify planning level, workflow level, capability level, batch level, and target level visibility
+- unify planning level, workflow level, atomic task level, batch level, and target level visibility
 - produce compact summary events for CLI and logs
 - preserve enough detail to diagnose invalid configuration, decomposition errors, and partial execution failures
 - make write skip versus write change outcomes obvious
@@ -71,16 +75,16 @@ Define telemetry for HTN ready workflow execution with enough detail for plannin
 - `repair_resolved`
 - `workflow_resumed`
 
-## Related Areas
-
-- [HTN Glossary](../htn_glossary.md)
-- [Capability Contract](../capability_contract/README.md)
-- [File Write Capability](../file_write_capability/README.md)
-- [Write Policy](../write_policy/README.md)
-- [Migration Plan](../migration_plan/README.md)
-
 ## Residual Questions
 
 - how much method selection detail should be preserved by default before event volume becomes too costly
 - which rejected method reasons deserve durable storage versus short lived diagnostics only
 - how should telemetry sampling behave for large batch runs without weakening repair and audit value
+
+## Related Areas
+
+- [HTN Glossary](../htn_glossary.md)
+- [Primitive Task Contract](../primitive_task_contract/README.md)
+- [File Write Task](../file_write_task/README.md)
+- [Write Policy](../write_policy/README.md)
+- [Migration Plan](../migration_plan/README.md)

@@ -1,7 +1,11 @@
 # Migration Plan
 
-Date: 2026-03-09
+Date: 2026-03-11
 Status: active
+
+## Parent Roadmap
+
+- [Workflow Orchestrator Roadmap](../README.md)
 
 ## Intent
 
@@ -10,7 +14,7 @@ Define a compatibility path from the current turn workflow runtime to an HTN rea
 ## HTN Position
 
 - the current turn runtime should be treated as a compatibility workflow shape rather than the final workflow model
-- migration should stabilize primitive capability contracts and durable workflow records before introducing broader decomposition features
+- migration should stabilize atomic task contracts and durable workflow records before introducing broader decomposition features
 - existing commands should compile into the new workflow substrate before their public surfaces change
 - first migration steps should improve identifiers, slots, checkpoints, and records without forcing immediate authoring changes
 
@@ -24,7 +28,7 @@ Define a compatibility path from the current turn workflow runtime to an HTN rea
 
 ### Command Compatibility Layer
 
-- `context generate` should remain stable while its internal execution compiles into ordering plus generate primitive tasks
+- `context generate` should remain stable while its internal execution compiles into ordering plus context generate tasks
 - `workflow execute` should remain stable while current turn profiles execute through compatibility compilation paths
 - compatibility wrappers should live at the workflow boundary rather than leaking orchestration logic back into domain modules
 
@@ -33,7 +37,7 @@ Define a compatibility path from the current turn workflow runtime to an HTN rea
 - add stable `plan_id` support
 - add stable `task_instance_id` support
 - add explicit input and output slot declarations
-- add capability ids and schema versions where they are still implicit
+- add task type ids and schema versions where they are still implicit
 - add checkpoint and repair record structures before broader decomposition features
 
 ### Stored State Migration
@@ -46,7 +50,7 @@ Define a compatibility path from the current turn workflow runtime to an HTN rea
 
 - keep current command behavior stable during the transition period
 - treat the current turn runtime as a compatibility workflow shape behind the new workflow contract
-- allow new capability workflows to coexist with current turn profiles during migration
+- allow new task based workflows to coexist with current turn profiles during migration
 - define cutover rules for profile ids, frame types, plan ids, task ids, and resume state
 - require characterization tests before removing old execution paths
 
@@ -54,8 +58,8 @@ Define a compatibility path from the current turn workflow runtime to an HTN rea
 
 ### Stage 1
 
-- stabilize primitive capability contracts
-- stabilize explicit artifact slots and capability ids
+- stabilize atomic task contracts
+- stabilize explicit artifact slots and task type ids
 - preserve command behavior
 
 ### Stage 2
@@ -66,7 +70,7 @@ Define a compatibility path from the current turn workflow runtime to an HTN rea
 ### Stage 3
 
 - compile current turn workflows through compatibility translation into the new workflow substrate
-- compile `context generate` through ordering plus generate primitive tasks
+- compile `context generate` through ordering plus context generate tasks
 
 ### Stage 4
 
@@ -82,6 +86,7 @@ Define a compatibility path from the current turn workflow runtime to an HTN rea
 ## Related Areas
 
 - [HTN Glossary](../htn_glossary.md)
+- [Task Model](../task_model/README.md)
 - [Workflow Definition](../workflow_definition/README.md)
-- [Context Generate Integration](../context_generate_integration/README.md)
+- [Context Generate Task](../context_generate_task/README.md)
 - [Completed Workflow Bootstrap](../../completed/workflow_bootstrap/README.md)

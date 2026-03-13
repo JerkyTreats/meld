@@ -1,17 +1,21 @@
-# Context Generate Integration
+# Context Generate Task
 
-Date: 2026-03-09
+Date: 2026-03-11
 Status: active
+
+## Parent Roadmap
+
+- [Workflow Orchestrator Roadmap](../README.md)
 
 ## Intent
 
-Refactor `context generate` so it consumes ordered target plans and executes context generation as a primitive task family inside workflow orchestration.
+Refactor `context generate` so it consumes ordered target plans and executes context generation as an atomic task family inside workflow orchestration.
 
 ## HTN Position
 
 - `src/context` owns context artifact production, queue execution, frame persistence, and retrieval
 - workflow owns recursive planning, ordering, cross task retry coordination, and downstream artifact handoff
-- `context generate` becomes a compatibility entry that compiles into ordering plus generate primitive tasks
+- `context generate` becomes a compatibility entry that compiles into ordering plus generate tasks
 - context should consume workflow public contracts without regaining hidden ownership of global orchestration
 
 ## Provisional Answers
@@ -27,7 +31,7 @@ Refactor `context generate` so it consumes ordered target plans and executes con
 - target expansion policy moves out of `src/context`
 - ordering policy moves out of `src/context`
 - cross task orchestration, publish handoff, and repair decisions move out of `src/context`
-- recursive planning becomes a workflow concern that may invoke multiple primitive tasks in sequence
+- recursive planning becomes a workflow concern that may invoke multiple tasks in sequence
 
 ### Migration Stability
 
@@ -51,7 +55,7 @@ Refactor `context generate` so it consumes ordered target plans and executes con
 
 ## Migration Boundary
 
-`context generate` should become a strong primitive task consumer without remaining the hidden owner of global orchestration policy.
+`context generate` should become a strong task consumer without remaining the hidden owner of global orchestration policy.
 
 ## Residual Questions
 
@@ -61,6 +65,7 @@ Refactor `context generate` so it consumes ordered target plans and executes con
 ## Related Areas
 
 - [HTN Glossary](../htn_glossary.md)
-- [Ordering Capability](../ordering_capability/README.md)
-- [Capability Contract](../capability_contract/README.md)
+- [Task Model](../task_model/README.md)
+- [Ordering Task](../ordering_task/README.md)
+- [Primitive Task Contract](../primitive_task_contract/README.md)
 - [Migration Plan](../migration_plan/README.md)

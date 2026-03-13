@@ -1,7 +1,11 @@
 # Write Policy
 
-Date: 2026-03-09
+Date: 2026-03-11
 Status: active
+
+## Parent Roadmap
+
+- [Workflow Orchestrator Roadmap](../README.md)
 
 ## Intent
 
@@ -9,7 +13,7 @@ Define side effect governance for file materialization so workflow outputs do no
 
 ## HTN Position
 
-- write policy governs side effecting primitive tasks and feeds workflow repair decisions
+- write policy governs side effecting atomic tasks and feeds workflow repair decisions
 - write policy should never be hidden inside the file write implementation as an implicit local rule set
 - write policy must stay deterministic for the same inputs and repository state
 - divergence must be a first class state and not a silent overwrite case
@@ -64,6 +68,6 @@ Define side effect governance for file materialization so workflow outputs do no
 ## Related Areas
 
 - [HTN Glossary](../htn_glossary.md)
-- [File Write Capability](../file_write_capability/README.md)
+- [File Write Task](../file_write_task/README.md)
 - [Telemetry Model](../telemetry_model/README.md)
 - [Migration Plan](../migration_plan/README.md)

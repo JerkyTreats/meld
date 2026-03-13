@@ -1,15 +1,19 @@
-# File Write Capability
+# File Write Task
 
-Date: 2026-03-09
+Date: 2026-03-11
 Status: active
+
+## Parent Roadmap
+
+- [Workflow Orchestrator Roadmap](../README.md)
 
 ## Intent
 
-Define file materialization as a separate primitive capability with explicit contracts and explicit write scope.
+Define file materialization as a separate atomic task with explicit contracts and explicit write scope.
 
 ## HTN Position
 
-- file write is a side effecting primitive task and not an incidental consequence of context generation
+- file write is a side effecting atomic task and not an incidental consequence of context generation
 - workflow owns when file write is invoked and which artifact is eligible for materialization
 - file write must expose enough structure for repair, retry, divergence handling, and watch safety
 - file write should consume explicit workflow artifacts and produce explicit materialization records
@@ -46,7 +50,7 @@ Define file materialization as a separate primitive capability with explicit con
 - workflow steps must declare target path policy before runtime
 - file writes should consume explicit content artifacts rather than implicit in memory strings
 - initial scope should support folder level `README.md` materialization
-- capability output should report whether content changed, wrote, skipped, or failed
+- task output should report whether content changed, wrote, skipped, or failed
 
 ## Expected Output States
 
@@ -64,6 +68,7 @@ Define file materialization as a separate primitive capability with explicit con
 ## Related Areas
 
 - [HTN Glossary](../htn_glossary.md)
+- [Task Model](../task_model/README.md)
 - [Write Policy](../write_policy/README.md)
 - [Telemetry Model](../telemetry_model/README.md)
 - [Migration Plan](../migration_plan/README.md)
