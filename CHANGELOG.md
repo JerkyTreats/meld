@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.2.1](https://github.com/JerkyTreats/meld/compare/v2.2.0...v2.2.1) — 2026-03-13
+
+### Refactors
+
+* **workflow:** normalize docs writer gates and reorganize workflow design [152f59c](https://github.com/JerkyTreats/meld/commit/152f59c6c9664169d063dbcfdaa459c5df8952f8)
+
+### Design
+
+* **workflow_orchestrator:** align orchestration docs with HTN foundation [ea29e8d](https://github.com/JerkyTreats/meld/commit/ea29e8dadb72cf51f731d3e3d4f9d5585950767e)
+* **workflow:** shift orchestrator design to task model [89f84cf](https://github.com/JerkyTreats/meld/commit/89f84cfc80634267735428424dce170afcba692a)
+
+
 ## [2.2.0](https://github.com/JerkyTreats/meld/compare/v2.1.0...v2.2.0) — 2026-03-09
 
 ### Features
