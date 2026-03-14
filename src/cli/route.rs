@@ -31,7 +31,7 @@ use crate::cli::parse::{
     WorkflowCommands, WorkspaceCommands,
 };
 use crate::cli::progress::LiveProgressHandle;
-use crate::cli::{command_name, summary_descriptor};
+use crate::cli::{command_name, typed_summary_event};
 
 fn resolve_context_get_frame_type(
     api: &ContextApi,
@@ -1643,15 +1643,14 @@ impl RunContext {
                 (Some(preview), None, Some(error_chars), Some(was_truncated))
             }
         };
-        let descriptor = summary_descriptor(command);
+        let typed_summary = typed_summary_event(command, ok, duration_ms, error.as_deref());
         emit_command_summary(
             self.progress.as_ref(),
             session_id,
             &command_name(command),
-            &descriptor,
+            typed_summary,
             ok,
             duration_ms,
-            error.as_deref(),
             message,
             output_chars,
             error_chars,

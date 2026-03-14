@@ -8,7 +8,7 @@ mod presentation;
 mod progress;
 mod route;
 
-pub use help::{command_name, summary_descriptor};
+pub use help::{command_name, typed_summary_event};
 pub use output::map_error;
 pub use parse::{
     AgentCommands, Cli, Commands, ContextCommands, DangerCommands, ProviderCommands,
