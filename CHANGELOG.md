@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.2.2](https://github.com/JerkyTreats/meld/compare/v2.2.1...v2.2.2) — 2026-03-14
+
+### Refactors
+
+* **telemetry:** move summary mapping into domain modules [ce1c6e8](https://github.com/JerkyTreats/meld/commit/ce1c6e8f6f0e1aedd32d418c58afcf9bb7324b0b)
+
+### Documentation
+
+* **htn:** add research corpus and reports [cf78595](https://github.com/JerkyTreats/meld/commit/cf78595af9eb2c11e687ed77f8b1c1d8e6b8ba8c)
+
+### Design
+
+* **workflow_orchestrator:** add context refactor design workstream [b1ddfb1](https://github.com/JerkyTreats/meld/commit/b1ddfb1a5a8f2ffa4d632b4786ebeb68b6146a3f)
+
+
 ## [2.2.1](https://github.com/JerkyTreats/meld/compare/v2.2.0...v2.2.1) — 2026-03-13
 
 ### Refactors
