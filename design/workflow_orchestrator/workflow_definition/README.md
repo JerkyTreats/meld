@@ -18,6 +18,7 @@ Workflow should no longer mean only turn sequencing for one concrete docs flow.
 - workflow owns compound task decomposition, method selection, dependency shaping, and task network compilation
 - primitive tasks are atomic tasks and do not own cross task orchestration
 - workflow runtime owns checkpoints, repair records, and durable execution trace across atomic task execution
+- workflow should compile through explicit phases into a durable compiled plan IR before the first atomic task starts
 
 ## Provisional Answers
 
@@ -25,6 +26,7 @@ Workflow should no longer mean only turn sequencing for one concrete docs flow.
 
 - the smallest stable definition of a workflow is one top level task compiled into a validated task network
 - that task network must declare stable task ids, dependency edges, artifact handoffs, and scope identity before execution begins
+- the compiled result should also preserve method version, artifact schema bindings, capability bindings, and plan digest inputs
 - a workflow definition may later support multiple methods, but the runtime should execute one compiled network at a time
 
 ### Planning Boundary
@@ -33,13 +35,30 @@ Workflow should no longer mean only turn sequencing for one concrete docs flow.
 - atomic task execution owns only task behavior, local precondition checks, runtime observations, and declared outputs
 - workflow may reject a plan before execution starts if task contracts do not compose cleanly
 
+### Compiler Phases
+
+- definition load should validate workflow config, method registry entries, and task catalog references
+- method selection should evaluate candidate methods, eligibility rules, and compatibility translation inputs
+- task expansion should shape task instances into an explicit dependency graph rather than a hidden runtime sequence
+- artifact binding should validate output slot to input slot connections with artifact type ids and schema versions
+- capability binding should resolve agent roles, provider bindings, managed scopes, and policy ids before runtime starts
+- final validation should emit one compiled plan digest that includes scope digest, binding digest, method versions, and artifact schema bindings
+
+### Method Registry
+
+- workflow should own a method registry with stable method ids, versions, applicability rules, and expected dependency shape
+- first phase methods may stay mostly linear, but the registry should still support partially ordered task graphs as a future stable shape
+- compatibility compiled methods should use the same registry concepts so migration does not invent a second planning model
+
 ### Durable Runtime Units
 
 - `workflow_run` records one attempt to execute one compiled task network
 - `plan` records the compiled network digest, method choice, task graph, and input snapshot
+- `compiled_plan` records the validated intermediate representation that runtime executes, including schema bindings and capability bindings
 - `task_instance` records one concrete compound or primitive task occurrence within the run
 - `target_batch` records a deterministic subset of targets when execution is batched
 - `artifact_handoff` records output slot to input slot bindings across task instances
+- `compile_diagnostic` records rejected methods, invalid bindings, and compatibility translation findings that influenced the compiled plan
 - `checkpoint` records safe resume boundaries after compile or execution milestones
 - `repair_record` records divergence, preserved work, and chosen recovery path
 - `execution_trace` records ordered planning and runtime events across the full run
@@ -58,6 +77,8 @@ Workflow should no longer mean only turn sequencing for one concrete docs flow.
 - workflow runtime owns task status, retry policy, checkpoints, and repair records
 - workflow should orchestrate both target local task instances and batch scoped task instances
 - workflow should support structures broader than one prompt thread
+- workflow should preserve an explicit compiled plan IR rather than relying on runtime turn lists as the only durable shape
+- workflow should support dependency graphs that remain valid when methods evolve beyond simple sequences
 
 ## Worked Mapping
 
@@ -92,3 +113,4 @@ Workflow should no longer mean only turn sequencing for one concrete docs flow.
 - [Primitive Task Contract](../primitive_task_contract/README.md)
 - [Migration Plan](../migration_plan/README.md)
 - [Completed Workflow Bootstrap](../../completed/workflow_bootstrap/README.md)
+- [HTN Codebase Structure Report](../../research/htn/README.md)

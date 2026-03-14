@@ -17,6 +17,7 @@ Define how workflows resolve agent roles across multiple atomic tasks.
 - tasks may provide safe defaults, but workflow remains the authoritative owner of cross task agent coordination
 - role binding should stay explicit enough for authorization, debugging, and repair
 - telemetry must preserve both declared role and resolved agent identity
+- resolved bindings should contribute to plan identity so resume and repair never confuse two networks with different role or provider assignments
 
 ## Provisional Answers
 
@@ -25,6 +26,7 @@ Define how workflows resolve agent roles across multiple atomic tasks.
 - workflow definitions should prefer named roles such as generator, reviewer, verifier, and publisher
 - direct agent ids should remain available as explicit overrides when a workflow truly depends on a specific agent
 - role resolution should happen before runtime starts so task networks compile with stable bindings
+- resolved bindings should produce a stable `binding_digest` for the compiled plan record
 
 ### Task Profiles
 
@@ -43,6 +45,7 @@ Define how workflows resolve agent roles across multiple atomic tasks.
 - configuration should expose declared role bindings and optional direct overrides
 - telemetry should record declared role, resolved agent id, source of the binding, and any override reason
 - repair and resume records should preserve the resolved bindings used when the original task network was compiled
+- provider and capability bindings that change execution semantics should be preserved beside agent role bindings rather than in separate hidden records
 
 ## Initial Requirements
 
@@ -63,3 +66,4 @@ Define how workflows resolve agent roles across multiple atomic tasks.
 - [Primitive Task Contract](../primitive_task_contract/README.md)
 - [Telemetry Model](../telemetry_model/README.md)
 - [Migration Plan](../migration_plan/README.md)
+- [HTN Codebase Structure Report](../../research/htn/README.md)

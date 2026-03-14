@@ -17,6 +17,7 @@ Refactor `context generate` so it consumes ordered target plans and executes con
 - workflow owns recursive planning, ordering, cross task retry coordination, and downstream artifact handoff
 - `context generate` becomes a compatibility entry that compiles into ordering plus generate tasks
 - context should consume workflow public contracts without regaining hidden ownership of global orchestration
+- generated context artifacts should be typed and versioned so downstream workflow compilation can validate them the same way it validates any other artifact family
 
 ## Provisional Answers
 
@@ -25,6 +26,7 @@ Refactor `context generate` so it consumes ordered target plans and executes con
 - prompt and context artifact production remains in `src/context`
 - queue lifecycle, provider calls, frame persistence, and retrieval behavior remain in `src/context`
 - frame quality and metadata guarantees remain owned by `src/context`
+- context execution may perform internal queue scheduling, but it should not reintroduce workflow level method choice or target derivation
 
 ### What Moves Out Of Context
 
@@ -32,6 +34,7 @@ Refactor `context generate` so it consumes ordered target plans and executes con
 - ordering policy moves out of `src/context`
 - cross task orchestration, publish handoff, and repair decisions move out of `src/context`
 - recursive planning becomes a workflow concern that may invoke multiple tasks in sequence
+- artifact schema binding, capability binding, and dependency validation stay in workflow even when execution is delegated into `src/context`
 
 ### Migration Stability
 
@@ -52,6 +55,7 @@ Refactor `context generate` so it consumes ordered target plans and executes con
 - allow workflow to submit target plans rather than force `context` to derive them
 - preserve current frame generation quality and metadata guarantees
 - keep `context` dependent only on workflow public contracts when running workflow backed execution
+- emit typed generation artifacts with stable schema ids for downstream validation and materialization
 
 ## Migration Boundary
 
@@ -69,3 +73,4 @@ Refactor `context generate` so it consumes ordered target plans and executes con
 - [Ordering Task](../ordering_task/README.md)
 - [Primitive Task Contract](../primitive_task_contract/README.md)
 - [Migration Plan](../migration_plan/README.md)
+- [HTN Codebase Structure Report](../../research/htn/README.md)

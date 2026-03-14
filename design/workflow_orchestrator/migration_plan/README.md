@@ -17,6 +17,7 @@ Define a compatibility path from the current turn workflow runtime to an HTN rea
 - migration should stabilize atomic task contracts and durable workflow records before introducing broader decomposition features
 - existing commands should compile into the new workflow substrate before their public surfaces change
 - first migration steps should improve identifiers, slots, checkpoints, and records without forcing immediate authoring changes
+- migration should add compiled plan IR, method registry records, and schema binding records before any broader search work lands
 
 ## Provisional Answers
 
@@ -38,6 +39,7 @@ Define a compatibility path from the current turn workflow runtime to an HTN rea
 - add stable `task_instance_id` support
 - add explicit input and output slot declarations
 - add task type ids and schema versions where they are still implicit
+- add artifact schema ids, capability requirement fields, and compiled plan digest inputs where they are still implicit
 - add checkpoint and repair record structures before broader decomposition features
 
 ### Stored State Migration
@@ -53,29 +55,32 @@ Define a compatibility path from the current turn workflow runtime to an HTN rea
 - allow new task based workflows to coexist with current turn profiles during migration
 - define cutover rules for profile ids, frame types, plan ids, task ids, and resume state
 - require characterization tests before removing old execution paths
+- keep compatibility translation visible enough that parity work can compare old sequencing to new compiled plan records
 
 ## Migration Stages
 
 ### Stage 1
 
 - stabilize atomic task contracts
-- stabilize explicit artifact slots and task type ids
+- stabilize explicit artifact slots, artifact schema ids, and task type ids
 - preserve command behavior
 
 ### Stage 2
 
-- enrich workflow durable state with plan ids, task instance ids, checkpoints, and repair records
+- enrich workflow durable state with plan ids, compiled plan records, task instance ids, checkpoints, and repair records
 - emit telemetry aligned to those new workflow records
 
 ### Stage 3
 
 - compile current turn workflows through compatibility translation into the new workflow substrate
 - compile `context generate` through ordering plus context generate tasks
+- introduce the method registry and binding digests as durable compile time records even when compatibility methods remain mostly linear
 
 ### Stage 4
 
 - re express the docs writer path as the first canonical hierarchical example on the stabilized substrate
 - remove old execution ownership only after characterization and parity gates pass
+- widen method shapes only after the compiler, telemetry, and repair records already support explicit dependency graphs
 
 ## Residual Questions
 
@@ -90,3 +95,4 @@ Define a compatibility path from the current turn workflow runtime to an HTN rea
 - [Workflow Definition](../workflow_definition/README.md)
 - [Context Generate Task](../context_generate_task/README.md)
 - [Completed Workflow Bootstrap](../../completed/workflow_bootstrap/README.md)
+- [HTN Codebase Structure Report](../../research/htn/README.md)
