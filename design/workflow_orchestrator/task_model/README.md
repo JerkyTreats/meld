@@ -18,6 +18,7 @@ This document treats the task as the foundational unit for orchestration design.
 - a primitive task is an atomic task with no further workflow decomposition
 - a compound task exists only at the workflow planning layer and refines into other tasks
 - a task network of one primitive task is the smallest executable workflow
+- task types should be rich enough to feed a compiler style workflow planner rather than a loose runtime dispatcher
 
 ## Provisional Answers
 
@@ -29,6 +30,10 @@ This document treats the task as the foundational unit for orchestration design.
 - explicit output slots
 - bounded side effect surface
 - explicit idempotency class
+- explicit capability requirements
+- explicit artifact schema contracts
+- explicit effect summary shape
+- explicit compensation posture
 - explicit observation shape
 - explicit retry boundary
 - explicit durable execution record
@@ -47,8 +52,14 @@ This document treats the task as the foundational unit for orchestration design.
 - `owner_domain`
 - `input_slots`
 - `output_slots`
+- `artifact_input_contracts`
+- `artifact_output_contracts`
 - `side_effect_class`
 - `idempotency_class`
+- `determinism_class`
+- `capability_requirements`
+- `effect_summary_schema`
+- `compensation_policy`
 - `observation_schema`
 - `retry_guidance`
 - `timeout_guidance`
@@ -65,6 +76,7 @@ This document treats the task as the foundational unit for orchestration design.
 ## Design Goal
 
 Make workflow composition rest on a stable inventory of atomic tasks before method libraries and richer decomposition rules are introduced.
+That inventory should already reflect the richer contract depth seen in modern HTN compiler and service stacks so later method work does not force a second task model redesign.
 
 ## Residual Questions
 
@@ -78,3 +90,4 @@ Make workflow composition rest on a stable inventory of atomic tasks before meth
 - [Primitive Task Contract](../primitive_task_contract/README.md)
 - [Workflow Definition](../workflow_definition/README.md)
 - [Migration Plan](../migration_plan/README.md)
+- [HTN Codebase Structure Report](../../research/htn/README.md)

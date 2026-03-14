@@ -17,6 +17,7 @@ Define side effect governance for file materialization so workflow outputs do no
 - write policy should never be hidden inside the file write implementation as an implicit local rule set
 - write policy must stay deterministic for the same inputs and repository state
 - divergence must be a first class state and not a silent overwrite case
+- write policy should compile into explicit policy ids and versions so compiled plans can be replayed and audited against the same decision rules
 
 ## Provisional Answers
 
@@ -31,6 +32,7 @@ Define side effect governance for file materialization so workflow outputs do no
 - intended content should be normalized according to the write policy profile before comparison
 - current repository state should be read from the managed target path immediately before the write decision
 - comparison should produce a durable reason code so later repair and telemetry can explain the outcome
+- the resulting decision should preserve policy id, policy version, and comparison digest in the materialization record
 
 ### Workspace Refresh
 
@@ -51,6 +53,7 @@ Define side effect governance for file materialization so workflow outputs do no
 - keep write policy deterministic for the same inputs and repository state
 - report write reason in telemetry and workflow summaries
 - define how workflow writes interact with workspace updates and future watch behavior
+- version policy rules so plan replay and parity checks remain explainable across migrations
 
 ## Policy Principles
 
@@ -71,3 +74,4 @@ Define side effect governance for file materialization so workflow outputs do no
 - [File Write Task](../file_write_task/README.md)
 - [Telemetry Model](../telemetry_model/README.md)
 - [Migration Plan](../migration_plan/README.md)
+- [HTN Codebase Structure Report](../../research/htn/README.md)

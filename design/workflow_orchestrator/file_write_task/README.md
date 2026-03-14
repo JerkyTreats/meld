@@ -17,6 +17,7 @@ Define file materialization as a separate atomic task with explicit contracts an
 - workflow owns when file write is invoked and which artifact is eligible for materialization
 - file write must expose enough structure for repair, retry, divergence handling, and watch safety
 - file write should consume explicit workflow artifacts and produce explicit materialization records
+- file write should declare managed scope, capability requirements, and effect summaries at compile time rather than rely on local runtime convention
 
 ## Provisional Answers
 
@@ -26,6 +27,7 @@ Define file materialization as a separate atomic task with explicit contracts an
 - file write should require a repo relative target path binding
 - file write should require a write policy id and declared write scope
 - file write should require provenance metadata that links the content artifact to workflow execution state
+- file write should require artifact type and schema bindings for the content it will materialize
 - file write should optionally consume a prior materialization record when change suppression or divergence checks need it
 
 ### Scope Declaration
@@ -38,6 +40,7 @@ Define file materialization as a separate atomic task with explicit contracts an
 
 - file writes should consume workflow artifacts that may have been derived from context frames, but they should not mutate context frame heads as part of file materialization
 - context frames remain immutable lineage sources while file writes produce repository side effects and materialization records
+- materialization records should preserve plan digest, binding digest, and managed scope information for later repair and audit
 
 ### Self Churn Avoidance
 
@@ -51,6 +54,7 @@ Define file materialization as a separate atomic task with explicit contracts an
 - file writes should consume explicit content artifacts rather than implicit in memory strings
 - initial scope should support folder level `README.md` materialization
 - task output should report whether content changed, wrote, skipped, or failed
+- task output should include effect summary fields strong enough for reuse, halt, or compensation decisions
 
 ## Expected Output States
 
@@ -73,3 +77,4 @@ Define file materialization as a separate atomic task with explicit contracts an
 - [Telemetry Model](../telemetry_model/README.md)
 - [Migration Plan](../migration_plan/README.md)
 - [Publish Arbiter Idea](../../workflow_ideas/publish_arbiter_spec.md)
+- [HTN Codebase Structure Report](../../research/htn/README.md)

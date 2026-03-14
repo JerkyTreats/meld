@@ -4,100 +4,203 @@ Date: 2026-03-11
 Status: active
 Scope: HTN ready workflow foundation and task orchestration
 
-## Entry Point
+## Overview
 
-This is the primary entry point for the workflow orchestrator effort.
-Use this file to understand the HTN aligned architectural framing, the major requirement areas, and the reading order for active design work.
-Each requirement area lives in its own folder with a workload `README.md` as the anchor document.
+This document is the starting point for workflow orchestrator design.
+Read it from the most concrete product capability up through workflow compilation and the later HTN method layer.
 
-This roadmap carries forward the workflow direction after the workflow bootstrap milestone.
-Bootstrap design history now lives in [Completed Workflow Bootstrap](../completed/workflow_bootstrap/README.md).
+The core idea is straightforward.
+Meld already has real domain behavior in `src/context`.
+This effort does not hide that behavior inside a planner.
+It lifts stable capabilities into explicit atomic tasks, compiles those tasks into validated workflow plans, and gives HTN methods a durable base for choosing among valid plan shapes.
 
-## Shared Vocabulary
+## Why It Exists
 
-- [HTN Glossary](htn_glossary.md)
+- preserve domain ownership
+- make orchestration visible
+- validate task wiring before execution begins
+- ground repair and resume in durable records
+- create a stable base for later HTN methods without another architectural reset
 
-## Working Direction
+## Mental Model
 
-- workflow orchestrates tasks
-- domains own their own behavior and internal operations
-- tasks define the workflow facing execution units that contract with domain operations
-- task modeling comes before advanced HTN composition
-- ordering, generation, validation, and file materialization should be expressed as atomic task families
-- workflow runtime owns task network compilation, checkpoints, repair state, and cross task telemetry
-- workflow configuration must compile into a reliable task network before runtime starts
+- `src/context` and other domains keep concrete behavior
+- atomic tasks expose those capabilities through stable workflow contracts
+- workflow binds scope, artifacts, policy, agents, and providers before execution begins
+- workflow compiles one explicit task graph with stable ids and durable records
+- runtime executes that compiled plan with checkpoints, repair data, and telemetry
+- HTN methods later refine plan shape on top of that stable base
 
-## HTN Direction
+## Architecture Diagram
 
-- workflow owns top level intent, method selection, decomposition, and compiled task networks
-- primitive tasks are the atomic execution layer beneath workflow composition
-- domains remain named by domain concern rather than HTN concern
-- current workflows and commands should migrate through compatibility task networks rather than a disruptive rewrite
-- this phase builds HTN readiness first and leaves method learning and broad planner search for later work
+```mermaid
+flowchart TD
+    A[Domain operations<br/>src/context, src/tree, src/workspace, other domains]
+    B[Atomic task families<br/>ordering, context_generate, validate, file_write, refresh, publish_record]
+    C[Task contracts and catalog<br/>task types, artifact schemas, capability requirements, effect summaries]
+    D[Compile time bindings and policy<br/>scope, agent roles, providers, write policy, managed paths]
+    E[Workflow compiler<br/>method selection, graph shaping, artifact handoff, validation, plan digest]
+    F[Workflow runtime<br/>task execution, checkpoints, repair records, execution trace, telemetry]
+    G[HTN method layer<br/>choose among valid task graph refinements]
 
-## Requirement Areas
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+```
 
-1. [Task Model](task_model/README.md)
-2. [Primitive Task Contract](primitive_task_contract/README.md)
-3. [Ordering Task](ordering_task/README.md)
-4. [Context Generate Task](context_generate_task/README.md)
-5. [File Write Task](file_write_task/README.md)
-6. [Write Policy](write_policy/README.md)
-7. [Agent Binding](agent_binding/README.md)
-8. [Workflow Definition](workflow_definition/README.md)
-9. [Telemetry Model](telemetry_model/README.md)
-10. [Migration Plan](migration_plan/README.md)
+## Concrete To Abstract Stack
 
-## Outcome Target
+### 1. Context And Domain Operations
 
-Deliver a workflow architecture where orchestration is a first class domain layer above domain operations and where the resulting foundation can host HTN style decomposition without another architectural reset.
-The workflow layer should compile declarative task networks, validate task wiring, persist durable run state, and coordinate artifact flow across ordering, generation, validation, and file materialization.
+This is the most concrete layer because it already exists and already does real product work.
+`src/context` owns context artifact production, queue execution, frame persistence, and retrieval.
+Other domains should keep the same direct ownership of their own behavior.
 
-## Why This Work Matters
+Workflow should:
 
-- task boundaries become explicit enough to support atomic execution, retry, reuse, and repair
-- configuration becomes easier to reason about because workflow composes known task types rather than hidden domain internals
-- runtime reliability improves when invalid task networks fail at load time rather than during partial execution
-- reuse improves when ordering, generation, validation, and publishing can be recombined without copying logic
-- migration risk drops when current command paths become compatibility task networks behind a stable workflow interface
-- HTN adoption risk drops when decomposition can later build on stable task and state contracts
+- call domain capabilities through explicit contracts
+- preserve domain quality and data guarantees
+- avoid reimplementing domain behavior in `src/workflow`
+
+Primary doc:
+
+- [Context Refactor Requirements](context/README.md)
+- [Context Generate Task](context_generate_task/README.md)
+
+### 2. Atomic Task Families
+
+Atomic tasks are the first workflow-facing lift above concrete domain behavior.
+Each task should wrap one domain-owned capability or one narrow execution surface.
+This is where reusable workflow building blocks begin.
+
+The first phase should cover ordering, context generation, validation, file materialization, workspace refresh, and record publication.
+
+Workflow should:
+
+- define stable execution boundaries
+- make inputs, outputs, and side effects explicit
+- let commands and later methods reuse the same task families
+
+Primary docs:
+
+- [Ordering Task](ordering_task/README.md)
+- [Context Generate Task](context_generate_task/README.md)
+- [File Write Task](file_write_task/README.md)
+
+### 3. Task Contracts And Task Catalog
+
+Once tasks exist, workflow needs a stable way to reason about them.
+That layer is the task model and the primitive task contract.
+It turns concrete capabilities into validated workflow building blocks.
+
+Task contracts should carry high-signal information:
+
+- task type id and version
+- typed artifact inputs and outputs
+- schema versions for artifacts
+- capability requirements
+- side effect and idempotency expectations
+- observation and effect summaries
+- retry and timeout guidance
+
+Primary docs:
+
+- [Primitive Task Contract](primitive_task_contract/README.md)
+- [Task Model](task_model/README.md)
+
+### 4. Compile-Time Policy And Bindings
+
+After tasks become explicit, the next layer is the set of decisions that determine whether tasks can safely run together.
+This includes write policy, agent roles, provider bindings, managed scopes, and related capability-level governance.
+
+These concerns belong in plan compilation, not inside hidden task internals, because they affect validity, repeatability, and resume safety.
+
+Primary docs:
+
+- [Write Policy](write_policy/README.md)
+- [Agent Binding](agent_binding/README.md)
+
+### 5. Workflow Compilation And Runtime
+
+Workflow is the first clearly more abstract layer above the concrete task surface.
+Its job is not to perform domain work directly.
+Its job is to interpret top-level intent, select a valid method shape, bind artifacts and capabilities, compile one explicit task graph, and execute that compiled plan through a durable runtime.
+
+The runtime should own checkpoints, repair records, execution trace, and telemetry.
+Planning and execution should remain clearly separate.
+
+Primary docs:
+
+- [Workflow Definition](workflow_definition/README.md)
+- [Telemetry Model](telemetry_model/README.md)
+
+### 6. HTN Method Layer
+
+HTN is the highest abstraction in this design set, not the starting point.
+The project should first stabilize concrete capabilities, atomic tasks, contracts, bindings, and compiled plan records.
+Only then should richer method libraries expand on that base.
+
+In this model, methods choose among valid task graph refinements.
+They do not replace domain behavior.
+They sit on top of stable workflow records.
+
+### 7. Migration And Compatibility
+
+Migration is the bridge from the current system into the new one.
+Current commands and turn-based flows should compile through compatibility shapes before their public behavior changes.
+This gives the project better ids, artifacts, plan records, and telemetry without a disruptive rewrite.
+
+Primary doc:
+
+- [Migration Plan](migration_plan/README.md)
+
+## Core Design Rules
+
+- domains own behavior
+- tasks stay small and explicit
+- compile before run
+- artifact handoff stays typed and validated
+- policy and bindings stay visible before execution
+- runtime records are the source of truth for repair and audit
+- compatibility comes before cutover
 
 ## Reading Order
 
-1. [HTN Glossary](htn_glossary.md)
-2. [Task Model](task_model/README.md)
-3. [Primitive Task Contract](primitive_task_contract/README.md)
-4. [Ordering Task](ordering_task/README.md)
-5. [Context Generate Task](context_generate_task/README.md)
-6. [File Write Task](file_write_task/README.md)
-7. [Write Policy](write_policy/README.md)
+Read in this order for the clearest path from concrete behavior to abstract orchestration:
+
+1. [Context Refactor Requirements](context/README.md)
+2. [Context Generate Task](context_generate_task/README.md)
+3. [Ordering Task](ordering_task/README.md)
+4. [File Write Task](file_write_task/README.md)
+5. [Write Policy](write_policy/README.md)
+6. [Primitive Task Contract](primitive_task_contract/README.md)
+7. [Task Model](task_model/README.md)
 8. [Agent Binding](agent_binding/README.md)
 9. [Workflow Definition](workflow_definition/README.md)
 10. [Telemetry Model](telemetry_model/README.md)
 11. [Migration Plan](migration_plan/README.md)
+12. [HTN Glossary](htn_glossary.md)
 
-## Initial Architectural Position
+## Near-Term Outcome
 
-- `src/workflow` should own task modeling, task resolution, task network compilation, workflow runtime, and durable workflow state
-- `src/context` should own context artifact production and retrieval through explicit task contracts
-- ordering policy should move out of `src/context` and become reusable by commands and workflows as a task family
-- file write and publish behavior should become task owned rather than an incidental side effect of context workflows
-- the current turn manager should be treated as a compatibility workflow shape rather than the permanent shape of workflow itself
+Deliver a workflow architecture where orchestration is a first-class layer above domain operations and where HTN decomposition can be added without another architectural reset.
+The system should compile explicit task graphs, validate task wiring before execution begins, persist durable run state, and coordinate artifacts across ordering, generation, validation, and materialization.
 
-## Immediate Deliverables
-
-- define the task model and atomic task criteria
-- define the primitive task contract and task catalog shape
-- define ordering and file write as reusable task families
-- define workflow composition rules above tasks
-- define a compatibility path from the current turn workflow runtime
-
-## What This Phase Does Not Build Yet
+## Not Yet
 
 - automated method learning
 - broad search across arbitrary action libraries
 - full uncertainty policy synthesis
 - a large workflow authoring language before task contracts and runtime records are stable
+
+## Research Anchors
+
+- [HTN Codebase Structure Report](../../research/htn/README.md)
+- [Advancements in Hierarchical Task Network Planning Research Since 2020.pdf](../../research/htn/Advancements%20in%20Hierarchical%20Task%20Network%20Planning%20Research%20Since%202020.pdf)
+- [Hierarchical Task Networks and Goal Oriented Action Planning for Modern Agentic Systems.pdf](../../research/htn/Hierarchical%20Task%20Networks%20and%20Goal%20Oriented%20Action%20Planning%20for%20Modern%20Agentic%20Systems.pdf)
 
 ## Related Design History
 
