@@ -7,6 +7,7 @@ pub(crate) mod frame_metadata_keys;
 pub mod generation;
 pub mod query;
 pub mod queue;
+pub mod summary;
 pub mod types;
 
 pub use facade::ContextFacade;

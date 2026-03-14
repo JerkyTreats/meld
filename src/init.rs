@@ -8,6 +8,8 @@ use crate::agent::{AgentRegistry, AgentRole, AgentStorage, XdgAgentStorage};
 use crate::config::{xdg, AgentConfig};
 use crate::error::ApiError;
 
+pub mod summary;
+
 /// Default prompts embedded in binary at compile time
 pub const DEFAULT_PROMPTS: &[(&str, &str)] = &[
     (

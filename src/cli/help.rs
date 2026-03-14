@@ -4,9 +4,9 @@ use crate::cli::parse::{
     AgentCommands, AgentPromptCommands, Commands, ContextCommands, DangerCommands,
     ProviderCommands, WorkflowCommands, WorkspaceCommands,
 };
-use crate::telemetry::emission::SummaryCommandDescriptor;
+use crate::telemetry::summary::TypedSummaryEvent;
 
-/// Command name string for session and telemetry (e.g. "workspace.status", "agent.list").
+/// Command name string for session and telemetry, for example `workspace.status`.
 pub fn command_name(command: &Commands) -> String {
     match command {
         Commands::Scan { .. } => "scan".to_string(),
@@ -87,66 +87,77 @@ pub fn agent_command_name(command: &AgentCommands) -> &'static str {
     }
 }
 
-/// Summary descriptor for telemetry emission. CLI boundary only; telemetry never imports Commands.
-pub fn summary_descriptor(command: &Commands) -> SummaryCommandDescriptor {
+/// Typed summary contract for telemetry emission. CLI adapts commands to domain producers.
+pub fn typed_summary_event(
+    command: &Commands,
+    ok: bool,
+    duration_ms: u128,
+    error: Option<&str>,
+) -> Option<TypedSummaryEvent> {
     match command {
-        Commands::Workspace { command } => match command {
+        Commands::Workspace { command } => Some(match command {
             WorkspaceCommands::Status { format, breakdown } => {
-                SummaryCommandDescriptor::WorkspaceStatus {
-                    format: format.clone(),
-                    breakdown: *breakdown,
-                }
+                crate::workspace::summary::status(format, *breakdown, ok, duration_ms, error)
             }
-            WorkspaceCommands::Validate { format } => SummaryCommandDescriptor::WorkspaceValidate {
-                format: format.clone(),
-            },
+            WorkspaceCommands::Validate { format } => {
+                crate::workspace::summary::validate(format, ok, duration_ms, error)
+            }
             WorkspaceCommands::Delete {
                 path,
                 node,
                 dry_run,
                 no_ignore,
-            } => SummaryCommandDescriptor::WorkspaceDelete {
-                target_path: path.is_some(),
-                target_node: node.is_some(),
-                dry_run: *dry_run,
-                no_ignore: *no_ignore,
-            },
+            } => crate::workspace::summary::delete(
+                path.is_some(),
+                node.is_some(),
+                *dry_run,
+                *no_ignore,
+                ok,
+                duration_ms,
+                error,
+            ),
             WorkspaceCommands::Restore {
                 path,
                 node,
                 dry_run,
-            } => SummaryCommandDescriptor::WorkspaceRestore {
-                target_path: path.is_some(),
-                target_node: node.is_some(),
-                dry_run: *dry_run,
-            },
+            } => crate::workspace::summary::restore(
+                path.is_some(),
+                node.is_some(),
+                *dry_run,
+                ok,
+                duration_ms,
+                error,
+            ),
             WorkspaceCommands::Compact {
                 ttl,
                 all,
                 keep_frames,
                 dry_run,
-            } => SummaryCommandDescriptor::WorkspaceCompact {
-                ttl_days: *ttl,
-                all: *all,
-                keep_frames: *keep_frames,
-                dry_run: *dry_run,
-            },
+            } => crate::workspace::summary::compact(
+                *ttl,
+                *all,
+                *keep_frames,
+                *dry_run,
+                ok,
+                duration_ms,
+                error,
+            ),
             WorkspaceCommands::ListDeleted { older_than, format } => {
-                SummaryCommandDescriptor::WorkspaceListDeleted {
-                    older_than_days: *older_than,
-                    format: format.clone(),
-                }
+                crate::workspace::summary::list_deleted(*older_than, format, ok, duration_ms, error)
             }
             WorkspaceCommands::Ignore {
                 path,
                 dry_run,
                 format,
-            } => SummaryCommandDescriptor::WorkspaceIgnore {
-                has_path: path.is_some(),
-                dry_run: *dry_run,
-                format: format.clone(),
-            },
-        },
+            } => crate::workspace::summary::ignore(
+                path.is_some(),
+                *dry_run,
+                format,
+                ok,
+                duration_ms,
+                error,
+            ),
+        }),
         Commands::Status {
             format,
             workspace_only,
@@ -156,19 +167,26 @@ pub fn summary_descriptor(command: &Commands) -> SummaryCommandDescriptor {
             test_connectivity,
         } => {
             let include_all = !*workspace_only && !*agents_only && !*providers_only;
-            SummaryCommandDescriptor::StatusUnified {
-                format: format.clone(),
-                include_workspace: include_all || *workspace_only,
-                include_agents: include_all || *agents_only,
-                include_providers: include_all || *providers_only,
-                breakdown: *breakdown,
-                test_connectivity: *test_connectivity,
-            }
+            Some(crate::workspace::summary::unified_status(
+                format,
+                include_all || *workspace_only,
+                include_all || *agents_only,
+                include_all || *providers_only,
+                *breakdown,
+                *test_connectivity,
+                ok,
+                duration_ms,
+                error,
+            ))
         }
-        Commands::Validate => SummaryCommandDescriptor::ValidateWorkspace,
-        Commands::Agent { command } => SummaryCommandDescriptor::AgentAction {
-            action: agent_command_name(command).to_string(),
-            mutation: matches!(
+        Commands::Validate => Some(crate::workspace::summary::validate_workspace(
+            ok,
+            duration_ms,
+            error,
+        )),
+        Commands::Agent { command } => Some(crate::agent::summary::command(
+            agent_command_name(command),
+            matches!(
                 command,
                 AgentCommands::Create { .. }
                     | AgentCommands::Edit { .. }
@@ -177,16 +195,22 @@ pub fn summary_descriptor(command: &Commands) -> SummaryCommandDescriptor {
                     }
                     | AgentCommands::Remove { .. }
             ),
-        },
-        Commands::Provider { command } => SummaryCommandDescriptor::ProviderAction {
-            action: provider_command_name(command).to_string(),
-            mutation: matches!(
+            ok,
+            duration_ms,
+            error,
+        )),
+        Commands::Provider { command } => Some(crate::provider::summary::command(
+            provider_command_name(command),
+            matches!(
                 command,
                 ProviderCommands::Create { .. }
                     | ProviderCommands::Edit { .. }
                     | ProviderCommands::Remove { .. }
             ),
-        },
+            ok,
+            duration_ms,
+            error,
+        )),
         Commands::Context { command } => match command {
             ContextCommands::Generate {
                 node,
@@ -195,35 +219,47 @@ pub fn summary_descriptor(command: &Commands) -> SummaryCommandDescriptor {
                 force,
                 no_recursive,
                 ..
-            } => SummaryCommandDescriptor::ContextGeneration {
-                action: context_command_name(command).to_string(),
-                target_path: path.is_some() || path_positional.is_some(),
-                target_node: node.is_some(),
-                recursive: !*no_recursive,
-                force: *force,
-            },
+            } => Some(crate::context::summary::generation(
+                context_command_name(command),
+                path.is_some() || path_positional.is_some(),
+                node.is_some(),
+                !*no_recursive,
+                *force,
+                ok,
+                duration_ms,
+                error,
+            )),
             ContextCommands::Regenerate {
                 node,
                 path,
                 path_positional,
                 recursive,
                 ..
-            } => SummaryCommandDescriptor::ContextGeneration {
-                action: context_command_name(command).to_string(),
-                target_path: path.is_some() || path_positional.is_some(),
-                target_node: node.is_some(),
-                recursive: *recursive,
-                force: true,
-            },
-            ContextCommands::Get { .. } => SummaryCommandDescriptor::None,
+            } => Some(crate::context::summary::generation(
+                context_command_name(command),
+                path.is_some() || path_positional.is_some(),
+                node.is_some(),
+                *recursive,
+                true,
+                ok,
+                duration_ms,
+                error,
+            )),
+            ContextCommands::Get { .. } => None,
         },
-        Commands::Init { force, list } => SummaryCommandDescriptor::Init {
-            force: *force,
-            list_only: *list,
-        },
-        Commands::Workflow { command } => SummaryCommandDescriptor::WorkflowAction {
-            action: workflow_command_name(command).to_string(),
-        },
-        _ => SummaryCommandDescriptor::None,
+        Commands::Init { force, list } => Some(crate::init::summary::command(
+            *force,
+            *list,
+            ok,
+            duration_ms,
+            error,
+        )),
+        Commands::Workflow { command } => Some(crate::workflow::summary::command(
+            workflow_command_name(command),
+            ok,
+            duration_ms,
+            error,
+        )),
+        _ => None,
     }
 }

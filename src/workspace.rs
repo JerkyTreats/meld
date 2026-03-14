@@ -6,6 +6,7 @@ mod danger;
 mod facade;
 mod format;
 mod section;
+pub mod summary;
 mod types;
 mod watch;
 
