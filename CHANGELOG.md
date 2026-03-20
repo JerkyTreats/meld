@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.3](https://github.com/JerkyTreats/meld/compare/v2.2.2...v2.2.3) — 2026-03-20
+
+### Design
+
+* **workflow_orchestrator:** streamline roadmap read order [ccf7519](https://github.com/JerkyTreats/meld/commit/ccf7519c6cb1e597a3c7358f3c6146051463381b)
+
+
 ## [2.2.2](https://github.com/JerkyTreats/meld/compare/v2.2.1...v2.2.2) — 2026-03-14
 
 ### Refactors
