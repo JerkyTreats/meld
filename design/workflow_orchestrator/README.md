@@ -4,8 +4,7 @@ Date: 2026-03-27
 Status: active
 Scope: capability contracts, plan compilation, and plan-ready refactors for current behavior
 
-![[screenshot-2026-03-27_06-10-01.png]]
-
+![[screenshot-2026-03-27_07-30-27.png]]
 ## Thesis
 
 This design set defines the durable orchestration model for Meld.
