@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.4](https://github.com/JerkyTreats/meld/compare/v2.2.3...v2.2.4) — 2026-03-27
+
+### Design
+
+* **workflow_orchestrator:** replace workflow docs with capability and plan model [3209b2d](https://github.com/JerkyTreats/meld/commit/3209b2d85b581bcd5c8b717a74de4396e9a9ce0d)
+
+
 ## [2.2.3](https://github.com/JerkyTreats/meld/compare/v2.2.2...v2.2.3) — 2026-03-20
 
 ### Design
