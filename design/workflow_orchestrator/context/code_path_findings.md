@@ -1,18 +1,19 @@
 # Context Code Path Findings
 
-Date: 2026-03-14
-Scope: current code baseline findings for HTN ready `src/context` refactor
+Date: 2026-03-27
+Scope: current code baseline findings for capability-ready and plan-ready `src/context` refactor
 
 ## Intent
 
 Capture concrete code findings for the `src/context` orchestration split before refactor execution.
-This document records the current seams, the strongest reuse boundaries, and the main gaps that still block cleaner HTN integration.
+This document records the current seams, the strongest reuse boundaries, and the main gaps that still block clean capability contracts and plan compilation.
 
 ## Source Specs
 
 - [Context Refactor Requirements](README.md)
-- [Context Generate Task](../context_generate_task/README.md)
-- [Workflow Definition](../workflow_definition/README.md)
+- [Capability And Plan Design](../README.md)
+- [Capability Model](../capability/README.md)
+- [Plan Compiler](../plan/compiler/README.md)
 
 ## Baseline Findings
 
@@ -25,7 +26,7 @@ Current state:
 
 Impact:
 - context still mixes planning policy with generation execution setup
-- workflow cannot yet fully own target expansion and ordering without duplicating context logic
+- plan compilation cannot yet fully own target expansion and ordering without duplicating context logic
 
 ### C2 `GenerationPlan` is a useful compatibility envelope but not yet a workflow compiled artifact
 
@@ -36,7 +37,7 @@ Current state:
 
 Impact:
 - the current plan shape is strong enough for compatibility execution
-- the current plan shape is not yet rich enough for workflow compilation to validate target plan artifacts and downstream bindings before runtime starts
+- the current plan shape is not yet rich enough for plan compilation to validate target plan artifacts and downstream bindings before runtime starts
 
 ### C3 `src/context/queue.rs` still owns execution mode branching
 
@@ -47,7 +48,7 @@ Current state:
 
 Impact:
 - queue execution remains aware of workflow versus non workflow policy
-- the atomic generation task family does not yet have one uniform dispatch contract below the queue layer
+- the generation capability family does not yet have one uniform dispatch contract below the queue layer
 
 ### C4 A clear workflow public seam already exists and should be preserved
 
@@ -57,8 +58,8 @@ Current state:
 - `build_target_execution_request` and workflow target execution live in `src/workflow/facade.rs`
 
 Impact:
-- the codebase already has a useful public contract boundary between workflow and context
-- future HTN integration should extend this seam rather than let `src/context` reach into workflow internals
+- the codebase already has a useful public contract boundary between plan-facing code and context
+- future capability and plan work should extend this seam rather than let `src/context` reach into compiler internals
 
 ### C5 Plan lineage and workflow lineage are still partial in execution telemetry
 
@@ -70,14 +71,14 @@ Current state:
 
 Impact:
 - execution records do not yet carry full target level lineage through all generation paths
-- downstream repair, artifact handoff, and audit surfaces still lack part of the planned workflow context
+- downstream repair, artifact handoff, and audit surfaces still lack part of the planned plan context
 
 ### C6 Retry policy remains queue local and partly string matched
 
 Current state:
 - `is_retryable_error` branches by execution program kind in `src/context/queue.rs`
 - workflow retryability is currently inferred by checking error message content such as `failed gate` in `src/context/queue.rs`
-- single shot retryability is also still decided in the queue layer rather than in a typed task or workflow policy contract
+- single shot retryability is also still decided in the queue layer rather than in a typed capability or plan policy contract
 
 Impact:
 - retry and repair policy are not yet first class workflow inputs

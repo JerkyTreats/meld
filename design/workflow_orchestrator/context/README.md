@@ -1,57 +1,74 @@
-# Context Refactor Requirements
+# Context Capability Readiness
 
-Date: 2026-03-14
+Date: 2026-03-27
 Status: active
-
-## Parent Roadmap
-
-- [Workflow Orchestrator Roadmap](../README.md)
-- [Context Generate Task](../context_generate_task/README.md)
 
 ## Intent
 
-Break the HTN driven `src/context` refactor into requirement scoped work items.
-These work items preserve domain ownership while moving global orchestration policy into workflow.
+Define the refactor work required to make current `context generate` behavior capability-ready and plan-ready.
 
-## Scope
+## Current Problem
 
-- keep prompt assembly, provider execution, frame persistence, and retrieval in `src/context`
-- move target derivation, ordering policy, workflow level retry, repair choice, and publish handoff out of `src/context`
-- define stable workflow facing contracts for generation inputs and outputs
-- preserve current CLI behavior through compatibility compilation during migration
+Current `context generate` behavior still mixes several concerns:
 
-## Work Items
+- target expansion
+- ordering
+- generation execution
+- retry and resume assumptions
+- workflow-shaped sequencing
+- output shaping
 
-- [Generation Surface Focus](generation_surface_focus/README.md)
-- [Compatibility Compilation](compatibility_compilation/README.md)
-- [Target Plan Input](target_plan_input/README.md)
-- [Quality And Metadata Parity](quality_and_metadata_parity/README.md)
-- [Workflow Contract Boundary](workflow_contract_boundary/README.md)
-- [Typed Generation Artifacts](typed_generation_artifacts/README.md)
+That mixed ownership prevents clean capability contracts and clean plan compilation.
 
-## Findings
+## Required End State
 
-- [Code Path Findings](code_path_findings.md)
+The `context` domain should own only domain behavior behind explicit capability contracts.
 
-## Code Pressure
+For the first slice, `context` must expose:
 
-- `src/context/generation/run.rs` still owns recursive target discovery, subtree validation, and level shaping
-- `src/context/queue.rs` still holds queue level orchestration seams that future workflow compilation must call through cleanly
-- `src/context/generation/orchestration.rs` is the execution seam for prompt assembly, provider calls, metadata construction, and frame writes
-- `src/context/generation/program.rs` and `src/context/generation/selection.rs` already expose the first public compatibility contract between `context` and workflow
+- a `context_generate` capability contract
+- typed input artifact contracts
+- typed output artifact contracts
+- execution-facing implementation behind the contract
 
-## Exit Shape
+The following concerns must move out of `context`:
 
-- workflow compiles target plans before context execution starts
-- context consumes ordered plans and returns typed generation artifacts
-- workflow level retry, repair, and publish decisions no longer hide inside context execution
-- command level behavior remains stable while old entry paths compile into the new workflow aware contract
+- plan graph assembly
+- dependency edge construction
+- artifact handoff validation
+- execution ordering policy
+- workflow-shaped retry policy
 
-## Related Areas
+## First Slice Refactor Work
 
-- [Context Generate Task](../context_generate_task/README.md)
-- [Ordering Task](../ordering_task/README.md)
-- [Primitive Task Contract](../primitive_task_contract/README.md)
-- [Task Model](../task_model/README.md)
-- [Workflow Definition](../workflow_definition/README.md)
-- [Migration Plan](../migration_plan/README.md)
+- extract target expansion outputs into typed artifacts
+- extract ordering inputs and outputs into a plan-consumable contract
+- isolate generation execution behind a capability-facing adapter
+- remove hidden coupling between generation execution and ordering policy
+- remove hidden coupling between generation execution and workflow-wide retry policy
+- make result artifacts explicit enough for downstream file materialization
+
+## Required Inputs
+
+The first slice `context_generate` capability must accept:
+
+- scope reference
+- ordered target artifact
+- generation policy binding
+- provider binding
+- agent binding when required
+
+## Required Outputs
+
+The first slice `context_generate` capability must emit:
+
+- generation result artifact
+- frame reference artifact when materialized frames exist
+- structured observation summary
+- structured effect summary
+
+## Non Goals
+
+- moving plan compilation into `context`
+- preserving hidden ordering behavior inside `context`
+- preserving workflow-specific sequencing inside `context`
