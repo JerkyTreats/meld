@@ -7,26 +7,16 @@ Scope: refactor current behavior into capability-ready domain contracts and plan
 ## Objective
 
 Refactor existing code so current behavior can be expressed as validated plans of bound capability instances.
-
-This plan does not add new HTN behavior.
-This plan does not make compiler choose capabilities.
-This plan does not make execution smarter.
-
-This plan does:
-
-- define durable capability contracts
-- make current domain behavior capability-ready
-- add plan graph infrastructure on `petgraph`
-- add compiler as plan validation and lock-in
-- preserve current command behavior while old workflow-shaped internals are removed
+This plan does not add new HTN behavior, make compiler choose capabilities, or make execution smarter.
+It does define durable capability contracts, make current domain behavior capability-ready, add plan graph infrastructure on `petgraph`, add compiler as plan validation and lock-in, and preserve current command behavior while old workflow-shaped internals are removed.
 
 ## First Slice Outcomes
 
-- `context generate` becomes capability-ready and loses mixed orchestration concerns
-- current docs writer behavior becomes representable as a candidate capability graph
-- compiler accepts candidate capability graphs and emits locked plan records
-- plans are parallel-ready DAGs
-- plan graph infrastructure is built on `petgraph`
+`context generate` becomes capability-ready and loses mixed orchestration concerns.
+Merkle traversal becomes its own capability and stops living inside `context generate`.
+Current docs writer behavior becomes representable as a candidate capability graph.
+Compiler accepts candidate capability graphs and emits locked plan records.
+Plans are parallel-ready DAGs, and plan graph infrastructure is built on `petgraph`.
 
 ## Core Architecture
 
@@ -121,7 +111,7 @@ Add the durable capability domain.
 - define artifact contract types
 - register first-slice capability families:
 - `context_generate`
-- `order_execution`
+- `merkle_traversal`
 - `compatibility_turn`
 
 ### Exit
@@ -158,7 +148,8 @@ Refactor `context generate` to be capability-ready.
 ### Tasks
 
 - separate target expansion outputs from generation execution
-- separate ordering outputs from generation execution
+- separate Merkle traversal outputs from generation execution
+- define `merkle_traversal` as a separate capability contract
 - isolate generation execution behind a capability-facing adapter
 - remove hidden orchestration assumptions from `src/context`
 - make generation inputs explicit and typed
