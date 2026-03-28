@@ -120,6 +120,7 @@ jobs:
           required_rank=0
           required_name="none"
           saw_commit=false
+          saw_release_relevant_change=false
           while IFS= read -r sha; do
             saw_commit=true
             subject="$(git log -1 --format=%s "$sha")"
@@ -152,6 +153,12 @@ jobs:
               fi
             fi
 
+            if git diff-tree --no-commit-id --name-only -r "$sha" | grep -Eq '^(src/|Cargo\.toml$|Cargo\.lock$|build\.rs$)'; then
+              saw_release_relevant_change=true
+            else
+              continue
+            fi
+
             if [[ -n "$breaking_marker" ]] || grep -Eq '^BREAKING CHANGE:[[:space:]].+' <<<"$body"; then
               required_rank=3
               required_name="major"
@@ -159,17 +166,32 @@ jobs:
               required_rank=2
               required_name="minor"
             elif [[ "$required_rank" -lt 1 ]]; then
-              required_rank=1
-              required_name="patch"
+              case "$commit_type" in
+                docs|design)
+                  ;;
+                *)
+                  required_rank=1
+                  required_name="patch"
+                  ;;
+              esac
             fi
           done < <(git rev-list --no-merges "$range_expr")
 
           if [[ "$saw_commit" != "true" && "$FORCE_RELEASE" == "true" ]]; then
             required_rank=1
             required_name="patch"
+            saw_release_relevant_change=true
           fi
 
           if [[ "$saw_commit" != "true" && "$FORCE_RELEASE" != "true" ]]; then
+            echo "release_required=false" >>"$GITHUB_OUTPUT"
+            echo "crate_name=$crate_name" >>"$GITHUB_OUTPUT"
+            echo "next_version=$cargo_version" >>"$GITHUB_OUTPUT"
+            echo "release_tag=v$cargo_version" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$saw_release_relevant_change" != "true" ]]; then
             echo "release_required=false" >>"$GITHUB_OUTPUT"
             echo "crate_name=$crate_name" >>"$GITHUB_OUTPUT"
             echo "next_version=$cargo_version" >>"$GITHUB_OUTPUT"

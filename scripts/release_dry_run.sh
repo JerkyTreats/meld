@@ -212,6 +212,7 @@ fi
 required_rank=0
 required_name="none"
 saw_commit=false
+saw_release_relevant_change=false
 
 while IFS= read -r sha; do
   [[ -n "$sha" ]] || continue
@@ -259,6 +260,12 @@ while IFS= read -r sha; do
 
   append_entry "$commit_type" "$entry"
 
+  if git diff-tree --no-commit-id --name-only -r "$sha" | grep -Eq '^(src/|Cargo\.toml$|Cargo\.lock$|build\.rs$)'; then
+    saw_release_relevant_change=true
+  else
+    continue
+  fi
+
   if [[ -n "$bang" ]] || grep -Eq '^BREAKING CHANGE:[[:space:]].+' <<<"$body"; then
     required_rank=3
     required_name="major"
@@ -271,17 +278,42 @@ while IFS= read -r sha; do
     required_rank=2
     required_name="minor"
   elif [[ "$required_rank" -lt 1 ]]; then
-    required_rank=1
-    required_name="patch"
+    case "$commit_type" in
+      docs|design)
+        ;;
+      *)
+        required_rank=1
+        required_name="patch"
+        ;;
+    esac
   fi
 done < <(git rev-list --no-merges --reverse "$range_expr")
 
 if [[ "$saw_commit" != "true" && "$FORCE_RELEASE" == "true" ]]; then
   required_rank=1
   required_name="patch"
+  saw_release_relevant_change=true
 fi
 
 if [[ "$saw_commit" != "true" && "$FORCE_RELEASE" != "true" ]]; then
+  if [[ "$CHANGELOG_ONLY" == true ]]; then
+    exit 0
+  fi
+  echo "release_required=false"
+  echo "target_ref=$TARGET_REF"
+  echo "base_ref=${BASE_REF:-none}"
+  echo "crate_name=$crate_name"
+  echo "cargo_version=$target_cargo_version"
+  echo "base_version=$base_version"
+  echo "required_bump=none"
+  echo "next_version=$target_cargo_version"
+  echo "release_tag=v$target_cargo_version"
+  echo
+  echo "No release needed for $TARGET_REF."
+  exit 0
+fi
+
+if [[ "$saw_release_relevant_change" != "true" ]]; then
   if [[ "$CHANGELOG_ONLY" == true ]]; then
     exit 0
   fi
