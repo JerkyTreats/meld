@@ -1,0 +1,12 @@
+case_id: ghdocs_events
+source:
+  type: github
+  repo_url: https://github.com/github/docs
+  commit: 6e72d0c53186fceb52deb53677cf81e0421791ea
+  subtree: src/events
+category: nested
+purpose: Validate event-system documentation synthesis with component subtrees.
+expected_properties:
+  - Covers root events architecture.
+  - Mentions experimental component area.
+  - Preserves high-signal headings from expected README.

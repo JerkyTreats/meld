@@ -1,0 +1,12 @@
+case_id: ghdocs_links
+source:
+  type: github
+  repo_url: https://github.com/github/docs
+  commit: 6e72d0c53186fceb52deb53677cf81e0421791ea
+  subtree: src/links
+category: nested
+purpose: Validate README synthesis with a parent README and nested library README in a compact tree.
+expected_properties:
+  - Summarizes links module role.
+  - Includes lib subdirectory responsibilities.
+  - Keeps concise structure.

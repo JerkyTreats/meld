@@ -1,0 +1,11 @@
+case_id: sample_nested
+source:
+  type: synthetic
+  repo_url: local
+  commit: local
+category: nested
+purpose: Smoke test for bottom-up README synthesis with nested folders.
+expected_properties:
+  - Includes top-level project summary.
+  - Mentions nested package subtree.
+  - Preserves key headings from expected README.

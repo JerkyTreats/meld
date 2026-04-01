@@ -1,0 +1,8 @@
+version: 1
+pass:
+  min_score: 0.72
+  min_heading_coverage: 0.70
+weights:
+  similarity: 0.55
+  heading_coverage: 0.30
+  length_proximity: 0.15
