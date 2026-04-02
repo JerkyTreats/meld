@@ -7,6 +7,7 @@ import pathlib
 import shlex
 import subprocess
 import sys
+from typing import Any
 
 
 def run_cmd(command_template: str, tokens: dict, cwd: pathlib.Path) -> subprocess.CompletedProcess:
@@ -33,11 +34,21 @@ def provider_config_path(provider_name: str) -> pathlib.Path:
     return base / "meld" / "providers" / f"{provider_name}.toml"
 
 
-def upsert_lmserver_max_tool_turns_toml(text: str, turns: int) -> str:
+def toml_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    raise ValueError(f"Unsupported additional_json value type: {type(value).__name__}")
+
+
+def upsert_additional_json_toml(text: str, values: dict[str, Any]) -> str:
     lines = text.splitlines()
     section = "[default_options.additional_json]"
-    key = "lmserver_max_tool_turns"
-    target_line = f"{key} = {turns}"
 
     section_start = None
     for idx, line in enumerate(lines):
@@ -49,7 +60,8 @@ def upsert_lmserver_max_tool_turns_toml(text: str, turns: int) -> str:
         if lines and lines[-1].strip() != "":
             lines.append("")
         lines.append(section)
-        lines.append(target_line)
+        for key, value in sorted(values.items()):
+            lines.append(f"{key} = {toml_scalar(value)}")
         return "\n".join(lines) + "\n"
 
     section_end = len(lines)
@@ -59,14 +71,26 @@ def upsert_lmserver_max_tool_turns_toml(text: str, turns: int) -> str:
             section_end = idx
             break
 
-    for idx in range(section_start + 1, section_end):
-        stripped = lines[idx].strip()
-        if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
-            lines[idx] = target_line
-            return "\n".join(lines) + "\n"
-
-    lines.insert(section_start + 1, target_line)
+    for key, value in sorted(values.items()):
+        target_line = f"{key} = {toml_scalar(value)}"
+        replaced = False
+        for idx in range(section_start + 1, section_end):
+            stripped = lines[idx].strip()
+            if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
+                lines[idx] = target_line
+                replaced = True
+                break
+        if not replaced:
+            lines.insert(section_start + 1, target_line)
+            section_end += 1
     return "\n".join(lines) + "\n"
+
+
+def load_json_file(path: pathlib.Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("additional_json file must contain a top-level JSON object")
+    return payload
 
 
 def main() -> int:
@@ -81,6 +105,25 @@ def main() -> int:
         type=int,
         default=None,
         help="If set, temporarily injects default_options.additional_json.lmserver_max_tool_turns for the provider during this case run.",
+    )
+    parser.add_argument(
+        "--additional-json-file",
+        default=None,
+        help="Optional JSON object file merged into provider default_options.additional_json for this case run.",
+    )
+    parser.set_defaults(disable_auto_web_search=True)
+    search_group = parser.add_mutually_exclusive_group()
+    search_group.add_argument(
+        "--disable-auto-web-search",
+        dest="disable_auto_web_search",
+        action="store_true",
+        help="Inject lmserver_disable_auto_web_search=true (default).",
+    )
+    search_group.add_argument(
+        "--allow-auto-web-search",
+        dest="disable_auto_web_search",
+        action="store_false",
+        help="Do not inject lmserver_disable_auto_web_search=true.",
     )
     parser.add_argument(
         "--harness-root",
@@ -135,7 +178,27 @@ def main() -> int:
     provider_cfg_modified = False
 
     try:
+        additional_json: dict[str, Any] = {}
+        if args.disable_auto_web_search:
+            additional_json["lmserver_disable_auto_web_search"] = True
         if args.lmserver_max_tool_turns is not None:
+            additional_json["lmserver_max_tool_turns"] = args.lmserver_max_tool_turns
+
+        additional_json_file = (
+            pathlib.Path(args.additional_json_file)
+            if args.additional_json_file
+            else harness_root / "config" / "local" / "additional_json.local.json"
+        )
+        if additional_json_file.exists():
+            additional_json.update(load_json_file(additional_json_file))
+        elif args.additional_json_file:
+            print(
+                f"additional_json file not found: {additional_json_file}",
+                file=sys.stderr,
+            )
+            return 2
+
+        if additional_json:
             if not provider_cfg_path.exists():
                 print(
                     f"provider config not found for '{args.provider}': {provider_cfg_path}",
@@ -143,9 +206,7 @@ def main() -> int:
                 )
                 return 2
             original_provider_cfg_text = provider_cfg_path.read_text(encoding="utf-8")
-            updated = upsert_lmserver_max_tool_turns_toml(
-                original_provider_cfg_text, args.lmserver_max_tool_turns
-            )
+            updated = upsert_additional_json_toml(original_provider_cfg_text, additional_json)
             provider_cfg_path.write_text(updated, encoding="utf-8")
             provider_cfg_modified = True
 
@@ -194,6 +255,7 @@ def main() -> int:
         "agent": args.agent,
         "run_id": args.run_id,
         "lmserver_max_tool_turns": args.lmserver_max_tool_turns,
+        "disable_auto_web_search": args.disable_auto_web_search,
         "generated_path": str(generated_path),
         "frame_count": len(frames),
     }

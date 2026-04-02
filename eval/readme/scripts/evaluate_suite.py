@@ -129,6 +129,25 @@ def main() -> int:
         default=None,
         help="If set, pass through to run_case to temporarily inject provider additional_json.lmserver_max_tool_turns.",
     )
+    parser.add_argument(
+        "--additional-json-file",
+        default=None,
+        help="Optional JSON object file merged into provider default_options.additional_json during eval runs.",
+    )
+    parser.set_defaults(disable_auto_web_search=True)
+    search_group = parser.add_mutually_exclusive_group()
+    search_group.add_argument(
+        "--disable-auto-web-search",
+        dest="disable_auto_web_search",
+        action="store_true",
+        help="Inject lmserver_disable_auto_web_search=true (default).",
+    )
+    search_group.add_argument(
+        "--allow-auto-web-search",
+        dest="disable_auto_web_search",
+        action="store_false",
+        help="Do not inject lmserver_disable_auto_web_search=true.",
+    )
     parser.add_argument("--harness-root", default="eval/readme")
     parser.add_argument(
         "--preflight-provider-test",
@@ -225,6 +244,12 @@ def main() -> int:
                         str(args.lmserver_max_tool_turns),
                     ]
                 )
+            if args.additional_json_file is not None:
+                run_case_cmd.extend(["--additional-json-file", args.additional_json_file])
+            if args.disable_auto_web_search:
+                run_case_cmd.append("--disable-auto-web-search")
+            else:
+                run_case_cmd.append("--allow-auto-web-search")
             proc = subprocess.run(
                 run_case_cmd,
                 cwd=str(repo_root),
@@ -276,6 +301,8 @@ def main() -> int:
         "provider": args.provider,
         "agent": args.agent,
         "lmserver_max_tool_turns": args.lmserver_max_tool_turns,
+        "disable_auto_web_search": args.disable_auto_web_search,
+        "additional_json_file": args.additional_json_file,
         "total_cases": total,
         "passed_cases": passed,
         "failed_cases": failed,
@@ -291,6 +318,8 @@ def main() -> int:
         f"- Provider: `{args.provider}`",
         f"- Agent: `{args.agent}`",
         f"- lmserver_max_tool_turns: `{args.lmserver_max_tool_turns}`",
+        f"- disable_auto_web_search: `{args.disable_auto_web_search}`",
+        f"- additional_json_file: `{args.additional_json_file}`",
         f"- Cases: `{total}`",
         f"- Passed: `{passed}`",
         f"- Failed: `{failed}`",

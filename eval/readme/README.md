@@ -39,10 +39,24 @@ Set lmserver tool-turn cap for eval runs:
 
 `python3 eval/readme/scripts/evaluate_suite.py --provider local --agent docs-writer --lmserver-max-tool-turns 24`
 
-This flag temporarily patches `~/.config/meld/providers/<provider>.toml` to add:
+By default eval runs also inject:
+
+`lmserver_disable_auto_web_search = true`
+
+This keeps eval behavior stable and limits unwanted web-side variability.
+
+Use local additional JSON overrides (gitignored) via:
+
+`eval/readme/config/local/additional_json.local.json`
+
+or pass an explicit file:
+
+`python3 eval/readme/scripts/evaluate_suite.py --provider local --agent docs-writer --additional-json-file /path/to/overrides.json`
+
+The harness temporarily patches provider config to add fields under:
 
 `[default_options.additional_json]`
-`lmserver_max_tool_turns = <N>`
+`... custom keys ...`
 
 and restores the original provider file after each case run.
 
