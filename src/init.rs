@@ -19,6 +19,33 @@ pub const DEFAULT_PROMPTS: &[(&str, &str)] = &[
     ("docs-writer.md", include_str!("../prompts/docs-writer.md")),
 ];
 
+/// Default workflows embedded in binary at compile time.
+///
+/// Paths are relative to the user workflow profile directory
+/// (default: ~/.config/meld/workflows).
+pub const DEFAULT_WORKFLOW_FILES: &[(&str, &str)] = &[
+    (
+        "docs_writer_thread_v1.yaml",
+        include_str!("../workflows/docs_writer_thread_v1.yaml"),
+    ),
+    (
+        "prompts/docs_writer/evidence_gather.md",
+        include_str!("../workflows/prompts/docs_writer/evidence_gather.md"),
+    ),
+    (
+        "prompts/docs_writer/verification.md",
+        include_str!("../workflows/prompts/docs_writer/verification.md"),
+    ),
+    (
+        "prompts/docs_writer/readme_struct.md",
+        include_str!("../workflows/prompts/docs_writer/readme_struct.md"),
+    ),
+    (
+        "prompts/docs_writer/style_refine.md",
+        include_str!("../workflows/prompts/docs_writer/style_refine.md"),
+    ),
+];
+
 /// Default agent configuration data
 struct DefaultAgent {
     id: &'static str,
@@ -74,6 +101,7 @@ impl InitResult {
 #[derive(Debug, Clone)]
 pub struct InitSummary {
     pub prompts: InitResult,
+    pub workflows: InitResult,
     pub agents: InitResult,
     pub validation: ValidationSummary,
 }
@@ -82,6 +110,7 @@ pub struct InitSummary {
 #[derive(Debug, Clone)]
 pub struct InitPreview {
     pub prompts: Vec<String>,
+    pub workflows: Vec<String>,
     pub agents: Vec<String>,
 }
 
@@ -187,15 +216,60 @@ pub fn initialize_agents(force: bool) -> Result<InitResult, ApiError> {
     Ok(result)
 }
 
+/// Initialize default workflow profiles and prompt assets.
+pub fn initialize_workflows(force: bool) -> Result<InitResult, ApiError> {
+    let workflow_dir = crate::config::WorkflowConfig::default().resolve_user_profile_dir()?;
+    std::fs::create_dir_all(&workflow_dir).map_err(|e| {
+        ApiError::ConfigError(format!(
+            "Failed to create workflows directory {}: {}",
+            workflow_dir.display(),
+            e
+        ))
+    })?;
+
+    let mut result = InitResult::new();
+    for (relative_path, content) in DEFAULT_WORKFLOW_FILES {
+        let output_path = workflow_dir.join(relative_path);
+        if output_path.exists() && !force {
+            result.skipped.push(relative_path.to_string());
+            continue;
+        }
+
+        if let Some(parent) = output_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                result.errors.push(format!(
+                    "Failed to create workflow path {}: {}",
+                    parent.display(),
+                    e
+                ));
+                continue;
+            }
+        }
+
+        match std::fs::write(&output_path, *content) {
+            Ok(_) => result.created.push(relative_path.to_string()),
+            Err(e) => result.errors.push(format!(
+                "Failed to write workflow file {}: {}",
+                output_path.display(),
+                e
+            )),
+        }
+    }
+
+    Ok(result)
+}
+
 /// Initialize all default agents and prompts
 pub fn initialize_all(force: bool) -> Result<InitSummary, ApiError> {
     // Ensure all XDG directories exist
     XdgAgentStorage::new().agents_dir()?;
     xdg::providers_dir()?;
     xdg::prompts_dir()?;
+    crate::config::WorkflowConfig::default().resolve_user_profile_dir()?;
 
     // Initialize prompts first
     let prompts_result = initialize_prompts(force)?;
+    let workflows_result = initialize_workflows(force)?;
 
     // Initialize agents
     let agents_result = initialize_agents(force)?;
@@ -205,6 +279,7 @@ pub fn initialize_all(force: bool) -> Result<InitSummary, ApiError> {
 
     Ok(InitSummary {
         prompts: prompts_result,
+        workflows: workflows_result,
         agents: agents_result,
         validation,
     })
@@ -213,9 +288,11 @@ pub fn initialize_all(force: bool) -> Result<InitSummary, ApiError> {
 /// List what would be initialized without actually creating files
 pub fn list_initialization() -> Result<InitPreview, ApiError> {
     let prompts_dir = xdg::prompts_dir()?;
+    let workflows_dir = crate::config::WorkflowConfig::default().resolve_user_profile_dir()?;
     let agents_dir = XdgAgentStorage::new().agents_dir()?;
 
     let mut prompts = Vec::new();
+    let mut workflows = Vec::new();
     let mut agents = Vec::new();
 
     // Check prompts
@@ -223,6 +300,13 @@ pub fn list_initialization() -> Result<InitPreview, ApiError> {
         let prompt_path = prompts_dir.join(filename);
         if !prompt_path.exists() {
             prompts.push(filename.to_string());
+        }
+    }
+
+    for (relative_path, _) in DEFAULT_WORKFLOW_FILES {
+        let workflow_path = workflows_dir.join(relative_path);
+        if !workflow_path.exists() {
+            workflows.push(relative_path.to_string());
         }
     }
 
@@ -234,7 +318,11 @@ pub fn list_initialization() -> Result<InitPreview, ApiError> {
         }
     }
 
-    Ok(InitPreview { prompts, agents })
+    Ok(InitPreview {
+        prompts,
+        workflows,
+        agents,
+    })
 }
 
 /// Validate all initialized agents
@@ -283,6 +371,15 @@ mod tests {
         for (_, content) in DEFAULT_PROMPTS {
             // Verify content is valid UTF-8 (this will panic if not)
             let _ = content.to_string();
+        }
+    }
+
+    #[test]
+    fn test_workflow_content_valid() {
+        assert!(!DEFAULT_WORKFLOW_FILES.is_empty());
+        for (relative_path, content) in DEFAULT_WORKFLOW_FILES {
+            assert!(!relative_path.is_empty());
+            assert!(!content.is_empty());
         }
     }
 
