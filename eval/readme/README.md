@@ -35,6 +35,17 @@ Provider preflight before full suite:
 
 `python3 eval/readme/scripts/evaluate_suite.py --provider local --agent docs-writer --preflight-provider-test`
 
+Set lmserver tool-turn cap for eval runs:
+
+`python3 eval/readme/scripts/evaluate_suite.py --provider local --agent docs-writer --lmserver-max-tool-turns 24`
+
+This flag temporarily patches `~/.config/meld/providers/<provider>.toml` to add:
+
+`[default_options.additional_json]`
+`lmserver_max_tool_turns = <N>`
+
+and restores the original provider file after each case run.
+
 ## Workflow tuning loop
 
 1. Edit external workflow/prompt variant files under `eval/readme/variants/`.

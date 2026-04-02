@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use futures::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -72,6 +73,12 @@ pub struct CompletionOptions {
     pub frequency_penalty: Option<f32>, // -2.0 to 2.0
     pub presence_penalty: Option<f32>,  // -2.0 to 2.0
     pub stop: Option<Vec<String>>,      // Stop sequences
+    /// Arbitrary provider-specific JSON fields merged into request payloads.
+    ///
+    /// Example:
+    /// `additional_json.lmserver_max_tool_turns = 24`
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub additional_json: BTreeMap<String, Value>,
 }
 
 impl Default for CompletionOptions {
@@ -83,6 +90,7 @@ impl Default for CompletionOptions {
             frequency_penalty: None,
             presence_penalty: None,
             stop: None,
+            additional_json: BTreeMap::new(),
         }
     }
 }
@@ -152,6 +160,8 @@ struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     stop: Option<Vec<String>>,
     stream: bool,
+    #[serde(flatten)]
+    additional_json: BTreeMap<String, Value>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -188,6 +198,18 @@ fn role_to_string(role: MessageRole) -> &'static str {
         MessageRole::System => "system",
         MessageRole::User => "user",
         MessageRole::Assistant => "assistant",
+    }
+}
+
+fn merge_additional_json(request_body: &mut Value, additional_json: &BTreeMap<String, Value>) {
+    if additional_json.is_empty() {
+        return;
+    }
+    let Some(obj) = request_body.as_object_mut() else {
+        return;
+    };
+    for (key, value) in additional_json {
+        obj.insert(key.clone(), value.clone());
     }
 }
 
@@ -272,6 +294,7 @@ impl ModelProviderClient for OpenAIClient {
             presence_penalty: options.presence_penalty,
             stop: options.stop,
             stream: false,
+            additional_json: options.additional_json,
         };
 
         let url = format!("{}/chat/completions", self.base_url);
@@ -451,6 +474,7 @@ impl ModelProviderClient for AnthropicClient {
         if let Some(temp) = options.temperature {
             request_body["temperature"] = json!(temp);
         }
+        merge_additional_json(&mut request_body, &options.additional_json);
 
         let response = self
             .client
@@ -598,6 +622,7 @@ impl ModelProviderClient for OllamaClient {
             presence_penalty: options.presence_penalty,
             stop: options.stop,
             stream: false,
+            additional_json: options.additional_json,
         };
 
         let url = format!("{}/v1/chat/completions", self.base_url);
@@ -746,6 +771,7 @@ impl ModelProviderClient for CustomLocalClient {
             presence_penalty: options.presence_penalty,
             stop: options.stop,
             stream: false,
+            additional_json: options.additional_json,
         };
 
         let url = format!("{}/chat/completions", self.endpoint);
@@ -1375,6 +1401,22 @@ mod tests {
         let options = CompletionOptions::default();
         assert_eq!(options.temperature, Some(1.0));
         assert_eq!(options.max_tokens, None);
+        assert!(options.additional_json.is_empty());
+    }
+
+    #[test]
+    fn test_completion_options_additional_json_roundtrip() {
+        let mut options = CompletionOptions::default();
+        options
+            .additional_json
+            .insert("lmserver_max_tool_turns".to_string(), json!(24));
+
+        let encoded = serde_json::to_string(&options).unwrap();
+        let decoded: CompletionOptions = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(
+            decoded.additional_json.get("lmserver_max_tool_turns"),
+            Some(&json!(24))
+        );
     }
 
     #[tokio::test]

@@ -78,6 +78,13 @@ pub fn format_provider_show_result_text(result: &ProviderShowResult) -> String {
     if let Some(ref stop) = provider.default_options.stop {
         output.push_str(&format!("  stop: {:?}\n", stop));
     }
+    if !provider.default_options.additional_json.is_empty() {
+        output.push_str(&format!(
+            "  additional_json: {}\n",
+            serde_json::to_string(&provider.default_options.additional_json)
+                .unwrap_or_else(|_| "{}".to_string())
+        ));
+    }
     output
 }
 
@@ -98,6 +105,7 @@ pub fn format_provider_show_result_json(result: &ProviderShowResult) -> String {
         "frequency_penalty": provider.default_options.frequency_penalty,
         "presence_penalty": provider.default_options.presence_penalty,
         "stop": provider.default_options.stop,
+        "additional_json": provider.default_options.additional_json,
     });
     let out = json!({
         "provider_name": provider.provider_name.as_deref().unwrap_or("unknown"),

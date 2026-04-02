@@ -149,6 +149,7 @@ fn test_completion_options() {
         frequency_penalty: None,
         presence_penalty: None,
         stop: Some(vec!["\n".to_string()]),
+        additional_json: std::collections::BTreeMap::new(),
     };
 
     assert_eq!(options.temperature, Some(0.7));

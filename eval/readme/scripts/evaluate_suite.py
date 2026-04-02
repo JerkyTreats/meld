@@ -123,6 +123,12 @@ def main() -> int:
     parser.add_argument("--agent", default="docs-writer")
     parser.add_argument("--meld-bin", default="meld")
     parser.add_argument("--run-id", default=dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ"))
+    parser.add_argument(
+        "--lmserver-max-tool-turns",
+        type=int,
+        default=None,
+        help="If set, pass through to run_case to temporarily inject provider additional_json.lmserver_max_tool_turns.",
+    )
     parser.add_argument("--harness-root", default="eval/readme")
     parser.add_argument(
         "--preflight-provider-test",
@@ -212,6 +218,13 @@ def main() -> int:
                 "--harness-root",
                 str(harness_root),
             ]
+            if args.lmserver_max_tool_turns is not None:
+                run_case_cmd.extend(
+                    [
+                        "--lmserver-max-tool-turns",
+                        str(args.lmserver_max_tool_turns),
+                    ]
+                )
             proc = subprocess.run(
                 run_case_cmd,
                 cwd=str(repo_root),
@@ -262,6 +275,7 @@ def main() -> int:
         "run_id": args.run_id,
         "provider": args.provider,
         "agent": args.agent,
+        "lmserver_max_tool_turns": args.lmserver_max_tool_turns,
         "total_cases": total,
         "passed_cases": passed,
         "failed_cases": failed,
@@ -276,6 +290,7 @@ def main() -> int:
         "",
         f"- Provider: `{args.provider}`",
         f"- Agent: `{args.agent}`",
+        f"- lmserver_max_tool_turns: `{args.lmserver_max_tool_turns}`",
         f"- Cases: `{total}`",
         f"- Passed: `{passed}`",
         f"- Failed: `{failed}`",
