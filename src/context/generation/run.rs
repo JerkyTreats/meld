@@ -11,7 +11,7 @@ use crate::context::generation::selection::resolve_target_execution_program;
 use crate::context::generation::GenerationExecutor;
 use crate::context::queue::{FrameGenerationQueue, GenerationConfig, QueueEventContext};
 use crate::error::ApiError;
-use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
+use crate::provider::ProviderExecutionBinding;
 use crate::store::NodeType;
 use crate::telemetry::{now_millis, ProgressRuntime};
 use crate::types::NodeID;
@@ -82,21 +82,6 @@ fn resolve_agent_id(api: &ContextApi, agent_id: Option<&str>) -> Result<String, 
             agent_ids.join(", ")
         ))),
     }
-}
-
-fn resolve_provider_name(
-    api: &ContextApi,
-    provider_name: Option<&str>,
-) -> Result<String, ApiError> {
-    let provider_name = provider_name.ok_or_else(|| {
-        ApiError::ProviderNotConfigured(
-            "Provider is required. Use `--provider <provider_name>` to specify a provider. Use `meld provider list` to see available providers.".to_string()
-        )
-    })?;
-    let registry = api.provider_registry().read();
-    registry.get_or_error(provider_name)?;
-    drop(registry);
-    Ok(provider_name.to_string())
 }
 
 fn find_missing_descendant_heads(
@@ -340,9 +325,8 @@ pub struct GenerateRequest {
     pub node: Option<String>,
     pub path: Option<PathBuf>,
     pub agent: Option<String>,
-    pub provider: Option<String>,
+    pub provider: ProviderExecutionBinding,
     pub workflow_id: Option<String>,
-    pub provider_runtime_overrides: ProviderRuntimeOverrides,
     pub frame_type: Option<String>,
     pub force: bool,
     pub no_recursive: bool,
@@ -357,20 +341,6 @@ pub fn run_generate(
     session_id: Option<&str>,
     request: &GenerateRequest,
 ) -> Result<String, ApiError> {
-    if std::env::var("MELD_DEBUG_PROVIDER_JSON").ok().as_deref() == Some("1") {
-        let mut keys: Vec<&str> = request.provider_runtime_overrides.extra_body_field_keys();
-        keys.sort_unstable();
-        eprintln!(
-            "MELD_DEBUG run_generate provider_additional_json_keys={:?} provider_model={}",
-            keys,
-            request
-                .provider_runtime_overrides
-                .model_override
-                .as_deref()
-                .unwrap_or("null")
-        );
-    }
-
     let node_id = match (request.node.as_deref(), request.path.as_deref()) {
         (Some(node_str), None) => parse_node_id(node_str)?,
         (None, Some(p)) => workspace::resolve_workspace_node_id(
@@ -393,11 +363,10 @@ pub fn run_generate(
     };
 
     let agent_id = resolve_agent_id(api.as_ref(), request.agent.as_deref())?;
-    let provider_name = resolve_provider_name(api.as_ref(), request.provider.as_deref())?;
-    let provider = ProviderExecutionBinding::new(
-        provider_name.clone(),
-        request.provider_runtime_overrides.clone(),
-    )?;
+    {
+        let registry = api.provider_registry().read();
+        registry.get_or_error(&request.provider.provider_name)?;
+    }
     let frame_type = request
         .frame_type
         .clone()
@@ -441,7 +410,7 @@ pub fn run_generate(
         recursive,
         request.force,
         &agent_id,
-        &provider,
+        &request.provider,
         &frame_type,
         &execution_program,
     )?;
@@ -455,7 +424,7 @@ pub fn run_generate(
                 "node_id": hex::encode(node_id),
                 "path": node_path,
                 "agent_id": agent_id,
-                "provider_name": provider.provider_name,
+                "provider_name": request.provider.provider_name,
                 "frame_type": frame_type,
                 "program_kind": execution_program.kind_str(),
                 "workflow_id": execution_program.workflow_id(),

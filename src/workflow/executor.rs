@@ -318,25 +318,6 @@ pub(crate) async fn execute_registered_workflow_async(
 
             let mut orchestration_request = orchestration_request;
             orchestration_request.frame_type = turn_frame_type.clone();
-            if std::env::var("MELD_DEBUG_PROVIDER_JSON").ok().as_deref() == Some("1") {
-                let mut keys: Vec<&str> = orchestration_request
-                    .provider
-                    .runtime_overrides
-                    .extra_body_field_keys();
-                keys.sort_unstable();
-                eprintln!(
-                    "MELD_DEBUG workflow_orchestration_request additional_json_keys={:?} provider_model_override={} turn_id={}",
-                    keys,
-                    orchestration_request
-                        .provider
-                        .runtime_overrides
-                        .model_override
-                        .as_deref()
-                        .unwrap_or("null"),
-                    turn.turn_id
-                );
-            }
-
             if let Some(ctx) = event_context {
                 let lineage_event = PromptContextLineageEventData {
                     node_id: hex::encode(request.node_id),

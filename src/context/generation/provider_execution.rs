@@ -16,25 +16,6 @@ pub struct ProviderPreparation {
     pub client: Box<dyn ModelProviderClient>,
 }
 
-pub fn prepare_provider(
-    api: &ContextApi,
-    provider_name: &str,
-) -> Result<ProviderPreparation, ApiError> {
-    let provider_registry = api.provider_registry().read();
-    let provider_config = provider_registry.get_or_error(provider_name)?.clone();
-    let provider_type =
-        crate::provider::profile::provider_type_slug(provider_config.provider_type).to_string();
-    let model_provider = provider_config.to_model_provider()?;
-    let client = ProviderFactory::create_client(&model_provider)?;
-    drop(provider_registry);
-
-    Ok(ProviderPreparation {
-        provider_config,
-        provider_type,
-        client,
-    })
-}
-
 pub fn prepare_provider_for_request(
     api: &ContextApi,
     request: &GenerationOrchestrationRequest,

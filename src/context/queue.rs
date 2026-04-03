@@ -1342,24 +1342,6 @@ impl FrameGenerationQueue {
             retry_count: request.retry_count,
             force: request.options.force,
         };
-        if std::env::var("MELD_DEBUG_PROVIDER_JSON").ok().as_deref() == Some("1") {
-            let mut keys: Vec<&str> = orchestration_request
-                .provider
-                .runtime_overrides
-                .extra_body_field_keys();
-            keys.sort_unstable();
-            eprintln!(
-                "MELD_DEBUG queue_orchestration_request additional_json_keys={:?} provider_model_override={}",
-                keys,
-                orchestration_request
-                    .provider
-                    .runtime_overrides
-                    .model_override
-                    .as_deref()
-                    .unwrap_or("null")
-            );
-        }
-
         execute_generation_request(
             &orchestration_request,
             api,

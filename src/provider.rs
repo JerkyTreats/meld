@@ -774,24 +774,6 @@ impl ModelProviderClient for CustomLocalClient {
             stream: false,
             additional_json: options.additional_json,
         };
-
-        if std::env::var("MELD_DEBUG_PROVIDER_JSON").ok().as_deref() == Some("1") {
-            let mut additional_keys: Vec<&str> =
-                request.additional_json.keys().map(String::as_str).collect();
-            additional_keys.sort_unstable();
-            eprintln!(
-                "MELD_DEBUG local_request model={} endpoint={} additional_keys={:?} lmserver_max_tool_turns={}",
-                request.model,
-                self.endpoint,
-                additional_keys,
-                request
-                    .additional_json
-                    .get("lmserver_max_tool_turns")
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "null".to_string())
-            );
-        }
-
         let url = format!("{}/chat/completions", self.endpoint);
         let mut request_builder = self
             .client

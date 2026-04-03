@@ -9,7 +9,7 @@ use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
 use crate::ignore;
-use crate::provider::ProviderRuntimeOverrides;
+use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
 use crate::telemetry::sessions::policy::PrunePolicy;
@@ -67,6 +67,26 @@ fn resolve_context_get_frame_type(
             .clone()
             .unwrap_or_else(|| format!("context-{}", agent_id)),
     ))
+}
+
+fn build_generate_provider_binding(
+    provider_name: Option<&str>,
+    provider_model: Option<&str>,
+    provider_additional_json_file: Option<&PathBuf>,
+) -> Result<ProviderExecutionBinding, ApiError> {
+    let provider_name = provider_name.ok_or_else(|| {
+        ApiError::ProviderNotConfigured(
+            "Provider is required. Use `--provider <provider_name>` to specify a provider. Use `meld provider list` to see available providers.".to_string(),
+        )
+    })?;
+    let provider_additional_json =
+        parse_provider_additional_json_file(provider_additional_json_file)
+            .map_err(ApiError::ConfigError)?;
+    let provider_runtime_overrides = ProviderRuntimeOverrides::new(
+        provider_model.map(ToString::to_string),
+        provider_additional_json.unwrap_or_default(),
+    )?;
+    ProviderExecutionBinding::new(provider_name, provider_runtime_overrides)
 }
 
 /// Runtime context for CLI execution: workspace, config paths, and domain facades.
@@ -1332,20 +1352,17 @@ impl RunContext {
                 no_recursive,
             } => {
                 let path_merged = path.as_ref().or(path_positional.as_ref());
-                let provider_additional_json =
-                    parse_provider_additional_json_file(provider_additional_json_file.as_ref())
-                        .map_err(ApiError::ConfigError)?;
-                let provider_runtime_overrides = ProviderRuntimeOverrides::new(
-                    provider_model.clone(),
-                    provider_additional_json.unwrap_or_default(),
+                let provider_binding = build_generate_provider_binding(
+                    provider.as_deref(),
+                    provider_model.as_deref(),
+                    provider_additional_json_file.as_ref(),
                 )?;
                 let request = GenerateRequest {
                     node: node.clone(),
                     path: path_merged.cloned(),
                     agent: agent.clone(),
-                    provider: provider.clone(),
+                    provider: provider_binding,
                     workflow_id: workflow_id.clone(),
-                    provider_runtime_overrides,
                     frame_type: frame_type.clone(),
                     force: *force,
                     no_recursive: *no_recursive,
@@ -1371,20 +1388,17 @@ impl RunContext {
                 recursive,
             } => {
                 let path_merged = path.as_ref().or(path_positional.as_ref());
-                let provider_additional_json =
-                    parse_provider_additional_json_file(provider_additional_json_file.as_ref())
-                        .map_err(ApiError::ConfigError)?;
-                let provider_runtime_overrides = ProviderRuntimeOverrides::new(
-                    provider_model.clone(),
-                    provider_additional_json.unwrap_or_default(),
+                let provider_binding = build_generate_provider_binding(
+                    provider.as_deref(),
+                    provider_model.as_deref(),
+                    provider_additional_json_file.as_ref(),
                 )?;
                 let request = GenerateRequest {
                     node: node.clone(),
                     path: path_merged.cloned(),
                     agent: agent.clone(),
-                    provider: provider.clone(),
+                    provider: provider_binding,
                     workflow_id: workflow_id.clone(),
-                    provider_runtime_overrides,
                     frame_type: frame_type.clone(),
                     force: true,
                     no_recursive: !*recursive,
