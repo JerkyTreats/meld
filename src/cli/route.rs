@@ -130,7 +130,7 @@ impl RunContext {
 
         let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(&workspace_root)?;
-        let workflow_registry = WorkflowRegistry::load(&workspace_root, &config.workflows)?;
+        let workflow_registry = WorkflowRegistry::load(&config.workflows)?;
 
         std::fs::create_dir_all(&store_path)
             .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
@@ -1499,8 +1499,8 @@ impl RunContext {
                     for item in result.workflows {
                         let path = item.source_path.unwrap_or_else(|| "-".to_string());
                         out.push_str(&format!(
-                            "{} | v{} | {} | {} | {}\n",
-                            item.workflow_id, item.version, item.source_layer, item.title, path
+                            "{} | v{} | {} | {}\n",
+                            item.workflow_id, item.version, item.title, path
                         ));
                     }
                     if out.is_empty() {
@@ -1511,8 +1511,7 @@ impl RunContext {
             }
             WorkflowCommands::Validate { format } => {
                 let config = self.load_runtime_config()?;
-                let result =
-                    WorkflowCommandService::run_validate(&self.workspace_root, &config.workflows)?;
+                let result = WorkflowCommandService::run_validate(&config.workflows)?;
                 if format == "json" {
                     serde_json::to_string_pretty(&result).map_err(|err| {
                         ApiError::ConfigError(format!(
@@ -1543,7 +1542,6 @@ impl RunContext {
                 } else {
                     let mut out = String::new();
                     out.push_str(&format!("workflow_id: {}\n", result.workflow_id));
-                    out.push_str(&format!("source_layer: {}\n", result.source_layer));
                     if let Some(path) = result.source_path {
                         out.push_str(&format!("source_path: {}\n", path));
                     }
@@ -1627,7 +1625,7 @@ impl RunContext {
         session_id: &str,
     ) -> Result<String, ApiError> {
         let config = self.load_runtime_config()?;
-        let workflow_registry = WorkflowRegistry::load(&self.workspace_root, &config.workflows)?;
+        let workflow_registry = WorkflowRegistry::load(&config.workflows)?;
 
         {
             let mut registry = self.api.agent_registry().write();

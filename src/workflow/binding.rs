@@ -43,7 +43,10 @@ mod tests {
     #[test]
     fn validate_binding_accepts_unbound_agent() {
         let temp = TempDir::new().unwrap();
-        let registry = WorkflowRegistry::load(temp.path(), &WorkflowConfig::default()).unwrap();
+        let registry = WorkflowRegistry::load(&WorkflowConfig {
+            user_profile_dir: Some(temp.path().join("workflows")),
+        })
+        .unwrap();
         let agent = AgentIdentity::new("writer".to_string(), AgentRole::Writer);
 
         validate_agent_binding(&agent, &registry).unwrap();
@@ -52,7 +55,10 @@ mod tests {
     #[test]
     fn validate_binding_rejects_unknown_workflow() {
         let temp = TempDir::new().unwrap();
-        let registry = WorkflowRegistry::load(temp.path(), &WorkflowConfig::default()).unwrap();
+        let registry = WorkflowRegistry::load(&WorkflowConfig {
+            user_profile_dir: Some(temp.path().join("workflows")),
+        })
+        .unwrap();
         let mut agent = AgentIdentity::new("writer".to_string(), AgentRole::Writer);
         agent.workflow_id = Some("missing_workflow".to_string());
 
@@ -63,7 +69,10 @@ mod tests {
     #[test]
     fn validate_binding_rejects_reader_binding() {
         let temp = TempDir::new().unwrap();
-        let registry = WorkflowRegistry::load(temp.path(), &WorkflowConfig::default()).unwrap();
+        let registry = WorkflowRegistry::load(&WorkflowConfig {
+            user_profile_dir: Some(temp.path().join("workflows")),
+        })
+        .unwrap();
         let mut agent = AgentIdentity::new("reader".to_string(), AgentRole::Reader);
         agent.workflow_id = Some("docs_writer_thread_v1".to_string());
 

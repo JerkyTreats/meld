@@ -78,7 +78,6 @@ pub struct WorkflowFailurePolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptRefKind {
     ArtifactId(String),
-    Builtin(String),
     FilePath(String),
 }
 
@@ -88,7 +87,7 @@ impl PromptRefKind {
             return Self::ArtifactId(rest.to_string());
         }
         if let Some(rest) = value.strip_prefix("builtin:") {
-            return Self::Builtin(rest.to_string());
+            return Self::FilePath(format!("prompts/{}.md", rest));
         }
         Self::FilePath(value.to_string())
     }
@@ -271,7 +270,7 @@ mod tests {
                 turn_id: "turn-1".to_string(),
                 seq: 1,
                 title: "First turn".to_string(),
-                prompt_ref: "builtin:docs_writer/evidence_gather".to_string(),
+                prompt_ref: "prompts/docs_writer/evidence_gather.md".to_string(),
                 input_refs: vec!["target_context".to_string()],
                 output_type: "evidence_map".to_string(),
                 gate_id: "gate-1".to_string(),
@@ -327,7 +326,7 @@ mod tests {
         );
         assert_eq!(
             PromptRefKind::parse("builtin:docs_writer/evidence_gather"),
-            PromptRefKind::Builtin("docs_writer/evidence_gather".to_string())
+            PromptRefKind::FilePath("prompts/docs_writer/evidence_gather.md".to_string())
         );
         assert_eq!(
             PromptRefKind::parse("config/workflows/prompts/test.md"),

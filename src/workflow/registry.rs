@@ -1,34 +1,15 @@
-//! Workflow profile registry with source priority resolution.
+//! Workflow profile registry backed by the user workflow directory.
 
 use crate::config::WorkflowConfig;
 use crate::error::ApiError;
-use crate::workflow::builtin::{builtin_profiles, builtin_prompt_text};
 use crate::workflow::profile::{PromptRefKind, WorkflowProfile};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkflowProfileSourceLayer {
-    Workspace,
-    User,
-    Builtin,
-}
-
-impl WorkflowProfileSourceLayer {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Workspace => "workspace",
-            Self::User => "user",
-            Self::Builtin => "builtin",
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct RegisteredWorkflowProfile {
     pub profile: WorkflowProfile,
-    pub source_layer: WorkflowProfileSourceLayer,
     pub source_path: Option<PathBuf>,
 }
 
@@ -38,27 +19,10 @@ pub struct WorkflowRegistry {
 }
 
 impl WorkflowRegistry {
-    pub fn load(workspace_root: &Path, config: &WorkflowConfig) -> Result<Self, ApiError> {
+    pub fn load(config: &WorkflowConfig) -> Result<Self, ApiError> {
         let mut registry = Self::default();
-
-        let workspace_dir = config.resolve_workspace_profile_dir(workspace_root);
         let user_dir = config.resolve_user_profile_dir()?;
-
-        registry.load_layer_from_directory(
-            workspace_root,
-            WorkflowProfileSourceLayer::Workspace,
-            &workspace_dir,
-        )?;
-        registry.load_layer_from_directory(
-            workspace_root,
-            WorkflowProfileSourceLayer::User,
-            &user_dir,
-        )?;
-
-        if config.enable_builtin_profiles {
-            registry.load_builtin_layer(workspace_root)?;
-        }
-
+        registry.load_directory(&user_dir)?;
         Ok(registry)
     }
 
@@ -74,19 +38,13 @@ impl WorkflowRegistry {
         self.profiles.iter()
     }
 
-    fn load_layer_from_directory(
-        &mut self,
-        workspace_root: &Path,
-        source_layer: WorkflowProfileSourceLayer,
-        directory: &Path,
-    ) -> Result<(), ApiError> {
+    fn load_directory(&mut self, directory: &Path) -> Result<(), ApiError> {
         if !directory.exists() {
             return Ok(());
         }
         if !directory.is_dir() {
             return Err(ApiError::ConfigError(format!(
-                "Workflow profile source '{}' is not a directory: {}",
-                source_layer.as_str(),
+                "Workflow profile directory is not a directory: {}",
                 directory.display()
             )));
         }
@@ -113,63 +71,24 @@ impl WorkflowRegistry {
 
             if !layer_seen_ids.insert(profile.workflow_id.clone()) {
                 return Err(ApiError::ConfigError(format!(
-                    "Duplicate workflow_id '{}' in {} source layer",
+                    "Duplicate workflow_id '{}' in workflow directory {}",
                     profile.workflow_id,
-                    source_layer.as_str()
+                    directory.display()
                 )));
             }
 
             profile.validate()?;
-            validate_prompt_refs(&profile, workspace_root, Some(&profile_path), source_layer)?;
-
-            if self.contains(&profile.workflow_id) {
-                continue;
-            }
+            validate_prompt_refs(&profile, Some(&profile_path))?;
 
             self.profiles.insert(
                 profile.workflow_id.clone(),
                 RegisteredWorkflowProfile {
                     profile,
-                    source_layer,
                     source_path: Some(profile_path),
                 },
             );
         }
 
-        Ok(())
-    }
-
-    fn load_builtin_layer(&mut self, workspace_root: &Path) -> Result<(), ApiError> {
-        let mut seen = HashSet::new();
-        for profile in builtin_profiles() {
-            if !seen.insert(profile.workflow_id.clone()) {
-                return Err(ApiError::ConfigError(format!(
-                    "Duplicate workflow_id '{}' in builtin source layer",
-                    profile.workflow_id
-                )));
-            }
-
-            profile.validate()?;
-            validate_prompt_refs(
-                &profile,
-                workspace_root,
-                None,
-                WorkflowProfileSourceLayer::Builtin,
-            )?;
-
-            if self.contains(&profile.workflow_id) {
-                continue;
-            }
-
-            self.profiles.insert(
-                profile.workflow_id.clone(),
-                RegisteredWorkflowProfile {
-                    profile,
-                    source_layer: WorkflowProfileSourceLayer::Builtin,
-                    source_path: None,
-                },
-            );
-        }
         Ok(())
     }
 }
@@ -207,30 +126,17 @@ fn collect_workflow_profile_paths(root: &Path) -> Result<Vec<PathBuf>, ApiError>
 
 fn validate_prompt_refs(
     profile: &WorkflowProfile,
-    workspace_root: &Path,
     source_path: Option<&Path>,
-    source_layer: WorkflowProfileSourceLayer,
 ) -> Result<(), ApiError> {
     for turn in &profile.turns {
         match PromptRefKind::parse(&turn.prompt_ref) {
             PromptRefKind::ArtifactId(_) => {}
-            PromptRefKind::Builtin(ref builtin_key) => {
-                if builtin_prompt_text(builtin_key).is_none() {
-                    return Err(ApiError::ConfigError(format!(
-                        "Workflow profile '{}' turn '{}' references unknown builtin prompt_ref '{}'",
-                        profile.workflow_id, turn.turn_id, turn.prompt_ref
-                    )));
-                }
-            }
             PromptRefKind::FilePath(ref prompt_path) => {
-                let resolved = resolve_prompt_path(prompt_path, workspace_root, source_path);
+                let resolved = resolve_prompt_path(prompt_path, source_path);
                 if resolved.is_none() {
                     return Err(ApiError::ConfigError(format!(
-                        "Workflow profile '{}' turn '{}' has unresolved prompt_ref '{}' in {} layer",
-                        profile.workflow_id,
-                        turn.turn_id,
-                        turn.prompt_ref,
-                        source_layer.as_str()
+                        "Workflow profile '{}' turn '{}' has unresolved prompt_ref '{}'",
+                        profile.workflow_id, turn.turn_id, turn.prompt_ref
                     )));
                 }
             }
@@ -240,11 +146,7 @@ fn validate_prompt_refs(
     Ok(())
 }
 
-fn resolve_prompt_path(
-    prompt_ref: &str,
-    workspace_root: &Path,
-    source_path: Option<&Path>,
-) -> Option<PathBuf> {
+fn resolve_prompt_path(prompt_ref: &str, source_path: Option<&Path>) -> Option<PathBuf> {
     let candidate = PathBuf::from(prompt_ref);
     if candidate.is_absolute() {
         if candidate.exists() {
@@ -260,11 +162,6 @@ fn resolve_prompt_path(
                 return Some(parent_relative);
             }
         }
-    }
-
-    let workspace_relative = workspace_root.join(&candidate);
-    if workspace_relative.exists() {
-        return Some(workspace_relative);
     }
 
     None
@@ -321,89 +218,75 @@ failure_policy:
     }
 
     #[test]
-    fn load_includes_builtin_docs_writer_profile_by_default() {
+    fn load_reads_profiles_from_user_workflow_directory() {
         let temp = TempDir::new().unwrap();
-        let config = WorkflowConfig {
-            user_profile_dir: Some(temp.path().join("user-workflows")),
-            ..WorkflowConfig::default()
-        };
-
-        let registry = WorkflowRegistry::load(temp.path(), &config).unwrap();
-        assert!(registry.contains("docs_writer_thread_v1"));
-
-        let profile = registry.get("docs_writer_thread_v1").unwrap();
-        assert_eq!(profile.source_layer, WorkflowProfileSourceLayer::Builtin);
-    }
-
-    #[test]
-    fn workspace_layer_wins_over_builtin_layer_for_matching_workflow_id() {
-        let temp = TempDir::new().unwrap();
-        let workflow_dir = temp.path().join("config").join("workflows");
-        let prompt_file = temp
-            .path()
-            .join("config")
-            .join("workflows")
-            .join("prompts")
-            .join("custom.md");
+        let workflow_dir = temp.path().join("user-workflows");
+        let prompt_file = workflow_dir.join("prompts").join("custom.md");
         std::fs::create_dir_all(prompt_file.parent().unwrap()).unwrap();
         std::fs::write(&prompt_file, "test prompt").unwrap();
-
         write_profile(
             &workflow_dir.join("docs_writer_thread_v1.yaml"),
             "docs_writer_thread_v1",
-            "config/workflows/prompts/custom.md",
+            "prompts/custom.md",
         );
+        let config = WorkflowConfig {
+            user_profile_dir: Some(workflow_dir.clone()),
+            ..WorkflowConfig::default()
+        };
 
-        let config = WorkflowConfig::default();
-        let registry = WorkflowRegistry::load(temp.path(), &config).unwrap();
+        let registry = WorkflowRegistry::load(&config).unwrap();
+        assert!(registry.contains("docs_writer_thread_v1"));
 
-        let resolved = registry.get("docs_writer_thread_v1").unwrap();
-        assert_eq!(resolved.source_layer, WorkflowProfileSourceLayer::Workspace);
-        assert!(resolved.source_path.is_some());
+        let profile = registry.get("docs_writer_thread_v1").unwrap();
+        assert_eq!(
+            profile.source_path.as_ref(),
+            Some(&workflow_dir.join("docs_writer_thread_v1.yaml"))
+        );
     }
 
     #[test]
     fn load_fails_on_duplicate_workflow_id_in_same_layer() {
         let temp = TempDir::new().unwrap();
-        let workflow_dir = temp.path().join("config").join("workflows");
-        let prompt_file = temp
-            .path()
-            .join("config")
-            .join("workflows")
-            .join("prompts")
-            .join("custom.md");
+        let workflow_dir = temp.path().join("user-workflows");
+        let prompt_file = workflow_dir.join("prompts").join("custom.md");
         std::fs::create_dir_all(prompt_file.parent().unwrap()).unwrap();
         std::fs::write(&prompt_file, "test prompt").unwrap();
 
         write_profile(
             &workflow_dir.join("a.yaml"),
             "workflow_a",
-            "config/workflows/prompts/custom.md",
+            "prompts/custom.md",
         );
         write_profile(
             &workflow_dir.join("b.yaml"),
             "workflow_a",
-            "config/workflows/prompts/custom.md",
+            "prompts/custom.md",
         );
 
-        let config = WorkflowConfig::default();
-        let err = WorkflowRegistry::load(temp.path(), &config).unwrap_err();
+        let config = WorkflowConfig {
+            user_profile_dir: Some(workflow_dir),
+            ..WorkflowConfig::default()
+        };
+        let err = WorkflowRegistry::load(&config).unwrap_err();
         assert!(matches!(err, ApiError::ConfigError(_)));
     }
 
     #[test]
     fn load_fails_when_prompt_ref_file_missing() {
         let temp = TempDir::new().unwrap();
-        let workflow_dir = temp.path().join("config").join("workflows");
+        let workflow_dir = temp.path().join("user-workflows");
 
         write_profile(
             &workflow_dir.join("missing.yaml"),
             "workflow_missing_prompt",
-            "config/workflows/prompts/does_not_exist.md",
+            "prompts/does_not_exist.md",
         );
 
-        let config = WorkflowConfig::default();
-        let err = WorkflowRegistry::load(temp.path(), &config).unwrap_err();
+        let config = WorkflowConfig {
+            user_profile_dir: Some(workflow_dir),
+            ..WorkflowConfig::default()
+        };
+        let err = WorkflowRegistry::load(&config).unwrap_err();
         assert!(matches!(err, ApiError::ConfigError(_)));
     }
 }

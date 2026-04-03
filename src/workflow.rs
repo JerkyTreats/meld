@@ -1,7 +1,6 @@
 //! Workflow domain modules.
 
 pub mod binding;
-pub mod builtin;
 pub mod commands;
 pub mod executor;
 pub mod facade;

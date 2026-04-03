@@ -32,6 +32,9 @@ fn create_test_agent_with_workflow(
     prompt_path: Option<&str>,
     workflow_id: Option<&str>,
 ) -> Result<PathBuf, ApiError> {
+    if workflow_id.is_some() {
+        meld::init::initialize_workflows(false)?;
+    }
     let agents_dir = XdgAgentStorage::new().agents_dir()?;
     // Ensure directory exists
     fs::create_dir_all(&agents_dir)

@@ -239,7 +239,6 @@ pub(crate) async fn execute_registered_workflow_async(
         )?;
         let prompt_template = resolve_prompt_template(
             api,
-            workspace_root,
             registered_profile.source_path.as_deref(),
             &turn.prompt_ref,
         )?;
@@ -827,14 +826,51 @@ fn workflow_turn_frame_type(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::builtin::builtin_profiles;
+    use crate::workflow::profile::{
+        WorkflowArtifactPolicy, WorkflowFailurePolicy, WorkflowGate, WorkflowProfile,
+        WorkflowThreadPolicy,
+    };
+
+    fn test_profile() -> WorkflowProfile {
+        WorkflowProfile {
+            workflow_id: "docs_writer_thread_v1".to_string(),
+            version: 1,
+            title: "Docs Writer".to_string(),
+            description: "Test workflow".to_string(),
+            thread_policy: WorkflowThreadPolicy {
+                start_conditions: serde_json::Value::Null,
+                dedupe_key_fields: vec!["workflow_id".to_string()],
+                max_turn_retries: 1,
+            },
+            turns: vec![],
+            gates: vec![WorkflowGate {
+                gate_id: "style_gate".to_string(),
+                gate_type: "no_semantic_drift".to_string(),
+                required_fields: vec![],
+                rules: serde_json::Value::Null,
+                fail_on_violation: false,
+            }],
+            artifact_policy: WorkflowArtifactPolicy {
+                store_output: true,
+                store_prompt_render: true,
+                store_context_payload: true,
+                max_output_bytes: 1024,
+            },
+            failure_policy: WorkflowFailurePolicy {
+                mode: "fail_fast".to_string(),
+                resume_from_failed_turn: true,
+                stop_on_gate_fail: false,
+            },
+            thread_profile: None,
+            target_agent_id: None,
+            target_frame_type: None,
+            final_artifact_type: None,
+        }
+    }
 
     #[test]
     fn thread_id_is_deterministic_for_same_inputs() {
-        let profile = builtin_profiles()
-            .into_iter()
-            .find(|profile| profile.workflow_id == "docs_writer_thread_v1")
-            .unwrap();
+        let profile = test_profile();
         let node_id = crate::types::Hash::from([1u8; 32]);
 
         let left = build_thread_id(&profile, node_id, "context-docs-writer");
@@ -850,7 +886,7 @@ mod tests {
             turn_id: "evidence_gather".to_string(),
             seq: 1,
             title: "Gather Evidence".to_string(),
-            prompt_ref: "builtin:docs_writer/evidence_gather".to_string(),
+            prompt_ref: "prompts/docs_writer/evidence_gather.md".to_string(),
             input_refs: vec!["target_context".to_string()],
             output_type: "evidence_map".to_string(),
             gate_id: "evidence_gate".to_string(),
@@ -873,7 +909,7 @@ mod tests {
             turn_id: "style_refine".to_string(),
             seq: 4,
             title: "Refine Style".to_string(),
-            prompt_ref: "builtin:docs_writer/style_refine".to_string(),
+            prompt_ref: "prompts/docs_writer/style_refine.md".to_string(),
             input_refs: vec!["readme_struct".to_string()],
             output_type: "readme_final".to_string(),
             gate_id: "style_gate".to_string(),

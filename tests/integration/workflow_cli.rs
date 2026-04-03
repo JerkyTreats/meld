@@ -16,11 +16,18 @@ use tempfile::TempDir;
 
 use crate::integration::with_xdg_env;
 
+fn initialize_default_workflows() {
+    meld::init::initialize_workflows(false).unwrap();
+}
+
 fn create_test_agent(
     agent_id: &str,
     role: AgentRole,
     workflow_id: Option<&str>,
 ) -> Result<PathBuf, ApiError> {
+    if workflow_id.is_some() {
+        initialize_default_workflows();
+    }
     let agents_dir = XdgAgentStorage::new().agents_dir()?;
     fs::create_dir_all(&agents_dir)
         .map_err(|err| ApiError::ConfigError(format!("Failed to create agents dir: {}", err)))?;
@@ -71,11 +78,12 @@ fn create_test_provider(
 }
 
 #[test]
-fn workflow_list_includes_builtin_profile() {
+fn workflow_list_includes_initialized_profile() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(&workspace_root).unwrap();
+        initialize_default_workflows();
 
         let run_context = RunContext::new(workspace_root, None).unwrap();
         let output = run_context

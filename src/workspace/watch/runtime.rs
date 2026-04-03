@@ -664,6 +664,16 @@ mod tests {
             .unwrap();
     }
 
+    fn write_default_workflows(workflow_dir: &Path) {
+        for (relative_path, content) in crate::init::DEFAULT_WORKFLOW_FILES {
+            let output_path = workflow_dir.join(relative_path);
+            if let Some(parent) = output_path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(output_path, content).unwrap();
+        }
+    }
+
     #[test]
     fn ensure_agent_frames_keeps_legacy_path_for_unbound_agents() {
         let temp = TempDir::new().unwrap();
@@ -708,7 +718,12 @@ mod tests {
             agents.register(bound);
         }
 
-        let registry = WorkflowRegistry::load(&workspace_root, &WorkflowConfig::default()).unwrap();
+        let workflow_dir = temp.path().join("workflows");
+        write_default_workflows(&workflow_dir);
+        let registry = WorkflowRegistry::load(&WorkflowConfig {
+            user_profile_dir: Some(workflow_dir),
+        })
+        .unwrap();
 
         let mut config = WatchConfig::default();
         config.workspace_root = workspace_root;

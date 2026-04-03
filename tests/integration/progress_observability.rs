@@ -39,6 +39,9 @@ fn create_test_writer_agent(agent_id: &str) {
 }
 
 fn create_test_writer_agent_with_workflow(agent_id: &str, workflow_id: Option<&str>) {
+    if workflow_id.is_some() {
+        meld::init::initialize_workflows(false).unwrap();
+    }
     let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
     fs::create_dir_all(&agents_dir).unwrap();
     let config_path = agents_dir.join(format!("{}.toml", agent_id));

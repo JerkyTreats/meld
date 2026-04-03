@@ -21,7 +21,6 @@ pub struct WorkflowListItem {
     pub workflow_id: String,
     pub version: u32,
     pub title: String,
-    pub source_layer: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
 }
@@ -40,7 +39,6 @@ pub struct WorkflowValidateResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowInspectResult {
     pub workflow_id: String,
-    pub source_layer: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
     pub profile: WorkflowProfile,
@@ -75,7 +73,6 @@ impl WorkflowCommandService {
                 workflow_id: workflow_id.clone(),
                 version: registered.profile.version,
                 title: registered.profile.title.clone(),
-                source_layer: format!("{:?}", registered.source_layer).to_lowercase(),
                 source_path: registered
                     .source_path
                     .as_ref()
@@ -86,11 +83,8 @@ impl WorkflowCommandService {
         WorkflowListResult { workflows }
     }
 
-    pub fn run_validate(
-        workspace_root: &Path,
-        config: &WorkflowConfig,
-    ) -> Result<WorkflowValidateResult, ApiError> {
-        let registry = WorkflowRegistry::load(workspace_root, config)?;
+    pub fn run_validate(config: &WorkflowConfig) -> Result<WorkflowValidateResult, ApiError> {
+        let registry = WorkflowRegistry::load(config)?;
         Ok(WorkflowValidateResult {
             valid: true,
             workflow_count: registry.iter().count(),
@@ -107,7 +101,6 @@ impl WorkflowCommandService {
 
         Ok(WorkflowInspectResult {
             workflow_id: workflow_id.to_string(),
-            source_layer: format!("{:?}", registered.source_layer).to_lowercase(),
             source_path: registered
                 .source_path
                 .as_ref()

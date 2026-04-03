@@ -5,7 +5,6 @@ use crate::context::frame::Frame;
 use crate::error::ApiError;
 use crate::store::{NodeRecord, NodeType};
 use crate::types::NodeID;
-use crate::workflow::builtin::builtin_prompt_text;
 use crate::workflow::profile::{PromptRefKind, WorkflowTurn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -58,20 +57,15 @@ pub fn resolve_turn_inputs(
 
 pub fn resolve_prompt_template(
     api: &ContextApi,
-    workspace_root: &Path,
     profile_source_path: Option<&Path>,
     prompt_ref: &str,
 ) -> Result<String, ApiError> {
     match PromptRefKind::parse(prompt_ref) {
-        PromptRefKind::Builtin(key) => builtin_prompt_text(&key)
-            .map(str::to_string)
-            .ok_or_else(|| ApiError::ConfigError(format!("Unknown builtin prompt_ref '{}'", key))),
         PromptRefKind::ArtifactId(artifact_id) => read_artifact_prompt(api, &artifact_id),
         PromptRefKind::FilePath(path) => {
-            let resolved = resolve_prompt_path(&path, workspace_root, profile_source_path)
-                .ok_or_else(|| {
-                    ApiError::ConfigError(format!("Unable to resolve prompt path '{}'", path))
-                })?;
+            let resolved = resolve_prompt_path(&path, profile_source_path).ok_or_else(|| {
+                ApiError::ConfigError(format!("Unable to resolve prompt path '{}'", path))
+            })?;
             std::fs::read_to_string(&resolved).map_err(|err| {
                 ApiError::ConfigError(format!(
                     "Failed to read prompt path '{}': {}",
@@ -244,11 +238,7 @@ fn format_context_block(path: &Path, node_type: &str, content: &str) -> String {
     )
 }
 
-fn resolve_prompt_path(
-    prompt_path: &str,
-    workspace_root: &Path,
-    profile_source_path: Option<&Path>,
-) -> Option<PathBuf> {
+fn resolve_prompt_path(prompt_path: &str, profile_source_path: Option<&Path>) -> Option<PathBuf> {
     let raw = PathBuf::from(prompt_path);
     if raw.is_absolute() {
         if raw.exists() {
@@ -264,11 +254,6 @@ fn resolve_prompt_path(
                 return Some(candidate);
             }
         }
-    }
-
-    let workspace_candidate = workspace_root.join(&raw);
-    if workspace_candidate.exists() {
-        return Some(workspace_candidate);
     }
 
     None
@@ -348,15 +333,24 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn resolve_prompt_template_reads_builtin() {
+    fn resolve_prompt_template_reads_file_prompt_ref() {
         let (api, temp, _) = create_test_api();
-        let resolved = resolve_prompt_template(
-            &api,
-            temp.path(),
-            None,
-            "builtin:docs_writer/evidence_gather",
-        )
-        .unwrap();
+        let profile_path = temp
+            .path()
+            .join("workflows")
+            .join("docs_writer_thread_v1.yaml");
+        let prompt_path = temp
+            .path()
+            .join("workflows")
+            .join("prompts")
+            .join("evidence_gather.md");
+        std::fs::create_dir_all(prompt_path.parent().unwrap()).unwrap();
+        std::fs::write(&prompt_path, "evidence prompt").unwrap();
+        std::fs::write(&profile_path, "workflow_id: docs_writer_thread_v1").unwrap();
+
+        let resolved =
+            resolve_prompt_template(&api, Some(&profile_path), "prompts/evidence_gather.md")
+                .unwrap();
         assert!(resolved.contains("evidence"));
     }
 
@@ -367,7 +361,7 @@ mod tests {
             turn_id: "t1".to_string(),
             seq: 1,
             title: "Turn one".to_string(),
-            prompt_ref: "builtin:docs_writer/evidence_gather".to_string(),
+            prompt_ref: "prompts/docs_writer/evidence_gather.md".to_string(),
             input_refs: vec!["target_context".to_string()],
             output_type: "o1".to_string(),
             gate_id: "g1".to_string(),
@@ -394,7 +388,7 @@ mod tests {
             turn_id: "t2".to_string(),
             seq: 2,
             title: "Turn two".to_string(),
-            prompt_ref: "builtin:docs_writer/verification".to_string(),
+            prompt_ref: "prompts/docs_writer/verification.md".to_string(),
             input_refs: vec!["verification_report".to_string()],
             output_type: "verification_report".to_string(),
             gate_id: "g1".to_string(),
@@ -497,7 +491,7 @@ mod tests {
             turn_id: "t1".to_string(),
             seq: 1,
             title: "Turn one".to_string(),
-            prompt_ref: "builtin:docs_writer/evidence_gather".to_string(),
+            prompt_ref: "prompts/docs_writer/evidence_gather.md".to_string(),
             input_refs: vec!["target_context".to_string()],
             output_type: "evidence_map".to_string(),
             gate_id: "g1".to_string(),
@@ -522,7 +516,7 @@ mod tests {
 
     #[test]
     fn resolve_prompt_template_reads_artifact_prompt_ref() {
-        let (api, temp, _) = create_test_api();
+        let (api, _temp, _) = create_test_api();
         let artifact = api
             .prompt_context_storage()
             .write_utf8(
@@ -531,13 +525,9 @@ mod tests {
             )
             .unwrap();
 
-        let prompt = resolve_prompt_template(
-            &api,
-            temp.path(),
-            None,
-            &format!("artifact:{}", artifact.artifact_id),
-        )
-        .unwrap();
+        let prompt =
+            resolve_prompt_template(&api, None, &format!("artifact:{}", artifact.artifact_id))
+                .unwrap();
         assert_eq!(prompt, "artifact prompt body");
     }
 }

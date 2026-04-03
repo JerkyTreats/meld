@@ -27,7 +27,7 @@ pub fn execute_workflow_target(
         )
     })?;
     let config = ConfigLoader::load(workspace_root)?;
-    let registry = WorkflowRegistry::load(workspace_root, &config.workflows)?;
+    let registry = WorkflowRegistry::load(&config.workflows)?;
     let registered_profile = registry
         .get(workflow_id)
         .ok_or_else(|| ApiError::ConfigError(format!("Workflow not found: {}", workflow_id)))?;
@@ -52,7 +52,7 @@ pub async fn execute_workflow_target_async(
         )
     })?;
     let config = ConfigLoader::load(workspace_root)?;
-    let registry = WorkflowRegistry::load(workspace_root, &config.workflows)?;
+    let registry = WorkflowRegistry::load(&config.workflows)?;
     let registered_profile = registry
         .get(workflow_id)
         .ok_or_else(|| ApiError::ConfigError(format!("Workflow not found: {}", workflow_id)))?;

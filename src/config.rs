@@ -79,23 +79,10 @@ pub struct SystemConfig {
 /// Workflow profile loading configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowConfig {
-    /// Workspace profile directory.
-    /// Relative values are resolved against workspace root.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_profile_dir: Option<PathBuf>,
-
     /// User profile directory.
     /// Relative values are resolved against XDG config home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_profile_dir: Option<PathBuf>,
-
-    /// Enable builtin profile fallback.
-    #[serde(default = "default_true")]
-    pub enable_builtin_profiles: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn default_workspace_root() -> PathBuf {
@@ -112,19 +99,6 @@ impl Default for SystemConfig {
 }
 
 impl WorkflowConfig {
-    /// Resolve workspace workflow profile directory.
-    pub fn resolve_workspace_profile_dir(&self, workspace_root: &Path) -> PathBuf {
-        let configured = self
-            .workspace_profile_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("config/workflows"));
-        if configured.is_absolute() {
-            configured
-        } else {
-            workspace_root.join(configured)
-        }
-    }
-
     /// Resolve user workflow profile directory.
     pub fn resolve_user_profile_dir(&self) -> Result<PathBuf, ApiError> {
         let configured = self
@@ -141,11 +115,6 @@ impl WorkflowConfig {
 
     /// Validate workflow configuration.
     pub fn validate(&self) -> Result<(), String> {
-        if let Some(path) = &self.workspace_profile_dir {
-            if path.as_os_str().is_empty() {
-                return Err("workspace_profile_dir cannot be empty".to_string());
-            }
-        }
         if let Some(path) = &self.user_profile_dir {
             if path.as_os_str().is_empty() {
                 return Err("user_profile_dir cannot be empty".to_string());
@@ -158,9 +127,7 @@ impl WorkflowConfig {
 impl Default for WorkflowConfig {
     fn default() -> Self {
         Self {
-            workspace_profile_dir: None,
             user_profile_dir: None,
-            enable_builtin_profiles: true,
         }
     }
 }
