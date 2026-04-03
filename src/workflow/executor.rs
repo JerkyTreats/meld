@@ -9,11 +9,14 @@ use crate::context::generation::contracts::{
 use crate::context::generation::metadata_construction::{
     build_and_validate_generated_metadata, load_previous_metadata_snapshot,
 };
-use crate::context::generation::provider_execution::{execute_completion, prepare_provider};
+use crate::context::generation::provider_execution::{
+    execute_completion, prepare_provider_for_request,
+};
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
+use crate::provider::ProviderExecutionBinding;
 use crate::telemetry::{
     now_millis, FrameMetadataValidationEventData, PromptContextLineageEventData,
     WorkflowForceResetEventData, WorkflowTargetEventData, WorkflowTurnEventData,
@@ -39,7 +42,7 @@ use std::path::Path;
 pub struct WorkflowExecutionRequest {
     pub node_id: NodeID,
     pub agent_id: String,
-    pub provider_name: String,
+    pub provider: ProviderExecutionBinding,
     pub frame_type: String,
     pub force: bool,
     pub path: Option<String>,
@@ -115,7 +118,7 @@ pub(crate) async fn execute_registered_workflow_async(
                             node_id: hex::encode(request.node_id),
                             path: target_path.clone(),
                             agent_id: request.agent_id.clone(),
-                            provider_name: request.provider_name.clone(),
+                            provider_name: request.provider.provider_name.clone(),
                             frame_type: request.frame_type.clone(),
                             plan_id: request.plan_id.clone(),
                             level_index: request.level_index,
@@ -159,7 +162,7 @@ pub(crate) async fn execute_registered_workflow_async(
                     node_id: hex::encode(request.node_id),
                     path: target_path.clone(),
                     agent_id: request.agent_id.clone(),
-                    provider_name: request.provider_name.clone(),
+                    provider_name: request.provider.provider_name.clone(),
                     frame_type: request.frame_type.clone(),
                     previous_frame_id: Some(hex::encode(previous_frame_id)),
                     plan_id: request.plan_id.clone(),
@@ -188,7 +191,7 @@ pub(crate) async fn execute_registered_workflow_async(
             node_id: hex::encode(request.node_id),
             path: target_path.clone(),
             agent_id: request.agent_id.clone(),
-            provider_name: request.provider_name.clone(),
+            provider_name: request.provider.provider_name.clone(),
             frame_type: request.frame_type.clone(),
             plan_id: request.plan_id.clone(),
             level_index: request.level_index,
@@ -201,7 +204,6 @@ pub(crate) async fn execute_registered_workflow_async(
     let agent = api.get_agent(&request.agent_id)?;
     let prompt_contract = PromptContract::from_agent(&agent)?;
 
-    let provider_preparation = prepare_provider(api, &request.provider_name)?;
     let metadata_builder: &GeneratedMetadataBuilder = &build_generated_metadata;
 
     let mut final_frame_id: Option<FrameID> =
@@ -250,6 +252,17 @@ pub(crate) async fn execute_registered_workflow_async(
         while attempt < turn.retry_limit {
             attempt += 1;
 
+            let orchestration_request = GenerationOrchestrationRequest {
+                request_id: ((turn.seq as u64) * 1000) + attempt as u64,
+                node_id: request.node_id,
+                agent_id: request.agent_id.clone(),
+                provider: request.provider.clone(),
+                frame_type: request.frame_type.clone(),
+                retry_count: attempt.saturating_sub(1),
+                force: request.force,
+            };
+            let provider_preparation = prepare_provider_for_request(api, &orchestration_request)?;
+
             let prepared_lineage = prepare_generated_lineage(
                 api.prompt_context_storage(),
                 &PromptContextLineageInput {
@@ -259,7 +272,7 @@ pub(crate) async fn execute_registered_workflow_async(
                     context_payload: resolved_inputs.context_payload.clone(),
                 },
                 &request.agent_id,
-                &request.provider_name,
+                &request.provider.provider_name,
                 provider_preparation.client.model_name(),
                 &provider_preparation.provider_type,
             )?;
@@ -281,7 +294,7 @@ pub(crate) async fn execute_registered_workflow_async(
                     node_id: hex::encode(request.node_id),
                     path: target_path.clone(),
                     agent_id: request.agent_id.clone(),
-                    provider_name: request.provider_name.clone(),
+                    provider_name: request.provider.provider_name.clone(),
                     frame_type: turn_frame_type.clone(),
                     attempt,
                     plan_id: request.plan_id.clone(),
@@ -303,21 +316,32 @@ pub(crate) async fn execute_registered_workflow_async(
                 updated_at_ms: now_millis(),
             })?;
 
-            let orchestration_request = GenerationOrchestrationRequest {
-                request_id: ((turn.seq as u64) * 1000) + attempt as u64,
-                node_id: request.node_id,
-                agent_id: request.agent_id.clone(),
-                provider_name: request.provider_name.clone(),
-                frame_type: turn_frame_type.clone(),
-                retry_count: attempt.saturating_sub(1),
-                force: request.force,
-            };
+            let mut orchestration_request = orchestration_request;
+            orchestration_request.frame_type = turn_frame_type.clone();
+            if std::env::var("MELD_DEBUG_PROVIDER_JSON").ok().as_deref() == Some("1") {
+                let mut keys: Vec<&str> = orchestration_request
+                    .provider
+                    .runtime_overrides
+                    .extra_body_field_keys();
+                keys.sort_unstable();
+                eprintln!(
+                    "MELD_DEBUG workflow_orchestration_request additional_json_keys={:?} provider_model_override={} turn_id={}",
+                    keys,
+                    orchestration_request
+                        .provider
+                        .runtime_overrides
+                        .model_override
+                        .as_deref()
+                        .unwrap_or("null"),
+                    turn.turn_id
+                );
+            }
 
             if let Some(ctx) = event_context {
                 let lineage_event = PromptContextLineageEventData {
                     node_id: hex::encode(request.node_id),
                     agent_id: request.agent_id.clone(),
-                    provider_name: request.provider_name.clone(),
+                    provider_name: request.provider.provider_name.clone(),
                     frame_type: turn_frame_type.clone(),
                     prompt_link_id: prepared_lineage.prompt_link_contract.prompt_link_id.clone(),
                     prompt_digest: prepared_lineage.prompt_link_contract.prompt_digest.clone(),
@@ -355,7 +379,7 @@ pub(crate) async fn execute_registered_workflow_async(
                     node_id: hex::encode(request.node_id),
                     path: target_path.clone(),
                     agent_id: request.agent_id.clone(),
-                    provider_name: request.provider_name.clone(),
+                    provider_name: request.provider.provider_name.clone(),
                     frame_type: turn_frame_type.clone(),
                     prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
                     context_digest: prepared_lineage.metadata_input.context_digest.clone(),
@@ -389,7 +413,7 @@ pub(crate) async fn execute_registered_workflow_async(
                             node_id: hex::encode(request.node_id),
                             path: target_path.clone(),
                             agent_id: request.agent_id.clone(),
-                            provider_name: request.provider_name.clone(),
+                            provider_name: request.provider.provider_name.clone(),
                             frame_type: turn_frame_type.clone(),
                             prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
                             context_digest: prepared_lineage.metadata_input.context_digest.clone(),
@@ -429,7 +453,7 @@ pub(crate) async fn execute_registered_workflow_async(
                             node_id: hex::encode(request.node_id),
                             path: target_path.clone(),
                             agent_id: request.agent_id.clone(),
-                            provider_name: request.provider_name.clone(),
+                            provider_name: request.provider.provider_name.clone(),
                             frame_type: turn_frame_type.clone(),
                             prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
                             context_digest: prepared_lineage.metadata_input.context_digest.clone(),
@@ -459,7 +483,7 @@ pub(crate) async fn execute_registered_workflow_async(
                             node_id: hex::encode(request.node_id),
                             path: target_path.clone(),
                             agent_id: request.agent_id.clone(),
-                            provider_name: request.provider_name.clone(),
+                            provider_name: request.provider.provider_name.clone(),
                             frame_type: turn_frame_type.clone(),
                             attempt,
                             plan_id: request.plan_id.clone(),
@@ -526,7 +550,7 @@ pub(crate) async fn execute_registered_workflow_async(
                             node_id: hex::encode(request.node_id),
                             path: target_path.clone(),
                             agent_id: request.agent_id.clone(),
-                            provider_name: request.provider_name.clone(),
+                            provider_name: request.provider.provider_name.clone(),
                             frame_type: turn_frame_type.clone(),
                             attempt,
                             plan_id: request.plan_id.clone(),
@@ -593,7 +617,7 @@ pub(crate) async fn execute_registered_workflow_async(
                         node_id: hex::encode(request.node_id),
                         path: target_path.clone(),
                         agent_id: request.agent_id.clone(),
-                        provider_name: request.provider_name.clone(),
+                        provider_name: request.provider.provider_name.clone(),
                         frame_type: turn_frame_type.clone(),
                         attempt,
                         plan_id: request.plan_id.clone(),
@@ -664,7 +688,7 @@ pub(crate) async fn execute_registered_workflow_async(
                     node_id: hex::encode(request.node_id),
                     path: target_path.clone(),
                     agent_id: request.agent_id.clone(),
-                    provider_name: request.provider_name.clone(),
+                    provider_name: request.provider.provider_name.clone(),
                     frame_type: turn_frame_type.clone(),
                     attempt,
                     plan_id: request.plan_id.clone(),
@@ -730,7 +754,7 @@ pub(crate) async fn execute_registered_workflow_async(
             node_id: hex::encode(request.node_id),
             path: target_path,
             agent_id: request.agent_id.clone(),
-            provider_name: request.provider_name.clone(),
+            provider_name: request.provider.provider_name.clone(),
             frame_type: request.frame_type.clone(),
             plan_id: request.plan_id.clone(),
             level_index: request.level_index,

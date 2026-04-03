@@ -2,11 +2,12 @@
 import argparse
 import datetime as dt
 import json
-import os
 import pathlib
+import shutil
 import shlex
 import subprocess
 import sys
+import time
 from typing import Any
 
 
@@ -25,67 +26,6 @@ def ensure_dir(path: pathlib.Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def provider_config_path(provider_name: str) -> pathlib.Path:
-    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
-    if xdg_config_home:
-        base = pathlib.Path(xdg_config_home)
-    else:
-        base = pathlib.Path.home() / ".config"
-    return base / "meld" / "providers" / f"{provider_name}.toml"
-
-
-def toml_scalar(value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        return str(value)
-    if isinstance(value, str):
-        return json.dumps(value)
-    raise ValueError(f"Unsupported additional_json value type: {type(value).__name__}")
-
-
-def upsert_additional_json_toml(text: str, values: dict[str, Any]) -> str:
-    lines = text.splitlines()
-    section = "[default_options.additional_json]"
-
-    section_start = None
-    for idx, line in enumerate(lines):
-        if line.strip() == section:
-            section_start = idx
-            break
-
-    if section_start is None:
-        if lines and lines[-1].strip() != "":
-            lines.append("")
-        lines.append(section)
-        for key, value in sorted(values.items()):
-            lines.append(f"{key} = {toml_scalar(value)}")
-        return "\n".join(lines) + "\n"
-
-    section_end = len(lines)
-    for idx in range(section_start + 1, len(lines)):
-        stripped = lines[idx].strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            section_end = idx
-            break
-
-    for key, value in sorted(values.items()):
-        target_line = f"{key} = {toml_scalar(value)}"
-        replaced = False
-        for idx in range(section_start + 1, section_end):
-            stripped = lines[idx].strip()
-            if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
-                lines[idx] = target_line
-                replaced = True
-                break
-        if not replaced:
-            lines.insert(section_start + 1, target_line)
-            section_end += 1
-    return "\n".join(lines) + "\n"
-
-
 def load_json_file(path: pathlib.Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -93,11 +33,33 @@ def load_json_file(path: pathlib.Path) -> dict[str, Any]:
     return payload
 
 
+def load_local_run_config(harness_root: pathlib.Path) -> dict[str, Any]:
+    path = harness_root / "config" / "local" / "run.local.json"
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("run.local.json must contain a top-level JSON object")
+    return payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run one README eval fixture through meld.")
     parser.add_argument("--case-id", required=True, help="Fixture case id under eval/readme/fixtures/")
-    parser.add_argument("--provider", required=True, help="Provider name used by meld context generate")
+    parser.add_argument("--provider", default=None, help="Provider name used by meld context generate")
+    parser.add_argument(
+        "--provider-overwrite-file",
+        default=None,
+        help="Deprecated: provider overwrite now supported via meld runtime flags.",
+    )
+    parser.add_argument(
+        "--workflow-variant-dir",
+        default=None,
+        help="Optional directory copied to fixture config/workflows for this run and then restored.",
+    )
     parser.add_argument("--agent", default="docs-writer", help="Agent id used for generation")
+    parser.add_argument("--workflow-id", default=None, help="Optional runtime workflow_id override")
+    parser.add_argument("--provider-model", default=None, help="Optional runtime provider model override")
     parser.add_argument("--meld-bin", default="meld", help="Meld executable path")
     parser.add_argument("--run-id", default=dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ"))
     parser.add_argument(
@@ -137,7 +99,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--generate-cmd-template",
-        default="{meld_bin} context generate --path . --agent {agent} --provider {provider} --force",
+        default=(
+            "{meld_bin} context generate --path . --agent {agent} --provider {provider} --force"
+            "{workflow_flag}{provider_model_flag}{provider_additional_json_file_flag}"
+        ),
         help="Template for generate command",
     )
     parser.add_argument(
@@ -149,6 +114,15 @@ def main() -> int:
 
     repo_root = pathlib.Path.cwd()
     harness_root = (repo_root / args.harness_root).resolve()
+    run_config = load_local_run_config(harness_root)
+    provider = args.provider or run_config.get("provider")
+    if not provider:
+        print(
+            "provider is required (pass --provider or set eval/readme/config/local/run.local.json)",
+            file=sys.stderr,
+        )
+        return 2
+
     fixture_root = harness_root / "fixtures" / args.case_id
     input_fs = fixture_root / "input_fs"
 
@@ -161,8 +135,13 @@ def main() -> int:
 
     tokens = {
         "meld_bin": args.meld_bin,
-        "provider": args.provider,
+        "provider": provider,
         "agent": args.agent,
+        "workflow_flag": f" --workflow-id {shlex.quote(args.workflow_id)}" if args.workflow_id else "",
+        "provider_model_flag": f" --provider-model {shlex.quote(args.provider_model)}"
+        if args.provider_model
+        else "",
+        "provider_additional_json_file_flag": "",
     }
 
     steps = [
@@ -173,11 +152,28 @@ def main() -> int:
 
     command_log = []
     get_stdout = ""
-    provider_cfg_path = provider_config_path(args.provider)
-    original_provider_cfg_text = None
-    provider_cfg_modified = False
+    workflow_target_dir = input_fs / "config" / "workflows"
+    workflow_backup_dir = case_result_dir / "_backup_workflows"
+    workflow_overlay_active = False
+    runtime_additional_json_path = case_result_dir / "_runtime_additional_json.json"
+    runtime_additional_json_used = False
 
     try:
+        if args.workflow_variant_dir is not None:
+            variant_dir = pathlib.Path(args.workflow_variant_dir)
+            if not variant_dir.exists() or not variant_dir.is_dir():
+                print(f"workflow variant dir not found or not a directory: {variant_dir}", file=sys.stderr)
+                return 2
+            if workflow_target_dir.exists():
+                if workflow_backup_dir.exists():
+                    shutil.rmtree(workflow_backup_dir)
+                workflow_backup_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(workflow_target_dir, workflow_backup_dir)
+                shutil.rmtree(workflow_target_dir)
+            workflow_target_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(variant_dir, workflow_target_dir)
+            workflow_overlay_active = True
+
         additional_json: dict[str, Any] = {}
         if args.disable_auto_web_search:
             additional_json["lmserver_disable_auto_web_search"] = True
@@ -199,24 +195,24 @@ def main() -> int:
             return 2
 
         if additional_json:
-            if not provider_cfg_path.exists():
-                print(
-                    f"provider config not found for '{args.provider}': {provider_cfg_path}",
-                    file=sys.stderr,
-                )
-                return 2
-            original_provider_cfg_text = provider_cfg_path.read_text(encoding="utf-8")
-            updated = upsert_additional_json_toml(original_provider_cfg_text, additional_json)
-            provider_cfg_path.write_text(updated, encoding="utf-8")
-            provider_cfg_modified = True
+            runtime_additional_json_path.write_text(
+                json.dumps(additional_json, indent=2), encoding="utf-8"
+            )
+            runtime_additional_json_used = True
+            tokens["provider_additional_json_file_flag"] = (
+                f" --provider-additional-json-file {shlex.quote(str(runtime_additional_json_path))}"
+            )
 
         for step_name, step_template in steps:
+            started = time.perf_counter()
             result = run_cmd(step_template, tokens, input_fs)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
             command_log.append(
                 {
                     "step": step_name,
                     "command": step_template.format(**tokens),
                     "exit_code": result.returncode,
+                    "elapsed_ms": elapsed_ms,
                     "stdout": result.stdout,
                     "stderr": result.stderr,
                 }
@@ -238,8 +234,15 @@ def main() -> int:
             if step_name == "get":
                 get_stdout = result.stdout
     finally:
-        if provider_cfg_modified and original_provider_cfg_text is not None:
-            provider_cfg_path.write_text(original_provider_cfg_text, encoding="utf-8")
+        if workflow_overlay_active:
+            if workflow_target_dir.exists():
+                shutil.rmtree(workflow_target_dir)
+            if workflow_backup_dir.exists():
+                workflow_target_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(workflow_backup_dir, workflow_target_dir)
+                shutil.rmtree(workflow_backup_dir)
+        if runtime_additional_json_path.exists():
+            runtime_additional_json_path.unlink()
 
     parsed = json.loads(get_stdout)
     frames = parsed.get("frames", [])
@@ -251,13 +254,26 @@ def main() -> int:
 
     run_meta = {
         "case_id": args.case_id,
-        "provider": args.provider,
+        "provider": provider,
         "agent": args.agent,
+        "workflow_id": args.workflow_id,
+        "provider_model": args.provider_model,
+        "provider_overwrite_file": args.provider_overwrite_file,
+        "workflow_variant_dir": args.workflow_variant_dir,
         "run_id": args.run_id,
         "lmserver_max_tool_turns": args.lmserver_max_tool_turns,
         "disable_auto_web_search": args.disable_auto_web_search,
+        "provider_additional_json_file": (
+            str(runtime_additional_json_path) if runtime_additional_json_used else None
+        ),
         "generated_path": str(generated_path),
         "frame_count": len(frames),
+        "scan_elapsed_ms": next((s.get("elapsed_ms") for s in command_log if s.get("step") == "scan"), None),
+        "generate_elapsed_ms": next(
+            (s.get("elapsed_ms") for s in command_log if s.get("step") == "generate"), None
+        ),
+        "get_elapsed_ms": next((s.get("elapsed_ms") for s in command_log if s.get("step") == "get"), None),
+        "total_elapsed_ms": sum(int(s.get("elapsed_ms", 0)) for s in command_log),
     }
     (case_result_dir / "run_meta.json").write_text(json.dumps(run_meta, indent=2), encoding="utf-8")
     print(json.dumps(run_meta))

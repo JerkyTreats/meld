@@ -16,12 +16,21 @@ This harness evaluates `meld` README generation quality with a local, reproducib
 
 - `meld` CLI available on `PATH` (override with `--meld-bin`).
 - A configured writer agent/provider pair that can execute README generation.
+- Optional local runtime defaults in `eval/readme/config/local/run.local.json` (gitignored).
 
 ## Quickstart
 
 Run one fixture:
 
 `python3 eval/readme/scripts/run_case.py --case-id sample_nested --provider test-provider --agent docs-writer`
+
+If `eval/readme/config/local/run.local.json` exists with `{ "provider": "local" }`, `--provider` can be omitted.
+
+Tactical workflow/provider overrides for eval runs:
+
+`python3 eval/readme/scripts/evaluate_suite.py --agent docs-writer --workflow-id docs_writer_thread_v1 --provider-model qwen3-coder-next --workflow-variant-dir eval/readme/variants/workflow_candidate`
+
+These are passed as runtime flags to `meld context generate` and do not mutate XDG provider files.
 
 Run suite + scoring:
 
@@ -53,12 +62,11 @@ or pass an explicit file:
 
 `python3 eval/readme/scripts/evaluate_suite.py --provider local --agent docs-writer --additional-json-file /path/to/overrides.json`
 
-The harness temporarily patches provider config to add fields under:
+The harness writes a per-case runtime JSON file and passes it via:
 
-`[default_options.additional_json]`
-`... custom keys ...`
+`--provider-additional-json-file <path>`
 
-and restores the original provider file after each case run.
+on `meld context generate`.
 
 ## Workflow tuning loop
 
@@ -74,6 +82,10 @@ and restores the original provider file after each case run.
   - `meld context generate ...`
   - `meld context get ... --format json`
 - The first frame content returned by `context get` is treated as generated README text.
+- Scoring uses:
+  - Accuracy score (`score`) from similarity/heading coverage/length proximity.
+  - Speed score from `generate_elapsed_ms` vs rubric target.
+  - Utility score that rewards speed only when accuracy is above `optimization.accuracy_floor`.
 - Initial `github/docs` corpus cases are:
   - `ghdocs_deployments`
   - `ghdocs_observability`

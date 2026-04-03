@@ -323,7 +323,10 @@ failure_policy:
     #[test]
     fn load_includes_builtin_docs_writer_profile_by_default() {
         let temp = TempDir::new().unwrap();
-        let config = WorkflowConfig::default();
+        let config = WorkflowConfig {
+            user_profile_dir: Some(temp.path().join("user-workflows")),
+            ..WorkflowConfig::default()
+        };
 
         let registry = WorkflowRegistry::load(temp.path(), &config).unwrap();
         assert!(registry.contains("docs_writer_thread_v1"));

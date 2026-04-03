@@ -36,7 +36,7 @@ impl QueueSubmitter for FrameGenerationQueue {
         self.enqueue_and_wait_with_program(
             item.node_id,
             item.agent_id.clone(),
-            item.provider_name.clone(),
+            item.provider.clone(),
             Some(item.frame_type.clone()),
             item.program.clone(),
             priority,
@@ -135,7 +135,7 @@ impl GenerationExecutor {
                         "node_id": hex::encode(item.node_id),
                         "path": item.path,
                         "agent_id": item.agent_id,
-                        "provider_name": item.provider_name,
+                        "provider_name": item.provider.provider_name,
                         "frame_type": item.frame_type,
                         "program_kind": item.program.kind_str(),
                         "workflow_id": item.program.workflow_id(),
@@ -330,7 +330,11 @@ mod tests {
             path: format!("/tmp/{id}.txt"),
             node_type: GenerationNodeType::File,
             agent_id: "writer".to_string(),
-            provider_name: "provider".to_string(),
+            provider: crate::provider::ProviderExecutionBinding::new(
+                "provider",
+                crate::provider::ProviderRuntimeOverrides::default(),
+            )
+            .unwrap(),
             frame_type: "context-writer".to_string(),
             force: false,
             program: TargetExecutionProgram::single_shot(),
@@ -343,7 +347,11 @@ mod tests {
             path: format!("/tmp/{id}.txt"),
             node_type: GenerationNodeType::File,
             agent_id: "writer".to_string(),
-            provider_name: "provider".to_string(),
+            provider: crate::provider::ProviderExecutionBinding::new(
+                "provider",
+                crate::provider::ProviderRuntimeOverrides::default(),
+            )
+            .unwrap(),
             frame_type: "context-writer".to_string(),
             force: false,
             program: TargetExecutionProgram::workflow("docs_writer_thread_v1"),

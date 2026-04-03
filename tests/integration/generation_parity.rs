@@ -287,7 +287,7 @@ fn direct_generation_artifact(
 
     let metadata_input = generated_metadata_input_from_payload(
         &request.agent_id,
-        &request.provider_name,
+        &request.provider.provider_name,
         "mock-model",
         "local",
         &prompt_output.rendered_prompt,
@@ -346,7 +346,11 @@ fn generation_parity_file_success_matches_fixture() {
         request_id: 1,
         node_id,
         agent_id: "writer".to_string(),
-        provider_name: "mock-provider".to_string(),
+        provider: meld::provider::ProviderExecutionBinding::new(
+            "mock-provider",
+            meld::provider::ProviderRuntimeOverrides::default(),
+        )
+        .unwrap(),
         frame_type: "context-writer".to_string(),
         retry_count: 0,
         force: true,
@@ -392,7 +396,11 @@ fn generation_parity_directory_success_matches_fixture() {
         request_id: 1,
         node_id: dir_node,
         agent_id: "writer".to_string(),
-        provider_name: "mock-provider".to_string(),
+        provider: meld::provider::ProviderExecutionBinding::new(
+            "mock-provider",
+            meld::provider::ProviderRuntimeOverrides::default(),
+        )
+        .unwrap(),
         frame_type: "context-writer".to_string(),
         retry_count: 0,
         force: true,

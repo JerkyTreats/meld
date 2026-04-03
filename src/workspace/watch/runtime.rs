@@ -7,6 +7,7 @@ use crate::context::queue::{FrameGenerationQueue, QueueEventContext};
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
 use crate::ignore;
+use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 use crate::store::{NodeRecord, NodeRecordStore};
 use crate::tree::builder::TreeBuilder;
 use crate::tree::path::canonicalize_path;
@@ -453,7 +454,10 @@ impl WatchDaemon {
                         let request = WorkflowExecutionRequest {
                             node_id: *node_id,
                             agent_id: agent.agent_id.clone(),
-                            provider_name: provider_name.to_string(),
+                            provider: ProviderExecutionBinding::new(
+                                provider_name.to_string(),
+                                ProviderRuntimeOverrides::default(),
+                            )?,
                             frame_type: format!("context-{}", agent.agent_id),
                             force: false,
                             path: None,

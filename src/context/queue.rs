@@ -14,6 +14,7 @@ use crate::metadata::frame_types::FrameMetadata;
 use crate::metadata::frame_write_contract::{
     build_generated_metadata, GeneratedFrameMetadataInput,
 };
+use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 use crate::telemetry::{
     ProgressRuntime, ProviderLifecycleEventData, QueueEventData, QueueStatsEventData,
 };
@@ -41,8 +42,12 @@ pub enum Priority {
 #[cfg(test)]
 mod tests {
     use super::FrameGenerationQueue;
+    use super::RequestIdentity;
     use crate::context::TargetExecutionProgram;
     use crate::error::ApiError;
+    use crate::provider::ProviderRuntimeOverrides;
+    use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test]
     fn required_section_gate_failures_are_retryable() {
@@ -92,6 +97,54 @@ mod tests {
             &error,
         ));
     }
+
+    #[test]
+    fn request_identity_includes_provider_name_and_runtime_overrides() {
+        let default_provider = crate::provider::ProviderExecutionBinding::new(
+            "provider-a",
+            ProviderRuntimeOverrides::default(),
+        )
+        .unwrap();
+        let default_identity = RequestIdentity::new(
+            crate::types::Hash::from([1u8; 32]),
+            "writer",
+            &default_provider,
+            "context-writer",
+            &TargetExecutionProgram::single_shot(),
+        )
+        .unwrap();
+        let different_provider = crate::provider::ProviderExecutionBinding::new(
+            "provider-b",
+            ProviderRuntimeOverrides::default(),
+        )
+        .unwrap();
+        let different_provider_identity = RequestIdentity::new(
+            crate::types::Hash::from([1u8; 32]),
+            "writer",
+            &different_provider,
+            "context-writer",
+            &TargetExecutionProgram::single_shot(),
+        )
+        .unwrap();
+        let tuned_overrides = ProviderRuntimeOverrides::new(
+            None,
+            BTreeMap::from([("lmserver_max_tool_turns".to_string(), json!(24))]),
+        )
+        .unwrap();
+        let tuned_provider =
+            crate::provider::ProviderExecutionBinding::new("provider-a", tuned_overrides).unwrap();
+        let tuned_identity = RequestIdentity::new(
+            crate::types::Hash::from([1u8; 32]),
+            "writer",
+            &tuned_provider,
+            "context-writer",
+            &TargetExecutionProgram::single_shot(),
+        )
+        .unwrap();
+
+        assert_ne!(default_identity, different_provider_identity);
+        assert_ne!(default_identity, tuned_identity);
+    }
 }
 
 /// Request ID for tracking completion
@@ -127,6 +180,7 @@ pub struct GenerationRequestOptions {
 struct RequestIdentity {
     node_id: NodeID,
     agent_id: String,
+    provider_fingerprint: String,
     frame_type: String,
     program: TargetExecutionProgram,
 }
@@ -135,24 +189,28 @@ impl RequestIdentity {
     fn new(
         node_id: NodeID,
         agent_id: &str,
+        provider: &ProviderExecutionBinding,
         frame_type: &str,
         program: &TargetExecutionProgram,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
             node_id,
             agent_id: agent_id.to_string(),
+            provider_fingerprint: provider.fingerprint()?,
             frame_type: frame_type.to_string(),
             program: program.clone(),
-        }
+        })
     }
 
     fn from_request(request: &GenerationRequest) -> Self {
         Self::new(
             request.node_id,
             &request.agent_id,
+            &request.provider,
             &request.frame_type,
             &request.program,
         )
+        .expect("request identity fingerprint must be encodable")
     }
 }
 
@@ -225,8 +283,8 @@ pub struct GenerationRequest {
     pub node_id: NodeID,
     /// Agent ID that will generate the frame
     pub agent_id: String,
-    /// Provider name to use for generation
-    pub provider_name: String,
+    /// Provider selection and runtime overrides to use for generation
+    pub provider: ProviderExecutionBinding,
     /// Frame type to generate
     pub frame_type: String,
     /// Execution program for the target item
@@ -249,7 +307,7 @@ impl Clone for GenerationRequest {
             request_id: self.request_id,
             node_id: self.node_id,
             agent_id: self.agent_id.clone(),
-            provider_name: self.provider_name.clone(),
+            provider: self.provider.clone(),
             frame_type: self.frame_type.clone(),
             program: self.program.clone(),
             priority: self.priority,
@@ -481,10 +539,20 @@ impl FrameGenerationQueue {
         let mut queue = self.queue.lock().await;
         let mut dedupe = self.dedupe_index.lock().await;
         let program = TargetExecutionProgram::single_shot();
+        let provider = ProviderExecutionBinding::new(
+            provider_name.clone(),
+            ProviderRuntimeOverrides::default(),
+        )?;
         let resolved_frame_type = frame_type
             .clone()
             .unwrap_or_else(|| format!("context-{}", agent_id));
-        let identity = RequestIdentity::new(node_id, &agent_id, &resolved_frame_type, &program);
+        let identity = RequestIdentity::new(
+            node_id,
+            &agent_id,
+            &provider,
+            &resolved_frame_type,
+            &program,
+        )?;
 
         if let Some(existing_entry) = dedupe.get(&identity) {
             let existing_id = existing_entry.request_id;
@@ -493,7 +561,7 @@ impl FrameGenerationQueue {
                 QueueEventData {
                     node_id: hex::encode(node_id),
                     agent_id,
-                    provider_name,
+                    provider_name: provider.provider_name.clone(),
                     frame_type: resolved_frame_type,
                     request_id: Some(existing_id.as_u64()),
                     retry_count: None,
@@ -524,7 +592,7 @@ impl FrameGenerationQueue {
             request_id,
             node_id,
             agent_id: agent_id.clone(),
-            provider_name: provider_name.clone(),
+            provider: provider.clone(),
             frame_type: frame_type.clone(),
             program,
             priority,
@@ -555,7 +623,7 @@ impl FrameGenerationQueue {
             request_id = ?request_id,
             node_id = %hex::encode(node_id),
             agent_id = %agent_id,
-            provider_name = %provider_name,
+            provider_name = %provider.provider_name,
             priority = ?priority,
             queue_size = queue_size,
             "Enqueued generation request"
@@ -565,7 +633,7 @@ impl FrameGenerationQueue {
             QueueEventData {
                 node_id: hex::encode(node_id),
                 agent_id: agent_id.clone(),
-                provider_name: provider_name.clone(),
+                provider_name: provider.provider_name.clone(),
                 frame_type: frame_type.clone(),
                 request_id: Some(request_id.as_u64()),
                 retry_count: Some(0),
@@ -602,7 +670,7 @@ impl FrameGenerationQueue {
         &self,
         node_id: NodeID,
         agent_id: String,
-        provider_name: String,
+        provider: ProviderExecutionBinding,
         frame_type: Option<String>,
         program: TargetExecutionProgram,
         priority: Priority,
@@ -615,7 +683,13 @@ impl FrameGenerationQueue {
         let mut dedupe = self.dedupe_index.lock().await;
 
         let resolved_frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
-        let identity = RequestIdentity::new(node_id, &agent_id, &resolved_frame_type, &program);
+        let identity = RequestIdentity::new(
+            node_id,
+            &agent_id,
+            &provider,
+            &resolved_frame_type,
+            &program,
+        )?;
 
         if let Some(existing_entry) = dedupe.get_mut(&identity) {
             existing_entry.push_waiter(QueueWaiter::new(started_tx, tx));
@@ -627,7 +701,7 @@ impl FrameGenerationQueue {
                 QueueEventData {
                     node_id: hex::encode(node_id),
                     agent_id,
-                    provider_name,
+                    provider_name: provider.provider_name.clone(),
                     frame_type: resolved_frame_type,
                     request_id: Some(existing_id.as_u64()),
                     retry_count: None,
@@ -648,7 +722,7 @@ impl FrameGenerationQueue {
                     QueueEventData {
                         node_id: hex::encode(node_id),
                         agent_id,
-                        provider_name,
+                        provider_name: provider.provider_name.clone(),
                         frame_type: resolved_frame_type,
                         request_id: None,
                         retry_count: None,
@@ -677,7 +751,7 @@ impl FrameGenerationQueue {
             request_id,
             node_id,
             agent_id: agent_id.clone(),
-            provider_name: provider_name.clone(),
+            provider: provider.clone(),
             frame_type: frame_type.clone(),
             program,
             priority,
@@ -706,7 +780,7 @@ impl FrameGenerationQueue {
             request_id = ?request_id,
             node_id = %hex::encode(node_id),
             agent_id = %agent_id,
-            provider_name = %provider_name,
+            provider_name = %provider.provider_name,
             priority = ?priority,
             "Enqueued sync generation request"
         );
@@ -715,7 +789,7 @@ impl FrameGenerationQueue {
             QueueEventData {
                 node_id: hex::encode(node_id),
                 agent_id: agent_id.clone(),
-                provider_name: provider_name.clone(),
+                provider_name: provider.provider_name.clone(),
                 frame_type: frame_type.clone(),
                 request_id: Some(request_id.as_u64()),
                 retry_count: Some(0),
@@ -740,7 +814,7 @@ impl FrameGenerationQueue {
         self.enqueue_and_wait_with_program(
             node_id,
             agent_id,
-            provider_name,
+            ProviderExecutionBinding::new(provider_name, ProviderRuntimeOverrides::default())?,
             frame_type,
             TargetExecutionProgram::single_shot(),
             priority,
@@ -765,7 +839,12 @@ impl FrameGenerationQueue {
 
         for (node_id, agent_id, provider_name, frame_type, priority) in requests {
             let frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
-            let identity = RequestIdentity::new(node_id, &agent_id, &frame_type, &program);
+            let provider = ProviderExecutionBinding::new(
+                provider_name.clone(),
+                ProviderRuntimeOverrides::default(),
+            )?;
+            let identity =
+                RequestIdentity::new(node_id, &agent_id, &provider, &frame_type, &program)?;
 
             if let Some(existing_id) = staged.get(&identity) {
                 request_ids.push(*existing_id);
@@ -806,7 +885,7 @@ impl FrameGenerationQueue {
                 request_id,
                 node_id,
                 agent_id: agent_id.clone(),
-                provider_name: provider_name.clone(),
+                provider,
                 frame_type: frame_type.clone(),
                 program: program.clone(),
                 priority,
@@ -839,7 +918,7 @@ impl FrameGenerationQueue {
             enqueue_events.push(QueueEventData {
                 node_id: hex::encode(request.node_id),
                 agent_id: request.agent_id.clone(),
-                provider_name: request.provider_name.clone(),
+                provider_name: request.provider.provider_name.clone(),
                 frame_type: request.frame_type.clone(),
                 request_id: Some(request_id.as_u64()),
                 retry_count: Some(request.retry_count),
@@ -1065,7 +1144,7 @@ impl FrameGenerationQueue {
                 QueueEventData {
                     node_id: hex::encode(request.node_id),
                     agent_id: request.agent_id.clone(),
-                    provider_name: request.provider_name.clone(),
+                    provider_name: request.provider.provider_name.clone(),
                     frame_type: request.frame_type.clone(),
                     request_id: Some(request.request_id.as_u64()),
                     retry_count: Some(request.retry_count),
@@ -1188,7 +1267,7 @@ impl FrameGenerationQueue {
                     ProviderLifecycleEventData {
                         node_id: hex::encode(request.node_id),
                         agent_id: request.agent_id.clone(),
-                        provider_name: request.provider_name.clone(),
+                        provider_name: request.provider.provider_name.clone(),
                         frame_type: request.frame_type.clone(),
                         duration_ms: None,
                         error: None,
@@ -1236,7 +1315,7 @@ impl FrameGenerationQueue {
                 api,
                 request.node_id,
                 request.agent_id.clone(),
-                request.provider_name.clone(),
+                request.provider.clone(),
                 request.frame_type.clone(),
                 request.options.force,
                 request.program.clone(),
@@ -1258,11 +1337,28 @@ impl FrameGenerationQueue {
             request_id: request.request_id.as_u64(),
             node_id: request.node_id,
             agent_id: request.agent_id.clone(),
-            provider_name: request.provider_name.clone(),
+            provider: request.provider.clone(),
             frame_type: request.frame_type.clone(),
             retry_count: request.retry_count,
             force: request.options.force,
         };
+        if std::env::var("MELD_DEBUG_PROVIDER_JSON").ok().as_deref() == Some("1") {
+            let mut keys: Vec<&str> = orchestration_request
+                .provider
+                .runtime_overrides
+                .extra_body_field_keys();
+            keys.sort_unstable();
+            eprintln!(
+                "MELD_DEBUG queue_orchestration_request additional_json_keys={:?} provider_model_override={}",
+                keys,
+                orchestration_request
+                    .provider
+                    .runtime_overrides
+                    .model_override
+                    .as_deref()
+                    .unwrap_or("null")
+            );
+        }
 
         execute_generation_request(
             &orchestration_request,

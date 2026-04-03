@@ -9,6 +9,7 @@ use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
 use crate::ignore;
+use crate::provider::ProviderRuntimeOverrides;
 use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
 use crate::telemetry::sessions::policy::PrunePolicy;
@@ -27,8 +28,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::cli::parse::{
-    AgentCommands, AgentPromptCommands, Commands, ContextCommands, ProviderCommands,
-    WorkflowCommands, WorkspaceCommands,
+    parse_provider_additional_json_file, AgentCommands, AgentPromptCommands, Commands,
+    ContextCommands, ProviderCommands, WorkflowCommands, WorkspaceCommands,
 };
 use crate::cli::progress::LiveProgressHandle;
 use crate::cli::{command_name, typed_summary_event};
@@ -1323,16 +1324,28 @@ impl RunContext {
                 path_positional,
                 agent,
                 provider,
+                workflow_id,
+                provider_model,
+                provider_additional_json_file,
                 frame_type,
                 force,
                 no_recursive,
             } => {
                 let path_merged = path.as_ref().or(path_positional.as_ref());
+                let provider_additional_json =
+                    parse_provider_additional_json_file(provider_additional_json_file.as_ref())
+                        .map_err(ApiError::ConfigError)?;
+                let provider_runtime_overrides = ProviderRuntimeOverrides::new(
+                    provider_model.clone(),
+                    provider_additional_json.unwrap_or_default(),
+                )?;
                 let request = GenerateRequest {
                     node: node.clone(),
                     path: path_merged.cloned(),
                     agent: agent.clone(),
                     provider: provider.clone(),
+                    workflow_id: workflow_id.clone(),
+                    provider_runtime_overrides,
                     frame_type: frame_type.clone(),
                     force: *force,
                     no_recursive: *no_recursive,
@@ -1351,15 +1364,27 @@ impl RunContext {
                 path_positional,
                 agent,
                 provider,
+                workflow_id,
+                provider_model,
+                provider_additional_json_file,
                 frame_type,
                 recursive,
             } => {
                 let path_merged = path.as_ref().or(path_positional.as_ref());
+                let provider_additional_json =
+                    parse_provider_additional_json_file(provider_additional_json_file.as_ref())
+                        .map_err(ApiError::ConfigError)?;
+                let provider_runtime_overrides = ProviderRuntimeOverrides::new(
+                    provider_model.clone(),
+                    provider_additional_json.unwrap_or_default(),
+                )?;
                 let request = GenerateRequest {
                     node: node.clone(),
                     path: path_merged.cloned(),
                     agent: agent.clone(),
                     provider: provider.clone(),
+                    workflow_id: workflow_id.clone(),
+                    provider_runtime_overrides,
                     frame_type: frame_type.clone(),
                     force: true,
                     no_recursive: !*recursive,

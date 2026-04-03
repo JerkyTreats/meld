@@ -7,6 +7,7 @@ use crate::context::generation::{
 };
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
+use crate::provider::ProviderExecutionBinding;
 use crate::store::NodeType;
 use crate::workflow::executor::{
     execute_registered_workflow, execute_registered_workflow_async, WorkflowExecutionRequest,
@@ -85,7 +86,7 @@ pub fn execute_registered_workflow_target(
         &WorkflowExecutionRequest {
             node_id: request.node_id,
             agent_id: request.agent_id.clone(),
-            provider_name: request.provider_name.clone(),
+            provider: request.provider.clone(),
             frame_type: request.frame_type.clone(),
             force: request.force,
             path: Some(request.path.clone()),
@@ -132,7 +133,7 @@ pub async fn execute_registered_workflow_target_async(
         &WorkflowExecutionRequest {
             node_id: request.node_id,
             agent_id: request.agent_id.clone(),
-            provider_name: request.provider_name.clone(),
+            provider: request.provider.clone(),
             frame_type: request.frame_type.clone(),
             force: request.force,
             path: Some(request.path.clone()),
@@ -164,7 +165,7 @@ pub fn build_target_execution_request(
     api: &ContextApi,
     node_id: crate::types::NodeID,
     agent_id: String,
-    provider_name: String,
+    provider: ProviderExecutionBinding,
     frame_type: String,
     force: bool,
     program: crate::context::generation::TargetExecutionProgram,
@@ -185,7 +186,7 @@ pub fn build_target_execution_request(
             NodeType::Directory => crate::context::generation::GenerationNodeType::Directory,
         },
         agent_id,
-        provider_name,
+        provider,
         frame_type,
         force,
         program,

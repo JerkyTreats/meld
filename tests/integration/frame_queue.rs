@@ -406,7 +406,11 @@ async fn test_generation_request_ordering() {
         request_id: RequestId::next(),
         node_id: Hash::from([1u8; 32]),
         agent_id: "agent1".to_string(),
-        provider_name: "test-provider".to_string(),
+        provider: meld::provider::ProviderExecutionBinding::new(
+            "test-provider",
+            meld::provider::ProviderRuntimeOverrides::default(),
+        )
+        .unwrap(),
         frame_type: "test".to_string(),
         program: meld::context::TargetExecutionProgram::single_shot(),
         priority: Priority::High,
@@ -420,7 +424,11 @@ async fn test_generation_request_ordering() {
         request_id: RequestId::next(),
         node_id: Hash::from([2u8; 32]),
         agent_id: "agent1".to_string(),
-        provider_name: "test-provider".to_string(),
+        provider: meld::provider::ProviderExecutionBinding::new(
+            "test-provider",
+            meld::provider::ProviderRuntimeOverrides::default(),
+        )
+        .unwrap(),
         frame_type: "test".to_string(),
         program: meld::context::TargetExecutionProgram::single_shot(),
         priority: Priority::Low,
@@ -438,7 +446,11 @@ async fn test_generation_request_ordering() {
         request_id: RequestId::next(),
         node_id: Hash::from([3u8; 32]),
         agent_id: "agent1".to_string(),
-        provider_name: "test-provider".to_string(),
+        provider: meld::provider::ProviderExecutionBinding::new(
+            "test-provider",
+            meld::provider::ProviderRuntimeOverrides::default(),
+        )
+        .unwrap(),
         frame_type: "test".to_string(),
         program: meld::context::TargetExecutionProgram::single_shot(),
         priority: Priority::Normal,
@@ -452,7 +464,11 @@ async fn test_generation_request_ordering() {
         request_id: RequestId::next(),
         node_id: Hash::from([4u8; 32]),
         agent_id: "agent1".to_string(),
-        provider_name: "test-provider".to_string(),
+        provider: meld::provider::ProviderExecutionBinding::new(
+            "test-provider",
+            meld::provider::ProviderRuntimeOverrides::default(),
+        )
+        .unwrap(),
         frame_type: "test".to_string(),
         program: meld::context::TargetExecutionProgram::single_shot(),
         priority: Priority::Normal,

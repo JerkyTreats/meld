@@ -1,6 +1,8 @@
 //! CLI parse: clap types for Merkle. No behavior; definitions only.
 
 use clap::{Parser, Subcommand};
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// Merkle CLI - Deterministic filesystem state management
@@ -463,6 +465,18 @@ pub enum ContextCommands {
         #[arg(long)]
         provider: Option<String>,
 
+        /// Override workflow id for this run (bypasses agent workflow binding)
+        #[arg(long)]
+        workflow_id: Option<String>,
+
+        /// Override provider model for this run only
+        #[arg(long)]
+        provider_model: Option<String>,
+
+        /// Path to JSON object merged into provider additional_json for this run only
+        #[arg(long, value_name = "JSON_PATH")]
+        provider_additional_json_file: Option<PathBuf>,
+
         /// Frame type (defaults to context-<agent_id>)
         #[arg(long)]
         frame_type: Option<String>,
@@ -495,6 +509,18 @@ pub enum ContextCommands {
         /// Provider to use for generation (required)
         #[arg(long)]
         provider: Option<String>,
+
+        /// Override workflow id for this run (bypasses agent workflow binding)
+        #[arg(long)]
+        workflow_id: Option<String>,
+
+        /// Override provider model for this run only
+        #[arg(long)]
+        provider_model: Option<String>,
+
+        /// Path to JSON object merged into provider additional_json for this run only
+        #[arg(long, value_name = "JSON_PATH")]
+        provider_additional_json_file: Option<PathBuf>,
 
         /// Frame type (defaults to context-<agent_id>)
         #[arg(long)]
@@ -550,6 +576,34 @@ pub enum ContextCommands {
         #[arg(long)]
         include_deleted: bool,
     },
+}
+
+pub fn parse_provider_additional_json_file(
+    path: Option<&PathBuf>,
+) -> Result<Option<BTreeMap<String, Value>>, String> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        format!(
+            "Failed to read provider additional json file {}: {}",
+            path.display(),
+            e
+        )
+    })?;
+    let value: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Invalid JSON in {}: {}", path.display(), e))?;
+    let obj = value.as_object().ok_or_else(|| {
+        format!(
+            "Provider additional json file {} must contain a top-level JSON object",
+            path.display()
+        )
+    })?;
+    Ok(Some(
+        obj.iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    ))
 }
 
 #[derive(Subcommand)]

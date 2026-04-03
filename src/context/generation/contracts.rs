@@ -1,6 +1,7 @@
 use crate::metadata::frame_types::FrameMetadata;
 use crate::metadata::frame_write_contract::GeneratedFrameMetadataInput;
 use crate::provider::ChatMessage;
+use crate::provider::ProviderExecutionBinding;
 use crate::types::NodeID;
 
 pub type GeneratedMetadataBuilder =
@@ -11,7 +12,7 @@ pub struct GenerationOrchestrationRequest {
     pub request_id: u64,
     pub node_id: NodeID,
     pub agent_id: String,
-    pub provider_name: String,
+    pub provider: ProviderExecutionBinding,
     pub frame_type: String,
     pub retry_count: usize,
     pub force: bool,

@@ -24,6 +24,7 @@ pub mod profile;
 pub mod storage;
 pub mod summary;
 
+pub use generation::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 pub use profile::{ProviderConfig, ProviderType, ValidationResult};
 
 /// Model provider configuration
@@ -774,6 +775,23 @@ impl ModelProviderClient for CustomLocalClient {
             additional_json: options.additional_json,
         };
 
+        if std::env::var("MELD_DEBUG_PROVIDER_JSON").ok().as_deref() == Some("1") {
+            let mut additional_keys: Vec<&str> =
+                request.additional_json.keys().map(String::as_str).collect();
+            additional_keys.sort_unstable();
+            eprintln!(
+                "MELD_DEBUG local_request model={} endpoint={} additional_keys={:?} lmserver_max_tool_turns={}",
+                request.model,
+                self.endpoint,
+                additional_keys,
+                request
+                    .additional_json
+                    .get("lmserver_max_tool_turns")
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "null".to_string())
+            );
+        }
+
         let url = format!("{}/chat/completions", self.endpoint);
         let mut request_builder = self
             .client
@@ -1417,6 +1435,36 @@ mod tests {
             decoded.additional_json.get("lmserver_max_tool_turns"),
             Some(&json!(24))
         );
+    }
+
+    #[test]
+    fn test_chat_completion_request_flattens_additional_json() {
+        let request = ChatCompletionRequest {
+            model: "qwen3-coder-next".to_string(),
+            messages: vec![OpenAIMessage {
+                role: "user".to_string(),
+                content: "hello".to_string(),
+            }],
+            temperature: Some(0.2),
+            max_tokens: None,
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: None,
+            stream: false,
+            additional_json: BTreeMap::from([
+                ("lmserver_max_tool_turns".to_string(), json!(24)),
+                ("lmserver_disable_auto_web_search".to_string(), json!(true)),
+            ]),
+        };
+
+        let body = serde_json::to_value(&request).unwrap();
+        assert_eq!(body.get("lmserver_max_tool_turns"), Some(&json!(24)));
+        assert_eq!(
+            body.get("lmserver_disable_auto_web_search"),
+            Some(&json!(true))
+        );
+        assert!(body.get("additional_json").is_none());
     }
 
     #[tokio::test]

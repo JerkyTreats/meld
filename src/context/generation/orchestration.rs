@@ -8,7 +8,9 @@ use crate::context::generation::metadata_construction::{
     build_and_validate_generated_metadata, load_previous_metadata_snapshot,
 };
 use crate::context::generation::prompt_collection::build_prompt_messages;
-use crate::context::generation::provider_execution::{execute_completion, prepare_provider};
+use crate::context::generation::provider_execution::{
+    execute_completion, prepare_provider_for_request,
+};
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
@@ -47,7 +49,7 @@ pub async fn execute_generation_request(
     let prompt_contract = PromptContract::from_agent(&agent)?;
     let prompt_output = build_prompt_messages(api, request, &node_record, &prompt_contract)?;
 
-    let provider_preparation = prepare_provider(api, &request.provider_name)?;
+    let provider_preparation = prepare_provider_for_request(api, request)?;
 
     let prepared_lineage = prepare_generated_lineage(
         api.prompt_context_storage(),
@@ -58,7 +60,7 @@ pub async fn execute_generation_request(
             context_payload: prompt_output.context_payload.clone(),
         },
         &request.agent_id,
-        &request.provider_name,
+        &request.provider.provider_name,
         provider_preparation.client.model_name(),
         &provider_preparation.provider_type,
     )?;
@@ -66,7 +68,7 @@ pub async fn execute_generation_request(
         let lineage_event = PromptContextLineageEventData {
             node_id: hex::encode(request.node_id),
             agent_id: request.agent_id.clone(),
-            provider_name: request.provider_name.clone(),
+            provider_name: request.provider.provider_name.clone(),
             frame_type: request.frame_type.clone(),
             prompt_link_id: prepared_lineage.prompt_link_contract.prompt_link_id.clone(),
             prompt_digest: prepared_lineage.prompt_link_contract.prompt_digest.clone(),
@@ -104,7 +106,7 @@ pub async fn execute_generation_request(
             node_id: hex::encode(request.node_id),
             path: node_record.path.to_string_lossy().to_string(),
             agent_id: request.agent_id.clone(),
-            provider_name: request.provider_name.clone(),
+            provider_name: request.provider.provider_name.clone(),
             frame_type: request.frame_type.clone(),
             prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
             context_digest: prepared_lineage.metadata_input.context_digest.clone(),
@@ -138,7 +140,7 @@ pub async fn execute_generation_request(
                     node_id: hex::encode(request.node_id),
                     path: node_record.path.to_string_lossy().to_string(),
                     agent_id: request.agent_id.clone(),
-                    provider_name: request.provider_name.clone(),
+                    provider_name: request.provider.provider_name.clone(),
                     frame_type: request.frame_type.clone(),
                     prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
                     context_digest: prepared_lineage.metadata_input.context_digest.clone(),
@@ -167,7 +169,7 @@ pub async fn execute_generation_request(
                     node_id: hex::encode(request.node_id),
                     path: node_record.path.to_string_lossy().to_string(),
                     agent_id: request.agent_id.clone(),
-                    provider_name: request.provider_name.clone(),
+                    provider_name: request.provider.provider_name.clone(),
                     frame_type: request.frame_type.clone(),
                     prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
                     context_digest: prepared_lineage.metadata_input.context_digest.clone(),

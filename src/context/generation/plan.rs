@@ -1,6 +1,7 @@
 use crate::context::generation::program::TargetExecutionProgram;
 use crate::context::queue::Priority;
 use crate::error::ApiError;
+use crate::provider::ProviderExecutionBinding;
 use crate::types::{FrameID, NodeID};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -43,7 +44,7 @@ pub struct GenerationItem {
     pub path: String,
     pub node_type: GenerationNodeType,
     pub agent_id: String,
-    pub provider_name: String,
+    pub provider: ProviderExecutionBinding,
     pub frame_type: String,
     pub force: bool,
     pub program: TargetExecutionProgram,
@@ -144,7 +145,11 @@ mod tests {
             path: "/tmp/a.txt".to_string(),
             node_type: GenerationNodeType::File,
             agent_id: "writer".to_string(),
-            provider_name: "provider".to_string(),
+            provider: ProviderExecutionBinding::new(
+                "provider",
+                crate::provider::ProviderRuntimeOverrides::default(),
+            )
+            .unwrap(),
             frame_type: "context-writer".to_string(),
             force: false,
             program: TargetExecutionProgram::single_shot(),

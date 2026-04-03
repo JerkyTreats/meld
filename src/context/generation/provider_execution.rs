@@ -2,7 +2,9 @@ use crate::api::ContextApi;
 use crate::context::generation::contracts::GenerationOrchestrationRequest;
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
-use crate::provider::{ChatMessage, CompletionResponse, ModelProviderClient, ProviderConfig};
+use crate::provider::{
+    ChatMessage, CompletionResponse, ModelProviderClient, ProviderConfig, ProviderFactory,
+};
 use crate::telemetry::ProviderLifecycleEventData;
 use serde_json::json;
 use std::time::Instant;
@@ -22,7 +24,44 @@ pub fn prepare_provider(
     let provider_config = provider_registry.get_or_error(provider_name)?.clone();
     let provider_type =
         crate::provider::profile::provider_type_slug(provider_config.provider_type).to_string();
-    let client = provider_registry.create_client(provider_name)?;
+    let model_provider = provider_config.to_model_provider()?;
+    let client = ProviderFactory::create_client(&model_provider)?;
+    drop(provider_registry);
+
+    Ok(ProviderPreparation {
+        provider_config,
+        provider_type,
+        client,
+    })
+}
+
+pub fn prepare_provider_for_request(
+    api: &ContextApi,
+    request: &GenerationOrchestrationRequest,
+) -> Result<ProviderPreparation, ApiError> {
+    let provider_registry = api.provider_registry().read();
+    let mut provider_config = provider_registry
+        .get_or_error(&request.provider.provider_name)?
+        .clone();
+    request.provider.runtime_overrides.validate()?;
+    if let Some(model_override) = request.provider.runtime_overrides.model_override.as_ref() {
+        provider_config.model = model_override.clone();
+    }
+    if !request
+        .provider
+        .runtime_overrides
+        .extra_body_fields
+        .is_empty()
+    {
+        provider_config
+            .default_options
+            .additional_json
+            .extend(request.provider.runtime_overrides.extra_body_fields.clone());
+    }
+    let provider_type =
+        crate::provider::profile::provider_type_slug(provider_config.provider_type).to_string();
+    let model_provider = provider_config.to_model_provider()?;
+    let client = ProviderFactory::create_client(&model_provider)?;
     drop(provider_registry);
 
     Ok(ProviderPreparation {
@@ -45,7 +84,7 @@ pub async fn execute_completion(
         request_id = request.request_id,
         node_id = %hex::encode(request.node_id),
         agent_id = %request.agent_id,
-        provider_name = %request.provider_name,
+        provider_name = %request.provider.provider_name,
         frame_type = %request.frame_type,
         attempt = request.retry_count + 1,
         message_count = messages.len(),
@@ -57,7 +96,7 @@ pub async fn execute_completion(
         ProviderLifecycleEventData {
             node_id: hex::encode(request.node_id),
             agent_id: request.agent_id.clone(),
-            provider_name: request.provider_name.clone(),
+            provider_name: request.provider.provider_name.clone(),
             frame_type: request.frame_type.clone(),
             duration_ms: None,
             error: None,
@@ -78,7 +117,7 @@ pub async fn execute_completion(
                 ProviderLifecycleEventData {
                     node_id: hex::encode(request.node_id),
                     agent_id: request.agent_id.clone(),
-                    provider_name: request.provider_name.clone(),
+                    provider_name: request.provider.provider_name.clone(),
                     frame_type: request.frame_type.clone(),
                     duration_ms: Some(start.elapsed().as_millis()),
                     error: Some(e.to_string()),
@@ -115,7 +154,7 @@ pub async fn execute_completion(
         request_id = request.request_id,
         node_id = %hex::encode(request.node_id),
         agent_id = %request.agent_id,
-        provider_name = %request.provider_name,
+        provider_name = %request.provider.provider_name,
         frame_type = %request.frame_type,
         attempt = request.retry_count + 1,
         duration_ms = duration.as_millis(),
@@ -128,7 +167,7 @@ pub async fn execute_completion(
         ProviderLifecycleEventData {
             node_id: hex::encode(request.node_id),
             agent_id: request.agent_id.clone(),
-            provider_name: request.provider_name.clone(),
+            provider_name: request.provider.provider_name.clone(),
             frame_type: request.frame_type.clone(),
             duration_ms: Some(duration.as_millis()),
             error: None,

@@ -46,6 +46,16 @@ def parse_simple_yaml(path: pathlib.Path) -> Dict:
     return root
 
 
+def load_local_run_config(harness_root: pathlib.Path) -> Dict:
+    path = harness_root / "config" / "local" / "run.local.json"
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("run.local.json must contain a top-level JSON object")
+    return payload
+
+
 def normalize_markdown(text: str) -> str:
     lines = [line.rstrip() for line in text.replace("\r\n", "\n").split("\n")]
     compact = "\n".join(lines).strip()
@@ -97,6 +107,43 @@ def evaluate_case(expected: str, actual: str, rubric: Dict) -> Dict:
     }
 
 
+def compute_speed_score(generate_elapsed_ms: int, rubric: Dict) -> float:
+    optimization = rubric.get("optimization", {})
+    speed_target_ms = float(optimization.get("speed_target_generate_ms", 30000))
+    if generate_elapsed_ms <= 0:
+        return 0.0
+    score = speed_target_ms / float(generate_elapsed_ms)
+    # Cap so very fast runs do not dominate utility.
+    return max(0.0, min(1.0, score))
+
+
+def compute_utility(accuracy_score: float, speed_score: float, rubric: Dict) -> float:
+    optimization = rubric.get("optimization", {})
+    accuracy_floor = float(
+        optimization.get("accuracy_floor", rubric.get("pass", {}).get("min_score", 0.72))
+    )
+    if accuracy_score < accuracy_floor:
+        return 0.0
+    weights = optimization.get("utility_weights", {})
+    accuracy_weight = float(weights.get("accuracy", 0.85))
+    speed_weight = float(weights.get("speed", 0.15))
+    total = accuracy_weight + speed_weight
+    if total <= 0:
+        return accuracy_score
+    utility = (accuracy_weight * accuracy_score + speed_weight * speed_score) / total
+    return max(0.0, min(1.0, utility))
+
+
+def load_run_meta(run_dir: pathlib.Path, case_id: str) -> Dict:
+    path = run_dir / case_id / "run_meta.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 def parse_run_case_failure(stdout_text: str) -> Dict:
     try:
         payload = json.loads(stdout_text.strip())
@@ -119,8 +166,20 @@ def build_provider_hint(provider: str, detail: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run and evaluate README fixture suite.")
-    parser.add_argument("--provider", required=True)
+    parser.add_argument("--provider", default=None)
+    parser.add_argument(
+        "--provider-overwrite-file",
+        default=None,
+        help="Optional provider TOML template to apply per case run and then restore.",
+    )
+    parser.add_argument(
+        "--workflow-variant-dir",
+        default=None,
+        help="Optional directory copied into fixture config/workflows per case run and then restore.",
+    )
     parser.add_argument("--agent", default="docs-writer")
+    parser.add_argument("--workflow-id", default=None, help="Optional runtime workflow_id override")
+    parser.add_argument("--provider-model", default=None, help="Optional runtime provider model override")
     parser.add_argument("--meld-bin", default="meld")
     parser.add_argument("--run-id", default=dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ"))
     parser.add_argument(
@@ -164,6 +223,15 @@ def main() -> int:
 
     repo_root = pathlib.Path.cwd()
     harness_root = (repo_root / args.harness_root).resolve()
+    run_config = load_local_run_config(harness_root)
+    provider = args.provider or run_config.get("provider")
+    if not provider:
+        print(
+            "provider is required (pass --provider or set eval/readme/config/local/run.local.json)",
+            file=sys.stderr,
+        )
+        return 2
+
     fixtures_dir = harness_root / "fixtures"
     rubric_path = harness_root / "rubrics" / "readme_quality.yaml"
     rubric = parse_simple_yaml(rubric_path)
@@ -183,7 +251,7 @@ def main() -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if args.preflight_provider_test and not args.skip_generate:
-        preflight_cmd = [args.meld_bin, "provider", "test", args.provider, "--timeout", "10"]
+        preflight_cmd = [args.meld_bin, "provider", "test", provider, "--timeout", "10"]
         preflight = subprocess.run(
             preflight_cmd,
             cwd=str(repo_root),
@@ -194,7 +262,7 @@ def main() -> int:
         if preflight.returncode != 0:
             summary = {
                 "run_id": args.run_id,
-                "provider": args.provider,
+                "provider": provider,
                 "agent": args.agent,
                 "total_cases": 0,
                 "passed_cases": 0,
@@ -227,7 +295,7 @@ def main() -> int:
                 "--case-id",
                 case_id,
                 "--provider",
-                args.provider,
+                provider,
                 "--agent",
                 args.agent,
                 "--meld-bin",
@@ -237,6 +305,14 @@ def main() -> int:
                 "--harness-root",
                 str(harness_root),
             ]
+            if args.provider_overwrite_file is not None:
+                run_case_cmd.extend(["--provider-overwrite-file", args.provider_overwrite_file])
+            if args.workflow_variant_dir is not None:
+                run_case_cmd.extend(["--workflow-variant-dir", args.workflow_variant_dir])
+            if args.workflow_id is not None:
+                run_case_cmd.extend(["--workflow-id", args.workflow_id])
+            if args.provider_model is not None:
+                run_case_cmd.extend(["--provider-model", args.provider_model])
             if args.lmserver_max_tool_turns is not None:
                 run_case_cmd.extend(
                     [
@@ -260,7 +336,7 @@ def main() -> int:
             if proc.returncode != 0:
                 failure_payload = parse_run_case_failure(proc.stdout)
                 detail = failure_payload.get("stderr", "")
-                hint = build_provider_hint(args.provider, detail)
+                hint = build_provider_hint(provider, detail)
                 case_results.append(
                     {
                         "case_id": case_id,
@@ -285,7 +361,19 @@ def main() -> int:
         else:
             actual = ""
         metrics = evaluate_case(expected, actual, rubric)
+        run_meta = load_run_meta(run_dir, case_id)
+        generate_elapsed_ms = run_meta.get("generate_elapsed_ms")
+        if isinstance(generate_elapsed_ms, int):
+            speed_score = round(compute_speed_score(generate_elapsed_ms, rubric), 4)
+            utility = round(compute_utility(float(metrics.get("score", 0.0)), speed_score, rubric), 4)
+        else:
+            speed_score = None
+            utility = None
         metrics["case_id"] = case_id
+        metrics["generate_elapsed_ms"] = generate_elapsed_ms
+        metrics["total_elapsed_ms"] = run_meta.get("total_elapsed_ms")
+        metrics["speed_score"] = speed_score
+        metrics["utility"] = utility
         case_results.append(metrics)
 
     total = len(case_results)
@@ -295,11 +383,23 @@ def main() -> int:
         sum(float(item.get("score", 0.0)) for item in case_results) / total if total else 0.0,
         4,
     )
+    timed_cases = [item for item in case_results if isinstance(item.get("generate_elapsed_ms"), int)]
+    avg_generate_ms = round(
+        sum(int(item["generate_elapsed_ms"]) for item in timed_cases) / len(timed_cases), 2
+    ) if timed_cases else None
+    utility_cases = [item for item in case_results if isinstance(item.get("utility"), (float, int))]
+    avg_utility = round(
+        sum(float(item["utility"]) for item in utility_cases) / len(utility_cases), 4
+    ) if utility_cases else None
 
     summary = {
         "run_id": args.run_id,
-        "provider": args.provider,
+        "provider": provider,
+        "provider_overwrite_file": args.provider_overwrite_file,
+        "workflow_variant_dir": args.workflow_variant_dir,
+        "workflow_id": args.workflow_id,
         "agent": args.agent,
+        "provider_model": args.provider_model,
         "lmserver_max_tool_turns": args.lmserver_max_tool_turns,
         "disable_auto_web_search": args.disable_auto_web_search,
         "additional_json_file": args.additional_json_file,
@@ -307,6 +407,8 @@ def main() -> int:
         "passed_cases": passed,
         "failed_cases": failed,
         "avg_score": avg_score,
+        "avg_generate_elapsed_ms": avg_generate_ms,
+        "avg_utility": avg_utility,
         "rubric_path": str(rubric_path),
         "cases": case_results,
     }
@@ -315,8 +417,12 @@ def main() -> int:
     report_lines = [
         f"# README Eval Report ({args.run_id})",
         "",
-        f"- Provider: `{args.provider}`",
+        f"- Provider: `{provider}`",
+        f"- Provider overwrite file: `{args.provider_overwrite_file}`",
+        f"- Workflow variant dir: `{args.workflow_variant_dir}`",
+        f"- Workflow id override: `{args.workflow_id}`",
         f"- Agent: `{args.agent}`",
+        f"- Provider model override: `{args.provider_model}`",
         f"- lmserver_max_tool_turns: `{args.lmserver_max_tool_turns}`",
         f"- disable_auto_web_search: `{args.disable_auto_web_search}`",
         f"- additional_json_file: `{args.additional_json_file}`",
@@ -324,6 +430,8 @@ def main() -> int:
         f"- Passed: `{passed}`",
         f"- Failed: `{failed}`",
         f"- Average score: `{avg_score}`",
+        f"- Average generate ms: `{avg_generate_ms}`",
+        f"- Average utility: `{avg_utility}`",
         "",
         "## Case Results",
         "",
@@ -344,10 +452,13 @@ def main() -> int:
                 report_lines.append(f"- `{case_id}`: FAIL (`{item['error']}`)")
         else:
             report_lines.append(
-                "- `{}`: {} score={} similarity={} heading_cov={}".format(
+                "- `{}`: {} score={} utility={} speed_score={} gen_ms={} similarity={} heading_cov={}".format(
                     case_id,
                     "PASS" if item.get("passed") else "FAIL",
                     item.get("score"),
+                    item.get("utility"),
+                    item.get("speed_score"),
+                    item.get("generate_elapsed_ms"),
                     item.get("similarity"),
                     item.get("heading_coverage"),
                 )

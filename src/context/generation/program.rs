@@ -1,4 +1,5 @@
 use crate::context::generation::plan::GenerationNodeType;
+use crate::provider::ProviderExecutionBinding;
 use crate::types::{FrameID, NodeID};
 use serde::{Deserialize, Serialize};
 
@@ -53,7 +54,7 @@ pub struct TargetExecutionRequest {
     pub path: String,
     pub node_type: GenerationNodeType,
     pub agent_id: String,
-    pub provider_name: String,
+    pub provider: ProviderExecutionBinding,
     pub frame_type: String,
     pub force: bool,
     pub program: TargetExecutionProgram,

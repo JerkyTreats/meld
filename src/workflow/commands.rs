@@ -5,6 +5,7 @@ use crate::config::WorkflowConfig;
 use crate::context::generation::TargetExecutionProgram;
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
+use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 use crate::types::NodeID;
 use crate::workflow::facade::{build_target_execution_request, execute_registered_workflow_target};
 use crate::workflow::profile::WorkflowProfile;
@@ -162,7 +163,10 @@ impl WorkflowCommandService {
             api,
             node_id,
             request.agent_id.clone(),
-            request.provider_name.clone(),
+            ProviderExecutionBinding::new(
+                request.provider_name.clone(),
+                ProviderRuntimeOverrides::default(),
+            )?,
             frame_type,
             request.force,
             TargetExecutionProgram::workflow(&request.workflow_id),

@@ -282,7 +282,11 @@ fn workflow_facade_maps_completed_thread_reuse_to_target_result() {
             run_context.api(),
             node_id,
             "docs-writer".to_string(),
-            "test-provider".to_string(),
+            meld::provider::ProviderExecutionBinding::new(
+                "test-provider",
+                meld::provider::ProviderRuntimeOverrides::default(),
+            )
+            .unwrap(),
             "context-docs-writer".to_string(),
             false,
             meld::context::TargetExecutionProgram::workflow("docs_writer_thread_v1"),
