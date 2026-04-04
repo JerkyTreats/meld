@@ -67,7 +67,7 @@ This plan does not expand non-default selector behavior.
 | 1 | Capability contract core and catalog | Phase 0 | complete |
 | 2 | Task records, artifact repo, and compiler | Phase 0 and Phase 1 | complete |
 | 3 | Task executor and invocation payload assembly | Phase 1 and Phase 2 | complete |
-| 4 | First-slice capability implementation | Phase 1 through Phase 3 | proposed |
+| 4 | First-slice capability implementation | Phase 1 through Phase 3 | complete |
 | 5 | Docs-writer task package and task DAG execution | Phase 2 through Phase 4 | proposed |
 | 6 | Workflow convergence onto task execution | Phase 3 through Phase 5 | proposed |
 | 7 | Boundary seal, workflow retirement, and readiness signoff | Phase 0 through Phase 6 | proposed |
@@ -347,6 +347,12 @@ This plan does not expand non-default selector behavior.
 **Comment gate**:
 - public capability publication code has Rustdoc comments
 - sig adapter code explains non-obvious slot-to-argument resolution and output shaping decisions
+
+**Phase completion notes**:
+- the first-slice invoker registry now exists in `src/capability/invocation.rs`
+- workspace, Merkle traversal, context prepare, provider execute, and context finalize now publish real contracts from their owning domains
+- the new capability invocation integration suite proves real structured-data invocation over a scanned tree and a mock provider on 2026-04-04
+- repo-wide clippy remains blocked by preexisting warnings outside the new capability files
 
 ---
 

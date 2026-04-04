@@ -1,3 +1,5 @@
+pub mod capability;
+
 use crate::api::ContextApi;
 use crate::error::ApiError;
 use crate::types::NodeID;

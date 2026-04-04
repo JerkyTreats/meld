@@ -27,7 +27,7 @@ pub struct FrameMetadataValidationInput<'a> {
     pub previous_metadata: Option<&'a FrameMetadata>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GeneratedFrameMetadataInput {
     pub agent_id: String,
     pub provider: String,

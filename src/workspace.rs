@@ -1,5 +1,6 @@
 //! Workspace domain: command orchestration, status assembly, and watch runtime.
 
+pub mod capability;
 mod ci;
 mod commands;
 mod danger;

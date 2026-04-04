@@ -1,6 +1,7 @@
 //! Context domain: frame model, query, mutation, generation, and queue.
 //! Owns context behavior; CLI, agent adapter, and workspace watch consume via explicit contracts.
 
+pub mod capability;
 pub mod facade;
 pub mod frame;
 pub(crate) mod frame_metadata_keys;
