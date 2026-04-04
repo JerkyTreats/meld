@@ -21,6 +21,7 @@ pub mod metadata;
 pub mod prompt_context;
 pub mod provider;
 pub mod store;
+pub mod task;
 pub mod telemetry;
 pub mod tree;
 pub mod types;

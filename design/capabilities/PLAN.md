@@ -65,7 +65,7 @@ This plan does not expand non-default selector behavior.
 |-------|------|--------------|--------|
 | 0 | Baseline lock and readiness gates | None | complete |
 | 1 | Capability contract core and catalog | Phase 0 | complete |
-| 2 | Task records, artifact repo, and compiler | Phase 0 and Phase 1 | proposed |
+| 2 | Task records, artifact repo, and compiler | Phase 0 and Phase 1 | complete |
 | 3 | Task executor and invocation payload assembly | Phase 1 and Phase 2 | proposed |
 | 4 | First-slice capability implementation | Phase 1 through Phase 3 | proposed |
 | 5 | Docs-writer task package and task DAG execution | Phase 2 through Phase 4 | proposed |
@@ -223,6 +223,12 @@ This plan does not expand non-default selector behavior.
 **Comment gate**:
 - public task record and compiler contract types have Rustdoc comments
 - graph derivation, effect ordering, and artifact supersession code includes invariant comments where the logic is not self-evident
+
+**Phase completion notes**:
+- `src/task` now provides durable task records, init payload validation, artifact repo behavior, and compiler entry points
+- task compilation derives artifact edges from upstream slot wiring and serializes exclusive effects deterministically
+- targeted task compiler and artifact repo unit and integration gates passed on 2026-04-04
+- repo-wide clippy remains blocked by preexisting warnings outside the new task files
 
 ---
 
