@@ -873,11 +873,15 @@ fn context_generate_recursive_completes_levels_bottom_up() {
             .find(|e| e.event_type == "plan_constructed")
             .expect("plan_constructed should be emitted");
         assert_eq!(
-            plan.data.get("total_nodes").and_then(|value| value.as_u64()),
+            plan.data
+                .get("total_nodes")
+                .and_then(|value| value.as_u64()),
             Some(4)
         );
         assert_eq!(
-            plan.data.get("total_levels").and_then(|value| value.as_u64()),
+            plan.data
+                .get("total_levels")
+                .and_then(|value| value.as_u64()),
             Some(3)
         );
 

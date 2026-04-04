@@ -4,9 +4,9 @@
 //! Handles large-scale operations efficiently through batching, rate limiting, and concurrent processing.
 
 use crate::api::ContextApi;
-use crate::control::compatibility::execute_target_request;
 use crate::context::generation::contracts::GeneratedMetadataBuilder;
 use crate::context::generation::{TargetExecutionProgram, TargetExecutionProgramKind};
+use crate::control::compatibility::execute_target_request;
 use crate::error::ApiError;
 use crate::metadata::frame_types::FrameMetadata;
 use crate::metadata::frame_write_contract::{
@@ -1302,13 +1302,7 @@ impl FrameGenerationQueue {
         event_context: Option<QueueEventContext>,
         metadata_builder: &GeneratedMetadataBuilder,
     ) -> Result<FrameID, ApiError> {
-        execute_target_request(
-            request,
-            api,
-            event_context.as_ref(),
-            metadata_builder,
-        )
-        .await
+        execute_target_request(request, api, event_context.as_ref(), metadata_builder).await
     }
 
     fn is_retryable_workflow_generation_failure(message: &str) -> bool {

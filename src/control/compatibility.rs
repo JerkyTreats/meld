@@ -22,13 +22,9 @@ pub async fn execute_target_request(
             )
         })?;
         let target_request = build_compatibility_target_request(api, request, event_context)?;
-        let target_result = execute_workflow_target_async(
-            api,
-            workspace_root,
-            &target_request,
-            event_context,
-        )
-        .await?;
+        let target_result =
+            execute_workflow_target_async(api, workspace_root, &target_request, event_context)
+                .await?;
         return Ok(target_result.final_frame_id);
     }
 
@@ -41,13 +37,7 @@ pub async fn execute_target_request(
         retry_count: request.retry_count,
         force: request.options.force,
     };
-    execute_generation_request(
-        &orchestration_request,
-        api,
-        metadata_builder,
-        event_context,
-    )
-    .await
+    execute_generation_request(&orchestration_request, api, metadata_builder, event_context).await
 }
 
 fn build_compatibility_target_request(

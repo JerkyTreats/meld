@@ -64,7 +64,7 @@ This plan does not expand non-default selector behavior.
 | Phase | Goal | Dependencies | Status |
 |-------|------|--------------|--------|
 | 0 | Baseline lock and readiness gates | None | complete |
-| 1 | Capability contract core and catalog | Phase 0 | proposed |
+| 1 | Capability contract core and catalog | Phase 0 | complete |
 | 2 | Task records, artifact repo, and compiler | Phase 0 and Phase 1 | proposed |
 | 3 | Task executor and invocation payload assembly | Phase 1 and Phase 2 | proposed |
 | 4 | First-slice capability implementation | Phase 1 through Phase 3 | proposed |
@@ -163,6 +163,12 @@ This plan does not expand non-default selector behavior.
 **Comment gate**:
 - all new public capability contract types and traits have Rustdoc comments
 - validation code with non-obvious rules includes short why-focused comments
+
+**Phase completion notes**:
+- `src/capability` now provides published contract, catalog, and invocation payload types
+- contract validation covers duplicate slots, required bindings, and artifact compatibility
+- targeted capability unit and integration gates passed on 2026-04-04
+- repo-wide clippy remains blocked by preexisting warnings outside the new capability files
 
 ---
 

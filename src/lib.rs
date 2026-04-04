@@ -5,11 +5,12 @@
 
 pub mod agent;
 pub mod api;
+pub mod capability;
 pub mod cli;
 pub mod concurrency;
-pub mod control;
 pub mod config;
 pub mod context;
+pub mod control;
 pub mod error;
 pub mod heads;
 pub mod ignore;
