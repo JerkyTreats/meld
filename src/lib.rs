@@ -14,6 +14,7 @@ pub mod heads;
 pub mod ignore;
 pub mod init;
 pub mod logging;
+pub mod merkle_traversal;
 pub mod metadata;
 pub mod prompt_context;
 pub mod provider;

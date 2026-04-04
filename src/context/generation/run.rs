@@ -12,12 +12,13 @@ use crate::context::generation::GenerationExecutor;
 use crate::context::queue::{FrameGenerationQueue, GenerationConfig, QueueEventContext};
 use crate::error::ApiError;
 use crate::provider::ProviderExecutionBinding;
+use crate::merkle_traversal::{traverse, TraversalStrategy};
 use crate::store::NodeType;
 use crate::telemetry::{now_millis, ProgressRuntime};
 use crate::types::NodeID;
 use crate::workspace;
 use serde_json::json;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -119,33 +120,6 @@ fn find_missing_descendant_heads(
     Ok(missing)
 }
 
-fn collect_subtree_levels(
-    api: &ContextApi,
-    target_node_id: NodeID,
-) -> Result<Vec<Vec<NodeID>>, ApiError> {
-    let mut levels: HashMap<usize, Vec<NodeID>> = HashMap::new();
-    let mut visited: HashSet<NodeID> = HashSet::new();
-    let mut queue = VecDeque::new();
-    queue.push_back((target_node_id, 0usize));
-    while let Some((node_id, depth)) = queue.pop_front() {
-        if !visited.insert(node_id) {
-            continue;
-        }
-        levels.entry(depth).or_default().push(node_id);
-        let record = api
-            .node_store()
-            .get(&node_id)
-            .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
-        for child in &record.children {
-            queue.push_back((*child, depth + 1));
-        }
-    }
-    let mut ordered_depths: Vec<_> = levels.into_iter().collect();
-    ordered_depths.sort_by(|(a, _), (b, _)| b.cmp(a));
-    Ok(ordered_depths.into_iter().map(|(_, nodes)| nodes).collect())
-}
-
 #[allow(clippy::too_many_arguments)]
 fn build_plan(
     api: &ContextApi,
@@ -205,8 +179,8 @@ fn build_plan(
 
     let mut levels: Vec<Vec<GenerationItem>> = Vec::new();
     if recursive {
-        let depth_levels = collect_subtree_levels(api, target_node_id)?;
-        for level in depth_levels {
+        let traversal = traverse(api, target_node_id, TraversalStrategy::BottomUp)?;
+        for level in traversal.into_batches() {
             let mut items = Vec::new();
             for node_id in level {
                 let record = api
