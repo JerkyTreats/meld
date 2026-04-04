@@ -8,6 +8,7 @@ mod capability_invocation;
 mod config_integration;
 mod context_api;
 mod context_cli;
+mod docs_writer_task;
 mod frame_queue;
 mod generation_parity;
 mod hasher_verification;

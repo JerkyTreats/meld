@@ -692,20 +692,7 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
                     guaranteed: false,
                 },
             ],
-            effect_contract: vec![
-                EffectSpec {
-                    effect_id: "write_frame_store".to_string(),
-                    kind: EffectKind::Write,
-                    target: "frame_store".to_string(),
-                    exclusive: true,
-                },
-                EffectSpec {
-                    effect_id: "write_active_head".to_string(),
-                    kind: EffectKind::Write,
-                    target: "active_head".to_string(),
-                    exclusive: true,
-                },
-            ],
+            effect_contract: Vec::new(),
             execution_contract: ExecutionContract {
                 execution_class: ExecutionClass::Inline,
                 completion_semantics: "artifacts".to_string(),

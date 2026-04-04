@@ -68,7 +68,7 @@ This plan does not expand non-default selector behavior.
 | 2 | Task records, artifact repo, and compiler | Phase 0 and Phase 1 | complete |
 | 3 | Task executor and invocation payload assembly | Phase 1 and Phase 2 | complete |
 | 4 | First-slice capability implementation | Phase 1 through Phase 3 | complete |
-| 5 | Docs-writer task package and task DAG execution | Phase 2 through Phase 4 | proposed |
+| 5 | Docs-writer task package and task DAG execution | Phase 2 through Phase 4 | complete |
 | 6 | Workflow convergence onto task execution | Phase 3 through Phase 5 | proposed |
 | 7 | Boundary seal, workflow retirement, and readiness signoff | Phase 0 through Phase 6 | proposed |
 
@@ -406,6 +406,12 @@ This plan does not expand non-default selector behavior.
 **Comment gate**:
 - package lowering and DAG expansion code documents the child-to-parent dependency invariant
 - tests include clear fixtures and comments where tree shapes express execution intent
+
+**Phase completion notes**:
+- `src/task/package.rs`, `src/task/runtime.rs`, and `src/task/templates/docs_writer.rs` now lower docs-writer into a compiled task and execute it through the task runtime
+- docs-writer task runs now persist task-scoped artifacts, invocation records, and final frames while preserving bottom-up child-to-parent dependencies
+- the new docs-writer task integration suite proves deterministic compilation and end-to-end execution on 2026-04-04
+- repo-wide clippy remains blocked by preexisting warnings outside the new task and capability files
 
 ---
 

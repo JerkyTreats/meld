@@ -11,7 +11,10 @@ pub mod events;
 pub mod executor;
 pub mod init;
 pub mod invocation;
+pub mod package;
 pub mod readiness;
+pub mod runtime;
+pub mod templates;
 
 pub use artifact_repo::TaskArtifactRepo;
 pub use compiler::{compile_task_definition, TaskCompiler};
@@ -26,4 +29,6 @@ pub use init::{
     validate_task_initialization, InitArtifactValue, TaskInitializationPayload, TaskRunContext,
 };
 pub use invocation::assemble_invocation_payload;
+pub use package::{PreparedTaskRun, WorkflowPackageTriggerRequest};
 pub use readiness::compute_ready_capability_instances;
+pub use runtime::{execute_task_to_completion, TaskRunSummary};

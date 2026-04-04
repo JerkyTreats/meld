@@ -76,6 +76,16 @@ impl TaskExecutor {
         &self.artifact_repo
     }
 
+    /// Returns the compiled task backing this live executor.
+    pub fn compiled_task(&self) -> &CompiledTaskRecord {
+        &self.compiled_task
+    }
+
+    /// Returns the task initialization payload for this live executor.
+    pub fn init_payload(&self) -> &TaskInitializationPayload {
+        &self.init_payload
+    }
+
     /// Returns the persisted invocation records.
     pub fn invocation_records(&self) -> &[CapabilityInvocationRecord] {
         &self.invocation_records
@@ -94,6 +104,16 @@ impl TaskExecutor {
             &self.completed_instances,
             &self.in_flight_instances,
         )
+    }
+
+    /// Returns true when all compiled capability instances completed successfully.
+    pub fn is_complete(&self) -> bool {
+        self.completed_instances.len() == self.compiled_task.capability_instances.len()
+    }
+
+    /// Returns the current completed capability instance count.
+    pub fn completed_count(&self) -> usize {
+        self.completed_instances.len()
     }
 
     /// Releases all currently ready capability invocations.
