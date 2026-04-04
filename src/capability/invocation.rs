@@ -4,6 +4,7 @@ use crate::api::ContextApi;
 use crate::capability::catalog::CapabilityCatalog;
 use crate::capability::contracts::{BoundCapabilityInstance, CapabilityTypeContract};
 use crate::capability::runtime::{CapabilityInvocationPayload, CapabilityRuntimeInit};
+use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::task::ArtifactRecord;
 use async_trait::async_trait;
@@ -60,6 +61,7 @@ pub trait CapabilityInvoker: Send + Sync {
         api: &ContextApi,
         runtime_init: &CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
+        event_context: Option<&QueueEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError>;
 }
 

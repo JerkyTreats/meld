@@ -126,6 +126,7 @@ impl CapabilityInvoker for ProviderExecuteChatCapability {
         api: &ContextApi,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
+        event_context: Option<&crate::context::queue::QueueEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 
@@ -136,7 +137,7 @@ impl CapabilityInvoker for ProviderExecuteChatCapability {
             &request_artifact.request,
             &preparation,
             request_artifact.messages,
-            None,
+            event_context,
         )
         .await?;
         let duration_ms = started.elapsed().as_millis();

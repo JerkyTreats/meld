@@ -301,6 +301,8 @@ fn docs_writer_task_runs_to_completion() {
                 run_context.api(),
                 &mut executor,
                 &registry,
+                None,
+                None,
             ))
             .unwrap();
 

@@ -69,7 +69,7 @@ This plan does not expand non-default selector behavior.
 | 3 | Task executor and invocation payload assembly | Phase 1 and Phase 2 | complete |
 | 4 | First-slice capability implementation | Phase 1 through Phase 3 | complete |
 | 5 | Docs-writer task package and task DAG execution | Phase 2 through Phase 4 | complete |
-| 6 | Workflow convergence onto task execution | Phase 3 through Phase 5 | proposed |
+| 6 | Workflow convergence onto task execution | Phase 3 through Phase 5 | complete |
 | 7 | Boundary seal, workflow retirement, and readiness signoff | Phase 0 through Phase 6 | proposed |
 
 ---
@@ -462,6 +462,12 @@ This plan does not expand non-default selector behavior.
 
 **Comment gate**:
 - compatibility adapters include short comments that explain why the adapter still exists and what future task-native path will replace it
+
+**Phase completion notes**:
+- `src/workflow/executor.rs` now routes the active docs-writer execution path into task package preparation and task runtime execution while preserving the outer workflow trigger contract
+- workflow-triggered docs-writer runs now emit workflow-compatible turn, lineage, provider, and summary events through the task-backed path
+- workflow CLI, workflow-task compatibility, and progress observability gates passed on 2026-04-04
+- repo-wide clippy remains blocked by preexisting warnings outside the new workflow, task, and capability files
 
 ---
 

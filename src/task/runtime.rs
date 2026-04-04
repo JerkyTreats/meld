@@ -2,10 +2,14 @@
 
 use crate::api::ContextApi;
 use crate::capability::{CapabilityExecutionContext, CapabilityExecutorRegistry};
+use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::task::executor::TaskExecutor;
 use crate::task::ArtifactRecord;
+use crate::telemetry::WorkflowTurnEventData;
 use futures::stream::{FuturesUnordered, StreamExt};
+use serde_json::json;
+use std::collections::HashMap;
 
 /// Summary for one completed task runtime execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,11 +21,26 @@ pub struct TaskRunSummary {
     pub artifact_count: usize,
 }
 
+/// Workflow compatibility telemetry carried into task execution.
+#[derive(Debug, Clone)]
+pub struct WorkflowTaskTelemetry {
+    pub workflow_id: String,
+    pub thread_id: String,
+    pub agent_id: String,
+    pub provider_name: String,
+    pub frame_type: String,
+    pub plan_id: Option<String>,
+    pub level_index: Option<usize>,
+    pub turn_seq_by_id: HashMap<String, u32>,
+}
+
 /// Executes one task to completion using the registered capability invokers.
 pub async fn execute_task_to_completion(
     api: &ContextApi,
     executor: &mut TaskExecutor,
     registry: &CapabilityExecutorRegistry,
+    event_context: Option<&QueueEventContext>,
+    workflow_telemetry: Option<&WorkflowTaskTelemetry>,
 ) -> Result<TaskRunSummary, ApiError> {
     loop {
         if executor.is_complete() {
@@ -69,20 +88,83 @@ pub async fn execute_task_to_completion(
                     ))
                 })?;
             let invocation_id = payload.invocation_id.clone();
+            if let (Some(ctx), Some(telemetry), Some((turn_id, stage))) = (
+                event_context,
+                workflow_telemetry,
+                parse_turn_stage(&payload.capability_instance_id),
+            )
+            {
+                if stage == "prepare" {
+                    emit_workflow_turn_event(
+                        ctx,
+                        "workflow_turn_started",
+                        workflow_turn_event_data(
+                            telemetry,
+                            &payload,
+                            &turn_id,
+                            None,
+                            None,
+                        ),
+                    );
+                }
+            }
             futures.push(async move {
-                let outcome = invoker.invoke(api, &runtime_init, &payload).await;
+                let outcome = invoker
+                    .invoke(api, &runtime_init, &payload, event_context)
+                    .await;
                 (
                     invocation_id,
                     payload.capability_instance_id.clone(),
+                    payload.clone(),
                     outcome,
                 )
             });
         }
 
-        while let Some((invocation_id, capability_instance_id, outcome)) = futures.next().await {
+        while let Some((invocation_id, capability_instance_id, payload, outcome)) = futures.next().await {
             match outcome {
-                Ok(result) => executor.record_success(&invocation_id, result.emitted_artifacts)?,
+                Ok(result) => {
+                    executor.record_success(&invocation_id, result.emitted_artifacts)?;
+                    if let (Some(ctx), Some(telemetry), Some((turn_id, stage))) = (
+                        event_context,
+                        workflow_telemetry,
+                        parse_turn_stage(&capability_instance_id),
+                    )
+                    {
+                        if stage == "finalize" {
+                            emit_workflow_turn_event(
+                                ctx,
+                                "workflow_turn_completed",
+                                workflow_turn_event_data(
+                                    telemetry,
+                                    &payload,
+                                    &turn_id,
+                                    None,
+                                    None,
+                                ),
+                            );
+                        }
+                    }
+                }
                 Err(err) => {
+                    if let (Some(ctx), Some(telemetry), Some((turn_id, _stage))) = (
+                        event_context,
+                        workflow_telemetry,
+                        parse_turn_stage(&capability_instance_id),
+                    )
+                    {
+                        emit_workflow_turn_event(
+                            ctx,
+                            "workflow_turn_failed",
+                            workflow_turn_event_data(
+                                telemetry,
+                                &payload,
+                                &turn_id,
+                                None,
+                                Some(err.to_string()),
+                            ),
+                        );
+                    }
                     executor.record_failure(
                         &invocation_id,
                         failure_artifact(
@@ -98,6 +180,81 @@ pub async fn execute_task_to_completion(
             }
         }
     }
+}
+
+fn emit_workflow_turn_event(
+    event_context: &QueueEventContext,
+    event_type: &str,
+    payload: WorkflowTurnEventData,
+) {
+    event_context
+        .progress
+        .emit_event_best_effort(&event_context.session_id, event_type, json!(payload));
+}
+
+fn workflow_turn_event_data(
+    telemetry: &WorkflowTaskTelemetry,
+    payload: &crate::capability::CapabilityInvocationPayload,
+    turn_id: &str,
+    final_frame_id: Option<String>,
+    error: Option<String>,
+) -> WorkflowTurnEventData {
+    WorkflowTurnEventData {
+        workflow_id: telemetry.workflow_id.clone(),
+        thread_id: telemetry.thread_id.clone(),
+        turn_id: turn_id.to_string(),
+        turn_seq: telemetry.turn_seq_by_id.get(turn_id).copied().unwrap_or_default(),
+        node_id: payload_node_id(payload).unwrap_or_default(),
+        path: payload_path(payload).unwrap_or_default(),
+        agent_id: telemetry.agent_id.clone(),
+        provider_name: telemetry.provider_name.clone(),
+        frame_type: telemetry.frame_type.clone(),
+        attempt: payload.execution_context.attempt as usize,
+        plan_id: telemetry.plan_id.clone(),
+        level_index: telemetry.level_index,
+        final_frame_id,
+        error,
+    }
+}
+
+fn parse_turn_stage(capability_instance_id: &str) -> Option<(String, String)> {
+    let parts = capability_instance_id.split("::").collect::<Vec<_>>();
+    if parts.len() < 5 || parts[2] != "turn" {
+        return None;
+    }
+    Some((parts[3].to_string(), parts[4].to_string()))
+}
+
+fn payload_node_id(payload: &crate::capability::CapabilityInvocationPayload) -> Option<String> {
+    payload
+        .supplied_inputs
+        .iter()
+        .find(|input| input.slot_id == "resolved_node_ref")
+        .and_then(|input| match &input.value {
+            crate::capability::SuppliedValueRef::Artifact(artifact) => {
+                artifact.content.get("node_id").and_then(|value| value.as_str())
+            }
+            crate::capability::SuppliedValueRef::StructuredValue(value) => {
+                value.get("node_id").and_then(|value| value.as_str())
+            }
+        })
+        .map(ToString::to_string)
+}
+
+fn payload_path(payload: &crate::capability::CapabilityInvocationPayload) -> Option<String> {
+    payload
+        .supplied_inputs
+        .iter()
+        .find(|input| input.slot_id == "resolved_node_ref")
+        .and_then(|input| match &input.value {
+            crate::capability::SuppliedValueRef::Artifact(artifact) => {
+                artifact.content.get("path").and_then(|value| value.as_str())
+            }
+            crate::capability::SuppliedValueRef::StructuredValue(value) => {
+                value.get("path").and_then(|value| value.as_str())
+            }
+        })
+        .map(ToString::to_string)
 }
 
 fn failure_artifact(

@@ -184,6 +184,7 @@ impl CapabilityInvoker for MerkleTraversalCapability {
         api: &ContextApi,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
+        _event_context: Option<&crate::context::queue::QueueEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 

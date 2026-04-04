@@ -241,7 +241,7 @@ fn workspace_and_traversal_capabilities_follow_scanned_tree() {
                 registry
                     .get("workspace_resolve_node_id", 1)
                     .unwrap()
-                    .invoke(run_context.api(), &resolve_runtime, &resolve_payload),
+                    .invoke(run_context.api(), &resolve_runtime, &resolve_payload, None),
             )
             .unwrap();
         let resolved = resolve_result
@@ -280,6 +280,7 @@ fn workspace_and_traversal_capabilities_follow_scanned_tree() {
                 run_context.api(),
                 &traversal_runtime,
                 &traversal_payload,
+                None,
             ))
             .unwrap();
         let ordered = traversal_result
@@ -420,6 +421,7 @@ fn context_provider_finalize_capabilities_materialize_frame() {
                 run_context.api(),
                 &prepare_runtime,
                 &prepare_payload,
+                None,
             ))
             .unwrap();
         let provider_request = prepare_result
@@ -457,6 +459,7 @@ fn context_provider_finalize_capabilities_materialize_frame() {
                 run_context.api(),
                 &provider_runtime,
                 &provider_payload,
+                None,
             ))
             .unwrap();
         let provider_output = provider_result
@@ -531,7 +534,7 @@ fn context_provider_finalize_capabilities_materialize_frame() {
                 registry
                     .get("context_generate_finalize", 1)
                     .unwrap()
-                    .invoke(run_context.api(), &finalize_runtime, &finalize_payload),
+                    .invoke(run_context.api(), &finalize_runtime, &finalize_payload, None),
             )
             .unwrap();
 

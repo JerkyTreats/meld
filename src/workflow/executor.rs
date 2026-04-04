@@ -2,6 +2,7 @@
 
 use crate::agent::profile::prompt_contract::PromptContract;
 use crate::api::ContextApi;
+use crate::capability::{CapabilityCatalog, CapabilityExecutorRegistry};
 use crate::context::frame::{Basis, Frame};
 use crate::context::generation::contracts::{
     GeneratedMetadataBuilder, GenerationOrchestrationRequest,
@@ -17,6 +18,11 @@ use crate::error::ApiError;
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
 use crate::provider::ProviderExecutionBinding;
+use crate::task::templates::docs_writer::prepare_docs_writer_task_run;
+use crate::task::{
+    execute_task_to_completion, TaskExecutor, WorkflowPackageTriggerRequest,
+    WorkflowTaskTelemetry,
+};
 use crate::telemetry::{
     now_millis, FrameMetadataValidationEventData, PromptContextLineageEventData,
     WorkflowForceResetEventData, WorkflowTargetEventData, WorkflowTurnEventData,
@@ -213,6 +219,21 @@ pub(crate) async fn execute_registered_workflow_async(
         .last()
         .map(|turn| turn.seq)
         .unwrap_or_default();
+
+    if uses_task_package_path(profile) {
+        return execute_registered_workflow_via_task_async(
+            api,
+            workspace_root,
+            registered_profile,
+            request,
+            event_context,
+            &state_store,
+            &thread_id,
+            &target_path,
+            final_turn_seq,
+        )
+        .await;
+    }
 
     for turn in ordered_turns {
         if turn.seq < start_seq {
@@ -750,6 +771,150 @@ pub(crate) async fn execute_registered_workflow_async(
         turns_completed: completed_turns,
         final_frame_id,
     })
+}
+
+fn uses_task_package_path(profile: &WorkflowProfile) -> bool {
+    profile.workflow_id == "docs_writer_thread_v1"
+}
+
+async fn execute_registered_workflow_via_task_async(
+    api: &ContextApi,
+    workspace_root: &Path,
+    registered_profile: &RegisteredWorkflowProfile,
+    request: &WorkflowExecutionRequest,
+    event_context: Option<&QueueEventContext>,
+    state_store: &WorkflowStateStore,
+    thread_id: &str,
+    target_path: &str,
+    final_turn_seq: u32,
+) -> Result<WorkflowExecutionSummary, ApiError> {
+    let mut catalog = CapabilityCatalog::new();
+    let mut registry = CapabilityExecutorRegistry::new();
+    register_task_path_capabilities(&mut catalog, &mut registry)?;
+
+    let prepared = prepare_docs_writer_task_run(
+        api,
+        workspace_root,
+        registered_profile,
+        &WorkflowPackageTriggerRequest {
+            package_id: "docs_writer".to_string(),
+            workflow_id: registered_profile.profile.workflow_id.clone(),
+            node_id: Some(request.node_id),
+            path: None,
+            agent_id: request.agent_id.clone(),
+            provider: request.provider.clone(),
+            frame_type: request.frame_type.clone(),
+            force: request.force,
+            session_id: event_context.map(|ctx| ctx.session_id.clone()),
+        },
+        &catalog,
+    )?;
+    let mut executor = TaskExecutor::new(
+        prepared.compiled_task,
+        prepared.init_payload,
+        format!("task_repo::{thread_id}"),
+    )?;
+    let task_summary = match execute_task_to_completion(
+        api,
+        &mut executor,
+        &registry,
+        event_context,
+        Some(&WorkflowTaskTelemetry {
+            workflow_id: registered_profile.profile.workflow_id.clone(),
+            thread_id: thread_id.to_string(),
+            agent_id: request.agent_id.clone(),
+            provider_name: request.provider.provider_name.clone(),
+            frame_type: request.frame_type.clone(),
+            plan_id: request.plan_id.clone(),
+            level_index: request.level_index,
+            turn_seq_by_id: registered_profile
+                .profile
+                .ordered_turns()
+                .into_iter()
+                .map(|turn| (turn.turn_id, turn.seq))
+                .collect(),
+        }),
+    )
+    .await
+    {
+        Ok(summary) => summary,
+        Err(err) => {
+            state_store.upsert_thread(&WorkflowThreadRecord {
+                thread_id: thread_id.to_string(),
+                workflow_id: registered_profile.profile.workflow_id.clone(),
+                node_id: hex::encode(request.node_id),
+                frame_type: request.frame_type.clone(),
+                status: WorkflowThreadStatus::Failed,
+                next_turn_seq: 1,
+                updated_at_ms: now_millis(),
+            })?;
+            return Err(err);
+        }
+    };
+
+    let final_frame_id = api.get_head(&request.node_id, &request.frame_type)?;
+    state_store.upsert_thread(&WorkflowThreadRecord {
+        thread_id: thread_id.to_string(),
+        workflow_id: registered_profile.profile.workflow_id.clone(),
+        node_id: hex::encode(request.node_id),
+        frame_type: request.frame_type.clone(),
+        status: WorkflowThreadStatus::Completed,
+        next_turn_seq: final_turn_seq.saturating_add(1),
+        updated_at_ms: now_millis(),
+    })?;
+
+    emit_workflow_target_event(
+        event_context,
+        "workflow_target_completed",
+        WorkflowTargetEventData {
+            workflow_id: registered_profile.profile.workflow_id.clone(),
+            thread_id: thread_id.to_string(),
+            node_id: hex::encode(request.node_id),
+            path: target_path.to_string(),
+            agent_id: request.agent_id.clone(),
+            provider_name: request.provider.provider_name.clone(),
+            frame_type: request.frame_type.clone(),
+            plan_id: request.plan_id.clone(),
+            level_index: request.level_index,
+            final_frame_id: final_frame_id.map(hex::encode),
+            turns_completed: Some(task_summary.completed_instances / 3),
+            reused_existing_head: Some(false),
+        },
+    );
+
+    Ok(WorkflowExecutionSummary {
+        workflow_id: registered_profile.profile.workflow_id.clone(),
+        thread_id: thread_id.to_string(),
+        turns_completed: task_summary.completed_instances / 3,
+        final_frame_id,
+    })
+}
+
+fn register_task_path_capabilities(
+    catalog: &mut CapabilityCatalog,
+    registry: &mut CapabilityExecutorRegistry,
+) -> Result<(), ApiError> {
+    registry.register(
+        catalog,
+        crate::workspace::capability::WorkspaceResolveNodeIdCapability,
+    )?;
+    registry.register(
+        catalog,
+        crate::merkle_traversal::capability::MerkleTraversalCapability,
+    )?;
+    registry.register(
+        catalog,
+        crate::context::capability::ContextGeneratePrepareCapability,
+    )?;
+    registry.register(
+        catalog,
+        crate::provider::capability::ProviderExecuteChatCapability,
+    )?;
+    registry.register(
+        catalog,
+        crate::context::capability::ContextGenerateFinalizeCapability,
+    )?;
+    Ok(())
 }
 
 fn emit_workflow_target_event(

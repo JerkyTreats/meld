@@ -10,7 +10,9 @@ use crate::capability::{
 };
 use crate::context::frame::{Basis, Frame};
 use crate::context::generation::contracts::{GenerationOrchestrationRequest, PromptAssemblyOutput};
-use crate::context::generation::metadata_construction::build_and_validate_generated_metadata;
+use crate::context::generation::metadata_construction::{
+    build_and_validate_generated_metadata, load_previous_metadata_snapshot,
+};
 use crate::context::generation::prompt_collection::build_prompt_messages;
 use crate::error::ApiError;
 use crate::metadata::frame_write_contract::{
@@ -19,6 +21,7 @@ use crate::metadata::frame_write_contract::{
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
 use crate::provider::{ChatMessage, MessageRole, ProviderExecutionBinding};
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
+use crate::telemetry::{FrameMetadataValidationEventData, PromptContextLineageEventData};
 use crate::workflow::gates::evaluate_gate;
 use crate::workflow::profile::WorkflowGate;
 use async_trait::async_trait;
@@ -366,6 +369,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
         api: &ContextApi,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
+        event_context: Option<&crate::context::queue::QueueEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 
@@ -450,6 +454,101 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
                 .unwrap_or_else(|| "resolved_at_provider".to_string()),
             "task_capability",
         )?;
+        if let Some(ctx) = event_context {
+            ctx.progress.emit_event_best_effort(
+                &ctx.session_id,
+                "prompt_context_lineage_prepared",
+                json!(PromptContextLineageEventData {
+                    node_id: hex::encode(node_id),
+                    agent_id: request.agent_id.clone(),
+                    provider_name: request.provider.provider_name.clone(),
+                    frame_type: request.frame_type.clone(),
+                    prompt_link_id: prepared_lineage.prompt_link_contract.prompt_link_id.clone(),
+                    prompt_digest: prepared_lineage.prompt_link_contract.prompt_digest.clone(),
+                    context_digest: prepared_lineage.prompt_link_contract.context_digest.clone(),
+                    system_prompt_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .system_prompt_artifact_id
+                        .clone(),
+                    user_prompt_template_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .user_prompt_template_artifact_id
+                        .clone(),
+                    rendered_prompt_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .rendered_prompt_artifact_id
+                        .clone(),
+                    context_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .context_artifact_id
+                        .clone(),
+                    lineage_failure_policy: "deterministic_orphan_keep".to_string(),
+                }),
+            );
+        }
+        let previous_metadata = load_previous_metadata_snapshot(api, &request)?;
+        if let Some(ctx) = event_context {
+            ctx.progress.emit_event_best_effort(
+                &ctx.session_id,
+                "frame_metadata_validation_started",
+                json!(FrameMetadataValidationEventData {
+                    node_id: hex::encode(node_id),
+                    path: node_record.path.to_string_lossy().to_string(),
+                    agent_id: request.agent_id.clone(),
+                    provider_name: request.provider.provider_name.clone(),
+                    frame_type: request.frame_type.clone(),
+                    prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
+                    context_digest: prepared_lineage.metadata_input.context_digest.clone(),
+                    prompt_link_id: prepared_lineage.metadata_input.prompt_link_id.clone(),
+                    previous_frame_id: previous_metadata.frame_id.clone(),
+                    previous_prompt_digest: previous_metadata.prompt_digest.clone(),
+                    previous_context_digest: previous_metadata.context_digest.clone(),
+                    previous_prompt_link_id: previous_metadata.prompt_link_id.clone(),
+                    workflow_id: workflow_id.clone(),
+                    thread_id: None,
+                    turn_id: Some(turn_id.clone()),
+                    turn_seq: None,
+                    attempt: Some(request.retry_count + 1),
+                    plan_id: None,
+                    level_index: None,
+                    error: None,
+                }),
+            );
+        }
+        build_and_validate_generated_metadata(
+            api,
+            &request,
+            &prepared_lineage.metadata_input,
+            &build_generated_metadata,
+        )?;
+        if let Some(ctx) = event_context {
+            ctx.progress.emit_event_best_effort(
+                &ctx.session_id,
+                "frame_metadata_validation_succeeded",
+                json!(FrameMetadataValidationEventData {
+                    node_id: hex::encode(node_id),
+                    path: node_record.path.to_string_lossy().to_string(),
+                    agent_id: request.agent_id.clone(),
+                    provider_name: request.provider.provider_name.clone(),
+                    frame_type: request.frame_type.clone(),
+                    prompt_digest: prepared_lineage.metadata_input.prompt_digest.clone(),
+                    context_digest: prepared_lineage.metadata_input.context_digest.clone(),
+                    prompt_link_id: prepared_lineage.metadata_input.prompt_link_id.clone(),
+                    previous_frame_id: previous_metadata.frame_id.clone(),
+                    previous_prompt_digest: previous_metadata.prompt_digest.clone(),
+                    previous_context_digest: previous_metadata.context_digest.clone(),
+                    previous_prompt_link_id: previous_metadata.prompt_link_id.clone(),
+                    workflow_id: workflow_id.clone(),
+                    thread_id: None,
+                    turn_id: Some(turn_id.clone()),
+                    turn_seq: None,
+                    attempt: Some(request.retry_count + 1),
+                    plan_id: None,
+                    level_index: None,
+                    error: None,
+                }),
+            );
+        }
 
         let gate_inputs = supporting_inputs
             .into_iter()
@@ -707,6 +806,7 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
         api: &ContextApi,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
+        _event_context: Option<&crate::context::queue::QueueEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 
