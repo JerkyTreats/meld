@@ -148,7 +148,7 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
     if disabled {
         Registry::default()
             .with(EnvFilter::new("off"))
-            .with(fmt::layer().with_writer(|| std::io::sink()))
+            .with(fmt::layer().with_writer(std::io::sink))
             .init();
         return Ok(());
     }

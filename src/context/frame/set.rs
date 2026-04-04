@@ -150,10 +150,7 @@ impl FrameMerkleSet {
         // Get root hash
         let root_opt = tree.root();
         let root = root_opt.ok_or_else(|| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to compute Merkle tree root",
-            ))
+            StorageError::IoError(std::io::Error::other("Failed to compute Merkle tree root"))
         })?;
 
         self.root = Some(root);

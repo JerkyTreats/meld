@@ -29,7 +29,7 @@ pub fn format_workspace_status_text(data: &WorkspaceStatus, include_breakdown: b
         out.push_str("  Scanned: no\n\n");
         if let Some(ref msg) = data.message {
             out.push_str(msg);
-            out.push_str("\n");
+            out.push('\n');
         }
         return out;
     }

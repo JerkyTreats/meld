@@ -71,10 +71,10 @@ impl Walker {
 
         for entry in walker {
             let entry = entry.map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to walk directory: {}", e),
-                ))
+                StorageError::IoError(std::io::Error::other(format!(
+                    "Failed to walk directory: {}",
+                    e
+                )))
             })?;
 
             // Skip if matches ignore pattern
@@ -90,10 +90,10 @@ impl Walker {
             }
 
             let metadata = entry.metadata().map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to read metadata for {:?}: {}", path, e),
-                ))
+                StorageError::IoError(std::io::Error::other(format!(
+                    "Failed to read metadata for {:?}: {}",
+                    path, e
+                )))
             })?;
 
             if metadata.is_file() {
@@ -203,7 +203,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(dirs.len() >= 1);
+        assert!(!dirs.is_empty());
     }
 
     #[test]

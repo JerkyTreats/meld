@@ -2,6 +2,7 @@ use serde_json::json;
 
 use crate::telemetry::summary::TypedSummaryEvent;
 
+#[allow(clippy::too_many_arguments)]
 pub fn generation(
     action: &str,
     target_path: bool,

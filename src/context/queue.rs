@@ -663,6 +663,7 @@ impl FrameGenerationQueue {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn enqueue_and_wait_with_program(
         &self,
         node_id: NodeID,
@@ -798,6 +799,7 @@ impl FrameGenerationQueue {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn enqueue_and_wait_with_options(
         &self,
         node_id: NodeID,
@@ -1011,12 +1013,13 @@ impl FrameGenerationQueue {
 
     /// Stop background workers (graceful shutdown)
     pub async fn stop(&self) -> Result<(), ApiError> {
-        let mut running = self.running.write();
-        if !*running {
-            return Ok(()); // Already stopped
+        {
+            let mut running = self.running.write();
+            if !*running {
+                return Ok(()); // Already stopped
+            }
+            *running = false;
         }
-        *running = false;
-        drop(running);
 
         // Wait for all workers to finish
         let workers = std::mem::take(&mut *self.workers.write());
@@ -1037,10 +1040,13 @@ impl FrameGenerationQueue {
     pub async fn wait_for_completion(&self, timeout: Option<Duration>) -> Result<(), ApiError> {
         let start = Instant::now();
         loop {
-            let queue = self.queue.lock().await;
-            let stats = self.stats.read();
+            let is_complete = {
+                let queue = self.queue.lock().await;
+                let stats = self.stats.read();
+                queue.is_empty() && stats.processing == 0
+            };
 
-            if queue.is_empty() && stats.processing == 0 {
+            if is_complete {
                 return Ok(());
             }
 
@@ -1051,9 +1057,6 @@ impl FrameGenerationQueue {
                     ));
                 }
             }
-
-            drop(queue);
-            drop(stats);
             sleep(Duration::from_millis(100)).await;
         }
     }
@@ -1089,6 +1092,7 @@ impl FrameGenerationQueue {
     }
 
     /// Worker loop for processing requests
+    #[allow(clippy::too_many_arguments)]
     async fn worker_loop(
         worker_id: usize,
         queue: Arc<Mutex<BinaryHeap<GenerationRequest>>>,

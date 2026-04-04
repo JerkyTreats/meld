@@ -50,7 +50,7 @@ pub fn traverse(
             .node_store()
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
         for child in &record.children {
             queue.push_back((*child, depth + 1));
         }

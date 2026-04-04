@@ -71,14 +71,14 @@ pub fn format_context_text_output(
                         output.push_str(&format!("  {}: {}\n", key, value));
                     }
                 }
-                output.push_str("\n");
+                output.push('\n');
             }
             if let Ok(text) = frame.text_content() {
                 output.push_str(&format!("Content:\n{}\n", text));
             } else {
                 output.push_str("Content: [Binary content - not UTF-8]\n");
             }
-            output.push_str("\n");
+            output.push('\n');
         }
         Ok(output)
     }

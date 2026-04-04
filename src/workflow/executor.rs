@@ -20,8 +20,7 @@ use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput
 use crate::provider::ProviderExecutionBinding;
 use crate::task::templates::docs_writer::prepare_docs_writer_task_run;
 use crate::task::{
-    execute_task_to_completion, TaskExecutor, WorkflowPackageTriggerRequest,
-    WorkflowTaskTelemetry,
+    execute_task_to_completion, TaskExecutor, WorkflowPackageTriggerRequest, WorkflowTaskTelemetry,
 };
 use crate::telemetry::{
     now_millis, FrameMetadataValidationEventData, PromptContextLineageEventData,
@@ -100,7 +99,7 @@ pub(crate) async fn execute_registered_workflow_async(
         .node_store()
         .get(&request.node_id)
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NodeNotFound(request.node_id))?;
+        .ok_or(ApiError::NodeNotFound(request.node_id))?;
     let target_path = request
         .path
         .clone()
@@ -777,6 +776,7 @@ fn uses_task_package_path(profile: &WorkflowProfile) -> bool {
     profile.workflow_id == "docs_writer_thread_v1"
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_registered_workflow_via_task_async(
     api: &ContextApi,
     workspace_root: &Path,

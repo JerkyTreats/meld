@@ -114,7 +114,7 @@ impl HeadIndex {
     /// Purge tombstoned head entries older than cutoff.
     pub fn purge_tombstoned(&mut self, cutoff: u64) {
         self.heads
-            .retain(|_, e| e.tombstoned_at.map_or(true, |ts| ts > cutoff));
+            .retain(|_, e| e.tombstoned_at.is_none_or(|ts| ts > cutoff));
     }
 
     /// Get all frame IDs for a given node (including tombstoned; used e.g. for compact).
@@ -178,10 +178,10 @@ impl HeadIndex {
 
         // Read file
         let bytes = fs::read(path).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read head index from {:?}: {}", path, e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to read head index from {:?}: {}",
+                path, e
+            )))
         })?;
 
         // Try legacy V1 format (single bincode blob) first.
@@ -265,10 +265,10 @@ impl HeadIndex {
         // Create parent directories if needed
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to create parent directory {:?}: {}", parent, e),
-                ))
+                StorageError::IoError(std::io::Error::other(format!(
+                    "Failed to create parent directory {:?}: {}",
+                    parent, e
+                )))
             })?;
         }
 
@@ -284,10 +284,10 @@ impl HeadIndex {
 
         // V2 format: 4-byte version then bincode(entries).
         let payload = bincode::serialize(&entries).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to serialize head index entries: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to serialize head index entries: {}",
+                e
+            )))
         })?;
         let mut serialized = Vec::with_capacity(4 + payload.len());
         serialized.extend_from_slice(&HEAD_INDEX_VERSION_V2.to_le_bytes());
@@ -296,20 +296,20 @@ impl HeadIndex {
         // Write to temporary file (atomic write)
         let temp_path = path.with_extension("bin.tmp");
         fs::write(&temp_path, &serialized).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to write head index to {:?}: {}", temp_path, e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to write head index to {:?}: {}",
+                temp_path, e
+            )))
         })?;
 
         // Atomically rename temp file to final location
         fs::rename(&temp_path, path).map_err(|e| {
             // Clean up temp file on error
             let _ = fs::remove_file(&temp_path);
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to rename temp file to {:?}: {}", path, e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to rename temp file to {:?}: {}",
+                path, e
+            )))
         })?;
 
         Ok(())

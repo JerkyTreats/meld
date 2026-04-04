@@ -588,16 +588,14 @@ mod tests {
         let mut output = String::new();
         let mut chars = input.chars().peekable();
         while let Some(ch) = chars.next() {
-            if ch == '\u{1b}' {
-                if matches!(chars.peek(), Some('[')) {
-                    let _ = chars.next();
-                    for esc in chars.by_ref() {
-                        if esc.is_ascii_alphabetic() {
-                            break;
-                        }
+            if ch == '\u{1b}' && matches!(chars.peek(), Some('[')) {
+                let _ = chars.next();
+                for esc in chars.by_ref() {
+                    if esc.is_ascii_alphabetic() {
+                        break;
                     }
-                    continue;
                 }
+                continue;
             }
             output.push(ch);
         }

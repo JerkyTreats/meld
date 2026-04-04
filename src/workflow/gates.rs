@@ -140,7 +140,7 @@ fn required_sections_for_gate<'a>(
         .unwrap_or_default();
 
     for section in dynamic_sections {
-        if !sections.iter().any(|candidate| *candidate == section) {
+        if !sections.contains(&section) {
             sections.push(section);
         }
     }

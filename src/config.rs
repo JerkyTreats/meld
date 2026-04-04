@@ -38,7 +38,7 @@ pub mod xdg {
 }
 
 /// Root configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MerkleConfig {
     /// Workspace root path (defaults to current directory)
     pub workspace_root: Option<PathBuf>,
@@ -77,7 +77,7 @@ pub struct SystemConfig {
 }
 
 /// Workflow profile loading configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkflowConfig {
     /// User profile directory.
     /// Relative values are resolved against XDG config home.
@@ -121,27 +121,6 @@ impl WorkflowConfig {
             }
         }
         Ok(())
-    }
-}
-
-impl Default for WorkflowConfig {
-    fn default() -> Self {
-        Self {
-            user_profile_dir: None,
-        }
-    }
-}
-
-impl Default for MerkleConfig {
-    fn default() -> Self {
-        Self {
-            workspace_root: None,
-            providers: HashMap::new(),
-            agents: HashMap::new(),
-            system: SystemConfig::default(),
-            logging: LoggingConfig::default(),
-            workflows: WorkflowConfig::default(),
-        }
     }
 }
 
@@ -442,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_config_loader_default() {
-        let config = ConfigLoader::default();
+        let config = ConfigLoader::load_default();
         assert!(config.providers.is_empty());
         assert!(config.agents.is_empty());
     }

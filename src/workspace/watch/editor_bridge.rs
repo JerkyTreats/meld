@@ -36,8 +36,7 @@ impl EditorHooks {
             }
         })
         .map_err(|e| {
-            ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::other(
                 format!("Failed to create watcher: {}", e),
             )))
         })?;
@@ -45,8 +44,7 @@ impl EditorHooks {
         watcher
             .watch(&self.workspace_root, RecursiveMode::Recursive)
             .map_err(|e| {
-                ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::other(
                     format!("Failed to watch directory: {}", e),
                 )))
             })?;

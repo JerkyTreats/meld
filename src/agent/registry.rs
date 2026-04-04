@@ -65,7 +65,7 @@ impl AgentRegistry {
         &mut self,
         config: &crate::config::MerkleConfig,
     ) -> Result<(), ApiError> {
-        for (_, agent_config) in &config.agents {
+        for agent_config in config.agents.values() {
             let mut identity = AgentIdentity::new(agent_config.agent_id.clone(), agent_config.role);
             identity.workflow_id = agent_config.workflow_id.clone();
 

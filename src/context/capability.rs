@@ -431,7 +431,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
             .node_store()
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
         let mut prompt_output =
             build_prompt_messages(api, &request, &node_record, &prompt_contract)?;
         let supporting_inputs = Self::supporting_inputs(payload);

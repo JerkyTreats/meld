@@ -239,9 +239,11 @@ async fn test_enqueue_and_wait_deduplicates_pending_request() {
 
 #[tokio::test]
 async fn test_enqueue_deduplicates_during_retry_backoff_window() {
-    let mut config = GenerationConfig::default();
-    config.max_retry_attempts = 1;
-    config.retry_delay_ms = 500;
+    let config = GenerationConfig {
+        max_retry_attempts: 1,
+        retry_delay_ms: 500,
+        ..GenerationConfig::default()
+    };
     let (queue, _temp_dir) = create_test_queue_with_config(config);
     queue.start().unwrap();
 
@@ -289,8 +291,10 @@ async fn test_enqueue_deduplicates_during_retry_backoff_window() {
 
 #[tokio::test]
 async fn test_queue_size_limit() {
-    let mut config = GenerationConfig::default();
-    config.max_queue_size = 3;
+    let config = GenerationConfig {
+        max_queue_size: 3,
+        ..GenerationConfig::default()
+    };
     let (queue, _temp_dir) = create_test_queue_with_config(config);
 
     // Fill queue to capacity
@@ -362,8 +366,10 @@ async fn test_batch_enqueue() {
 
 #[tokio::test]
 async fn test_batch_enqueue_size_limit() {
-    let mut config = GenerationConfig::default();
-    config.max_queue_size = 2;
+    let config = GenerationConfig {
+        max_queue_size: 2,
+        ..GenerationConfig::default()
+    };
     let (queue, _temp_dir) = create_test_queue_with_config(config);
 
     // Try to enqueue batch that exceeds limit
@@ -1244,7 +1250,7 @@ async fn test_queue_accepts_generated_digest_metadata_keys() {
         api,
         GenerationConfig::default(),
         None,
-        |input| build_generated_metadata(input),
+        build_generated_metadata,
     );
     queue.start().unwrap();
 

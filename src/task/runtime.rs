@@ -92,19 +92,12 @@ pub async fn execute_task_to_completion(
                 event_context,
                 workflow_telemetry,
                 parse_turn_stage(&payload.capability_instance_id),
-            )
-            {
+            ) {
                 if stage == "prepare" {
                     emit_workflow_turn_event(
                         ctx,
                         "workflow_turn_started",
-                        workflow_turn_event_data(
-                            telemetry,
-                            &payload,
-                            &turn_id,
-                            None,
-                            None,
-                        ),
+                        workflow_turn_event_data(telemetry, &payload, &turn_id, None, None),
                     );
                 }
             }
@@ -121,7 +114,9 @@ pub async fn execute_task_to_completion(
             });
         }
 
-        while let Some((invocation_id, capability_instance_id, payload, outcome)) = futures.next().await {
+        while let Some((invocation_id, capability_instance_id, payload, outcome)) =
+            futures.next().await
+        {
             match outcome {
                 Ok(result) => {
                     executor.record_success(&invocation_id, result.emitted_artifacts)?;
@@ -129,19 +124,12 @@ pub async fn execute_task_to_completion(
                         event_context,
                         workflow_telemetry,
                         parse_turn_stage(&capability_instance_id),
-                    )
-                    {
+                    ) {
                         if stage == "finalize" {
                             emit_workflow_turn_event(
                                 ctx,
                                 "workflow_turn_completed",
-                                workflow_turn_event_data(
-                                    telemetry,
-                                    &payload,
-                                    &turn_id,
-                                    None,
-                                    None,
-                                ),
+                                workflow_turn_event_data(telemetry, &payload, &turn_id, None, None),
                             );
                         }
                     }
@@ -151,8 +139,7 @@ pub async fn execute_task_to_completion(
                         event_context,
                         workflow_telemetry,
                         parse_turn_stage(&capability_instance_id),
-                    )
-                    {
+                    ) {
                         emit_workflow_turn_event(
                             ctx,
                             "workflow_turn_failed",
@@ -187,9 +174,11 @@ fn emit_workflow_turn_event(
     event_type: &str,
     payload: WorkflowTurnEventData,
 ) {
-    event_context
-        .progress
-        .emit_event_best_effort(&event_context.session_id, event_type, json!(payload));
+    event_context.progress.emit_event_best_effort(
+        &event_context.session_id,
+        event_type,
+        json!(payload),
+    );
 }
 
 fn workflow_turn_event_data(
@@ -203,7 +192,11 @@ fn workflow_turn_event_data(
         workflow_id: telemetry.workflow_id.clone(),
         thread_id: telemetry.thread_id.clone(),
         turn_id: turn_id.to_string(),
-        turn_seq: telemetry.turn_seq_by_id.get(turn_id).copied().unwrap_or_default(),
+        turn_seq: telemetry
+            .turn_seq_by_id
+            .get(turn_id)
+            .copied()
+            .unwrap_or_default(),
         node_id: payload_node_id(payload).unwrap_or_default(),
         path: payload_path(payload).unwrap_or_default(),
         agent_id: telemetry.agent_id.clone(),
@@ -231,9 +224,10 @@ fn payload_node_id(payload: &crate::capability::CapabilityInvocationPayload) -> 
         .iter()
         .find(|input| input.slot_id == "resolved_node_ref")
         .and_then(|input| match &input.value {
-            crate::capability::SuppliedValueRef::Artifact(artifact) => {
-                artifact.content.get("node_id").and_then(|value| value.as_str())
-            }
+            crate::capability::SuppliedValueRef::Artifact(artifact) => artifact
+                .content
+                .get("node_id")
+                .and_then(|value| value.as_str()),
             crate::capability::SuppliedValueRef::StructuredValue(value) => {
                 value.get("node_id").and_then(|value| value.as_str())
             }
@@ -247,9 +241,10 @@ fn payload_path(payload: &crate::capability::CapabilityInvocationPayload) -> Opt
         .iter()
         .find(|input| input.slot_id == "resolved_node_ref")
         .and_then(|input| match &input.value {
-            crate::capability::SuppliedValueRef::Artifact(artifact) => {
-                artifact.content.get("path").and_then(|value| value.as_str())
-            }
+            crate::capability::SuppliedValueRef::Artifact(artifact) => artifact
+                .content
+                .get("path")
+                .and_then(|value| value.as_str()),
             crate::capability::SuppliedValueRef::StructuredValue(value) => {
                 value.get("path").and_then(|value| value.as_str())
             }

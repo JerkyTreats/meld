@@ -44,7 +44,7 @@ pub async fn execute_generation_request(
         .node_store()
         .get(&request.node_id)
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NodeNotFound(request.node_id))?;
+        .ok_or(ApiError::NodeNotFound(request.node_id))?;
 
     let prompt_contract = PromptContract::from_agent(&agent)?;
     let prompt_output = build_prompt_messages(api, request, &node_record, &prompt_contract)?;

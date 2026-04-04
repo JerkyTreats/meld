@@ -35,13 +35,10 @@ impl FrameStorage {
         // Create the frames directory if it doesn't exist
         let frames_dir = root.join("frames");
         fs::create_dir_all(&frames_dir).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Failed to create frames directory at {:?}: {}",
-                    frames_dir, e
-                ),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to create frames directory at {:?}: {}",
+                frames_dir, e
+            )))
         })?;
 
         Ok(Self { root })
@@ -93,37 +90,37 @@ impl FrameStorage {
         // Create parent directories if needed
         if let Some(parent) = frame_path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to create parent directory {:?}: {}", parent, e),
-                ))
+                StorageError::IoError(std::io::Error::other(format!(
+                    "Failed to create parent directory {:?}: {}",
+                    parent, e
+                )))
             })?;
         }
 
         // Serialize frame to bytes
         let serialized = bincode::serialize(frame).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to serialize frame: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to serialize frame: {}",
+                e
+            )))
         })?;
 
         // Write to temporary file (atomic write)
         fs::write(&temp_path, &serialized).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to write frame to {:?}: {}", temp_path, e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to write frame to {:?}: {}",
+                temp_path, e
+            )))
         })?;
 
         // Atomically rename temp file to final location
         fs::rename(&temp_path, &frame_path).map_err(|e| {
             // Clean up temp file on error
             let _ = fs::remove_file(&temp_path);
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to rename temp file to {:?}: {}", frame_path, e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to rename temp file to {:?}: {}",
+                frame_path, e
+            )))
         })?;
 
         Ok(())
@@ -143,18 +140,18 @@ impl FrameStorage {
 
         // Read file
         let bytes = fs::read(&frame_path).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read frame from {:?}: {}", frame_path, e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to read frame from {:?}: {}",
+                frame_path, e
+            )))
         })?;
 
         // Deserialize frame
         let mut frame: Frame = bincode::deserialize(&bytes).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to deserialize frame from {:?}: {}", frame_path, e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to deserialize frame from {:?}: {}",
+                frame_path, e
+            )))
         })?;
 
         // Backward compatibility: old blobs may only have metadata agent_id.
@@ -208,10 +205,10 @@ impl FrameStorage {
         let frame_path = self.frame_path(frame_id);
         if frame_path.exists() {
             fs::remove_file(&frame_path).map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to purge frame {:?}: {}", frame_path, e),
-                ))
+                StorageError::IoError(std::io::Error::other(format!(
+                    "Failed to purge frame {:?}: {}",
+                    frame_path, e
+                )))
             })?;
         }
         Ok(())

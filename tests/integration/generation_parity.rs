@@ -428,9 +428,11 @@ async fn generation_parity_retryable_failure_matches_fixture() {
         .start_command_session("generation.parity.retryable".to_string())
         .unwrap();
 
-    let mut config = GenerationConfig::default();
-    config.max_retry_attempts = 2;
-    config.retry_delay_ms = 5;
+    let config = GenerationConfig {
+        max_retry_attempts: 2,
+        retry_delay_ms: 5,
+        ..GenerationConfig::default()
+    };
     let queue = FrameGenerationQueue::with_event_context(
         Arc::clone(&api),
         config,
@@ -500,9 +502,11 @@ async fn generation_parity_non_retryable_failure_matches_fixture() {
         .start_command_session("generation.parity.non_retryable".to_string())
         .unwrap();
 
-    let mut config = GenerationConfig::default();
-    config.max_retry_attempts = 4;
-    config.retry_delay_ms = 5;
+    let config = GenerationConfig {
+        max_retry_attempts: 4,
+        retry_delay_ms: 5,
+        ..GenerationConfig::default()
+    };
     let queue = FrameGenerationQueue::with_event_context(
         Arc::clone(&api),
         config,

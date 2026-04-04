@@ -98,8 +98,7 @@ impl WatchDaemon {
             }
         })
         .map_err(|e| {
-            ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::other(
                 format!("Failed to create watcher: {}", e),
             )))
         })?;
@@ -107,8 +106,7 @@ impl WatchDaemon {
         watcher
             .watch(&self.config.workspace_root, RecursiveMode::Recursive)
             .map_err(|e| {
-                ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::other(
                     format!("Failed to watch directory: {}", e),
                 )))
             })?;
@@ -142,7 +140,7 @@ impl WatchDaemon {
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     if !pending_events.is_empty() && last_batch_time.elapsed() >= batch_window {
-                        self.process_events(pending_events.drain(..).collect())?;
+                        self.process_events(std::mem::take(&mut pending_events))?;
                         last_batch_time = Instant::now();
                     }
                 }
@@ -153,7 +151,7 @@ impl WatchDaemon {
             }
 
             if !pending_events.is_empty() && last_batch_time.elapsed() >= batch_window {
-                self.process_events(pending_events.drain(..).collect())?;
+                self.process_events(std::mem::take(&mut pending_events))?;
                 last_batch_time = Instant::now();
             }
         }
@@ -295,7 +293,7 @@ impl WatchDaemon {
 
         let mut affected_nodes = Vec::new();
 
-        for (node_id, _node) in &tree.nodes {
+        for node_id in tree.nodes.keys() {
             let node_record = self.api.node_store().get(node_id).map_err(ApiError::from)?;
             if let Some(record) = node_record {
                 let canonical_path = canonicalize_path(&record.path).unwrap_or(record.path.clone());
@@ -691,8 +689,10 @@ mod tests {
             ));
         }
 
-        let mut config = WatchConfig::default();
-        config.workspace_root = workspace_root;
+        let config = WatchConfig {
+            workspace_root,
+            ..WatchConfig::default()
+        };
         let daemon = WatchDaemon::new(api.clone(), config).unwrap();
         daemon.ensure_agent_frames_batched(&[node_id]).unwrap();
 
@@ -725,9 +725,11 @@ mod tests {
         })
         .unwrap();
 
-        let mut config = WatchConfig::default();
-        config.workspace_root = workspace_root;
-        config.workflow_registry = Some(Arc::new(parking_lot::RwLock::new(registry)));
+        let config = WatchConfig {
+            workspace_root,
+            workflow_registry: Some(Arc::new(parking_lot::RwLock::new(registry))),
+            ..WatchConfig::default()
+        };
         let daemon = WatchDaemon::new(api.clone(), config).unwrap();
         daemon.ensure_agent_frames_batched(&[node_id]).unwrap();
 

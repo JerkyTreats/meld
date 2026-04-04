@@ -203,10 +203,10 @@ impl TreeBuilder {
         // Read file content
         let content = std::fs::read(file_path).map_err(|e| {
             error!("Failed to read file: {}", e);
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read file {:?}: {}", file_path, e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to read file {:?}: {}",
+                file_path, e
+            )))
         })?;
 
         // Compute content hash
@@ -240,10 +240,10 @@ impl TreeBuilder {
     ) -> Result<(NodeID, DirectoryNode), StorageError> {
         // Read directory contents
         let dir_entries = std::fs::read_dir(dir_path).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read directory {:?}: {}", dir_path, e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to read directory {:?}: {}",
+                dir_path, e
+            )))
         })?;
 
         // Collect children (name, NodeID) pairs
@@ -251,10 +251,10 @@ impl TreeBuilder {
 
         for entry in dir_entries {
             let entry = entry.map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to read directory entry in {:?}: {}", dir_path, e),
-                ))
+                StorageError::IoError(std::io::Error::other(format!(
+                    "Failed to read directory entry in {:?}: {}",
+                    dir_path, e
+                )))
             })?;
 
             let child_path = entry.path();

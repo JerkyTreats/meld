@@ -231,7 +231,6 @@ failure_policy:
         );
         let config = WorkflowConfig {
             user_profile_dir: Some(workflow_dir.clone()),
-            ..WorkflowConfig::default()
         };
 
         let registry = WorkflowRegistry::load(&config).unwrap();
@@ -265,7 +264,6 @@ failure_policy:
 
         let config = WorkflowConfig {
             user_profile_dir: Some(workflow_dir),
-            ..WorkflowConfig::default()
         };
         let err = WorkflowRegistry::load(&config).unwrap_err();
         assert!(matches!(err, ApiError::ConfigError(_)));
@@ -284,7 +282,6 @@ failure_policy:
 
         let config = WorkflowConfig {
             user_profile_dir: Some(workflow_dir),
-            ..WorkflowConfig::default()
         };
         let err = WorkflowRegistry::load(&config).unwrap_err();
         assert!(matches!(err, ApiError::ConfigError(_)));

@@ -128,14 +128,14 @@ pub fn read_workspace_scan_state(
 /// Resolve path or --node to NodeID. If include_tombstoned is true, use get_by_path (for restore).
 pub fn resolve_workspace_node_id(
     api: &ContextApi,
-    workspace_root: &PathBuf,
+    workspace_root: &Path,
     path: Option<&Path>,
     node: Option<&str>,
     include_tombstoned: bool,
 ) -> Result<NodeID, ApiError> {
     match (path, node) {
         (Some(p), None) => {
-            let resolved_path = workspace_lookup_path(workspace_root.as_path(), p);
+            let resolved_path = workspace_lookup_path(workspace_root, p);
             let store = api.node_store();
             let record = if include_tombstoned {
                 store.get_by_path(&resolved_path).map_err(ApiError::from)?
@@ -158,7 +158,7 @@ pub fn resolve_workspace_node_id(
                 }
                 if let Some(node_id) = resolve_node_id_by_canonical_fallback(
                     store.as_ref(),
-                    workspace_root.as_path(),
+                    workspace_root,
                     &canonical_path,
                     include_tombstoned,
                 )? {
@@ -271,13 +271,13 @@ impl WorkspaceCommandService {
     /// Validate store, head index, and root consistency.
     pub fn validate(
         api: &ContextApi,
-        workspace_root: &PathBuf,
+        workspace_root: &Path,
         frame_storage_path: &PathBuf,
     ) -> Result<ValidateResult, ApiError> {
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
 
-        let root_hash = match current_workspace_root_hash(workspace_root.as_path()) {
+        let root_hash = match current_workspace_root_hash(workspace_root) {
             Ok(hash) => hash,
             Err(e) => {
                 errors.push(format!("Failed to compute workspace root: {}", e));
@@ -352,7 +352,7 @@ impl WorkspaceCommandService {
 
     /// List ignore list or add a path.
     pub fn ignore(
-        workspace_root: &PathBuf,
+        workspace_root: &Path,
         path: Option<&Path>,
         dry_run: bool,
     ) -> Result<IgnoreResult, ApiError> {
@@ -379,7 +379,7 @@ impl WorkspaceCommandService {
     /// Tombstone node/subtree; optionally add path to ignore list.
     pub fn delete(
         api: &ContextApi,
-        workspace_root: &PathBuf,
+        workspace_root: &Path,
         path: Option<&Path>,
         node: Option<&str>,
         dry_run: bool,
@@ -390,7 +390,7 @@ impl WorkspaceCommandService {
         let record = store
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
         if record.tombstoned_at.is_some() {
             return Ok("Already deleted.".to_string());
         }
@@ -427,7 +427,7 @@ impl WorkspaceCommandService {
     /// Restore tombstoned node/subtree and remove from ignore list.
     pub fn restore(
         api: &ContextApi,
-        workspace_root: &PathBuf,
+        workspace_root: &Path,
         path: Option<&Path>,
         node: Option<&str>,
         dry_run: bool,
@@ -437,7 +437,7 @@ impl WorkspaceCommandService {
         let record = store
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
         if record.tombstoned_at.is_none() {
             return Ok("Not deleted.".to_string());
         }
@@ -499,7 +499,7 @@ impl WorkspaceCommandService {
                 .read()
                 .heads
                 .iter()
-                .filter(|(_, e)| e.tombstoned_at.map_or(false, |ts| ts <= cutoff))
+                .filter(|(_, e)| e.tombstoned_at.is_some_and(|ts| ts <= cutoff))
                 .count();
             return Ok(format!(
                 "Would compact {} nodes, {} head entries, {} frames, {} artifacts.",
@@ -575,7 +575,7 @@ impl WorkspaceCommandService {
     /// Returns a summary string. Progress/session_id optional for telemetry events.
     pub fn scan(
         api: &ContextApi,
-        workspace_root: &PathBuf,
+        workspace_root: &Path,
         force: bool,
         progress: Option<&Arc<ProgressRuntime>>,
         session_id: Option<&str>,
@@ -588,33 +588,33 @@ impl WorkspaceCommandService {
             ignore_patterns,
             max_depth: None,
         };
-        let builder = TreeBuilder::new(workspace_root.clone()).with_walker_config(walker_config);
+        let builder =
+            TreeBuilder::new(workspace_root.to_path_buf()).with_walker_config(walker_config);
         let tree = builder.build().map_err(ApiError::StorageError)?;
         let total_nodes = tree.nodes.len();
 
-        if !force {
-            if api
+        if !force
+            && api
                 .node_store()
                 .get(&tree.root_id)
                 .map_err(ApiError::from)?
                 .is_some()
-            {
-                if let (Some(prog), Some(sid)) = (progress, session_id) {
-                    prog.emit_event_best_effort(
-                        sid,
-                        "scan_progress",
-                        json!({
-                            "node_count": total_nodes,
-                            "total_nodes": total_nodes
-                        }),
-                    );
-                }
-                let root_hex = hex::encode(tree.root_id);
-                return Ok(format!(
-                    "Tree already exists (root: {}). Use --force to rebuild.",
-                    root_hex
-                ));
+        {
+            if let (Some(prog), Some(sid)) = (progress, session_id) {
+                prog.emit_event_best_effort(
+                    sid,
+                    "scan_progress",
+                    json!({
+                        "node_count": total_nodes,
+                        "total_nodes": total_nodes
+                    }),
+                );
             }
+            let root_hex = hex::encode(tree.root_id);
+            return Ok(format!(
+                "Tree already exists (root: {}). Use --force to rebuild.",
+                root_hex
+            ));
         }
 
         let store = api.node_store().as_ref() as &dyn NodeRecordStore;
@@ -626,7 +626,7 @@ impl WorkspaceCommandService {
             store.put(&record).map_err(ApiError::from)?;
             processed_nodes += 1;
             if let (Some(prog), Some(sid)) = (progress, session_id) {
-                if processed_nodes % SCAN_PROGRESS_BATCH_NODES == 0
+                if processed_nodes.is_multiple_of(SCAN_PROGRESS_BATCH_NODES)
                     || processed_nodes == total_nodes
                 {
                     prog.emit_event_best_effort(
@@ -652,7 +652,7 @@ impl WorkspaceCommandService {
                 );
             }
         }
-        store.flush().map_err(|e| ApiError::StorageError(e))?;
+        store.flush().map_err(ApiError::StorageError)?;
 
         let _ = ignore::maybe_sync_gitignore_after_tree(
             workspace_root,
@@ -678,6 +678,7 @@ impl WorkspaceCommandService {
     }
 
     /// Fan-in workspace + agent + provider status for `meld status`.
+    #[allow(clippy::too_many_arguments)]
     pub fn unified_status(
         api: &ContextApi,
         workspace_root: &Path,

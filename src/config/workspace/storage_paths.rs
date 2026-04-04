@@ -39,9 +39,9 @@ impl StorageConfig {
         &self,
         workspace_root: &Path,
     ) -> Result<(PathBuf, PathBuf, PathBuf), ApiError> {
-        let is_default_store = self.store_path == PathBuf::from(".meld/store");
-        let is_default_frames = self.frames_path == PathBuf::from(".meld/frames");
-        let is_default_artifacts = self.artifacts_path == PathBuf::from(".meld/artifacts");
+        let is_default_store = self.store_path == Path::new(".meld/store");
+        let is_default_frames = self.frames_path == Path::new(".meld/frames");
+        let is_default_artifacts = self.artifacts_path == Path::new(".meld/artifacts");
 
         let store_path = if is_default_store {
             let data_dir = xdg::workspace_data_dir(workspace_root)?;

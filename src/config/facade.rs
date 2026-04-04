@@ -32,8 +32,8 @@ impl ConfigLoader {
         MergeService::load_from_file(path)
     }
 
-    /// Create default configuration.
-    pub fn default() -> MerkleConfig {
+    /// Create the default configuration value.
+    pub fn load_default() -> MerkleConfig {
         MerkleConfig::default()
     }
 }

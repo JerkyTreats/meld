@@ -152,7 +152,7 @@ fn collect_directory_target_context(
             api.node_store()
                 .get(child_id)
                 .map_err(ApiError::from)?
-                .ok_or_else(|| ApiError::NodeNotFound(*child_id))
+                .ok_or(ApiError::NodeNotFound(*child_id))
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
     child_records.sort_by(|left, right| {

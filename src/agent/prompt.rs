@@ -16,16 +16,16 @@ pub fn resolve_prompt_path(path: &str, base_dir: &Path) -> Result<PathBuf, ApiEr
     if path.starts_with('/') {
         return Ok(PathBuf::from(path));
     }
-    if path.starts_with("~/") {
+    if let Some(stripped) = path.strip_prefix("~/") {
         let home =
             std::env::var("HOME").map_err(|_| ApiError::ConfigError("HOME not set".to_string()))?;
-        return Ok(PathBuf::from(home).join(&path[2..]));
+        return Ok(PathBuf::from(home).join(stripped));
     }
-    if path.starts_with("./") {
+    if let Some(stripped) = path.strip_prefix("./") {
         let current_dir = std::env::current_dir().map_err(|e| {
             ApiError::ConfigError(format!("Failed to get current directory: {}", e))
         })?;
-        return Ok(current_dir.join(&path[2..]));
+        return Ok(current_dir.join(stripped));
     }
     Ok(base_dir.join(path))
 }

@@ -143,7 +143,7 @@ impl CapabilityInvoker for WorkspaceResolveNodeIdCapability {
         let (path, node_hex, selector_kind) = Self::extract_selector(payload)?;
         let node_id = resolve_workspace_node_id(
             api,
-            &workspace_root.to_path_buf(),
+            workspace_root,
             path.as_deref(),
             node_hex.as_deref(),
             include_tombstoned,
@@ -152,7 +152,7 @@ impl CapabilityInvoker for WorkspaceResolveNodeIdCapability {
             .node_store()
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
 
         let producer = ArtifactProducerRef {
             task_id: payload

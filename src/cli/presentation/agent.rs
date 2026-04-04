@@ -87,12 +87,12 @@ pub fn format_validation_result(result: &ValidationResult, verbose: bool) -> Str
             }
         }
         if !result.errors.is_empty() {
-            output.push_str("\n");
+            output.push('\n');
             for error in &result.errors {
                 output.push_str(&format!("✗ {}\n", error));
             }
         }
-        output.push_str("\n");
+        output.push('\n');
     }
 
     if verbose {

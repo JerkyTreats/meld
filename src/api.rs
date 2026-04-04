@@ -77,6 +77,7 @@ impl ContextApi {
     }
 
     /// Create a new Context API service with workspace root for persistence
+    #[allow(clippy::too_many_arguments)]
     pub fn with_workspace_root(
         node_store: Arc<dyn NodeRecordStore + Send + Sync>,
         frame_storage: Arc<FrameStorage>,
@@ -112,7 +113,7 @@ impl ContextApi {
                 let path = HeadIndex::persistence_path(workspace_root);
                 head_index
                     .save_to_disk(&path)
-                    .map_err(|e| ApiError::StorageError(e))?;
+                    .map_err(ApiError::StorageError)?;
             }
         }
         Ok(())
@@ -222,7 +223,7 @@ impl ContextApi {
             .node_store
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
         if _node_record.tombstoned_at.is_some() {
             return Err(ApiError::NodeNotFound(node_id));
         }
@@ -328,7 +329,7 @@ impl ContextApi {
             .node_store
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
         for &child_id in &record.children {
             queue.push_back(child_id);
         }
@@ -352,7 +353,7 @@ impl ContextApi {
             .node_store
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
         if record.tombstoned_at.is_some() {
             return Ok(TombstoneResult {
                 nodes_tombstoned: 0,
@@ -405,7 +406,7 @@ impl ContextApi {
             .node_store
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
         if record.tombstoned_at.is_none() {
             return Ok(RestoreResult {
                 nodes_restored: 0,
@@ -504,7 +505,7 @@ impl ContextApi {
             .node_store
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
 
         // Compose frames
         let head_index = self.head_index.read();
@@ -588,7 +589,7 @@ impl ContextApi {
             .node_store
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
 
         // Note: Generation with providers now requires explicit provider_name parameter
         // This method only creates metadata frames. Use ContextApiAdapter::generate_frame
@@ -623,7 +624,7 @@ impl ContextApi {
             agent_id.clone(),
             metadata,
         )
-        .map_err(|e| ApiError::StorageError(e))?;
+        .map_err(ApiError::StorageError)?;
 
         // Store frame
         let frame_id = self.put_frame(node_id, frame, agent_id)?;
@@ -637,7 +638,7 @@ impl ContextApi {
     /// agent information, particularly for provider configuration.
     pub fn get_agent(&self, agent_id: &str) -> Result<crate::agent::AgentIdentity, ApiError> {
         let registry = self.agent_registry.read();
-        registry.get_or_error(agent_id).map(|a| a.clone())
+        registry.get_or_error(agent_id).cloned()
     }
 
     /// Get head frame ID for a node and frame type

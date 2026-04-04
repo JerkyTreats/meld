@@ -80,7 +80,7 @@ fn resolve_target_node_id(
     match (request.node_id, request.path.as_deref()) {
         (Some(node_id), None) => Ok(node_id),
         (None, Some(path)) => {
-            resolve_workspace_node_id(api, &workspace_root.to_path_buf(), Some(path), None, false)
+            resolve_workspace_node_id(api, workspace_root, Some(path), None, false)
         }
         (Some(_), Some(_)) => Err(ApiError::ConfigError(
             "Workflow package trigger cannot accept both node_id and path".to_string(),
@@ -102,7 +102,7 @@ fn collect_node_records(
                 .node_store()
                 .get(node_id)
                 .map_err(ApiError::from)?
-                .ok_or_else(|| ApiError::NodeNotFound(*node_id))?;
+                .ok_or(ApiError::NodeNotFound(*node_id))?;
             records.insert(*node_id, record);
         }
     }

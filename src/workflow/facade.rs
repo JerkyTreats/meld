@@ -161,6 +161,7 @@ pub async fn execute_registered_workflow_target_async(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_target_execution_request(
     api: &ContextApi,
     node_id: crate::types::NodeID,
@@ -177,7 +178,7 @@ pub fn build_target_execution_request(
         .node_store()
         .get(&node_id)
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+        .ok_or(ApiError::NodeNotFound(node_id))?;
     Ok(TargetExecutionRequest {
         node_id,
         path: record.path.to_string_lossy().to_string(),

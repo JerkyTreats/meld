@@ -9,6 +9,7 @@ use crate::telemetry::summary::TypedSummaryEvent;
 use serde_json::json;
 
 /// Emit typed summary event if any and always command_summary. Best-effort; logs on failure.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_command_summary(
     runtime: &ProgressRuntime,
     session_id: &str,

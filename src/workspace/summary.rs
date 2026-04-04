@@ -150,6 +150,7 @@ pub fn ignore(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn unified_status(
     format: &str,
     include_workspace: bool,

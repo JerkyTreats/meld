@@ -97,7 +97,7 @@ fn find_missing_descendant_heads(
         .node_store()
         .get(&target_node_id)
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NodeNotFound(target_node_id))?;
+        .ok_or(ApiError::NodeNotFound(target_node_id))?;
     for child in &target_record.children {
         queue.push_back(*child);
     }
@@ -109,7 +109,7 @@ fn find_missing_descendant_heads(
             .node_store()
             .get(&node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+            .ok_or(ApiError::NodeNotFound(node_id))?;
         if api.get_head(&node_id, frame_type)?.is_none() {
             missing.push(record.path.to_string_lossy().to_string());
         }
@@ -187,7 +187,7 @@ fn build_plan(
                     .node_store()
                     .get(&node_id)
                     .map_err(ApiError::from)?
-                    .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+                    .ok_or(ApiError::NodeNotFound(node_id))?;
                 if !force && api.get_head(&node_id, frame_type)?.is_some() {
                     if let (Some(prog), Some(sid)) = (progress, session_id) {
                         prog.emit_event_best_effort(
@@ -259,7 +259,7 @@ fn build_plan(
             .node_store()
             .get(&target_node_id)
             .map_err(ApiError::from)?
-            .ok_or_else(|| ApiError::NodeNotFound(target_node_id))?;
+            .ok_or(ApiError::NodeNotFound(target_node_id))?;
         levels.push(vec![GenerationItem {
             node_id: target_node_id,
             path: target_record.path.to_string_lossy().to_string(),
@@ -310,7 +310,7 @@ pub struct GenerateRequest {
 /// Returns human-readable summary string or error.
 pub fn run_generate(
     api: Arc<ContextApi>,
-    workspace_root: &PathBuf,
+    workspace_root: &Path,
     progress: Option<Arc<ProgressRuntime>>,
     session_id: Option<&str>,
     request: &GenerateRequest,
@@ -363,7 +363,7 @@ pub fn run_generate(
         .node_store()
         .get(&node_id)
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NodeNotFound(node_id))?;
+        .ok_or(ApiError::NodeNotFound(node_id))?;
     let node_path = node_record.path.to_string_lossy().to_string();
 
     if execution_program.kind == crate::context::generation::TargetExecutionProgramKind::SingleShot

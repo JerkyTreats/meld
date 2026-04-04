@@ -237,7 +237,7 @@ fn encode_event_key(session_id: &str, seq: u64) -> String {
 }
 
 fn to_storage_io(err: sled::Error) -> StorageError {
-    StorageError::IoError(io::Error::new(io::ErrorKind::Other, err.to_string()))
+    StorageError::IoError(io::Error::other(err.to_string()))
 }
 
 fn to_storage_data(err: serde_json::Error) -> StorageError {

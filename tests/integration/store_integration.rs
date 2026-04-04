@@ -27,7 +27,7 @@ fn test_populate_store_from_tree() {
     NodeRecord::populate_store_from_tree(&store, &tree).unwrap();
 
     // Verify all nodes are stored
-    for (node_id, _) in &tree.nodes {
+    for node_id in tree.nodes.keys() {
         let record = store.get(node_id).unwrap();
         assert!(record.is_some(), "Node {:?} should be in store", node_id);
     }
@@ -214,7 +214,7 @@ fn test_store_persistence() {
     // Second session: verify data persisted
     // Retry opening the database in case it's still closing
     let store = retry_open_store(&store_path, 10).unwrap();
-    for (node_id, _) in &tree.nodes {
+    for node_id in tree.nodes.keys() {
         let record = store.get(node_id).unwrap();
         assert!(record.is_some(), "Node should persist across restarts");
     }

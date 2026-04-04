@@ -205,7 +205,7 @@ pub fn compose_frames(
     let target_record = node_store
         .get(&target_node_id)
         .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NodeNotFound(target_node_id))?;
+        .ok_or(ApiError::NodeNotFound(target_node_id))?;
 
     let parent_node_id = target_record.parent;
 

@@ -74,7 +74,7 @@ fn test_workspace_delete_dry_run() {
                 },
             })
             .unwrap();
-        assert!(!list_out.contains("f.txt") || list_out.contains("empty") || list_out == "");
+        assert!(!list_out.contains("f.txt") || list_out.contains("empty") || list_out.is_empty());
     });
 }
 

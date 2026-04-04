@@ -293,7 +293,7 @@ fn test_agent_registry_load_from_xdg_prompt_path() {
         let agent_file = agents_dir.join("test-agent.toml");
         fs::write(
             &agent_file,
-            &format!(
+            format!(
                 r#"
 agent_id = "test-agent"
 role = "Writer"
@@ -323,7 +323,7 @@ fn test_agent_registry_load_from_xdg_prompt_path_relative() {
         let test_config_home = test_dir.path().to_path_buf();
         let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
         let meld_dir = test_config_home.join("meld");
-        fs::create_dir_all(&meld_dir.join("prompts")).unwrap();
+        fs::create_dir_all(meld_dir.join("prompts")).unwrap();
 
         // Create a prompt file relative to XDG config
         let prompt_file = meld_dir.join("prompts").join("test.md");
@@ -368,13 +368,11 @@ fn test_agent_registry_load_from_xdg_prompt_path_tilde() {
         let agent_file = agents_dir.join("test-agent.toml");
         fs::write(
             &agent_file,
-            &format!(
-                r#"
+            r#"
 agent_id = "test-agent"
 role = "Writer"
 system_prompt_path = "~/test_prompts/test.md"
 "#,
-            ),
         )
         .unwrap();
 

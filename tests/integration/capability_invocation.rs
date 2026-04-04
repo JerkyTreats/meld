@@ -534,7 +534,12 @@ fn context_provider_finalize_capabilities_materialize_frame() {
                 registry
                     .get("context_generate_finalize", 1)
                     .unwrap()
-                    .invoke(run_context.api(), &finalize_runtime, &finalize_payload, None),
+                    .invoke(
+                        run_context.api(),
+                        &finalize_runtime,
+                        &finalize_payload,
+                        None,
+                    ),
             )
             .unwrap();
 

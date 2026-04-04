@@ -19,13 +19,14 @@ pub fn validate_agent_config(
         }
     }
 
-    if agent.role != AgentRole::Reader {
-        if agent.system_prompt.is_none() && agent.system_prompt_path.is_none() {
-            return Err(format!(
-                "Agent '{}' (role: {:?}) requires either system_prompt or system_prompt_path",
-                agent.agent_id, agent.role
-            ));
-        }
+    if agent.role != AgentRole::Reader
+        && agent.system_prompt.is_none()
+        && agent.system_prompt_path.is_none()
+    {
+        return Err(format!(
+            "Agent '{}' (role: {:?}) requires either system_prompt or system_prompt_path",
+            agent.agent_id, agent.role
+        ));
     }
 
     if let Some(ref prompt_path) = agent.system_prompt_path {

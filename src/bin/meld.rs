@@ -170,7 +170,7 @@ mod tests {
     fn test_build_logging_config_default() {
         let temp = tempfile::tempdir().unwrap();
         let ws = temp.path().to_string_lossy();
-        let cli = Cli::try_parse_from(&["meld", "--workspace", ws.as_ref(), "status"]).unwrap();
+        let cli = Cli::try_parse_from(["meld", "--workspace", ws.as_ref(), "status"]).unwrap();
         let config = build_logging_config(&cli, temp.path());
         assert!(config.enabled, "default should have logging enabled");
         assert_eq!(config.output, "file", "default output should be file");
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn test_build_logging_config_quiet() {
-        let cli = Cli::try_parse_from(&["meld", "--quiet", "status"]).unwrap();
+        let cli = Cli::try_parse_from(["meld", "--quiet", "status"]).unwrap();
         let cwd = std::env::current_dir().unwrap();
         let config = build_logging_config(&cli, cwd.as_path());
         assert!(!config.enabled, "quiet should disable logging");
@@ -189,7 +189,7 @@ mod tests {
     fn test_build_logging_config_verbose() {
         let temp = tempfile::tempdir().unwrap();
         let ws = temp.path().to_string_lossy();
-        let cli = Cli::try_parse_from(&["meld", "--workspace", ws.as_ref(), "--verbose", "status"])
+        let cli = Cli::try_parse_from(["meld", "--workspace", ws.as_ref(), "--verbose", "status"])
             .unwrap();
         let config = build_logging_config(&cli, temp.path());
         assert_eq!(config.level, "debug", "verbose should set level to debug");
@@ -203,7 +203,7 @@ mod tests {
     fn test_build_logging_config_verbose_respects_explicit_output_override() {
         let temp = tempfile::tempdir().unwrap();
         let ws = temp.path().to_string_lossy();
-        let cli = Cli::try_parse_from(&[
+        let cli = Cli::try_parse_from([
             "meld",
             "--workspace",
             ws.as_ref(),

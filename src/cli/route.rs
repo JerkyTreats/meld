@@ -34,6 +34,14 @@ use crate::cli::parse::{
 use crate::cli::progress::LiveProgressHandle;
 use crate::cli::{command_name, typed_summary_event};
 
+type ProviderCreationDialogResult = (
+    crate::config::ProviderType,
+    String,
+    Option<String>,
+    Option<String>,
+    crate::provider::CompletionOptions,
+);
+
 fn resolve_context_get_frame_type(
     api: &ContextApi,
     workflow_registry: &WorkflowRegistry,
@@ -136,8 +144,7 @@ impl RunContext {
             .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
 
         let db = sled::open(&store_path).map_err(|e| {
-            ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::other(
                 format!("Failed to open sled database: {}", e),
             )))
         })?;
@@ -150,7 +157,7 @@ impl RunContext {
             .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
         let frame_storage = Arc::new(
             crate::context::frame::open_storage(&frame_storage_path)
-                .map_err(|e| ApiError::StorageError(e))?,
+                .map_err(ApiError::StorageError)?,
         );
         let prompt_context_storage = Arc::new(
             crate::prompt_context::PromptContextArtifactStorage::new(&artifact_storage_path)
@@ -1017,6 +1024,7 @@ impl RunContext {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_provider_create(
         &self,
         provider_name: &str,
@@ -1077,18 +1085,7 @@ impl RunContext {
         ))
     }
 
-    fn create_provider_interactive(
-        &self,
-    ) -> Result<
-        (
-            crate::config::ProviderType,
-            String,
-            Option<String>,
-            Option<String>,
-            crate::provider::CompletionOptions,
-        ),
-        ApiError,
-    > {
+    fn create_provider_interactive(&self) -> Result<ProviderCreationDialogResult, ApiError> {
         use crate::provider::commands::ProviderCommandService;
         use dialoguer::{Input, Select};
 
@@ -1645,14 +1642,16 @@ impl RunContext {
         let ignore_patterns = ignore::load_ignore_patterns(&self.workspace_root)
             .unwrap_or_else(|_| WalkerConfig::default().ignore_patterns);
 
-        let mut watch_config = WatchConfig::default();
-        watch_config.workspace_root = self.workspace_root.clone();
-        watch_config.debounce_ms = debounce_ms;
-        watch_config.batch_window_ms = batch_window_ms;
-        watch_config.ignore_patterns = ignore_patterns;
-        watch_config.session_id = Some(session_id.to_string());
-        watch_config.progress = Some(self.progress.clone());
-        watch_config.workflow_registry = Some(self.workflow_registry.clone());
+        let watch_config = WatchConfig {
+            workspace_root: self.workspace_root.clone(),
+            debounce_ms,
+            batch_window_ms,
+            ignore_patterns,
+            session_id: Some(session_id.to_string()),
+            progress: Some(self.progress.clone()),
+            workflow_registry: Some(self.workflow_registry.clone()),
+            ..WatchConfig::default()
+        };
 
         let daemon = WatchDaemon::new(self.api.clone(), watch_config)?;
         tracing::info!("Starting watch mode daemon");

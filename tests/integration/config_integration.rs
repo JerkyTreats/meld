@@ -156,7 +156,7 @@ fn test_config_validation_errors() {
     let validation_result = config.validate();
     assert!(validation_result.is_err());
     let errors = validation_result.unwrap_err();
-    assert!(errors.len() > 0);
+    assert!(!errors.is_empty());
     assert!(errors
         .iter()
         .any(|e| { matches!(e, meld::config::ValidationError::Agent(_, _)) }));

@@ -150,8 +150,7 @@ impl ProgressRuntime {
 }
 
 fn to_api_error(err: std::sync::mpsc::SendError<ProgressEnvelope>) -> ApiError {
-    ApiError::StorageError(StorageError::IoError(std::io::Error::new(
-        std::io::ErrorKind::Other,
+    ApiError::StorageError(StorageError::IoError(std::io::Error::other(
         err.to_string(),
     )))
 }

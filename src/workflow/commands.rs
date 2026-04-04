@@ -169,7 +169,7 @@ impl WorkflowCommandService {
         )?;
         let result = execute_registered_workflow_target(
             api,
-            &workspace_root.to_path_buf(),
+            workspace_root,
             registered_profile,
             &execution_request,
             event_context,
@@ -210,13 +210,9 @@ fn resolve_node_id(
 ) -> Result<NodeID, ApiError> {
     match (node, path) {
         (Some(node_id), None) => parse_node_id(node_id),
-        (None, Some(path)) => workspace::resolve_workspace_node_id(
-            api,
-            &workspace_root.to_path_buf(),
-            Some(path),
-            None,
-            false,
-        ),
+        (None, Some(path)) => {
+            workspace::resolve_workspace_node_id(api, workspace_root, Some(path), None, false)
+        }
         (Some(_), Some(_)) => Err(ApiError::ConfigError(
             "Cannot specify both --node and --path".to_string(),
         )),

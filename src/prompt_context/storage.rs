@@ -142,10 +142,10 @@ impl PromptContextArtifactStorage {
             let modified_secs = modified
                 .duration_since(UNIX_EPOCH)
                 .map_err(|err| {
-                    StorageError::IoError(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Invalid file modification timestamp: {}", err),
-                    ))
+                    StorageError::IoError(std::io::Error::other(format!(
+                        "Invalid file modification timestamp: {}",
+                        err
+                    )))
                 })?
                 .as_secs();
             if modified_secs <= cutoff_unix_secs {
@@ -172,10 +172,10 @@ impl PromptContextArtifactStorage {
             let modified_secs = modified
                 .duration_since(UNIX_EPOCH)
                 .map_err(|err| {
-                    StorageError::IoError(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Invalid file modification timestamp: {}", err),
-                    ))
+                    StorageError::IoError(std::io::Error::other(format!(
+                        "Invalid file modification timestamp: {}",
+                        err
+                    )))
                 })?
                 .as_secs();
             if modified_secs <= cutoff_unix_secs {

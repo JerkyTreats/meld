@@ -48,10 +48,10 @@ impl SledNodeRecordStore {
     /// a file path (sled will use it as the database file).
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
         let db = sled::open(path).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to open sled database: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to open sled database: {}",
+                e
+            )))
         })?;
         Ok(Self { db })
     }
@@ -71,10 +71,10 @@ impl NodeRecordStore for SledNodeRecordStore {
     fn get(&self, node_id: &NodeID) -> Result<Option<NodeRecord>, StorageError> {
         let key = node_id.as_slice();
         match self.db.get(key).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to get node record: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to get node record: {}",
+                e
+            )))
         })? {
             Some(value) => {
                 let record = deserialize_node_record(&value)?;
@@ -89,10 +89,10 @@ impl NodeRecordStore for SledNodeRecordStore {
         let value = serialize_node_record(record)?;
 
         self.db.insert(key, value).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to put node record: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to put node record: {}",
+                e
+            )))
         })?;
 
         // Store path-to-NodeID mapping for efficient path lookups
@@ -108,10 +108,10 @@ impl NodeRecordStore for SledNodeRecordStore {
         self.db
             .insert(path_key.as_bytes(), path_value)
             .map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to store path mapping: {}", e),
-                ))
+                StorageError::IoError(std::io::Error::other(format!(
+                    "Failed to store path mapping: {}",
+                    e
+                )))
             })?;
 
         Ok(())
@@ -128,10 +128,10 @@ impl NodeRecordStore for SledNodeRecordStore {
         let path_key = format!("path:{}", path_str);
 
         match self.db.get(path_key.as_bytes()).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to get path mapping: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to get path mapping: {}",
+                e
+            )))
         })? {
             Some(node_id_bytes) => {
                 let node_id: NodeID = bincode::deserialize(&node_id_bytes).map_err(|e| {
@@ -150,10 +150,10 @@ impl NodeRecordStore for SledNodeRecordStore {
         let mut records = Vec::new();
         for item in self.db.iter() {
             let (key, value) = item.map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to iterate store: {}", e),
-                ))
+                StorageError::IoError(std::io::Error::other(format!(
+                    "Failed to iterate store: {}",
+                    e
+                )))
             })?;
             if !is_node_record_key(key.as_ref()) {
                 continue;
@@ -188,12 +188,7 @@ impl NodeRecordStore for SledNodeRecordStore {
             .ok_or_else(|| StorageError::InvalidPath("Node not found".to_string()))?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?
+            .map_err(|e| StorageError::IoError(std::io::Error::other(e.to_string())))?
             .as_secs();
         record.tombstoned_at = Some(now);
         self.put(&record)?;
@@ -223,17 +218,17 @@ impl NodeRecordStore for SledNodeRecordStore {
         }
         let key = node_id.as_slice();
         self.db.remove(key).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to remove node record: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to remove node record: {}",
+                e
+            )))
         })?;
         let path_key = format!("path:{}", record.path.to_string_lossy());
         self.db.remove(path_key.as_bytes()).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to remove path mapping: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to remove path mapping: {}",
+                e
+            )))
         })?;
         Ok(())
     }
@@ -242,10 +237,10 @@ impl NodeRecordStore for SledNodeRecordStore {
         let mut out = Vec::new();
         for item in self.db.iter() {
             let (key, value) = item.map_err(|e| {
-                StorageError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to iterate store: {}", e),
-                ))
+                StorageError::IoError(std::io::Error::other(format!(
+                    "Failed to iterate store: {}",
+                    e
+                )))
             })?;
             if !is_node_record_key(key.as_ref()) {
                 continue;
@@ -263,7 +258,7 @@ impl NodeRecordStore for SledNodeRecordStore {
                 Err(err) => return Err(err),
             };
             if let Some(ts) = record.tombstoned_at {
-                if older_than.map_or(true, |cutoff| ts <= cutoff) {
+                if older_than.is_none_or(|cutoff| ts <= cutoff) {
                     out.push(record.node_id);
                 }
             }
@@ -273,10 +268,10 @@ impl NodeRecordStore for SledNodeRecordStore {
 
     fn flush(&self) -> Result<(), StorageError> {
         self.db.flush().map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to flush database: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to flush database: {}",
+                e
+            )))
         })?;
         Ok(())
     }
@@ -287,10 +282,10 @@ impl SledNodeRecordStore {
     pub fn contains(&self, node_id: &NodeID) -> Result<bool, StorageError> {
         let key = node_id.as_slice();
         let exists = self.db.contains_key(key).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to check node existence: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to check node existence: {}",
+                e
+            )))
         })?;
         Ok(exists)
     }
@@ -318,10 +313,10 @@ impl SledNodeRecordStore {
         }
 
         self.db.apply_batch(batch).map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to apply batch: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to apply batch: {}",
+                e
+            )))
         })?;
 
         Ok(())
@@ -330,10 +325,10 @@ impl SledNodeRecordStore {
     /// Flush all pending writes to disk
     pub fn flush(&self) -> Result<(), StorageError> {
         self.db.flush().map_err(|e| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to flush database: {}", e),
-            ))
+            StorageError::IoError(std::io::Error::other(format!(
+                "Failed to flush database: {}",
+                e
+            )))
         })?;
         Ok(())
     }

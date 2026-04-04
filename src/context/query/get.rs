@@ -30,9 +30,10 @@ pub struct CliNodeContext {
 }
 
 /// Single get entry point: resolve node_id, build ContextView, call api.get_node.
+#[allow(clippy::too_many_arguments)]
 pub fn get_node_for_cli(
     api: &ContextApi,
-    workspace_root: &std::path::PathBuf,
+    workspace_root: &Path,
     node: Option<&str>,
     path: Option<&Path>,
     agent: Option<&str>,
@@ -84,7 +85,7 @@ pub fn get_node_for_cli(
     let view = builder.build();
     let context = api.get_node(node_id, view)?;
     let mut warnings = Vec::new();
-    if let Ok(scan_info) = workspace::read_workspace_scan_state(api, workspace_root.as_path()) {
+    if let Ok(scan_info) = workspace::read_workspace_scan_state(api, workspace_root) {
         if matches!(scan_info.scan_state, WorkspaceScanState::Stale) {
             warnings.push(
                 "Workspace scan is stale. Showing context from stored scan data.".to_string(),
