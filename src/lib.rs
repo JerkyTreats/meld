@@ -7,6 +7,7 @@ pub mod agent;
 pub mod api;
 pub mod cli;
 pub mod concurrency;
+pub mod control;
 pub mod config;
 pub mod context;
 pub mod error;
