@@ -66,7 +66,7 @@ This plan does not expand non-default selector behavior.
 | 0 | Baseline lock and readiness gates | None | complete |
 | 1 | Capability contract core and catalog | Phase 0 | complete |
 | 2 | Task records, artifact repo, and compiler | Phase 0 and Phase 1 | complete |
-| 3 | Task executor and invocation payload assembly | Phase 1 and Phase 2 | proposed |
+| 3 | Task executor and invocation payload assembly | Phase 1 and Phase 2 | complete |
 | 4 | First-slice capability implementation | Phase 1 through Phase 3 | proposed |
 | 5 | Docs-writer task package and task DAG execution | Phase 2 through Phase 4 | proposed |
 | 6 | Workflow convergence onto task execution | Phase 3 through Phase 5 | proposed |
@@ -283,6 +283,12 @@ This plan does not expand non-default selector behavior.
 **Comment gate**:
 - task executor public entry points have Rustdoc comments
 - readiness, barrier, and event-emission logic includes concise comments on invariants and ownership boundaries
+
+**Phase completion notes**:
+- `TaskExecutor` now seeds init artifacts, computes ready capability instances, assembles invocation payloads, and records task-local success or failure
+- task-local event emission now covers request, start, progress, blocked, artifact emitted, success, and failure boundaries
+- targeted readiness, executor, and task executor integration gates passed on 2026-04-04
+- repo-wide clippy remains blocked by preexisting warnings outside the new task files
 
 ---
 

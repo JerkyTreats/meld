@@ -7,7 +7,11 @@
 pub mod artifact_repo;
 pub mod compiler;
 pub mod contracts;
+pub mod events;
+pub mod executor;
 pub mod init;
+pub mod invocation;
+pub mod readiness;
 
 pub use artifact_repo::TaskArtifactRepo;
 pub use compiler::{compile_task_definition, TaskCompiler};
@@ -16,6 +20,10 @@ pub use contracts::{
     ArtifactRepoRecord, CapabilityInvocationRecord, CompiledTaskRecord, TaskDefinition,
     TaskDependencyEdge, TaskDependencyKind, TaskInitSlotSpec,
 };
+pub use events::TaskEvent;
+pub use executor::TaskExecutor;
 pub use init::{
     validate_task_initialization, InitArtifactValue, TaskInitializationPayload, TaskRunContext,
 };
+pub use invocation::assemble_invocation_payload;
+pub use readiness::compute_ready_capability_instances;

@@ -19,6 +19,7 @@ mod provider_cli;
 mod store_integration;
 mod task_artifact_repo;
 mod task_compiler;
+mod task_executor;
 mod test_utils;
 mod tooling_integration;
 mod tree_determinism;
