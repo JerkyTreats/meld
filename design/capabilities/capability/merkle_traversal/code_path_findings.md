@@ -11,7 +11,7 @@ This document records what already exists, what is reusable, and what still prev
 
 ## Source Specs
 
-- [Capability And Plan Design](../../README.md)
+- [Capability And Task Design](../../README.md)
 - [Capability Model](../README.md)
 - [Merkle Traversal Capability](README.md)
 - [Context Capability Readiness](../../context/README.md)

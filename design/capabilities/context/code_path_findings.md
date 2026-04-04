@@ -1,164 +1,210 @@
 # Context Code Path Findings
 
-Date: 2026-03-27
-Scope: current code baseline findings for capability-ready and plan-ready `src/context` refactor
+Date: 2026-04-03
+Status: active
+Scope: current code baseline for the `src/context` domain as it exists today
 
 ## Intent
 
-Capture concrete code findings for the `src/context` orchestration split before refactor execution.
-This document records the current seams, the strongest reuse boundaries, and the main gaps that still block clean capability contracts and plan compilation.
+Capture how `context` actually works in the current codebase.
+This document is descriptive, not aspirational.
+Its purpose is to show where control lives today, where workflow behavior is inverted relative to the target design, and which seams are worth preserving for a future capability and task layer.
 
-## Source Specs
+## Source Set
 
-- [Context Refactor Requirements](README.md)
-- [Capability And Plan Design](../README.md)
-- [Capability Model](../capability/README.md)
-- [Plan Compiler](../plan/compiler/README.md)
+- [Context Capability Readiness](README.md)
+- [Capability And Task Design](../README.md)
+- [Domain Architecture](../domain_architecture.md)
+- [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs)
+- [plan.rs](/home/jerkytreats/meld/src/context/generation/plan.rs)
+- [executor.rs](/home/jerkytreats/meld/src/context/generation/executor.rs)
+- [orchestration.rs](/home/jerkytreats/meld/src/context/generation/orchestration.rs)
+- [queue.rs](/home/jerkytreats/meld/src/context/queue.rs)
+- [selection.rs](/home/jerkytreats/meld/src/context/generation/selection.rs)
+- [program.rs](/home/jerkytreats/meld/src/context/generation/program.rs)
+- [workflow facade](/home/jerkytreats/meld/src/workflow/facade.rs)
+- [progress observability test](/home/jerkytreats/meld/tests/integration/progress_observability.rs)
+
+## Current Domain Shape
+
+Today `context` is not only a domain behavior provider.
+It is also the main host for target resolution, compatibility planning, queue startup, execution mode choice, and part of workflow routing.
+
+The public surface in [context.rs](/home/jerkytreats/meld/src/context.rs) and [facade.rs](/home/jerkytreats/meld/src/context/facade.rs) exports:
+
+- `GenerationPlan`
+- `GenerationExecutor`
+- `TargetExecutionProgram`
+- `TargetExecutionRequest`
+- queue types and queue options
+
+That means the domain boundary already includes both atomic generation behavior and a compatibility execution envelope.
 
 ## Baseline Findings
 
-### C1 `src/context/generation/run.rs` still owns recursive target planning
+### C1 `run_generate` is the real top-level orchestrator for context generation
 
 Current state:
-- `find_missing_descendant_heads` performs subtree readiness checks in `src/context/generation/run.rs`
-- `collect_subtree_levels` derives bottom up execution levels in `src/context/generation/run.rs`
-- `build_plan` decides recursive versus non recursive behavior, skip reuse behavior, plan ids, and level contents in `src/context/generation/run.rs`
+
+- [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs) resolves node identity from path or node id
+- it resolves the agent and validates provider presence
+- it chooses execution mode through direct `workflow_id` input or agent workflow binding
+- it computes recursive behavior for directory targets
+- it calls `build_plan`
+- it emits `plan_constructed`
+- it creates a Tokio runtime, creates the queue, starts the queue, and runs `GenerationExecutor`
 
 Impact:
-- context still mixes planning policy with generation execution setup
-- plan compilation cannot yet fully own target expansion and ordering without duplicating context logic
 
-### C2 `GenerationPlan` is a useful compatibility envelope but not yet a workflow compiled artifact
+- `context` currently owns the main command-side orchestration path for generation
+- the domain is not yet reduced to atomic behavior behind a capability contract
+- compatibility planning and execution startup still live inside the domain entry path
+
+### C2 `build_plan` is context-owned target derivation and ordering
 
 Current state:
-- `GenerationPlan` stores `plan_id`, `source`, `session_id`, `levels`, `priority`, and `failure_policy` in `src/context/generation/plan.rs`
-- `GenerationItem` stores execution details such as target path, agent, provider, frame type, force flag, and execution program in `src/context/generation/plan.rs`
-- current plan data does not declare explicit dependency edges, scope digest, artifact type ids, or schema bindings
+
+- [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs) contains `find_missing_descendant_heads`
+- it also contains `collect_subtree_levels`
+- `build_plan` derives bottom-up subtree levels for recursive generation
+- `build_plan` enforces descendant head checks for non-recursive directory generation
+- `build_plan` decides head reuse skip behavior
+- `build_plan` assigns `plan_id`, `source`, `priority`, `failure_policy`, `total_nodes`, and `total_levels`
 
 Impact:
-- the current plan shape is strong enough for compatibility execution
-- the current plan shape is not yet rich enough for plan compilation to validate target plan artifacts and downstream bindings before runtime starts
 
-### C3 `src/context/queue.rs` still owns execution mode branching
+- target graph shape is currently derived inside `context`
+- ordering is level-based and produced before queue or workflow execution begins
+- a future task compiler cannot own target derivation cleanly until this logic moves or is wrapped as explicit compatibility input
+
+### C3 `GenerationPlan` is the actual compatibility execution envelope
 
 Current state:
-- `process_request` branches on `TargetExecutionProgramKind` in `src/context/queue.rs`
-- workflow backed requests are translated into `TargetExecutionRequest` and sent through `src/workflow/facade.rs`
-- single shot requests are sent to `execute_generation_request` in `src/context/generation/orchestration.rs`
+
+- [plan.rs](/home/jerkytreats/meld/src/context/generation/plan.rs) defines `GenerationPlan`
+- that shape is level-based rather than dependency-edge based
+- each `GenerationItem` carries node id, path, agent, provider, frame type, force, and `TargetExecutionProgram`
+- `GenerationPlan` carries `plan_id`, `session_id`, `levels`, `priority`, `failure_policy`, `target_path`, `total_nodes`, and `total_levels`
+- [executor.rs](/home/jerkytreats/meld/src/context/generation/executor.rs) consumes this type directly
 
 Impact:
-- queue execution remains aware of workflow versus non workflow policy
-- the generation capability family does not yet have one uniform dispatch contract below the queue layer
 
-### C4 A clear workflow public seam already exists and should be preserved
+- the current durable compatibility contract is a context-owned execution envelope
+- this shape is strong enough for current queue and workflow execution
+- this shape is not yet a compiled task artifact with explicit dependency edges, artifact contracts, or capability instance records
+
+### C4 Workflow control is inverted relative to the target design
 
 Current state:
-- `resolve_target_execution_program` maps agent workflow binding to execution mode in `src/context/generation/selection.rs`
-- `TargetExecutionProgram`, `TargetExecutionRequest`, and `TargetExecutionResult` define the main public bridge in `src/context/generation/program.rs`
-- `build_target_execution_request` and workflow target execution live in `src/workflow/facade.rs`
+
+- [selection.rs](/home/jerkytreats/meld/src/context/generation/selection.rs) chooses workflow mode from agent workflow binding
+- [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs) also allows explicit `workflow_id` override on the request
+- [executor.rs](/home/jerkytreats/meld/src/context/generation/executor.rs) still iterates context-owned plan levels even when the program kind is `workflow`
+- [queue.rs](/home/jerkytreats/meld/src/context/queue.rs) branches on `TargetExecutionProgramKind::Workflow`
+- for workflow items, the queue builds a target execution request through [workflow facade](/home/jerkytreats/meld/src/workflow/facade.rs)
+- that request includes `plan_id` and `level_index`
+- the workflow layer then executes as a downstream branch of the context-owned plan
 
 Impact:
-- the codebase already has a useful public contract boundary between plan-facing code and context
-- future capability and plan work should extend this seam rather than let `src/context` reach into compiler internals
 
-### C5 Plan lineage and workflow lineage are still partial in execution telemetry
+- workflow is not the outer controller of `context`
+- `context` decides the execution envelope first, then routes one branch into workflow
+- this is the opposite of the target direction where a higher-order task or control layer should decide multi-step structure and then call atomic domain capabilities
+
+### C5 Queue owns both transport and execution mode policy
 
 Current state:
-- `TargetExecutionRequest` includes `plan_id`, `session_id`, and `level_index` in `src/context/generation/program.rs`
-- workflow facade forwards `plan_id` and `level_index` into workflow execution in `src/workflow/facade.rs`
-- `process_request` currently passes `None` for `level_index` in `src/context/queue.rs`
-- atomic generation telemetry in `src/context/generation/orchestration.rs` emits `workflow_id`, `thread_id`, `turn_id`, `turn_seq`, `plan_id`, and `level_index` as `None`
+
+- [queue.rs](/home/jerkytreats/meld/src/context/queue.rs) deduplicates requests by node, agent, provider fingerprint, frame type, and program
+- `GenerationRequestOptions` includes `plan_id`
+- queue ordering gives requests with `plan_id` a higher rank than otherwise equal requests
+- `process_request` branches between direct orchestration and workflow execution
+- `is_retryable_error` has workflow-specific handling
+- workflow retryability is inferred from message text such as `failed gate`
 
 Impact:
-- execution records do not yet carry full target level lineage through all generation paths
-- downstream repair, artifact handoff, and audit surfaces still lack part of the planned plan context
 
-### C6 Retry policy remains queue local and partly string matched
+- queue behavior is not only transport
+- queue still owns durable execution policy through program-kind branching and retry classification
+- workflow compatibility currently reaches deeply into queue semantics
+
+### C6 `execute_generation_request` is the strongest atomic context seam
 
 Current state:
-- `is_retryable_error` branches by execution program kind in `src/context/queue.rs`
-- workflow retryability is currently inferred by checking error message content such as `failed gate` in `src/context/queue.rs`
-- single shot retryability is also still decided in the queue layer rather than in a typed capability or plan policy contract
+
+- [orchestration.rs](/home/jerkytreats/meld/src/context/generation/orchestration.rs) owns prompt collection
+- it prepares provider execution
+- it prepares prompt-context lineage
+- it builds and validates metadata
+- it executes the completion
+- it writes the resulting frame
 
 Impact:
-- retry and repair policy are not yet first class workflow inputs
-- message based classification increases drift risk as runtime behavior evolves
 
-### C7 `execute_generation_request` is the strongest domain owned atomic seam
+- this is the cleanest domain seam to preserve during refactor
+- it performs real context work without needing subtree traversal, level planning, or workflow turn selection
+- a future `context_generate` capability should wrap this seam rather than re-center the domain around `run_generate`
+
+### C7 Telemetry and lineage are compatibility-first and still partial
 
 Current state:
-- `execute_generation_request` in `src/context/generation/orchestration.rs` owns prompt collection, provider preparation, metadata construction, metadata validation, model execution, frame creation, and frame persistence
-- this path does real context work without needing to own recursive target derivation or workflow method choice
+
+- [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs) emits `plan_constructed`
+- [executor.rs](/home/jerkytreats/meld/src/context/generation/executor.rs) emits `generation_started`, `level_started`, `node_generation_started`, `node_generation_completed`, and related level events
+- [orchestration.rs](/home/jerkytreats/meld/src/context/generation/orchestration.rs) emits metadata validation events
+- those atomic metadata events currently set `workflow_id`, `plan_id`, and `level_index` to `None`
+- workflow execution carries `plan_id` and `level_index` through [workflow facade](/home/jerkytreats/meld/src/workflow/facade.rs)
 
 Impact:
-- this is the main domain boundary to preserve during HTN integration
-- refactor work should move planning and workflow policy around this seam rather than rewrite the seam itself
 
-## Test Coverage Findings
+- the compatibility layer already has plan and level lineage
+- the atomic context seam does not yet preserve that lineage all the way through
+- a future task layer will need explicit lineage propagation rather than best-effort compatibility fields
 
-### T1 Compatibility coverage exists for program selection and plan execution shape
+### C8 Tests confirm that context owns the current multi-step shape
 
 Current state:
-- `src/context/generation/program.rs` tests cover workflow and single shot program construction
-- `src/context/generation/selection.rs` tests cover workflow binding selection
-- `src/context/generation/executor.rs` tests cover execution behavior differences for workflow backed items such as wait timeout behavior
+
+- [progress observability test](/home/jerkytreats/meld/tests/integration/progress_observability.rs) includes `context_generate_plan_constructed_includes_path_field`
+- the same file includes `context_generate_with_workflow_agent_uses_context_plan_levels`
+- that workflow-backed test expects `plan_constructed`
+- it expects context-owned `total_nodes` and `total_levels`
+- it expects `program_kind` to be `workflow`
+- it expects workflow events to happen after the context-owned planning events
 
 Impact:
-- the basic compatibility bridge already has unit coverage and is a good baseline for refactor safety
 
-### T2 Integration coverage proves context level planning still drives workflow backed generation
+- the tests verify the current inversion of control
+- parity work must treat these tests as evidence of how the system behaves today
+- a refactor that assumes workflow already owns multi-step planning would misread the actual codebase
 
-Current state:
-- `tests/integration/progress_observability.rs` includes `context_generate_with_workflow_agent_uses_context_plan_levels`
-- that test verifies `plan_constructed`, workflow events, and metadata validation events in one command session
+## Current Interpretation
 
-Impact:
-- there is already evidence that context owned plan levels still shape workflow backed execution today
-- this test should remain a parity gate during the planning split
+The current `context` domain has three distinct layers mixed together:
 
-### T3 Coverage gaps remain for target plan artifacts and workflow lineage propagation
+- atomic generation behavior
+- compatibility planning and execution envelope creation
+- workflow-aware routing and queue policy
 
-Needed coverage:
-- validate typed target plan inputs once workflow owns ordering output
-- verify `level_index` and related lineage fields survive queue to workflow dispatch
-- replace retry message matching with typed failure classification coverage
+The atomic seam is viable.
+The surrounding host logic is the part that conflicts with the capability and task design.
 
-## Governance Coverage Findings
+## Refactor Implications
 
-### G1 The complex workflow policy does not currently represent this README structure
+The code suggests these refactor rules:
 
-Current state:
-- `governance/complex_change_workflow.md` requires one `PLAN` document when complex workflow mode is active
-- the policy defines required `PLAN` sections such as overview, phases, tasks, seams, gates, order summary, related links, and exception list
-- the policy does not define a README index, workload README layout, or a `code_path_findings.md` companion artifact
+1. Preserve `execute_generation_request` as the atomic context seam.
+2. Treat `GenerationPlan` as a compatibility envelope, not as the future durable task artifact.
+3. Move target derivation and ordering out of `run_generate` before claiming task compilation owns graph structure.
+4. Remove workflow branching from queue only after a replacement task input path exists.
+5. Preserve `TargetExecutionRequest` style bridge shapes only as temporary compatibility inputs if they still help migration.
+6. Do not assume workflow currently controls context.
+Current code shows the reverse.
 
-Impact:
-- the new `design/workflow_orchestrator/context/README.md` structure is useful but not formally represented in the current governance policy
-- reviewers cannot rely on governance alone to expect this README based decomposition
+## Exit Signals For A Future Refactor
 
-### G2 There is partial conceptual overlap with policy goals
-
-Current state:
-- the `context` README family already captures intent, scope, work items, code pressure, exit shape, and related links
-- these sections overlap with policy concepts such as objective, key seams, outcome, and documentation links
-
-Impact:
-- the structure aligns with the spirit of complex workflow documentation
-- the structure is still outside the current formal policy vocabulary because policy covers `PLAN` content only
-
-## Refactor Order Suggested By Current Code
-
-1. preserve `execute_generation_request` as the atomic context seam
-2. extract target expansion and ordering out of `src/context/generation/run.rs`
-3. turn `GenerationPlan` into a clearer workflow consumable target plan contract
-4. move retry and repair policy out of queue local string checks
-5. strengthen lineage propagation for `plan_id`, `level_index`, and workflow execution metadata
-6. add typed artifact and binding coverage for downstream workflow tasks
-
-## Exit Signals
-
-- `src/context/generation/run.rs` no longer derives target graphs internally
-- workflow submits typed target plans into context execution
-- queue dispatch no longer hides workflow policy decisions that belong in compile time or runtime workflow state
-- execution telemetry carries enough plan and workflow lineage for repair and audit
-- governance either stays intentionally `PLAN` only or is updated to recognize README workload indexes and findings docs
+- `context` no longer derives subtree ordering internally
+- queue no longer branches on workflow program kind
+- workflow no longer receives `plan_id` and `level_index` from a context-owned planner
+- atomic generation telemetry carries explicit upstream task lineage when present
+- public `context` exports center on capability-facing contracts rather than compatibility plan types

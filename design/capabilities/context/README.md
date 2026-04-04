@@ -5,12 +5,12 @@ Status: active
 
 ## Intent
 
-Define the refactor work required to make current `context generate` behavior capability-ready and plan-ready.
+Define the refactor work required to make current `context generate` behavior capability-ready and task-ready.
 
 ## Current Problem
 
 Current `context generate` behavior still mixes target expansion, Merkle traversal, generation execution, retry and resume assumptions, workflow-shaped sequencing, and output shaping.
-That mixed ownership prevents clean capability contracts and clean plan compilation.
+That mixed ownership prevents clean capability contracts and clean task compilation.
 
 ## Required End State
 
@@ -18,7 +18,7 @@ The `context` domain should own only domain behavior behind explicit capability 
 
 For the first slice, `context` must expose a `context_generate` capability contract, typed input artifact contracts, typed output artifact contracts, and the execution-facing implementation behind that contract.
 
-The following concerns must move out of `context`: plan graph assembly, dependency edge construction, artifact handoff validation, Merkle traversal policy, and workflow-shaped retry policy.
+The following concerns must move out of `context`: compiled task graph assembly, dependency edge construction, artifact handoff validation, Merkle traversal policy, and workflow-shaped retry policy.
 
 ## First Slice Refactor Work
 
@@ -39,6 +39,13 @@ The first slice `context_generate` capability must emit generation result artifa
 
 ## Non Goals
 
-- moving plan compilation into `context`
+- moving task compilation into `context`
 - preserving hidden Merkle traversal behavior inside `context`
 - preserving workflow-specific sequencing inside `context`
+
+## Read With
+
+- [Context Code Path Findings](code_path_findings.md)
+- [Context Technical Spec](technical_spec.md)
+- [Capability And Task Design](../README.md)
+- [Domain Architecture](../domain_architecture.md)

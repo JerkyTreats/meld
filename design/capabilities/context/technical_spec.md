@@ -1,13 +1,19 @@
-# Context Generate Technical Spec
+# Context Technical Spec
 
-Date: 2026-03-28
+Date: 2026-04-03
 Status: active
-Scope: first-slice extraction of `context_generate` into a clean capability-facing domain seam
+Scope: definitive refactor spec for preparing `src/context` for the capability feature set
 
 ## Intent
 
-Provide one implementation-facing execution spec for `context_generate`.
-This spec keeps the capability boundary explicit while also mapping the work into concrete code changes, outcomes, and verification gates.
+Define the concrete refactor required to make `context` usable as a clean capability provider.
+This spec is based on the current code, not on the target architecture alone.
+
+The key problem is not that `context` lacks a working generation seam.
+The key problem is that the domain currently wraps that seam in compatibility planning, queue policy, and workflow-aware routing.
+
+The refactor must preserve the atomic generation seam while moving orchestration concerns out of the domain.
+It must also move provider-service execution concerns into `provider`.
 
 ## Source Synthesis
 
@@ -15,148 +21,284 @@ This specification synthesizes:
 
 - [Context Capability Readiness](README.md)
 - [Context Code Path Findings](code_path_findings.md)
-- [Merkle Traversal Technical Spec](../capability/merkle_traversal/technical_spec.md)
+- [Provider Capability Design](../provider/README.md)
+- [Capability Model](../capability/README.md)
+- [Domain Architecture](../domain_architecture.md)
+- [Interregnum Orchestration](../../control/interregnum_orchestration.md)
+- [Workflow Cleanup Technical Spec](../workflow_refactor/technical_spec.md)
 
-## Boundary
+## Definitive Boundary
 
-Start condition:
-- `context generate` mixes traversal, planning, execution setup, queue-local retry assumptions, and compatibility sequencing
-- upstream execution projection is level-shaped
-- retry classification remains partly string matched
+### Start Condition
 
-End condition:
-- `context_generate` is a clean capability-facing seam
-- traversal arrives as `ordered_merkle_node_set`
-- generation execution stays in the context domain
-- plan construction and traversal derivation no longer live inside generation execution setup
+Current `context` owns all of these concerns at once:
 
-## Functional Contract
+- atomic generation behavior
+- target expansion and ordering
+- compatibility execution envelope creation
+- queue startup and queue routing decisions
+- workflow-aware execution mode selection
+- partial lineage and telemetry shaping
 
-`context_generate` takes scope input, `ordered_merkle_node_set`, generation policy binding, provider binding, and agent binding when required.
-It emits generation result artifact, frame reference artifact when present, structured observation summary, and structured effect summary.
+### End Condition
 
-The capability owns generation behavior only.
-Compiler owns compatibility and graph coherence.
-Traversal belongs to `merkle_traversal`, not to `context_generate`.
+After refactor, `context` should own only:
 
-## Change To Outcome Map
+- atomic generation behavior
+- context-owned query and frame read or write behavior
+- typed capability-facing inputs and outputs
+- domain-local validation and metadata construction needed for that atomic behavior
 
-### C0 Preserve the strongest domain execution seam
+After refactor, `context` should not own:
 
-Code changes:
-- keep `execute_generation_request` in [orchestration.rs](/home/jerkytreats/meld/src/context/generation/orchestration.rs) as the primary execution seam
-- avoid rewriting core generation behavior while extraction work is underway
+- compiled task graph construction
+- target ordering policy
+- traversal batch release
+- batch barrier coordination
+- provider batching and throttling
+- provider retry and backoff policy
+- workflow-specific routing
+- queue-local retry semantics that depend on orchestration mode
+- compatibility plan envelope as the primary public contract
 
-Outcome:
-- refactor work wraps and clarifies the existing domain seam instead of destabilizing it
+## Core Position
 
-Verification:
-- characterization coverage around `execute_generation_request` stays valid through the refactor
+The atomic seam to preserve is [orchestration.rs](/home/jerkytreats/meld/src/context/generation/orchestration.rs) and specifically `execute_generation_request`.
 
-### C1 Remove traversal derivation from generation setup
+The main code to shrink or move around that seam is:
 
-Code changes:
-- stop deriving traversal in [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs) as part of generation setup
-- replace that assumption with typed traversal input from `merkle_traversal`
+- [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs)
+- [plan.rs](/home/jerkytreats/meld/src/context/generation/plan.rs)
+- [executor.rs](/home/jerkytreats/meld/src/context/generation/executor.rs)
+- [selection.rs](/home/jerkytreats/meld/src/context/generation/selection.rs)
+- [queue.rs](/home/jerkytreats/meld/src/context/queue.rs)
 
-Outcome:
-- `context_generate` no longer owns traversal
-- generation setup becomes capability-focused rather than mixed with tree derivation
+This is the central architectural fact revealed by the code findings:
 
-Verification:
-- generation setup consumes `ordered_merkle_node_set` rather than raw subtree traversal helpers
+- the atomic domain seam already exists
+- the orchestration shell around it is what blocks capability readiness
 
-### C2 Replace level-shaped upstream assumptions with typed artifacts
+## Functional Contract Target
 
-Code changes:
-- stop using `GenerationPlan.levels` as the primary upstream contract for generation capability input
-- introduce typed capability input shapes that carry scope and traversal artifacts explicitly
+The first-slice `context_generate` capability should be shaped so that it can be called without asking `context` to derive the task graph around it.
 
-Outcome:
-- capability input becomes stable and compiler-visible
-- generation no longer depends on one legacy execution projection
+Required inputs:
 
-Verification:
-- typed capability input validation passes for valid traversal artifacts
-- invalid traversal input fails at the capability boundary
+- scope reference for the target node
+- typed traversal or target set artifact from outside `context`
+- provider binding
+- agent binding when needed
+- generation policy binding
+- explicit force or replay posture when relevant
 
-### C3 Separate queue behavior from capability semantics
+Required outputs:
 
-Code changes:
-- reduce branching in [queue.rs](/home/jerkytreats/meld/src/context/queue.rs) that decides behavior based on workflow-shaped execution mode
-- keep queue dispatch thin and move durable semantics to capability and plan contracts
+- generation result artifact
+- frame reference artifact when a frame is materialized
+- structured observation summary
+- structured effect summary
+- explicit failure classification suitable for retry policy outside the domain
+- explicit provider handoff and result boundary
 
-Outcome:
-- queue becomes transport and dispatch logic rather than orchestration logic
-- `context_generate` stops inheriting workflow-shaped behavior from queue decisions
+## Refactor Rules
 
-Verification:
-- queue paths still dispatch correctly without owning durable capability semantics
+### R1 Preserve the atomic generation seam
 
-### C4 Make retry and repair classification explicit
+Required change:
 
-Code changes:
-- stop depending on error message matching in [queue.rs](/home/jerkytreats/meld/src/context/queue.rs)
-- replace that path over time with typed outcome and classification contracts
+- keep `execute_generation_request` as the core domain execution path
+- keep prompt assembly, lineage preparation, metadata construction, result validation, and frame persistence behind that seam
+- extract provider binding resolution and completion execution into a provider-domain handoff
 
-Outcome:
-- retry posture becomes explicit and stable
-- classification drift from message wording is reduced
+Reason:
 
-Verification:
-- typed retry classification coverage replaces string-match coverage as cutover proceeds
+- this is the cleanest part of the current domain boundary
+- rewriting the full path would increase risk without fixing the orchestration problem
+- provider transport work is a separate concern and should not remain context-owned
 
-### C5 Make output artifacts explicit and downstream-safe
+### R2 Move target derivation out of `run_generate`
 
-Code changes:
-- define explicit generation result and frame reference outputs
-- keep observation and effect summaries structured
-- preserve lineage and metadata needed by downstream capabilities
+Required change:
 
-Outcome:
-- `context_generate` becomes a real capability producer
-- downstream compiler validation can reason about generation outputs
+- stop treating `build_plan` in [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs) as the durable upstream contract
+- move subtree traversal, level construction, and head-reuse ordering policy out of the main domain entry path
 
-Verification:
-- output artifacts serialize, validate, and connect cleanly to downstream capability contracts
+Reason:
 
-## File Level Execution Order
+- target graph derivation is task or control work, not atomic context behavior
+- keeping it inside `context` prevents a future task compiler from owning graph structure
 
-1. [orchestration.rs](/home/jerkytreats/meld/src/context/generation/orchestration.rs)
-2. [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs)
-3. [plan.rs](/home/jerkytreats/meld/src/context/generation/plan.rs)
-4. [program.rs](/home/jerkytreats/meld/src/context/generation/program.rs)
-5. [queue.rs](/home/jerkytreats/meld/src/context/queue.rs)
-6. downstream capability contract and compiler input types once introduced under `src/capability` and `src/plan`
+### R3 Move traversal batch release into `control`
 
-## Verification Matrix
+Required change:
 
-Boundary gates:
-- traversal no longer lives inside generation setup
-- queue no longer owns durable generation semantics
+- move bottom-up release order and wave progression out of `context`
+- let `control` consume structural traversal batches and coordinate execution barriers
 
-Execution seam gates:
-- `execute_generation_request` remains the main domain execution seam
-- provider behavior and frame persistence remain stable
+Reason:
 
-Artifact gates:
-- typed generation inputs validate cleanly
-- typed generation outputs are explicit and reusable downstream
+- ordered release across batches is orchestration rather than atomic generation
+- that logic must live somewhere real during the refactor window
+- `control` is the correct owner once `context` narrows to capability-ready behavior
 
-Classification gates:
-- retry and repair classification stop depending on string matching
+### R4 Downgrade `GenerationPlan` to compatibility status
+
+Required change:
+
+- stop treating `GenerationPlan` as the future durable public contract
+- keep it only as a migration envelope while the new task layer comes online
+
+Reason:
+
+- the current type is level-based
+- it lacks explicit dependency edges, artifact contracts, and capability instance identity
+- it is useful for migration, but it should not define the future context capability boundary
+
+### R5 Remove workflow mode from context-owned execution selection
+
+Required change:
+
+- remove workflow-aware execution mode selection from [selection.rs](/home/jerkytreats/meld/src/context/generation/selection.rs)
+- remove direct workflow override from the context generate request surface in [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs)
+
+Reason:
+
+- current code shows inverted control
+- `context` chooses the multi-step envelope and only then routes one branch into workflow
+- the future architecture requires the opposite posture
+
+### R6 Reduce queue to transport and bounded retry mechanics
+
+Required change:
+
+- remove `TargetExecutionProgramKind::Workflow` branching from [queue.rs](/home/jerkytreats/meld/src/context/queue.rs)
+- remove workflow-specific retry classification from the queue
+- stop using message text such as `failed gate` as orchestration policy input
+
+Reason:
+
+- queue should not decide which orchestration model is active
+- queue should not own execution policy that depends on workflow-specific meaning
+- capability and task layers need typed outcomes instead
+
+### R7 Replace compatibility lineage gaps with explicit upstream lineage
+
+Required change:
+
+- stop emitting `workflow_id`, `plan_id`, and `level_index` as empty placeholders inside the atomic seam
+- allow upstream task or control layers to supply explicit lineage when present
+
+Reason:
+
+- current telemetry proves the compatibility shell knows about lineage
+- the atomic seam does not currently preserve it
+- later capability execution will need explicit upstream lineage, not implicit workflow assumptions
+
+### R8 Keep temporary bridge shapes only when they help migration
+
+Required change:
+
+- `TargetExecutionRequest` and related bridge shapes may remain temporarily
+- they must be treated as compatibility inputs, not the long-term domain surface
+
+Reason:
+
+- the current queue and workflow paths already depend on these types
+- migration should be incremental
+- but these bridges should not become the final capability contract
+
+## Change Program
+
+### Phase C0
+
+Freeze the atomic seam and identify replacement boundaries.
+
+Required outcomes:
+
+- `execute_generation_request` is named as the preserved seam
+- `build_plan` and `GenerationPlan` are explicitly marked compatibility-only
+- queue workflow branching is identified as removal work rather than capability work
+- `control` is identified as the temporary orchestration owner for ordered batch release
+
+### Phase C1
+
+Extract target derivation and ordering from the domain entry path.
+
+Required outcomes:
+
+- recursive subtree ordering no longer originates in `run_generate`
+- head reuse checks no longer decide durable graph shape inside `context`
+- the domain can accept precomputed target inputs
+- traversal batch release is delegated to `control`
+
+### Phase C2
+
+Introduce capability-facing input and output types around the atomic seam.
+
+Required outcomes:
+
+- provider, agent, and policy inputs become explicit
+- generation result and frame reference outputs become explicit
+- failure classification becomes structured enough for upstream retry logic
+- provider execution becomes an explicit handoff rather than a hidden internal call
+
+### Phase C3
+
+Shrink queue responsibility.
+
+Required outcomes:
+
+- queue no longer branches into workflow execution
+- queue no longer reasons about workflow-specific retry posture
+- queue remains a transport and concurrency mechanism only
+
+### Phase C4
+
+Retire compatibility envelopes from the public domain center.
+
+Required outcomes:
+
+- `GenerationPlan` no longer defines the main public shape for context execution
+- public exports move toward capability-facing contracts
+- compatibility wrappers remain only where migration still requires them
+
+## Verification Gates
+
+### Boundary Gates
+
+- `context` no longer derives compiled task graph structure internally
+- `context` no longer selects workflow execution mode internally
+- queue no longer chooses between atomic generation and workflow execution
+
+### Seam Gates
+
+- `execute_generation_request` still performs generation successfully
+- provider handoff and frame persistence remain stable
+- prompt-context lineage and metadata validation still occur inside the atomic seam
+
+### Contract Gates
+
+- capability-facing inputs validate before domain execution starts
+- capability-facing outputs are explicit and reusable downstream
+- retry classification is no longer inferred from workflow-specific error text
+
+### Observability Gates
+
+- upstream lineage can be attached when present
+- atomic domain telemetry no longer hardcodes empty compatibility lineage fields as the only posture
 
 ## Completion Criteria
 
-1. `context_generate` consumes typed traversal input rather than deriving traversal
-2. generation execution still runs through the preserved domain seam
-3. queue-local orchestration logic is reduced
-4. output artifacts are explicit enough for downstream compiler validation
-5. retry and repair classification are on a typed path rather than a message-match path
+1. `run_generate` no longer defines the durable public shape of context execution.
+2. `build_plan` no longer owns target graph derivation for the future architecture.
+3. `GenerationPlan` is clearly compatibility-only.
+4. queue no longer branches on workflow program kind.
+5. `execute_generation_request` remains the preserved atomic domain seam.
+6. `context_generate` can be called by a future task layer without asking `context` to invent the task graph around it.
 
 ## Read With
 
 - [Context Capability Readiness](README.md)
 - [Context Code Path Findings](code_path_findings.md)
-- [Merkle Traversal Technical Spec](../capability/merkle_traversal/technical_spec.md)
-- [Capability And Plan Implementation Plan](../PLAN.md)
+- [Workflow Cleanup Technical Spec](../workflow_refactor/technical_spec.md)
+- [Capability And Task Implementation Plan](../PLAN.md)

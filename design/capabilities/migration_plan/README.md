@@ -5,7 +5,7 @@ Status: active
 
 ## Intent
 
-Define how current behavior moves into the capability and plan model without breaking command behavior.
+Define how current behavior moves into the capability and task model without breaking command behavior.
 
 ## Migration Rules
 
@@ -21,6 +21,6 @@ The first slice migration targets are current `context generate` and the current
 ## Required Migration Outcomes
 
 Current behavior lowers into candidate capability graphs.
-Compiler emits locked plans for those graphs.
+Compiler emits locked compiled tasks for those graphs.
 Domain code executes behind explicit capability contracts.
 Hidden workflow-shaped sequencing stops being the durable model.

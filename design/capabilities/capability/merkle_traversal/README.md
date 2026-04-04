@@ -5,18 +5,18 @@ Status: active
 
 ## Intent
 
-Define the capability that derives a definitive ordered Merkle node set from a Merkle scope and a traversal strategy.
+Define the capability that derives definitive ordered Merkle node batches from a Merkle scope and a traversal strategy.
 
 ## Why This Exists
 
 Current `context generate` behavior still carries tree ordering logic inside the `context` domain.
-That mixes traversal derivation with context generation execution.
+That mixes traversal derivation with orchestration concerns.
 
 This capability makes traversal derivation explicit and separate.
 
 ## Functional Definition
 
-`merkle_traversal` takes a Merkle tree scope plus traversal bindings and emits a typed ordered Merkle node set artifact.
+`merkle_traversal` takes a Merkle tree scope plus traversal bindings and emits typed ordered Merkle node batches.
 
 It does not generate context.
 It does not write files.
@@ -30,7 +30,7 @@ The first slice accepted values are `bottom_up` and `top_down`.
 Internally, the first slice should represent strategy as a typed enum rather than as open-ended runtime polymorphism.
 That keeps the contract explicit while keeping the implementation simple.
 
-The output artifact for the first slice is `ordered_merkle_node_set`.
+The output artifact for the first slice is `ordered_merkle_node_batches`.
 That artifact is the stable output contract consumed by downstream capabilities.
 
 ## Inputs
@@ -39,7 +39,7 @@ The first slice input contract includes tree scope reference, target selection a
 
 ## Outputs
 
-The first slice output contract includes `ordered_merkle_node_set`, traversal metadata artifact, and structured observation summary.
+The first slice output contract includes `ordered_merkle_node_batches`, traversal metadata artifact, and structured observation summary.
 
 ## Contract Rules
 
@@ -47,7 +47,7 @@ The first slice output contract includes `ordered_merkle_node_set`, traversal me
 - the contract does not assume downstream intent
 - the contract does not encode `context generate` semantics
 - the contract must support multiple traversal strategies behind one stable capability id
-- the contract is strategy in, ordered Merkle node set out
+- the contract is strategy in, ordered Merkle node batches out
 - the first slice internal representation should use a closed enum for strategy selection
 - the first slice should avoid trait-object-heavy strategy infrastructure unless future strategy growth makes it necessary
 
@@ -69,14 +69,14 @@ The initial implementation can stay as a small enum plus one algorithm per varia
 ## Domain Boundary
 
 The Merkle tree and traversal logic should live behind this capability contract.
-`context_generate` must consume the ordered Merkle node set artifact rather than derive traversal internally.
+`control` must consume the ordered Merkle node batch artifact rather than derive traversal internally.
 
 ## First Slice Refactor Impact
 
 Making this capability explicit requires:
 
 - pulling tree ordering logic out of `context generate`
-- producing a typed ordered Merkle node set artifact
+- producing a typed ordered Merkle node batch artifact
 - moving traversal policy selection outside `context generate`
 - compiling traversal as its own capability instance in the candidate capability graph
 
@@ -84,4 +84,4 @@ Making this capability explicit requires:
 
 - choosing why traversal is needed
 - deciding which downstream capability should consume the traversal
-- embedding plan graph logic into the ordering implementation
+- embedding provider timing or batch barriers into the traversal implementation

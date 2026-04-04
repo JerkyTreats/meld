@@ -2,7 +2,7 @@
 
 Date: 2026-03-28
 Status: active
-Scope: current workflow code paths and the removal lift required to clear the way for capability and plan
+Scope: current workflow code paths and the removal lift required to clear the way for capability and task
 
 ## Intent
 
@@ -13,8 +13,8 @@ It is a current-state map for removal planning.
 ## Source Specs
 
 - [Workflow Refactor](README.md)
-- [Capability And Plan Design](../README.md)
-- [Capability And Plan Implementation Plan](../PLAN.md)
+- [Capability And Task Design](../README.md)
+- [Capability And Task Implementation Plan](../PLAN.md)
 
 ## Baseline Findings
 
@@ -25,6 +25,7 @@ The main built-in profile in [builtin.rs](/home/jerkytreats/meld/src/workflow/bu
 
 In practical terms, the current workflow subsystem is mostly a specialized multi-turn runner for docs writing.
 It is not the durable planning substrate the new direction wants.
+It is not the durable task implementation substrate the new direction wants.
 
 ### W2 Current behavior is concentrated around one meaningful builtin flow
 
@@ -64,6 +65,7 @@ So the current workflow model owns one local dataflow system:
 - gate checks validate outputs between turns
 
 That dataflow will need a replacement once docs writer is reintroduced as capability graph compilation.
+That dataflow will need a replacement once docs writer is reintroduced as compiled task behavior.
 
 ### W6 Workflow state is durable and operator-visible
 
@@ -171,5 +173,5 @@ The lift is meaningful because workflows sit at several routing seams.
 But the removal is very feasible if the replacement plan is:
 
 - pull reusable implementation seams out first
-- replace workflow-owned docs-writer behavior with capability-graph compilation later
+- replace workflow-owned docs-writer behavior with compiled task behavior later
 - then remove workflow routing and workflow state as a dedicated concept

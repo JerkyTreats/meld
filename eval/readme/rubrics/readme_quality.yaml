@@ -6,3 +6,9 @@ weights:
   similarity: 0.55
   heading_coverage: 0.30
   length_proximity: 0.15
+optimization:
+  accuracy_floor: 0.72
+  speed_target_generate_ms: 30000
+  utility_weights:
+    accuracy: 0.85
+    speed: 0.15

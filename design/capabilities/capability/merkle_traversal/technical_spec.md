@@ -16,6 +16,7 @@ This specification synthesizes:
 - [Merkle Traversal Capability](README.md)
 - [Merkle Traversal Code Path Findings](code_path_findings.md)
 - [Context Capability Readiness](../../context/README.md)
+- [Interregnum Orchestration](../../../control/interregnum_orchestration.md)
 
 ## Boundary
 
@@ -29,13 +30,13 @@ End condition:
 - `merkle_traversal` is a distinct capability
 - user-facing input includes `traversal_strategy`
 - first-slice strategies are `bottom_up` and `top_down`
-- output is a typed `ordered_merkle_node_set`
+- output is a typed `ordered_merkle_node_batches`
 - downstream code can consume traversal output without deriving traversal internally
 
 ## Functional Contract
 
 `merkle_traversal` takes Merkle scope input, target selection input, and `traversal_strategy`.
-It emits `ordered_merkle_node_set`, traversal metadata, and structured observations.
+It emits `ordered_merkle_node_batches`, traversal metadata, and structured observations.
 
 The first slice should represent strategy internally as a closed enum such as `TraversalStrategy`.
 This is strategy-shaped behavior, but the implementation should stay simple.
@@ -48,7 +49,7 @@ One enum plus one algorithm per variant is sufficient.
 Code changes:
 - define `traversal_strategy` in the traversal capability input contract
 - define first-slice accepted values as `bottom_up` and `top_down`
-- define `ordered_merkle_node_set` as the first-slice traversal output artifact
+- define `ordered_merkle_node_batches` as the first-slice traversal output artifact
 
 Outcome:
 - callers specify traversal intent explicitly
@@ -85,26 +86,26 @@ Verification:
 - top-down outputs ancestors before descendants
 - bottom-up and top-down produce visibly different orders on non-trivial tree shapes
 
-### T3 Replace level-shaped traversal output with ordered node set artifact
+### T3 Replace level-shaped traversal output with ordered node batch artifact
 
 Code changes:
 - stop treating `Vec<Vec<NodeID>>` level output as the primary traversal product
-- introduce a typed ordered-node-set artifact for traversal output
-- keep any level-based projection as a downstream adapter concern
+- introduce a typed ordered-node-batch artifact for traversal output
+- keep execution release and provider timing as downstream control concerns
 
 Outcome:
-- traversal output is no longer coupled to one execution projection
-- later execution models can consume traversal output without re-deriving it
+- traversal output remains structural and batch-shaped
+- later control flows can consume traversal output without re-deriving it
 
 Verification:
 - traversal output artifact serializes and validates cleanly
-- downstream consumers can project execution levels from the ordered node set when needed
+- downstream control can release execution wave by wave from the ordered batch output
 
 ### T4 Separate traversal from descendant readiness semantics
 
 Code changes:
 - stop treating `find_missing_descendant_heads` as part of traversal output semantics
-- keep descendant readiness validation separate from ordered-node-set derivation
+- keep descendant readiness validation separate from ordered-node-batch derivation
 
 Outcome:
 - traversal capability owns traversal only
@@ -113,17 +114,18 @@ Outcome:
 Verification:
 - traversal output remains defined even when descendant readiness is evaluated elsewhere
 
-### T5 Preserve downstream compatibility with `context_generate`
+### T5 Preserve downstream compatibility with control-owned orchestration
 
 Code changes:
-- update downstream seams so `context_generate` consumes `ordered_merkle_node_set`
+- update downstream seams so `control` consumes `ordered_merkle_node_batches`
 - keep compatibility lowering or projection paths outside the traversal capability
 
 Outcome:
 - traversal is a reusable upstream capability rather than a context-only helper
+- control can coordinate ordered execution without embedding traversal logic
 
 Verification:
-- `context_generate` input expectations accept `ordered_merkle_node_set`
+- control input expectations accept `ordered_merkle_node_batches`
 - no downstream path needs to call internal traversal helpers directly
 
 ## File Level Execution Order
@@ -138,7 +140,7 @@ Verification:
 
 Contract gates:
 - `traversal_strategy` accepts only supported first-slice values
-- `ordered_merkle_node_set` is a stable typed artifact
+- `ordered_merkle_node_batches` is a stable typed artifact
 
 Behavior gates:
 - bottom-up preserves current behavior
@@ -149,19 +151,20 @@ Boundary gates:
 - readiness checking is not part of traversal artifact semantics
 
 Compatibility gates:
-- `context_generate` can consume traversal output without internal traversal derivation
+- `control` can consume traversal output without internal traversal derivation
 
 ## Completion Criteria
 
 1. `merkle_traversal` exists as a standalone capability contract
 2. bottom-up and top-down both work through one stable strategy field
-3. traversal output is `ordered_merkle_node_set`, not raw level vectors
-4. downstream capability input can consume traversal output directly
+3. traversal output is `ordered_merkle_node_batches`, not raw level vectors
+4. downstream control input can consume traversal output directly
 5. traversal derivation is no longer embedded in generation planning setup
 
 ## Read With
 
 - [Merkle Traversal Capability](README.md)
 - [Merkle Traversal Code Path Findings](code_path_findings.md)
-- [Context Generate Technical Spec](../../context/technical_spec.md)
-- [Capability And Plan Implementation Plan](../../PLAN.md)
+- [Context Code Path Findings](../../context/code_path_findings.md)
+- [Context Technical Spec](../../context/technical_spec.md)
+- [Capability And Task Implementation Plan](../../PLAN.md)

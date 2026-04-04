@@ -1,4 +1,9 @@
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
 use meld::cli::{
@@ -67,6 +72,73 @@ fn create_test_writer_agent_with_workflow(agent_id: &str, workflow_id: Option<&s
 
     let toml = toml::to_string_pretty(&agent_config).unwrap();
     fs::write(config_path, toml).unwrap();
+}
+
+fn spawn_completion_server(
+    response_body: &str,
+    expected_requests: usize,
+) -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let response_body = response_body.to_string();
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+        for _ in 0..expected_requests {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let mut header_end = None;
+            loop {
+                let read = stream.read(&mut chunk).unwrap();
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if header_end.is_none() {
+                    header_end = find_header_end(&buffer);
+                }
+                if let Some(end) = header_end {
+                    let headers = String::from_utf8_lossy(&buffer[..end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let lower = line.to_ascii_lowercase();
+                            lower
+                                .strip_prefix("content-length:")
+                                .and_then(|value| value.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    let body_start = end + 4;
+                    while buffer.len() < body_start + content_length {
+                        let read = stream.read(&mut chunk).unwrap();
+                        if read == 0 {
+                            break;
+                        }
+                        buffer.extend_from_slice(&chunk[..read]);
+                    }
+                    let body =
+                        String::from_utf8_lossy(&buffer[body_start..body_start + content_length])
+                            .to_string();
+                    tx.send(body).unwrap();
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response_body.len(),
+                        response_body
+                    );
+                    stream.write_all(response.as_bytes()).unwrap();
+                    stream.flush().unwrap();
+                    break;
+                }
+            }
+        }
+    });
+
+    (endpoint, rx, handle)
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
 #[test]
@@ -742,6 +814,105 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
             .expect("session_ended should be emitted");
         assert!(typed_idx < ended_idx);
         assert!(events.iter().any(|e| e.event_type == "command_summary"));
+    });
+}
+
+#[test]
+fn context_generate_recursive_completes_levels_bottom_up() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        let target = workspace_root.join("docs");
+        fs::create_dir_all(target.join("nested")).unwrap();
+        fs::write(target.join("nested").join("leaf.md"), "# leaf").unwrap();
+        fs::write(target.join("root.md"), "# root").unwrap();
+
+        create_test_writer_agent("bottom-up-agent");
+        let response_body = r##"{"id":"test","object":"chat.completion","created":0,"model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":"generated"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"##;
+        let (endpoint, body_rx, handle) = spawn_completion_server(response_body, 4);
+        create_test_openai_provider("bottom-up-provider", "gpt-4-test", &endpoint);
+
+        let cli = RunContext::new(workspace_root.clone(), None).unwrap();
+        cli.execute(&Commands::Scan { force: true }).unwrap();
+
+        let output = cli
+            .execute(&Commands::Context {
+                command: ContextCommands::Generate {
+                    node: None,
+                    path: Some(target.clone()),
+                    path_positional: None,
+                    agent: Some("bottom-up-agent".to_string()),
+                    provider: Some("bottom-up-provider".to_string()),
+                    workflow_id: None,
+                    provider_model: None,
+                    provider_additional_json_file: None,
+                    frame_type: Some("context-bottom-up-agent".to_string()),
+                    force: true,
+                    no_recursive: false,
+                },
+            })
+            .unwrap();
+
+        for _ in 0..4 {
+            let _ = body_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        handle.join().unwrap();
+
+        assert!(output.contains("generated=4, failed=0"));
+
+        let runtime = cli.progress_runtime();
+        let sessions = runtime.store().list_sessions().unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s.command == "context.generate")
+            .expect("context.generate session should exist");
+        let events = runtime.store().read_events(&session.session_id).unwrap();
+
+        let plan = events
+            .iter()
+            .find(|e| e.event_type == "plan_constructed")
+            .expect("plan_constructed should be emitted");
+        assert_eq!(
+            plan.data.get("total_nodes").and_then(|value| value.as_u64()),
+            Some(4)
+        );
+        assert_eq!(
+            plan.data.get("total_levels").and_then(|value| value.as_u64()),
+            Some(3)
+        );
+
+        let completed_levels: Vec<u64> = events
+            .iter()
+            .filter(|event| event.event_type == "node_generation_completed")
+            .map(|event| {
+                event
+                    .data
+                    .get("level_index")
+                    .and_then(|value| value.as_u64())
+                    .expect("node_generation_completed.level_index should be present")
+            })
+            .collect();
+        assert_eq!(completed_levels.len(), 4);
+        assert_eq!(completed_levels, vec![0, 1, 1, 2]);
+
+        let level_completed_positions: Vec<(u64, usize)> = events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| event.event_type == "level_completed")
+            .map(|(index, event)| {
+                (
+                    event
+                        .data
+                        .get("level_index")
+                        .and_then(|value| value.as_u64())
+                        .expect("level_completed.level_index should be present"),
+                    index,
+                )
+            })
+            .collect();
+        assert_eq!(level_completed_positions.len(), 3);
+        assert!(level_completed_positions[0].1 < level_completed_positions[1].1);
+        assert!(level_completed_positions[1].1 < level_completed_positions[2].1);
     });
 }
 
