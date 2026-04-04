@@ -14,3 +14,8 @@ Status: active
 - Do not use literal `(` or `)` in Markdown prose.
 - Parentheses are allowed only when required by Markdown formatting syntax such as `[label](/path)`.
 - Parentheses are allowed inside inline code and fenced code blocks.
+
+## Code Comment Policy Reference
+
+- Rust code commenting is governed by [Commenting Policy](commenting_policy.md).
+- Keep Markdown doc style and Rust code comment style aligned on concise, high-signal explanation.

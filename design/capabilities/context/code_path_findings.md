@@ -143,7 +143,7 @@ Impact:
 
 - this is the cleanest domain seam to preserve during refactor
 - it performs real context work without needing subtree traversal, level planning, or workflow turn selection
-- a future `context_generate` capability should wrap this seam rather than re-center the domain around `run_generate`
+- future `ContextGeneratePrepare` and `ContextGenerateFinalize` contracts should anchor on this seam rather than re-center the domain around `run_generate`
 
 ### C7 Telemetry and lineage are compatibility-first and still partial
 

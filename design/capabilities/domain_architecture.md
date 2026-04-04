@@ -72,6 +72,10 @@ Recommended responsibilities:
 - validate authored structure
 - own compiled task record shape
 - own graph structure used by task compilation
+- own task-scoped artifact repo contract and persistence model
+- own capability invocation record schema
+- own artifact lookup and slot satisfaction data plane
+- own task run creation from compiled task plus initialization payload
 - compatibility lowering from old workflow files
 - compile request assembly for downstream compiler
 
@@ -80,9 +84,13 @@ Recommended output types:
 - `TaskDefinition`
 - `TaskCompileInput`
 - `TaskLoadError`
+- `CompiledTaskRecord`
+- `ArtifactRepoRecord`
+- `TaskInitializationPayload`
 
 This domain is also the natural home for integration fixtures.
 A docs-writer definition should be a task fixture that compiles and then executes through the same path as production inputs.
+That fixture should include task-owned artifact repo behavior, not only graph shape.
 
 ### `src/provider`
 

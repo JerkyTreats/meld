@@ -1,349 +1,539 @@
-# Capability Refactor Implementation Plan
+# Capability And Task Implementation Plan
 
-Date: 2026-04-03
+Date: 2026-04-04
 Status: proposed
-Scope: phased refactor of traversal, control, provider execution, and workflow compatibility before task features land
+Scope: ordered implementation of capability contracts, task runtime, first-slice capabilities, docs-writer task package, and workflow convergence onto task execution
 
 ## Overview
 
-This plan defines the implementation order for the current capability-readiness refactor.
+This plan defines the next implementation order after the ownership refactor.
 
-The goal is not to add `task` execution yet.
-The goal is to make the current system honest about ownership so later capability and task work lands on clean seams.
+The objective is to build the first real `capability` and `task` layer on top of the refactored runtime without reintroducing mixed ownership.
 
-The dependency order is:
+Planned outcome:
 
-1. freeze current behavior with characterization and parity gates
-2. split Merkle traversal out of `context`
-3. bootstrap `src/control` and move ordered orchestration into it
-4. extract provider execution into `src/provider`
-5. rebuild workflow paths as compatibility consumers of the new domains
+- `src/capability` defines the published contract model and catalog surface
+- `src/task` owns compiled task records, artifact repo persistence, task initialization, and task-local execution
+- the first high-value capability set is implemented against structured-data contracts
+- docs-writer runs as a task package with durable artifact-driven dependency truth
+- legacy workflow entry paths become compatibility triggers into task execution
+- observability and test coverage are strong enough to make later control and repair work safe
 
-## Source Docs
+## Related Specs
 
 - [Capability And Task Design](README.md)
+- [Capability Model](capability/README.md)
+- [Capabilities By Domain](capability/by_domain.md)
+- [Task Design](task/README.md)
+- [Docs Writer Package](task/docs_writer_package.md)
+- [Task Control Boundary](task_control_boundary.md)
 - [Domain Architecture](domain_architecture.md)
-- [Context Technical Spec](context/technical_spec.md)
 - [Provider Capability Design](provider/README.md)
+- [Context Capability Readiness](context/README.md)
 - [Workflow Refactor](workflow_refactor/README.md)
-- [Workflow Cleanup Technical Spec](workflow_refactor/technical_spec.md)
-- [Merkle Traversal Capability](capability/merkle_traversal/README.md)
-- [Merkle Traversal Technical Spec](capability/merkle_traversal/technical_spec.md)
-- [Interregnum Orchestration](../control/interregnum_orchestration.md)
+- [Control Design](../control/README.md)
+- [Task Network](../control/task_network.md)
+- [Complex Change Workflow Governance](../../governance/complex_change_workflow.md)
+- [Commenting Policy](../../governance/commenting_policy.md)
 
-## Execution Rules
+## Guiding Rules
 
-- preserve end-to-end workflow-triggered execution during the refactor window
-- do not remove old ownership until the new owner is wired and covered by tests
-- prefer compatibility adapters over mixed ownership
-- move one concern at a time and seal the boundary before the next phase
-- expand characterization tests before deleting any legacy orchestration path
+- keep all task to capability traffic structured-data-only
+- keep artifact persistence task-owned
+- keep task-local progression task-owned
+- keep task-network ordering and repair intent control-owned
+- preserve runnable workflow-triggered behavior until task-triggered paths fully replace it
+- expand characterization, unit, and integration coverage before deleting compatibility paths
+- require comments on new public contracts and non-obvious orchestration code using Rust idiomatic comment practice
+
+## CLI Path Default Exception List
+
+Project direction remains path-first targeting.
+Current command surfaces that still include non-default path behavior:
+
+- `meld context generate` accepts `--node` as an alternate selector
+- `meld context regenerate` accepts `--node` as an alternate selector
+- `meld context get` accepts `--node` as an alternate selector
+- `meld workspace delete` accepts `--node` as an alternate selector
+- `meld workspace restore` accepts `--node` as an alternate selector
+
+This plan does not expand non-default selector behavior.
 
 ## Development Phases
 
 | Phase | Goal | Dependencies | Status |
-|------|------|--------------|--------|
-| 0 | Characterization and baseline gates | None | proposed |
-| 1 | Merkle traversal extraction | Phase 0 | proposed |
-| 2 | Control bootstrap and orchestration cutover | Phase 0 and Phase 1 | proposed |
-| 3 | Provider executor extraction | Phase 0 and Phase 2 | proposed |
-| 4 | Workflow compatibility rebuild | Phase 0 through Phase 3 | proposed |
-| 5 | Legacy seal and refactor closeout | Phase 0 through Phase 4 | proposed |
+|-------|------|--------------|--------|
+| 0 | Baseline lock and readiness gates | None | complete |
+| 1 | Capability contract core and catalog | Phase 0 | proposed |
+| 2 | Task records, artifact repo, and compiler | Phase 0 and Phase 1 | proposed |
+| 3 | Task executor and invocation payload assembly | Phase 1 and Phase 2 | proposed |
+| 4 | First-slice capability implementation | Phase 1 through Phase 3 | proposed |
+| 5 | Docs-writer task package and task DAG execution | Phase 2 through Phase 4 | proposed |
+| 6 | Workflow convergence onto task execution | Phase 3 through Phase 5 | proposed |
+| 7 | Boundary seal, workflow retirement, and readiness signoff | Phase 0 through Phase 6 | proposed |
 
-## Phase 0
+---
 
-### Goal
+### Phase 0 - Baseline lock and readiness gates
 
-Freeze the current recursive generate and workflow-triggered behavior before ownership moves.
+**Goal**: freeze the refactored baseline and establish the stronger test and observability gates needed before new task and capability work lands.
 
-### Tasks
+**Source docs**:
+- [Capability And Task Design](README.md)
+- [Task Design](task/README.md)
+- [Task Control Boundary](task_control_boundary.md)
+- [Workflow Refactor](workflow_refactor/README.md)
 
-- document the current recursive bottom-up behavior that must remain true during the interregnum
-- document the current docs writer execution path that must continue to run
-- add characterization coverage for bottom-up release and parent-after-child behavior
-- add characterization coverage for workflow-triggered docs writer execution through the CLI path
-- add characterization coverage for provider request telemetry and response correlation as observed today
+| Task | Completion |
+|------|------------|
+| Reconfirm current end-to-end docs-writer behavior through the workflow trigger path. | Proposed |
+| Reconfirm provider lifecycle telemetry and progress reconstruction after the refactor. | Proposed |
+| Define the new capability and task domain test matrix. | Proposed |
+| Define comment gates for new public contracts and orchestrators. | Proposed |
 
-### Expanded Test Work
+**Exit criteria**:
+- refactor baseline behavior is characterized well enough to detect regression
+- observability expectations for task and capability work are explicit
+- the new domain test matrix is documented before implementation begins
 
-- extend [progress_observability.rs](/home/jerkytreats/meld/tests/integration/progress_observability.rs) with assertions around level release order and barrier completion
-- extend [context_cli.rs](/home/jerkytreats/meld/tests/integration/context_cli.rs) with recursive directory cases that prove parent execution waits for lower levels
-- extend [workflow_cli.rs](/home/jerkytreats/meld/tests/integration/workflow_cli.rs) with end-to-end docs writer compatibility coverage
-- extend [frame_queue.rs](/home/jerkytreats/meld/tests/integration/frame_queue.rs) with ordering and dedupe assertions that capture current queue behavior
+**Key files and seams**:
+- `tests/integration/progress_observability.rs`
+- `tests/integration/context_cli.rs`
+- `tests/integration/workflow_cli.rs`
+- `src/telemetry`
+- `src/logging.rs`
 
-### Exit Criteria
-
-- current recursive generation order is characterized in tests
-- current workflow-triggered docs writer behavior is characterized in tests
-- current provider request lifecycle signals are characterized well enough to detect regressions
-
-### Verification Gates
-
+**Implementation evidence**:
+- format gate: `cargo fmt -- --check`
 - compile gate: `cargo check`
+- integration gate: `cargo test --test integration_tests integration::progress_observability::`
 - integration gate: `cargo test --test integration_tests integration::context_cli::`
 - integration gate: `cargo test --test integration_tests integration::workflow_cli::`
+
+**Phase completion notes**:
+- baseline `cargo check` passed on 2026-04-04
+- workflow CLI integration gate passed on 2026-04-04
+- progress observability integration gate passed on 2026-04-04
+- commenting governance and stronger domain gate expectations are now part of the active plan
+
+---
+
+### Phase 1 - Capability contract core and catalog
+
+**Goal**: introduce the shared capability contract layer and the first catalog surface in `src/capability`.
+
+**Source docs**:
+- [Capability Model](capability/README.md)
+- [Capabilities By Domain](capability/by_domain.md)
+- [Domain Architecture](domain_architecture.md)
+
+| Task | Completion |
+|------|------------|
+| Add `src/capability` with typed contract records for identity, bindings, inputs, outputs, effects, and execution metadata. | Proposed |
+| Add `BoundCapabilityInstance` and related compile-time instance projection types. | Proposed |
+| Add `CapabilityCatalog` contract for registration and lookup by capability type id and version. | Proposed |
+| Add validation rules for slot compatibility, binding completeness, and artifact schema agreement. | Proposed |
+| Add structured invocation boundary types for runtime init and invocation payload. | Proposed |
+
+**Exit criteria**:
+- one shared capability contract model exists in code
+- tasks can bind to published capability contracts without reaching into domain internals
+- capability runtime init and invocation payload shapes are explicit and test covered
+
+**Key files and seams**:
+- new `src/capability.rs`
+- new `src/capability/contracts.rs`
+- new `src/capability/catalog.rs`
+- new `src/capability/runtime.rs`
+- `design/capabilities/capability/README.md`
+
+**Expanded test work**:
+- add unit coverage for capability contract validation and compatibility matching
+- add unit coverage for stable identity and version resolution
+- add integration coverage for catalog registration and lookup under multiple domains
+- add negative tests for missing bindings, schema mismatches, and unsatisfied required slots
+
+**Implementation evidence**:
+- format gate: `cargo fmt -- --check`
+- compile gate: `cargo check`
+- lint gate: `cargo clippy --all-targets -- -D warnings`
+- unit gate: `cargo test capability::`
+- integration gate: new `tests/integration/capability_contracts.rs`
+
+**Comment gate**:
+- all new public capability contract types and traits have Rustdoc comments
+- validation code with non-obvious rules includes short why-focused comments
+
+---
+
+### Phase 2 - Task records, artifact repo, and compiler
+
+**Goal**: introduce `src/task` with durable task records, artifact repo behavior, task initialization, and compile-time graph creation.
+
+**Source docs**:
+- [Task Design](task/README.md)
+- [Task Control Boundary](task_control_boundary.md)
+- [Docs Writer Package](task/docs_writer_package.md)
+- [Domain Architecture](domain_architecture.md)
+
+| Task | Completion |
+|------|------------|
+| Add `CompiledTaskRecord`, `ArtifactRepoRecord`, and `CapabilityInvocationRecord` in `src/task`. | Proposed |
+| Add task initialization payload contracts and seed artifact ingestion. | Proposed |
+| Add task compiler that resolves bound capability instances from authored task definitions. | Proposed |
+| Derive dependency edges from artifact requirements and effect ordering. | Proposed |
+| Add compile-time validation for unsatisfied init slots, incompatible schemas, and invalid dependency structure. | Proposed |
+
+**Exit criteria**:
+- task graph creation happens at compile time
+- artifact repo contract exists and is task-owned
+- run creation can fail cleanly when required external structured inputs are missing
+- compile-time errors and run-creation errors are distinct in code and tests
+
+**Key files and seams**:
+- new `src/task.rs`
+- new `src/task/compiler.rs`
+- new `src/task/artifact_repo.rs`
+- new `src/task/contracts.rs`
+- new `src/task/init.rs`
+- `design/capabilities/task/README.md`
+
+**Expanded test work**:
+- add unit coverage for artifact repo append, lookup, supersession, and lineage
+- add unit coverage for compiler graph derivation and effect ordering
+- add integration coverage for compile success on valid docs-writer task definitions
+- add integration coverage for compile failure on invalid wiring and missing init artifacts
+- add integration coverage for deterministic compile output on repeated inputs
+
+**Implementation evidence**:
+- format gate: `cargo fmt -- --check`
+- compile gate: `cargo check`
+- lint gate: `cargo clippy --all-targets -- -D warnings`
+- unit gate: `cargo test task::artifact_repo`
+- unit gate: `cargo test task::compiler`
+- integration gate: new `tests/integration/task_compiler.rs`
+- integration gate: new `tests/integration/task_artifact_repo.rs`
+
+**Comment gate**:
+- public task record and compiler contract types have Rustdoc comments
+- graph derivation, effect ordering, and artifact supersession code includes invariant comments where the logic is not self-evident
+
+---
+
+### Phase 3 - Task executor and invocation payload assembly
+
+**Goal**: implement task-local execution progression and capability payload assembly without collapsing task back into domain execution details.
+
+**Source docs**:
+- [Task Design](task/README.md)
+- [Capability Model](capability/README.md)
+- [Task Control Boundary](task_control_boundary.md)
+- [Task Network](../control/task_network.md)
+
+| Task | Completion |
+|------|------------|
+| Add `TaskExecutor` in `src/task` as the single task-local execution agent. | Proposed |
+| Implement ready-set evaluation over compiled task structure plus current artifact repo state. | Proposed |
+| Implement invocation payload assembly from seed artifacts, upstream artifacts, and control-supplied execution context. | Proposed |
+| Add invocation record persistence and task event emission. | Proposed |
+| Add capability runtime acquisition from bound static data without leaking process-local objects across the task boundary. | Proposed |
+
+**Exit criteria**:
+- one task can advance itself through ready capability instances
+- `CapabilityInvocationPayload` assembly is explicit and test covered
+- task emits durable execution events and persists invocation records consistently
+- task-local progression is clearly separate from task-network ordering and repair intent
+
+**Key files and seams**:
+- new `src/task/executor.rs`
+- new `src/task/readiness.rs`
+- new `src/task/events.rs`
+- new `src/task/invocation.rs`
+- `design/capabilities/task/README.md`
+- `design/capabilities/capability/README.md`
+
+**Expanded test work**:
+- add unit coverage for ready-set calculation from artifact satisfaction
+- add unit coverage for invocation payload assembly and ownership of `invocation_id`, `upstream_lineage`, and `execution_context`
+- add integration coverage for parallel release of sibling capability instances
+- add integration coverage for block then unblock behavior after artifact persistence
+- add integration coverage for event emission and invocation record parity
+
+**Implementation evidence**:
+- format gate: `cargo fmt -- --check`
+- compile gate: `cargo check`
+- lint gate: `cargo clippy --all-targets -- -D warnings`
+- unit gate: `cargo test task::executor`
+- unit gate: `cargo test task::readiness`
+- integration gate: new `tests/integration/task_executor.rs`
 - integration gate: `cargo test --test integration_tests integration::progress_observability::`
-- integration gate: `cargo test --test integration_tests integration::frame_queue::`
 
-## Phase 1
+**Comment gate**:
+- task executor public entry points have Rustdoc comments
+- readiness, barrier, and event-emission logic includes concise comments on invariants and ownership boundaries
 
-### Goal
+---
 
-Split Merkle traversal out of `context` into its own domain seam with structural batch output.
+### Phase 4 - First-slice capability implementation
 
-### Tasks
+**Goal**: implement the initial high-value capability set against the shared contract model.
 
-- extract traversal derivation from `src/context/generation/run.rs`
-- introduce traversal contracts that emit `ordered_merkle_node_batches`
-- preserve current `bottom_up` behavior as the baseline strategy
-- add `top_down` as the second supported strategy if it is cheap to carry during extraction
-- remove direct traversal derivation from `context` public execution shape
+**Source docs**:
+- [Capabilities By Domain](capability/by_domain.md)
+- [Workspace Resolve Node Id](capability/workspace_resolve_node_id/README.md)
+- [Merkle Traversal](capability/merkle_traversal/README.md)
+- [Context Generate Prepare](capability/context_generate_prepare/README.md)
+- [Provider Execute Chat](capability/provider_execute_chat/README.md)
+- [Context Generate Finalize](capability/context_generate_finalize/README.md)
 
-### Key Files And Seams
+| Task | Completion |
+|------|------------|
+| Publish `WorkspaceResolveNodeId` from the workspace domain. | Proposed |
+| Publish `MerkleTraversal` from the traversal domain with ordered batch outputs. | Proposed |
+| Publish `ContextGeneratePrepare` from the context domain. | Proposed |
+| Publish `ProviderExecuteChat` from the provider domain. | Proposed |
+| Publish `ContextGenerateFinalize` from the context domain. | Proposed |
+| Register the first-slice capability set in the capability catalog. | Proposed |
 
-- [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs)
-- [plan.rs](/home/jerkytreats/meld/src/context/generation/plan.rs)
-- the new traversal domain path under `src`
-- [README.md](/home/jerkytreats/meld/design/capabilities/capability/merkle_traversal/README.md)
-- [technical_spec.md](/home/jerkytreats/meld/design/capabilities/capability/merkle_traversal/technical_spec.md)
+**Exit criteria**:
+- the first-slice capability set exists in code behind published contracts
+- each capability accepts structured invocation payloads and emits structured artifacts or failure summaries
+- no first-slice capability requires task to pass process-local object references
 
-### Expanded Test Work
+**Key files and seams**:
+- `src/workspace/capability.rs`
+- `src/merkle_traversal.rs` or domain-local capability publication path
+- `src/context/capability.rs`
+- `src/provider/capability.rs`
+- `src/provider/executor.rs`
+- `design/capabilities/capability/by_domain.md`
 
-- add a new integration surface for traversal output shape, likely `tests/integration/merkle_traversal.rs`
-- characterize bottom-up batch output against current recursive behavior
-- add deterministic ordering checks for repeated traversal over the same tree
-- add strategy coverage for `top_down` if the variant lands in this phase
+**Expanded test work**:
+- add unit coverage for sig adapter resolution in each first-slice capability
+- add unit coverage for output shaping and failure artifact emission
+- add integration coverage for each capability in task-driven invocation mode
+- add integration coverage for provider execution correlation through the capability boundary
+- add integration coverage for traversal batch determinism and workspace resolution stability
 
-### Exit Criteria
-
-- traversal lives outside `context`
-- traversal output is batch-shaped and structural
-- `context` no longer derives traversal internally for the future path
-- bottom-up behavior still matches current recursive ordering
-
-### Verification Gates
-
+**Implementation evidence**:
+- format gate: `cargo fmt -- --check`
 - compile gate: `cargo check`
-- unit gate: traversal domain unit tests
-- integration gate: `cargo test --test integration_tests integration::tree_determinism::`
-- integration gate: new traversal integration suite
-- regression gate: `cargo test --test integration_tests integration::context_cli::`
+- lint gate: `cargo clippy --all-targets -- -D warnings`
+- unit gate: `cargo test workspace::capability`
+- unit gate: `cargo test provider::capability`
+- unit gate: `cargo test context::capability`
+- integration gate: new `tests/integration/capability_invocation.rs`
+- integration gate: new `tests/integration/merkle_traversal.rs`
+- integration gate: new `tests/integration/provider_execution.rs`
 
-## Phase 2
+**Comment gate**:
+- public capability publication code has Rustdoc comments
+- sig adapter code explains non-obvious slot-to-argument resolution and output shaping decisions
 
-### Goal
+---
 
-Bootstrap `src/control` and move ordered orchestration out of `context`.
+### Phase 5 - Docs-writer task package and task DAG execution
 
-### Tasks
+**Goal**: realize docs-writer as a task package that compiles into a task DAG and runs through task execution rather than workflow-owned orchestration.
 
-- add `src/control` as the refactor-phase orchestration home
-- move bottom-up release logic and wave progression out of `context`
-- move batch barrier coordination out of `context`
-- make `control` consume traversal batches and coordinate execution waves
-- preserve `context` as preparation and finalization around atomic generation
-- keep CLI-triggered behavior stable through compatibility adapters
+**Source docs**:
+- [Docs Writer Package](task/docs_writer_package.md)
+- [Task Design](task/README.md)
+- [Task Control Boundary](task_control_boundary.md)
+- [Control Design](../control/README.md)
 
-### Key Files And Seams
+| Task | Completion |
+|------|------------|
+| Implement package loading and package-to-task-definition lowering for docs-writer. | Proposed |
+| Compile docs-writer into a task DAG with bottom-up child-to-parent artifact requirements. | Proposed |
+| Run docs-writer through task executor using the first-slice capabilities. | Proposed |
+| Persist docs-writer artifacts and invocation records in the task artifact repo. | Proposed |
+| Emit task and capability events that reconstruct progress for one docs-writer run. | Proposed |
 
-- the new `src/control.rs`
-- the new `src/control/orchestration.rs`
-- the new `src/control/traversal_release.rs`
-- the new `src/control/batch_barrier.rs`
-- [run.rs](/home/jerkytreats/meld/src/context/generation/run.rs)
-- [orchestration.rs](/home/jerkytreats/meld/src/context/generation/orchestration.rs)
-- [technical_spec.md](/home/jerkytreats/meld/design/capabilities/context/technical_spec.md)
-- [interregnum_orchestration.md](/home/jerkytreats/meld/design/control/interregnum_orchestration.md)
+**Exit criteria**:
+- docs-writer no longer depends on workflow-owned execution order
+- docs-writer task DAG compiles deterministically
+- sibling nodes run in parallel when artifact requirements permit
+- parent work does not release until required child artifacts are present
 
-### Expanded Test Work
+**Key files and seams**:
+- new `src/task/package.rs`
+- new `src/task/templates/docs_writer.rs`
+- `src/task/compiler.rs`
+- `src/task/executor.rs`
+- `src/control`
+- `design/capabilities/task/docs_writer_package.md`
 
-- add a new integration suite for control-owned orchestration, likely `tests/integration/control_orchestration.rs`
-- add assertions that one batch fully completes before the next batch is released
-- add parity coverage proving the old recursive CLI flow still emits the same user-visible outcomes through the new control path
-- add failure-path coverage proving the barrier does not release parent work after lower-level failure
+**Expanded test work**:
+- add integration coverage for docs-writer compile output on representative directory trees
+- add integration coverage for bottom-up parallel sibling release
+- add integration coverage for artifact repo state after each wave
+- add integration coverage for task event reconstruction of docs-writer progress
+- add parity coverage against current user-visible docs-writer output behavior
 
-### Exit Criteria
-
-- ordered orchestration no longer lives in `context`
-- `control` is the owner of batch release and batch barriers
-- recursive generation still works end to end
-- `context` remains the atomic generation seam
-
-### Verification Gates
-
+**Implementation evidence**:
+- format gate: `cargo fmt -- --check`
 - compile gate: `cargo check`
-- unit gate: control release and barrier unit tests
-- integration gate: new control orchestration suite
-- integration gate: `cargo test --test integration_tests integration::context_cli::`
-- integration gate: `cargo test --test integration_tests integration::progress_observability::`
+- lint gate: `cargo clippy --all-targets -- -D warnings`
+- integration gate: new `tests/integration/docs_writer_task.rs`
+- integration gate: new `tests/integration/task_progress_events.rs`
+- regression gate: `cargo test --test integration_tests integration::workflow_cli::`
 
-## Phase 3
+**Comment gate**:
+- package lowering and DAG expansion code documents the child-to-parent dependency invariant
+- tests include clear fixtures and comments where tree shapes express execution intent
 
-### Goal
+---
 
-Extract provider execution into the provider domain and make `control` hand off ready work to a provider executor.
+### Phase 6 - Workflow convergence onto task execution
 
-### Tasks
+**Goal**: make workflow a compatibility trigger into task package and task execution instead of a separate execution runtime.
 
-- move provider binding resolution out of context-owned execution paths
-- add a provider-native execution contract
-- add `ProviderExecutor` under `src/provider`
-- move batching, throttling, retry, and backoff into the provider domain
-- make `context` hand off provider-ready requests rather than calling provider transport directly
-- keep result correlation stable by request identity
+**Source docs**:
+- [Workflow Refactor](workflow_refactor/README.md)
+- [Docs Writer Package](task/docs_writer_package.md)
+- [Task Design](task/README.md)
+- [Control Design](../control/README.md)
 
-### Key Files And Seams
+| Task | Completion |
+|------|------------|
+| Add workflow compatibility mapping from legacy workflow request shape to task package trigger shape. | Proposed |
+| Route workflow-triggered docs-writer execution into task creation and task execution. | Proposed |
+| Keep current CLI and watch entry paths working while execution ownership moves underneath. | Proposed |
+| Remove workflow-owned sequencing and capability triggering from the active path. | Proposed |
+| Keep user-visible behavior stable through compatibility adapters until workflow retirement is complete. | Proposed |
 
-- [provider.rs](/home/jerkytreats/meld/src/provider.rs)
-- [generation.rs](/home/jerkytreats/meld/src/provider/generation.rs)
-- the new `src/provider/executor.rs`
-- [provider_execution.rs](/home/jerkytreats/meld/src/context/generation/provider_execution.rs)
-- [orchestration.rs](/home/jerkytreats/meld/src/context/generation/orchestration.rs)
-- [README.md](/home/jerkytreats/meld/design/capabilities/provider/README.md)
+**Exit criteria**:
+- workflow remains callable but no longer owns execution progression
+- workflow-triggered docs-writer runs through task execution
+- workflow compatibility behavior is covered well enough to retire legacy workflow internals later
 
-### Expanded Test Work
+**Key files and seams**:
+- `src/workflow/facade.rs`
+- `src/workflow/executor.rs`
+- `src/workflow/resolver.rs`
+- `src/cli/route.rs`
+- `src/task`
+- `src/control`
 
-- add a new provider executor suite, likely `tests/integration/provider_execution.rs`
-- characterize batching behavior for compatible requests
-- characterize throttling and retry behavior by provider lane rather than agent identity
-- add correlation tests that prove results map back to stable request ids after batch execution
-- preserve current provider CLI and model-provider coverage
+**Expanded test work**:
+- extend workflow CLI coverage to assert task creation and task execution under the compatibility path
+- add integration coverage for workflow-to-task trigger mapping errors
+- add progress and telemetry coverage proving workflow session events join cleanly with task events
+- add watch-mode compatibility coverage if watch still enters through workflow-shaped routes
 
-### Exit Criteria
-
-- provider transport no longer lives under `context`
-- batching and throttling live under `provider`
-- `context` exposes an explicit provider handoff
-- `control` can submit ready work to `provider` without reaching into provider internals
-
-### Verification Gates
-
+**Implementation evidence**:
+- format gate: `cargo fmt -- --check`
 - compile gate: `cargo check`
-- unit gate: provider executor unit tests
-- integration gate: new provider execution suite
-- integration gate: `cargo test --test integration_tests integration::model_providers::`
-- integration gate: `cargo test --test integration_tests integration::provider_cli::`
-- regression gate: `cargo test --test integration_tests integration::generation_parity::`
-
-## Phase 4
-
-### Goal
-
-Rebuild workflow paths so workflow becomes a compatibility consumer of traversal, control, context, and provider instead of a hidden orchestration owner.
-
-### Tasks
-
-- keep the outer workflow trigger path callable
-- move ordered workflow execution out of workflow internals into `control`
-- reduce workflow to compatibility request mapping and user-facing trigger behavior
-- remove workflow-owned provider execution calls
-- remove workflow-owned batch release logic
-- preserve docs writer execution during the interregnum
-
-### Key Files And Seams
-
-- [facade.rs](/home/jerkytreats/meld/src/workflow/facade.rs)
-- [executor.rs](/home/jerkytreats/meld/src/workflow/executor.rs)
-- [resolver.rs](/home/jerkytreats/meld/src/workflow/resolver.rs)
-- [commands.rs](/home/jerkytreats/meld/src/workflow/commands.rs)
-- [route.rs](/home/jerkytreats/meld/src/cli/route.rs)
-- [runtime.rs](/home/jerkytreats/meld/src/workspace/watch/runtime.rs)
-- [README.md](/home/jerkytreats/meld/design/capabilities/workflow_refactor/README.md)
-- [technical_spec.md](/home/jerkytreats/meld/design/capabilities/workflow_refactor/technical_spec.md)
-
-### Expanded Test Work
-
-- extend [workflow_cli.rs](/home/jerkytreats/meld/tests/integration/workflow_cli.rs) with compatibility-trigger coverage that proves delegation into `control`
-- add assertions that docs writer still completes through the workflow entry path
-- add watch-mode compatibility coverage if workflow-shaped watch execution remains during the interregnum
-- add telemetry coverage proving workflow compatibility events and control events remain reconstructable in one session
-
-### Exit Criteria
-
-- workflow no longer owns execution order
-- workflow still works end to end as a compatibility trigger
-- docs writer remains runnable during the interregnum
-- workflow internals no longer reach into context-owned provider transport
-
-### Verification Gates
-
-- compile gate: `cargo check`
+- lint gate: `cargo clippy --all-targets -- -D warnings`
 - integration gate: `cargo test --test integration_tests integration::workflow_cli::`
-- integration gate: `cargo test --test integration_tests integration::workflow_contracts_conformance::`
+- integration gate: new `tests/integration/workflow_task_compatibility.rs`
 - integration gate: `cargo test --test integration_tests integration::progress_observability::`
-- integration gate: `cargo test --test integration_tests integration::workspace_commands::`
 
-## Phase 5
+**Comment gate**:
+- compatibility adapters include short comments that explain why the adapter still exists and what future task-native path will replace it
 
-### Goal
+---
 
-Seal the refactor boundaries and remove the last mixed-ownership paths that would block later task work.
+### Phase 7 - Boundary seal, workflow retirement, and readiness signoff
 
-### Tasks
+**Goal**: remove the last mixed-ownership paths and seal the codebase around capability and task as the durable implementation layer.
 
-- remove dead traversal logic from `context`
-- remove dead provider execution glue from `context`
-- remove dead orchestration loops from workflow internals
-- reduce compatibility wrappers to clearly named edge adapters
-- publish the post-refactor `src` map for the pre-feature state
-- confirm the system is ready for `src/task` and `src/capability` introduction
+**Source docs**:
+- [Capability And Task Design](README.md)
+- [Workflow Refactor](workflow_refactor/README.md)
+- [Task Design](task/README.md)
+- [Control Design](../control/README.md)
 
-### Expanded Test Work
+| Task | Completion |
+|------|------------|
+| Remove dead workflow-owned execution code from active paths. | Proposed |
+| Remove dead compatibility shims once all replacement gates are green. | Proposed |
+| Publish the post-cutover `src` map for capability, task, control, context, provider, and workflow. | Proposed |
+| Confirm that workflow now acts only as a package and trigger surface, or remove it when fully obsolete. | Proposed |
+| Lock the final regression and observability suite. | Proposed |
 
-- add a full regression matrix for touched domains
-- add targeted negative tests for batch-failure stop behavior
-- add characterization coverage for docs writer result parity before and after the refactor
-- add command-surface coverage that proves user-visible workflow and context behavior did not regress during ownership moves
+**Exit criteria**:
+- each runtime concern has one clear owner
+- no active path bypasses task for docs-writer style execution
+- workflow is no longer a hidden executor
+- capability, task, and control boundaries are stable enough for later repair and task-network growth
 
-### Exit Criteria
+**Key files and seams**:
+- `src/task`
+- `src/capability`
+- `src/control`
+- `src/workflow`
+- `tests/integration`
 
-- each concern has one clear owner
-- no active end-to-end path depends on mixed context and workflow orchestration
-- no active end-to-end path depends on context-owned provider transport
-- the codebase is ready for capability and task feature work without another large ownership refactor
-
-### Verification Gates
-
+**Implementation evidence**:
+- format gate: `cargo fmt -- --check`
 - compile gate: `cargo check`
+- lint gate: `cargo clippy --all-targets -- -D warnings`
 - full integration gate: `cargo test --test integration_tests`
 - full suite gate: `cargo test`
 
+**Comment gate**:
+- remaining public domain contracts have Rustdoc coverage
+- no compatibility adapter remains without an explanatory comment or an issue to remove it
+
 ## Cross-Phase Gates
-
-### Behavior Preservation Gates
-
-- recursive directory generation remains bottom-up
-- parent work does not release before lower-level completion
-- workflow-triggered docs writer remains runnable during the interregnum
-- provider request correlation remains deterministic
 
 ### Boundary Gates
 
-- traversal is not owned by `context`
-- orchestration is not owned by `context`
-- provider transport is not owned by `context`
-- workflow does not own durable orchestration
+- task to capability traffic remains structured-data-only
+- artifact persistence remains task-owned
+- task-local readiness and triggering remain task-owned
+- task-network ordering and repair intent remain control-owned
+- provider execution remains provider-owned
+- workflow does not regain hidden execution ownership
+
+### Contract Gates
+
+- every first-slice capability is published through the shared capability contract model
+- every task payload field has a clear owner across compiler, task runtime, and control runtime
+- no published contract requires process-local object references
+- compile-time validation catches incompatible slot and artifact wiring before live execution
 
 ### Observability Gates
 
-- progress events still reconstruct batch release order
-- provider lifecycle signals still correlate to request identity
-- workflow compatibility events can still be joined with control execution events in one session
+- task events and capability events use the shared telemetry envelope
+- progress reducers can reconstruct task progression from emitted events
+- provider lifecycle events remain correlated to stable request identity
+- logs are diagnostic and never the sole source of durable execution truth
+
+### Test Expansion Gates
+
+- new domains land with unit coverage before broad integration coverage depends on them
+- every phase adds at least one new negative-path test
+- docs-writer receives end-to-end integration coverage as a task package
+- workflow compatibility remains covered until workflow-owned execution is retired
+
+### Commenting Gates
+
+- public contracts, traits, and domain entry points added in this plan have Rustdoc comments
+- non-obvious orchestration, graph, retry, and compatibility logic has short why-focused comments
+- obvious statement-by-statement narration comments are avoided
+- comments are updated or removed in the same change when surrounding behavior changes
 
 ## Implementation Order Summary
 
-1. characterize current behavior
-2. extract traversal
-3. bootstrap `control`
-4. extract provider executor
-5. rebuild workflow compatibility on top of the new seams
-6. remove dead mixed-ownership code
+1. lock the refactored baseline with stronger gates
+2. build the capability contract core and catalog
+3. build task records, artifact repo, and compiler
+4. build task executor and payload assembly
+5. implement the first-slice capability set
+6. run docs-writer as a task package
+7. converge workflow onto task execution
+8. retire workflow-owned execution and seal the boundaries
 
 ## Read With
 
 - [Capability And Task Design](README.md)
-- [Domain Architecture](domain_architecture.md)
-- [Context Technical Spec](context/technical_spec.md)
-- [Provider Capability Design](provider/README.md)
-- [Workflow Cleanup Technical Spec](workflow_refactor/technical_spec.md)
-- [Interregnum Orchestration](../control/interregnum_orchestration.md)
+- [Capability Model](capability/README.md)
+- [Task Design](task/README.md)
+- [Docs Writer Package](task/docs_writer_package.md)
+- [Task Control Boundary](task_control_boundary.md)
+- [Control Design](../control/README.md)
+- [Task Network](../control/task_network.md)
+- [Commenting Policy](../../governance/commenting_policy.md)

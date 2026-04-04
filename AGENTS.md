@@ -17,6 +17,7 @@
 - [Commit Policy](governance/commit_policy.md)
 - [Compatibility Policy](governance/compatibility_policy.md)
 - [CLI Targeting Policy](governance/cli_targeting_policy.md)
+- [Commenting Policy](governance/commenting_policy.md)
 - [Docs Style Policy](governance/docs_style_policy.md)
 - [Policy Proposal Flow](governance/policy_proposal_flow.md)
 - [Complex Change Workflow Governance](governance/complex_change_workflow.md)

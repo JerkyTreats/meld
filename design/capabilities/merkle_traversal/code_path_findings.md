@@ -65,8 +65,8 @@ The first extraction step should not be a new execution engine.
 It should be a clean traversal seam that:
 
 - accepts a Merkle scope and traversal strategy
-- derives one ordered Merkle node set
+- derives ordered Merkle node batches
 - emits that result as a typed artifact
-- leaves generation execution to `context_generate`
+- leaves generation execution to downstream context and provider capabilities coordinated by `control`
 
-That would let the current bottom-up behavior survive as the first strategy while making other strategies possible without rewriting `context generate`.
+That would let the current bottom-up behavior survive as the first strategy while making other strategies possible without rewriting the context preparation and finalization path.

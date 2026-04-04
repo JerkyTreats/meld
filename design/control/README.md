@@ -172,8 +172,9 @@ The current model assumes these durable artifact families:
 
 1. [Capability And Task Design](../capabilities/README.md)
 2. [Domain Architecture](../capabilities/domain_architecture.md)
-3. [HTN Turing Plan](../htn_turing.md)
-4. [Goals](../goals/README.md)
+3. [Task Control Boundary](../capabilities/task_control_boundary.md)
+4. [HTN Turing Plan](../htn_turing.md)
+5. [Goals](../goals/README.md)
 
 ## Reading Notes
 

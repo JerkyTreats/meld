@@ -25,7 +25,7 @@ It should describe ordering, graph execution, and modification of tasks, not the
 
 ## Durable Structure
 
-The durable structure in this layer is `capability/`, `provider/`, `context/`, `workflow_refactor/`, and `migration_plan/`.
+The durable structure in this layer is `capability/`, `task/`, `provider/`, `context/`, `workflow_refactor/`, and `migration_plan/`.
 
 ## Core Decisions
 
@@ -33,6 +33,8 @@ The durable structure in this layer is `capability/`, `provider/`, `context/`, `
 - capability contracts are owned by the domain that provides the behavior
 - functionality remains behind the capability contract
 - tasks are directed compiled capability graphs
+- tasks own task-scoped artifact persistence and invocation records
+- capabilities remain stateless execution boundaries over structured data
 - workflow files should converge into task definitions, not remain the durable runtime abstraction
 - `petgraph` is the graph substrate for task compilation infrastructure
 - compiler validates and locks candidate capability graphs into compiled tasks
@@ -48,19 +50,22 @@ The durable structure in this layer is `capability/`, `provider/`, `context/`, `
 
 1. [Implementation Plan](PLAN.md)
 2. [Capability Model](capability/README.md)
-3. [Capabilities By Domain](capability/by_domain.md)
-4. [Domain Architecture](domain_architecture.md)
-5. [Provider Capability Design](provider/README.md)
-6. [Context Capability Readiness](context/README.md)
-7. [Context Code Path Findings](context/code_path_findings.md)
-8. [Context Technical Spec](context/technical_spec.md)
-9. [Workflow Refactor](workflow_refactor/README.md)
-10. [Workflow Cleanup Technical Spec](workflow_refactor/technical_spec.md)
-11. [Workflow Refactor Code Path Findings](workflow_refactor/code_path_findings.md)
-12. [Merkle Traversal Capability](capability/merkle_traversal/README.md)
-13. [Merkle Traversal Technical Spec](capability/merkle_traversal/technical_spec.md)
-14. [Merkle Traversal Code Path Findings](capability/merkle_traversal/code_path_findings.md)
-15. [Migration Plan](migration_plan/README.md)
+3. [Task Design](task/README.md)
+4. [Docs Writer Package](task/docs_writer_package.md)
+5. [Task Control Boundary](task_control_boundary.md)
+6. [Capabilities By Domain](capability/by_domain.md)
+7. [Domain Architecture](domain_architecture.md)
+8. [Provider Capability Design](provider/README.md)
+9. [Context Capability Readiness](context/README.md)
+10. [Context Code Path Findings](context/code_path_findings.md)
+11. [Context Technical Spec](context/technical_spec.md)
+12. [Workflow Refactor](workflow_refactor/README.md)
+13. [Workflow Cleanup Technical Spec](workflow_refactor/technical_spec.md)
+14. [Workflow Refactor Code Path Findings](workflow_refactor/code_path_findings.md)
+15. [Merkle Traversal Capability](capability/merkle_traversal/README.md)
+16. [Merkle Traversal Technical Spec](capability/merkle_traversal/technical_spec.md)
+17. [Merkle Traversal Code Path Findings](capability/merkle_traversal/code_path_findings.md)
+18. [Migration Plan](migration_plan/README.md)
 
 ## Non Goals
 

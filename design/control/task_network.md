@@ -122,6 +122,20 @@ The first pass event path can be viewed as one ordered family:
 This is not a strict linear lifecycle for every task.
 It is the first bounded event vocabulary that the network must understand.
 
+These events should use the current application telemetry envelope:
+
+```rust
+struct ProgressEvent {
+    ts: String,
+    session: String,
+    seq: u64,
+    event_type: String,
+    data: serde_json::Value,
+}
+```
+
+That keeps task-network reduction aligned with the existing progress runtime and event store.
+
 ## State ownership
 
 The `task_network` should own:
@@ -135,7 +149,13 @@ The `task_network` should own:
 - plan version state
 
 `task` should own none of that.
-`task` should carry only compiled structure and typed task contracts.
+`task` should carry compiled structure, typed task contracts, and task-scoped artifact persistence.
+The distinction is important:
+
+- `task_network` owns orchestration state
+- `task_network` decides retry and repair intent
+- `task` owns task-local artifact repo and invocation history records
+- `task` executes the resulting retry path inside task scope
 
 ## Plan
 
@@ -192,6 +212,24 @@ Recommended posture:
 - task network owns all state transitions
 
 This gives event driven orchestration without spreading state across workers.
+
+## Future Task Executor Note
+
+One likely next refinement is a task-local executor that responds to task-network stimuli rather than being treated as an undifferentiated worker shell.
+
+In that future shape:
+
+- the task network emits task-scoped execution intent such as start, stop, retry, continue, or cancel
+- the task-local executor consumes that intent for one active task
+- the task-local executor advances capability progress inside the task
+- the task-local executor emits task events back to the task network
+
+This keeps the split clean:
+
+- task network owns event reduction, dispatch intent, repair intent, and continuation state
+- task-local executor owns capability triggering and artifact-driven progression inside one task
+
+That refinement should make the eventual event model clearer without changing the current ownership line.
 
 ## Compiler as runtime work
 

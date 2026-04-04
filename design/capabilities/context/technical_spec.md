@@ -80,25 +80,36 @@ This is the central architectural fact revealed by the code findings:
 
 ## Functional Contract Target
 
-The first-slice `context_generate` capability should be shaped so that it can be called without asking `context` to derive the task graph around it.
+The first-slice context capability surface should be split around the provider handoff rather than published as one monolithic `context_generate` capability.
 
-Required inputs:
+Recommended first-slice task-facing contracts:
 
-- scope reference for the target node
-- typed traversal or target set artifact from outside `context`
-- provider binding
-- agent binding when needed
-- generation policy binding
-- explicit force or replay posture when relevant
+- `ContextGeneratePrepare`
+  - inputs
+    - scope reference for the target node
+    - provider binding
+    - agent binding when needed
+    - generation policy binding
+    - explicit force or replay posture when relevant
+    - explicit upstream lineage or observation inputs when present
+  - outputs
+    - provider execute request artifact
+    - preparation summary artifact
+    - structured observation summary for upstream diagnostics
 
-Required outputs:
+- `ContextGenerateFinalize`
+  - inputs
+    - provider execute result artifact
+    - preparation summary artifact
+    - persistence policy binding when relevant
+  - outputs
+    - generation result artifact
+    - frame reference artifact when a frame is materialized
+    - structured observation summary
+    - structured effect summary
+    - explicit failure classification suitable for retry policy outside the domain
 
-- generation result artifact
-- frame reference artifact when a frame is materialized
-- structured observation summary
-- structured effect summary
-- explicit failure classification suitable for retry policy outside the domain
-- explicit provider handoff and result boundary
+This split keeps provider transport outside `context` while preserving the existing atomic seam as an implementation anchor during migration.
 
 ## Refactor Rules
 
@@ -109,6 +120,7 @@ Required change:
 - keep `execute_generation_request` as the core domain execution path
 - keep prompt assembly, lineage preparation, metadata construction, result validation, and frame persistence behind that seam
 - extract provider binding resolution and completion execution into a provider-domain handoff
+- use the seam as the migration anchor for `ContextGeneratePrepare` and `ContextGenerateFinalize`
 
 Reason:
 
@@ -238,7 +250,8 @@ Introduce capability-facing input and output types around the atomic seam.
 Required outcomes:
 
 - provider, agent, and policy inputs become explicit
-- generation result and frame reference outputs become explicit
+- provider execute request and provider execute result become explicit handoff artifacts
+- preparation summary, generation result, and frame reference outputs become explicit
 - failure classification becomes structured enough for upstream retry logic
 - provider execution becomes an explicit handoff rather than a hidden internal call
 
@@ -294,7 +307,7 @@ Required outcomes:
 3. `GenerationPlan` is clearly compatibility-only.
 4. queue no longer branches on workflow program kind.
 5. `execute_generation_request` remains the preserved atomic domain seam.
-6. `context_generate` can be called by a future task layer without asking `context` to invent the task graph around it.
+6. future task layers can call `ContextGeneratePrepare` and `ContextGenerateFinalize` without asking `context` to invent the task graph around them.
 
 ## Read With
 

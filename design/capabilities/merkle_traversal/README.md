@@ -41,6 +41,98 @@ The first slice input contract includes tree scope reference, target selection a
 
 The first slice output contract includes `ordered_merkle_node_batches`, traversal metadata artifact, and structured observation summary.
 
+## Invocation Payload Example
+
+```json
+{
+  "invocation_id": "invk_merkle_traversal_001",
+  "capability_instance_id": "capinst_merkle_traversal_docs_writer_v1",
+  "supplied_inputs": [
+    {
+      "slot_id": "resolved_node_ref",
+      "source": "ArtifactHandoff",
+      "value": {
+        "artifact_id": "artifact_resolved_node_ref_pkg_a_readme",
+        "artifact_type_id": "resolved_node_ref",
+        "schema_version": "v1",
+        "content": {
+          "node_id": "9f6d8d7f1f1d7e5a1a7f8b4f5c3e2d1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4",
+          "path": "packages/pkg-a/README.md"
+        }
+      }
+    },
+    {
+      "slot_id": "traversal_strategy",
+      "source": "InitPayload",
+      "value": {
+        "artifact_type_id": "traversal_strategy",
+        "schema_version": "v1",
+        "content": {
+          "strategy": "bottom_up"
+        }
+      }
+    }
+  ],
+  "upstream_lineage": {
+    "task_id": "task_docs_writer",
+    "task_run_id": "taskrun_docs_writer_001"
+  },
+  "execution_context": {
+    "attempt": 1,
+    "trace_id": "trace_docs_writer_001"
+  }
+}
+```
+
+## Artifacts Out Example
+
+Primary emitted artifact:
+
+```json
+{
+  "artifact_id": "artifact_ordered_merkle_node_batches_pkg_a_readme",
+  "artifact_type_id": "ordered_merkle_node_batches",
+  "schema_version": "v1",
+  "producer": {
+    "capability_instance_id": "capinst_merkle_traversal_docs_writer_v1",
+    "invocation_id": "invk_merkle_traversal_001",
+    "output_slot_id": "ordered_merkle_node_batches"
+  },
+  "content": {
+    "strategy": "bottom_up",
+    "batches": [
+      [
+        "2f6d8d7f1f1d7e5a1a7f8b4f5c3e2d1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5001",
+        "2f6d8d7f1f1d7e5a1a7f8b4f5c3e2d1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5002"
+      ],
+      [
+        "9f6d8d7f1f1d7e5a1a7f8b4f5c3e2d1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4"
+      ]
+    ]
+  }
+}
+```
+
+Supporting artifact:
+
+```json
+{
+  "artifact_id": "artifact_traversal_metadata_pkg_a_readme",
+  "artifact_type_id": "traversal_metadata",
+  "schema_version": "v1",
+  "producer": {
+    "capability_instance_id": "capinst_merkle_traversal_docs_writer_v1",
+    "invocation_id": "invk_merkle_traversal_001",
+    "output_slot_id": "traversal_metadata"
+  },
+  "content": {
+    "root_node_id": "9f6d8d7f1f1d7e5a1a7f8b4f5c3e2d1a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4",
+    "batch_count": 2,
+    "node_count": 3
+  }
+}
+```
+
 ## Contract Rules
 
 - the contract describes traversal derivation only

@@ -16,7 +16,7 @@ That mixed ownership prevents clean capability contracts and clean task compilat
 
 The `context` domain should own only domain behavior behind explicit capability contracts.
 
-For the first slice, `context` must expose a `context_generate` capability contract, typed input artifact contracts, typed output artifact contracts, and the execution-facing implementation behind that contract.
+For the first slice, `context` must expose task-facing preparation and finalization capability contracts, typed input artifact contracts, typed output artifact contracts, and the execution-facing implementation behind those contracts.
 
 The following concerns must move out of `context`: compiled task graph assembly, dependency edge construction, artifact handoff validation, Merkle traversal policy, and workflow-shaped retry policy.
 
@@ -31,11 +31,15 @@ The following concerns must move out of `context`: compiled task graph assembly,
 
 ## Required Inputs
 
-The first slice `context_generate` capability must accept scope reference, ordered Merkle node set artifact, generation policy binding, provider binding, and agent binding when required.
+The first slice `ContextGeneratePrepare` capability must accept node scope reference, generation policy binding, provider binding, agent binding when required, and explicit upstream lineage or observation inputs when present.
+
+The first slice `ContextGenerateFinalize` capability must accept provider execute result, preparation summary, and any persistence policy binding needed for frame materialization.
 
 ## Required Outputs
 
-The first slice `context_generate` capability must emit generation result artifact, frame reference artifact when materialized frames exist, structured observation summary, and structured effect summary.
+The first slice `ContextGeneratePrepare` capability must emit a provider-ready execute request plus structured preparation summary.
+
+The first slice `ContextGenerateFinalize` capability must emit generation result artifact, frame reference artifact when materialized frames exist, structured observation summary, and structured effect summary.
 
 ## Non Goals
 

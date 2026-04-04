@@ -19,9 +19,11 @@ This document is **not** source of truth for Rust modules. It is a design sketch
 
 ---
 
-## Workflow usefulness
+## Runtime usefulness inventory
 
-**Meaning:** how central each capability is to **runtime workflow execution** — the path from `WorkflowExecuteTarget` through thread state, turns, prompt assembly, provider chat, frame write, and head updates. Higher weight means a stronger candidate for explicit compiled task nodes or control-runtime bindings when workflows are expressed as capability graphs.
+**Meaning:** how central each capability is to the **current runtime path** from trigger to generated frame and durable state updates.
+This is an inventory aid, not a first-slice task-node recommendation.
+Several high-score items below are still implementation helpers or compatibility surfaces rather than durable task-facing capability contracts.
 
 **Out of scope for this score:** long-term plan compiler-only surfaces; weights assume today’s workflow-shaped runner remains the primary orchestration host.
 
@@ -117,6 +119,311 @@ Sorted by score descending, then domain, then name.
 - **Queue submit or drain** are **3** because inline workflow execution can bypass the queue; queued generation is a parallel hosting model.
 - **Admin and list or show** capabilities remain **0** or **1**; they matter for operator experience and repository health, not for turn graphs.
 
+### Inventory caveat
+
+The weighted catalog above is useful for coverage analysis, but it is too fine-grained to serve directly as the first task-facing capability set.
+
+Examples:
+
+- `ProviderResolveClient` is a provider helper behind `ProviderExecuteChat`
+- `FrameMetadataBuildGenerated` is part of context result shaping
+- `PromptContextAssemble` is part of context preparation
+- `HeadIndexSave` is a persistence detail behind higher state mutation
+- `WorkflowExecuteTarget` is a compatibility trigger, not a durable task node
+
+The first task-facing slice should publish durable atomic seams, not every helper step currently visible in code.
+
+## First-Slice Task-Facing Capability Set
+
+For the first task layer, the capability surface should be smaller and more intentional than the inventory above.
+
+Recommended first-slice task-facing capability types:
+
+| Domain | Capability | Why it is task-facing |
+|--------|------------|-----------------------|
+| merkle_traversal | MerkleTraversal | Structural ordering capability with reusable batch output |
+| workspace | WorkspaceResolveNodeId | Resolves authored path or target into stable node scope |
+| context | ContextGeneratePrepare | Produces provider-ready generation request from node scope, prompts, and policy |
+| provider | ProviderExecuteChat | Executes ready provider work with batching and throttling hidden behind the domain |
+| context | ContextGenerateFinalize | Validates provider result, builds metadata, persists frame effects, and emits reusable outputs |
+
+Compatibility-only or hosting-only surfaces should remain outside that first task-facing set:
+
+- `WorkflowExecuteTarget`
+- `WorkflowStateRead`
+- `WorkflowStateWrite`
+- `ContextGenerateQueueSubmit`
+- `ContextGenerateQueueDrain`
+
+These may still be domain capabilities in a broad sense, but they should not be the initial building blocks for compiled tasks.
+
+## Concrete Profiles For The First Slice
+
+This section makes the first-slice task-facing set more concrete.
+For each capability, it names:
+
+- the internal function chain it should encompass
+- the runtime initialization state that should live with the capability runtime object
+- the external params that the sig adapter resolves into domain arguments
+- the typed artifacts that come back out
+
+The important boundary is this:
+
+- `task` and `control` see slots, bindings, effects, and artifacts
+- the domain-owned sig adapter resolves those external values into the internal function chain
+- the underlying functionality stays behind the capability boundary
+
+Everything listed below under runtime initialization, internal function chain, and internal arguments is domain-internal.
+Those items are not durable task payload fields.
+They may include process-local helpers that never cross the capability boundary.
+
+### `WorkspaceResolveNodeId`
+
+Purpose:
+
+- resolve authored target input into one stable node scope that later capabilities can consume
+
+Current implementation anchor:
+
+- [commands.rs](/home/jerkytreats/meld/src/workspace/commands.rs)
+
+Internal function chain:
+
+- `workspace_lookup_path`
+- store lookup through `find_by_path` or `get_by_path`
+- `resolve_node_id_by_canonical_fallback`
+- direct node id validation when the input is already a node id
+
+Runtime initialization holds:
+
+- capability instance identity
+- workspace scope kind
+- `workspace_root` binding
+- input slot and output slot contracts
+- execution policy metadata
+
+Sig adapter resolves:
+
+- one target selector input artifact
+  - path-like target
+  - or node-id-like target
+- `include_tombstoned` policy binding when needed
+
+Into internal arguments:
+
+- `api`
+- `workspace_root`
+- resolved target selector
+- `include_tombstoned`
+
+Artifacts out:
+
+- `resolved_node_ref`
+- `target_resolution_summary`
+
+### `MerkleTraversal`
+
+Purpose:
+
+- derive structural execution order from a root node scope and traversal strategy
+
+Current implementation anchor:
+
+- [merkle_traversal.rs](/home/jerkytreats/meld/src/merkle_traversal.rs)
+
+Internal function chain:
+
+- `traverse`
+- level collection by Merkle child walk
+- strategy-directed batch ordering
+- `OrderedMerkleNodeBatches::new`
+
+Runtime initialization holds:
+
+- capability instance identity
+- subtree or workspace scope
+- chosen traversal bindings that are static for the bound instance
+- input slot and output slot contracts
+
+Sig adapter resolves:
+
+- `resolved_node_ref` input artifact
+- `traversal_strategy` binding
+- optional traversal policy binding
+
+Into internal arguments:
+
+- `api`
+- `target_node_id`
+- `TraversalStrategy`
+
+Artifacts out:
+
+- `ordered_merkle_node_batches`
+- `traversal_metadata`
+- `traversal_observation_summary`
+
+### `ContextGeneratePrepare`
+
+Purpose:
+
+- gather node, prompt, provider, and lineage inputs into one provider-ready generation request
+
+Current implementation anchor:
+
+- [orchestration.rs](/home/jerkytreats/meld/src/context/generation/orchestration.rs)
+- [prompt_collection.rs](/home/jerkytreats/meld/src/context/generation/prompt_collection.rs)
+
+Internal function chain:
+
+- `api.get_agent`
+- node record load through `api.node_store().get`
+- `PromptContract::from_agent`
+- `build_prompt_messages`
+- `prepare_provider_for_request`
+- `prepare_generated_lineage`
+- optional previous metadata snapshot load for downstream finalization
+
+Runtime initialization holds:
+
+- capability instance identity
+- node scope kind
+- bound agent, provider, and generation policy values when statically chosen
+- input slot and output slot contracts
+- execution policy metadata for this capability instance
+
+Sig adapter resolves:
+
+- `resolved_node_ref` input artifact
+- optional upstream lineage or observation artifact
+- explicit force or replay posture when relevant
+
+Into internal arguments:
+
+- context API handle
+- node scope
+- agent profile
+- provider execution binding
+- prompt contract inputs
+- lineage preparation input
+
+Artifacts out:
+
+- `provider_execute_request`
+- `preparation_summary`
+- `prompt_context_lineage_summary`
+- `preparation_observation_summary`
+
+### `ProviderExecuteChat`
+
+Purpose:
+
+- execute ready provider work with batching, throttling, and response correlation hidden behind the provider boundary
+
+Current implementation anchor:
+
+- [executor.rs](/home/jerkytreats/meld/src/provider/executor.rs)
+
+Internal function chain:
+
+- execution admission
+- provider compatibility grouping for batchable work
+- `prepare_provider_for_request`
+- `execute_completion`
+- provider lifecycle event emission
+- normalized result shaping
+
+Runtime initialization holds:
+
+- capability instance identity
+- provider execution class
+- any static provider lane or retry policy bindings
+- input slot and output slot contracts
+- batching and throttling policy metadata
+
+Sig adapter resolves:
+
+- `provider_execute_request` input artifact
+- provider execution policy bindings such as retry class or lane hints when present
+
+Into internal arguments:
+
+- provider config
+- runtime overrides
+- provider client
+- chat message payload
+- completion options
+
+Artifacts out:
+
+- `provider_execute_result`
+- `provider_usage_summary`
+- `provider_timing_summary`
+- `provider_observation_summary`
+
+### `ContextGenerateFinalize`
+
+Purpose:
+
+- validate provider output, build durable frame metadata, persist frame effects, and emit downstream result artifacts
+
+Current implementation anchor:
+
+- [orchestration.rs](/home/jerkytreats/meld/src/context/generation/orchestration.rs)
+- [metadata_construction.rs](/home/jerkytreats/meld/src/context/generation/metadata_construction.rs)
+
+Internal function chain:
+
+- `build_and_validate_generated_metadata`
+- metadata validation event emission
+- `Frame::new`
+- `api.put_frame`
+- generation completion result shaping
+
+Runtime initialization holds:
+
+- capability instance identity
+- frame family scope
+- frame type and persistence policy bindings when statically chosen
+- input slot and output slot contracts
+- effect contract for frame and head writes
+
+Sig adapter resolves:
+
+- `provider_execute_result` input artifact
+- `preparation_summary` input artifact
+
+Into internal arguments:
+
+- generated content bytes
+- metadata validation inputs
+- frame construction inputs
+- frame persistence call
+
+Artifacts out:
+
+- `generation_result`
+- `frame_ref`
+- `frame_metadata_summary`
+- `effect_summary`
+- `finalization_observation_summary`
+
+### Unified Caller Rule
+
+Across the first-slice set, the caller-facing shape should stay uniform:
+
+- initialize a capability runtime object from one bound capability instance
+- invoke that runtime object with one invocation payload
+- supply dynamic values only through named input slots and invocation context
+
+That means `task` or `control` should never construct the internal `foo`, `string`, `bot` style argument set directly.
+They should supply:
+
+- bound static values during runtime initialization
+- dynamic artifact or init values during invocation
+
+The sig adapter then turns those two external layers into the internal call shape required by the domain functionality.
+
 ## Contract Shape For Score 5 And 4 Slice
 
 The score 5 and 4 slice should share one execution-grade capability contract shape.
@@ -198,33 +505,40 @@ They do not expose adapters, storage structs, or transport handles.
 
 ### Why This Fits The 5 And 4 Band
 
-- `PromptContextAssemble`, `ProviderExecuteChat`, and `FrameMetadataBuildGenerated` are mainly artifact-driven, so typed input and output slots are the critical contract.
-- `FrameWrite`, `HeadSet`, `WorkflowStateWrite`, and `HeadIndexSave` also mutate durable state, so they need effect metadata in addition to artifact slots.
-- `StoreOpen`, `ConfigLoadWorkspace`, and `WorkspaceResolveNodeId` often behave like prerequisite binders, so explicit scope and binding contracts matter more than complex outputs.
+- `MerkleTraversal`, `ContextGeneratePrepare`, `ProviderExecuteChat`, and `ContextGenerateFinalize` are artifact-driven and hand work cleanly from one domain to the next.
+- `ContextGenerateFinalize` and later explicit state-mutation capabilities need effect metadata because they write durable state.
+- `WorkspaceResolveNodeId` and `ConfigLoadWorkspace` often behave like prerequisite binders, so explicit scope and binding contracts matter more than complex outputs.
 - `TelemetryEmitEvent` is runtime-adjacent but sink selection is environmental, so execution class and effect target are more important than downstream artifact fan-out.
 
 ### Example Readings
 
+- `MerkleTraversal`
+  - scope: workspace or subtree root
+  - bindings: traversal strategy, traversal policy
+  - inputs: target selection artifact from init or upstream handoff
+  - outputs: ordered Merkle node batches, traversal metadata
+  - effects: none
+
+- `ContextGeneratePrepare`
+  - scope: node
+  - bindings: agent ref, provider ref, generation policy
+  - inputs: target node ref, lineage input, optional upstream observations
+  - outputs: provider execute request, preparation summary
+  - effects: read-only access to context and prompt sources
+
 - `ProviderExecuteChat`
   - scope: turn
   - bindings: provider ref, generation policy
-  - inputs: prompt context artifact from init or upstream handoff
-  - outputs: chat completion result, observation summary
+  - inputs: provider execute request from upstream handoff
+  - outputs: provider execute result, observation summary
   - effects: none beyond provider call accounting
 
-- `FrameWrite`
+- `ContextGenerateFinalize`
   - scope: node or frame family
   - bindings: frame type, persistence policy
-  - inputs: generation result, frame metadata
+  - inputs: provider execute result, preparation summary
   - outputs: frame ref
-  - effects: exclusive write against frame store target
-
-- `HeadSet`
-  - scope: node plus frame type
-  - bindings: none beyond resolved scope
-  - inputs: frame ref
-  - outputs: head ref or head mutation record
-  - effects: exclusive write against active head target
+  - effects: exclusive write against frame store and active head targets
 
 ### Instance Projection Rule
 
@@ -278,7 +592,8 @@ Loose stand-in for `src/config/capability.rs`.
 Loose stand-in for `src/context/capability.rs`. Primary refactor target for task-ready generation.
 
 ```rust
-// capability: ContextGenerate — run generation plan for a target node and frame type
+// capability: ContextGeneratePrepare — assemble prompt context and provider-ready request
+// capability: ContextGenerateFinalize — validate result, build metadata, and persist frame effects
 // capability: ContextGenerateQueueSubmit — enqueue generation work with priority
 // capability: ContextGenerateQueueDrain — process queue events and stats
 // capability: ContextQueryView — build composed context view for a node
@@ -317,6 +632,16 @@ Loose stand-in for `src/init/capability.rs`.
 
 ---
 
+## `merkle_traversal`
+
+Loose stand-in for `src/merkle_traversal.rs`.
+
+```rust
+// capability: MerkleTraversal — derive ordered Merkle node batches from scope and strategy
+```
+
+---
+
 ## `metadata`
 
 Loose stand-in for `src/metadata/capability.rs`.
@@ -351,7 +676,6 @@ Loose stand-in for `src/provider/capability.rs`.
 // capability: ProviderRemove — remove profile and paths
 // capability: ProviderValidate — validate profile fields and types
 // capability: ProviderTest — connectivity and model listing
-// capability: ProviderResolveClient — resolve runtime client for a named provider
 // capability: ProviderExecuteChat — bind and run chat completion for generation callers
 ```
 
@@ -388,7 +712,7 @@ Loose stand-in for `src/telemetry/capability.rs`.
 
 ## `workflow`
 
-Loose stand-in for `src/workflow/capability.rs`. Longer term this domain may shrink as plans replace ad hoc workflow graphs; names here describe **current** command and executor surfaces.
+Loose stand-in for `src/workflow/capability.rs`. These are compatibility-facing surfaces, not recommended first-slice task nodes.
 
 ```rust
 // capability: WorkflowRegistryList — list registered workflow ids and versions

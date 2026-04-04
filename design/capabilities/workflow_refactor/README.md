@@ -24,6 +24,7 @@ The immediate direction is:
 
 `docs_writer_thread_v1` is still useful as a concrete example of multi-step behavior.
 What survives is the behavior shape, not the workflow abstraction.
+The likely retrofit shape is a docs-writer package that lowers into a task DAG rather than a workflow-owned runtime.
 
 ## Cleanup Goal
 
@@ -54,6 +55,7 @@ The external trigger path may remain stable while internal ownership changes.
 - [Workflow Cleanup Technical Spec](technical_spec.md)
 - [Workflow Refactor Code Path Findings](code_path_findings.md)
 - [Capability And Task Design](../README.md)
+- [Docs Writer Package](../task/docs_writer_package.md)
 - [Capability And Task Implementation Plan](../PLAN.md)
 - [Interregnum Orchestration](../../control/interregnum_orchestration.md)
 - [Merkle Traversal Technical Spec](../capability/merkle_traversal/technical_spec.md)
