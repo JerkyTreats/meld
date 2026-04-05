@@ -121,6 +121,8 @@ The durable structure is:
   - refactor-phase orchestration ownership before task execution takes over
 - `task_network.md`
   - task network model, events, state ownership, repair, and dispatch
+- `events/`
+  - canonical event management design and telemetry refactor path
 - `architecture_diagrams.md`
   - the unified architecture diagram and reading notes
 - `htn/`
@@ -158,15 +160,18 @@ The current model assumes these durable artifact families:
 1. [Bootstrap Plan](PLAN.md)
 2. [Interregnum Orchestration](interregnum_orchestration.md)
 3. [Task Network](task_network.md)
-4. [Unified Task Network Diagram](architecture_diagrams.md)
-5. [HTN Model](htn/README.md)
-6. [HTN Lineage Model](htn/lineage_model.md)
-7. [Control Program Model](program/README.md)
-8. [Control Graph Model](program/control_graph.md)
-9. [Runtime Model](runtime/README.md)
-10. [Continuation Model](runtime/continuation_model.md)
-11. [Repair Model](repair/README.md)
-12. [Repair Entry Model](repair/repair_entry.md)
+4. [Events Design](events/README.md)
+5. [Event Manager Requirements](events/event_manager_requirements.md)
+6. [Telemetry Refactor](events/telemetry_refactor.md)
+7. [Unified Task Network Diagram](architecture_diagrams.md)
+8. [HTN Model](htn/README.md)
+9. [HTN Lineage Model](htn/lineage_model.md)
+10. [Control Program Model](program/README.md)
+11. [Control Graph Model](program/control_graph.md)
+12. [Runtime Model](runtime/README.md)
+13. [Continuation Model](runtime/continuation_model.md)
+14. [Repair Model](repair/README.md)
+15. [Repair Entry Model](repair/repair_entry.md)
 
 ## Read With
 
