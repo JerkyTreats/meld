@@ -6,7 +6,7 @@ use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
 use meld::provider::capability::ProviderExecuteChatCapability;
 use meld::provider::ProviderExecutionBinding;
 use meld::provider::ProviderRuntimeOverrides;
-use meld::task::templates::docs_writer::prepare_docs_writer_task_run;
+use meld::task::templates::prepare_registered_workflow_task_run;
 use meld::task::{
     compile_task_expansion_request, parse_task_expansion_request_artifact, TaskExecutor,
     WorkflowPackageTriggerRequest,
@@ -160,7 +160,7 @@ fn compiled_shape_for_case(case: &BottomUpCompileCase) -> NormalizedCompileShape
         let mut registry = CapabilityExecutorRegistry::new();
         register_phase_four_capabilities(&mut catalog, &mut registry);
 
-        let prepared = prepare_docs_writer_task_run(
+        let prepared = prepare_registered_workflow_task_run(
             run_context.api(),
             &workspace_root,
             &registered_profile,

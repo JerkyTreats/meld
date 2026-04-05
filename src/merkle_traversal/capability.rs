@@ -8,13 +8,15 @@ use crate::capability::{
     ScopeContract, SuppliedValueRef,
 };
 use crate::error::ApiError;
+use crate::merkle_traversal::expansion::{
+    TraversalExpansionNode, TraversalExpansionRelation, TraversalPrerequisiteExpansionContent,
+    TraversalPrerequisiteExpansionTemplate,
+};
 use crate::merkle_traversal::{traverse, TraversalStrategy};
 use crate::task::{
     ArtifactProducerRef, ArtifactRecord, TaskExpansionRequest, TaskExpansionTemplate,
-    TraversalExpansionNode, TraversalExpansionRelation, TraversalPrerequisiteExpansionContent,
-    TraversalPrerequisiteExpansionTemplate, TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID,
-    TASK_EXPANSION_SCHEMA_VERSION, TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID,
-    TRAVERSAL_PREREQUISITE_EXPANSION_KIND,
+    TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID, TASK_EXPANSION_SCHEMA_VERSION,
+    TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID, TRAVERSAL_PREREQUISITE_EXPANSION_KIND,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};

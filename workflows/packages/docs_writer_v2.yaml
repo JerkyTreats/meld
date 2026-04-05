@@ -1,0 +1,84 @@
+package_id: docs_writer
+workflow_id: docs_writer_thread_v1
+trigger:
+  accepted_targets:
+    - node_id
+    - path
+  required_runtime_fields:
+    - agent_id
+    - provider_binding
+    - frame_type
+    - force
+seed:
+  artifacts:
+    - init_slot_id: force_posture
+      artifact_type_id: force_posture
+      schema_version: 1
+      source:
+        kind: force_posture
+    - init_slot_id: target_node_ref
+      artifact_type_id: resolved_node_ref
+      schema_version: 1
+      source:
+        kind: target_node_ref
+    - init_slot_id: task_expansion_template
+      artifact_type_id: task_expansion_template
+      schema_version: 1
+      source:
+        kind: expansion_template
+        template_id: docs_writer_bottom_up
+expansions:
+  - kind: traversal_prerequisite
+    expansion_kind: traversal_prerequisite_expansion
+    template_ref: docs_writer_bottom_up
+    traversal_strategy: bottom_up
+    repeated_region:
+      region_id: docs_writer_node
+      force_init_slot_id: force_posture
+      node_ref_slot_template: node_ref::{node_id_prefix}
+      existing_output_slot_template: existing_readme::{node_id_prefix}
+      existing_output_artifact_type_id: readme_final
+      stage_chain:
+        stages:
+          - stage_id: prepare
+            capability_type_id: context_generate_prepare
+            capability_version: 1
+          - stage_id: execute
+            capability_type_id: provider_execute_chat
+            capability_version: 1
+          - stage_id: finalize
+            capability_type_id: context_generate_finalize
+            capability_version: 1
+      turns:
+        - turn_id: evidence_gather
+          prompt_ref: prompts/docs_writer/evidence_gather.md
+          output_type: evidence_map
+          gate_id: evidence_gate
+          output_policy:
+            persist_frame: false
+        - turn_id: verification
+          prompt_ref: prompts/docs_writer/verification.md
+          output_type: verification_report
+          gate_id: verification_gate
+          output_policy:
+            persist_frame: false
+        - turn_id: readme_struct
+          prompt_ref: prompts/docs_writer/readme_struct.md
+          output_type: readme_struct
+          gate_id: struct_gate
+          output_policy:
+            persist_frame: false
+        - turn_id: style_refine
+          prompt_ref: prompts/docs_writer/style_refine.md
+          output_type: readme_final
+          gate_id: style_gate
+          output_policy:
+            persist_frame: true
+    prerequisite:
+      producer_turn_id: style_refine
+      producer_stage_id: finalize
+      producer_output_slot_id: generation_output
+      producer_artifact_type_id: readme_final
+      consumer_turn_id: evidence_gather
+      consumer_stage_id: prepare
+      consumer_input_slot_id: upstream_artifact

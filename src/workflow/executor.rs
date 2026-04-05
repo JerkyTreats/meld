@@ -18,9 +18,12 @@ use crate::error::ApiError;
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
 use crate::provider::ProviderExecutionBinding;
-use crate::task::templates::docs_writer::prepare_docs_writer_task_run;
+use crate::task::templates::{
+    prepare_registered_workflow_task_run, workflow_uses_task_package_path,
+};
 use crate::task::{
-    execute_task_to_completion, TaskExecutor, WorkflowPackageTriggerRequest, WorkflowTaskTelemetry,
+    execute_task_to_completion, load_task_package_spec_for_workflow, TaskExecutor,
+    WorkflowPackageTriggerRequest, WorkflowTaskTelemetry,
 };
 use crate::telemetry::{
     now_millis, FrameMetadataValidationEventData, PromptContextLineageEventData,
@@ -108,11 +111,12 @@ pub(crate) async fn execute_registered_workflow_async(
     let mut start_seq = 1u32;
     let mut turn_outputs: HashMap<String, String> = HashMap::new();
     let mut completed_turns = 0usize;
-    let task_path_final_head = if !request.force && uses_task_package_path(profile) {
-        api.get_head(&request.node_id, &request.frame_type)?
-    } else {
-        None
-    };
+    let task_path_final_head =
+        if !request.force && workflow_uses_task_package_path(registered_profile)? {
+            api.get_head(&request.node_id, &request.frame_type)?
+        } else {
+            None
+        };
 
     if let Some(existing) = state_store.load_thread(&thread_id)? {
         match existing.status {
@@ -293,7 +297,7 @@ pub(crate) async fn execute_registered_workflow_async(
         .map(|turn| turn.seq)
         .unwrap_or_default();
 
-    if uses_task_package_path(profile) {
+    if workflow_uses_task_package_path(registered_profile)? {
         return execute_registered_workflow_via_task_async(
             api,
             workspace_root,
@@ -846,10 +850,6 @@ pub(crate) async fn execute_registered_workflow_async(
     })
 }
 
-fn uses_task_package_path(profile: &WorkflowProfile) -> bool {
-    profile.workflow_id == "docs_writer_thread_v1"
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn execute_registered_workflow_via_task_async(
     api: &ContextApi,
@@ -865,13 +865,20 @@ async fn execute_registered_workflow_via_task_async(
     let mut catalog = CapabilityCatalog::new();
     let mut registry = CapabilityExecutorRegistry::new();
     register_task_path_capabilities(&mut catalog, &mut registry)?;
+    let package_spec =
+        load_task_package_spec_for_workflow(registered_profile)?.ok_or_else(|| {
+            ApiError::ConfigError(format!(
+                "Workflow '{}' does not have a task package route",
+                registered_profile.profile.workflow_id
+            ))
+        })?;
 
-    let prepared = prepare_docs_writer_task_run(
+    let prepared = prepare_registered_workflow_task_run(
         api,
         workspace_root,
         registered_profile,
         &WorkflowPackageTriggerRequest {
-            package_id: "docs_writer".to_string(),
+            package_id: package_spec.package_id,
             workflow_id: registered_profile.profile.workflow_id.clone(),
             node_id: Some(request.node_id),
             path: None,

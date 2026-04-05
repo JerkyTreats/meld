@@ -1,28 +1,32 @@
-//! Task package trigger contracts and prepared run outputs.
+//! Task package contracts and authored package surfaces.
 
-use crate::provider::ProviderExecutionBinding;
-use crate::task::{CompiledTaskRecord, TaskInitializationPayload};
-use crate::types::NodeID;
-use std::path::PathBuf;
+pub mod contracts;
+pub mod lower;
+pub mod output;
+pub mod prepare;
+pub mod prerequisite;
+pub mod region;
+pub mod registry;
+pub mod seed;
+pub mod trigger;
 
-/// Compatibility-facing trigger request for one workflow-backed task package.
-#[derive(Debug, Clone)]
-pub struct WorkflowPackageTriggerRequest {
-    pub package_id: String,
-    pub workflow_id: String,
-    pub node_id: Option<NodeID>,
-    pub path: Option<PathBuf>,
-    pub agent_id: String,
-    pub provider: ProviderExecutionBinding,
-    pub frame_type: String,
-    pub force: bool,
-    pub session_id: Option<String>,
-}
-
-/// Prepared compiled task and run payload for one package trigger.
-#[derive(Debug, Clone)]
-pub struct PreparedTaskRun {
-    pub compiled_task: CompiledTaskRecord,
-    pub init_payload: TaskInitializationPayload,
-    pub target_node_id: NodeID,
-}
+pub use contracts::{
+    PackageExpansionSpec, PreparedTaskRun, PreparedWorkflowPackageContext, TaskPackageSpec,
+    TraversalPrerequisitePackageExpansionSpec, WorkflowPackageTriggerRequest,
+};
+pub use lower::{lower_traversal_prerequisite_expansion_template, lower_workflow_region_template};
+pub use output::TurnOutputPolicySpec;
+pub use prepare::{
+    build_initial_task_definition, build_task_initialization_payload,
+    find_traversal_prerequisite_expansion, gate_map, prepare_workflow_package_context,
+    prepare_workflow_task_run, prompt_map, resolve_package_target_node_id,
+    validate_workflow_package_trigger,
+};
+pub use prerequisite::PrerequisiteTemplateSpec;
+pub use region::{RepeatedRegionSpec, StageChainSpec, StageSpec, TurnSpec};
+pub use registry::{
+    load_builtin_task_package_spec, load_builtin_task_package_spec_for_workflow,
+    load_task_package_spec_for_workflow,
+};
+pub use seed::{InitialSeedSpec, SeedArtifactSpec, SeedSourceSpec};
+pub use trigger::{TargetSelectorKind, TaskTriggerSpec};

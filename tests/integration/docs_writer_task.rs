@@ -10,7 +10,7 @@ use meld::metadata::frame_write_contract::{
 };
 use meld::provider::capability::ProviderExecuteChatCapability;
 use meld::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
-use meld::task::templates::docs_writer::prepare_docs_writer_task_run;
+use meld::task::templates::prepare_registered_workflow_task_run;
 use meld::task::{
     compile_task_expansion_request, execute_task_to_completion,
     parse_task_expansion_request_artifact, TaskExecutor, WorkflowPackageTriggerRequest,
@@ -258,7 +258,7 @@ fn docs_writer_task_compiles_bottom_up_dependencies() {
         let mut registry = CapabilityExecutorRegistry::new();
         register_phase_four_capabilities(&mut catalog, &mut registry);
 
-        let prepared = prepare_docs_writer_task_run(
+        let prepared = prepare_registered_workflow_task_run(
             run_context.api(),
             &workspace_root,
             &registered_profile,
@@ -342,7 +342,7 @@ fn docs_writer_task_runs_to_completion() {
         let mut registry = CapabilityExecutorRegistry::new();
         register_phase_four_capabilities(&mut catalog, &mut registry);
 
-        let prepared = prepare_docs_writer_task_run(
+        let prepared = prepare_registered_workflow_task_run(
             run_context.api(),
             &workspace_root,
             &registered_profile,
@@ -440,7 +440,7 @@ fn docs_writer_task_expansion_is_idempotent() {
         let mut registry = CapabilityExecutorRegistry::new();
         register_phase_four_capabilities(&mut catalog, &mut registry);
 
-        let prepared = prepare_docs_writer_task_run(
+        let prepared = prepare_registered_workflow_task_run(
             run_context.api(),
             &workspace_root,
             &registered_profile,
@@ -606,7 +606,7 @@ fn docs_writer_task_reuses_existing_child_readme_outputs() {
         let mut registry = CapabilityExecutorRegistry::new();
         register_phase_four_capabilities(&mut catalog, &mut registry);
 
-        let prepared = prepare_docs_writer_task_run(
+        let prepared = prepare_registered_workflow_task_run(
             run_context.api(),
             &workspace_root,
             &registered_profile,

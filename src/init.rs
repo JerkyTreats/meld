@@ -29,6 +29,10 @@ pub const DEFAULT_WORKFLOW_FILES: &[(&str, &str)] = &[
         include_str!("../workflows/docs_writer_thread_v1.yaml"),
     ),
     (
+        "packages/docs_writer_v2.yaml",
+        include_str!("../workflows/packages/docs_writer_v2.yaml"),
+    ),
+    (
         "prompts/docs_writer/evidence_gather.md",
         include_str!("../workflows/prompts/docs_writer/evidence_gather.md"),
     ),

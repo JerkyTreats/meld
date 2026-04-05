@@ -105,10 +105,10 @@ fn collect_workflow_profile_paths(root: &Path) -> Result<Vec<PathBuf>, ApiError>
         }
 
         let path = entry.path();
-        if path
-            .components()
-            .any(|component| component.as_os_str() == "prompts")
-        {
+        if path.components().any(|component| {
+            let value = component.as_os_str();
+            value == "prompts" || value == "packages"
+        }) {
             continue;
         }
 
@@ -285,5 +285,34 @@ failure_policy:
         };
         let err = WorkflowRegistry::load(&config).unwrap_err();
         assert!(matches!(err, ApiError::ConfigError(_)));
+    }
+
+    #[test]
+    fn load_ignores_task_package_documents_under_packages_directory() {
+        let temp = TempDir::new().unwrap();
+        let workflow_dir = temp.path().join("user-workflows");
+        let prompt_file = workflow_dir.join("prompts").join("custom.md");
+        std::fs::create_dir_all(prompt_file.parent().unwrap()).unwrap();
+        std::fs::write(&prompt_file, "test prompt").unwrap();
+        write_profile(
+            &workflow_dir.join("docs_writer_thread_v1.yaml"),
+            "docs_writer_thread_v1",
+            "prompts/custom.md",
+        );
+        let package_file = workflow_dir.join("packages").join("docs_writer_v2.yaml");
+        std::fs::create_dir_all(package_file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &package_file,
+            "package_id: docs_writer\nworkflow_id: docs_writer_thread_v1\ntrigger:\n  accepted_targets: []\n  required_runtime_fields: []\nseed:\n  artifacts: []\nexpansions: []\n",
+        )
+        .unwrap();
+
+        let registry = WorkflowRegistry::load(&WorkflowConfig {
+            user_profile_dir: Some(workflow_dir),
+        })
+        .unwrap();
+
+        assert!(registry.contains("docs_writer_thread_v1"));
+        assert_eq!(registry.iter().count(), 1);
     }
 }

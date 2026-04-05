@@ -1,4 +1,5 @@
 pub mod capability;
+pub mod expansion;
 
 use crate::api::ContextApi;
 use crate::error::ApiError;
