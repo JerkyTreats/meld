@@ -26,11 +26,10 @@ Planned outcome:
 - [Capabilities By Domain](capability/by_domain.md)
 - [Task Design](task/README.md)
 - [Docs Writer Package](task/docs_writer_package.md)
+- [Task Expansion Plan](task/task_expansion_plan.md)
 - [Task Control Boundary](task_control_boundary.md)
 - [Domain Architecture](domain_architecture.md)
-- [Provider Capability Design](provider/README.md)
-- [Context Capability Readiness](context/README.md)
-- [Workflow Refactor](workflow_refactor/README.md)
+- [Capability Refactor Completion](../completed/capability_refactor/README.md)
 - [Control Design](../control/README.md)
 - [Task Network](../control/task_network.md)
 - [Complex Change Workflow Governance](../../governance/complex_change_workflow.md)
@@ -82,7 +81,7 @@ This plan does not expand non-default selector behavior.
 - [Capability And Task Design](README.md)
 - [Task Design](task/README.md)
 - [Task Control Boundary](task_control_boundary.md)
-- [Workflow Refactor](workflow_refactor/README.md)
+- [Capability Refactor Completion](../completed/capability_refactor/README.md)
 
 | Task | Completion |
 |------|------------|
@@ -299,7 +298,7 @@ This plan does not expand non-default selector behavior.
 **Source docs**:
 - [Capabilities By Domain](capability/by_domain.md)
 - [Workspace Resolve Node Id](capability/workspace_resolve_node_id/README.md)
-- [Merkle Traversal](capability/merkle_traversal/README.md)
+- [Merkle Traversal](../completed/capability_refactor/merkle_traversal/README.md)
 - [Context Generate Prepare](capability/context_generate_prepare/README.md)
 - [Provider Execute Chat](capability/provider_execute_chat/README.md)
 - [Context Generate Finalize](capability/context_generate_finalize/README.md)
@@ -420,7 +419,7 @@ This plan does not expand non-default selector behavior.
 **Goal**: make workflow a compatibility trigger into task package and task execution instead of a separate execution runtime.
 
 **Source docs**:
-- [Workflow Refactor](workflow_refactor/README.md)
+- [Capability Refactor Completion](../completed/capability_refactor/README.md)
 - [Docs Writer Package](task/docs_writer_package.md)
 - [Task Design](task/README.md)
 - [Control Design](../control/README.md)
@@ -477,7 +476,7 @@ This plan does not expand non-default selector behavior.
 
 **Source docs**:
 - [Capability And Task Design](README.md)
-- [Workflow Refactor](workflow_refactor/README.md)
+- [Capability Refactor Completion](../completed/capability_refactor/README.md)
 - [Task Design](task/README.md)
 - [Control Design](../control/README.md)
 

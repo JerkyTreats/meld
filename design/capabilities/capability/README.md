@@ -373,7 +373,7 @@ They should not be the durable contract surface consumed by task compilation or 
 
 - [Capabilities by domain](by_domain.md) — section-per-domain sketch of future `src/<domain>/capability.rs` surfaces
 - [Workspace Resolve Node Id](workspace_resolve_node_id/README.md) — structured task-facing target resolution contract
-- [Merkle Traversal](merkle_traversal/README.md) — structured traversal contract and emitted batch artifact examples
+- [Merkle Traversal](../../completed/capability_refactor/merkle_traversal/README.md) — structured traversal contract and emitted batch artifact examples
 - [Context Generate Prepare](context_generate_prepare/README.md) — structured preparation inputs and provider-request outputs
 - [Provider Execute Chat](provider_execute_chat/README.md) — structured provider execution inputs and normalized result outputs
 - [Context Generate Finalize](context_generate_finalize/README.md) — structured finalization inputs and generated artifact outputs

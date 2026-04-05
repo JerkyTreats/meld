@@ -25,7 +25,9 @@ It should describe ordering, graph execution, and modification of tasks, not the
 
 ## Durable Structure
 
-The durable structure in this layer is `capability/`, `task/`, `provider/`, `context/`, `workflow_refactor/`, and `migration_plan/`.
+The durable structure still active in this layer is `capability/`, `task/`, and `migration_plan/`.
+
+Completed refactor slices have been moved to [Capability Refactor Completion](../completed/capability_refactor/README.md).
 
 ## Core Decisions
 
@@ -55,17 +57,18 @@ The durable structure in this layer is `capability/`, `task/`, `provider/`, `con
 5. [Task Control Boundary](task_control_boundary.md)
 6. [Capabilities By Domain](capability/by_domain.md)
 7. [Domain Architecture](domain_architecture.md)
-8. [Provider Capability Design](provider/README.md)
-9. [Context Capability Readiness](context/README.md)
-10. [Context Code Path Findings](context/code_path_findings.md)
-11. [Context Technical Spec](context/technical_spec.md)
-12. [Workflow Refactor](workflow_refactor/README.md)
-13. [Workflow Cleanup Technical Spec](workflow_refactor/technical_spec.md)
-14. [Workflow Refactor Code Path Findings](workflow_refactor/code_path_findings.md)
-15. [Merkle Traversal Capability](capability/merkle_traversal/README.md)
-16. [Merkle Traversal Technical Spec](capability/merkle_traversal/technical_spec.md)
-17. [Merkle Traversal Code Path Findings](capability/merkle_traversal/code_path_findings.md)
-18. [Migration Plan](migration_plan/README.md)
+8. [Capability Refactor Completion](../completed/capability_refactor/README.md)
+9. [Migration Plan](migration_plan/README.md)
+
+## Archived Read Order
+
+Use the completed archive when you need the refactor rationale or compatibility notes for the runtime seams that are already landed:
+
+1. [Capability Refactor Completion](../completed/capability_refactor/README.md)
+2. [Context Capability Readiness](../completed/capability_refactor/context/README.md)
+3. [Provider Capability Design](../completed/capability_refactor/provider/README.md)
+4. [Workflow Refactor](../completed/capability_refactor/workflow_refactor/README.md)
+5. [Merkle Traversal Capability](../completed/capability_refactor/merkle_traversal/README.md)
 
 ## Non Goals
 

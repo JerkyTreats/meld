@@ -175,5 +175,5 @@ Supporting artifacts:
 
 - [Capability Model](../README.md)
 - [Capabilities By Domain](../by_domain.md)
-- [Provider Capability Design](../../provider/README.md)
+- [Provider Capability Design](../../../completed/capability_refactor/provider/README.md)
 - [Task Design](../../task/README.md)

@@ -22,6 +22,8 @@ This keeps the abstraction line clean.
 Capabilities execute against structured inputs and produce structured outputs.
 Tasks preserve those inputs and outputs durably across invocations, retries, and replay.
 
+For the current docs-writer interregnum, also see [Docs Writer Projection Audit](docs_writer_projection_audit.md) and [Task Expansion Plan](task_expansion_plan.md).
+
 ## Core Position
 
 `task` is not a second orchestrator.

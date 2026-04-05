@@ -202,5 +202,5 @@ Supporting artifacts:
 
 - [Capability Model](../README.md)
 - [Capabilities By Domain](../by_domain.md)
-- [Context Technical Spec](../../context/technical_spec.md)
+- [Context Technical Spec](../../../completed/capability_refactor/context/technical_spec.md)
 - [Task Design](../../task/README.md)

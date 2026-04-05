@@ -17,6 +17,8 @@ What remains is:
 - one task definition that compiles into a task DAG
 - one live task run that executes through task and capability boundaries
 
+For the current interregnum audit of what should move out of package lowering and into a durable projection, see [Docs Writer Projection Audit](docs_writer_projection_audit.md). For the next implementation path around dynamic task growth, see [Task Expansion Plan](task_expansion_plan.md).
+
 ## Package Thesis
 
 The docs-writer package should be treated as:
@@ -356,5 +358,5 @@ That is the retrofit:
 - [Task Design](README.md)
 - [Task Control Boundary](../task_control_boundary.md)
 - [Capability Model](../capability/README.md)
-- [Workflow Refactor](../workflow_refactor/README.md)
+- [Workflow Refactor](../../completed/capability_refactor/workflow_refactor/README.md)
 - [Interregnum Orchestration](../../control/interregnum_orchestration.md)
