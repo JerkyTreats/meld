@@ -9,9 +9,16 @@ use crate::capability::{
 };
 use crate::error::ApiError;
 use crate::merkle_traversal::{traverse, TraversalStrategy};
-use crate::task::{ArtifactProducerRef, ArtifactRecord};
+use crate::task::{
+    ArtifactProducerRef, ArtifactRecord, TaskExpansionRequest, TaskExpansionTemplate,
+    TraversalExpansionNode, TraversalExpansionRelation, TraversalPrerequisiteExpansionContent,
+    TraversalPrerequisiteExpansionTemplate, TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID,
+    TASK_EXPANSION_SCHEMA_VERSION, TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID,
+    TRAVERSAL_PREREQUISITE_EXPANSION_KIND,
+};
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashSet};
 
 const CAPABILITY_TYPE_ID: &str = "merkle_traversal";
 const CAPABILITY_VERSION: u32 = 1;
@@ -108,6 +115,111 @@ impl MerkleTraversalCapability {
             ))),
         }
     }
+
+    fn parse_expansion_template(
+        payload: &CapabilityInvocationPayload,
+    ) -> Result<Option<TaskExpansionTemplate>, ApiError> {
+        let Some(input) = payload
+            .supplied_inputs
+            .iter()
+            .find(|input| input.slot_id == "task_expansion_template")
+        else {
+            return Ok(None);
+        };
+        let artifact = match &input.value {
+            SuppliedValueRef::Artifact(artifact) => artifact,
+            SuppliedValueRef::StructuredValue(_) => {
+                return Err(ApiError::ConfigError(format!(
+                    "Capability invocation '{}' task_expansion_template must be an artifact",
+                    payload.invocation_id
+                )))
+            }
+        };
+        if artifact.artifact_type_id != TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID {
+            return Err(ApiError::ConfigError(format!(
+                "Capability invocation '{}' received unexpected expansion template type '{}'",
+                payload.invocation_id, artifact.artifact_type_id
+            )));
+        }
+        if artifact.schema_version != TASK_EXPANSION_SCHEMA_VERSION {
+            return Err(ApiError::ConfigError(format!(
+                "Capability invocation '{}' received unsupported expansion template schema '{}'",
+                payload.invocation_id, artifact.schema_version
+            )));
+        }
+
+        serde_json::from_value(artifact.content.clone())
+            .map(Some)
+            .map_err(|err| {
+                ApiError::ConfigError(format!(
+                    "Capability invocation '{}' failed to decode expansion template: {}",
+                    payload.invocation_id, err
+                ))
+            })
+    }
+
+    fn collect_nodes_and_relations(
+        api: &ContextApi,
+        ordered: &[Vec<[u8; 32]>],
+    ) -> Result<
+        (
+            Vec<Vec<TraversalExpansionNode>>,
+            Vec<TraversalExpansionRelation>,
+        ),
+        ApiError,
+    > {
+        let traversed = ordered
+            .iter()
+            .flat_map(|batch| batch.iter().copied())
+            .collect::<HashSet<_>>();
+        let mut nodes_by_id = BTreeMap::new();
+
+        for batch in ordered {
+            for node_id in batch {
+                let record = api
+                    .node_store()
+                    .get(node_id)
+                    .map_err(ApiError::from)?
+                    .ok_or(ApiError::NodeNotFound(*node_id))?;
+                nodes_by_id.insert(
+                    *node_id,
+                    TraversalExpansionNode {
+                        node_id: hex::encode(node_id),
+                        path: record.path.to_string_lossy().to_string(),
+                    },
+                );
+            }
+        }
+
+        let node_batches = ordered
+            .iter()
+            .map(|batch| {
+                batch
+                    .iter()
+                    .filter_map(|node_id| nodes_by_id.get(node_id).cloned())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let mut relations = Vec::new();
+        for node_id in nodes_by_id.keys() {
+            let record = api
+                .node_store()
+                .get(node_id)
+                .map_err(ApiError::from)?
+                .ok_or(ApiError::NodeNotFound(*node_id))?;
+            for child in &record.children {
+                if traversed.contains(child) {
+                    relations.push(TraversalExpansionRelation {
+                        upstream_node_id: hex::encode(child),
+                        downstream_node_id: hex::encode(node_id),
+                    });
+                }
+            }
+        }
+
+        Ok((node_batches, relations))
+    }
 }
 
 #[async_trait]
@@ -149,6 +261,18 @@ impl CapabilityInvoker for MerkleTraversalCapability {
                     required: false,
                     cardinality: InputCardinality::One,
                 },
+                InputSlotSpec {
+                    slot_id: "task_expansion_template".to_string(),
+                    accepted_artifact_type_ids: vec![
+                        TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID.to_string()
+                    ],
+                    schema_versions: ArtifactSchemaVersionRange {
+                        min: TASK_EXPANSION_SCHEMA_VERSION,
+                        max: TASK_EXPANSION_SCHEMA_VERSION,
+                    },
+                    required: false,
+                    cardinality: InputCardinality::One,
+                },
             ],
             output_contract: vec![
                 OutputSlotSpec {
@@ -162,6 +286,12 @@ impl CapabilityInvoker for MerkleTraversalCapability {
                     artifact_type_id: "traversal_metadata".to_string(),
                     schema_version: ARTIFACT_SCHEMA_VERSION,
                     guaranteed: true,
+                },
+                OutputSlotSpec {
+                    slot_id: "task_expansion_request".to_string(),
+                    artifact_type_id: TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID.to_string(),
+                    schema_version: TASK_EXPANSION_SCHEMA_VERSION,
+                    guaranteed: false,
                 },
             ],
             effect_contract: vec![EffectSpec {
@@ -190,7 +320,9 @@ impl CapabilityInvoker for MerkleTraversalCapability {
 
         let node_id = Self::parse_node_id(payload)?;
         let strategy = Self::parse_strategy(runtime_init, payload)?;
+        let expansion_template = Self::parse_expansion_template(payload)?;
         let ordered = traverse(api, node_id, strategy)?;
+        let (node_batches, relations) = Self::collect_nodes_and_relations(api, ordered.as_slice())?;
         let batches = ordered
             .as_slice()
             .iter()
@@ -211,40 +343,91 @@ impl CapabilityInvoker for MerkleTraversalCapability {
             invocation_id: Some(payload.invocation_id.clone()),
             output_slot_id: None,
         };
+        let mut emitted_artifacts = vec![
+            ArtifactRecord {
+                artifact_id: Self::artifact_id(
+                    &payload.invocation_id,
+                    "ordered_merkle_node_batches",
+                ),
+                artifact_type_id: "ordered_merkle_node_batches".to_string(),
+                schema_version: ARTIFACT_SCHEMA_VERSION,
+                content: json!({
+                    "strategy": strategy_slug,
+                    "batches": batches,
+                }),
+                producer: ArtifactProducerRef {
+                    output_slot_id: Some("ordered_merkle_node_batches".to_string()),
+                    ..producer.clone()
+                },
+            },
+            ArtifactRecord {
+                artifact_id: Self::artifact_id(&payload.invocation_id, "traversal_metadata"),
+                artifact_type_id: "traversal_metadata".to_string(),
+                schema_version: ARTIFACT_SCHEMA_VERSION,
+                content: json!({
+                    "root_node_id": hex::encode(node_id),
+                    "batch_count": ordered.as_slice().len(),
+                    "node_count": node_count,
+                }),
+                producer: ArtifactProducerRef {
+                    output_slot_id: Some("traversal_metadata".to_string()),
+                    ..producer.clone()
+                },
+            },
+        ];
 
-        Ok(CapabilityInvocationResult {
-            emitted_artifacts: vec![
-                ArtifactRecord {
-                    artifact_id: Self::artifact_id(
-                        &payload.invocation_id,
-                        "ordered_merkle_node_batches",
+        if let Some(template) = expansion_template {
+            if template.expansion_kind != TRAVERSAL_PREREQUISITE_EXPANSION_KIND {
+                return Err(ApiError::ConfigError(format!(
+                    "Capability invocation '{}' received unsupported expansion kind '{}'",
+                    payload.invocation_id, template.expansion_kind
+                )));
+            }
+            let template_content: TraversalPrerequisiteExpansionTemplate =
+                serde_json::from_value(template.content).map_err(|err| {
+                    ApiError::ConfigError(format!(
+                        "Capability invocation '{}' failed to decode traversal prerequisite template: {}",
+                        payload.invocation_id, err
+                    ))
+                })?;
+            let expansion_content = serde_json::to_value(TraversalPrerequisiteExpansionContent {
+                traversal_strategy: strategy_slug.to_string(),
+                node_batches,
+                relations,
+                repeated_region: template_content.repeated_region,
+                prerequisite_template: template_content.prerequisite_template,
+            })
+            .map_err(|err| {
+                ApiError::ConfigError(format!(
+                    "Capability invocation '{}' failed to encode expansion content: {}",
+                    payload.invocation_id, err
+                ))
+            })?;
+            emitted_artifacts.push(ArtifactRecord {
+                artifact_id: Self::artifact_id(&payload.invocation_id, "task_expansion_request"),
+                artifact_type_id: TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID.to_string(),
+                schema_version: TASK_EXPANSION_SCHEMA_VERSION,
+                content: serde_json::to_value(TaskExpansionRequest {
+                    expansion_id: format!(
+                        "{}::{}",
+                        runtime_init.capability_instance_id, TRAVERSAL_PREREQUISITE_EXPANSION_KIND
                     ),
-                    artifact_type_id: "ordered_merkle_node_batches".to_string(),
-                    schema_version: ARTIFACT_SCHEMA_VERSION,
-                    content: json!({
-                        "strategy": strategy_slug,
-                        "batches": batches,
-                    }),
-                    producer: ArtifactProducerRef {
-                        output_slot_id: Some("ordered_merkle_node_batches".to_string()),
-                        ..producer.clone()
-                    },
+                    expansion_kind: TRAVERSAL_PREREQUISITE_EXPANSION_KIND.to_string(),
+                    content: expansion_content,
+                })
+                .map_err(|err| {
+                    ApiError::ConfigError(format!(
+                        "Capability invocation '{}' failed to encode task expansion request: {}",
+                        payload.invocation_id, err
+                    ))
+                })?,
+                producer: ArtifactProducerRef {
+                    output_slot_id: Some("task_expansion_request".to_string()),
+                    ..producer
                 },
-                ArtifactRecord {
-                    artifact_id: Self::artifact_id(&payload.invocation_id, "traversal_metadata"),
-                    artifact_type_id: "traversal_metadata".to_string(),
-                    schema_version: ARTIFACT_SCHEMA_VERSION,
-                    content: json!({
-                        "root_node_id": hex::encode(node_id),
-                        "batch_count": ordered.as_slice().len(),
-                        "node_count": node_count,
-                    }),
-                    producer: ArtifactProducerRef {
-                        output_slot_id: Some("traversal_metadata".to_string()),
-                        ..producer
-                    },
-                },
-            ],
-        })
+            });
+        }
+
+        Ok(CapabilityInvocationResult { emitted_artifacts })
     }
 }

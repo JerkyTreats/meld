@@ -1,13 +1,20 @@
 use crate::integration::with_xdg_env;
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
-use meld::capability::{CapabilityCatalog, CapabilityExecutorRegistry};
+use meld::capability::{CapabilityCatalog, CapabilityExecutionContext, CapabilityExecutorRegistry};
 use meld::cli::{Commands, RunContext};
 use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
+use meld::context::frame::{Basis, Frame};
 use meld::context::query::ContextView;
+use meld::metadata::frame_write_contract::{
+    build_generated_metadata, generated_metadata_input_from_payload,
+};
 use meld::provider::capability::ProviderExecuteChatCapability;
 use meld::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 use meld::task::templates::docs_writer::prepare_docs_writer_task_run;
-use meld::task::{execute_task_to_completion, TaskExecutor, WorkflowPackageTriggerRequest};
+use meld::task::{
+    compile_task_expansion_request, execute_task_to_completion,
+    parse_task_expansion_request_artifact, TaskExecutor, WorkflowPackageTriggerRequest,
+};
 use meld::workspace::capability::WorkspaceResolveNodeIdCapability;
 use std::fs;
 use std::io::{Read, Write};
@@ -164,6 +171,61 @@ fn register_phase_four_capabilities(
         .unwrap();
 }
 
+fn apply_initial_expansion(
+    api: &meld::api::ContextApi,
+    executor: &mut TaskExecutor,
+    catalog: &CapabilityCatalog,
+    registry: &CapabilityExecutorRegistry,
+) {
+    let payload = executor
+        .release_ready_invocations(CapabilityExecutionContext::default())
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let traversal_instance = executor
+        .compiled_task()
+        .capability_instances
+        .iter()
+        .find(|instance| instance.capability_instance_id == payload.capability_instance_id)
+        .unwrap()
+        .clone();
+    let runtime_init = registry.runtime_init_for(&traversal_instance).unwrap();
+    let invoker = registry
+        .get(
+            &traversal_instance.capability_type_id,
+            traversal_instance.capability_version,
+        )
+        .unwrap()
+        .clone();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt
+        .block_on(invoker.invoke(api, &runtime_init, &payload, None))
+        .unwrap();
+    let mut expansion_requests = Vec::new();
+    for artifact in &result.emitted_artifacts {
+        if let Some(request) = parse_task_expansion_request_artifact(artifact).unwrap() {
+            expansion_requests.push((artifact.artifact_id.clone(), request));
+        }
+    }
+    executor
+        .record_success(&payload.invocation_id, result.emitted_artifacts)
+        .unwrap();
+    for (source_artifact_id, request) in expansion_requests {
+        let delta =
+            compile_task_expansion_request(api, executor.compiled_task(), &request, catalog)
+                .unwrap();
+        executor
+            .apply_task_expansion(
+                &request.expansion_id,
+                &request.expansion_kind,
+                &source_artifact_id,
+                delta,
+            )
+            .unwrap();
+    }
+}
+
 #[test]
 fn docs_writer_task_compiles_bottom_up_dependencies() {
     let temp_dir = TempDir::new().unwrap();
@@ -219,17 +281,31 @@ fn docs_writer_task_compiles_bottom_up_dependencies() {
         )
         .unwrap();
 
-        assert!(!prepared.compiled_task.capability_instances.is_empty());
-        assert!(prepared
-            .compiled_task
-            .dependency_edges
-            .iter()
-            .any(|edge| edge.reason.contains("output 'generation_output'")));
+        assert_eq!(prepared.compiled_task.capability_instances.len(), 1);
         assert!(prepared
             .compiled_task
             .init_slots
             .iter()
-            .any(|slot| slot.artifact_type_id == "resolved_node_ref"));
+            .any(|slot| slot.artifact_type_id == "task_expansion_template"));
+
+        let mut executor = TaskExecutor::new(
+            prepared.compiled_task.clone(),
+            prepared.init_payload.clone(),
+            "repo_docs_writer_compile",
+        )
+        .unwrap();
+        apply_initial_expansion(run_context.api(), &mut executor, &catalog, &registry);
+
+        assert!(executor
+            .compiled_task()
+            .dependency_edges
+            .iter()
+            .any(|edge| edge.reason.contains("output 'generation_output'")));
+        assert!(executor
+            .compiled_task()
+            .init_slots
+            .iter()
+            .any(|slot| slot.init_slot_id.starts_with("node_ref::")));
     });
 }
 
@@ -300,6 +376,7 @@ fn docs_writer_task_runs_to_completion() {
             .block_on(execute_task_to_completion(
                 run_context.api(),
                 &mut executor,
+                &catalog,
                 &registry,
                 None,
                 None,
@@ -310,8 +387,10 @@ fn docs_writer_task_runs_to_completion() {
         assert_eq!(handled, 8);
         assert_eq!(
             summary.completed_instances,
-            prepared.compiled_task.capability_instances.len()
+            executor.compiled_task().capability_instances.len()
         );
+        assert!(executor.compiled_task().capability_instances.len() > 1);
+        assert_eq!(executor.expansion_records().len(), 1);
 
         let view = ContextView::builder()
             .max_frames(1)
@@ -326,5 +405,298 @@ fn docs_writer_task_runs_to_completion() {
         assert_eq!(context.frames.len(), 1);
         let body = String::from_utf8_lossy(&context.frames[0].content);
         assert!(body.contains("# Workspace Library"));
+    });
+}
+
+#[test]
+fn docs_writer_task_expansion_is_idempotent() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        meld::init::initialize_workflows(false).unwrap();
+
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        fs::write(
+            workspace_root.join("src").join("lib.rs"),
+            "pub fn greet() {}",
+        )
+        .unwrap();
+
+        create_test_agent("docs-writer", Some("docs_writer_thread_v1"));
+        create_test_provider("test-provider", "http://127.0.0.1:9");
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&Commands::Scan { force: true })
+            .unwrap();
+
+        let registered_profile = run_context
+            .workflow_registry()
+            .read()
+            .get("docs_writer_thread_v1")
+            .unwrap()
+            .clone();
+        let mut catalog = CapabilityCatalog::new();
+        let mut registry = CapabilityExecutorRegistry::new();
+        register_phase_four_capabilities(&mut catalog, &mut registry);
+
+        let prepared = prepare_docs_writer_task_run(
+            run_context.api(),
+            &workspace_root,
+            &registered_profile,
+            &WorkflowPackageTriggerRequest {
+                package_id: "docs_writer".to_string(),
+                workflow_id: "docs_writer_thread_v1".to_string(),
+                node_id: None,
+                path: Some(PathBuf::from("src")),
+                agent_id: "docs-writer".to_string(),
+                provider: ProviderExecutionBinding::new(
+                    "test-provider",
+                    ProviderRuntimeOverrides::default(),
+                )
+                .unwrap(),
+                frame_type: "context-docs-writer".to_string(),
+                force: true,
+                session_id: None,
+            },
+            &catalog,
+        )
+        .unwrap();
+
+        let mut executor = TaskExecutor::new(
+            prepared.compiled_task.clone(),
+            prepared.init_payload.clone(),
+            "repo_docs_writer_idempotent",
+        )
+        .unwrap();
+        let payload = executor
+            .release_ready_invocations(CapabilityExecutionContext::default())
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        let traversal_instance = executor
+            .compiled_task()
+            .capability_instances
+            .iter()
+            .find(|instance| instance.capability_instance_id == payload.capability_instance_id)
+            .unwrap()
+            .clone();
+        let runtime_init = registry.runtime_init_for(&traversal_instance).unwrap();
+        let invoker = registry
+            .get(
+                &traversal_instance.capability_type_id,
+                traversal_instance.capability_version,
+            )
+            .unwrap()
+            .clone();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt
+            .block_on(invoker.invoke(run_context.api(), &runtime_init, &payload, None))
+            .unwrap();
+        let (source_artifact_id, request) = result
+            .emitted_artifacts
+            .iter()
+            .find_map(|artifact| {
+                parse_task_expansion_request_artifact(artifact)
+                    .unwrap()
+                    .map(|request| (artifact.artifact_id.clone(), request))
+            })
+            .unwrap();
+        executor
+            .record_success(&payload.invocation_id, result.emitted_artifacts)
+            .unwrap();
+
+        let delta = compile_task_expansion_request(
+            run_context.api(),
+            executor.compiled_task(),
+            &request,
+            &catalog,
+        )
+        .unwrap();
+        assert!(executor
+            .apply_task_expansion(
+                &request.expansion_id,
+                &request.expansion_kind,
+                &source_artifact_id,
+                delta.clone(),
+            )
+            .unwrap());
+
+        let instance_count = executor.compiled_task().capability_instances.len();
+        let edge_count = executor.compiled_task().dependency_edges.len();
+        let init_slot_count = executor.compiled_task().init_slots.len();
+
+        assert!(!executor
+            .apply_task_expansion(
+                &request.expansion_id,
+                &request.expansion_kind,
+                &source_artifact_id,
+                delta,
+            )
+            .unwrap());
+        assert_eq!(executor.expansion_records().len(), 1);
+        assert_eq!(
+            executor.compiled_task().capability_instances.len(),
+            instance_count
+        );
+        assert_eq!(executor.compiled_task().dependency_edges.len(), edge_count);
+        assert_eq!(executor.compiled_task().init_slots.len(), init_slot_count);
+    });
+}
+
+#[test]
+fn docs_writer_task_reuses_existing_child_readme_outputs() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        meld::init::initialize_workflows(false).unwrap();
+
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        fs::write(
+            workspace_root.join("src").join("lib.rs"),
+            "pub fn greet(name: &str) -> String { format!(\"hello {}\", name) }",
+        )
+        .unwrap();
+
+        create_test_agent("docs-writer", Some("docs_writer_thread_v1"));
+        let (endpoint, server_handle) = spawn_docs_writer_server(4);
+        create_test_provider("test-provider", &endpoint);
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&Commands::Scan { force: true })
+            .unwrap();
+
+        let child_node_id = meld::workspace::resolve_workspace_node_id(
+            run_context.api(),
+            &workspace_root,
+            Some(PathBuf::from("src/lib.rs").as_path()),
+            None,
+            false,
+        )
+        .unwrap();
+        let child_frame = Frame::new(
+            Basis::Node(child_node_id),
+            b"# Existing Child README".to_vec(),
+            "context-docs-writer".to_string(),
+            "docs-writer".to_string(),
+            build_generated_metadata(&generated_metadata_input_from_payload(
+                "docs-writer",
+                "test-provider",
+                "test-model",
+                "local_custom",
+                "child prompt",
+                "child context",
+            )),
+        )
+        .unwrap();
+        run_context
+            .api()
+            .put_frame(child_node_id, child_frame, "docs-writer".to_string())
+            .unwrap();
+
+        let registered_profile = run_context
+            .workflow_registry()
+            .read()
+            .get("docs_writer_thread_v1")
+            .unwrap()
+            .clone();
+        let mut catalog = CapabilityCatalog::new();
+        let mut registry = CapabilityExecutorRegistry::new();
+        register_phase_four_capabilities(&mut catalog, &mut registry);
+
+        let prepared = prepare_docs_writer_task_run(
+            run_context.api(),
+            &workspace_root,
+            &registered_profile,
+            &WorkflowPackageTriggerRequest {
+                package_id: "docs_writer".to_string(),
+                workflow_id: "docs_writer_thread_v1".to_string(),
+                node_id: None,
+                path: Some(PathBuf::from("src")),
+                agent_id: "docs-writer".to_string(),
+                provider: ProviderExecutionBinding::new(
+                    "test-provider",
+                    ProviderRuntimeOverrides::default(),
+                )
+                .unwrap(),
+                frame_type: "context-docs-writer".to_string(),
+                force: false,
+                session_id: Some("session_docs_writer".to_string()),
+            },
+            &catalog,
+        )
+        .unwrap();
+
+        assert_eq!(prepared.compiled_task.capability_instances.len(), 1);
+
+        let mut executor = TaskExecutor::new(
+            prepared.compiled_task.clone(),
+            prepared.init_payload.clone(),
+            "repo_docs_writer_existing_child",
+        )
+        .unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let summary = rt
+            .block_on(execute_task_to_completion(
+                run_context.api(),
+                &mut executor,
+                &catalog,
+                &registry,
+                None,
+                None,
+            ))
+            .unwrap();
+
+        let handled = server_handle.join().unwrap();
+        assert_eq!(handled, 4);
+        assert_eq!(
+            summary.completed_instances,
+            executor.compiled_task().capability_instances.len()
+        );
+        assert!(executor
+            .compiled_task()
+            .init_slots
+            .iter()
+            .any(|slot| slot.artifact_type_id == "readme_final"));
+
+        let root_node_id = meld::workspace::resolve_workspace_node_id(
+            run_context.api(),
+            &workspace_root,
+            Some(PathBuf::from("src").as_path()),
+            None,
+            false,
+        )
+        .unwrap();
+        let root_context = run_context
+            .api()
+            .get_node(
+                root_node_id,
+                ContextView::builder()
+                    .max_frames(1)
+                    .recent()
+                    .by_type("context-docs-writer".to_string())
+                    .by_agent("docs-writer".to_string())
+                    .build(),
+            )
+            .unwrap();
+        assert_eq!(root_context.frames.len(), 1);
+
+        let child_context = run_context
+            .api()
+            .get_node(
+                child_node_id,
+                ContextView::builder()
+                    .max_frames(1)
+                    .recent()
+                    .by_type("context-docs-writer".to_string())
+                    .by_agent("docs-writer".to_string())
+                    .build(),
+            )
+            .unwrap();
+        assert_eq!(child_context.frames.len(), 1);
+        let body = String::from_utf8_lossy(&child_context.frames[0].content);
+        assert_eq!(body, "# Existing Child README");
     });
 }

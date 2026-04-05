@@ -6,10 +6,13 @@ use crate::capability::{
     CapabilityCatalog,
 };
 use crate::error::ApiError;
-use crate::merkle_traversal::{traverse, TraversalStrategy};
-use crate::store::NodeRecord;
 use crate::task::compiler::compile_task_definition;
 use crate::task::contracts::{TaskDefinition, TaskInitSlotSpec};
+use crate::task::expansion::{
+    TaskExpansionTemplate, TraversalPrerequisiteExpansionTemplate, TraversalPrerequisiteTemplate,
+    WorkflowRegionTemplate, WorkflowTurnTemplate, TASK_EXPANSION_SCHEMA_VERSION,
+    TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID, TRAVERSAL_PREREQUISITE_EXPANSION_KIND,
+};
 use crate::task::init::{InitArtifactValue, TaskInitializationPayload, TaskRunContext};
 use crate::task::package::{PreparedTaskRun, WorkflowPackageTriggerRequest};
 use crate::types::NodeID;
@@ -17,9 +20,14 @@ use crate::workflow::profile::{WorkflowGate, WorkflowProfile};
 use crate::workflow::registry::RegisteredWorkflowProfile;
 use crate::workflow::resolver::resolve_prompt_template;
 use crate::workspace::resolve_workspace_node_id;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
+
+const FORCE_POSTURE_INIT_SLOT_ID: &str = "force_posture";
+const TARGET_NODE_REF_INIT_SLOT_ID: &str = "target_node_ref";
+const TASK_EXPANSION_TEMPLATE_INIT_SLOT_ID: &str = "task_expansion_template";
+const TRAVERSAL_INSTANCE_ID: &str = "capinst_traversal";
 
 /// Prepares the docs-writer task package for one trigger request.
 pub fn prepare_docs_writer_task_run(
@@ -43,27 +51,89 @@ pub fn prepare_docs_writer_task_run(
     }
 
     let target_node_id = resolve_target_node_id(api, workspace_root, request)?;
-    let traversal = traverse(api, target_node_id, TraversalStrategy::BottomUp)?;
-    let node_records = collect_node_records(api, traversal.as_slice())?;
+    let target_node_record = api
+        .node_store()
+        .get(&target_node_id)
+        .map_err(ApiError::from)?
+        .ok_or(ApiError::NodeNotFound(target_node_id))?;
     let profile = &registered_profile.profile;
-    let gates = gate_map(profile);
     let prompts = prompt_map(api, registered_profile, profile)?;
-    let task_definition = build_docs_writer_definition(
-        profile,
-        request,
-        traversal.as_slice(),
-        &node_records,
-        &gates,
-        &prompts,
-    )?;
+    let gates = gate_map(profile);
+    let ordered_turns = profile.ordered_turns();
+    let region_template = WorkflowRegionTemplate {
+        workflow_id: profile.workflow_id.clone(),
+        agent_id: request.agent_id.clone(),
+        provider: request.provider.clone(),
+        frame_type: request.frame_type.clone(),
+        force: request.force,
+        force_init_slot_id: FORCE_POSTURE_INIT_SLOT_ID.to_string(),
+        node_ref_slot_template: "node_ref::{node_id_prefix}".to_string(),
+        existing_output_slot_template: "existing_readme::{node_id_prefix}".to_string(),
+        existing_output_artifact_type_id: "readme_final".to_string(),
+        turns: ordered_turns
+            .iter()
+            .map(|turn| {
+                Ok(WorkflowTurnTemplate {
+                    turn_id: turn.turn_id.clone(),
+                    prompt_text: prompts.get(&turn.turn_id).cloned().ok_or_else(|| {
+                        ApiError::ConfigError(format!(
+                            "Workflow '{}' missing prompt text for turn '{}'",
+                            profile.workflow_id, turn.turn_id
+                        ))
+                    })?,
+                    output_type: turn.output_type.clone(),
+                    gate: gates.get(&turn.gate_id).cloned().ok_or_else(|| {
+                        ApiError::ConfigError(format!(
+                            "Workflow '{}' missing gate '{}'",
+                            profile.workflow_id, turn.gate_id
+                        ))
+                    })?,
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?,
+    };
+    let first_turn = ordered_turns.first().ok_or_else(|| {
+        ApiError::ConfigError(format!(
+            "Workflow '{}' must declare at least one turn",
+            profile.workflow_id
+        ))
+    })?;
+    let last_turn = ordered_turns.last().ok_or_else(|| {
+        ApiError::ConfigError(format!(
+            "Workflow '{}' must declare at least one turn",
+            profile.workflow_id
+        ))
+    })?;
+    let expansion_template = TaskExpansionTemplate {
+        expansion_kind: TRAVERSAL_PREREQUISITE_EXPANSION_KIND.to_string(),
+        content: serde_json::to_value(TraversalPrerequisiteExpansionTemplate {
+            repeated_region: region_template,
+            prerequisite_template: TraversalPrerequisiteTemplate {
+                producer_turn_id: last_turn.turn_id.clone(),
+                producer_stage_id: "finalize".to_string(),
+                producer_output_slot_id: "generation_output".to_string(),
+                producer_artifact_type_id: last_turn.output_type.clone(),
+                consumer_turn_id: first_turn.turn_id.clone(),
+                consumer_stage_id: "prepare".to_string(),
+                consumer_input_slot_id: "upstream_artifact".to_string(),
+            },
+        })
+        .map_err(|err| {
+            ApiError::ConfigError(format!(
+                "Failed to encode docs-writer expansion template: {}",
+                err
+            ))
+        })?,
+    };
+    let task_definition = build_initial_definition(profile);
     let compiled_task = compile_task_definition(&task_definition, catalog)?;
     let init_payload = build_init_payload(
         profile,
         request,
-        traversal.as_slice(),
-        &node_records,
         target_node_id,
-    );
+        &target_node_record.path.to_string_lossy(),
+        expansion_template,
+    )?;
 
     Ok(PreparedTaskRun {
         compiled_task,
@@ -89,24 +159,6 @@ fn resolve_target_node_id(
             "Workflow package trigger requires node_id or path".to_string(),
         )),
     }
-}
-
-fn collect_node_records(
-    api: &ContextApi,
-    batches: &[Vec<NodeID>],
-) -> Result<HashMap<NodeID, NodeRecord>, ApiError> {
-    let mut records = HashMap::new();
-    for batch in batches {
-        for node_id in batch {
-            let record = api
-                .node_store()
-                .get(node_id)
-                .map_err(ApiError::from)?
-                .ok_or(ApiError::NodeNotFound(*node_id))?;
-            records.insert(*node_id, record);
-        }
-    }
-    Ok(records)
 }
 
 fn gate_map(profile: &WorkflowProfile) -> HashMap<String, WorkflowGate> {
@@ -135,241 +187,67 @@ fn prompt_map(
     Ok(prompts)
 }
 
-fn build_docs_writer_definition(
-    profile: &WorkflowProfile,
-    request: &WorkflowPackageTriggerRequest,
-    batches: &[Vec<NodeID>],
-    node_records: &HashMap<NodeID, NodeRecord>,
-    gates: &HashMap<String, WorkflowGate>,
-    prompts: &HashMap<String, String>,
-) -> Result<TaskDefinition, ApiError> {
-    let mut init_slots = vec![TaskInitSlotSpec {
-        init_slot_id: "force_posture".to_string(),
-        artifact_type_id: "force_posture".to_string(),
-        schema_version: 1,
-        required: true,
-    }];
-    let mut capability_instances = Vec::new();
-    let ordered_turns = profile.ordered_turns();
-
-    for batch in batches {
-        for node_id in batch {
-            let record = node_records
-                .get(node_id)
-                .expect("node record collected above");
-            init_slots.push(TaskInitSlotSpec {
-                init_slot_id: node_ref_slot_id(*node_id),
+fn build_initial_definition(profile: &WorkflowProfile) -> TaskDefinition {
+    TaskDefinition {
+        task_id: task_id(profile),
+        task_version: profile.version,
+        init_slots: vec![
+            TaskInitSlotSpec {
+                init_slot_id: FORCE_POSTURE_INIT_SLOT_ID.to_string(),
+                artifact_type_id: "force_posture".to_string(),
+                schema_version: 1,
+                required: true,
+            },
+            TaskInitSlotSpec {
+                init_slot_id: TARGET_NODE_REF_INIT_SLOT_ID.to_string(),
                 artifact_type_id: "resolved_node_ref".to_string(),
                 schema_version: 1,
                 required: true,
-            });
-
-            let mut previous_finalize_instance_id: Option<String> = None;
-            for turn in &ordered_turns {
-                let prepare_instance_id = stage_instance_id(*node_id, &turn.turn_id, "prepare");
-                let execute_instance_id = stage_instance_id(*node_id, &turn.turn_id, "execute");
-                let finalize_instance_id = stage_instance_id(*node_id, &turn.turn_id, "finalize");
-                let gate = gates.get(&turn.gate_id).cloned().ok_or_else(|| {
-                    ApiError::ConfigError(format!(
-                        "Workflow '{}' missing gate '{}'",
-                        profile.workflow_id, turn.gate_id
-                    ))
-                })?;
-                let prompt_text = prompts.get(&turn.turn_id).cloned().ok_or_else(|| {
-                    ApiError::ConfigError(format!(
-                        "Workflow '{}' missing prompt text for turn '{}'",
-                        profile.workflow_id, turn.turn_id
-                    ))
-                })?;
-                let mut prepare_sources = vec![BoundInputWiringSource::TaskInitSlot {
-                    init_slot_id: node_ref_slot_id(*node_id),
-                    artifact_type_id: "resolved_node_ref".to_string(),
-                    schema_version: 1,
-                }];
-                if let Some(previous_finalize) = previous_finalize_instance_id.as_ref() {
-                    let upstream_type = previous_turn_output_type(profile, &turn.turn_id)?;
-                    prepare_sources.push(BoundInputWiringSource::UpstreamOutput {
-                        capability_instance_id: previous_finalize.clone(),
-                        output_slot_id: "generation_output".to_string(),
-                        artifact_type_id: upstream_type.to_string(),
+            },
+            TaskInitSlotSpec {
+                init_slot_id: TASK_EXPANSION_TEMPLATE_INIT_SLOT_ID.to_string(),
+                artifact_type_id: TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID.to_string(),
+                schema_version: TASK_EXPANSION_SCHEMA_VERSION,
+                required: true,
+            },
+        ],
+        capability_instances: vec![BoundCapabilityInstance {
+            capability_instance_id: TRAVERSAL_INSTANCE_ID.to_string(),
+            capability_type_id: "merkle_traversal".to_string(),
+            capability_version: 1,
+            scope_ref: "target".to_string(),
+            scope_kind: "node".to_string(),
+            binding_values: vec![binding("strategy", json!("bottom_up"))],
+            input_wiring: vec![
+                BoundInputWiring {
+                    slot_id: "resolved_node_ref".to_string(),
+                    sources: vec![BoundInputWiringSource::TaskInitSlot {
+                        init_slot_id: TARGET_NODE_REF_INIT_SLOT_ID.to_string(),
+                        artifact_type_id: "resolved_node_ref".to_string(),
                         schema_version: 1,
-                    });
-                } else {
-                    for child in &record.children {
-                        let child_finalize = stage_instance_id(*child, "style_refine", "finalize");
-                        if node_records.contains_key(child) {
-                            prepare_sources.push(BoundInputWiringSource::UpstreamOutput {
-                                capability_instance_id: child_finalize,
-                                output_slot_id: "generation_output".to_string(),
-                                artifact_type_id: "readme_final".to_string(),
-                                schema_version: 1,
-                            });
-                        }
-                    }
-                }
-
-                capability_instances.push(BoundCapabilityInstance {
-                    capability_instance_id: prepare_instance_id.clone(),
-                    capability_type_id: "context_generate_prepare".to_string(),
-                    capability_version: 1,
-                    scope_ref: hex::encode(node_id),
-                    scope_kind: "node".to_string(),
-                    binding_values: vec![
-                        binding("agent_id", json!(request.agent_id)),
-                        binding(
-                            "provider_binding",
-                            serde_json::to_value(&request.provider).map_err(|err| {
-                                ApiError::ConfigError(format!(
-                                    "Failed to encode provider binding: {}",
-                                    err
-                                ))
-                            })?,
-                        ),
-                        binding("frame_type", json!(request.frame_type)),
-                        binding("prompt_text", json!(prompt_text)),
-                        binding("turn_id", json!(turn.turn_id)),
-                        binding("workflow_id", json!(profile.workflow_id)),
-                        binding("output_type", json!(turn.output_type)),
-                        binding(
-                            "gate",
-                            serde_json::to_value(&gate).map_err(|err| {
-                                ApiError::ConfigError(format!(
-                                    "Failed to encode workflow gate '{}': {}",
-                                    gate.gate_id, err
-                                ))
-                            })?,
-                        ),
-                    ],
-                    input_wiring: vec![
-                        BoundInputWiring {
-                            slot_id: "resolved_node_ref".to_string(),
-                            sources: vec![BoundInputWiringSource::TaskInitSlot {
-                                init_slot_id: node_ref_slot_id(*node_id),
-                                artifact_type_id: "resolved_node_ref".to_string(),
-                                schema_version: 1,
-                            }],
-                        },
-                        BoundInputWiring {
-                            slot_id: "force_posture".to_string(),
-                            sources: vec![BoundInputWiringSource::TaskInitSlot {
-                                init_slot_id: "force_posture".to_string(),
-                                artifact_type_id: "force_posture".to_string(),
-                                schema_version: 1,
-                            }],
-                        },
-                        BoundInputWiring {
-                            slot_id: "upstream_artifact".to_string(),
-                            sources: prepare_sources
-                                .into_iter()
-                                .filter(|source| {
-                                    !matches!(source, BoundInputWiringSource::TaskInitSlot { .. })
-                                })
-                                .collect(),
-                        },
-                    ]
-                    .into_iter()
-                    .filter(|wiring| !wiring.sources.is_empty())
-                    .collect(),
-                });
-
-                capability_instances.push(BoundCapabilityInstance {
-                    capability_instance_id: execute_instance_id.clone(),
-                    capability_type_id: "provider_execute_chat".to_string(),
-                    capability_version: 1,
-                    scope_ref: hex::encode(node_id),
-                    scope_kind: "node".to_string(),
-                    binding_values: Vec::new(),
-                    input_wiring: vec![BoundInputWiring {
-                        slot_id: "provider_execute_request".to_string(),
-                        sources: vec![BoundInputWiringSource::UpstreamOutput {
-                            capability_instance_id: prepare_instance_id.clone(),
-                            output_slot_id: "provider_execute_request".to_string(),
-                            artifact_type_id: "provider_execute_request".to_string(),
-                            schema_version: 1,
-                        }],
                     }],
-                });
-
-                capability_instances.push(BoundCapabilityInstance {
-                    capability_instance_id: finalize_instance_id.clone(),
-                    capability_type_id: "context_generate_finalize".to_string(),
-                    capability_version: 1,
-                    scope_ref: hex::encode(node_id),
-                    scope_kind: "node".to_string(),
-                    binding_values: vec![
-                        binding("persist_frame", json!(turn.turn_id == "style_refine")),
-                        binding("output_type", json!(turn.output_type)),
-                    ],
-                    input_wiring: vec![
-                        BoundInputWiring {
-                            slot_id: "provider_execute_result".to_string(),
-                            sources: vec![BoundInputWiringSource::UpstreamOutput {
-                                capability_instance_id: execute_instance_id,
-                                output_slot_id: "provider_execute_result".to_string(),
-                                artifact_type_id: "provider_execute_result".to_string(),
-                                schema_version: 1,
-                            }],
-                        },
-                        BoundInputWiring {
-                            slot_id: "preparation_summary".to_string(),
-                            sources: vec![BoundInputWiringSource::UpstreamOutput {
-                                capability_instance_id: prepare_instance_id,
-                                output_slot_id: "preparation_summary".to_string(),
-                                artifact_type_id: "preparation_summary".to_string(),
-                                schema_version: 1,
-                            }],
-                        },
-                    ],
-                });
-
-                previous_finalize_instance_id = Some(finalize_instance_id);
-            }
-        }
+                },
+                BoundInputWiring {
+                    slot_id: "task_expansion_template".to_string(),
+                    sources: vec![BoundInputWiringSource::TaskInitSlot {
+                        init_slot_id: TASK_EXPANSION_TEMPLATE_INIT_SLOT_ID.to_string(),
+                        artifact_type_id: TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID.to_string(),
+                        schema_version: TASK_EXPANSION_SCHEMA_VERSION,
+                    }],
+                },
+            ],
+        }],
     }
-
-    Ok(TaskDefinition {
-        task_id: task_id(profile),
-        task_version: profile.version,
-        init_slots,
-        capability_instances,
-    })
 }
 
 fn build_init_payload(
     profile: &WorkflowProfile,
     request: &WorkflowPackageTriggerRequest,
-    batches: &[Vec<NodeID>],
-    node_records: &HashMap<NodeID, NodeRecord>,
     target_node_id: NodeID,
-) -> TaskInitializationPayload {
-    let mut init_artifacts = vec![InitArtifactValue {
-        init_slot_id: "force_posture".to_string(),
-        artifact_type_id: "force_posture".to_string(),
-        schema_version: 1,
-        content: json!({
-            "force": request.force,
-            "replay": false,
-        }),
-    }];
-
-    for batch in batches {
-        for node_id in batch {
-            let record = node_records
-                .get(node_id)
-                .expect("node record collected above");
-            init_artifacts.push(InitArtifactValue {
-                init_slot_id: node_ref_slot_id(*node_id),
-                artifact_type_id: "resolved_node_ref".to_string(),
-                schema_version: 1,
-                content: json!({
-                    "node_id": hex::encode(node_id),
-                    "path": record.path.to_string_lossy(),
-                }),
-            });
-        }
-    }
-
-    TaskInitializationPayload {
+    target_path: &str,
+    expansion_template: TaskExpansionTemplate,
+) -> Result<TaskInitializationPayload, ApiError> {
+    Ok(TaskInitializationPayload {
         task_id: task_id(profile),
         compiled_task_ref: format!(
             "{}::{}::{}",
@@ -377,7 +255,37 @@ fn build_init_payload(
             profile.version,
             &hex::encode(target_node_id)[..16]
         ),
-        init_artifacts,
+        init_artifacts: vec![
+            InitArtifactValue {
+                init_slot_id: FORCE_POSTURE_INIT_SLOT_ID.to_string(),
+                artifact_type_id: "force_posture".to_string(),
+                schema_version: 1,
+                content: json!({
+                    "force": request.force,
+                    "replay": false,
+                }),
+            },
+            InitArtifactValue {
+                init_slot_id: TARGET_NODE_REF_INIT_SLOT_ID.to_string(),
+                artifact_type_id: "resolved_node_ref".to_string(),
+                schema_version: 1,
+                content: json!({
+                    "node_id": hex::encode(target_node_id),
+                    "path": target_path,
+                }),
+            },
+            InitArtifactValue {
+                init_slot_id: TASK_EXPANSION_TEMPLATE_INIT_SLOT_ID.to_string(),
+                artifact_type_id: TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID.to_string(),
+                schema_version: TASK_EXPANSION_SCHEMA_VERSION,
+                content: serde_json::to_value(expansion_template).map_err(|err| {
+                    ApiError::ConfigError(format!(
+                        "Failed to encode task expansion template artifact: {}",
+                        err
+                    ))
+                })?,
+            },
+        ],
         task_run_context: TaskRunContext {
             task_run_id: format!(
                 "taskrun::{}::{}",
@@ -387,52 +295,16 @@ fn build_init_payload(
             session_id: request.session_id.clone(),
             trigger: "workflow.docs_writer.run".to_string(),
         },
-    }
+    })
 }
 
-fn previous_turn_output_type(
-    profile: &WorkflowProfile,
-    current_turn_id: &str,
-) -> Result<String, ApiError> {
-    let ordered = profile.ordered_turns();
-    let current_index = ordered
-        .iter()
-        .position(|turn| turn.turn_id == current_turn_id)
-        .ok_or_else(|| {
-            ApiError::ConfigError(format!(
-                "Workflow '{}' is missing turn '{}'",
-                profile.workflow_id, current_turn_id
-            ))
-        })?;
-    if current_index == 0 {
-        return Err(ApiError::ConfigError(format!(
-            "Workflow '{}' turn '{}' does not have a previous output",
-            profile.workflow_id, current_turn_id
-        )));
-    }
-    Ok(ordered[current_index - 1].output_type.clone())
-}
-
-fn stage_instance_id(node_id: NodeID, turn_id: &str, stage: &str) -> String {
-    format!(
-        "node::{}::turn::{}::{}",
-        &hex::encode(node_id)[..16],
-        turn_id,
-        stage
-    )
-}
-
-fn node_ref_slot_id(node_id: NodeID) -> String {
-    format!("node_ref::{}", &hex::encode(node_id)[..16])
-}
-
-fn task_id(profile: &WorkflowProfile) -> String {
-    format!("task::{}", profile.workflow_id)
-}
-
-fn binding(binding_id: &str, value: serde_json::Value) -> BoundBindingValue {
+fn binding(binding_id: &str, value: Value) -> BoundBindingValue {
     BoundBindingValue {
         binding_id: binding_id.to_string(),
         value,
     }
+}
+
+fn task_id(profile: &WorkflowProfile) -> String {
+    format!("task::{}", profile.workflow_id)
 }

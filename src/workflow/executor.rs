@@ -108,6 +108,11 @@ pub(crate) async fn execute_registered_workflow_async(
     let mut start_seq = 1u32;
     let mut turn_outputs: HashMap<String, String> = HashMap::new();
     let mut completed_turns = 0usize;
+    let task_path_final_head = if !request.force && uses_task_package_path(profile) {
+        api.get_head(&request.node_id, &request.frame_type)?
+    } else {
+        None
+    };
 
     if let Some(existing) = state_store.load_thread(&thread_id)? {
         match existing.status {
@@ -141,6 +146,41 @@ pub(crate) async fn execute_registered_workflow_async(
                 }
             }
             WorkflowThreadStatus::Failed | WorkflowThreadStatus::Running => {
+                if let Some(head) = task_path_final_head {
+                    state_store.upsert_thread(&WorkflowThreadRecord {
+                        thread_id: thread_id.clone(),
+                        workflow_id: profile.workflow_id.clone(),
+                        node_id: hex::encode(request.node_id),
+                        frame_type: request.frame_type.clone(),
+                        status: WorkflowThreadStatus::Completed,
+                        next_turn_seq: profile.turns.len() as u32 + 1,
+                        updated_at_ms: now_millis(),
+                    })?;
+                    emit_workflow_target_event(
+                        event_context,
+                        "workflow_target_completed",
+                        WorkflowTargetEventData {
+                            workflow_id: profile.workflow_id.clone(),
+                            thread_id: thread_id.clone(),
+                            node_id: hex::encode(request.node_id),
+                            path: target_path.clone(),
+                            agent_id: request.agent_id.clone(),
+                            provider_name: request.provider.provider_name.clone(),
+                            frame_type: request.frame_type.clone(),
+                            plan_id: request.plan_id.clone(),
+                            level_index: request.level_index,
+                            final_frame_id: Some(hex::encode(head)),
+                            turns_completed: Some(0),
+                            reused_existing_head: Some(true),
+                        },
+                    );
+                    return Ok(WorkflowExecutionSummary {
+                        workflow_id: profile.workflow_id.clone(),
+                        thread_id,
+                        turns_completed: 0,
+                        final_frame_id: Some(head),
+                    });
+                }
                 if profile.failure_policy.resume_from_failed_turn && !request.force {
                     start_seq = existing.next_turn_seq.max(1);
                     turn_outputs = state_store.completed_output_map(&thread_id)?;
@@ -153,6 +193,40 @@ pub(crate) async fn execute_registered_workflow_async(
             }
             WorkflowThreadStatus::Pending => {}
         }
+    } else if let Some(head) = task_path_final_head {
+        state_store.upsert_thread(&WorkflowThreadRecord {
+            thread_id: thread_id.clone(),
+            workflow_id: profile.workflow_id.clone(),
+            node_id: hex::encode(request.node_id),
+            frame_type: request.frame_type.clone(),
+            status: WorkflowThreadStatus::Completed,
+            next_turn_seq: profile.turns.len() as u32 + 1,
+            updated_at_ms: now_millis(),
+        })?;
+        emit_workflow_target_event(
+            event_context,
+            "workflow_target_completed",
+            WorkflowTargetEventData {
+                workflow_id: profile.workflow_id.clone(),
+                thread_id: thread_id.clone(),
+                node_id: hex::encode(request.node_id),
+                path: target_path.clone(),
+                agent_id: request.agent_id.clone(),
+                provider_name: request.provider.provider_name.clone(),
+                frame_type: request.frame_type.clone(),
+                plan_id: request.plan_id.clone(),
+                level_index: request.level_index,
+                final_frame_id: Some(hex::encode(head)),
+                turns_completed: Some(0),
+                reused_existing_head: Some(true),
+            },
+        );
+        return Ok(WorkflowExecutionSummary {
+            workflow_id: profile.workflow_id.clone(),
+            thread_id,
+            turns_completed: 0,
+            final_frame_id: Some(head),
+        });
     }
 
     if request.force {
@@ -817,6 +891,7 @@ async fn execute_registered_workflow_via_task_async(
     let task_summary = match execute_task_to_completion(
         api,
         &mut executor,
+        &catalog,
         &registry,
         event_context,
         Some(&WorkflowTaskTelemetry {

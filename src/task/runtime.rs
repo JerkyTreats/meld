@@ -1,11 +1,14 @@
 //! Task runtime loop over ready capability invocations.
 
 use crate::api::ContextApi;
-use crate::capability::{CapabilityExecutionContext, CapabilityExecutorRegistry};
+use crate::capability::{
+    CapabilityCatalog, CapabilityExecutionContext, CapabilityExecutorRegistry,
+};
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::task::executor::TaskExecutor;
 use crate::task::ArtifactRecord;
+use crate::task::{compile_task_expansion_request, parse_task_expansion_request_artifact};
 use crate::telemetry::WorkflowTurnEventData;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::json;
@@ -38,6 +41,7 @@ pub struct WorkflowTaskTelemetry {
 pub async fn execute_task_to_completion(
     api: &ContextApi,
     executor: &mut TaskExecutor,
+    catalog: &CapabilityCatalog,
     registry: &CapabilityExecutorRegistry,
     event_context: Option<&QueueEventContext>,
     workflow_telemetry: Option<&WorkflowTaskTelemetry>,
@@ -119,7 +123,27 @@ pub async fn execute_task_to_completion(
         {
             match outcome {
                 Ok(result) => {
+                    let mut expansion_requests = Vec::new();
+                    for artifact in &result.emitted_artifacts {
+                        if let Some(request) = parse_task_expansion_request_artifact(artifact)? {
+                            expansion_requests.push((artifact.artifact_id.clone(), request));
+                        }
+                    }
                     executor.record_success(&invocation_id, result.emitted_artifacts)?;
+                    for (source_artifact_id, expansion_request) in expansion_requests {
+                        let delta = compile_task_expansion_request(
+                            api,
+                            executor.compiled_task(),
+                            &expansion_request,
+                            catalog,
+                        )?;
+                        let _ = executor.apply_task_expansion(
+                            &expansion_request.expansion_id,
+                            &expansion_request.expansion_kind,
+                            &source_artifact_id,
+                            delta,
+                        )?;
+                    }
                     if let (Some(ctx), Some(telemetry), Some((turn_id, stage))) = (
                         event_context,
                         workflow_telemetry,

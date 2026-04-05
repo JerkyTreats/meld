@@ -9,6 +9,7 @@ pub mod compiler;
 pub mod contracts;
 pub mod events;
 pub mod executor;
+pub mod expansion;
 pub mod init;
 pub mod invocation;
 pub mod package;
@@ -25,6 +26,14 @@ pub use contracts::{
 };
 pub use events::TaskEvent;
 pub use executor::TaskExecutor;
+pub use expansion::{
+    compile_task_expansion_request, parse_task_expansion_request_artifact, CompiledTaskDelta,
+    TaskExpansionRecord, TaskExpansionRequest, TaskExpansionTemplate, TraversalExpansionNode,
+    TraversalExpansionRelation, TraversalPrerequisiteExpansionContent,
+    TraversalPrerequisiteExpansionTemplate, TraversalPrerequisiteTemplate, WorkflowRegionTemplate,
+    WorkflowTurnTemplate, TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID, TASK_EXPANSION_SCHEMA_VERSION,
+    TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID, TRAVERSAL_PREREQUISITE_EXPANSION_KIND,
+};
 pub use init::{
     validate_task_initialization, InitArtifactValue, TaskInitializationPayload, TaskRunContext,
 };

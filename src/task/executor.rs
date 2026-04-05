@@ -6,11 +6,12 @@ use crate::task::contracts::{
     ArtifactProducerRef, ArtifactRecord, CapabilityInvocationRecord, CompiledTaskRecord,
 };
 use crate::task::events::TaskEvent;
+use crate::task::expansion::{CompiledTaskDelta, TaskExpansionRecord};
 use crate::task::init::{validate_task_initialization, TaskInitializationPayload};
 use crate::task::invocation::assemble_invocation_payload;
 use crate::task::readiness::compute_ready_capability_instances;
 use crate::task::TaskArtifactRepo;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// Single task-local execution agent for one live task instance.
 #[derive(Debug, Clone)]
@@ -20,6 +21,8 @@ pub struct TaskExecutor {
     artifact_repo: TaskArtifactRepo,
     invocation_records: Vec<CapabilityInvocationRecord>,
     events: Vec<TaskEvent>,
+    expansion_records: Vec<TaskExpansionRecord>,
+    applied_expansion_ids: HashSet<String>,
     completed_instances: HashSet<String>,
     in_flight_instances: HashSet<String>,
     started: bool,
@@ -65,6 +68,8 @@ impl TaskExecutor {
             artifact_repo,
             invocation_records: Vec::new(),
             events,
+            expansion_records: Vec::new(),
+            applied_expansion_ids: HashSet::new(),
             completed_instances: HashSet::new(),
             in_flight_instances: HashSet::new(),
             started: false,
@@ -94,6 +99,11 @@ impl TaskExecutor {
     /// Returns emitted task events.
     pub fn events(&self) -> &[TaskEvent] {
         &self.events
+    }
+
+    /// Returns applied task expansion records.
+    pub fn expansion_records(&self) -> &[TaskExpansionRecord] {
+        &self.expansion_records
     }
 
     /// Returns the currently ready capability instances.
@@ -313,6 +323,123 @@ impl TaskExecutor {
         event.error = Some(error.into());
         self.events.push(event);
         Ok(())
+    }
+
+    /// Applies one append-only compiled task delta if the expansion id is new.
+    pub fn apply_task_expansion(
+        &mut self,
+        expansion_id: &str,
+        expansion_kind: &str,
+        source_artifact_id: &str,
+        delta: CompiledTaskDelta,
+    ) -> Result<bool, ApiError> {
+        if self.applied_expansion_ids.contains(expansion_id) {
+            return Ok(false);
+        }
+
+        let existing_init_slots = self
+            .compiled_task
+            .init_slots
+            .iter()
+            .map(|slot| slot.init_slot_id.as_str())
+            .collect::<HashSet<_>>();
+        for slot in &delta.init_slots {
+            if existing_init_slots.contains(slot.init_slot_id.as_str()) {
+                return Err(ApiError::ConfigError(format!(
+                    "Task '{}' already contains init slot '{}' from expansion '{}'",
+                    self.compiled_task.task_id, slot.init_slot_id, expansion_id
+                )));
+            }
+        }
+
+        let existing_instances = self
+            .compiled_task
+            .capability_instances
+            .iter()
+            .map(|instance| instance.capability_instance_id.as_str())
+            .collect::<HashSet<_>>();
+        for instance in &delta.capability_instances {
+            if existing_instances.contains(instance.capability_instance_id.as_str()) {
+                return Err(ApiError::ConfigError(format!(
+                    "Task '{}' already contains capability instance '{}' from expansion '{}'",
+                    self.compiled_task.task_id, instance.capability_instance_id, expansion_id
+                )));
+            }
+        }
+
+        let existing_edges = self
+            .compiled_task
+            .dependency_edges
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        for edge in &delta.dependency_edges {
+            if existing_edges.contains(edge) {
+                return Err(ApiError::ConfigError(format!(
+                    "Task '{}' already contains dependency edge '{} -> {}' from expansion '{}'",
+                    self.compiled_task.task_id,
+                    edge.from_capability_instance_id,
+                    edge.to_capability_instance_id,
+                    expansion_id
+                )));
+            }
+        }
+
+        for artifact in &delta.init_artifacts {
+            if self
+                .artifact_repo
+                .get_artifact(&artifact.artifact_id)
+                .is_some()
+            {
+                return Err(ApiError::ConfigError(format!(
+                    "Task '{}' already contains init artifact '{}' from expansion '{}'",
+                    self.compiled_task.task_id, artifact.artifact_id, expansion_id
+                )));
+            }
+        }
+
+        for slot in delta.init_slots {
+            self.compiled_task.init_slots.push(slot);
+        }
+        for artifact in delta.init_artifacts {
+            self.artifact_repo.append_artifact(artifact.clone())?;
+
+            let mut event = TaskEvent::new(
+                "task_artifact_emitted",
+                self.compiled_task.task_id.clone(),
+                self.init_payload.task_run_context.task_run_id.clone(),
+            );
+            event.capability_instance_id = Some("__task_init__".to_string());
+            event.artifact_id = Some(artifact.artifact_id.clone());
+            event.artifact_type_id = Some(artifact.artifact_type_id.clone());
+            self.events.push(event);
+        }
+        for instance in delta.capability_instances {
+            self.compiled_task.capability_instances.push(instance);
+        }
+        for edge in delta.dependency_edges {
+            self.compiled_task.dependency_edges.push(edge);
+        }
+
+        self.applied_expansion_ids.insert(expansion_id.to_string());
+        self.expansion_records.push(TaskExpansionRecord {
+            expansion_id: expansion_id.to_string(),
+            expansion_kind: expansion_kind.to_string(),
+            source_artifact_id: source_artifact_id.to_string(),
+        });
+
+        let mut event = TaskEvent::new(
+            "task_expansion_applied",
+            self.compiled_task.task_id.clone(),
+            self.init_payload.task_run_context.task_run_id.clone(),
+        );
+        event.artifact_id = Some(source_artifact_id.to_string());
+        event.artifact_type_id = Some(expansion_kind.to_string());
+        event.ready_count = Some(self.ready_capability_instances().len());
+        event.running_count = Some(self.in_flight_instances.len());
+        self.events.push(event);
+
+        Ok(true)
     }
 }
 
