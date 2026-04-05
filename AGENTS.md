@@ -17,7 +17,6 @@
 - [Commit Policy](governance/commit_policy.md)
 - [Compatibility Policy](governance/compatibility_policy.md)
 - [CLI Targeting Policy](governance/cli_targeting_policy.md)
-- [Commenting Policy](governance/commenting_policy.md)
 - [Docs Style Policy](governance/docs_style_policy.md)
 - [Policy Proposal Flow](governance/policy_proposal_flow.md)
 - [Complex Change Workflow Governance](governance/complex_change_workflow.md)
@@ -26,6 +25,10 @@
 ## Commit Governance Rule
 
 - For every user request that asks for a commit, review [Commit Policy](governance/commit_policy.md) before running `git commit` or `git commit --amend`.
+
+## Comment Policy 
+
+Use comments appropriately, following the idiomatic guide in [Commenting Policy](governance/commenting_policy.md).
 
 ## Complex Workflow Note
 
