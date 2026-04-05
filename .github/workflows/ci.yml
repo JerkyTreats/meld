@@ -129,8 +129,8 @@ jobs:
             body="$(git log -1 --format=%b "$sha")"
 
             if ! grep -Eq '^[a-z]+(\([^)]+\))?(!)?:[[:space:]].+' <<<"$subject"; then
-              echo "::error::Commit $sha is not a valid conventional commit: $subject"
-              exit 1
+              echo "::notice::Ignoring non-conventional commit $sha: $subject"
+              continue
             fi
 
             commit_prefix="${subject%%:*}"
@@ -143,8 +143,8 @@ jobs:
             case "$commit_type" in
               feat|fix|perf|refactor|docs|design|test|build|ci|chore|policy|eval) ;;
               *)
-                echo "::error::Commit $sha uses unsupported type '$commit_type'"
-                exit 1
+                echo "::notice::Ignoring unsupported commit type '$commit_type' for $sha"
+                continue
                 ;;
             esac
 

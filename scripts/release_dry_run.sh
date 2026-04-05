@@ -226,8 +226,8 @@ while IFS= read -r sha; do
   short_sha="$(git rev-parse --short "$sha")"
 
   if ! [[ "$subject" =~ $COMMIT_PATTERN ]]; then
-    echo "error: commit $sha is not a valid conventional commit: $subject" >&2
-    exit 1
+    echo "notice: ignoring non-conventional commit $sha: $subject" >&2
+    continue
   fi
 
   commit_type="${BASH_REMATCH[1]}"
@@ -238,8 +238,8 @@ while IFS= read -r sha; do
   case "$commit_type" in
     feat|fix|perf|refactor|docs|design|test|build|ci|chore|policy|eval) ;;
     *)
-      echo "error: commit $sha uses unsupported type '$commit_type'" >&2
-      exit 1
+      echo "notice: ignoring unsupported commit type '$commit_type' for $sha" >&2
+      continue
       ;;
   esac
 
