@@ -1,5 +1,61 @@
 # Changelog
 
+## [2.3.0](https://github.com/JerkyTreats/meld/compare/v2.2.5...v2.3.0) — 2026-04-05
+
+### Features
+
+* **provider:** support additional_json overrides in completion payloads [6786b68](https://github.com/JerkyTreats/meld/commit/6786b68867f617c4c897208806cfbef83c96f224)
+* **workflow:** externalize docs writer workflow assets for init [39c0736](https://github.com/JerkyTreats/meld/commit/39c0736734e96eff5c87567a518c02d72aa23463)
+* **capability:** add shared contract and catalog core [5c901f2](https://github.com/JerkyTreats/meld/commit/5c901f294872041a00e1530d15cba25ff80f8106)
+* **task:** add records artifact repo and compiler [2782cf8](https://github.com/JerkyTreats/meld/commit/2782cf8025e4056952ec14a435929bd9ae10bc9a)
+* **task:** add executor readiness and payload assembly [05f2dec](https://github.com/JerkyTreats/meld/commit/05f2decbef37b118df27010756459f7c2ba0cc02)
+* **capability:** publish first slice domain invokers [927a7aa](https://github.com/JerkyTreats/meld/commit/927a7aa094fec5fd15a01fe64d427996e9158b78)
+* **task:** run docs writer as compiled task package [32a7874](https://github.com/JerkyTreats/meld/commit/32a78749803d9ae1143f7facc669f0121fb53092)
+* **task:** add artifact-driven task expansion [86c4ed2](https://github.com/JerkyTreats/meld/commit/86c4ed26ec70fdea241a70627d53128240f38681)
+* **task:** load workflow packages from external specs [522e5da](https://github.com/JerkyTreats/meld/commit/522e5dafdaa414b0eae32c819badad6802ba43e8)
+
+### Bug Fixes
+
+* **repo:** tolerate wrapped docs writer JSON and ignore eval-only CI [1f30bd9](https://github.com/JerkyTreats/meld/commit/1f30bd944467089d60702ec11973f8d3183f9954)
+* **ci:** ignore bad commit types [7d25435](https://github.com/JerkyTreats/meld/commit/7d254355cd36c0e8fed82c17e737c640eb2c5047)
+
+### Refactors
+
+* **provider:** unify runtime request overrides [6da2c6e](https://github.com/JerkyTreats/meld/commit/6da2c6edfb38b16ba691255c8c8ee4c78b74022f)
+* **context:** carry provider bindings through generate requests [f131363](https://github.com/JerkyTreats/meld/commit/f131363149b1ebe46154a21d53a3fb812d5fa361)
+* **workflow:** load workflows from XDG only [10edc24](https://github.com/JerkyTreats/meld/commit/10edc2499a72e67ff96eff042ea24c0690bcc73e)
+* **merkle_traversal:** extract structural traversal batches [b022e31](https://github.com/JerkyTreats/meld/commit/b022e31a647cfe09ab6d37570dd212373a1ed952)
+* **control:** move generation orchestration under control [d0e8f67](https://github.com/JerkyTreats/meld/commit/d0e8f6746184d61fe974c6a8c1c8725f9b28ff90)
+* **provider:** move generation transport into provider executor [7e6f67e](https://github.com/JerkyTreats/meld/commit/7e6f67ec40e98443e7ba52ed5f2f047d93953239)
+* **workflow:** route queue dispatch through control compatibility [4f581bb](https://github.com/JerkyTreats/meld/commit/4f581bb69895e75280510ecc1424a2b6bd79689d)
+* **workflow:** route docs writer through task runtime [321775f](https://github.com/JerkyTreats/meld/commit/321775f358e725aa79290d80b8750a83719b51b4)
+
+### Tests
+
+* **progress:** characterize bottom-up recursive generate ordering [ad7e2fd](https://github.com/JerkyTreats/meld/commit/ad7e2fdc409c2c3d5b4a9a5aea39839a2de6e26d)
+* **workflow:** add task path compatibility coverage [40d18be](https://github.com/JerkyTreats/meld/commit/40d18be7fed42e2d7e434d0787462c89ab70e814)
+
+### CI
+
+* **release:** skip runs without release-relevant changes [3fe9201](https://github.com/JerkyTreats/meld/commit/3fe9201fd19f5af1f0cdd2fc8a136dd35ef6a802)
+
+### Chores
+
+* **eval:** isolate local override config and default web-search off [30a8991](https://github.com/JerkyTreats/meld/commit/30a89911abfb9369d9ac83b3b667053839d7bd4f)
+* **lint:** fix fmt and clippy violations [97f0fff](https://github.com/JerkyTreats/meld/commit/97f0fff3abed38d9f0fe0d13d8080f7ef4296865)
+
+### Design
+
+* **capabilities:** archive refactor docs and task plans [75e6cc7](https://github.com/JerkyTreats/meld/commit/75e6cc7046dfbbaad6d299095ff5395b9b0a2858)
+* **capabilities:** remove archived refactor stubs [7d13b87](https://github.com/JerkyTreats/meld/commit/7d13b877bbbfd283956c21722bd75553654234cd)
+* **control:** define event manager requirements and telemetry refactor [ee600b6](https://github.com/JerkyTreats/meld/commit/ee600b6b7b186d1c0aa3d33fad7dcb764fdd7a39)
+
+### Policy
+
+* **governance:** lock capability task baseline gates [4c63da0](https://github.com/JerkyTreats/meld/commit/4c63da028659bd8d564a3064ff2aabeb5c5287fa)
+* **agents:** reference commenting guidance in agent rules [7861a68](https://github.com/JerkyTreats/meld/commit/7861a68336dbb04450f42aeabfb91c03046f4a23)
+
+
 ## [2.2.5](https://github.com/JerkyTreats/meld/compare/v2.2.4...v2.2.5) — 2026-03-27
 
 ### Design
