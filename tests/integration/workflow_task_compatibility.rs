@@ -192,3 +192,95 @@ fn workflow_execute_routes_docs_writer_through_task_path() {
         assert_eq!(thread.status, WorkflowThreadStatus::Completed);
     });
 }
+
+#[test]
+fn workflow_execute_reuses_existing_final_head_when_task_thread_state_drifted() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        meld::init::initialize_workflows(false).unwrap();
+
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        fs::write(
+            workspace_root.join("src").join("lib.rs"),
+            "pub fn greet(name: &str) -> String { format!(\"hello {}\", name) }",
+        )
+        .unwrap();
+
+        create_test_agent("docs-writer", Some("docs_writer_thread_v1"));
+        let (endpoint, first_server_handle) = spawn_docs_writer_server(8);
+        create_test_provider("test-provider", &endpoint);
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&Commands::Scan { force: true })
+            .unwrap();
+
+        let first_output = run_context
+            .execute(&Commands::Workflow {
+                command: WorkflowCommands::Execute {
+                    workflow_id: "docs_writer_thread_v1".to_string(),
+                    node: None,
+                    path: Some(PathBuf::from("src")),
+                    path_positional: None,
+                    agent: "docs-writer".to_string(),
+                    provider: "test-provider".to_string(),
+                    frame_type: None,
+                    force: true,
+                },
+            })
+            .unwrap();
+
+        assert!(first_output.contains("skipped=false"));
+        assert_eq!(first_server_handle.join().unwrap(), 8);
+
+        let node_id = meld::workspace::resolve_workspace_node_id(
+            run_context.api(),
+            &workspace_root,
+            Some(PathBuf::from("src").as_path()),
+            None,
+            false,
+        )
+        .unwrap();
+        let thread_payload = format!(
+            "{}:{}:{}",
+            "docs_writer_thread_v1",
+            hex::encode(node_id),
+            "context-docs-writer"
+        );
+        let thread_digest = blake3::hash(thread_payload.as_bytes()).to_hex().to_string();
+        let thread_id = format!("thread-{}", &thread_digest[..16]);
+        let state_store = WorkflowStateStore::new(&workspace_root).unwrap();
+        state_store
+            .upsert_thread(&meld::workflow::state_store::WorkflowThreadRecord {
+                thread_id: thread_id.clone(),
+                workflow_id: "docs_writer_thread_v1".to_string(),
+                node_id: hex::encode(node_id),
+                frame_type: "context-docs-writer".to_string(),
+                status: WorkflowThreadStatus::Failed,
+                next_turn_seq: 1,
+                updated_at_ms: 0,
+            })
+            .unwrap();
+
+        let second_output = run_context
+            .execute(&Commands::Workflow {
+                command: WorkflowCommands::Execute {
+                    workflow_id: "docs_writer_thread_v1".to_string(),
+                    node: None,
+                    path: Some(PathBuf::from("src")),
+                    path_positional: None,
+                    agent: "docs-writer".to_string(),
+                    provider: "test-provider".to_string(),
+                    frame_type: None,
+                    force: false,
+                },
+            })
+            .unwrap();
+
+        assert!(second_output.contains("skipped=true"));
+
+        let repaired_thread = state_store.load_thread(&thread_id).unwrap().unwrap();
+        assert_eq!(repaired_thread.status, WorkflowThreadStatus::Completed);
+    });
+}

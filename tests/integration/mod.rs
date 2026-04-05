@@ -20,6 +20,7 @@ mod progress_observability;
 mod provider_cli;
 mod store_integration;
 mod task_artifact_repo;
+mod task_bottom_up_compile_shape;
 mod task_compiler;
 mod task_executor;
 mod test_utils;
