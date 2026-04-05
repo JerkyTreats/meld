@@ -714,12 +714,99 @@ impl ContextGenerateFinalizeCapability {
                 "format": "markdown",
             }));
         }
-        serde_json::from_str(output_text).map_err(|err| {
-            ApiError::GenerationFailed(format!(
-                "Failed to decode '{}' output as JSON: {}",
-                output_type, err
-            ))
-        })
+        let trimmed = output_text.trim();
+        let mut candidates = vec![trimmed.to_string()];
+        if let Some(fenced) = Self::extract_fenced_block(trimmed) {
+            if !candidates.iter().any(|candidate| candidate == fenced) {
+                candidates.push(fenced.to_string());
+            }
+        }
+        if let Some(json_slice) = Self::extract_first_json_slice(trimmed) {
+            if !candidates.iter().any(|candidate| candidate == json_slice) {
+                candidates.push(json_slice.to_string());
+            }
+        }
+
+        let mut last_error = None;
+        for candidate in candidates {
+            match serde_json::from_str(&candidate) {
+                Ok(value) => return Ok(value),
+                Err(err) => last_error = Some(err),
+            }
+        }
+
+        Err(ApiError::GenerationFailed(format!(
+            "Failed to decode '{}' output as JSON: {}",
+            output_type,
+            last_error
+                .map(|err| err.to_string())
+                .unwrap_or_else(|| "no JSON content found".to_string())
+        )))
+    }
+
+    fn extract_fenced_block(output_text: &str) -> Option<&str> {
+        let fence_start = output_text.find("```")?;
+        let after_start = &output_text[fence_start + 3..];
+        let newline_index = after_start.find('\n')?;
+        let content_start = fence_start + 3 + newline_index + 1;
+        let fence_end = output_text[content_start..].find("```")?;
+        Some(output_text[content_start..content_start + fence_end].trim())
+    }
+
+    fn extract_first_json_slice(output_text: &str) -> Option<&str> {
+        let mut start = None;
+        let mut curly_depth = 0usize;
+        let mut square_depth = 0usize;
+        let mut in_string = false;
+        let mut escaped = false;
+
+        for (index, ch) in output_text.char_indices() {
+            if start.is_none() {
+                match ch {
+                    '{' => {
+                        start = Some(index);
+                        curly_depth = 1;
+                    }
+                    '[' => {
+                        start = Some(index);
+                        square_depth = 1;
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
+            if escaped {
+                escaped = false;
+                continue;
+            }
+
+            if in_string {
+                match ch {
+                    '\\' => escaped = true,
+                    '"' => in_string = false,
+                    _ => {}
+                }
+                continue;
+            }
+
+            match ch {
+                '"' => in_string = true,
+                '{' => curly_depth += 1,
+                '}' => curly_depth = curly_depth.saturating_sub(1),
+                '[' => square_depth += 1,
+                ']' => square_depth = square_depth.saturating_sub(1),
+                _ => {}
+            }
+
+            if curly_depth == 0 && square_depth == 0 {
+                let start_index = start?;
+                let end_index = index + ch.len_utf8();
+                return Some(&output_text[start_index..end_index]);
+            }
+        }
+
+        None
     }
 }
 
@@ -910,5 +997,56 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
         }
 
         Ok(CapabilityInvocationResult { emitted_artifacts })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ContextGenerateFinalizeCapability;
+
+    #[test]
+    fn shaped_output_value_accepts_plain_json() {
+        let value = ContextGenerateFinalizeCapability::shaped_output_value(
+            "evidence_map",
+            r#"{"claims":[{"statement":"ok"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(value["claims"][0]["statement"], "ok");
+    }
+
+    #[test]
+    fn shaped_output_value_accepts_fenced_json() {
+        let value = ContextGenerateFinalizeCapability::shaped_output_value(
+            "verification_report",
+            "```json\n{\"verified_claims\":[{\"statement\":\"ok\"}]}\n```",
+        )
+        .unwrap();
+
+        assert_eq!(value["verified_claims"][0]["statement"], "ok");
+    }
+
+    #[test]
+    fn shaped_output_value_accepts_prefixed_json() {
+        let value = ContextGenerateFinalizeCapability::shaped_output_value(
+            "readme_struct",
+            "Here is the JSON you requested.\n{\"title\":\"Doc\",\"purpose\":\"ok\"}",
+        )
+        .unwrap();
+
+        assert_eq!(value["title"], "Doc");
+    }
+
+    #[test]
+    fn shaped_output_value_rejects_missing_json() {
+        let err = ContextGenerateFinalizeCapability::shaped_output_value(
+            "evidence_map",
+            "No structured output available.",
+        )
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("Failed to decode 'evidence_map' output as JSON"));
     }
 }

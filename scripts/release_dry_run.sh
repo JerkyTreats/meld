@@ -236,12 +236,16 @@ while IFS= read -r sha; do
   summary="${BASH_REMATCH[5]}"
 
   case "$commit_type" in
-    feat|fix|perf|refactor|docs|design|test|build|ci|chore|policy) ;;
+    feat|fix|perf|refactor|docs|design|test|build|ci|chore|policy|eval) ;;
     *)
       echo "error: commit $sha uses unsupported type '$commit_type'" >&2
       exit 1
       ;;
   esac
+
+  if [[ "$commit_type" == "eval" ]]; then
+    continue
+  fi
 
   if [[ "$commit_type" == "policy" ]]; then
     if ! grep -Eq '^(Policy-Ref|Discussion):[[:space:]].+' <<<"$body"; then

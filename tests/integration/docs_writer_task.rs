@@ -75,6 +75,19 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 }
 
 fn spawn_docs_writer_server(expected_requests: usize) -> (String, thread::JoinHandle<usize>) {
+    spawn_docs_writer_server_with_shape(expected_requests, false)
+}
+
+fn spawn_wrapped_docs_writer_server(
+    expected_requests: usize,
+) -> (String, thread::JoinHandle<usize>) {
+    spawn_docs_writer_server_with_shape(expected_requests, true)
+}
+
+fn spawn_docs_writer_server_with_shape(
+    expected_requests: usize,
+    wrap_structured_output: bool,
+) -> (String, thread::JoinHandle<usize>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
 
@@ -114,11 +127,23 @@ fn spawn_docs_writer_server(expected_requests: usize) -> (String, thread::JoinHa
 
             let request_body = String::from_utf8_lossy(&buffer);
             let completion = if request_body.contains("Build evidence for README generation") {
-                r#"{"claims":[{"claim_id":"c1","statement":"Provides greeting helpers.","evidence_path":"src/lib.rs","evidence_symbol":"greet","evidence_quote":"pub fn greet(name: &str) -> String"}]}"#
+                if wrap_structured_output {
+                    "```json\n{\"claims\":[{\"claim_id\":\"c1\",\"statement\":\"Provides greeting helpers.\",\"evidence_path\":\"src/lib.rs\",\"evidence_symbol\":\"greet\",\"evidence_quote\":\"pub fn greet(name: &str) -> String\"}]}\n```"
+                } else {
+                    r#"{"claims":[{"claim_id":"c1","statement":"Provides greeting helpers.","evidence_path":"src/lib.rs","evidence_symbol":"greet","evidence_quote":"pub fn greet(name: &str) -> String"}]}"#
+                }
             } else if request_body.contains("Validate each claim against the provided evidence") {
-                r#"{"verified_claims":[{"claim_id":"c1","statement":"Provides greeting helpers.","evidence_path":"src/lib.rs","evidence_symbol":"greet","evidence_quote":"pub fn greet(name: &str) -> String"}],"rejected_claims":[],"reasons":[]}"#
+                if wrap_structured_output {
+                    "Here is the JSON you requested.\n{\"verified_claims\":[{\"claim_id\":\"c1\",\"statement\":\"Provides greeting helpers.\",\"evidence_path\":\"src/lib.rs\",\"evidence_symbol\":\"greet\",\"evidence_quote\":\"pub fn greet(name: &str) -> String\"}],\"rejected_claims\":[],\"reasons\":[]}"
+                } else {
+                    r#"{"verified_claims":[{"claim_id":"c1","statement":"Provides greeting helpers.","evidence_path":"src/lib.rs","evidence_symbol":"greet","evidence_quote":"pub fn greet(name: &str) -> String"}],"rejected_claims":[],"reasons":[]}"#
+                }
             } else if request_body.contains("Build a structured README draft") {
-                r#"{"title":"Workspace Library","purpose":"Provides greeting helpers.","usage":"Call greet with a user name."}"#
+                if wrap_structured_output {
+                    "```json\n{\"title\":\"Workspace Library\",\"purpose\":\"Provides greeting helpers.\",\"usage\":\"Call greet with a user name.\"}\n```"
+                } else {
+                    r#"{"title":"Workspace Library","purpose":"Provides greeting helpers.","usage":"Call greet with a user name."}"#
+                }
             } else {
                 "# Workspace Library\n\n## Purpose\n\nProvides greeting helpers.\n\n## Usage\n\nCall `greet` with a user name."
             };
@@ -391,6 +416,98 @@ fn docs_writer_task_runs_to_completion() {
         );
         assert!(executor.compiled_task().capability_instances.len() > 1);
         assert_eq!(executor.expansion_records().len(), 1);
+
+        let view = ContextView::builder()
+            .max_frames(1)
+            .recent()
+            .by_type("context-docs-writer".to_string())
+            .by_agent("docs-writer".to_string())
+            .build();
+        let context = run_context
+            .api()
+            .get_node(prepared.target_node_id, view)
+            .unwrap();
+        assert_eq!(context.frames.len(), 1);
+        let body = String::from_utf8_lossy(&context.frames[0].content);
+        assert!(body.contains("# Workspace Library"));
+    });
+}
+
+#[test]
+fn docs_writer_task_accepts_wrapped_structured_output() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        meld::init::initialize_workflows(false).unwrap();
+
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        fs::write(
+            workspace_root.join("src").join("lib.rs"),
+            "pub fn greet(name: &str) -> String { format!(\"hello {}\", name) }",
+        )
+        .unwrap();
+
+        create_test_agent("docs-writer", Some("docs_writer_thread_v1"));
+        let (endpoint, server_handle) = spawn_wrapped_docs_writer_server(8);
+        create_test_provider("test-provider", &endpoint);
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&Commands::Scan { force: true })
+            .unwrap();
+
+        let registered_profile = run_context
+            .workflow_registry()
+            .read()
+            .get("docs_writer_thread_v1")
+            .unwrap()
+            .clone();
+        let mut catalog = CapabilityCatalog::new();
+        let mut registry = CapabilityExecutorRegistry::new();
+        register_phase_four_capabilities(&mut catalog, &mut registry);
+
+        let prepared = prepare_registered_workflow_task_run(
+            run_context.api(),
+            &workspace_root,
+            &registered_profile,
+            &WorkflowPackageTriggerRequest {
+                package_id: "docs_writer".to_string(),
+                workflow_id: "docs_writer_thread_v1".to_string(),
+                node_id: None,
+                path: Some(PathBuf::from("src")),
+                agent_id: "docs-writer".to_string(),
+                provider: ProviderExecutionBinding::new(
+                    "test-provider",
+                    ProviderRuntimeOverrides::default(),
+                )
+                .unwrap(),
+                frame_type: "context-docs-writer".to_string(),
+                force: true,
+                session_id: Some("session_docs_writer_wrapped".to_string()),
+            },
+            &catalog,
+        )
+        .unwrap();
+
+        let mut executor = TaskExecutor::new(
+            prepared.compiled_task.clone(),
+            prepared.init_payload.clone(),
+            "repo_docs_writer_wrapped",
+        )
+        .unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(execute_task_to_completion(
+            run_context.api(),
+            &mut executor,
+            &catalog,
+            &registry,
+            None,
+            None,
+        ))
+        .unwrap();
+
+        let handled = server_handle.join().unwrap();
+        assert_eq!(handled, 8);
 
         let view = ContextView::builder()
             .max_frames(1)

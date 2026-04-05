@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - master
+    paths-ignore:
+      - eval/**
   workflow_dispatch:
     inputs:
       force_release:
@@ -139,12 +141,16 @@ jobs:
               breaking_marker="!"
             fi
             case "$commit_type" in
-              feat|fix|perf|refactor|docs|design|test|build|ci|chore|policy) ;;
+              feat|fix|perf|refactor|docs|design|test|build|ci|chore|policy|eval) ;;
               *)
                 echo "::error::Commit $sha uses unsupported type '$commit_type'"
                 exit 1
                 ;;
             esac
+
+            if [[ "$commit_type" == "eval" ]]; then
+              continue
+            fi
 
             if [[ "$commit_type" == "policy" ]]; then
               if ! grep -Eq '^(Policy-Ref|Discussion):[[:space:]].+' <<<"$body"; then
