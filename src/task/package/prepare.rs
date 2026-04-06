@@ -517,6 +517,8 @@ mod tests {
                             output_policy: TurnOutputPolicySpec {
                                 persist_frame: true,
                             },
+                            retry_limit: 1,
+                            validate_json: false,
                         }],
                     },
                     prerequisite: PrerequisiteTemplateSpec {

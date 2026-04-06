@@ -810,6 +810,31 @@ impl ContextGenerateFinalizeCapability {
     }
 }
 
+/// Returns true if `text` can be decoded as JSON using the same extraction
+/// strategies that `ContextGenerateFinalizeCapability` applies at finalize time.
+/// Use this in upstream stages to avoid retrying responses that finalize can
+/// already handle (e.g. fenced blocks, prose-prefixed JSON).
+pub(crate) fn json_output_is_decodable(text: &str) -> bool {
+    let trimmed = text.trim();
+    let candidates: Vec<&str> = {
+        let mut v = vec![trimmed];
+        if let Some(fenced) = ContextGenerateFinalizeCapability::extract_fenced_block(trimmed) {
+            if !v.contains(&fenced) {
+                v.push(fenced);
+            }
+        }
+        if let Some(slice) = ContextGenerateFinalizeCapability::extract_first_json_slice(trimmed) {
+            if !v.contains(&slice) {
+                v.push(slice);
+            }
+        }
+        v
+    };
+    candidates
+        .iter()
+        .any(|c| serde_json::from_str::<serde_json::Value>(c).is_ok())
+}
+
 #[async_trait]
 impl CapabilityInvoker for ContextGenerateFinalizeCapability {
     fn contract(&self) -> CapabilityTypeContract {

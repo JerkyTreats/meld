@@ -37,4 +37,12 @@ pub struct TurnSpec {
     pub output_type: String,
     pub gate_id: String,
     pub output_policy: TurnOutputPolicySpec,
+    #[serde(default = "default_retry_limit")]
+    pub retry_limit: usize,
+    #[serde(default)]
+    pub validate_json: bool,
+}
+
+fn default_retry_limit() -> usize {
+    1
 }

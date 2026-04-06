@@ -55,6 +55,8 @@ pub struct WorkflowTurnTemplate {
     pub output_type: String,
     pub gate: WorkflowGate,
     pub persist_frame: bool,
+    pub retry_limit: usize,
+    pub validate_json: bool,
 }
 
 /// Cross-node prerequisite mapping applied over traversal relations.
@@ -333,7 +335,10 @@ pub fn compile_traversal_prerequisite_expansion(
                     capability_version: 1,
                     scope_ref: node.node_id.clone(),
                     scope_kind: "node".to_string(),
-                    binding_values: Vec::new(),
+                    binding_values: vec![
+                        binding("max_attempts", json!(turn.retry_limit)),
+                        binding("validate_json", json!(turn.validate_json)),
+                    ],
                     input_wiring: vec![BoundInputWiring {
                         slot_id: "provider_execute_request".to_string(),
                         sources: vec![BoundInputWiringSource::UpstreamOutput {

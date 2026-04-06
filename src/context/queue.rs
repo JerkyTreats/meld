@@ -73,6 +73,19 @@ mod tests {
     }
 
     #[test]
+    fn json_decode_failures_are_retryable() {
+        let error = ApiError::GenerationFailed(
+            "Failed to decode 'evidence_map' output as JSON: expected value at line 1 column 1"
+                .to_string(),
+        );
+
+        assert!(FrameGenerationQueue::is_retryable_error(
+            &TargetExecutionProgram::workflow("docs_writer_thread_v1"),
+            &error,
+        ));
+    }
+
+    #[test]
     fn unknown_gate_type_failures_are_not_retryable() {
         let error = ApiError::GenerationFailed(
             "Workflow 'docs_writer_thread_v1' turn 'readme_struct' failed gate 'struct_gate': unknown gate_type 'imaginary_gate'"
@@ -1312,6 +1325,10 @@ impl FrameGenerationQueue {
     fn is_retryable_workflow_generation_failure(message: &str) -> bool {
         if message.contains("failed gate") {
             return !message.contains("unknown gate_type");
+        }
+
+        if message.contains("Failed to decode") && message.contains("output as JSON") {
+            return true;
         }
 
         false

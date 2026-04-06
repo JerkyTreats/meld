@@ -98,6 +98,8 @@ pub fn lower_workflow_region_template(
                     output_type: turn.output_type.clone(),
                     gate,
                     persist_frame: turn.output_policy.persist_frame,
+                    retry_limit: turn.retry_limit,
+                    validate_json: turn.validate_json,
                 })
             })
             .collect::<Result<Vec<_>, ApiError>>()?,
@@ -227,6 +229,8 @@ mod tests {
                     output_policy: TurnOutputPolicySpec {
                         persist_frame: true,
                     },
+                    retry_limit: 1,
+                    validate_json: false,
                 }],
             },
             prerequisite: PrerequisiteTemplateSpec {

@@ -54,18 +54,24 @@ expansions:
           prompt_ref: prompts/docs_writer/evidence_gather.md
           output_type: evidence_map
           gate_id: evidence_gate
+          retry_limit: 3
+          validate_json: true
           output_policy:
             persist_frame: false
         - turn_id: verification
           prompt_ref: prompts/docs_writer/verification.md
           output_type: verification_report
           gate_id: verification_gate
+          retry_limit: 3
+          validate_json: true
           output_policy:
             persist_frame: false
         - turn_id: readme_struct
           prompt_ref: prompts/docs_writer/readme_struct.md
           output_type: readme_struct
           gate_id: struct_gate
+          retry_limit: 3
+          validate_json: true
           output_policy:
             persist_frame: false
         - turn_id: style_refine

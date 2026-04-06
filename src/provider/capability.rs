@@ -2,10 +2,10 @@
 
 use crate::api::ContextApi;
 use crate::capability::{
-    ArtifactSchemaVersionRange, CapabilityInvocationPayload, CapabilityInvocationResult,
-    CapabilityInvoker, CapabilityTypeContract, EffectKind, EffectSpec, ExecutionClass,
-    ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec, ScopeContract,
-    SuppliedValueRef,
+    ArtifactSchemaVersionRange, BindingSpec, BindingValueKind, CapabilityInvocationPayload,
+    CapabilityInvocationResult, CapabilityInvoker, CapabilityTypeContract, EffectKind, EffectSpec,
+    ExecutionClass, ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec,
+    ScopeContract, SuppliedValueRef,
 };
 use crate::context::generation::contracts::GenerationOrchestrationRequest;
 use crate::error::ApiError;
@@ -75,7 +75,20 @@ impl CapabilityInvoker for ProviderExecuteChatCapability {
                 scope_ref_kind: "node_id".to_string(),
                 allow_fan_out: false,
             },
-            binding_contract: vec![],
+            binding_contract: vec![
+                BindingSpec {
+                    binding_id: "max_attempts".to_string(),
+                    value_kind: BindingValueKind::Literal,
+                    required: false,
+                    affects_deterministic_identity: false,
+                },
+                BindingSpec {
+                    binding_id: "validate_json".to_string(),
+                    value_kind: BindingValueKind::Literal,
+                    required: false,
+                    affects_deterministic_identity: false,
+                },
+            ],
             input_contract: vec![InputSlotSpec {
                 slot_id: "provider_execute_request".to_string(),
                 accepted_artifact_type_ids: vec!["provider_execute_request".to_string()],
@@ -132,14 +145,41 @@ impl CapabilityInvoker for ProviderExecuteChatCapability {
 
         let request_artifact = Self::parse_request(payload)?;
         let preparation = prepare_provider_for_request(api, &request_artifact.request)?;
+
+        let max_attempts = runtime_init
+            .binding_values
+            .iter()
+            .find(|b| b.binding_id == "max_attempts")
+            .and_then(|b| b.value.as_u64())
+            .unwrap_or(1) as usize;
+        let validate_json = runtime_init
+            .binding_values
+            .iter()
+            .find(|b| b.binding_id == "validate_json")
+            .and_then(|b| b.value.as_bool())
+            .unwrap_or(false);
+
         let started = Instant::now();
-        let response = execute_completion(
-            &request_artifact.request,
-            &preparation,
-            request_artifact.messages,
-            event_context,
-        )
-        .await?;
+        let mut attempt = 0usize;
+        let response = loop {
+            attempt += 1;
+            let response = execute_completion(
+                &request_artifact.request,
+                &preparation,
+                request_artifact.messages.clone(),
+                event_context,
+            )
+            .await?;
+
+            if validate_json
+                && !crate::context::capability::json_output_is_decodable(&response.content)
+                && attempt < max_attempts
+            {
+                continue;
+            }
+
+            break response;
+        };
         let duration_ms = started.elapsed().as_millis();
         let producer = ArtifactProducerRef {
             task_id: payload
