@@ -6,6 +6,7 @@ mod commands;
 mod danger;
 mod facade;
 mod format;
+pub mod publish;
 mod section;
 pub mod summary;
 mod types;

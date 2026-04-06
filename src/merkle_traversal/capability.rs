@@ -111,6 +111,9 @@ impl MerkleTraversalCapability {
         match value {
             "bottom_up" | "BottomUp" => Ok(TraversalStrategy::BottomUp),
             "top_down" | "TopDown" => Ok(TraversalStrategy::TopDown),
+            "directories_bottom_up" | "DirectoriesBottomUp" => {
+                Ok(TraversalStrategy::DirectoriesBottomUp)
+            }
             other => Err(ApiError::ConfigError(format!(
                 "Unsupported traversal strategy '{}'",
                 other
@@ -334,6 +337,7 @@ impl CapabilityInvoker for MerkleTraversalCapability {
         let strategy_slug = match strategy {
             TraversalStrategy::BottomUp => "bottom_up",
             TraversalStrategy::TopDown => "top_down",
+            TraversalStrategy::DirectoriesBottomUp => "directories_bottom_up",
         };
         let producer = ArtifactProducerRef {
             task_id: payload
@@ -398,6 +402,7 @@ impl CapabilityInvoker for MerkleTraversalCapability {
                 relations,
                 repeated_region: template_content.repeated_region,
                 prerequisite_template: template_content.prerequisite_template,
+                publish: template_content.publish,
             })
             .map_err(|err| {
                 ApiError::ConfigError(format!(

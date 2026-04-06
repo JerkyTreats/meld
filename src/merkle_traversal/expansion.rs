@@ -9,10 +9,14 @@ use crate::error::ApiError;
 use crate::provider::ProviderExecutionBinding;
 use crate::task::compiler::compile_task_definition;
 use crate::task::contracts::{
-    ArtifactProducerRef, ArtifactRecord, CompiledTaskRecord, TaskDefinition, TaskInitSlotSpec,
+    ArtifactProducerRef, ArtifactRecord, CompiledTaskRecord, TaskDefinition, TaskDependencyEdge,
+    TaskInitSlotSpec,
 };
 use crate::task::expansion::{CompiledTaskDelta, TaskExpansionRequest};
 use crate::types::NodeID;
+use crate::workspace::publish::{
+    publish_filter_dependency, publish_filter_instance_id, FrameHeadPublishTemplate,
+};
 use crate::workflow::profile::WorkflowGate;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -76,6 +80,7 @@ pub struct TraversalPrerequisiteTemplate {
 pub struct TraversalPrerequisiteExpansionTemplate {
     pub repeated_region: WorkflowRegionTemplate,
     pub prerequisite_template: TraversalPrerequisiteTemplate,
+    pub publish: Option<FrameHeadPublishTemplate>,
 }
 
 /// Fully resolved expansion content emitted after traversal succeeds.
@@ -86,6 +91,7 @@ pub struct TraversalPrerequisiteExpansionContent {
     pub relations: Vec<TraversalExpansionRelation>,
     pub repeated_region: WorkflowRegionTemplate,
     pub prerequisite_template: TraversalPrerequisiteTemplate,
+    pub publish: Option<FrameHeadPublishTemplate>,
 }
 
 /// Compiles a traversal prerequisite expansion into a task delta.
@@ -134,6 +140,11 @@ pub fn compile_traversal_prerequisite_expansion(
         .flat_map(|batch| batch.iter().map(|node| node.node_id.clone()))
         .collect::<HashSet<_>>();
     let upstream_by_downstream = relations_by_downstream(&content.relations)?;
+    let required_node_refs = if content.publish.is_some() {
+        nodes_by_id.values().cloned().collect::<Vec<_>>()
+    } else {
+        active_batches.iter().flatten().cloned().collect::<Vec<_>>()
+    };
 
     let mut init_slots = Vec::new();
     let mut init_artifacts = Vec::new();
@@ -165,32 +176,29 @@ pub fn compile_traversal_prerequisite_expansion(
         ));
     }
 
-    for batch in &active_batches {
-        for node in batch {
-            let slot_id = instantiate_template(
-                &content.repeated_region.node_ref_slot_template,
-                &node.node_id,
-            )?;
-            init_slots.push(TaskInitSlotSpec {
-                init_slot_id: slot_id.clone(),
-                artifact_type_id: "resolved_node_ref".to_string(),
-                schema_version: 1,
-                required: true,
-            });
-            init_artifacts.push(expansion_init_artifact(
-                compiled_task,
-                &expansion.expansion_id,
-                &slot_id,
-                "resolved_node_ref",
-                json!({
-                    "node_id": node.node_id,
-                    "path": node.path,
-                }),
-            ));
-        }
+    for node in &required_node_refs {
+        let slot_id = instantiate_template(&content.repeated_region.node_ref_slot_template, &node.node_id)?;
+        init_slots.push(TaskInitSlotSpec {
+            init_slot_id: slot_id.clone(),
+            artifact_type_id: "resolved_node_ref".to_string(),
+            schema_version: 1,
+            required: true,
+        });
+        init_artifacts.push(expansion_init_artifact(
+            compiled_task,
+            &expansion.expansion_id,
+            &slot_id,
+            "resolved_node_ref",
+            json!({
+                "node_id": node.node_id,
+                "path": node.path,
+            }),
+        ));
     }
 
     let mut capability_instances = Vec::new();
+    let mut explicit_dependency_edges = Vec::<TaskDependencyEdge>::new();
+    let mut final_finalize_by_node = BTreeMap::<String, String>::new();
     for batch in &active_batches {
         for node in batch {
             let mut previous_finalize_instance_id: Option<String> = None;
@@ -385,6 +393,45 @@ pub fn compile_traversal_prerequisite_expansion(
                 previous_finalize_instance_id = Some(finalize_instance_id);
                 previous_turn_output_type = Some(turn.output_type.clone());
             }
+            if let Some(finalize_instance_id) = previous_finalize_instance_id {
+                final_finalize_by_node.insert(node.node_id.clone(), finalize_instance_id);
+            }
+        }
+    }
+
+    if let Some(publish) = &content.publish {
+        for node in nodes_by_id.values() {
+            let node_ref_slot_id = instantiate_template(
+                &content.repeated_region.node_ref_slot_template,
+                &node.node_id,
+            )?;
+            let filter_instance_id = publish_filter_instance_id(&node.node_id)?;
+            capability_instances.push(BoundCapabilityInstance {
+                capability_instance_id: filter_instance_id.clone(),
+                capability_type_id: "workspace_filter_frame_head_publish".to_string(),
+                capability_version: 1,
+                scope_ref: node.node_id.clone(),
+                scope_kind: "node".to_string(),
+                binding_values: vec![
+                    binding("frame_type", json!(content.repeated_region.frame_type)),
+                    binding("file_name", json!(publish.file_name)),
+                    binding("publish_strategy", json!(publish.strategy)),
+                ],
+                input_wiring: vec![BoundInputWiring {
+                    slot_id: "resolved_node_ref".to_string(),
+                    sources: vec![BoundInputWiringSource::TaskInitSlot {
+                        init_slot_id: node_ref_slot_id,
+                        artifact_type_id: "resolved_node_ref".to_string(),
+                        schema_version: 1,
+                    }],
+                }],
+            });
+            if let Some(finalize_instance_id) = final_finalize_by_node.get(&node.node_id) {
+                explicit_dependency_edges.push(publish_filter_dependency(
+                    finalize_instance_id.clone(),
+                    filter_instance_id,
+                ));
+            }
         }
     }
 
@@ -404,11 +451,12 @@ pub fn compile_traversal_prerequisite_expansion(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let dependency_edges = compiled
+    let mut dependency_edges = compiled
         .dependency_edges
         .into_iter()
         .filter(|edge| !base_edges.contains(edge))
         .collect::<Vec<_>>();
+    dependency_edges.extend(explicit_dependency_edges);
 
     Ok(CompiledTaskDelta {
         init_slots,

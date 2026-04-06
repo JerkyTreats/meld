@@ -483,6 +483,7 @@ mod tests {
                     expansion_kind: "traversal_prerequisite_expansion".to_string(),
                     template_ref: "bottom_up".to_string(),
                     traversal_strategy: "bottom_up".to_string(),
+                    publish: None,
                     repeated_region: RepeatedRegionSpec {
                         region_id: "docs_writer_node".to_string(),
                         force_init_slot_id: "force_posture".to_string(),

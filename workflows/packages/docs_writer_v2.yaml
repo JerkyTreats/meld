@@ -31,7 +31,10 @@ expansions:
   - kind: traversal_prerequisite
     expansion_kind: traversal_prerequisite_expansion
     template_ref: docs_writer_bottom_up
-    traversal_strategy: bottom_up
+    traversal_strategy: directories_bottom_up
+    publish:
+      file_name: README.md
+      strategy: overwrite_on_new_head
     repeated_region:
       region_id: docs_writer_node
       force_init_slot_id: force_posture

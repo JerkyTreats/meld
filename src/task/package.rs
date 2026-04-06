@@ -12,7 +12,7 @@ pub mod trigger;
 
 pub use contracts::{
     PackageExpansionSpec, PreparedTaskRun, PreparedWorkflowPackageContext, TaskPackageSpec,
-    TraversalPrerequisitePackageExpansionSpec, WorkflowPackageTriggerRequest,
+    TraversalPrerequisitePackageExpansionSpec, TraversalPublishSpec, WorkflowPackageTriggerRequest,
 };
 pub use lower::{lower_traversal_prerequisite_expansion_template, lower_workflow_region_template};
 pub use output::TurnOutputPolicySpec;

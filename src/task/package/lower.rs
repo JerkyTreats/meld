@@ -11,6 +11,7 @@ use crate::task::package::{
     WorkflowPackageTriggerRequest,
 };
 use crate::workflow::profile::{WorkflowGate, WorkflowProfile};
+use crate::workspace::publish::FrameHeadPublishTemplate;
 use std::collections::HashMap;
 
 /// Lowers one traversal prerequisite package expansion into a task expansion template.
@@ -39,6 +40,10 @@ pub fn lower_traversal_prerequisite_expansion_template(
                 consumer_stage_id: expansion.prerequisite.consumer_stage_id.clone(),
                 consumer_input_slot_id: expansion.prerequisite.consumer_input_slot_id.clone(),
             },
+            publish: expansion.publish.as_ref().map(|publish| FrameHeadPublishTemplate {
+                file_name: publish.file_name.clone(),
+                strategy: publish.strategy.clone(),
+            }),
         })
         .map_err(|err| {
             ApiError::ConfigError(format!(
@@ -196,6 +201,10 @@ mod tests {
             expansion_kind: "traversal_prerequisite_expansion".to_string(),
             template_ref: "docs_writer_bottom_up".to_string(),
             traversal_strategy: "bottom_up".to_string(),
+            publish: Some(crate::task::package::TraversalPublishSpec {
+                file_name: "README.md".to_string(),
+                strategy: "overwrite_on_new_head".to_string(),
+            }),
             repeated_region: RepeatedRegionSpec {
                 region_id: "docs_writer_node".to_string(),
                 force_init_slot_id: "force_posture".to_string(),
@@ -282,6 +291,23 @@ mod tests {
         assert_eq!(region.turns[0].prompt_text, "Refine the README");
         assert_eq!(region.turns[0].gate.gate_id, "style_gate");
         assert!(region.turns[0].persist_frame);
+    }
+
+    #[test]
+    fn lower_template_preserves_optional_publish_policy() {
+        let template = lower_traversal_prerequisite_expansion_template(
+            &profile(),
+            &request(),
+            &expansion(),
+            &context(),
+        )
+        .unwrap();
+        let lowered: TraversalPrerequisiteExpansionTemplate =
+            serde_json::from_value(template.content).unwrap();
+
+        let publish = lowered.publish.expect("publish policy should be lowered");
+        assert_eq!(publish.file_name, "README.md");
+        assert_eq!(publish.strategy, "overwrite_on_new_head");
     }
 
     #[test]

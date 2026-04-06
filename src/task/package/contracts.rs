@@ -30,6 +30,15 @@ pub struct TraversalPrerequisitePackageExpansionSpec {
     pub traversal_strategy: String,
     pub repeated_region: RepeatedRegionSpec,
     pub prerequisite: PrerequisiteTemplateSpec,
+    #[serde(default)]
+    pub publish: Option<TraversalPublishSpec>,
+}
+
+/// Optional publish policy authored alongside a traversal expansion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraversalPublishSpec {
+    pub file_name: String,
+    pub strategy: String,
 }
 
 /// Package-authored expansion entries.

@@ -982,6 +982,14 @@ fn register_task_path_capabilities(
     )?;
     registry.register(
         catalog,
+        crate::workspace::capability::WorkspaceFilterFrameHeadPublishCapability,
+    )?;
+    registry.register(
+        catalog,
+        crate::workspace::capability::WorkspaceWriteFrameHeadCapability,
+    )?;
+    registry.register(
+        catalog,
         crate::merkle_traversal::capability::MerkleTraversalCapability,
     )?;
     registry.register(

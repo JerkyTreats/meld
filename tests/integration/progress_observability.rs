@@ -657,8 +657,9 @@ fn workflow_execute_emits_lineage_and_provider_events() {
     with_xdg_env(&temp_dir, || {
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(&workspace_root).unwrap();
-        let target = workspace_root.join("doc.md");
-        fs::write(&target, "# hello").unwrap();
+        let target = workspace_root.join("docs");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("doc.md"), "# hello").unwrap();
 
         create_test_writer_agent_with_workflow("workflow-obs-agent", Some("docs_writer_thread_v1"));
         create_test_openai_provider("workflow-obs-provider", "gpt-4-test", "http://127.0.0.1:9");
@@ -786,24 +787,6 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
         assert!(events
             .iter()
             .any(|e| e.event_type == "workflow_target_started"));
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "workflow_turn_started"));
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "frame_metadata_validation_started"));
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "frame_metadata_validation_succeeded"));
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "workflow_turn_failed"));
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "node_generation_failed"));
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "provider_request_failed"));
         let typed_idx = events
             .iter()
             .position(|e| e.event_type == "context_generation_summary")

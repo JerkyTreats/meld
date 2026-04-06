@@ -71,6 +71,18 @@ fn register_phase_four_capabilities(
     registry
         .register(
             catalog,
+            meld::workspace::capability::WorkspaceFilterFrameHeadPublishCapability,
+        )
+        .unwrap();
+    registry
+        .register(
+            catalog,
+            meld::workspace::capability::WorkspaceWriteFrameHeadCapability,
+        )
+        .unwrap();
+    registry
+        .register(
+            catalog,
             meld::merkle_traversal::capability::MerkleTraversalCapability,
         )
         .unwrap();
@@ -361,26 +373,8 @@ fn bottom_up_compile_shape_matches_nested_tree_case_data() {
         expected_active_paths: &[
             "src/foo",
             "src/foo/bar",
-            "src/foo/bar/baz.rs",
-            "src/foo/bar/wow.rs",
         ],
         expected_cross_node_edges: &[
-            ExpectedEdge {
-                from_path: "src/foo/bar/baz.rs",
-                from_turn: "style_refine",
-                from_stage: "finalize",
-                to_path: "src/foo/bar",
-                to_turn: "evidence_gather",
-                to_stage: "prepare",
-            },
-            ExpectedEdge {
-                from_path: "src/foo/bar/wow.rs",
-                from_turn: "style_refine",
-                from_stage: "finalize",
-                to_path: "src/foo/bar",
-                to_turn: "evidence_gather",
-                to_stage: "prepare",
-            },
             ExpectedEdge {
                 from_path: "src/foo/bar",
                 from_turn: "style_refine",
@@ -403,27 +397,9 @@ fn bottom_up_compile_shape_matches_two_branch_tree_case_data() {
         expected_active_paths: &[
             "src/foo",
             "src/foo/bar",
-            "src/foo/bar/a.rs",
             "src/foo/baz",
-            "src/foo/baz/b.rs",
         ],
         expected_cross_node_edges: &[
-            ExpectedEdge {
-                from_path: "src/foo/bar/a.rs",
-                from_turn: "style_refine",
-                from_stage: "finalize",
-                to_path: "src/foo/bar",
-                to_turn: "evidence_gather",
-                to_stage: "prepare",
-            },
-            ExpectedEdge {
-                from_path: "src/foo/baz/b.rs",
-                from_turn: "style_refine",
-                from_stage: "finalize",
-                to_path: "src/foo/baz",
-                to_turn: "evidence_gather",
-                to_stage: "prepare",
-            },
             ExpectedEdge {
                 from_path: "src/foo/bar",
                 from_turn: "style_refine",

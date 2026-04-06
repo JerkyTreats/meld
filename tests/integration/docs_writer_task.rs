@@ -176,6 +176,18 @@ fn register_phase_four_capabilities(
     registry
         .register(
             catalog,
+            meld::workspace::capability::WorkspaceFilterFrameHeadPublishCapability,
+        )
+        .unwrap();
+    registry
+        .register(
+            catalog,
+            meld::workspace::capability::WorkspaceWriteFrameHeadCapability,
+        )
+        .unwrap();
+    registry
+        .register(
+            catalog,
             meld::merkle_traversal::capability::MerkleTraversalCapability,
         )
         .unwrap();
@@ -325,7 +337,7 @@ fn docs_writer_task_compiles_bottom_up_dependencies() {
             .compiled_task()
             .dependency_edges
             .iter()
-            .any(|edge| edge.reason.contains("output 'generation_output'")));
+            .any(|edge| edge.reason == "publish_after_generation_head"));
         assert!(executor
             .compiled_task()
             .init_slots
@@ -349,7 +361,7 @@ fn docs_writer_task_runs_to_completion() {
         .unwrap();
 
         create_test_agent("docs-writer", Some("docs_writer_thread_v1"));
-        let (endpoint, server_handle) = spawn_docs_writer_server(8);
+        let (endpoint, server_handle) = spawn_docs_writer_server(4);
         create_test_provider("test-provider", &endpoint);
 
         let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
@@ -409,13 +421,13 @@ fn docs_writer_task_runs_to_completion() {
             .unwrap();
 
         let handled = server_handle.join().unwrap();
-        assert_eq!(handled, 8);
+        assert_eq!(handled, 4);
         assert_eq!(
             summary.completed_instances,
             executor.compiled_task().capability_instances.len()
         );
         assert!(executor.compiled_task().capability_instances.len() > 1);
-        assert_eq!(executor.expansion_records().len(), 1);
+        assert_eq!(executor.expansion_records().len(), 2);
 
         let view = ContextView::builder()
             .max_frames(1)
@@ -448,7 +460,7 @@ fn docs_writer_task_accepts_wrapped_structured_output() {
         .unwrap();
 
         create_test_agent("docs-writer", Some("docs_writer_thread_v1"));
-        let (endpoint, server_handle) = spawn_wrapped_docs_writer_server(8);
+        let (endpoint, server_handle) = spawn_wrapped_docs_writer_server(4);
         create_test_provider("test-provider", &endpoint);
 
         let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
@@ -507,7 +519,7 @@ fn docs_writer_task_accepts_wrapped_structured_output() {
         .unwrap();
 
         let handled = server_handle.join().unwrap();
-        assert_eq!(handled, 8);
+        assert_eq!(handled, 4);
 
         let view = ContextView::builder()
             .max_frames(1)
@@ -669,9 +681,9 @@ fn docs_writer_task_reuses_existing_child_readme_outputs() {
         meld::init::initialize_workflows(false).unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
-        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        fs::create_dir_all(workspace_root.join("src").join("record_contracts")).unwrap();
         fs::write(
-            workspace_root.join("src").join("lib.rs"),
+            workspace_root.join("src").join("record_contracts").join("lib.rs"),
             "pub fn greet(name: &str) -> String { format!(\"hello {}\", name) }",
         )
         .unwrap();
@@ -688,7 +700,7 @@ fn docs_writer_task_reuses_existing_child_readme_outputs() {
         let child_node_id = meld::workspace::resolve_workspace_node_id(
             run_context.api(),
             &workspace_root,
-            Some(PathBuf::from("src/lib.rs").as_path()),
+            Some(PathBuf::from("src/record_contracts").as_path()),
             None,
             false,
         )

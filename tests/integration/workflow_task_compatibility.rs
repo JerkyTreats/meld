@@ -143,7 +143,7 @@ fn workflow_execute_routes_docs_writer_through_task_path() {
         .unwrap();
 
         create_test_agent("docs-writer", Some("docs_writer_thread_v1"));
-        let (endpoint, server_handle) = spawn_docs_writer_server(8);
+        let (endpoint, server_handle) = spawn_docs_writer_server(4);
         create_test_provider("test-provider", &endpoint);
 
         let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
@@ -167,7 +167,7 @@ fn workflow_execute_routes_docs_writer_through_task_path() {
             .unwrap();
 
         let handled = server_handle.join().unwrap();
-        assert_eq!(handled, 8);
+        assert_eq!(handled, 4);
         assert!(output.contains("workflow_id=docs_writer_thread_v1"));
         assert!(output.contains("skipped=false"));
 
@@ -208,7 +208,7 @@ fn workflow_execute_reuses_existing_final_head_when_task_thread_state_drifted() 
         .unwrap();
 
         create_test_agent("docs-writer", Some("docs_writer_thread_v1"));
-        let (endpoint, first_server_handle) = spawn_docs_writer_server(8);
+        let (endpoint, first_server_handle) = spawn_docs_writer_server(4);
         create_test_provider("test-provider", &endpoint);
 
         let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
@@ -232,7 +232,7 @@ fn workflow_execute_reuses_existing_final_head_when_task_thread_state_drifted() 
             .unwrap();
 
         assert!(first_output.contains("skipped=false"));
-        assert_eq!(first_server_handle.join().unwrap(), 8);
+        assert_eq!(first_server_handle.join().unwrap(), 4);
 
         let node_id = meld::workspace::resolve_workspace_node_id(
             run_context.api(),
