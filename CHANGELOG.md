@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.1](https://github.com/JerkyTreats/meld/compare/v2.3.0...v2.3.1) — 2026-04-06
+
+### Bug Fixes
+
+* **workflows:** add configurable provider retry for failed model responses [9cb745c](https://github.com/JerkyTreats/meld/commit/9cb745ce1b20e068e8e873c3df357ad4968ab712)
+
+
 ## [2.3.0](https://github.com/JerkyTreats/meld/compare/v2.2.5...v2.3.0) — 2026-04-05
 
 ### Features
