@@ -9,6 +9,7 @@ mod format;
 pub mod publish;
 mod section;
 pub mod summary;
+pub mod tooling;
 mod types;
 mod watch;
 

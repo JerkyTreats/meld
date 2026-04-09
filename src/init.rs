@@ -9,6 +9,7 @@ use crate::config::{xdg, AgentConfig};
 use crate::error::ApiError;
 
 pub mod summary;
+pub mod tooling;
 
 /// Default prompts embedded in binary at compile time
 pub const DEFAULT_PROMPTS: &[(&str, &str)] = &[

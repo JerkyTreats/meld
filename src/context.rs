@@ -9,6 +9,7 @@ pub mod generation;
 pub mod query;
 pub mod queue;
 pub mod summary;
+pub mod tooling;
 pub mod types;
 
 pub use facade::ContextFacade;

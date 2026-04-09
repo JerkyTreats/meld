@@ -25,6 +25,7 @@ pub mod generation;
 pub mod profile;
 pub mod storage;
 pub mod summary;
+pub mod tooling;
 
 pub use generation::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 pub use profile::{ProviderConfig, ProviderType, ValidationResult};

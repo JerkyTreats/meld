@@ -12,6 +12,7 @@ pub mod prompt;
 pub mod registry;
 pub mod storage;
 pub mod summary;
+pub mod tooling;
 
 pub use commands::{
     AgentCommandService, AgentCreateResult, AgentEditResult, AgentListItem, AgentListResult,

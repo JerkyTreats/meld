@@ -12,6 +12,7 @@ pub mod registry;
 pub mod resolver;
 pub mod state_store;
 pub mod summary;
+pub mod tooling;
 
 pub use facade::{
     build_target_execution_request, execute_registered_workflow_target,
