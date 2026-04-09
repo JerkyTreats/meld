@@ -40,10 +40,13 @@ pub fn lower_traversal_prerequisite_expansion_template(
                 consumer_stage_id: expansion.prerequisite.consumer_stage_id.clone(),
                 consumer_input_slot_id: expansion.prerequisite.consumer_input_slot_id.clone(),
             },
-            publish: expansion.publish.as_ref().map(|publish| FrameHeadPublishTemplate {
-                file_name: publish.file_name.clone(),
-                strategy: publish.strategy.clone(),
-            }),
+            publish: expansion
+                .publish
+                .as_ref()
+                .map(|publish| FrameHeadPublishTemplate {
+                    file_name: publish.file_name.clone(),
+                    strategy: publish.strategy.clone(),
+                }),
         })
         .map_err(|err| {
             ApiError::ConfigError(format!(

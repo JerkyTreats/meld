@@ -224,7 +224,9 @@ impl WorkspaceFilterFrameHeadPublishCapability {
         format!("{invocation_id}::{output_slot_id}")
     }
 
-    fn parse_node_ref(payload: &CapabilityInvocationPayload) -> Result<(String, PathBuf), ApiError> {
+    fn parse_node_ref(
+        payload: &CapabilityInvocationPayload,
+    ) -> Result<(String, PathBuf), ApiError> {
         let input = payload
             .supplied_inputs
             .iter()
@@ -427,7 +429,8 @@ impl CapabilityInvoker for WorkspaceFilterFrameHeadPublishCapability {
                 content: serde_json::to_value(crate::task::TaskExpansionRequest {
                     expansion_id: format!(
                         "{}::{}",
-                        runtime_init.capability_instance_id, WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND
+                        runtime_init.capability_instance_id,
+                        WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND
                     ),
                     expansion_kind: WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND.to_string(),
                     content: serde_json::to_value(FrameHeadWriteExpansionContent {
@@ -469,7 +472,9 @@ impl WorkspaceWriteFrameHeadCapability {
         format!("{invocation_id}::{output_slot_id}")
     }
 
-    fn parse_node_ref(payload: &CapabilityInvocationPayload) -> Result<(String, PathBuf), ApiError> {
+    fn parse_node_ref(
+        payload: &CapabilityInvocationPayload,
+    ) -> Result<(String, PathBuf), ApiError> {
         WorkspaceFilterFrameHeadPublishCapability::parse_node_ref(payload)
     }
 
@@ -605,9 +610,13 @@ impl CapabilityInvoker for WorkspaceWriteFrameHeadCapability {
                     })?;
                 }
                 fs::write(&output_path, &frame.content).map_err(|err| {
-                    ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::other(
-                        format!("Failed to write publish file '{}' : {}", output_path.display(), err),
-                    )))
+                    ApiError::StorageError(crate::error::StorageError::IoError(
+                        std::io::Error::other(format!(
+                            "Failed to write publish file '{}' : {}",
+                            output_path.display(),
+                            err
+                        )),
+                    ))
                 })?;
                 record_published_head(workspace_root, &output_path, frame_id)?;
                 json!({

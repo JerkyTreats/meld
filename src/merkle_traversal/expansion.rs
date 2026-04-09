@@ -14,10 +14,10 @@ use crate::task::contracts::{
 };
 use crate::task::expansion::{CompiledTaskDelta, TaskExpansionRequest};
 use crate::types::NodeID;
+use crate::workflow::profile::WorkflowGate;
 use crate::workspace::publish::{
     publish_filter_dependency, publish_filter_instance_id, FrameHeadPublishTemplate,
 };
-use crate::workflow::profile::WorkflowGate;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -177,7 +177,10 @@ pub fn compile_traversal_prerequisite_expansion(
     }
 
     for node in &required_node_refs {
-        let slot_id = instantiate_template(&content.repeated_region.node_ref_slot_template, &node.node_id)?;
+        let slot_id = instantiate_template(
+            &content.repeated_region.node_ref_slot_template,
+            &node.node_id,
+        )?;
         init_slots.push(TaskInitSlotSpec {
             init_slot_id: slot_id.clone(),
             artifact_type_id: "resolved_node_ref".to_string(),

@@ -683,7 +683,10 @@ fn docs_writer_task_reuses_existing_child_readme_outputs() {
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src").join("record_contracts")).unwrap();
         fs::write(
-            workspace_root.join("src").join("record_contracts").join("lib.rs"),
+            workspace_root
+                .join("src")
+                .join("record_contracts")
+                .join("lib.rs"),
             "pub fn greet(name: &str) -> String { format!(\"hello {}\", name) }",
         )
         .unwrap();

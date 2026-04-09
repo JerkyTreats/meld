@@ -81,7 +81,11 @@ impl PublishedHeadIndex {
 
         let bytes = fs::read(path).map_err(|err| {
             ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::other(
-                format!("Failed to read published head index '{}': {}", path.display(), err),
+                format!(
+                    "Failed to read published head index '{}': {}",
+                    path.display(),
+                    err
+                ),
             )))
         })?;
         if bytes.len() < 4 {
@@ -173,8 +177,8 @@ pub fn compile_workspace_write_frame_head_expansion(
     expansion: &TaskExpansionRequest,
     catalog: &CapabilityCatalog,
 ) -> Result<CompiledTaskDelta, ApiError> {
-    let content: FrameHeadWriteExpansionContent =
-        serde_json::from_value(expansion.content.clone()).map_err(|err| {
+    let content: FrameHeadWriteExpansionContent = serde_json::from_value(expansion.content.clone())
+        .map_err(|err| {
             ApiError::ConfigError(format!(
                 "Failed to decode workspace publish expansion '{}': {}",
                 expansion.expansion_id, err
@@ -362,15 +366,24 @@ pub fn decode_frame_id(value: &str) -> Result<FrameID, ApiError> {
 }
 
 pub fn publish_node_ref_slot_id(node_id_hex: &str) -> Result<String, ApiError> {
-    Ok(format!("publish_node_ref::{}", node_id_prefix(node_id_hex)?))
+    Ok(format!(
+        "publish_node_ref::{}",
+        node_id_prefix(node_id_hex)?
+    ))
 }
 
 pub fn publish_filter_instance_id(node_id_hex: &str) -> Result<String, ApiError> {
-    Ok(format!("node::{}::publish::filter", node_id_prefix(node_id_hex)?))
+    Ok(format!(
+        "node::{}::publish::filter",
+        node_id_prefix(node_id_hex)?
+    ))
 }
 
 pub fn publish_write_instance_id(node_id_hex: &str) -> Result<String, ApiError> {
-    Ok(format!("node::{}::publish::write", node_id_prefix(node_id_hex)?))
+    Ok(format!(
+        "node::{}::publish::write",
+        node_id_prefix(node_id_hex)?
+    ))
 }
 
 pub fn publish_filter_dependency(
@@ -404,7 +417,9 @@ pub fn node_from_ref_content(value: &Value) -> Result<TraversalExpansionNode, Ap
     let node_id = value
         .get("node_id")
         .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::ConfigError("resolved_node_ref is missing 'node_id'".to_string()))?;
+        .ok_or_else(|| {
+            ApiError::ConfigError("resolved_node_ref is missing 'node_id'".to_string())
+        })?;
     let path = value
         .get("path")
         .and_then(Value::as_str)
@@ -463,8 +478,8 @@ mod tests {
     use crate::agent::{AgentIdentity, AgentRegistry, AgentRole};
     use crate::api::ContextApi;
     use crate::concurrency::NodeLockManager;
-    use crate::context::frame::{Basis, Frame};
     use crate::context::frame::storage::FrameStorage;
+    use crate::context::frame::{Basis, Frame};
     use crate::heads::HeadIndex;
     use crate::metadata::frame_write_contract::{
         build_generated_metadata, generated_metadata_input_from_payload,
@@ -481,17 +496,16 @@ mod tests {
         fs::create_dir_all(workspace_root.join("src")).unwrap();
 
         let node_store = Arc::new(SledNodeRecordStore::new(temp_dir.path().join("store")).unwrap());
-        let frame_storage =
-            Arc::new(FrameStorage::new(temp_dir.path().join("frames")).unwrap());
-        let prompt_context_storage = Arc::new(
-            PromptContextArtifactStorage::new(temp_dir.path().join("artifacts")).unwrap(),
-        );
+        let frame_storage = Arc::new(FrameStorage::new(temp_dir.path().join("frames")).unwrap());
+        let prompt_context_storage =
+            Arc::new(PromptContextArtifactStorage::new(temp_dir.path().join("artifacts")).unwrap());
         let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
         let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
         let provider_registry = Arc::new(parking_lot::RwLock::new(ProviderRegistry::new()));
-        agent_registry
-            .write()
-            .register(AgentIdentity::new("docs-writer".to_string(), AgentRole::Writer));
+        agent_registry.write().register(AgentIdentity::new(
+            "docs-writer".to_string(),
+            AgentRole::Writer,
+        ));
 
         let api = ContextApi::with_workspace_root(
             node_store.clone(),
@@ -536,7 +550,8 @@ mod tests {
             )),
         )
         .unwrap();
-        api.put_frame(node_id, frame, "docs-writer".to_string()).unwrap()
+        api.put_frame(node_id, frame, "docs-writer".to_string())
+            .unwrap()
     }
 
     #[test]
@@ -577,7 +592,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(decision, PublishFilterDecision::SkipCurrentHeadAlreadyPublished);
+        assert_eq!(
+            decision,
+            PublishFilterDecision::SkipCurrentHeadAlreadyPublished
+        );
     }
 
     #[test]

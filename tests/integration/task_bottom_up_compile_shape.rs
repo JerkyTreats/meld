@@ -370,20 +370,15 @@ fn bottom_up_compile_shape_matches_nested_tree_case_data() {
     let case = BottomUpCompileCase {
         files: &["src/foo/bar/wow.rs", "src/foo/bar/baz.rs"],
         target_path: "src/foo",
-        expected_active_paths: &[
-            "src/foo",
-            "src/foo/bar",
-        ],
-        expected_cross_node_edges: &[
-            ExpectedEdge {
-                from_path: "src/foo/bar",
-                from_turn: "style_refine",
-                from_stage: "finalize",
-                to_path: "src/foo",
-                to_turn: "evidence_gather",
-                to_stage: "prepare",
-            },
-        ],
+        expected_active_paths: &["src/foo", "src/foo/bar"],
+        expected_cross_node_edges: &[ExpectedEdge {
+            from_path: "src/foo/bar",
+            from_turn: "style_refine",
+            from_stage: "finalize",
+            to_path: "src/foo",
+            to_turn: "evidence_gather",
+            to_stage: "prepare",
+        }],
     };
 
     assert_case(&case);
@@ -394,11 +389,7 @@ fn bottom_up_compile_shape_matches_two_branch_tree_case_data() {
     let case = BottomUpCompileCase {
         files: &["src/foo/bar/a.rs", "src/foo/baz/b.rs"],
         target_path: "src/foo",
-        expected_active_paths: &[
-            "src/foo",
-            "src/foo/bar",
-            "src/foo/baz",
-        ],
+        expected_active_paths: &["src/foo", "src/foo/bar", "src/foo/baz"],
         expected_cross_node_edges: &[
             ExpectedEdge {
                 from_path: "src/foo/bar",
