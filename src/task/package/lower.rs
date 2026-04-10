@@ -213,7 +213,7 @@ mod tests {
                 force_init_slot_id: "force_posture".to_string(),
                 node_ref_slot_template: "node_ref::{node_id_prefix}".to_string(),
                 existing_output_slot_template: "existing_readme::{node_id_prefix}".to_string(),
-                existing_output_artifact_type_id: "readme_final".to_string(),
+                existing_output_artifact_type_id: "frame_ref".to_string(),
                 stage_chain: StageChainSpec {
                     stages: vec![
                         StageSpec {
@@ -249,7 +249,7 @@ mod tests {
                 producer_turn_id: "style_refine".to_string(),
                 producer_stage_id: "finalize".to_string(),
                 producer_output_slot_id: "generation_output".to_string(),
-                producer_artifact_type_id: "readme_final".to_string(),
+                producer_artifact_type_id: "frame_ref".to_string(),
                 consumer_turn_id: "style_refine".to_string(),
                 consumer_stage_id: "prepare".to_string(),
                 consumer_input_slot_id: "upstream_artifact".to_string(),

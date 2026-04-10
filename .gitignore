@@ -21,3 +21,5 @@ test_data/
 
 .merkle/
 config.toml
+
+.codex

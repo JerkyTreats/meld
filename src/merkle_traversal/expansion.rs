@@ -117,7 +117,7 @@ pub fn compile_traversal_prerequisite_expansion(
     }
 
     let nodes_by_id = index_nodes(&content.node_batches)?;
-    let existing_readmes = collect_existing_readmes(
+    let existing_frame_refs = collect_existing_frame_refs(
         api,
         &nodes_by_id,
         &content.repeated_region.frame_type,
@@ -129,7 +129,7 @@ pub fn compile_traversal_prerequisite_expansion(
         .map(|batch| {
             batch
                 .iter()
-                .filter(|node| !existing_readmes.contains_key(&node.node_id))
+                .filter(|node| !existing_frame_refs.contains_key(&node.node_id))
                 .cloned()
                 .collect::<Vec<_>>()
         })
@@ -148,7 +148,7 @@ pub fn compile_traversal_prerequisite_expansion(
 
     let mut init_slots = Vec::new();
     let mut init_artifacts = Vec::new();
-    let mut existing_node_ids = existing_readmes.keys().cloned().collect::<Vec<_>>();
+    let mut existing_node_ids = existing_frame_refs.keys().cloned().collect::<Vec<_>>();
     existing_node_ids.sort_unstable();
     for node_id in existing_node_ids {
         let slot_id = instantiate_template(
@@ -169,7 +169,7 @@ pub fn compile_traversal_prerequisite_expansion(
             &expansion.expansion_id,
             &slot_id,
             &content.repeated_region.existing_output_artifact_type_id,
-            existing_readmes
+            existing_frame_refs
                 .get(&node_id)
                 .expect("existing node id collected above")
                 .clone(),
@@ -263,7 +263,7 @@ pub fn compile_traversal_prerequisite_expansion(
                                     .clone(),
                                 schema_version: 1,
                             });
-                        } else if existing_readmes.contains_key(&related_node_id) {
+                        } else if existing_frame_refs.contains_key(&related_node_id) {
                             upstream_sources.push(BoundInputWiringSource::TaskInitSlot {
                                 init_slot_id: instantiate_template(
                                     &content.repeated_region.existing_output_slot_template,
@@ -469,7 +469,7 @@ pub fn compile_traversal_prerequisite_expansion(
     })
 }
 
-fn collect_existing_readmes(
+fn collect_existing_frame_refs(
     api: &ContextApi,
     nodes_by_id: &BTreeMap<String, TraversalExpansionNode>,
     frame_type: &str,
@@ -499,8 +499,9 @@ fn collect_existing_readmes(
         existing.insert(
             node.node_id.clone(),
             json!({
-                "content": String::from_utf8_lossy(&frame.content).to_string(),
-                "format": "markdown",
+                "frame_id": hex::encode(frame_id),
+                "node_id": node.node_id,
+                "frame_type": frame.frame_type,
             }),
         );
     }

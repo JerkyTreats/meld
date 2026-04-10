@@ -55,6 +55,12 @@ struct PreparationSummaryArtifact {
     prompt_output: PromptAssemblyOutput,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SupportingInput {
+    artifact_type_id: String,
+    rendered_content: String,
+}
+
 /// Publishes and invokes the context-side generation preparation capability.
 #[derive(Debug, Clone, Default)]
 pub struct ContextGeneratePrepareCapability;
@@ -167,9 +173,64 @@ impl ContextGeneratePrepareCapability {
         Ok(node_id)
     }
 
-    fn supporting_inputs(
+    fn parse_frame_id(value: &Value, invocation_id: &str) -> Result<[u8; 32], ApiError> {
+        let frame_hex = value
+            .get("frame_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                ApiError::ConfigError(format!(
+                    "Capability invocation '{}' frame_ref is missing 'frame_id'",
+                    invocation_id
+                ))
+            })?;
+        let bytes = hex::decode(frame_hex).map_err(|err| {
+            ApiError::ConfigError(format!("Invalid frame hex '{}': {}", frame_hex, err))
+        })?;
+        if bytes.len() != 32 {
+            return Err(ApiError::ConfigError(format!(
+                "Invalid frame hex '{}' length '{}'",
+                frame_hex,
+                bytes.len()
+            )));
+        }
+        let mut frame_id = [0u8; 32];
+        frame_id.copy_from_slice(&bytes);
+        Ok(frame_id)
+    }
+
+    fn supporting_input_content(
+        api: &ContextApi,
         payload: &CapabilityInvocationPayload,
-    ) -> Vec<(String, serde_json::Value)> {
+        artifact_type_id: &str,
+        value: &Value,
+    ) -> Result<String, ApiError> {
+        if artifact_type_id == "frame_ref" {
+            let frame_id = Self::parse_frame_id(value, &payload.invocation_id)?;
+            let frame = api
+                .frame_storage()
+                .get(&frame_id)
+                .map_err(ApiError::from)?
+                .ok_or_else(|| {
+                    ApiError::ConfigError(format!(
+                        "Capability invocation '{}' references missing frame '{}'",
+                        payload.invocation_id,
+                        hex::encode(frame_id)
+                    ))
+                })?;
+            return Ok(String::from_utf8_lossy(&frame.content).to_string());
+        }
+
+        Ok(if let Some(string) = value.as_str() {
+            string.to_string()
+        } else {
+            serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+        })
+    }
+
+    fn supporting_inputs(
+        api: &ContextApi,
+        payload: &CapabilityInvocationPayload,
+    ) -> Result<Vec<SupportingInput>, ApiError> {
         payload
             .supplied_inputs
             .iter()
@@ -183,14 +244,22 @@ impl ContextGeneratePrepareCapability {
                         ("structured_value".to_string(), value.clone())
                     }
                 };
-                (artifact_type_id, value)
+                Ok(SupportingInput {
+                    rendered_content: Self::supporting_input_content(
+                        api,
+                        payload,
+                        &artifact_type_id,
+                        &value,
+                    )?,
+                    artifact_type_id,
+                })
             })
             .collect()
     }
 
     fn append_supporting_context(
         prompt_output: &mut PromptAssemblyOutput,
-        supporting_inputs: &[(String, Value)],
+        supporting_inputs: &[SupportingInput],
     ) {
         if supporting_inputs.is_empty() {
             return;
@@ -198,13 +267,11 @@ impl ContextGeneratePrepareCapability {
 
         let appended = supporting_inputs
             .iter()
-            .map(|(artifact_type_id, value)| {
-                let rendered = if let Some(string) = value.as_str() {
-                    string.to_string()
-                } else {
-                    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
-                };
-                format!("Type: {artifact_type_id}\nContent:\n{rendered}")
+            .map(|supporting_input| {
+                format!(
+                    "Type: {}\nContent:\n{}",
+                    supporting_input.artifact_type_id, supporting_input.rendered_content
+                )
             })
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
@@ -320,6 +387,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
                         "verification_report".to_string(),
                         "readme_struct".to_string(),
                         "readme_final".to_string(),
+                        "frame_ref".to_string(),
                     ],
                     schema_versions: ArtifactSchemaVersionRange {
                         min: ARTIFACT_SCHEMA_VERSION,
@@ -434,7 +502,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
             .ok_or(ApiError::NodeNotFound(node_id))?;
         let mut prompt_output =
             build_prompt_messages(api, &request, &node_record, &prompt_contract)?;
-        let supporting_inputs = Self::supporting_inputs(payload);
+        let supporting_inputs = Self::supporting_inputs(api, payload)?;
         Self::append_supporting_context(&mut prompt_output, &supporting_inputs);
 
         let prepared_lineage = prepare_generated_lineage(
@@ -552,13 +620,11 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
 
         let gate_inputs = supporting_inputs
             .into_iter()
-            .map(|(artifact_type_id, value)| {
-                let rendered = if let Some(string) = value.as_str() {
-                    string.to_string()
-                } else {
-                    serde_json::to_string(&value).unwrap_or_else(|_| value.to_string())
-                };
-                (artifact_type_id, rendered)
+            .map(|supporting_input| {
+                (
+                    supporting_input.artifact_type_id,
+                    supporting_input.rendered_content,
+                )
             })
             .collect::<HashMap<_, _>>();
         let summary = PreparationSummaryArtifact {

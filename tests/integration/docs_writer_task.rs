@@ -791,7 +791,7 @@ fn docs_writer_task_reuses_existing_child_readme_outputs() {
             .compiled_task()
             .init_slots
             .iter()
-            .any(|slot| slot.artifact_type_id == "readme_final"));
+            .any(|slot| slot.artifact_type_id == "frame_ref"));
 
         let root_node_id = meld::workspace::resolve_workspace_node_id(
             run_context.api(),

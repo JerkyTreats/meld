@@ -40,7 +40,7 @@ expansions:
       force_init_slot_id: force_posture
       node_ref_slot_template: node_ref::{node_id_prefix}
       existing_output_slot_template: existing_readme::{node_id_prefix}
-      existing_output_artifact_type_id: readme_final
+      existing_output_artifact_type_id: frame_ref
       stage_chain:
         stages:
           - stage_id: prepare
@@ -87,7 +87,7 @@ expansions:
       producer_turn_id: style_refine
       producer_stage_id: finalize
       producer_output_slot_id: generation_output
-      producer_artifact_type_id: readme_final
+      producer_artifact_type_id: frame_ref
       consumer_turn_id: evidence_gather
       consumer_stage_id: prepare
       consumer_input_slot_id: upstream_artifact

@@ -251,7 +251,7 @@ To preserve the current bottom-up docs-writer behavior, parent node generation s
 
 Recommended durable rule:
 
-- parent node `evidence_prepare` requires child `readme_final` summary artifacts for all direct child nodes when such children exist
+- parent node `evidence_prepare` requires child `frame_ref` artifacts with `frame_type: readme` for all direct child nodes when such children exist
 
 That one rule is enough to encode bottom-up dependency durably in the task graph.
 It means:

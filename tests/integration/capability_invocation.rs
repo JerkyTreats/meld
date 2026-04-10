@@ -7,8 +7,12 @@ use meld::capability::{
 };
 use meld::cli::{Commands, RunContext};
 use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
+use meld::context::frame::{Basis, Frame};
 use meld::context::query::ContextView;
 use meld::merkle_traversal::capability::MerkleTraversalCapability;
+use meld::metadata::frame_write_contract::{
+    build_generated_metadata, generated_metadata_input_from_payload,
+};
 use meld::provider::capability::ProviderExecuteChatCapability;
 use meld::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 use meld::workspace::capability::WorkspaceResolveNodeIdCapability;
@@ -568,5 +572,185 @@ fn context_provider_finalize_capabilities_materialize_frame() {
         let context = run_context.api().get_node(node_id, view).unwrap();
         assert_eq!(context.frames.len(), 1);
         assert!(String::from_utf8_lossy(&context.frames[0].content).contains("# Library"));
+    });
+}
+
+#[test]
+fn context_prepare_dereferences_frame_ref_supporting_input() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(workspace_root.join("src").join("child")).unwrap();
+        fs::write(
+            workspace_root.join("src").join("lib.rs"),
+            "pub fn greet() {}",
+        )
+        .unwrap();
+        fs::write(
+            workspace_root.join("src").join("child").join("lib.rs"),
+            "pub fn child() {}",
+        )
+        .unwrap();
+
+        create_test_agent("docs-writer");
+        create_test_provider("test-provider", "http://127.0.0.1:9");
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&Commands::Scan { force: true })
+            .unwrap();
+
+        let node_id = meld::workspace::resolve_workspace_node_id(
+            run_context.api(),
+            &workspace_root,
+            Some(Path::new("src")),
+            None,
+            false,
+        )
+        .unwrap();
+        let child_node_id = meld::workspace::resolve_workspace_node_id(
+            run_context.api(),
+            &workspace_root,
+            Some(Path::new("src/child")),
+            None,
+            false,
+        )
+        .unwrap();
+        let child_frame = Frame::new(
+            Basis::Node(child_node_id),
+            b"# Existing Child README".to_vec(),
+            "context-docs-writer".to_string(),
+            "docs-writer".to_string(),
+            build_generated_metadata(&generated_metadata_input_from_payload(
+                "docs-writer",
+                "test-provider",
+                "test-model",
+                "local_custom",
+                "child prompt",
+                "child context",
+            )),
+        )
+        .unwrap();
+        let child_frame_id = run_context
+            .api()
+            .put_frame(child_node_id, child_frame, "docs-writer".to_string())
+            .unwrap();
+
+        let mut catalog = CapabilityCatalog::new();
+        let mut registry = CapabilityExecutorRegistry::new();
+        register_phase_four_capabilities(&mut catalog, &mut registry);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        let prepare_instance = BoundCapabilityInstance {
+            capability_instance_id: "capinst_prepare".to_string(),
+            capability_type_id: "context_generate_prepare".to_string(),
+            capability_version: 1,
+            scope_ref: hex::encode(node_id),
+            scope_kind: "node".to_string(),
+            binding_values: vec![
+                BoundBindingValue {
+                    binding_id: "agent_id".to_string(),
+                    value: json!("docs-writer"),
+                },
+                BoundBindingValue {
+                    binding_id: "provider_binding".to_string(),
+                    value: serde_json::to_value(
+                        ProviderExecutionBinding::new(
+                            "test-provider",
+                            ProviderRuntimeOverrides::default(),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap(),
+                },
+                BoundBindingValue {
+                    binding_id: "frame_type".to_string(),
+                    value: json!("context-docs-writer"),
+                },
+                BoundBindingValue {
+                    binding_id: "prompt_text".to_string(),
+                    value: json!("Build evidence for README generation"),
+                },
+                BoundBindingValue {
+                    binding_id: "turn_id".to_string(),
+                    value: json!("evidence_gather"),
+                },
+                BoundBindingValue {
+                    binding_id: "workflow_id".to_string(),
+                    value: json!("docs_writer_thread_v1"),
+                },
+                BoundBindingValue {
+                    binding_id: "output_type".to_string(),
+                    value: json!("evidence_map"),
+                },
+            ],
+            input_wiring: Vec::new(),
+        };
+        let prepare_runtime = registry.runtime_init_for(&prepare_instance).unwrap();
+        let prepare_payload = CapabilityInvocationPayload {
+            invocation_id: "invk_prepare_with_frame_ref".to_string(),
+            capability_instance_id: prepare_instance.capability_instance_id.clone(),
+            supplied_inputs: vec![
+                SuppliedInputValue {
+                    slot_id: "resolved_node_ref".to_string(),
+                    source: InputValueSource::ArtifactHandoff,
+                    value: SuppliedValueRef::Artifact(ArtifactValueRef {
+                        artifact_id: "artifact_node".to_string(),
+                        artifact_type_id: "resolved_node_ref".to_string(),
+                        schema_version: 1,
+                        content: json!({
+                            "node_id": hex::encode(node_id),
+                            "path": "src",
+                        }),
+                    }),
+                },
+                SuppliedInputValue {
+                    slot_id: "upstream_artifact".to_string(),
+                    source: InputValueSource::ArtifactHandoff,
+                    value: SuppliedValueRef::Artifact(ArtifactValueRef {
+                        artifact_id: "artifact_child_frame_ref".to_string(),
+                        artifact_type_id: "frame_ref".to_string(),
+                        schema_version: 1,
+                        content: json!({
+                            "frame_id": hex::encode(child_frame_id),
+                            "node_id": hex::encode(child_node_id),
+                            "frame_type": "context-docs-writer",
+                        }),
+                    }),
+                },
+            ],
+            upstream_lineage: Some(UpstreamLineage {
+                task_id: "task_docs_writer".to_string(),
+                task_run_id: "taskrun_phase4".to_string(),
+                capability_path: vec!["capinst_prepare".to_string()],
+                batch_index: None,
+                node_index: None,
+                repair_scope: None,
+            }),
+            execution_context: CapabilityExecutionContext {
+                attempt: 1,
+                trace_id: Some("trace_phase4".to_string()),
+                deadline_ms: None,
+                cancellation_key: None,
+                dispatch_priority: None,
+            },
+        };
+
+        let prepare_result = rt
+            .block_on(registry.get("context_generate_prepare", 1).unwrap().invoke(
+                run_context.api(),
+                &prepare_runtime,
+                &prepare_payload,
+                None,
+            ))
+            .unwrap();
+
+        let provider_request = prepare_result
+            .emitted_artifacts
+            .iter()
+            .find(|artifact| artifact.artifact_type_id == "provider_execute_request")
+            .unwrap();
+        let request_json = serde_json::to_string(&provider_request.content).unwrap();
+        assert!(request_json.contains("# Existing Child README"));
     });
 }
