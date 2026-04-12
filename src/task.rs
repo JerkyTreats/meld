@@ -24,7 +24,7 @@ pub use contracts::{
     ArtifactRepoRecord, CapabilityInvocationRecord, CompiledTaskRecord, TaskDefinition,
     TaskDependencyEdge, TaskDependencyKind, TaskInitSlotSpec,
 };
-pub use events::TaskEvent;
+pub use events::{build_execution_task_envelope, canonical_task_event_type, ExecutionTaskEventData, TaskEvent};
 pub use executor::TaskExecutor;
 pub use expansion::{
     compile_task_expansion_request, parse_task_expansion_request_artifact, CompiledTaskDelta,

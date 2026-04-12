@@ -31,6 +31,10 @@ use crate::telemetry::{
 };
 use crate::types::{FrameID, NodeID};
 use crate::workflow::gates::evaluate_gate;
+use crate::workflow::events::{
+    workflow_turn_completed_envelope, workflow_turn_failed_envelope,
+    workflow_turn_started_envelope, ExecutionWorkflowTurnEventData,
+};
 use crate::workflow::profile::{WorkflowProfile, WorkflowTurn};
 use crate::workflow::record_contracts::{
     prompt_link_record_from_contract_v1, GateOutcome, PromptLinkRecordInputV1,
@@ -382,7 +386,7 @@ pub(crate) async fn execute_registered_workflow_async(
 
             emit_workflow_turn_event(
                 event_context,
-                "workflow_turn_started",
+                "execution.workflow.turn_started",
                 WorkflowTurnEventData {
                     workflow_id: profile.workflow_id.clone(),
                     thread_id: thread_id.clone(),
@@ -552,7 +556,7 @@ pub(crate) async fn execute_registered_workflow_async(
                     );
                     emit_workflow_turn_event(
                         event_context,
-                        "workflow_turn_failed",
+                        "execution.workflow.turn_failed",
                         WorkflowTurnEventData {
                             workflow_id: profile.workflow_id.clone(),
                             thread_id: thread_id.clone(),
@@ -619,7 +623,7 @@ pub(crate) async fn execute_registered_workflow_async(
                     })?;
                     emit_workflow_turn_event(
                         event_context,
-                        "workflow_turn_failed",
+                        "execution.workflow.turn_failed",
                         WorkflowTurnEventData {
                             workflow_id: profile.workflow_id.clone(),
                             thread_id: thread_id.clone(),
@@ -686,7 +690,7 @@ pub(crate) async fn execute_registered_workflow_async(
                 })?;
                 emit_workflow_turn_event(
                     event_context,
-                    "workflow_turn_failed",
+                    "execution.workflow.turn_failed",
                     WorkflowTurnEventData {
                         workflow_id: profile.workflow_id.clone(),
                         thread_id: thread_id.clone(),
@@ -757,7 +761,7 @@ pub(crate) async fn execute_registered_workflow_async(
 
             emit_workflow_turn_event(
                 event_context,
-                "workflow_turn_completed",
+                "execution.workflow.turn_completed",
                 WorkflowTurnEventData {
                     workflow_id: profile.workflow_id.clone(),
                     thread_id: thread_id.clone(),
@@ -1024,8 +1028,29 @@ fn emit_workflow_turn_event(
     payload: WorkflowTurnEventData,
 ) {
     if let Some(ctx) = event_context {
-        ctx.progress
-            .emit_event_best_effort(&ctx.session_id, event_type, json!(payload));
+        let envelope = match event_type {
+            "execution.workflow.turn_started" => workflow_turn_started_envelope(
+                &ctx.session_id,
+                ExecutionWorkflowTurnEventData::from(payload),
+            ),
+            "execution.workflow.turn_completed" => workflow_turn_completed_envelope(
+                &ctx.session_id,
+                ExecutionWorkflowTurnEventData::from(payload),
+            ),
+            "execution.workflow.turn_failed" => workflow_turn_failed_envelope(
+                &ctx.session_id,
+                ExecutionWorkflowTurnEventData::from(payload),
+            ),
+            _ => return,
+        };
+        ctx.progress.emit_domain_event_best_effort(
+            &ctx.session_id,
+            &envelope.domain_id,
+            &envelope.stream_id,
+            &envelope.event_type,
+            envelope.content_hash.clone(),
+            envelope.data.clone(),
+        );
     }
 }
 

@@ -7,11 +7,15 @@ use crate::capability::{
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::task::executor::TaskExecutor;
+use crate::task::events::build_execution_task_envelope;
 use crate::task::ArtifactRecord;
 use crate::task::{compile_task_expansion_request, parse_task_expansion_request_artifact};
 use crate::telemetry::WorkflowTurnEventData;
+use crate::workflow::events::{
+    workflow_turn_completed_envelope, workflow_turn_failed_envelope,
+    workflow_turn_started_envelope, ExecutionWorkflowTurnEventData,
+};
 use futures::stream::{FuturesUnordered, StreamExt};
-use serde_json::json;
 use std::collections::HashMap;
 
 /// Summary for one completed task runtime execution.
@@ -46,6 +50,7 @@ pub async fn execute_task_to_completion(
     event_context: Option<&QueueEventContext>,
     workflow_telemetry: Option<&WorkflowTaskTelemetry>,
 ) -> Result<TaskRunSummary, ApiError> {
+    let mut emitted_task_event_count = 0usize;
     loop {
         if executor.is_complete() {
             return Ok(TaskRunSummary {
@@ -58,6 +63,7 @@ pub async fn execute_task_to_completion(
         }
 
         let ready = executor.release_ready_invocations(CapabilityExecutionContext::default())?;
+        emit_new_task_events(event_context, executor, &mut emitted_task_event_count);
         if ready.is_empty() {
             return Err(ApiError::GenerationFailed(format!(
                 "Task '{}' is blocked with no ready capability instances",
@@ -100,7 +106,7 @@ pub async fn execute_task_to_completion(
                 if stage == "prepare" {
                     emit_workflow_turn_event(
                         ctx,
-                        "workflow_turn_started",
+                        "execution.workflow.turn_started",
                         workflow_turn_event_data(telemetry, &payload, &turn_id, None, None),
                     );
                 }
@@ -152,11 +158,12 @@ pub async fn execute_task_to_completion(
                         if stage == "finalize" {
                             emit_workflow_turn_event(
                                 ctx,
-                                "workflow_turn_completed",
+                                "execution.workflow.turn_completed",
                                 workflow_turn_event_data(telemetry, &payload, &turn_id, None, None),
                             );
                         }
                     }
+                    emit_new_task_events(event_context, executor, &mut emitted_task_event_count);
                 }
                 Err(err) => {
                     if let (Some(ctx), Some(telemetry), Some((turn_id, _stage))) = (
@@ -166,7 +173,7 @@ pub async fn execute_task_to_completion(
                     ) {
                         emit_workflow_turn_event(
                             ctx,
-                            "workflow_turn_failed",
+                            "execution.workflow.turn_failed",
                             workflow_turn_event_data(
                                 telemetry,
                                 &payload,
@@ -186,6 +193,7 @@ pub async fn execute_task_to_completion(
                         ),
                         err.to_string(),
                     )?;
+                    emit_new_task_events(event_context, executor, &mut emitted_task_event_count);
                     return Err(err);
                 }
             }
@@ -193,15 +201,59 @@ pub async fn execute_task_to_completion(
     }
 }
 
+fn emit_new_task_events(
+    event_context: Option<&QueueEventContext>,
+    executor: &TaskExecutor,
+    emitted_task_event_count: &mut usize,
+) {
+    let Some(ctx) = event_context else {
+        *emitted_task_event_count = executor.events().len();
+        return;
+    };
+
+    for event in executor.events().iter().skip(*emitted_task_event_count) {
+        if let Some(envelope) = build_execution_task_envelope(&ctx.session_id, event) {
+            ctx.progress.emit_domain_event_best_effort(
+                &ctx.session_id,
+                &envelope.domain_id,
+                &envelope.stream_id,
+                &envelope.event_type,
+                envelope.content_hash.clone(),
+                envelope.data.clone(),
+            );
+        }
+    }
+
+    *emitted_task_event_count = executor.events().len();
+}
+
 fn emit_workflow_turn_event(
     event_context: &QueueEventContext,
     event_type: &str,
     payload: WorkflowTurnEventData,
 ) {
-    event_context.progress.emit_event_best_effort(
+    let envelope = match event_type {
+        "execution.workflow.turn_started" => {
+            workflow_turn_started_envelope(&event_context.session_id, ExecutionWorkflowTurnEventData::from(payload))
+        }
+        "execution.workflow.turn_completed" => workflow_turn_completed_envelope(
+            &event_context.session_id,
+            ExecutionWorkflowTurnEventData::from(payload),
+        ),
+        "execution.workflow.turn_failed" => workflow_turn_failed_envelope(
+            &event_context.session_id,
+            ExecutionWorkflowTurnEventData::from(payload),
+        ),
+        _ => return,
+    };
+
+    event_context.progress.emit_domain_event_best_effort(
         &event_context.session_id,
-        event_type,
-        json!(payload),
+        &envelope.domain_id,
+        &envelope.stream_id,
+        &envelope.event_type,
+        envelope.content_hash.clone(),
+        envelope.data.clone(),
     );
 }
 

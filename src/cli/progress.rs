@@ -144,7 +144,7 @@ impl LivePanelReducer {
                 self.total_nodes = read_usize(&event.data, "total_nodes");
                 self.total_levels = read_usize(&event.data, "total_levels");
             }
-            "level_started" => {
+            "level_started" | "execution.control.level_started" => {
                 self.current_level = read_usize(&event.data, "level_index");
             }
             "queue_stats" => {
@@ -153,7 +153,7 @@ impl LivePanelReducer {
                 self.queue_processing =
                     read_usize(&event.data, "processing").unwrap_or(self.queue_processing);
             }
-            "node_generation_started" => {
+            "node_generation_started" | "execution.control.node_started" => {
                 if read_string(&event.data, "program_kind").as_deref() == Some("workflow") {
                     self.workflow_mode = true;
                 }
@@ -170,7 +170,7 @@ impl LivePanelReducer {
                     );
                 }
             }
-            "workflow_turn_started" => {
+            "workflow_turn_started" | "execution.workflow.turn_started" => {
                 self.workflow_mode = true;
                 if let Some(turn_id) = read_string(&event.data, "turn_id") {
                     *self.active_turns.entry(turn_id.clone()).or_insert(0) += 1;
@@ -186,21 +186,27 @@ impl LivePanelReducer {
                     }
                 }
             }
-            "workflow_turn_completed" | "workflow_turn_failed" => {
+            "workflow_turn_completed"
+            | "workflow_turn_failed"
+            | "execution.workflow.turn_completed"
+            | "execution.workflow.turn_failed" => {
                 if let Some(turn_id) = read_string(&event.data, "turn_id") {
                     decrement_counter(&mut self.active_turns, &turn_id);
                 }
-                if event.event_type == "workflow_turn_failed" {
+                if matches!(
+                    event.event_type.as_str(),
+                    "workflow_turn_failed" | "execution.workflow.turn_failed"
+                ) {
                     self.latest_message = read_string(&event.data, "error");
                 }
             }
-            "node_generation_completed" => {
+            "node_generation_completed" | "execution.control.node_completed" => {
                 self.completed += 1;
                 if let Some(node_id) = read_string(&event.data, "node_id") {
                     self.active_targets.remove(&node_id);
                 }
             }
-            "node_generation_failed" => {
+            "node_generation_failed" | "execution.control.node_failed" => {
                 self.failed += 1;
                 self.latest_message = read_string(&event.data, "error");
                 if let Some(node_id) = read_string(&event.data, "node_id") {

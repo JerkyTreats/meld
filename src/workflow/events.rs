@@ -21,6 +21,27 @@ pub struct ExecutionWorkflowTurnEventData {
     pub error: Option<String>,
 }
 
+impl From<crate::telemetry::WorkflowTurnEventData> for ExecutionWorkflowTurnEventData {
+    fn from(value: crate::telemetry::WorkflowTurnEventData) -> Self {
+        Self {
+            workflow_id: value.workflow_id,
+            thread_id: value.thread_id,
+            turn_id: value.turn_id,
+            turn_seq: value.turn_seq,
+            node_id: value.node_id,
+            path: value.path,
+            agent_id: value.agent_id,
+            provider_name: value.provider_name,
+            frame_type: value.frame_type,
+            attempt: value.attempt,
+            plan_id: value.plan_id,
+            level_index: value.level_index,
+            final_frame_id: value.final_frame_id,
+            error: value.error,
+        }
+    }
+}
+
 fn workflow_envelope(
     session_id: &str,
     event_type: &str,

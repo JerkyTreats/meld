@@ -5,11 +5,17 @@ use crate::context::generation::plan::{
     LevelSummary,
 };
 use crate::context::queue::{FrameGenerationQueue, Priority};
+use crate::control::events::{
+    generation_completed_envelope, generation_failed_envelope, generation_started_envelope,
+    level_completed_envelope, level_started_envelope, node_completed_envelope,
+    node_failed_envelope, node_started_envelope, GenerationCompletedEventData,
+    GenerationFailedEventData, GenerationStartedEventData, LevelCompletedEventData,
+    LevelStartedEventData, NodeCompletedEventData, NodeFailedEventData, NodeStartedEventData,
+};
 use crate::error::ApiError;
 use crate::telemetry::ProgressRuntime;
 use crate::types::FrameID;
 use futures::stream::{FuturesUnordered, StreamExt};
-use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -85,39 +91,43 @@ impl GenerationExecutor {
         let mut result = GenerationResult::new(plan.plan_id.clone());
         let session_id = plan.session_id.clone();
 
-        self.emit_event(
+        self.emit_envelope(
             session_id.as_deref(),
-            "generation_started",
-            json!({
-                "plan_id": plan.plan_id,
-                "total_levels": plan.total_levels,
-                "total_nodes": plan.total_nodes,
-                "target_path": plan.target_path,
-                "program_kind": plan
-                    .levels
-                    .first()
-                    .and_then(|level| level.first())
-                    .map(|item| item.program.kind_str())
-                    .unwrap_or("unknown"),
-                "workflow_id": plan
-                    .levels
-                    .first()
-                    .and_then(|level| level.first())
-                    .and_then(|item| item.program.workflow_id()),
-            }),
+            generation_started_envelope(
+                session_id.as_deref().unwrap_or(&plan.plan_id),
+                GenerationStartedEventData {
+                    plan_id: plan.plan_id.clone(),
+                    total_levels: plan.total_levels,
+                    total_nodes: plan.total_nodes,
+                    target_path: plan.target_path.clone(),
+                    program_kind: plan
+                        .levels
+                        .first()
+                        .and_then(|level| level.first())
+                        .map(|item| item.program.kind_str().to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    workflow_id: plan
+                        .levels
+                        .first()
+                        .and_then(|level| level.first())
+                        .and_then(|item| item.program.workflow_id().map(ToString::to_string)),
+                },
+            ),
         );
 
         for (level_index, level_items) in plan.levels.iter().enumerate() {
             let plan_id = plan.plan_id.clone();
             let queue_priority: Priority = plan.priority.into();
-            self.emit_event(
+            self.emit_envelope(
                 session_id.as_deref(),
-                "level_started",
-                json!({
-                    "plan_id": plan_id,
-                    "level_index": level_index,
-                    "total_count": level_items.len(),
-                }),
+                level_started_envelope(
+                    session_id.as_deref().unwrap_or(&plan_id),
+                    LevelStartedEventData {
+                        plan_id: plan_id.clone(),
+                        level_index,
+                        total_count: level_items.len(),
+                    },
+                ),
             );
 
             let mut generated_count = 0usize;
@@ -125,20 +135,22 @@ impl GenerationExecutor {
             let mut futures = FuturesUnordered::new();
             for item in level_items {
                 let item_plan_id = plan.plan_id.clone();
-                self.emit_event(
+                self.emit_envelope(
                     session_id.as_deref(),
-                    "node_generation_started",
-                    json!({
-                        "plan_id": item_plan_id,
-                        "level_index": level_index,
-                        "node_id": hex::encode(item.node_id),
-                        "path": item.path,
-                        "agent_id": item.agent_id,
-                        "provider_name": item.provider.provider_name,
-                        "frame_type": item.frame_type,
-                        "program_kind": item.program.kind_str(),
-                        "workflow_id": item.program.workflow_id(),
-                    }),
+                    node_started_envelope(
+                        session_id.as_deref().unwrap_or(&item_plan_id),
+                        NodeStartedEventData {
+                            plan_id: item_plan_id.clone(),
+                            level_index,
+                            node_id: hex::encode(item.node_id),
+                            path: item.path.clone(),
+                            agent_id: item.agent_id.clone(),
+                            provider_name: item.provider.provider_name.clone(),
+                            frame_type: item.frame_type.clone(),
+                            program_kind: item.program.kind_str().to_string(),
+                            workflow_id: item.program.workflow_id().map(ToString::to_string),
+                        },
+                    ),
                 );
 
                 let submit_plan_id = plan.plan_id.clone();
@@ -157,18 +169,20 @@ impl GenerationExecutor {
                     Ok(frame_id) => {
                         generated_count += 1;
                         result.successes.insert(item.node_id, frame_id);
-                        self.emit_event(
+                        self.emit_envelope(
                             session_id.as_deref(),
-                            "node_generation_completed",
-                            json!({
-                                "plan_id": plan.plan_id,
-                                "level_index": level_index,
-                                "node_id": hex::encode(item.node_id),
-                                "path": item.path,
-                                "frame_id": hex::encode(frame_id),
-                                "program_kind": item.program.kind_str(),
-                                "workflow_id": item.program.workflow_id(),
-                            }),
+                            node_completed_envelope(
+                                session_id.as_deref().unwrap_or(&plan.plan_id),
+                                NodeCompletedEventData {
+                                    plan_id: plan.plan_id.clone(),
+                                    level_index,
+                                    node_id: hex::encode(item.node_id),
+                                    path: item.path.clone(),
+                                    frame_id: hex::encode(frame_id),
+                                    program_kind: item.program.kind_str().to_string(),
+                                    workflow_id: item.program.workflow_id().map(ToString::to_string),
+                                },
+                            ),
                         );
                     }
                     Err(err) => {
@@ -179,18 +193,20 @@ impl GenerationExecutor {
                                 message: err.to_string(),
                             },
                         );
-                        self.emit_event(
+                        self.emit_envelope(
                             session_id.as_deref(),
-                            "node_generation_failed",
-                            json!({
-                                "plan_id": plan.plan_id,
-                                "level_index": level_index,
-                                "node_id": hex::encode(item.node_id),
-                                "path": item.path,
-                                "error": err.to_string(),
-                                "program_kind": item.program.kind_str(),
-                                "workflow_id": item.program.workflow_id(),
-                            }),
+                            node_failed_envelope(
+                                session_id.as_deref().unwrap_or(&plan.plan_id),
+                                NodeFailedEventData {
+                                    plan_id: plan.plan_id.clone(),
+                                    level_index,
+                                    node_id: hex::encode(item.node_id),
+                                    path: item.path.clone(),
+                                    error: err.to_string(),
+                                    program_kind: item.program.kind_str().to_string(),
+                                    workflow_id: item.program.workflow_id().map(ToString::to_string),
+                                },
+                            ),
                         );
                         if matches!(plan.failure_policy, FailurePolicy::FailImmediately) {
                             fail_immediately_hit = true;
@@ -209,28 +225,33 @@ impl GenerationExecutor {
                 total_count: level_items.len(),
             });
 
-            self.emit_event(
+            self.emit_envelope(
                 session_id.as_deref(),
-                "level_completed",
-                json!({
-                    "plan_id": plan.plan_id,
-                    "level_index": level_index,
-                    "generated_count": generated_count,
-                    "failed_count": failed_count,
-                    "total_count": level_items.len(),
-                }),
+                level_completed_envelope(
+                    session_id.as_deref().unwrap_or(&plan.plan_id),
+                    LevelCompletedEventData {
+                        plan_id: plan.plan_id.clone(),
+                        level_index,
+                        generated_count,
+                        failed_count,
+                        total_count: level_items.len(),
+                    },
+                ),
             );
 
             if fail_immediately_hit {
-                self.emit_event(
+                self.emit_envelope(
                     session_id.as_deref(),
-                    "generation_failed",
-                    json!({
-                        "plan_id": plan.plan_id,
-                        "reason": "fail_immediately",
-                        "total_generated": result.total_generated,
-                        "total_failed": result.total_failed,
-                    }),
+                    generation_failed_envelope(
+                        session_id.as_deref().unwrap_or(&plan.plan_id),
+                        GenerationFailedEventData {
+                            plan_id: plan.plan_id.clone(),
+                            reason: "fail_immediately".to_string(),
+                            failed_level_index: None,
+                            total_generated: result.total_generated,
+                            total_failed: result.total_failed,
+                        },
+                    ),
                 );
                 return Err(ApiError::GenerationFailed(format!(
                     "Generation failed immediately for plan {}",
@@ -240,29 +261,33 @@ impl GenerationExecutor {
 
             if failed_count > 0 && matches!(plan.failure_policy, FailurePolicy::StopOnLevelFailure)
             {
-                self.emit_event(
+                self.emit_envelope(
                     session_id.as_deref(),
-                    "generation_failed",
-                    json!({
-                        "plan_id": plan.plan_id,
-                        "reason": "stop_on_level_failure",
-                        "failed_level_index": level_index,
-                        "total_generated": result.total_generated,
-                        "total_failed": result.total_failed,
-                    }),
+                    generation_failed_envelope(
+                        session_id.as_deref().unwrap_or(&plan.plan_id),
+                        GenerationFailedEventData {
+                            plan_id: plan.plan_id.clone(),
+                            reason: "stop_on_level_failure".to_string(),
+                            failed_level_index: Some(level_index),
+                            total_generated: result.total_generated,
+                            total_failed: result.total_failed,
+                        },
+                    ),
                 );
                 return Ok(result);
             }
         }
 
-        self.emit_event(
+        self.emit_envelope(
             session_id.as_deref(),
-            "generation_completed",
-            json!({
-                "plan_id": result.plan_id,
-                "total_generated": result.total_generated,
-                "total_failed": result.total_failed,
-            }),
+            generation_completed_envelope(
+                session_id.as_deref().unwrap_or(&result.plan_id),
+                GenerationCompletedEventData {
+                    plan_id: result.plan_id.clone(),
+                    total_generated: result.total_generated,
+                    total_failed: result.total_failed,
+                },
+            ),
         );
 
         Ok(result)
@@ -275,9 +300,20 @@ impl GenerationExecutor {
         self.wait_timeout
     }
 
-    fn emit_event(&self, session_id: Option<&str>, event_type: &str, payload: serde_json::Value) {
+    fn emit_envelope(
+        &self,
+        session_id: Option<&str>,
+        envelope: crate::telemetry::events::ProgressEnvelope,
+    ) {
         if let (Some(progress), Some(session_id)) = (self.progress.as_ref(), session_id) {
-            progress.emit_event_best_effort(session_id, event_type, payload);
+            progress.emit_domain_event_best_effort(
+                session_id,
+                &envelope.domain_id,
+                &envelope.stream_id,
+                &envelope.event_type,
+                envelope.content_hash.clone(),
+                envelope.data.clone(),
+            );
         }
     }
 }

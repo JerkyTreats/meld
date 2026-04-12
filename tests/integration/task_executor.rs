@@ -5,8 +5,8 @@ use meld::capability::{
     ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec, ScopeContract,
 };
 use meld::task::{
-    compile_task_definition, ArtifactProducerRef, ArtifactRecord, InitArtifactValue,
-    TaskDefinition, TaskExecutor, TaskInitSlotSpec, TaskRunContext,
+    build_execution_task_envelope, compile_task_definition, ArtifactProducerRef, ArtifactRecord,
+    InitArtifactValue, TaskDefinition, TaskExecutor, TaskInitSlotSpec, TaskRunContext,
 };
 use serde_json::json;
 
@@ -226,4 +226,32 @@ fn task_executor_unblocks_downstream_after_artifact_persist() {
         .events()
         .iter()
         .any(|event| event.event_type == "task_succeeded"));
+}
+
+#[test]
+fn task_executor_publishes_canonical_events() {
+    let mut executor =
+        TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+
+    let _ = executor
+        .release_ready_invocations(CapabilityExecutionContext::default())
+        .unwrap();
+
+    let envelopes = executor
+        .events()
+        .iter()
+        .filter_map(|event| build_execution_task_envelope("session_1", event))
+        .collect::<Vec<_>>();
+
+    assert!(envelopes
+        .iter()
+        .any(|event| event.event_type == "execution.task.requested"));
+    assert!(envelopes
+        .iter()
+        .any(|event| event.event_type == "execution.task.started"));
+    assert!(envelopes
+        .iter()
+        .any(|event| event.event_type == "execution.task.progressed"));
+    assert!(envelopes.iter().all(|event| event.domain_id == "execution"));
+    assert!(envelopes.iter().all(|event| event.stream_id == "taskrun_1"));
 }

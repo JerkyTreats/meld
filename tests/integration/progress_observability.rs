@@ -779,11 +779,13 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
 
         let level_started_count = events
             .iter()
-            .filter(|e| e.event_type == "level_started")
+            .filter(|e| e.event_type == "execution.control.level_started")
             .count();
         assert_eq!(level_started_count, 1);
 
-        assert!(events.iter().any(|e| e.event_type == "generation_started"));
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "execution.control.generation_started"));
         assert!(events
             .iter()
             .any(|e| e.event_type == "workflow_target_started"));
@@ -870,7 +872,7 @@ fn context_generate_recursive_completes_levels_bottom_up() {
 
         let completed_levels: Vec<u64> = events
             .iter()
-            .filter(|event| event.event_type == "node_generation_completed")
+            .filter(|event| event.event_type == "execution.control.node_completed")
             .map(|event| {
                 event
                     .data
@@ -885,7 +887,7 @@ fn context_generate_recursive_completes_levels_bottom_up() {
         let level_completed_positions: Vec<(u64, usize)> = events
             .iter()
             .enumerate()
-            .filter(|(_, event)| event.event_type == "level_completed")
+            .filter(|(_, event)| event.event_type == "execution.control.level_completed")
             .map(|(index, event)| {
                 (
                     event
