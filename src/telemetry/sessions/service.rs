@@ -201,8 +201,17 @@ impl ProgressRuntime {
     }
 }
 
-fn to_api_error(err: std::sync::mpsc::SendError<ProgressEnvelope>) -> ApiError {
-    ApiError::StorageError(StorageError::IoError(std::io::Error::other(
-        err.to_string(),
-    )))
+fn to_api_error(err: std::sync::mpsc::TrySendError<ProgressEnvelope>) -> ApiError {
+    match err {
+        std::sync::mpsc::TrySendError::Full(_) => {
+            ApiError::StorageError(StorageError::Backpressure(
+                "progress bus is full".to_string(),
+            ))
+        }
+        std::sync::mpsc::TrySendError::Disconnected(_) => {
+            ApiError::StorageError(StorageError::IoError(std::io::Error::other(
+                "progress bus disconnected",
+            )))
+        }
+    }
 }

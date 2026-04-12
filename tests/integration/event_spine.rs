@@ -1,3 +1,9 @@
+use meld::control::projection::ExecutionProjection;
+use meld::task::ExecutionTaskEventData;
+use meld::telemetry::emission::emit_command_summary;
+use meld::telemetry::routing::bus::ProgressBus;
+use meld::telemetry::routing::ingestor::EventIngestor;
+use meld::telemetry::sinks::store::ProgressStore;
 use meld::telemetry::ProgressRuntime;
 use serde_json::json;
 
@@ -54,4 +60,86 @@ fn legacy_events_remain_readable() {
     assert_eq!(events[0].stream_id, session_id);
     assert_eq!(events[0].content_hash, None);
     assert_eq!(events[0].event_type, "session_started");
+}
+
+#[test]
+fn telemetry_is_downstream_only() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(dir.path()).unwrap();
+    let runtime = ProgressRuntime::new(db).unwrap();
+    let session_id = runtime.start_command_session("summary".to_string()).unwrap();
+
+    let data = ExecutionTaskEventData {
+        task_id: "task_one".to_string(),
+        task_run_id: "run_one".to_string(),
+        capability_instance_id: None,
+        invocation_id: None,
+        artifact_id: None,
+        artifact_type_id: None,
+        attempt_index: None,
+        ready_count: None,
+        running_count: None,
+        blocked_reason: None,
+        error: None,
+    };
+
+    runtime
+        .emit_domain_event(
+            &session_id,
+            "execution",
+            &data.task_run_id,
+            "execution.task.requested",
+            None,
+            json!(data),
+        )
+        .unwrap();
+
+    emit_command_summary(
+        &runtime,
+        &session_id,
+        "summary",
+        None,
+        true,
+        10,
+        Some("ok".to_string()),
+        None,
+        None,
+        None,
+    );
+
+    let events = runtime.store().read_all_events_after(0).unwrap();
+    assert!(events.iter().any(|event| event.event_type == "command_summary"));
+
+    let projection = ExecutionProjection::replay_from_store(runtime.store(), 0).unwrap();
+    assert!(projection.active_tasks.contains("run_one"));
+    assert!(projection.completed_tasks.is_empty());
+    assert!(projection.last_applied_seq < events.last().unwrap().seq);
+}
+
+#[test]
+fn slow_or_missing_consumer_does_not_break_append() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(dir.path()).unwrap();
+    let store = ProgressStore::shared(db).unwrap();
+    let (bus, receiver) = ProgressBus::new_pair_with_capacity(1);
+
+    bus.emit("s1", "session_started", json!({})).unwrap();
+    assert!(matches!(
+        bus.emit("s1", "session_ended", json!({})),
+        Err(std::sync::mpsc::TrySendError::Full(_))
+    ));
+
+    let mut ingestor = EventIngestor::new(store.clone(), receiver);
+    ingestor.ingest_pending().unwrap();
+
+    let events = store.read_all_events_after(0).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].seq, 1);
+
+    bus.emit("s1", "session_ended", json!({})).unwrap();
+    ingestor.ingest_pending().unwrap();
+
+    let events = store.read_all_events_after(0).unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1].seq, 2);
 }
