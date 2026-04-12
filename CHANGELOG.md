@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.4.0](https://github.com/JerkyTreats/meld/compare/v2.3.1...v2.4.0) — 2026-04-12
+
+### Features
+
+* **capability:** add capability to write files, wire to docs_writer_v2 [8835cc1](https://github.com/JerkyTreats/meld/commit/8835cc1b1daed2464b65a75c3cec4de4e7f3c62a)
+
+### Refactors
+
+* **cli:** move domain command routing into domain tooling [e554e0d](https://github.com/JerkyTreats/meld/commit/e554e0d73a50efd8ebe10aa9869aa93a41b25ebd)
+
+### Documentation
+
+* **completed:** move capabilities to completed [f09f383](https://github.com/JerkyTreats/meld/commit/f09f3830af885382f41b1533fd3e65ac71e7bdfd)
+* **design:** add cognitive architecture [16fc7d2](https://github.com/JerkyTreats/meld/commit/16fc7d219cfc6ed3f1abb377c27ff6d765f8f483)
+
+### Chores
+
+* **format:** apply rustfmt to workspace publish files [cf7a04b](https://github.com/JerkyTreats/meld/commit/cf7a04ba740bbe2208c33b3db6c80117112ed7db)
+
+
 ## [2.3.1](https://github.com/JerkyTreats/meld/compare/v2.3.0...v2.3.1) — 2026-04-06
 
 ### Bug Fixes
