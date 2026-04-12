@@ -1,18 +1,15 @@
 # Multi-Domain Spine
 
-Date: 2026-04-08
+Date: 2026-04-12
 Status: proposed
-Scope: generalization of the event spine from a single-domain application log to a shared temporal ledger across heterogeneous object graph domains
+Scope: north star for extending the first execution spine into one shared temporal ledger across cognitive domains
 
 ## Intent
 
-Define the architectural model for attaching multiple independent merkle-like object graphs
-to a single temporal event spine.
+Define how the first spine grows beyond `execution`.
 
-The current application is anchored in a filesystem representation. The spine refactor
-described in [Event Manager Requirements](event_manager_requirements.md) targets task execution
-events from one domain. This document defines the north star that constrains how the spine
-envelope is designed so that future domains can attach without schema migration.
+The immediate refactor lands one real spine for `execution`.
+This document constrains that work so `sensory`, `world_state`, and attached object domains can join later without another envelope reset.
 
 ## The Problem
 
@@ -49,71 +46,75 @@ domain-owned. This is the hub-and-spoke model.
 The current filesystem merkle tree.
 
 Spine events: `workspace_scan_completed`, `workspace_node_changed`, `workspace_node_removed`.
-Object store: frame storage (content-addressed by `FrameID`).
-Reference projection: `HeadIndex[(node_id, frame_type)] → FrameID`.
+Object store: frame storage keyed by `FrameID`.
+Reference projection: `HeadIndex` over node and frame type.
 
-The lift from the current model: filesystem mutations that are currently implicit (detected
-on scan) become explicit spine events with a domain_id of `workspace_fs`. The merkle tree
-hash per scan becomes a spine event payload field. Current state remains a projection.
+The lift from the current model is simple:
+filesystem mutations that are currently implicit during scan become explicit spine events with a `domain_id` of `workspace_fs`.
+The merkle tree hash per scan becomes a spine event payload field.
+Current state remains a projection.
 
-### task_graph
+### execution
 
-Task execution records as an append-only chain.
+Execution facts from planning, task progression, repair, and action outcome publication.
 
-Each capability invocation record hashes the prior invocation record plus its inputs and
-outputs. The chain for one task run is: `task_created → cap1_started → cap1_failed →
-cap1_retried → cap2_started → cap2_completed → task_expanded → cap3_started →
-cap3_completed → task_completed`.
+The first spine refactor targets this domain.
+The first event families are `execution.task.*`, `execution.control.*`, `execution.repair.*`, and `execution.artifact.*`.
 
-Spine events: `task_requested`, `task_started`, `capability_invoked`, `capability_failed`,
-`task_expanded`, `task_succeeded`, `task_failed`.
-Object store: capability invocation records and artifact blobs (content-addressed).
-Reference projection: task network state (active, blocked, completed, failed sets).
+Object store: task invocation records, execution artifacts, and related content-addressed blobs.
+Reference projection: task-network state and other execution projections.
 
-This domain already exists partially. The spine refactor in
-[Telemetry Refactor](telemetry_refactor.md) targets this domain. Adding `domain_id` to the
-envelope from day one means task_graph events are already domain-tagged.
+This domain already exists partially in code.
+The first refactor should tag all canonical facts with `domain_id = "execution"` from day one.
 
-### knowledge_graph
+### world_state
 
-Conceptual entities such as thesis nodes, contextual facts, and decision records.
+Curated claims, belief revisions, calibration records, and world-model projections.
 
-A "Core Thesis" is a node. Linked "contextual facts" are nodes. Decision records reference
-the task graph events that produced them. Edges are typed and have provenance (created at
-spine sequence S).
+This domain is not landing in the first spine refactor.
+Its inclusion here constrains the envelope and reference model now.
 
-This domain is not being built now. Its inclusion here constrains the envelope design:
-`domain_id` must be a first-class field, and cross-domain references must be expressible
-via `DomainObjectRef`.
+Spine events: `world_state.claim_added`, `world_state.belief_revised`, `world_state.claim_superseded`, `world_state.calibration_recorded`.
+Object store: evidence blobs, claim payloads, and projection snapshots where needed.
+Reference projection: current belief view and knowledge graph materialization.
 
-Spine events: `knowledge_node_added`, `knowledge_edge_added`, `knowledge_node_superseded`.
-Object store: knowledge graph node content (content-addressed).
-Reference projection: knowledge graph current view (latest version of each node and its edges).
+### sensory
+
+Promoted observations from lowered sensory pipelines.
+
+This domain does not publish raw high-rate lanes into the spine.
+It publishes promoted semantic observations only.
+
+Spine events: `sensory.observe.promoted`, `sensory.observe.retracted`, `sensory.observe.window_closed`.
+Object store: optional observation summaries or referenced evidence blobs.
+Reference projection: local observation windows or promoted observation indexes.
 
 ## Required Envelope Fields
 
-The current envelope shape is close to correct. Two fields must be added:
+The first spine envelope should include four durable identity anchors:
 
 ```rust
 struct SpineEvent {
     ts: String,
     session: String,
     seq: u64,
-    domain_id: DomainId,               // NEW — which domain this event belongs to
+    domain_id: DomainId,
+    stream_id: String,
     event_type: String,
-    content_hash: Option<Blake3Hash>,  // NEW — hash of the primary object this event touches
+    content_hash: Option<Blake3Hash>,
     data: serde_json::Value,
 }
 ```
 
 `domain_id` enables per-domain filtering and projection without parsing `event_type`.
 
-`content_hash` enables content-addressed lookup from an event reference without loading the
-full artifact. It is `Option` because not every event touches a content-addressed object
-(e.g., `dispatch_requested` events have no primary object).
+`stream_id` anchors one task run, workspace root, belief stream, or sensory lane.
 
-These two fields must be present from the first spine refactor commit. Adding them later
-requires a migration of all stored events.
+`content_hash` enables content-addressed lookup from an event reference without loading the full artifact.
+It is optional because not every event touches one primary content object.
+
+These fields must be present from the first spine refactor commit.
+Adding them later would force another stored event migration.
 
 ## DomainObjectRef
 
@@ -124,51 +125,49 @@ internal identifier scheme.
 struct DomainObjectRef {
     domain_id: DomainId,
     object_kind: ObjectKind,
-    content_hash: Blake3Hash,
+    object_id: String,
 }
 ```
 
 A `NodeID` becomes:
 ```
-DomainObjectRef { domain_id: "workspace_fs", object_kind: "node", content_hash: ... }
+DomainObjectRef { domain_id: "workspace_fs", object_kind: "node", object_id: ... }
 ```
 
 A task run becomes:
 ```
-DomainObjectRef { domain_id: "task_graph", object_kind: "task_run", content_hash: ... }
+DomainObjectRef { domain_id: "execution", object_kind: "task_run", object_id: ... }
 ```
 
-A knowledge graph thesis becomes:
+A world-state entity becomes:
 ```
-DomainObjectRef { domain_id: "knowledge_graph", object_kind: "thesis", content_hash: ... }
+DomainObjectRef { domain_id: "world_state", object_kind: "entity", object_id: ... }
 ```
 
-Cross-domain edges in the knowledge graph are typed references between `DomainObjectRef`
-values. The spine records when those references were created. The knowledge graph node that
-references a task_graph event carries a `DomainObjectRef` pointing to that event.
+Cross-domain edges in the knowledge graph are typed references between `DomainObjectRef` values.
+The spine records when those references were created.
+World-state nodes that reference execution outcomes carry `DomainObjectRef` values that point back to the execution stream.
 
-`DomainObjectRef` does not need to be used in the first spine refactor. It needs to be
-defined as a type before the knowledge_graph domain is built. The constraint it imposes
-on the current design is: `NodeID` should not be assumed to be the universal identity
-anchor in new code.
+`DomainObjectRef` does not need full adoption in the first spine refactor.
+It does need to exist before the world-state graph grows into broader cross-domain references.
+The practical constraint is simple:
+new payload schemas should stop assuming that `NodeID` is the universal identity anchor.
 
 ## Temporal Queries Across Domains
 
-With `domain_id` and monotonic `seq` in every event, cross-domain temporal queries become
-straightforward:
+With `domain_id`, `stream_id`, and runtime-wide `seq`, cross-domain temporal queries become straightforward:
 
 **"What was the workspace state when task T completed?"**
 
-1. Find the `task_succeeded` event for task T in the spine. Its sequence is S.
+1. Find the `execution.task.succeeded` event for task T in the spine. Its sequence is S.
 2. Find the latest `workspace_scan_completed` event for the relevant workspace with seq ≤ S.
 3. That event's payload carries the merkle tree hash representing the workspace state at that time.
 
-**"What decision was in effect when frame F was written?"**
+**"What world-state belief was in effect when frame F was written?"**
 
 1. Find the `frame_written` event for frame F. Its sequence is S.
-2. Find the latest `task_artifact_emitted` event for `decision_artifact` for the same node
-   with seq ≤ S.
-3. Resolve the `DecisionArtifact` content from the content store.
+2. Find the latest `world_state.belief_revised` event for the relevant belief stream with seq ≤ S.
+3. Resolve the referenced world-state object or projection snapshot.
 
 These queries do not require joins across systems with different clocks. The spine sequence
 is the shared clock.
@@ -184,6 +183,7 @@ The solution is batch events:
 ```json
 {
   "domain_id": "workspace_fs",
+  "stream_id": "workspace::<root>",
   "event_type": "workspace_scan_batch",
   "content_hash": "hash_of_new_merkle_root",
   "data": {
@@ -196,9 +196,9 @@ The solution is batch events:
 }
 ```
 
-The detailed diff (which nodes changed, their old and new hashes) is stored as a content-
-addressed blob referenced by `change_summary_ref`. The spine event is compact. Consumers
-that need the full diff load it from the content store.
+The detailed diff that lists changed nodes plus old and new hashes is stored as a content-addressed blob referenced by `change_summary_ref`.
+The spine event stays compact.
+Consumers that need the full diff load it from the content store.
 
 ## Genesis Events for Bootstrapping
 
@@ -208,6 +208,7 @@ A genesis event captures the baseline:
 ```json
 {
   "domain_id": "workspace_fs",
+  "stream_id": "workspace::<root>",
   "event_type": "workspace_domain_genesis",
   "content_hash": "hash_of_initial_merkle_root",
   "data": {
@@ -222,24 +223,25 @@ A genesis event captures the baseline:
 After genesis, all subsequent mutations emit delta events. Replaying the genesis event
 plus all subsequent delta events reconstructs the full domain state.
 
-## Constraint on the Immediate Refactor
+## Constraint On The Immediate Refactor
 
-The [Telemetry Refactor](telemetry_refactor.md) is the concrete next work.
-Its scope is the task_graph domain only.
+The [Event Spine Refactor](telemetry_refactor.md) is the concrete next work.
+Its scope is the `execution` domain only.
 
-The constraint this document imposes on that work is narrow:
+The constraints this document imposes on that work are narrow:
 
-1. Add `domain_id` to the spine event envelope. Default value for all current events:
-   `"task_graph"`.
-2. Add `content_hash` as an optional field.
-3. Do not assume `NodeID` is the universal identity type in new event payload schemas.
+1. Add `domain_id`, `stream_id`, and optional `content_hash` to the spine envelope.
+2. Default all first-slice canonical facts to `domain_id = "execution"`.
+3. Make `seq` runtime wide from the first real spine commit.
+4. Do not assume `NodeID` is the universal identity anchor in new payload schemas.
+5. Keep raw sensory lanes outside the canonical spine.
 
-Everything else in the telemetry refactor proceeds as planned.
+Everything else in the first refactor may stay scoped to execution.
 The hub-and-spoke model is the north star, not the immediate implementation target.
 
 ## Read With
 
-- [Event Manager Requirements](event_manager_requirements.md)
-- [Telemetry Refactor](telemetry_refactor.md)
+- [Event Spine Requirements](event_manager_requirements.md)
+- [Event Spine Refactor](telemetry_refactor.md)
 - [Event Management Research](research.md)
 - [Execution Control](../execution/control/README.md)

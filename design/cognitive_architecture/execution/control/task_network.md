@@ -122,19 +122,23 @@ The first pass event path can be viewed as one ordered family:
 This is not a strict linear lifecycle for every task.
 It is the first bounded event vocabulary that the network must understand.
 
-These events should use the current application telemetry envelope:
+These events should use the canonical spine envelope:
 
 ```rust
-struct ProgressEvent {
+struct SpineEvent {
     ts: String,
     session: String,
     seq: u64,
+    domain_id: String,
+    stream_id: String,
     event_type: String,
+    content_hash: Option<String>,
     data: serde_json::Value,
 }
 ```
 
-That keeps task-network reduction aligned with the existing progress runtime and event store.
+For the first landing, `domain_id` should be `execution` and `stream_id` should usually be `task_run_id`.
+That keeps task-network reduction aligned with the first real spine rather than the older telemetry-only shape.
 
 ## State ownership
 

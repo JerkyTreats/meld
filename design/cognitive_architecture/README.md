@@ -78,8 +78,8 @@ This area does own:
 8. [Execution Substrate](execution/substrate.md)
 9. [Execution Control](execution/control/README.md)
 10. [Execution Planning](execution/control/planning/README.md)
-11. [Events Design](events/README.md)
-12. [Spine Concern](spine/README.md)
+11. [Spine Concern](spine/README.md)
+12. [Events Design](events/README.md)
 13. [Further Research Prompts](further_research_prompts.md)
 
 ## Read With

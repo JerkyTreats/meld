@@ -1,242 +1,262 @@
-# Event Manager Requirements
+# Event Spine Requirements
 
-Date: 2026-04-05
+Date: 2026-04-12
 Status: active
-Scope: declarative requirements for the canonical control event manager
+Scope: canonical spine for promoted semantic facts across `sensory`, `world_state`, `execution`, and attached object domains
 
 ## Objective
 
-Define the requirements for an event manager that becomes the canonical feedback spine for control and task execution.
+Define what must be true for the event spine.
+This document closes the core design choices.
+Migration sequencing lives in [Event Spine Refactor](telemetry_refactor.md).
 
-This document states what must be true.
-It does not describe migration sequencing.
+## Current Baseline
+
+The current code already gives the spine a partial shape:
+
+- `src/telemetry/events.rs` defines `ProgressEvent`
+- `src/telemetry/routing/bus.rs` provides in-process ingress
+- `src/telemetry/routing/ingestor.rs` serializes append through one ingestor
+- `src/telemetry/sinks/store.rs` persists ordered records in `sled`
+- `src/telemetry/sessions/service.rs` exposes the current emission path
+- `src/task/events.rs` defines execution event vocabulary
+- `src/task/executor.rs` keeps a task-local event log outside the durable store
+- `src/workspace/watch/events.rs` batches local file changes before any semantic promotion
+
+The current gaps are:
+
+- `seq` is session scoped rather than runtime wide
+- emission drains and flushes on every event
+- execution facts are split across two event paths
+- raw local batching and promoted semantic facts are not separated clearly
+- telemetry still owns too much of the canonical path
 
 ## Core Thesis
 
-The application should have one canonical domain event spine for control relevant facts.
+There must be one canonical spine for promoted semantic facts.
 
 That spine must:
 
 - accept events from concurrent producers
-- preserve deterministic reduction order
-- support durable replay
-- drive state projections
-- allow downstream consumers such as telemetry without making telemetry the owner of domain semantics
+- assign one runtime-wide deterministic order
+- persist append-only records
+- support replay into reducer owned projections
+- allow downstream consumers without making them part of correctness
 
-## Required Ownership
+Raw sensory pulses, transient worker chatter, and presentation summaries do not belong in the canonical spine.
+Only promoted semantic facts belong there.
 
-### Event manager owns
+## Ownership
 
-- event ingress
-- event ordering
-- durability policy
+`events` owns:
+
+- ingress contract
+- sequence assignment
+- durable append contract
 - replay contract
 - subscription contract
-- reduction handoff boundary
+- compatibility rules for stored envelopes
 
-### Control owns
+`execution`, `world_state`, and `sensory` own:
 
-- domain event vocabulary
-- reducer rules
-- projection rules
-- command to event rules
+- typed event families
+- reducer logic
+- projection logic
+- promotion rules from local runtime behavior into canonical facts
 
-### Telemetry owns
+`telemetry` owns:
 
 - observability adapters
 - summary mapping
-- metrics export
-- sink integrations
+- metrics and export sinks
 
-## Canonical Event Rules
+## Canonical Envelope
 
-### One spine
+The canonical stored envelope for the first spine should be:
 
-There must be one canonical event path for control relevant domain facts.
+```rust
+struct SpineEvent {
+    ts: String,
+    session: String,
+    seq: u64,
+    domain_id: String,
+    stream_id: String,
+    #[serde(rename = "type")]
+    event_type: String,
+    content_hash: Option<String>,
+    data: serde_json::Value,
+}
+```
 
-A task local event list may exist as a cache or test helper, but it must not be authoritative.
+Required meaning of the fields:
+
+- `ts`
+  event creation time as observed by the publisher
+- `session`
+  operator or runtime session grouping
+- `seq`
+  runtime-wide monotonic spine order
+- `domain_id`
+  one domain label such as `execution`, `world_state`, `sensory`, or `workspace_fs`
+- `stream_id`
+  one stable per-object or per-run stream anchor such as `task_run_id`
+- `event_type`
+  typed semantic event name
+- `content_hash`
+  optional link to one content-addressed object or blob summary
+- `data`
+  typed payload encoded into one stable durable envelope
+
+## Closed Design Decisions
+
+### One runtime-wide order
+
+`seq` must be runtime wide.
+Session local sequence is not enough for a real spine.
+
+Without one shared order, cross-domain temporal questions have no precise answer.
+The first implementation should use one local sequencer and one local append path.
+
+### Stream identity is required
+
+`stream_id` is required from the first landing.
+
+The spine needs a stable per-run or per-object anchor that is not overloaded onto `session`.
+The first execution slice should use values such as:
+
+- `task_run_id`
+- `plan_id`
+- `workflow_id`
 
 ### Facts, not views
 
-The canonical stream must contain domain facts, not presentation summaries.
+The spine stores facts.
+Views are projections.
 
-Examples of facts:
+Facts for the first execution slice include:
 
-- `task_requested`
-- `task_started`
-- `task_progressed`
-- `task_succeeded`
-- `task_failed`
-- `task_blocked`
-- `task_artifact_emitted`
-- `repair_requested`
-- `repair_applied`
-- `dispatch_requested`
-- `dispatch_started`
-- `dispatch_completed`
+- `execution.task.requested`
+- `execution.task.started`
+- `execution.task.progressed`
+- `execution.task.blocked`
+- `execution.task.succeeded`
+- `execution.task.failed`
+- `execution.task.artifact_emitted`
+- `execution.repair.requested`
+- `execution.repair.applied`
+- `execution.control.dispatch_requested`
+- `execution.control.dispatch_started`
+- `execution.control.dispatch_completed`
 
-Examples of derived views:
+Derived views include:
 
-- task progress percentage
+- progress percentage
 - active task count
-- retry dashboard summary
-- TUI lane state
+- TUI lane summaries
+- retry dashboards
 
-Derived views must come from projections, not primary event emission.
+### Raw sensory stays outside
 
-### Reducer order
+The spine is not the raw sensory transport.
+High-rate sensory lanes lower into local observation forms first.
+Only promoted semantic observations enter the spine.
 
-For one runtime instance, the reducer must observe one deterministic order.
+### Reducers own state transitions
 
-Parallel work is allowed.
-State transition ownership is not.
+Workers may emit facts.
+Reducers own canonical state transitions and projections.
+Workers must not mutate reducer-owned state directly.
 
-### Typed contracts
+## Domain Event Families
 
-Canonical domain events must have typed contracts.
+The first landing should standardize these families:
 
-The stored envelope may still use one stable generic shape such as timestamp, stream identity, sequence, event type, and payload.
-But the business meaning must not depend on ad hoc JSON blobs alone.
+- `execution.session.*`
+- `execution.task.*`
+- `execution.control.*`
+- `execution.repair.*`
+- `execution.artifact.*`
+
+The next families should reserve namespace only:
+
+- `sensory.observe.*`
+- `sensory.promote.*`
+- `world_state.claim.*`
+- `world_state.belief.*`
+- `world_state.calibration.*`
 
 ## Durability Requirements
 
-### Replay
-
-The event manager must support rebuilding runtime projections from durable event history after restart.
-
-### Append only
-
-Canonical event records must be append only.
-Correction must happen through later events or projection repair, not in place mutation of prior facts.
-
-### Sequence
-
-Each stream must have monotonic sequence assignment.
-
-The design may choose global sequence or per runtime sequence.
-Whichever model is selected must be explicit and stable.
-
-### Durability classes
-
-The design must define at least two durability classes:
-
-- events that must become durable before the runtime treats them as committed facts
-- events that may be buffered briefly before durable commit
-
-This distinction is required so the hot path does not pay full sync cost for every low value update.
+- canonical records are append only
+- replay must rebuild reducer projections after restart
+- the design must define durable commit versus buffered commit
+- durability policy must be explicit rather than hidden inside one emit call
+- correction happens through later events, not in-place mutation
 
 ## Ingress Requirements
 
-### Multi producer
+- concurrent producers are allowed
+- canonical ingress must be bounded
+- shutdown and cancellation behavior must be explicit
+- one slow consumer must not block append correctness
 
-The event manager must support concurrent producers.
+The current `std::sync::mpsc` bus is acceptable as a transitional local mechanism.
+The design requirement is bounded ingress semantics, not that this exact channel survive unchanged.
 
-Expected producers include:
+## Subscription Requirements
 
-- task executors
-- repair logic
-- dispatch logic
-- operator commands
-- compatibility adapters from existing workflow paths
+- reducers must resume from durable sequence
+- downstream consumers may follow live or catch up from durable history
+- slow downstream consumers must recover through replay or separate projection state
+- diagnostics must not become the sole replay source
 
-### Backpressure
+## Cross-Domain References
 
-Ingress must expose bounded backpressure semantics.
+Cross-domain payloads should use one stable reference shape:
 
-An unbounded queue is not acceptable for the canonical runtime path because control load must fail or slow in explicit ways under sustained pressure.
+```rust
+struct DomainObjectRef {
+    domain_id: String,
+    object_kind: String,
+    object_id: String,
+}
+```
 
-### Cancellation
+`object_id` may be a content hash, task run id, workspace node hash, or another stable domain identifier.
+The first spine commit does not need full `DomainObjectRef` adoption in every payload.
+It does need to stop assuming that `NodeID` is the universal anchor.
 
-Ingress and reduction must support explicit cancellation and shutdown semantics.
+## First Landing Constraints
 
-## Reduction Requirements
+The first implementation slice is `execution`.
 
-### One owner for state transitions
+That slice must:
 
-Reducers must be the only owners of canonical runtime state transitions.
-
-Workers may emit events.
-Workers must not mutate task network state directly.
-
-### Idempotence posture
-
-The design must define how reducers handle duplicate delivery, restart replay, or retry of boundary actions.
-
-### Projection families
-
-The first projection set should be sufficient to derive:
-
-- active task set
-- blocked task set
-- completed task set
-- failed task set
-- artifact availability
-- dispatch state
-- repair state
-- continuation checkpoint state
-
-## Consumer Requirements
-
-### Telemetry is downstream
-
-Telemetry must consume the event stream.
-Telemetry must not be the authoritative owner of domain event semantics.
-
-### Multiple consumers
-
-The event manager must allow multiple downstream consumers without making them part of the correctness path for control state.
-
-Expected consumers include:
-
-- telemetry storage adapters
-- TUI live views
-- metrics exporters
-- debugging taps
-
-### Slow consumer isolation
-
-One slow consumer must not break reducer correctness.
-
-The design must define whether slow consumers are dropped, caught up from durable replay, or served from separate projection materialization.
-
-## Diagnostic Requirements
-
-### Separate diagnostics
-
-Diagnostic tracing must remain separate from canonical business events.
-
-Tracing may annotate execution and include correlation fields.
-Tracing must not become the sole replay source for task and control semantics.
-
-### Correlation
-
-Canonical domain events should carry enough identifiers to correlate with tracing spans, task runs, artifacts, repair scopes, and operator actions.
-
-## Compatibility Requirements
-
-### Existing envelope continuity
-
-The design should preserve compatibility with the current stored event envelope where practical so existing readers can continue during migration.
-
-### Compatibility adapters
-
-Existing telemetry emit paths may be wrapped during migration, but the target ownership model must stay visible.
+- keep existing storage and reader continuity where practical
+- introduce the canonical envelope fields now
+- shift sequence assignment to runtime-wide order now
+- make `TaskEvent` compatible with canonical spine publication
+- keep raw workspace watch batches outside the canonical spine until semantic promotion exists
 
 ## Non Requirements
 
-This document does not require:
+This design does not require:
 
-- an external message broker
-- distributed consensus
-- a full CQRS framework as the first implementation step
-- merging diagnostic tracing and domain events into one contract
+- distributed consensus in the first landing
+- an external broker in the first landing
+- a full CQRS framework
+- raw sensory ingestion into the canonical spine
+- world-state ECS work before the execution slice lands
 
 ## Acceptance Conditions
 
-The event manager design is acceptable when all of these are true:
+The spine requirements are satisfied when all of these are true:
 
-- there is one canonical domain event path for control relevant facts
-- reducer ownership of state transitions is explicit
-- durable replay can rebuild required runtime projections
-- telemetry is downstream of the event spine
-- hot path durability cost is governed by explicit policy rather than implicit flush on every event
+- one canonical envelope is defined and shared
+- runtime-wide sequence is explicit
+- typed event families are named for the first execution slice
+- reducer ownership of state transition is explicit
+- replay can rebuild required projections
+- telemetry is downstream of the spine
+- compatibility and parity gates are defined for the migration
+- the acceptance criteria in [Event Spine Refactor](telemetry_refactor.md) are all satisfied
