@@ -90,7 +90,6 @@ Published as a task-facing capability because:
 
 ## Read With
 
-- [Git Diff Summary](../git_diff_summary/README.md)
-- [Bayesian Evaluation](../bayesian_evaluation/README.md)
-- [Impact Assessment](../../../control/impact_assessment.md)
-- [Capability Model](../README.md)
+- [Git Diff Summary](git_diff_summary.md)
+- [Bayesian Evaluation](bayesian_evaluation.md)
+- [Await Observation Semantics](../control/program/await_observation_semantics.md)

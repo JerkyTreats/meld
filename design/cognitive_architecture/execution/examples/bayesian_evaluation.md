@@ -152,8 +152,7 @@ Published as a task-facing capability because:
 
 ## Read With
 
-- [Git Diff Summary](../git_diff_summary/README.md)
-- [AST Change Impact](../ast_change_impact/README.md)
-- [Impact Assessment](../../../control/impact_assessment.md)
-- [Guard Binding Semantics](../../../control/program/guard_binding_semantics.md)
-- [Capability Model](../README.md)
+- [Git Diff Summary](git_diff_summary.md)
+- [AST Change Impact](ast_change_impact.md)
+- [Await Observation Semantics](../control/program/await_observation_semantics.md)
+- [Guard Binding Semantics](../control/program/guard_binding_semantics.md)

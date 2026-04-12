@@ -93,7 +93,6 @@ Published as a task-facing capability because:
 
 ## Read With
 
-- [AST Change Impact](../ast_change_impact/README.md)
-- [Bayesian Evaluation](../bayesian_evaluation/README.md)
-- [Impact Assessment](../../../control/impact_assessment.md)
-- [Capability Model](../README.md)
+- [AST Change Impact](ast_change_impact.md)
+- [Bayesian Evaluation](bayesian_evaluation.md)
+- [Await Observation Semantics](../control/program/await_observation_semantics.md)

@@ -188,4 +188,4 @@ rather than Rust + git2.
 - [Synthesis Task](synthesis_task.md)
 - [Runtime Catalog](runtime_catalog.md)
 - [Synthesis Overview](README.md)
-- [Bayesian Evaluation](../bayesian_evaluation/README.md)
+- [Bayesian Evaluation Example](../../examples/bayesian_evaluation.md)

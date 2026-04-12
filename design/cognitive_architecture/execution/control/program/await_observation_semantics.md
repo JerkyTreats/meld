@@ -139,6 +139,6 @@ See [Continuation Model](../runtime/continuation_model.md) for the broader conti
 
 - [Control Graph Model](control_graph.md)
 - [Guard Binding Semantics](guard_binding_semantics.md)
-- [Impact Assessment](../impact_assessment.md)
+- [Execution Planning](../planning/README.md)
 - [Runtime Model](../runtime/README.md)
 - [Continuation Model](../runtime/continuation_model.md)

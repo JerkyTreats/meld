@@ -241,5 +241,5 @@ The hub-and-spoke model is the north star, not the immediate implementation targ
 
 - [Event Manager Requirements](event_manager_requirements.md)
 - [Telemetry Refactor](telemetry_refactor.md)
-- [Event Management Research](../event_management_research.md)
-- [Control Design](../README.md)
+- [Event Management Research](research.md)
+- [Execution Control](../execution/control/README.md)

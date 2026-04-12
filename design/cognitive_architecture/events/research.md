@@ -64,7 +64,7 @@ It is likely too eager for a high volume control loop with task, artifact, retry
 
 The current control notes already point in the right direction.
 
-- `design/control/task_network.md` says workers should emit events only
+- `execution/control/task_network.md` says workers should emit events only
 - the same doc says reducers should own state transitions
 - the same doc also says task and repair events should use the current telemetry envelope
 
@@ -342,8 +342,8 @@ That gives you a single feedback spine without forcing an early jump to external
 
 ### Internal
 
-- [Task Network](task_network.md)
-- [Runtime Model](runtime/README.md)
+- [Task Network](../execution/control/task_network.md)
+- [Runtime Model](../execution/control/runtime/README.md)
 - [Observability specification](../completed/observability/observability_spec.md)
 - [Telemetry Event Engine Spec](../completed/refactor/telemetry/telemetry_event_engine_spec.md)
 

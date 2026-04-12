@@ -2,13 +2,13 @@
 
 Date: 2026-04-05
 Status: active
-Scope: durable event management for control, task execution, replay, and downstream telemetry consumption
+Scope: shared event architecture for sensory, world state, execution, replay, and downstream telemetry consumption
 
 ## Intent
 
-This area defines the event management design for control.
+This area defines the shared event architecture for the cognitive loop.
 
-The design goal is one durable event spine for task execution and future control runtime behavior.
+The design goal is one durable event spine for cross-domain runtime behavior.
 That spine should support:
 
 - ordered domain facts
@@ -31,12 +31,12 @@ This area is intentionally split into two documents with different purposes.
 `events` is not the same concern as `telemetry`.
 
 - `events` owns ingress, ordering, reduction boundaries, durability, replay, and subscription semantics
-- `control` owns domain event meaning and projection rules
+- sensory, world state, and execution own domain event meaning and projection rules
 - `telemetry` consumes the event stream for observability, summaries, metrics, and external export
 
 ## Read With
 
-- [Control Design](../README.md)
-- [Task Network](../task_network.md)
-- [Event Management Research](../event_management_research.md)
-- [Runtime Model](../runtime/README.md)
+- [Execution Control](../execution/control/README.md)
+- [Task Network](../execution/control/task_network.md)
+- [Event Management Research](research.md)
+- [Runtime Model](../execution/control/runtime/README.md)

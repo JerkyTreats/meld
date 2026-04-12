@@ -162,5 +162,5 @@ capabilities are acquired on demand as planning needs them.
 - [External Process Capability](external_process_capability.md)
 - [Synthesis Task](synthesis_task.md)
 - [Synthesis Overview](README.md)
-- [Multi-Domain Spine](../events/multi_domain_spine.md)
-- [Event Manager Requirements](../events/event_manager_requirements.md)
+- [Multi-Domain Spine](../../../events/multi_domain_spine.md)
+- [Event Manager Requirements](../../../events/event_manager_requirements.md)

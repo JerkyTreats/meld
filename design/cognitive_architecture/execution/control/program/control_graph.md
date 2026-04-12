@@ -158,10 +158,10 @@ The first slice should support:
 
 ## Read With
 
-- [Control Design](../README.md)
+- [Execution Control](../README.md)
 - [Task Network](../task_network.md)
 - [Await Observation Semantics](await_observation_semantics.md)
 - [Guard Binding Semantics](guard_binding_semantics.md)
-- [Impact Assessment](../impact_assessment.md)
+- [Execution Planning](../planning/README.md)
 - [Repair Entry Model](../repair/repair_entry.md)
 - [Task Design](../../capabilities/task/README.md)

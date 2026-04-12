@@ -152,5 +152,5 @@ This validation catches contract mismatches before runtime.
 
 - [Control Graph Model](control_graph.md)
 - [Await Observation Semantics](await_observation_semantics.md)
-- [Impact Assessment](../impact_assessment.md)
-- [Bayesian Evaluation](../../capabilities/capability/bayesian_evaluation/README.md)
+- [Execution Planning](../planning/README.md)
+- [Bayesian Evaluation Example](../../examples/bayesian_evaluation.md)

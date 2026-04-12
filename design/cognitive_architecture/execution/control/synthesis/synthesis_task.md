@@ -207,4 +207,4 @@ The HTN planner uses this to confirm the catalog was updated before replanning.
 - [Runtime Catalog](runtime_catalog.md)
 - [Synthesis Overview](README.md)
 - [Task Design](../../completed/capabilities/task/README.md)
-- [Impact Assessment](../impact_assessment.md)
+- [Execution Planning](../planning/README.md)
