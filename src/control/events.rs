@@ -68,6 +68,7 @@ pub struct NodeFailedEventData {
 pub struct GenerationFailedEventData {
     pub plan_id: String,
     pub reason: String,
+    pub failed_level_index: Option<usize>,
     pub total_generated: usize,
     pub total_failed: usize,
 }
