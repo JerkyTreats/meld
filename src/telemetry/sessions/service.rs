@@ -118,6 +118,30 @@ impl ProgressRuntime {
         Ok(())
     }
 
+    pub fn emit_domain_event(
+        &self,
+        session_id: &str,
+        domain_id: &str,
+        stream_id: &str,
+        event_type: &str,
+        content_hash: Option<String>,
+        data: Value,
+    ) -> Result<(), ApiError> {
+        self.bus
+            .emit_envelope(ProgressEnvelope::with_now_domain(
+                session_id.to_string(),
+                domain_id.to_string(),
+                stream_id.to_string(),
+                event_type.to_string(),
+                content_hash,
+                data,
+            ))
+            .map_err(to_api_error)?;
+        self.ingestor.drain()?;
+        self.store.flush()?;
+        Ok(())
+    }
+
     pub fn emit_event_best_effort(&self, session_id: &str, event_type: &str, data: Value) {
         if let Err(err) = self.emit_event(session_id, event_type, data) {
             warn!(
@@ -125,6 +149,34 @@ impl ProgressRuntime {
                 event_type = %event_type,
                 error = %err,
                 "failed to emit progress event"
+            );
+        }
+    }
+
+    pub fn emit_domain_event_best_effort(
+        &self,
+        session_id: &str,
+        domain_id: &str,
+        stream_id: &str,
+        event_type: &str,
+        content_hash: Option<String>,
+        data: Value,
+    ) {
+        if let Err(err) = self.emit_domain_event(
+            session_id,
+            domain_id,
+            stream_id,
+            event_type,
+            content_hash,
+            data,
+        ) {
+            warn!(
+                session_id = %session_id,
+                domain_id = %domain_id,
+                stream_id = %stream_id,
+                event_type = %event_type,
+                error = %err,
+                "failed to emit domain event"
             );
         }
     }

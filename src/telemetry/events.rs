@@ -9,8 +9,14 @@ pub struct ProgressEvent {
     pub ts: String,
     pub session: String,
     pub seq: u64,
+    #[serde(default = "default_domain_id")]
+    pub domain_id: String,
+    #[serde(default)]
+    pub stream_id: String,
     #[serde(rename = "type")]
     pub event_type: String,
+    #[serde(default)]
+    pub content_hash: Option<String>,
     pub data: Value,
 }
 
@@ -18,16 +24,34 @@ pub struct ProgressEvent {
 pub struct ProgressEnvelope {
     pub ts: String,
     pub session: String,
+    pub domain_id: String,
+    pub stream_id: String,
     pub event_type: String,
+    pub content_hash: Option<String>,
     pub data: Value,
 }
 
 impl ProgressEnvelope {
     pub fn new(ts: String, session: String, event_type: impl Into<String>, data: Value) -> Self {
+        Self::new_domain(ts, session.clone(), default_domain_id(), session, event_type, None, data)
+    }
+
+    pub fn new_domain(
+        ts: String,
+        session: impl Into<String>,
+        domain_id: impl Into<String>,
+        stream_id: impl Into<String>,
+        event_type: impl Into<String>,
+        content_hash: Option<String>,
+        data: Value,
+    ) -> Self {
         Self {
             ts,
-            session,
+            session: session.into(),
+            domain_id: domain_id.into(),
+            stream_id: stream_id.into(),
             event_type: event_type.into(),
+            content_hash,
             data,
         }
     }
@@ -37,10 +61,32 @@ impl ProgressEnvelope {
         event_type: impl Into<String>,
         data: Value,
     ) -> Self {
+        let session = session.into();
+        Self::with_now_domain(
+            session.clone(),
+            default_domain_id(),
+            session,
+            event_type,
+            None,
+            data,
+        )
+    }
+
+    pub fn with_now_domain(
+        session: impl Into<String>,
+        domain_id: impl Into<String>,
+        stream_id: impl Into<String>,
+        event_type: impl Into<String>,
+        content_hash: Option<String>,
+        data: Value,
+    ) -> Self {
         Self {
             ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             session: session.into(),
+            domain_id: domain_id.into(),
+            stream_id: stream_id.into(),
             event_type: event_type.into(),
+            content_hash,
             data,
         }
     }
@@ -52,10 +98,27 @@ impl ProgressEvent {
             ts: envelope.ts,
             session: envelope.session,
             seq,
+            domain_id: envelope.domain_id,
+            stream_id: envelope.stream_id,
             event_type: envelope.event_type,
+            content_hash: envelope.content_hash,
             data: envelope.data,
         }
     }
+
+    pub fn normalize_legacy_defaults(mut self) -> Self {
+        if self.domain_id.is_empty() {
+            self.domain_id = default_domain_id();
+        }
+        if self.stream_id.is_empty() {
+            self.stream_id = self.session.clone();
+        }
+        self
+    }
+}
+
+fn default_domain_id() -> String {
+    "telemetry".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,21 +307,30 @@ mod tests {
             ts: "2026-02-14T12:34:56.789Z".to_string(),
             session: "s1".to_string(),
             seq: 1,
+            domain_id: "telemetry".to_string(),
+            stream_id: "s1".to_string(),
             event_type: "session_started".to_string(),
+            content_hash: None,
             data: json!({ "command": "scan" }),
         };
         let serialized = serde_json::to_string(&event).unwrap();
         let parsed: ProgressEvent = serde_json::from_str(&serialized).unwrap();
         assert_eq!(parsed.session, "s1");
         assert_eq!(parsed.seq, 1);
+        assert_eq!(parsed.domain_id, "telemetry");
+        assert_eq!(parsed.stream_id, "s1");
         assert_eq!(parsed.event_type, "session_started");
     }
 
     #[test]
     fn unknown_fields_are_ignored() {
         let raw = r#"{"ts":"2026-02-14T12:34:56.789Z","session":"s1","seq":1,"type":"session_started","data":{"command":"scan"},"future":"ok"}"#;
-        let parsed: ProgressEvent = serde_json::from_str(raw).unwrap();
+        let parsed = serde_json::from_str::<ProgressEvent>(raw)
+            .unwrap()
+            .normalize_legacy_defaults();
         assert_eq!(parsed.session, "s1");
+        assert_eq!(parsed.domain_id, "telemetry");
+        assert_eq!(parsed.stream_id, "s1");
     }
 
     #[test]

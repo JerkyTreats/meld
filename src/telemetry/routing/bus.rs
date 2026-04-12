@@ -17,6 +17,13 @@ impl ProgressBus {
         (Self { sender }, receiver)
     }
 
+    pub fn emit_envelope(
+        &self,
+        envelope: ProgressEnvelope,
+    ) -> Result<(), std::sync::mpsc::SendError<ProgressEnvelope>> {
+        self.sender.send(envelope)
+    }
+
     pub fn emit(
         &self,
         session: impl Into<String>,
@@ -24,6 +31,6 @@ impl ProgressBus {
         data: Value,
     ) -> Result<(), std::sync::mpsc::SendError<ProgressEnvelope>> {
         let envelope = ProgressEnvelope::with_now(session, event_type, data);
-        self.sender.send(envelope)
+        self.emit_envelope(envelope)
     }
 }

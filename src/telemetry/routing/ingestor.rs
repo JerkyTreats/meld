@@ -37,10 +37,9 @@ impl EventIngestor {
                 updated_at_ms: now_millis(),
             });
 
-        let seq = meta.next_seq;
+        let seq = self.store.allocate_next_seq()?;
         let event = ProgressEvent::from_envelope(envelope, seq);
         self.store.append_event(&event)?;
-        meta.next_seq += 1;
         meta.updated_at_ms = now_millis();
         self.store.put_meta(&event.session, &meta)?;
         Ok(())
@@ -75,12 +74,14 @@ mod tests {
         let mut ingestor = EventIngestor::new(store.clone(), rx);
         bus.emit("s1", "session_started", serde_json::json!({}))
             .unwrap();
-        bus.emit("s1", "session_ended", serde_json::json!({}))
+        bus.emit("s2", "session_started", serde_json::json!({}))
             .unwrap();
         ingestor.ingest_pending().unwrap();
-        let events = store.read_events("s1").unwrap();
+        let events = store.read_all_events_after(0).unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].seq, 1);
         assert_eq!(events[1].seq, 2);
+        assert_eq!(events[0].session, "s1");
+        assert_eq!(events[1].session, "s2");
     }
 }
