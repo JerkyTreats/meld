@@ -10,6 +10,7 @@ mod context_api;
 mod context_cli;
 mod docs_writer_task;
 mod event_spine;
+mod execution_projection;
 mod frame_queue;
 mod generation_parity;
 mod hasher_verification;
