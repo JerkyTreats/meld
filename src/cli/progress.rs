@@ -583,12 +583,16 @@ mod tests {
     fn event(seq: u64, event_type: &str, data: Value) -> ProgressEvent {
         ProgressEvent {
             ts: "2026-03-07T00:00:00.000Z".to_string(),
+            recorded_at: "2026-03-07T00:00:00.000Z".to_string(),
             session: "s1".to_string(),
             seq,
             domain_id: "telemetry".to_string(),
             stream_id: "s1".to_string(),
             event_type: event_type.to_string(),
+            occurred_at: None,
             content_hash: None,
+            objects: Vec::new(),
+            relations: Vec::new(),
             data,
         }
     }

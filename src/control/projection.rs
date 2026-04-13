@@ -107,12 +107,16 @@ mod tests {
 
         let requested = ProgressEvent {
             ts: "2026-01-01T00:00:00.000Z".to_string(),
+            recorded_at: "2026-01-01T00:00:00.000Z".to_string(),
             session: "session".to_string(),
             seq: 1,
             domain_id: "execution".to_string(),
             stream_id: "run_a".to_string(),
             event_type: "execution.task.requested".to_string(),
+            occurred_at: None,
             content_hash: None,
+            objects: Vec::new(),
+            relations: Vec::new(),
             data: json!({
                 "task_id": "task_a",
                 "task_run_id": "run_a",

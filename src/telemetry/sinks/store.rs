@@ -394,22 +394,30 @@ mod tests {
 
         let e2 = ProgressEvent {
             ts: "2".to_string(),
+            recorded_at: "2".to_string(),
             session: session.to_string(),
             seq: 2,
             domain_id: "telemetry".to_string(),
             stream_id: session.to_string(),
             event_type: "session_ended".to_string(),
+            occurred_at: None,
             content_hash: None,
+            objects: Vec::new(),
+            relations: Vec::new(),
             data: serde_json::json!({}),
         };
         let e1 = ProgressEvent {
             ts: "1".to_string(),
+            recorded_at: "1".to_string(),
             session: session.to_string(),
             seq: 1,
             domain_id: "telemetry".to_string(),
             stream_id: session.to_string(),
             event_type: "session_started".to_string(),
+            occurred_at: None,
             content_hash: None,
+            objects: Vec::new(),
+            relations: Vec::new(),
             data: serde_json::json!({}),
         };
         store.append_event(&e2).unwrap();
@@ -427,22 +435,30 @@ mod tests {
 
         let e1 = ProgressEvent {
             ts: "1".to_string(),
+            recorded_at: "1".to_string(),
             session: "s1".to_string(),
             seq: 1,
             domain_id: "telemetry".to_string(),
             stream_id: "s1".to_string(),
             event_type: "session_started".to_string(),
+            occurred_at: None,
             content_hash: None,
+            objects: Vec::new(),
+            relations: Vec::new(),
             data: serde_json::json!({}),
         };
         let e2 = ProgressEvent {
             ts: "2".to_string(),
+            recorded_at: "2".to_string(),
             session: "s2".to_string(),
             seq: 2,
             domain_id: "telemetry".to_string(),
             stream_id: "s2".to_string(),
             event_type: "session_started".to_string(),
+            occurred_at: None,
             content_hash: None,
+            objects: Vec::new(),
+            relations: Vec::new(),
             data: serde_json::json!({}),
         };
 

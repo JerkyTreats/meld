@@ -1,6 +1,8 @@
 use meld::control::projection::ExecutionProjection;
 use meld::task::ExecutionTaskEventData;
+use meld::telemetry::{DomainObjectRef, EventRelation};
 use meld::telemetry::emission::emit_command_summary;
+use meld::telemetry::events::ProgressEnvelope;
 use meld::telemetry::routing::bus::ProgressBus;
 use meld::telemetry::routing::ingestor::EventIngestor;
 use meld::telemetry::sinks::store::ProgressStore;
@@ -41,7 +43,7 @@ fn runtime_wide_sequence_is_monotonic() {
 }
 
 #[test]
-fn legacy_events_remain_readable() {
+fn legacy_spine_events_remain_readable_with_graph_fields() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
     let runtime = ProgressRuntime::new(db).unwrap();
@@ -60,6 +62,61 @@ fn legacy_events_remain_readable() {
     assert_eq!(events[0].stream_id, session_id);
     assert_eq!(events[0].content_hash, None);
     assert_eq!(events[0].event_type, "session_started");
+    assert_eq!(events[0].recorded_at, events[0].ts);
+    assert!(events[0].objects.is_empty());
+    assert!(events[0].relations.is_empty());
+}
+
+#[test]
+fn mixed_spine_events_replay_with_object_refs() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(dir.path()).unwrap();
+    let runtime = ProgressRuntime::new(db).unwrap();
+    let session_id = "mixed-session";
+    let legacy_tree = runtime.store().db().open_tree("obs_events").unwrap();
+    let legacy_key = ProgressStore::encode_event_key(session_id, 1);
+    let legacy_raw = r#"{"ts":"2026-02-14T12:34:56.789Z","session":"mixed-session","seq":1,"type":"session_started","data":{"command":"scan"}}"#;
+    legacy_tree
+        .insert(legacy_key.as_bytes(), legacy_raw.as_bytes())
+        .unwrap();
+
+    let task_run = DomainObjectRef::new("execution", "task_run", "run_a").unwrap();
+    let artifact = DomainObjectRef::new("execution", "artifact", "artifact_a").unwrap();
+    let relation = EventRelation::new("produced", task_run.clone(), artifact.clone()).unwrap();
+
+    let event = meld::telemetry::events::ProgressEvent::from_envelope(
+        ProgressEnvelope::with_now_domain(
+            session_id.to_string(),
+            "execution".to_string(),
+            "run_a".to_string(),
+            "execution.task.artifact_emitted".to_string(),
+            None,
+            json!({
+                "task_id": "task_a",
+                "task_run_id": "run_a",
+                "capability_instance_id": null,
+                "invocation_id": null,
+                "artifact_id": "artifact_a",
+                "artifact_type_id": "artifact.type",
+                "attempt_index": null,
+                "ready_count": null,
+                "running_count": null,
+                "blocked_reason": null,
+                "error": null
+            }),
+        )
+        .with_graph(vec![task_run, artifact], vec![relation]),
+        2,
+    );
+    runtime.store().append_event(&event).unwrap();
+
+    let events = runtime.store().read_events(session_id).unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].seq, 1);
+    assert_eq!(events[1].seq, 2);
+    assert_eq!(events[1].domain_id, "execution");
+    assert_eq!(events[1].objects.len(), 2);
+    assert_eq!(events[1].relations.len(), 1);
 }
 
 #[test]

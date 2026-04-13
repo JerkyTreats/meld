@@ -2,6 +2,7 @@
 
 mod types;
 
+pub mod contracts;
 pub mod emission;
 pub mod events;
 pub mod facade;
@@ -10,6 +11,7 @@ pub mod sessions;
 pub mod sinks;
 pub mod summary;
 
+pub use contracts::{DomainObjectRef, EventRelation};
 pub use events::{
     FrameMetadataValidationEventData, ProgressEvent, PromptContextLineageEventData,
     ProviderLifecycleEventData, QueueEventData, QueueStatsEventData, SessionEndedData,

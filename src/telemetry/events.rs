@@ -4,9 +4,13 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::telemetry::contracts::{DomainObjectRef, EventRelation};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressEvent {
     pub ts: String,
+    #[serde(default)]
+    pub recorded_at: String,
     pub session: String,
     pub seq: u64,
     #[serde(default = "default_domain_id")]
@@ -16,18 +20,28 @@ pub struct ProgressEvent {
     #[serde(rename = "type")]
     pub event_type: String,
     #[serde(default)]
+    pub occurred_at: Option<String>,
+    #[serde(default)]
     pub content_hash: Option<String>,
+    #[serde(default)]
+    pub objects: Vec<DomainObjectRef>,
+    #[serde(default)]
+    pub relations: Vec<EventRelation>,
     pub data: Value,
 }
 
 #[derive(Debug, Clone)]
 pub struct ProgressEnvelope {
     pub ts: String,
+    pub recorded_at: String,
     pub session: String,
     pub domain_id: String,
     pub stream_id: String,
     pub event_type: String,
+    pub occurred_at: Option<String>,
     pub content_hash: Option<String>,
+    pub objects: Vec<DomainObjectRef>,
+    pub relations: Vec<EventRelation>,
     pub data: Value,
 }
 
@@ -45,13 +59,22 @@ impl ProgressEnvelope {
         content_hash: Option<String>,
         data: Value,
     ) -> Self {
+        let recorded_at = if ts.is_empty() {
+            default_timestamp()
+        } else {
+            ts.clone()
+        };
         Self {
             ts,
+            recorded_at,
             session: session.into(),
             domain_id: domain_id.into(),
             stream_id: stream_id.into(),
             event_type: event_type.into(),
+            occurred_at: None,
             content_hash,
+            objects: Vec::new(),
+            relations: Vec::new(),
             data,
         }
     }
@@ -80,15 +103,35 @@ impl ProgressEnvelope {
         content_hash: Option<String>,
         data: Value,
     ) -> Self {
+        let ts = default_timestamp();
         Self {
-            ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            ts: ts.clone(),
+            recorded_at: ts,
             session: session.into(),
             domain_id: domain_id.into(),
             stream_id: stream_id.into(),
             event_type: event_type.into(),
+            occurred_at: None,
             content_hash,
+            objects: Vec::new(),
+            relations: Vec::new(),
             data,
         }
+    }
+
+    pub fn with_graph(
+        mut self,
+        objects: Vec<DomainObjectRef>,
+        relations: Vec<EventRelation>,
+    ) -> Self {
+        self.objects = objects;
+        self.relations = relations;
+        self
+    }
+
+    pub fn with_occurred_at(mut self, occurred_at: impl Into<String>) -> Self {
+        self.occurred_at = Some(occurred_at.into());
+        self
     }
 }
 
@@ -96,17 +139,28 @@ impl ProgressEvent {
     pub fn from_envelope(envelope: ProgressEnvelope, seq: u64) -> Self {
         Self {
             ts: envelope.ts,
+            recorded_at: envelope.recorded_at,
             session: envelope.session,
             seq,
             domain_id: envelope.domain_id,
             stream_id: envelope.stream_id,
             event_type: envelope.event_type,
+            occurred_at: envelope.occurred_at,
             content_hash: envelope.content_hash,
+            objects: envelope.objects,
+            relations: envelope.relations,
             data: envelope.data,
         }
     }
 
     pub fn normalize_legacy_defaults(mut self) -> Self {
+        if self.recorded_at.is_empty() {
+            self.recorded_at = if self.ts.is_empty() {
+                default_timestamp()
+            } else {
+                self.ts.clone()
+            };
+        }
         if self.domain_id.is_empty() {
             self.domain_id = default_domain_id();
         }
@@ -119,6 +173,10 @@ impl ProgressEvent {
 
 fn default_domain_id() -> String {
     "telemetry".to_string()
+}
+
+fn default_timestamp() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -305,12 +363,16 @@ mod tests {
     fn event_round_trip() {
         let event = ProgressEvent {
             ts: "2026-02-14T12:34:56.789Z".to_string(),
+            recorded_at: "2026-02-14T12:34:56.789Z".to_string(),
             session: "s1".to_string(),
             seq: 1,
             domain_id: "telemetry".to_string(),
             stream_id: "s1".to_string(),
             event_type: "session_started".to_string(),
+            occurred_at: None,
             content_hash: None,
+            objects: Vec::new(),
+            relations: Vec::new(),
             data: json!({ "command": "scan" }),
         };
         let serialized = serde_json::to_string(&event).unwrap();
@@ -329,8 +391,11 @@ mod tests {
             .unwrap()
             .normalize_legacy_defaults();
         assert_eq!(parsed.session, "s1");
+        assert_eq!(parsed.recorded_at, parsed.ts);
         assert_eq!(parsed.domain_id, "telemetry");
         assert_eq!(parsed.stream_id, "s1");
+        assert!(parsed.objects.is_empty());
+        assert!(parsed.relations.is_empty());
     }
 
     #[test]
@@ -338,6 +403,7 @@ mod tests {
         let env = ProgressEnvelope::with_now("s1", "session_started", json!({}));
         let parsed = chrono::DateTime::parse_from_rfc3339(&env.ts).unwrap();
         assert_eq!(env.ts.len(), 24);
+        assert_eq!(env.recorded_at, env.ts);
         assert_eq!(env.ts.chars().nth(19), Some('.'));
         assert!(env.ts.ends_with('Z'));
         assert!(parsed.timestamp_subsec_millis() <= 999);

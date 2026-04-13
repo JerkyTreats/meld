@@ -142,6 +142,13 @@ impl ProgressRuntime {
         Ok(())
     }
 
+    pub fn emit_envelope(&self, envelope: ProgressEnvelope) -> Result<(), ApiError> {
+        self.bus.emit_envelope(envelope).map_err(to_api_error)?;
+        self.ingestor.drain()?;
+        self.store.flush()?;
+        Ok(())
+    }
+
     pub fn emit_event_best_effort(&self, session_id: &str, event_type: &str, data: Value) {
         if let Err(err) = self.emit_event(session_id, event_type, data) {
             warn!(
@@ -177,6 +184,19 @@ impl ProgressRuntime {
                 event_type = %event_type,
                 error = %err,
                 "failed to emit domain event"
+            );
+        }
+    }
+
+    pub fn emit_envelope_best_effort(&self, envelope: ProgressEnvelope) {
+        let session_id = envelope.session.clone();
+        let event_type = envelope.event_type.clone();
+        if let Err(err) = self.emit_envelope(envelope) {
+            warn!(
+                session_id = %session_id,
+                event_type = %event_type,
+                error = %err,
+                "failed to emit envelope"
             );
         }
     }
