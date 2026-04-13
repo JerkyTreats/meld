@@ -113,6 +113,7 @@ That boundary keeps the world model living without turning every other domain in
 ## Read With
 
 - [World State Domain](README.md)
+- [Temporal Fact Graph](temporal_fact_graph.md)
 - [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md)
 - [Spine Concern](../spine/README.md)
 - [Observe Merge Push](../observe_merge_push.md)

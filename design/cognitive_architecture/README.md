@@ -51,6 +51,10 @@ This area does own:
   canonical current belief, knowledge graph projection, and world-model ownership
 - [Curation In World State](world_state/curation.md)
   merge activity and natural runtime inside `world_state`
+- [Temporal Fact Graph](world_state/temporal_fact_graph.md)
+  canonical graph model for settled belief, provenance, and spine-driven materialization
+- [Knowledge Graph Implementation Plan](world_state/knowledge_graph_implementation_plan.md)
+  phased implementation path for contracts, reducers, indexes, and planner-facing reads
 - [Execution Domain](execution/README.md)
   world-model-aware action aligned with current execution design
 - [Execution Substrate](execution/substrate.md)
@@ -74,13 +78,15 @@ This area does own:
 4. [Sensory Substrate](sensory/substrate.md)
 5. [World State Domain](world_state/README.md)
 6. [Curation In World State](world_state/curation.md)
-7. [Execution Domain](execution/README.md)
-8. [Execution Substrate](execution/substrate.md)
-9. [Execution Control](execution/control/README.md)
-10. [Execution Planning](execution/control/planning/README.md)
-11. [Spine Concern](spine/README.md)
-12. [Events Design](events/README.md)
-13. [Further Research Prompts](further_research_prompts.md)
+7. [Temporal Fact Graph](world_state/temporal_fact_graph.md)
+8. [Knowledge Graph Implementation Plan](world_state/knowledge_graph_implementation_plan.md)
+9. [Execution Domain](execution/README.md)
+10. [Execution Substrate](execution/substrate.md)
+11. [Execution Control](execution/control/README.md)
+12. [Execution Planning](execution/control/planning/README.md)
+13. [Spine Concern](spine/README.md)
+14. [Events Design](events/README.md)
+15. [Further Research Prompts](further_research_prompts.md)
 
 ## Read With
 

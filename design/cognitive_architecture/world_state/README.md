@@ -41,6 +41,10 @@ The durable world model is a temporal knowledge graph with:
 
 - [Curation In World State](curation.md)
   living world-model engine, materialized belief, and ECS as a candidate internal substrate
+- [Temporal Fact Graph](temporal_fact_graph.md)
+  canonical graph model, authority split with the spine, and reducer-owned settlement
+- [Knowledge Graph Implementation Plan](knowledge_graph_implementation_plan.md)
+  phased delivery plan, code landing zones, and acceptance gates for the first graph
 
 ## Required First Slice
 
@@ -53,6 +57,8 @@ The durable world model is a temporal knowledge graph with:
 
 - [Observe Merge Push](../observe_merge_push.md)
 - [Curation In World State](curation.md)
+- [Temporal Fact Graph](temporal_fact_graph.md)
+- [Knowledge Graph Implementation Plan](knowledge_graph_implementation_plan.md)
 - [Sensory Domain](../sensory/README.md)
 - [Spine Concern](../spine/README.md)
 - [Multi-Domain Spine](../events/multi_domain_spine.md)
