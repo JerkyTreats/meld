@@ -1,8 +1,15 @@
 use meld::telemetry::{DomainObjectRef, EventRelation};
+use meld::telemetry::events::ProgressEvent;
+use meld::telemetry::sinks::store::ProgressStore;
+use meld::control::events::{
+    node_completed_envelope, node_failed_envelope, NodeCompletedEventData, NodeFailedEventData,
+};
+use meld::task::{build_execution_task_envelope, TaskEvent};
 use meld::world_state::contracts::{
     ClaimKind, ClaimRecord, EvidenceRecord, SettlementStatus,
 };
 use meld::world_state::query::WorldStateQuery;
+use meld::world_state::reducer::WorldStateReducer;
 use meld::world_state::store::{StoredWorldStateFact, WorldStateStore};
 
 #[test]
@@ -122,4 +129,128 @@ fn supersession_chain_remains_queryable() {
 
     assert_eq!(chain.len(), 1);
     assert_eq!(chain[0].claim_id, "claim_b");
+}
+
+#[test]
+fn replay_rebuilds_current_claim_projection() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(dir.path()).unwrap();
+    let spine = ProgressStore::new(db.clone()).unwrap();
+    let world_state = WorldStateStore::new(db).unwrap();
+
+    spine
+        .append_event(&ProgressEvent::from_envelope(
+            node_completed_envelope(
+                "session_a",
+                NodeCompletedEventData {
+                    plan_id: "plan_a".to_string(),
+                    level_index: 0,
+                    node_id: "node_a".to_string(),
+                    path: "/tmp/a".to_string(),
+                    frame_id: "frame_a".to_string(),
+                    program_kind: "workflow".to_string(),
+                    workflow_id: None,
+                },
+            ),
+            1,
+        ))
+        .unwrap();
+
+    let reducer = WorldStateReducer::replay_from_spine(&spine, &world_state, 0).unwrap();
+    let query = WorldStateQuery::new(&world_state);
+    let current = query
+        .current_claims_for_object(&DomainObjectRef::new("workspace_fs", "node", "node_a").unwrap())
+        .unwrap();
+
+    assert_eq!(reducer.current_claims.last_applied_seq, 1);
+    assert_eq!(current.len(), 1);
+    assert_eq!(current[0].claim_kind, ClaimKind::GenerationSucceeded);
+}
+
+#[test]
+fn later_generation_success_supersedes_prior_failure() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(dir.path()).unwrap();
+    let spine = ProgressStore::new(db.clone()).unwrap();
+    let world_state = WorldStateStore::new(db).unwrap();
+
+    spine
+        .append_event(&ProgressEvent::from_envelope(
+            node_failed_envelope(
+                "session_a",
+                NodeFailedEventData {
+                    plan_id: "plan_a".to_string(),
+                    level_index: 0,
+                    node_id: "node_a".to_string(),
+                    path: "/tmp/a".to_string(),
+                    error: "boom".to_string(),
+                    program_kind: "workflow".to_string(),
+                    workflow_id: None,
+                },
+            ),
+            1,
+        ))
+        .unwrap();
+    spine
+        .append_event(&ProgressEvent::from_envelope(
+            node_completed_envelope(
+                "session_a",
+                NodeCompletedEventData {
+                    plan_id: "plan_a".to_string(),
+                    level_index: 0,
+                    node_id: "node_a".to_string(),
+                    path: "/tmp/a".to_string(),
+                    frame_id: "frame_a".to_string(),
+                    program_kind: "workflow".to_string(),
+                    workflow_id: None,
+                },
+            ),
+            2,
+        ))
+        .unwrap();
+
+    let reducer = WorldStateReducer::replay_from_spine(&spine, &world_state, 0).unwrap();
+    let subject = DomainObjectRef::new("workspace_fs", "node", "node_a").unwrap();
+    let current = WorldStateQuery::new(&world_state)
+        .current_claims_for_object(&subject)
+        .unwrap();
+    let history = WorldStateQuery::new(&world_state)
+        .claim_history_for_object(&subject)
+        .unwrap();
+
+    assert_eq!(current.len(), 1);
+    assert_eq!(current[0].claim_kind, ClaimKind::GenerationSucceeded);
+    assert_eq!(history.len(), 2);
+    assert!(history.iter().any(|claim| claim.status == SettlementStatus::Superseded));
+    assert!(reducer
+        .provenance
+        .supersession_chain_by_claim
+        .values()
+        .any(|chain| !chain.is_empty()));
+}
+
+#[test]
+fn provenance_query_returns_supporting_execution_fact() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(dir.path()).unwrap();
+    let spine = ProgressStore::new(db.clone()).unwrap();
+    let world_state = WorldStateStore::new(db).unwrap();
+    let mut task_event = TaskEvent::new("task_artifact_emitted", "task_a", "run_a");
+    task_event.artifact_id = Some("artifact_a".to_string());
+
+    spine
+        .append_event(&ProgressEvent::from_envelope(
+            build_execution_task_envelope("session_a", &task_event).unwrap(),
+            1,
+        ))
+        .unwrap();
+
+    let _ = WorldStateReducer::replay_from_spine(&spine, &world_state, 0).unwrap();
+    let provenance = WorldStateQuery::new(&world_state)
+        .provenance_for_claim("claim::artifact_available::execution::task_run::run_a::1")
+        .unwrap();
+
+    assert_eq!(provenance.source_fact_ids, vec!["spine::1".to_string()]);
+    assert_eq!(provenance.objects.len(), 2);
+    assert_eq!(provenance.relations.len(), 1);
 }
