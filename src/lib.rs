@@ -28,3 +28,4 @@ pub mod types;
 pub mod views;
 pub mod workflow;
 pub mod workspace;
+pub mod world_state;
