@@ -213,14 +213,7 @@ fn emit_new_task_events(
 
     for event in executor.events().iter().skip(*emitted_task_event_count) {
         if let Some(envelope) = build_execution_task_envelope(&ctx.session_id, event) {
-            ctx.progress.emit_domain_event_best_effort(
-                &ctx.session_id,
-                &envelope.domain_id,
-                &envelope.stream_id,
-                &envelope.event_type,
-                envelope.content_hash.clone(),
-                envelope.data.clone(),
-            );
+            ctx.progress.emit_envelope_best_effort(envelope);
         }
     }
 
@@ -247,14 +240,7 @@ fn emit_workflow_turn_event(
         _ => return,
     };
 
-    event_context.progress.emit_domain_event_best_effort(
-        &event_context.session_id,
-        &envelope.domain_id,
-        &envelope.stream_id,
-        &envelope.event_type,
-        envelope.content_hash.clone(),
-        envelope.data.clone(),
-    );
+    event_context.progress.emit_envelope_best_effort(envelope);
 }
 
 fn workflow_turn_event_data(

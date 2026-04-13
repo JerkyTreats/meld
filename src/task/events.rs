@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::telemetry::contracts::{DomainObjectRef, EventRelation};
 use crate::telemetry::events::ProgressEnvelope;
 
 /// Structured task event emitted by the task executor.
@@ -99,14 +100,58 @@ pub fn build_execution_task_envelope(
 ) -> Option<ProgressEnvelope> {
     let event_type = canonical_task_event_type(&event.event_type)?;
     let data = ExecutionTaskEventData::from(event);
-    Some(ProgressEnvelope::with_now_domain(
+    Some(
+        ProgressEnvelope::with_now_domain(
         session_id.to_string(),
         "execution".to_string(),
         event.task_run_id.clone(),
         event_type.to_string(),
         None,
         json!(data),
-    ))
+        )
+        .with_graph(task_event_objects(event_type, event), task_event_relations(event_type, event)),
+    )
+}
+
+fn task_event_objects(event_type: &str, event: &TaskEvent) -> Vec<DomainObjectRef> {
+    match event_type {
+        "execution.task.artifact_emitted" => {
+            let mut objects = vec![task_run_ref(&event.task_run_id)];
+            if let Some(artifact_id) = &event.artifact_id {
+                objects.push(artifact_ref(artifact_id));
+            }
+            objects
+        }
+        "execution.task.succeeded" | "execution.task.failed" => vec![task_run_ref(&event.task_run_id)],
+        _ => Vec::new(),
+    }
+}
+
+fn task_event_relations(event_type: &str, event: &TaskEvent) -> Vec<EventRelation> {
+    match event_type {
+        "execution.task.artifact_emitted" => {
+            let Some(artifact_id) = event.artifact_id.as_ref() else {
+                return Vec::new();
+            };
+            vec![EventRelation::new(
+                "produced",
+                task_run_ref(&event.task_run_id),
+                artifact_ref(artifact_id),
+            )
+            .expect("task artifact relation should be valid")]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn task_run_ref(task_run_id: &str) -> DomainObjectRef {
+    DomainObjectRef::new("execution", "task_run", task_run_id)
+        .expect("task run ref should be valid")
+}
+
+fn artifact_ref(artifact_id: &str) -> DomainObjectRef {
+    DomainObjectRef::new("execution", "artifact", artifact_id)
+        .expect("artifact ref should be valid")
 }
 
 #[cfg(test)]
@@ -123,5 +168,20 @@ mod tests {
         assert_eq!(envelope.domain_id, "execution");
         assert_eq!(envelope.stream_id, "run_a");
         assert_eq!(envelope.event_type, "execution.task.progressed");
+    }
+
+    #[test]
+    fn task_artifact_event_emits_task_and_artifact_refs() {
+        let mut event = TaskEvent::new("task_artifact_emitted", "task_a", "run_a");
+        event.artifact_id = Some("artifact_a".to_string());
+
+        let envelope = build_execution_task_envelope("session_a", &event).unwrap();
+
+        assert_eq!(envelope.objects.len(), 2);
+        assert_eq!(envelope.objects[0].domain_id, "execution");
+        assert_eq!(envelope.objects[0].object_kind, "task_run");
+        assert_eq!(envelope.objects[1].object_kind, "artifact");
+        assert_eq!(envelope.relations.len(), 1);
+        assert_eq!(envelope.relations[0].relation_type, "produced");
     }
 }

@@ -254,4 +254,47 @@ fn task_executor_publishes_canonical_events() {
         .any(|event| event.event_type == "execution.task.progressed"));
     assert!(envelopes.iter().all(|event| event.domain_id == "execution"));
     assert!(envelopes.iter().all(|event| event.stream_id == "taskrun_1"));
+    assert!(envelopes
+        .iter()
+        .any(|event| event.event_type == "execution.task.started" && event.objects.is_empty()));
+}
+
+#[test]
+fn task_artifact_event_emits_task_and_artifact_refs() {
+    let mut executor =
+        TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+    let payloads = executor
+        .release_ready_invocations(CapabilityExecutionContext::default())
+        .unwrap();
+
+    executor
+        .record_success(
+            &payloads[0].invocation_id,
+            vec![ArtifactRecord {
+                artifact_id: "artifact_resolved".to_string(),
+                artifact_type_id: "resolved_node_ref".to_string(),
+                schema_version: 1,
+                content: json!({ "node_id": "node_root" }),
+                producer: ArtifactProducerRef {
+                    task_id: "task_docs_writer".to_string(),
+                    capability_instance_id: "capinst_resolve".to_string(),
+                    invocation_id: Some(payloads[0].invocation_id.clone()),
+                    output_slot_id: Some("resolved_node_ref".to_string()),
+                },
+            }],
+        )
+        .unwrap();
+
+    let artifact_event = executor
+        .events()
+        .iter()
+        .find(|event| event.event_type == "task_artifact_emitted")
+        .unwrap();
+    let envelope = build_execution_task_envelope("session_1", artifact_event).unwrap();
+
+    assert_eq!(envelope.objects.len(), 2);
+    assert_eq!(envelope.objects[0].object_kind, "task_run");
+    assert_eq!(envelope.objects[1].object_kind, "artifact");
+    assert_eq!(envelope.relations.len(), 1);
+    assert_eq!(envelope.relations[0].relation_type, "produced");
 }

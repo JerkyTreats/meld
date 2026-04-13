@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::telemetry::contracts::{DomainObjectRef, EventRelation};
 use crate::telemetry::events::ProgressEnvelope;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +149,27 @@ pub fn node_completed_envelope(
         "execution.control.node_completed",
         json!(data),
     )
+    .with_graph(
+        vec![
+            plan_ref(&data.plan_id),
+            workspace_node_ref(&data.node_id),
+            frame_ref(&data.frame_id),
+        ],
+        vec![
+            EventRelation::new(
+                "targets",
+                plan_ref(&data.plan_id),
+                workspace_node_ref(&data.node_id),
+            )
+            .expect("control target relation should be valid"),
+            EventRelation::new(
+                "produced",
+                workspace_node_ref(&data.node_id),
+                frame_ref(&data.frame_id),
+            )
+            .expect("control produced relation should be valid"),
+        ],
+    )
 }
 
 pub fn node_failed_envelope(session_id: &str, data: NodeFailedEventData) -> ProgressEnvelope {
@@ -156,6 +178,17 @@ pub fn node_failed_envelope(session_id: &str, data: NodeFailedEventData) -> Prog
         &data.plan_id,
         "execution.control.node_failed",
         json!(data),
+    )
+    .with_graph(
+        vec![plan_ref(&data.plan_id), workspace_node_ref(&data.node_id)],
+        vec![
+            EventRelation::new(
+                "targets",
+                plan_ref(&data.plan_id),
+                workspace_node_ref(&data.node_id),
+            )
+            .expect("control target relation should be valid"),
+        ],
     )
 }
 
@@ -183,6 +216,19 @@ pub fn generation_completed_envelope(
     )
 }
 
+fn plan_ref(plan_id: &str) -> DomainObjectRef {
+    DomainObjectRef::new("execution", "plan", plan_id).expect("plan ref should be valid")
+}
+
+fn workspace_node_ref(node_id: &str) -> DomainObjectRef {
+    DomainObjectRef::new("workspace_fs", "node", node_id)
+        .expect("workspace node ref should be valid")
+}
+
+fn frame_ref(frame_id: &str) -> DomainObjectRef {
+    DomainObjectRef::new("context", "frame", frame_id).expect("frame ref should be valid")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +250,29 @@ mod tests {
         assert_eq!(envelope.domain_id, "execution");
         assert_eq!(envelope.stream_id, "plan_a");
         assert_eq!(envelope.event_type, "execution.control.generation_started");
+    }
+
+    #[test]
+    fn control_node_completed_emits_workspace_and_frame_refs() {
+        let envelope = node_completed_envelope(
+            "session_a",
+            NodeCompletedEventData {
+                plan_id: "plan_a".to_string(),
+                level_index: 0,
+                node_id: "node_a".to_string(),
+                path: "/tmp/a".to_string(),
+                frame_id: "frame_a".to_string(),
+                program_kind: "workflow".to_string(),
+                workflow_id: None,
+            },
+        );
+
+        assert_eq!(envelope.objects.len(), 3);
+        assert_eq!(envelope.objects[0].object_kind, "plan");
+        assert_eq!(envelope.objects[1].object_kind, "node");
+        assert_eq!(envelope.objects[2].object_kind, "frame");
+        assert_eq!(envelope.relations.len(), 2);
+        assert_eq!(envelope.relations[0].relation_type, "targets");
+        assert_eq!(envelope.relations[1].relation_type, "produced");
     }
 }

@@ -306,14 +306,9 @@ impl GenerationExecutor {
         envelope: crate::telemetry::events::ProgressEnvelope,
     ) {
         if let (Some(progress), Some(session_id)) = (self.progress.as_ref(), session_id) {
-            progress.emit_domain_event_best_effort(
-                session_id,
-                &envelope.domain_id,
-                &envelope.stream_id,
-                &envelope.event_type,
-                envelope.content_hash.clone(),
-                envelope.data.clone(),
-            );
+            let mut envelope = envelope;
+            envelope.session = session_id.to_string();
+            progress.emit_envelope_best_effort(envelope);
         }
     }
 }
