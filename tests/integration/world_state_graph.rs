@@ -251,8 +251,8 @@ fn provenance_query_returns_supporting_execution_fact() {
         .unwrap();
 
     assert_eq!(provenance.source_fact_ids, vec!["spine::1".to_string()]);
-    assert_eq!(provenance.objects.len(), 2);
-    assert_eq!(provenance.relations.len(), 1);
+    assert_eq!(provenance.objects.len(), 3);
+    assert_eq!(provenance.relations.len(), 2);
 }
 
 #[test]
