@@ -11,6 +11,10 @@ use crate::telemetry::ProgressRuntime;
 use crate::tree::builder::TreeBuilder;
 use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
+use crate::workspace::events::{
+    node_observed_envelope, scan_completed_envelope, snapshot_materialized_envelope,
+    snapshot_selected_envelope, source_attached_envelope,
+};
 use crate::workspace::section;
 use crate::workspace::types::{
     AgentStatusEntry, AgentStatusOutput, IgnoreResult, ListDeletedResult, ListDeletedRow,
@@ -592,6 +596,11 @@ impl WorkspaceCommandService {
             TreeBuilder::new(workspace_root.to_path_buf()).with_walker_config(walker_config);
         let tree = builder.build().map_err(ApiError::StorageError)?;
         let total_nodes = tree.nodes.len();
+        let previous_root_hash = stored_workspace_root_hash(
+            api.node_store().as_ref(),
+            workspace_root,
+            &tree.root_id,
+        )?;
 
         if !force
             && api
@@ -661,6 +670,13 @@ impl WorkspaceCommandService {
 
         let root_hex = hex::encode(tree.root_id);
         if let (Some(prog), Some(sid)) = (progress, session_id) {
+            emit_workspace_scan_facts(
+                prog,
+                sid,
+                workspace_root,
+                &tree,
+                previous_root_hash.as_deref(),
+            );
             prog.emit_event_best_effort(
                 sid,
                 "scan_completed",
@@ -753,4 +769,58 @@ impl WorkspaceCommandService {
             providers,
         })
     }
+}
+
+fn emit_workspace_scan_facts(
+    progress: &Arc<ProgressRuntime>,
+    session_id: &str,
+    workspace_root: &Path,
+    tree: &crate::tree::builder::Tree,
+    previous_root_hash: Option<&str>,
+) {
+    let current_root_hex = hex::encode(tree.root_id);
+    if previous_root_hash.is_none() {
+        progress.emit_envelope_best_effort(source_attached_envelope(session_id, workspace_root));
+    }
+    progress.emit_envelope_best_effort(snapshot_materialized_envelope(
+        session_id,
+        workspace_root,
+        tree.root_id,
+    ));
+    let previous_root_node_id = previous_root_hash.and_then(decode_node_id_hex);
+    if previous_root_hash != Some(current_root_hex.as_str()) {
+        progress.emit_envelope_best_effort(snapshot_selected_envelope(
+            session_id,
+            workspace_root,
+            tree.root_id,
+            previous_root_node_id,
+        ));
+    }
+    for (node_id, node) in &tree.nodes {
+        let record = match NodeRecord::from_merkle_node(*node_id, node, tree) {
+            Ok(record) => record,
+            Err(_) => continue,
+        };
+        progress.emit_envelope_best_effort(node_observed_envelope(
+            session_id,
+            workspace_root,
+            tree.root_id,
+            &record,
+        ));
+    }
+    progress.emit_envelope_best_effort(scan_completed_envelope(
+        session_id,
+        workspace_root,
+        tree.nodes.len(),
+    ));
+}
+
+fn decode_node_id_hex(value: &str) -> Option<NodeID> {
+    let bytes = hex::decode(value).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut node_id = [0u8; 32];
+    node_id.copy_from_slice(&bytes);
+    Some(node_id)
 }

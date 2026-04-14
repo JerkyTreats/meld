@@ -10,6 +10,7 @@ use crate::ignore;
 use crate::telemetry::ProgressRuntime;
 use crate::workflow::binding::validate_agent_binding;
 use crate::workflow::registry::WorkflowRegistry;
+use crate::workspace::events::scan_started_envelope;
 use crate::workspace::{
     format_unified_status_text, format_workspace_status_text, WatchConfig, WatchDaemon,
     WorkspaceCommandService, WorkspaceStatusRequest,
@@ -29,6 +30,26 @@ pub fn handle_scan_command(
         "scan_started",
         serde_json::json!({ "force": force }),
     );
+    let node_count = crate::workspace::commands::current_workspace_root_hash(workspace_root)
+        .ok()
+        .and_then(|_| {
+            Some(
+                crate::tree::builder::TreeBuilder::new(workspace_root.to_path_buf())
+                    .with_walker_config(crate::workspace::commands::workspace_walker_config(
+                        workspace_root,
+                    ))
+                    .build()
+                    .ok()?
+                    .nodes
+                    .len(),
+            )
+        })
+        .unwrap_or_default();
+    progress.emit_envelope_best_effort(scan_started_envelope(
+        session_id,
+        workspace_root,
+        node_count,
+    ));
     WorkspaceCommandService::scan(api, workspace_root, force, Some(progress), Some(session_id))
 }
 

@@ -37,6 +37,7 @@ mod workflow_task_compatibility;
 mod world_state_graph;
 mod workspace_commands;
 mod workspace_isolation;
+mod workspace_traversal;
 mod xdg_config;
 
 pub use test_utils::{with_env_lock, with_xdg_data_home, with_xdg_env};

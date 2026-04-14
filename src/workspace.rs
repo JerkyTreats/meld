@@ -4,6 +4,7 @@ pub mod capability;
 mod ci;
 mod commands;
 mod danger;
+pub mod events;
 mod facade;
 mod format;
 pub mod publish;

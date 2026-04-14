@@ -610,6 +610,7 @@ mod tests {
     use crate::provider::ProviderRegistry;
     use crate::store::persistence::SledNodeRecordStore;
     use crate::store::{NodeRecord, NodeType};
+    use crate::telemetry::ProgressRuntime;
     use crate::workflow::registry::WorkflowRegistry;
     use std::path::Path;
     use tempfile::TempDir;
@@ -760,5 +761,40 @@ mod tests {
         }
 
         daemon.ensure_agent_frames_batched(&[node_id]).unwrap();
+    }
+
+    #[test]
+    fn watch_noise_is_not_promoted_directly() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let target = workspace_root.join("doc.txt");
+        std::fs::write(&target, "hello").unwrap();
+
+        let api = Arc::new(create_test_api(&workspace_root));
+        let progress_db = sled::open(temp.path().join("progress")).unwrap();
+        let progress = Arc::new(ProgressRuntime::new(progress_db).unwrap());
+        let session_id = progress
+            .start_command_session("workspace.watch".to_string())
+            .unwrap();
+
+        let config = WatchConfig {
+            workspace_root,
+            session_id: Some(session_id.clone()),
+            progress: Some(Arc::clone(&progress)),
+            auto_create_frames: false,
+            ..WatchConfig::default()
+        };
+        let daemon = WatchDaemon::new(api, config).unwrap();
+        daemon
+            .process_events(vec![ChangeEvent::Modified(target)])
+            .unwrap();
+
+        let emitted = progress.store().read_events_after(&session_id, 0).unwrap();
+        assert!(emitted.iter().any(|event| event.event_type == "file_changed"));
+        assert!(emitted
+            .iter()
+            .any(|event| event.event_type == "batch_processed"));
+        assert!(!emitted.iter().any(|event| event.domain_id == "workspace_fs"));
     }
 }
