@@ -131,6 +131,7 @@ fn telemetry_is_downstream_only() {
         task_run_id: "run_one".to_string(),
         capability_instance_id: None,
         invocation_id: None,
+        target_node_id: None,
         artifact_id: None,
         artifact_type_id: None,
         attempt_index: None,

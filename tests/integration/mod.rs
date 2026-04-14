@@ -34,6 +34,7 @@ mod unified_status;
 mod workflow_cli;
 mod workflow_contracts_conformance;
 mod workflow_task_compatibility;
+mod workflow_traversal;
 mod world_state_graph;
 mod workspace_commands;
 mod workspace_isolation;

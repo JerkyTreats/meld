@@ -27,6 +27,7 @@ fn task_event_data(task_id: &str, task_run_id: &str) -> ExecutionTaskEventData {
         task_run_id: task_run_id.to_string(),
         capability_instance_id: None,
         invocation_id: None,
+        target_node_id: None,
         artifact_id: None,
         artifact_type_id: None,
         attempt_index: None,

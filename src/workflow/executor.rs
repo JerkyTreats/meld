@@ -1043,14 +1043,7 @@ fn emit_workflow_turn_event(
             ),
             _ => return,
         };
-        ctx.progress.emit_domain_event_best_effort(
-            &ctx.session_id,
-            &envelope.domain_id,
-            &envelope.stream_id,
-            &envelope.event_type,
-            envelope.content_hash.clone(),
-            envelope.data.clone(),
-        );
+        ctx.progress.emit_envelope_best_effort(envelope);
     }
 }
 
