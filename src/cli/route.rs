@@ -143,6 +143,8 @@ impl RunContext {
         let started = Instant::now();
         let command_name = command_name(command);
         let session_id = self.progress.start_command_session(command_name)?;
+        self.api
+            .set_progress_context(Arc::clone(&self.progress), session_id.clone());
         let mut live_progress = LiveProgressHandle::start_if_supported(
             Arc::clone(&self.progress),
             &session_id,
@@ -158,6 +160,7 @@ impl RunContext {
         let ok = result.is_ok();
         let err = result.as_ref().err().map(|e| e.to_string());
         self.progress.finish_command_session(&session_id, ok, err)?;
+        self.api.clear_progress_context();
         if let Some(handle) = live_progress.as_mut() {
             handle.stop();
         }

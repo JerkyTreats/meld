@@ -5,6 +5,9 @@
 
 use crate::agent::AgentRegistry;
 use crate::concurrency::NodeLockManager;
+use crate::context::events::{
+    frame_added_envelope, head_selected_envelope, head_tombstoned_envelope,
+};
 use crate::context::frame::{Basis, Frame, FrameStorage};
 use crate::context::query::get_node_query;
 use crate::context::query::{compose_frames, CompositionPolicy};
@@ -17,6 +20,7 @@ use crate::metadata::frame_write_contract::{
 };
 use crate::prompt_context::PromptContextArtifactStorage;
 use crate::store::NodeRecordStore;
+use crate::telemetry::ProgressRuntime;
 use crate::types::{FrameID, NodeID};
 use crate::views::ViewPolicy;
 use hex;
@@ -51,6 +55,14 @@ pub struct ContextApi {
     lock_manager: Arc<NodeLockManager>,
     /// Workspace root for persistence (optional)
     workspace_root: Option<PathBuf>,
+    /// Optional spine emitter context for canonical context facts.
+    progress_context: Arc<parking_lot::RwLock<Option<ProgressEmitterContext>>>,
+}
+
+#[derive(Clone)]
+struct ProgressEmitterContext {
+    runtime: Arc<ProgressRuntime>,
+    session_id: String,
 }
 
 impl ContextApi {
@@ -73,6 +85,7 @@ impl ContextApi {
             provider_registry,
             lock_manager,
             workspace_root: None,
+            progress_context: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -97,7 +110,19 @@ impl ContextApi {
             provider_registry,
             lock_manager,
             workspace_root: Some(workspace_root),
+            progress_context: Arc::new(parking_lot::RwLock::new(None)),
         }
+    }
+
+    pub fn set_progress_context(&self, runtime: Arc<ProgressRuntime>, session_id: impl Into<String>) {
+        *self.progress_context.write() = Some(ProgressEmitterContext {
+            runtime,
+            session_id: session_id.into(),
+        });
+    }
+
+    pub fn clear_progress_context(&self) {
+        *self.progress_context.write() = None;
     }
 
     pub fn workspace_root(&self) -> Option<&Path> {
@@ -262,7 +287,7 @@ impl ContextApi {
         let lock = self.lock_manager.get_lock(&node_id);
         let _guard = lock.write();
 
-        let previous_metadata = {
+        let (previous_head, previous_metadata) = {
             let previous_head = {
                 let head_index = self.head_index.read();
                 head_index
@@ -270,14 +295,15 @@ impl ContextApi {
                     .map_err(ApiError::from)?
             };
 
-            if let Some(previous_head_id) = previous_head {
+            let previous_metadata = if let Some(previous_head_id) = previous_head {
                 self.frame_storage
                     .get(&previous_head_id)
                     .map_err(ApiError::from)?
                     .map(|stored_frame| stored_frame.metadata)
             } else {
                 None
-            }
+            };
+            (previous_head, previous_metadata)
         };
 
         // Shared frame metadata write contract boundary.
@@ -316,6 +342,26 @@ impl ContextApi {
             duration_ms = duration.as_millis(),
             "Frame created"
         );
+
+        let session_id = self
+            .current_progress_context()
+            .map(|context| context.session_id)
+            .unwrap_or_else(|| "context_api".to_string());
+        self.emit_context_envelope(frame_added_envelope(
+            &session_id,
+            node_id,
+            &frame.basis,
+            frame.frame_id,
+            &frame.frame_type,
+            &frame.agent_id,
+        ));
+        self.emit_context_envelope(head_selected_envelope(
+            &session_id,
+            node_id,
+            &frame.frame_type,
+            frame.frame_id,
+            previous_head,
+        ));
 
         Ok(frame.frame_id)
     }
@@ -396,6 +442,17 @@ impl ContextApi {
         if previous_head.is_some() {
             self.persist_indices()?;
         }
+
+        let session_id = self
+            .current_progress_context()
+            .map(|context| context.session_id)
+            .unwrap_or_else(|| "context_api".to_string());
+        self.emit_context_envelope(head_tombstoned_envelope(
+            &session_id,
+            node_id,
+            frame_type,
+            previous_head,
+        ));
 
         Ok(previous_head)
     }
@@ -757,6 +814,17 @@ impl ContextApi {
     /// Get access to head index (for tooling)
     pub fn head_index(&self) -> &Arc<parking_lot::RwLock<HeadIndex>> {
         &self.head_index
+    }
+
+    fn current_progress_context(&self) -> Option<ProgressEmitterContext> {
+        self.progress_context.read().clone()
+    }
+
+    fn emit_context_envelope(&self, envelope: crate::telemetry::events::ProgressEnvelope) {
+        let Some(context) = self.current_progress_context() else {
+            return;
+        };
+        context.runtime.emit_envelope_best_effort(envelope);
     }
 
     /// Get access to agent registry (for tooling)
