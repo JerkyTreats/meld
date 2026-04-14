@@ -32,6 +32,13 @@ impl<'a> TraversalQuery<'a> {
             .current_anchor_for_subject(subject, perspective_kind, perspective_id)
     }
 
+    pub fn current_anchors_for_subject(
+        &self,
+        subject: &DomainObjectRef,
+    ) -> Result<Vec<AnchorSelectionRecord>, StorageError> {
+        self.store.current_anchors_for_subject(subject)
+    }
+
     pub fn anchor_history(
         &self,
         anchor_ref: &DomainObjectRef,

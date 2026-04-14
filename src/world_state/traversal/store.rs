@@ -261,6 +261,23 @@ impl TraversalStore {
         self.get_anchor(&anchor_id)
     }
 
+    pub fn current_anchors_for_subject(
+        &self,
+        subject: &DomainObjectRef,
+    ) -> Result<Vec<AnchorSelectionRecord>, StorageError> {
+        let mut out = Vec::new();
+        let prefix = format!("{}::", subject.index_key());
+        for item in self.subject_perspective_index.scan_prefix(prefix.as_bytes()) {
+            let (_, value) = item.map_err(to_storage_io)?;
+            let anchor_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
+            if let Some(record) = self.get_anchor(&anchor_id)? {
+                out.push(record);
+            }
+        }
+        out.sort_by_key(|record| record.selected_at_seq);
+        Ok(out)
+    }
+
     pub fn anchor_history(
         &self,
         anchor_ref: &DomainObjectRef,
@@ -372,20 +389,8 @@ impl TraversalStore {
         for item in tree.scan_prefix(prefix.as_bytes()) {
             let (_, value) = item.map_err(to_storage_io)?;
             let record: RelationRecord = serde_json::from_slice(&value).map_err(to_storage_data)?;
-            if let Some(types) = relation_types {
-                if !types.iter().any(|value| value == &record.relation.relation_type) {
-                    continue;
-                }
-            }
-            if current_only && record.relation.relation_type == "selected" {
-                let anchor_ref = if outgoing {
-                    &record.relation.src
-                } else {
-                    &record.relation.dst
-                };
-                if self.current_anchor(anchor_ref)?.is_none() {
-                    continue;
-                }
+            if !self.relation_visible(&record, relation_types, current_only)? {
+                continue;
             }
             let neighbor = if outgoing {
                 record.relation.dst
@@ -440,6 +445,9 @@ impl TraversalStore {
                 for item in tree.scan_prefix(relation_prefix.as_bytes()) {
                     let (_, value) = item.map_err(to_storage_io)?;
                     let record: RelationRecord = serde_json::from_slice(&value).map_err(to_storage_data)?;
+                    if !self.relation_visible(&record, spec.relation_types.as_deref(), spec.current_only)? {
+                        continue;
+                    }
                     visited_relations.push(record.relation);
                 }
             } else {
@@ -447,6 +455,13 @@ impl TraversalStore {
                     for item in tree.scan_prefix(relation_prefix.as_bytes()) {
                         let (_, value) = item.map_err(to_storage_io)?;
                         let record: RelationRecord = serde_json::from_slice(&value).map_err(to_storage_data)?;
+                        if !self.relation_visible(
+                            &record,
+                            spec.relation_types.as_deref(),
+                            spec.current_only,
+                        )? {
+                            continue;
+                        }
                         visited_relations.push(record.relation);
                     }
                 }
@@ -471,6 +486,30 @@ impl TraversalStore {
             visited_facts: facts,
             traversed_relations: visited_relations,
         })
+    }
+}
+
+impl TraversalStore {
+    fn relation_visible(
+        &self,
+        record: &RelationRecord,
+        relation_types: Option<&[String]>,
+        current_only: bool,
+    ) -> Result<bool, StorageError> {
+        if let Some(types) = relation_types {
+            if !types.iter().any(|value| value == &record.relation.relation_type) {
+                return Ok(false);
+            }
+        }
+        if current_only && record.relation.relation_type == "selected" {
+            let Some(current_anchor) = self.current_anchor(&record.relation.src)? else {
+                return Ok(false);
+            };
+            if current_anchor.target.index_key() != record.relation.dst.index_key() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 

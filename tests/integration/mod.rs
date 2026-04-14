@@ -28,6 +28,7 @@ mod task_compiler;
 mod task_executor;
 mod test_utils;
 mod tooling_integration;
+mod traversal_graph;
 mod tree_determinism;
 mod tree_structure;
 mod unified_status;
