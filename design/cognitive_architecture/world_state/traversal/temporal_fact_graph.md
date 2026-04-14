@@ -2,23 +2,23 @@
 
 Date: 2026-04-12
 Status: active
-Scope: canonical graph model for `world_state`, built downstream of the shared event spine
+Scope: canonical graph model for `world_state/traversal`, built downstream of the shared event spine
 
 ## Thesis
 
-The canonical graph for `world_state` should be a temporal fact graph.
+The canonical graph for `world_state/traversal` should be a temporal fact graph.
 
 This means:
 
 - the spine is the durable history of semantic fact commits
-- the graph is the current settled world model
+- the graph is the current traversal surface
 - the graph is materialized from spine history
 - the graph can emit new curation facts into the spine, but it does not rewrite history directly
 
 This is the clean split between:
 
-- how belief became settled
-- what is currently settled
+- how current anchors became available
+- what is currently reachable
 
 ## Core Position
 
@@ -31,15 +31,15 @@ The spine should own:
 - replay
 - cross-domain attachment
 
-The graph should own:
+Traversal should own:
 
-- current belief
+- current anchors
 - current relations
 - supersession state
 - provenance views
 - planner-facing and operator-facing projections
 
-The graph must always be derivable from the spine.
+The traversal surface must always be derivable from the spine.
 
 ## Canonical Model
 
@@ -51,11 +51,11 @@ The canonical model has four first-class primitives:
   one immutable semantic commit in time
 - relation
   typed edge declared by a fact
-- settlement
-  current belief state derived from facts and relations
+- anchor
+  current selected surface derived from facts and relations
 
 This is not a property graph first.
-This is not an ECS first design.
+This is not a belief calculus first design.
 This is not a raw JSON event bucket.
 
 It is a temporal fact ledger plus materialized graph views.
@@ -135,32 +135,31 @@ The important design rule is simple:
 
 Without that rule the spine remains a log, not a graph substrate.
 
-## Settlement Model
+## Traversal Model
 
-The graph is the result of settlement over facts.
+The graph is the result of selection and materialization over facts.
 
-Settlement means:
+Traversal means:
 
-- attach new evidence
-- revise confidence
-- supersede stale claims
+- attach new objects
+- preserve relation lineage
+- expose current anchors
+- expose current reachability
 - preserve provenance
-- expose current belief
 
-The settled graph should carry:
+The traversal graph should carry:
 
 - entity nodes
-- claim nodes
+- anchor nodes
 - typed relations
-- evidence links
+- evidence links where available
 - provenance links
-- current confidence
-- current validity state
-- supersession state
+- current head selection
+- current lineage state
 
-Not every settled node is absolute truth.
-Some nodes may be provisional, uncertain, or decayed.
-The graph is the current belief layer, not a certainty layer.
+This layer answers what is current and how to reach it.
+It does not by itself answer whether current is still credible.
+That is the job of `world_state/belief`.
 
 ## Authority Model
 
@@ -178,17 +177,17 @@ The safe rule is:
 
 So the loop is:
 
-1. `sensory` or `execution` publishes semantic facts into the spine
-2. `world_state` reducers consume those facts
+1. `workspace_fs`, `execution`, or later `sensory` publishes semantic facts into the spine
+2. `world_state/traversal` reducers consume those facts
 3. reducers update current graph state
-4. reducers may emit new `world_state.*` settlement facts
-5. later replay can rebuild the same settled graph
+4. reducers may emit new `world_state.*` traversal facts
+5. later replay can rebuild the same traversal graph
 
 This preserves both provenance and replay discipline.
 
 ## Reducer Model
 
-The graph should be materialized by curation reducers, not by arbitrary writers.
+The graph should be materialized by traversal reducers, not by arbitrary writers.
 
 Reducers should be partitionable by:
 
@@ -203,10 +202,10 @@ The first reducer families should be:
 
 - observation attachment
   attach promoted observations and execution outcomes to durable objects
-- claim settlement
-  create and revise claims plus confidence and validity
-- supersession and calibration
-  mark old claims stale, track later outcomes, and update reliability
+- anchor selection
+  select the current reachable artifact, frame, or head for one object and one perspective
+- provenance threading
+  preserve why one current anchor is selected
 
 Each reducer should consume the spine, maintain one materialized view, and expose replay from the last applied `seq`.
 
@@ -231,7 +230,7 @@ Minimum traversal indexes:
 
 Minimum current state indexes:
 
-- `object_ref -> current claims`
+- `object_ref -> current anchors`
 - `object_ref -> current relations`
 - `planner view key -> current settled value`
 - `inspection view key -> provenance bundle`
@@ -248,11 +247,11 @@ At minimum the system should support:
 - temporal traversal by `seq`
 - object history traversal by `DomainObjectRef`
 - current relation traversal by settled graph adjacency
-- provenance traversal from claim to supporting facts
-- supersession traversal from active claim to prior claim chain
+- provenance traversal from anchor to supporting facts
+- lineage traversal from current anchor to prior anchor chain
 
 The first spine refactor already gives temporal traversal.
-`world_state` must add object and relation traversal on top.
+`world_state/traversal` must add object and relation traversal on top.
 
 ## What ECS Is And Is Not Here
 
@@ -321,8 +320,9 @@ This is enough to prove the model without forcing a full graph runtime rewrite.
 
 ## Read With
 
-- [World State Domain](README.md)
-- [Curation In World State](curation.md)
-- [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md)
-- [Spine Concern](../spine/README.md)
-- [Multi-Domain Spine](../events/multi_domain_spine.md)
+- [World State Domain](../README.md)
+- [Traversal](README.md)
+- [Belief](../belief/README.md)
+- [Knowledge Graph ECS Decision Memo](../belief/knowledge_graph_ecs_decision_memo.md)
+- [Spine Concern](../../spine/README.md)
+- [Multi-Domain Spine](../../events/multi_domain_spine.md)

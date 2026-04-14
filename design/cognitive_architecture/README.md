@@ -41,7 +41,7 @@ This area does own:
 
 - [Observe Merge Push](observe_merge_push.md)
   founding prompt and response index
-- [Knowledge Graph ECS Decision Memo](world_state/knowledge_graph_ecs_decision_memo.md)
+- [Knowledge Graph ECS Decision Memo](world_state/belief/knowledge_graph_ecs_decision_memo.md)
   ECS evaluation for curation internals, migration cost, and recommendation
 - [Sensory Domain](sensory/README.md)
   continuous observation and diff publication
@@ -49,12 +49,20 @@ This area does own:
   stream compilation, lowering, and promotion in `sensory`
 - [World State Domain](world_state/README.md)
   canonical current belief, knowledge graph projection, and world-model ownership
-- [Curation In World State](world_state/curation.md)
-  merge activity and natural runtime inside `world_state`
-- [Temporal Fact Graph](world_state/temporal_fact_graph.md)
-  canonical graph model for settled belief, provenance, and spine-driven materialization
-- [Knowledge Graph Implementation Plan](world_state/knowledge_graph_implementation_plan.md)
-  phased implementation path for contracts, reducers, indexes, and planner-facing reads
+- [World State Traversal](world_state/traversal/README.md)
+  current anchor selection, lineage, provenance, and graph walk
+- [Temporal Fact Graph](world_state/traversal/temporal_fact_graph.md)
+  canonical graph model for the traversal layer and spine-driven materialization
+- [Traversal Implementation Plan](world_state/traversal/implementation_plan.md)
+  phased implementation path for contracts, reducers, indexes, and planner-facing traversal
+- [Workspace FS Traversal Transition Requirements](world_state/traversal/workspace_fs_transition_requirements.md)
+  compatibility requirements, code touchpoints, and phased lift of `workspace_fs` into graph inputs
+- [World State Belief](world_state/belief/README.md)
+  confidence, revision, contradiction, and settlement over current anchors
+- [Curation In Belief](world_state/belief/curation.md)
+  merge activity and natural runtime inside `world_state/belief`
+- [Knowledge Graph ECS Decision Memo](world_state/belief/knowledge_graph_ecs_decision_memo.md)
+  ECS evaluation for curation internals, migration cost, and recommendation
 - [Execution Domain](execution/README.md)
   world-model-aware action aligned with current execution design
 - [Execution Substrate](execution/substrate.md)
@@ -73,20 +81,24 @@ This area does own:
 ## Read Order
 
 1. [Observe Merge Push](observe_merge_push.md)
-2. [Knowledge Graph ECS Decision Memo](world_state/knowledge_graph_ecs_decision_memo.md)
+2. [Knowledge Graph ECS Decision Memo](world_state/belief/knowledge_graph_ecs_decision_memo.md)
 3. [Sensory Domain](sensory/README.md)
 4. [Sensory Substrate](sensory/substrate.md)
 5. [World State Domain](world_state/README.md)
-6. [Curation In World State](world_state/curation.md)
-7. [Temporal Fact Graph](world_state/temporal_fact_graph.md)
-8. [Knowledge Graph Implementation Plan](world_state/knowledge_graph_implementation_plan.md)
-9. [Execution Domain](execution/README.md)
-10. [Execution Substrate](execution/substrate.md)
-11. [Execution Control](execution/control/README.md)
-12. [Execution Planning](execution/control/planning/README.md)
-13. [Spine Concern](spine/README.md)
-14. [Events Design](events/README.md)
-15. [Further Research Prompts](further_research_prompts.md)
+6. [World State Traversal](world_state/traversal/README.md)
+7. [Temporal Fact Graph](world_state/traversal/temporal_fact_graph.md)
+8. [Traversal Implementation Plan](world_state/traversal/implementation_plan.md)
+9. [Workspace FS Traversal Transition Requirements](world_state/traversal/workspace_fs_transition_requirements.md)
+10. [World State Belief](world_state/belief/README.md)
+11. [Curation In Belief](world_state/belief/curation.md)
+12. [Knowledge Graph ECS Decision Memo](world_state/belief/knowledge_graph_ecs_decision_memo.md)
+13. [Execution Domain](execution/README.md)
+14. [Execution Substrate](execution/substrate.md)
+15. [Execution Control](execution/control/README.md)
+16. [Execution Planning](execution/control/planning/README.md)
+17. [Spine Concern](spine/README.md)
+18. [Events Design](events/README.md)
+19. [Further Research Prompts](further_research_prompts.md)
 
 ## Read With
 

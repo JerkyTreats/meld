@@ -1,41 +1,41 @@
-# Knowledge Graph Implementation Plan
+# Traversal Implementation Plan
 
 Date: 2026-04-12
 Status: active
-Scope: phased delivery plan for the first canonical `world_state` knowledge graph
+Scope: phased delivery plan for the first canonical `world_state/traversal` graph slice
 
 ## Summary
 
-The first knowledge graph should land as a materialized `world_state` domain built downstream of the shared event spine.
+The first traversal graph should land as a materialized `world_state` domain built downstream of the shared event spine.
 
 This plan assumes:
 
 - the spine remains the durable temporal source
-- the graph is the current settled belief layer
+- the graph is the current traversal layer
 - `DomainObjectRef` becomes the cross-domain anchor
-- reducers own settlement
-- planner reads projections, not the raw spine
+- reducers own materialization
+- planner and operator reads use traversal projections, not the raw spine
 
-The first version should not attempt full sensory integration, distributed sequencing, or generic graph query language support.
+The first version should not attempt belief calculus, full sensory integration, distributed sequencing, or generic graph query language support.
 
 ## Target End State
 
 At the end of this plan, the repo should have:
 
 - one shared object reference contract across domains
-- one typed `world_state` domain with durable fact families
-- one replayable settlement path from spine facts into current graph state
+- one typed `world_state/traversal` area with durable fact families
+- one replayable materialization path from spine facts into current graph state
 - one object history index
-- one current claim index
-- one planner-facing belief projection
+- one current anchor index
+- one planner-facing traversal projection
 - one operator-facing provenance projection
 
-The first graph should answer:
+This branch should answer:
 
-- what do we currently believe about object X
-- why do we believe claim Y
-- what superseded claim Y
-- which execution or workspace fact changed belief about object X
+- what is the current anchor for object X and perspective Y
+- why is anchor Z current
+- what prior anchor did Z replace
+- which execution or workspace fact moved the anchor
 
 ## Non Goals
 
@@ -44,6 +44,7 @@ The first graph should answer:
 - distributed log work
 - arbitrary graph query language
 - global ECS adoption
+- belief confidence, contradiction, calibration, or Bayesian revision
 
 ## Phase 0 Contract Freeze
 
@@ -103,11 +104,11 @@ Acceptance gate:
 - new events can persist and replay with object refs and relations
 - one integration test proves mixed old and new events replay cleanly
 
-## Phase 2 World State Domain Skeleton
+## Phase 2 Traversal Domain Skeleton
 
 Goal:
 
-- create the first real `world_state` runtime area
+- create the first real `world_state/traversal` runtime area
 
 Code landing zones:
 
@@ -119,22 +120,21 @@ Code landing zones:
 
 Define:
 
-- typed record ids for claim, evidence, and settlement records
+- typed record ids for anchor, evidence, and lineage records
 - `world_state.claim_added`
-- `world_state.claim_revised`
-- `world_state.claim_superseded`
+- `world_state.anchor_selected`
+- `world_state.anchor_superseded`
 - `world_state.evidence_attached`
-- `world_state.calibration_recorded`
 
 The first slice should keep public record shapes graph-oriented and typed.
 
 Acceptance gate:
 
-- world state record contracts round trip through serde
-- world state event builders emit explicit object refs and relation lists
+- traversal record contracts round trip through serde
+- traversal event builders emit explicit object refs and relation lists
 - no runtime reducer work yet
 
-## Phase 3 Fact Store And Indexes
+## Phase 3 Traversal Store And Indexes
 
 Goal:
 
@@ -150,23 +150,23 @@ Required indexes:
 
 - `fact_id -> fact`
 - `object_ref -> fact ids`
-- `claim_id -> evidence ids`
-- `claim_id -> supersession chain`
-- `object_ref -> current claim ids`
+- `anchor_id -> evidence ids`
+- `anchor_id -> supersession chain`
+- `object_ref -> current anchor ids`
 - `seq -> fact id`
 
 Design rule:
 
 - the spine stays the source of truth
-- world state storage is an indexed materialization and query layer
+- traversal storage is an indexed materialization and query layer
 
 Acceptance gate:
 
 - facts can be loaded by object reference without scanning the whole spine
-- current claims for one object can be loaded from indexes alone
-- supersession chain lookup works for one claim lineage
+- current anchors for one object can be loaded from indexes alone
+- supersession chain lookup works for one anchor lineage
 
-## Phase 4 Settlement Reducers
+## Phase 4 Traversal Reducers
 
 Goal:
 
@@ -182,10 +182,10 @@ First reducers:
 
 - attachment reducer
   maps execution and workspace facts onto durable objects
-- claim settlement reducer
-  creates and revises current claims
-- supersession and calibration reducer
-  marks stale claims and records later outcome quality
+- anchor selection reducer
+  creates and revises current anchors
+- supersession reducer
+  marks prior anchors stale when a newer current anchor takes over
 
 First source domains:
 
@@ -196,15 +196,15 @@ First source domains:
 
 Acceptance gate:
 
-- replay from spine facts rebuilds the same current claim view
-- late arriving fact revises current claim without losing prior provenance
-- one claim can attach to both a workspace node and a task run
+- replay from spine facts rebuilds the same current anchor view
+- one current anchor can attach to both a workspace node and a task run
+- one workspace node can resolve to the latest frame anchor for one perspective
 
 ## Phase 5 Planner And Operator Projections
 
 Goal:
 
-- make the graph useful to planning and inspection
+- make traversal useful to planning and inspection
 
 Code landing zones:
 
@@ -214,41 +214,61 @@ Code landing zones:
 
 Planner-facing projection:
 
-- current belief by object
-- confidence
-- staleness
-- blocking unknowns
+- current anchor by object and perspective
+- anchor provenance
+- lineage to prior anchor
+- blocking missing anchor
 
 Operator-facing projection:
 
-- claim provenance bundle
+- anchor provenance bundle
 - supporting evidence
-- contradicting evidence
 - supersession chain
+- cross-domain attached objects
 
 Acceptance gate:
 
-- planner projection answers current belief for one object without raw spine scan
-- operator projection explains why one claim is active
+- planner projection answers current anchor for one object without raw spine scan
+- operator projection explains why one anchor is current
 
 ## Phase 6 Execution Coupling
 
 Goal:
 
-- make planning consume current world state deliberately
+- make execution consume current traversal deliberately
 
 First coupling points:
 
-- execution can map desired world change to claim delta
-- planner can read current belief for target objects
-- execution outcomes can publish object refs needed by world state
+- execution can ask for the current anchor for a target object and perspective
+- planner can read current traversal for target objects
+- execution outcomes can publish object refs needed by traversal
 
 This is the first point where the knowledge graph stops being side analysis and becomes part of the cognitive loop.
 
 Acceptance gate:
 
-- one execution path reads planner-facing world state projection before acting
-- one execution outcome changes current world state through replayable facts
+- one execution path reads planner-facing traversal projection before acting
+- one execution outcome changes current traversal through replayable facts
+
+## Branch Scope
+
+This branch is traversal-only.
+
+It should encapsulate:
+
+- cross-domain object refs
+- explicit graph relations on canonical events
+- workspace and execution publication into the spine
+- current anchor materialization
+- lineage and provenance traversal
+
+It should explicitly defer:
+
+- belief confidence
+- contradiction handling
+- Bayesian revision
+- calibration
+- planner confidence policy
 
 ## Minimum Test Set
 
@@ -257,7 +277,7 @@ These tests should exist by the end of the first landing:
 - `domain_object_ref_round_trips`
 - `legacy_spine_events_remain_readable_with_graph_fields`
 - `world_state_event_builders_emit_explicit_object_refs`
-- `execution_outcome_can_attach_claim_to_task_and_workspace_node`
+- `execution_outcome_can_attach_anchor_to_task_and_workspace_node`
 - `replay_rebuilds_current_claim_projection`
 - `late_fact_revises_claim_without_history_loss`
 - `supersession_chain_remains_queryable`
@@ -311,8 +331,8 @@ Stop and redesign if any of these become true:
 
 ## Read With
 
-- [World State Domain](README.md)
+- [World State Domain](../README.md)
 - [Temporal Fact Graph](temporal_fact_graph.md)
-- [Curation In World State](curation.md)
-- [Spine Concern](../spine/README.md)
-- [Multi-Domain Spine](../events/multi_domain_spine.md)
+- [Belief](../belief/README.md)
+- [Spine Concern](../../spine/README.md)
+- [Multi-Domain Spine](../../events/multi_domain_spine.md)

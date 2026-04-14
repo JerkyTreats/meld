@@ -1,14 +1,14 @@
-# Curation In World State
+# Curation In Belief
 
 Date: 2026-04-12
 Status: active
-Scope: natural runtime model for belief maintenance and knowledge graph materialization inside `world_state`
+Scope: natural runtime model for belief maintenance inside `world_state/belief`
 
 ## Thesis
 
 To each domain be true.
 
-The natural substrate for `world_state` is a living world-model engine that consumes promoted facts and materializes current belief.
+The natural substrate for `belief` is a living world-model engine that consumes promoted facts and materializes current belief.
 It is not primarily a workflow engine.
 
 `curation` integrates.
@@ -33,7 +33,7 @@ The substrate should look like:
 - projection builders for planner and operator views
 
 This is why ECS is a plausible fit here.
-It gives `world_state` a way to maintain identity and many sparse attached belief concerns without forcing one rigid record shape for every internal operation.
+It gives `belief` a way to maintain identity and many sparse attached belief concerns without forcing one rigid record shape for every internal operation.
 
 ## Core Primitives
 
@@ -48,7 +48,7 @@ It gives `world_state` a way to maintain identity and many sparse attached belie
 - provenance component family
   why, when, and from which facts a belief changed
 - projection
-  materialized graph or query view derived from current world-state state
+  materialized graph or query view derived from current belief state
 
 ## Materialization Posture
 
@@ -85,7 +85,7 @@ Those remain outside `curation`.
 
 ## Relationship To Spine
 
-`world_state` consumes the spine and materializes current belief from it.
+`belief` consumes the spine and materializes current belief from it.
 It may also publish curated fact updates, but the spine remains the cross-domain durable ledger.
 
 The ordering and temporal rules are not solved by the substrate alone.
@@ -93,12 +93,12 @@ They are inherited from spine semantics.
 
 ## Relationship To ECS
 
-ECS is not the doctrine of `world_state`.
+ECS is not the doctrine of `belief`.
 It is a candidate internal substrate.
 
 The useful boundary is:
 
-- ECS may own live mutable world-state internals
+- ECS may own live mutable belief internals
 - graph-shaped records and shaped query views remain the public contract
 
 That boundary keeps the world model living without turning every other domain into ECS by accident.
@@ -112,8 +112,9 @@ That boundary keeps the world model living without turning every other domain in
 
 ## Read With
 
-- [World State Domain](README.md)
-- [Temporal Fact Graph](temporal_fact_graph.md)
+- [World State Domain](../README.md)
+- [Belief](README.md)
+- [Traversal](../traversal/README.md)
 - [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md)
-- [Spine Concern](../spine/README.md)
-- [Observe Merge Push](../observe_merge_push.md)
+- [Spine Concern](../../spine/README.md)
+- [Observe Merge Push](../../observe_merge_push.md)
