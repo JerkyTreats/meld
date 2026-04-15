@@ -11,9 +11,11 @@ use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
 use crate::telemetry::sessions::policy::PrunePolicy;
 use crate::telemetry::ProgressRuntime;
+use crate::world_state::GraphRuntime;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::warn;
 
 /// Runtime context for CLI execution: workspace, config paths, and domain facades.
 /// Built from workspace path and optional config path using ConfigLoader only.
@@ -28,6 +30,7 @@ pub struct RunContext {
     artifact_storage_path: PathBuf,
     workflow_registry: Arc<parking_lot::RwLock<crate::workflow::registry::WorkflowRegistry>>,
     progress: Arc<ProgressRuntime>,
+    graph_runtime: Arc<GraphRuntime>,
 }
 
 impl RunContext {
@@ -70,7 +73,8 @@ impl RunContext {
             )))
         })?;
         let node_store = Arc::new(SledNodeRecordStore::from_db(db.clone()));
-        let progress = Arc::new(ProgressRuntime::new(db).map_err(ApiError::StorageError)?);
+        let progress = Arc::new(ProgressRuntime::new(db.clone()).map_err(ApiError::StorageError)?);
+        let graph_runtime = Arc::new(GraphRuntime::new(db).map_err(ApiError::StorageError)?);
 
         std::fs::create_dir_all(&frame_storage_path)
             .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
@@ -126,6 +130,10 @@ impl RunContext {
         let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(&workspace_root)?;
 
+        if let Err(err) = graph_runtime.catch_up() {
+            warn!(error = %err, "failed to catch up graph runtime during startup");
+        }
+
         Ok(Self {
             api: Arc::new(api),
             workspace_root,
@@ -135,6 +143,7 @@ impl RunContext {
             artifact_storage_path,
             workflow_registry,
             progress,
+            graph_runtime,
         })
     }
 
@@ -151,6 +160,9 @@ impl RunContext {
             command,
         );
         let result = self.execute_inner(command, &session_id);
+        if let Err(err) = self.graph_runtime.catch_up() {
+            warn!(error = %err, "failed to catch up graph runtime after command execution");
+        }
         self.emit_command_summary(
             &session_id,
             command,

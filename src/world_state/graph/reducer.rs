@@ -16,6 +16,7 @@ pub struct TraversalReducer {
     pub current_anchors: CurrentAnchorProjection,
     pub lineage: AnchorLineageProjection,
     pub emitted_envelopes: Vec<ProgressEnvelope>,
+    pub applied_events: usize,
 }
 
 impl TraversalReducer {
@@ -28,10 +29,16 @@ impl TraversalReducer {
             current_anchors: CurrentAnchorProjection::default(),
             lineage: AnchorLineageProjection::default(),
             emitted_envelopes: Vec::new(),
+            applied_events: 0,
         };
+        let mut last_reduced_seq = after_seq;
         for event in spine.read_all_events_after(after_seq)? {
             reducer.apply_event(store, &event)?;
+            last_reduced_seq = event.seq;
+            reducer.applied_events += 1;
         }
+        store.set_last_reduced_seq(last_reduced_seq)?;
+        store.flush()?;
         Ok(reducer)
     }
 
@@ -156,6 +163,25 @@ impl TraversalReducer {
         source_fact_id: String,
     ) -> Result<(), StorageError> {
         let anchor_id = format!("anchor::{}::{}", anchor_ref.index_key(), event.seq);
+        if let Some(existing) = store.get_anchor(&anchor_id)? {
+            if let Some(current) = store.current_anchor(&anchor_ref)? {
+                if current.anchor_id == anchor_id {
+                    self.current_anchors.select(current);
+                    return Ok(());
+                }
+                if current.selected_at_seq > event.seq {
+                    return Ok(());
+                }
+            }
+            if existing.ended_at_seq.is_none() {
+                store.set_current_anchor(&existing)?;
+                self.current_anchors.select(existing);
+            } else if let Some(ended_at_seq) = existing.ended_at_seq {
+                self.current_anchors
+                    .end(&anchor_ref.index_key(), ended_at_seq);
+            }
+            return Ok(());
+        }
         if let Some(mut current) = store.current_anchor(&anchor_ref)? {
             current.ended_at_seq = Some(event.seq);
             current.ended_by_anchor_id = Some(anchor_id.clone());

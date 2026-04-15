@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use meld::agent::{AgentIdentity, AgentRegistry, AgentRole};
 use meld::api::ContextApi;
+use meld::cli::{Commands, RunContext};
 use meld::concurrency::NodeLockManager;
 use meld::context::events::{frame_added_envelope, head_ref, head_selected_envelope};
 use meld::context::frame::{Basis, Frame, FrameStorage};
@@ -16,11 +17,13 @@ use meld::workflow::events::{workflow_turn_completed_envelope, ExecutionWorkflow
 use meld::workspace::events::source_ref;
 use meld::workspace::{read_workspace_scan_state, WorkspaceCommandService};
 use meld::world_state::{
-    GraphWalkSpec, TraversalDirection, TraversalQuery, TraversalStore,
+    GraphRuntime, GraphWalkSpec, TraversalDirection, TraversalQuery, TraversalStore,
 };
 use meld::world_state::graph::compat::LegacyClaimAdapter;
 use meld::world_state::graph::reducer::TraversalReducer;
 use meld::types::{FrameID, NodeID};
+
+use crate::integration::with_xdg_env;
 
 fn create_runtime_and_traversal() -> (
     Arc<ProgressRuntime>,
@@ -572,4 +575,60 @@ fn legacy_claim_query_reads_through_traversal_adapter() {
     assert_eq!(claims.len(), 1);
     assert_eq!(claims[0].subject, subject);
     assert_eq!(claims[0].created_at_seq, 1);
+}
+
+#[test]
+fn graph_runtime_repeated_catch_up_is_idempotent() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(temp_dir.path().join("spine")).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
+    let runtime = GraphRuntime::new(db).unwrap();
+    let node_id = [24u8; 32];
+    let frame_id = [25u8; 32];
+
+    append(
+        &progress,
+        head_selected_envelope("session_a", node_id, "analysis", frame_id, None),
+        1,
+    );
+
+    assert_eq!(runtime.catch_up().unwrap(), 1);
+    assert_eq!(runtime.catch_up().unwrap(), 0);
+
+    let traversal = runtime.traversal_store();
+    let query = TraversalQuery::new(traversal.as_ref());
+    let current = query
+        .current_frame_head(&node_ref(node_id), "analysis")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(current.target.object_id, hex::encode(frame_id));
+    assert_eq!(query.anchor_history(&head_ref(node_id, "analysis")).unwrap().len(), 1);
+    assert_eq!(traversal.last_reduced_seq().unwrap(), 1);
+}
+
+#[test]
+fn run_context_scan_bootstraps_graph_runtime() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        std::fs::write(workspace_root.join("doc.txt"), "hello").unwrap();
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context.execute(&Commands::Scan { force: true }).unwrap();
+
+        let traversal = TraversalStore::new(
+            run_context.progress_runtime().store().db().clone(),
+        )
+        .unwrap();
+        let source = source_ref(&workspace_root).unwrap();
+        let current = TraversalQuery::new(&traversal)
+            .current_snapshot_for_source(&source)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(current.subject, source);
+        assert!(traversal.last_reduced_seq().unwrap() > 0);
+    });
 }

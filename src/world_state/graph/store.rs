@@ -24,6 +24,8 @@ const TREE_ANCHOR_LINEAGE: &str = "traversal_anchor_lineage";
 const TREE_SOURCE_FACT_INDEX: &str = "traversal_source_fact_index";
 const TREE_SEQ_INDEX: &str = "traversal_seq_index";
 const TREE_SUBJECT_PERSPECTIVE: &str = "traversal_subject_perspective_index";
+const TREE_RUNTIME_META: &str = "traversal_runtime_meta";
+const KEY_LAST_REDUCED_SEQ: &str = "last_reduced_seq";
 const KEY_PAD: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +50,7 @@ pub struct TraversalStore {
     source_fact_index: Tree,
     seq_index: Tree,
     subject_perspective_index: Tree,
+    runtime_meta: Tree,
 }
 
 impl TraversalStore {
@@ -65,6 +68,7 @@ impl TraversalStore {
             source_fact_index: db.open_tree(TREE_SOURCE_FACT_INDEX).map_err(to_storage_io)?,
             seq_index: db.open_tree(TREE_SEQ_INDEX).map_err(to_storage_io)?,
             subject_perspective_index: db.open_tree(TREE_SUBJECT_PERSPECTIVE).map_err(to_storage_io)?,
+            runtime_meta: db.open_tree(TREE_RUNTIME_META).map_err(to_storage_io)?,
             db,
         })
     }
@@ -330,6 +334,30 @@ impl TraversalStore {
         })
     }
 
+    pub fn last_reduced_seq(&self) -> Result<u64, StorageError> {
+        let Some(raw) = self
+            .runtime_meta
+            .get(KEY_LAST_REDUCED_SEQ.as_bytes())
+            .map_err(to_storage_io)?
+        else {
+            return Ok(0);
+        };
+        let value = String::from_utf8(raw.to_vec()).map_err(to_storage_utf8)?;
+        value.parse::<u64>().map_err(to_storage_parse)
+    }
+
+    pub fn set_last_reduced_seq(&self, seq: u64) -> Result<(), StorageError> {
+        self.runtime_meta
+            .insert(KEY_LAST_REDUCED_SEQ.as_bytes(), seq.to_string().as_bytes())
+            .map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    pub fn flush(&self) -> Result<(), StorageError> {
+        self.db.flush().map_err(to_storage_io)?;
+        Ok(())
+    }
+
     fn fact_for_source_spine_fact(
         &self,
         source_fact_id: &str,
@@ -550,5 +578,9 @@ fn to_storage_data(err: serde_json::Error) -> StorageError {
 }
 
 fn to_storage_utf8(err: std::string::FromUtf8Error) -> StorageError {
+    StorageError::IoError(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
+}
+
+fn to_storage_parse(err: std::num::ParseIntError) -> StorageError {
     StorageError::IoError(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
 }

@@ -4,6 +4,7 @@ pub mod events;
 pub mod projection;
 pub mod query;
 pub mod reducer;
+pub mod runtime;
 pub mod store;
 
 pub use contracts::{
@@ -11,4 +12,5 @@ pub use contracts::{
     PerspectiveKey, TraversalDirection, TraversalFactId, TraversalFactRecord,
 };
 pub use query::TraversalQuery;
+pub use runtime::GraphRuntime;
 pub use store::TraversalStore;
