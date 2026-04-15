@@ -2,15 +2,15 @@ use crate::error::StorageError;
 use crate::telemetry::events::{ProgressEnvelope, ProgressEvent};
 use crate::telemetry::sinks::store::ProgressStore;
 use crate::telemetry::DomainObjectRef;
-use crate::world_state::traversal::contracts::{
+use crate::world_state::graph::contracts::{
     AnchorSelectionRecord, PerspectiveKey, TraversalFactRecord,
 };
-use crate::world_state::traversal::events::{
+use crate::world_state::graph::events::{
     anchor_selected_envelope, anchor_superseded_envelope, AnchorSelectedEventData,
     AnchorSupersededEventData,
 };
-use crate::world_state::traversal::projection::{AnchorLineageProjection, CurrentAnchorProjection};
-use crate::world_state::traversal::store::TraversalStore;
+use crate::world_state::graph::projection::{AnchorLineageProjection, CurrentAnchorProjection};
+use crate::world_state::graph::store::TraversalStore;
 
 pub struct TraversalReducer {
     pub current_anchors: CurrentAnchorProjection,

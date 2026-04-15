@@ -1,17 +1,17 @@
-# Traversal Implementation Plan
+# Graph Implementation Plan
 
 Date: 2026-04-12
 Status: active
-Scope: phased delivery plan for the first canonical `world_state/traversal` graph slice
+Scope: phased delivery plan for the first canonical `world_state/graph` graph slice
 
 ## Summary
 
-The first traversal graph should land as a materialized `world_state` domain built downstream of the shared event spine.
+The first graph slice should land as a materialized `world_state` domain built downstream of the shared event spine.
 
 This plan assumes:
 
 - the spine remains the durable temporal source
-- the graph is the current traversal layer
+- the graph is the current graph and traversal layer
 - `DomainObjectRef` becomes the cross-domain anchor
 - reducers own materialization
 - planner and operator reads use traversal projections, not the raw spine
@@ -23,11 +23,11 @@ The first version should not attempt belief calculus, full sensory integration, 
 At the end of this plan, the repo should have:
 
 - one shared object reference contract across domains
-- one typed `world_state/traversal` area with durable fact families
+- one typed `world_state/graph` area with durable fact families
 - one replayable materialization path from spine facts into current graph state
 - one object history index
 - one current anchor index
-- one planner-facing traversal projection
+- one planner-facing graph projection
 - one operator-facing provenance projection
 
 This branch should answer:
@@ -108,7 +108,7 @@ Acceptance gate:
 
 Goal:
 
-- create the first real `world_state/traversal` runtime area
+- create the first real `world_state/graph` runtime area
 
 Code landing zones:
 

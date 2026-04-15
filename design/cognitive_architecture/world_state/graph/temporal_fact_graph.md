@@ -2,16 +2,16 @@
 
 Date: 2026-04-12
 Status: active
-Scope: canonical graph model for `world_state/traversal`, built downstream of the shared event spine
+Scope: canonical graph model for `world_state/graph`, built downstream of the shared event spine
 
 ## Thesis
 
-The canonical graph for `world_state/traversal` should be a temporal fact graph.
+The canonical graph for `world_state/graph` should be a temporal fact graph.
 
 This means:
 
 - the spine is the durable history of semantic fact commits
-- the graph is the current traversal surface
+- the graph is the current graph surface
 - the graph is materialized from spine history
 - the graph can emit new curation facts into the spine, but it does not rewrite history directly
 
@@ -31,7 +31,7 @@ The spine should own:
 - replay
 - cross-domain attachment
 
-Traversal should own:
+Graph materialization should own:
 
 - current anchors
 - current relations
@@ -39,7 +39,7 @@ Traversal should own:
 - provenance views
 - planner-facing and operator-facing projections
 
-The traversal surface must always be derivable from the spine.
+The graph surface must always be derivable from the spine.
 
 ## Canonical Model
 
@@ -178,7 +178,7 @@ The safe rule is:
 So the loop is:
 
 1. `workspace_fs`, `execution`, or later `sensory` publishes semantic facts into the spine
-2. `world_state/traversal` reducers consume those facts
+2. `world_state/graph` reducers consume those facts
 3. reducers update current graph state
 4. reducers may emit new `world_state.*` traversal facts
 5. later replay can rebuild the same traversal graph
@@ -251,7 +251,7 @@ At minimum the system should support:
 - lineage traversal from current anchor to prior anchor chain
 
 The first spine refactor already gives temporal traversal.
-`world_state/traversal` must add object and relation traversal on top.
+`world_state/graph` must add object and relation traversal on top.
 
 ## What ECS Is And Is Not Here
 

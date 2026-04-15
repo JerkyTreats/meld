@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::world_state::traversal::contracts::AnchorSelectionRecord;
+use crate::world_state::graph::contracts::AnchorSelectionRecord;
 
 #[derive(Debug, Clone, Default)]
 pub struct CurrentAnchorProjection {

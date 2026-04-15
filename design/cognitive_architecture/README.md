@@ -49,13 +49,13 @@ This area does own:
   stream compilation, lowering, and promotion in `sensory`
 - [World State Domain](world_state/README.md)
   canonical current belief, knowledge graph projection, and world-model ownership
-- [World State Traversal](world_state/traversal/README.md)
+- [World State Graph](world_state/graph/README.md)
   current anchor selection, lineage, provenance, and graph walk
-- [Temporal Fact Graph](world_state/traversal/temporal_fact_graph.md)
-  canonical graph model for the traversal layer and spine-driven materialization
-- [Traversal Implementation Plan](world_state/traversal/implementation_plan.md)
-  phased implementation path for contracts, reducers, indexes, and planner-facing traversal
-- [Workspace FS Traversal Transition Requirements](world_state/traversal/workspace_fs_transition_requirements.md)
+- [Temporal Fact Graph](world_state/graph/temporal_fact_graph.md)
+  canonical graph model for the graph layer and spine-driven materialization
+- [Graph Implementation Plan](world_state/graph/implementation_plan.md)
+  phased implementation path for contracts, reducers, indexes, and planner-facing graph reads
+- [Workspace FS Graph Transition Requirements](world_state/graph/workspace_fs_transition_requirements.md)
   compatibility requirements, code touchpoints, and phased lift of `workspace_fs` into graph inputs
 - [World State Belief](world_state/belief/README.md)
   confidence, revision, contradiction, and settlement over current anchors
@@ -85,10 +85,10 @@ This area does own:
 3. [Sensory Domain](sensory/README.md)
 4. [Sensory Substrate](sensory/substrate.md)
 5. [World State Domain](world_state/README.md)
-6. [World State Traversal](world_state/traversal/README.md)
-7. [Temporal Fact Graph](world_state/traversal/temporal_fact_graph.md)
-8. [Traversal Implementation Plan](world_state/traversal/implementation_plan.md)
-9. [Workspace FS Traversal Transition Requirements](world_state/traversal/workspace_fs_transition_requirements.md)
+6. [World State Graph](world_state/graph/README.md)
+7. [Temporal Fact Graph](world_state/graph/temporal_fact_graph.md)
+8. [Graph Implementation Plan](world_state/graph/implementation_plan.md)
+9. [Workspace FS Graph Transition Requirements](world_state/graph/workspace_fs_transition_requirements.md)
 10. [World State Belief](world_state/belief/README.md)
 11. [Curation In Belief](world_state/belief/curation.md)
 12. [Knowledge Graph ECS Decision Memo](world_state/belief/knowledge_graph_ecs_decision_memo.md)

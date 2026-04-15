@@ -1,10 +1,10 @@
 use crate::error::StorageError;
 use crate::telemetry::DomainObjectRef;
-use crate::world_state::traversal::contracts::{
+use crate::world_state::graph::contracts::{
     AnchorProvenanceRecord, AnchorSelectionRecord, GraphWalkResult, GraphWalkSpec,
     TraversalDirection, TraversalFactRecord,
 };
-use crate::world_state::traversal::store::TraversalStore;
+use crate::world_state::graph::store::TraversalStore;
 
 pub struct TraversalQuery<'a> {
     store: &'a TraversalStore,

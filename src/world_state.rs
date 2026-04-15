@@ -1,4 +1,4 @@
-pub mod traversal;
+pub mod graph;
 
 pub mod contracts;
 pub mod events;
@@ -14,7 +14,7 @@ pub use contracts::{
 };
 pub use query::WorldStateQuery;
 pub use store::WorldStateStore;
-pub use traversal::{
+pub use graph::{
     AnchorId, AnchorProvenanceRecord, AnchorSelectionRecord, GraphWalkResult, GraphWalkSpec,
     PerspectiveKey, TraversalDirection, TraversalFactId, TraversalFactRecord, TraversalQuery,
     TraversalStore,

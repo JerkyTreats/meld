@@ -7,7 +7,7 @@ use sled::{Db, Tree};
 
 use crate::error::StorageError;
 use crate::telemetry::{DomainObjectRef, EventRelation};
-use crate::world_state::traversal::contracts::{
+use crate::world_state::graph::contracts::{
     AnchorProvenanceRecord, AnchorSelectionRecord, GraphWalkResult, GraphWalkSpec,
     TraversalDirection, TraversalFactRecord,
 };
@@ -216,7 +216,7 @@ impl TraversalStore {
         &self,
         anchor_ref: &DomainObjectRef,
         subject: &DomainObjectRef,
-        perspective: &crate::world_state::traversal::contracts::PerspectiveKey,
+        perspective: &crate::world_state::graph::contracts::PerspectiveKey,
     ) -> Result<(), StorageError> {
         self.current_anchor
             .remove(anchor_ref.index_key().as_bytes())
@@ -536,7 +536,7 @@ fn encode_seq_index_key(seq: u64, fact_id: &str) -> String {
 
 fn encode_subject_perspective_key(
     subject: &DomainObjectRef,
-    perspective: &crate::world_state::traversal::contracts::PerspectiveKey,
+    perspective: &crate::world_state::graph::contracts::PerspectiveKey,
 ) -> String {
     format!("{}::{}", subject.index_key(), perspective.index_key())
 }

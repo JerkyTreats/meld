@@ -1,12 +1,12 @@
-# Workspace FS Traversal Transition Requirements
+# Workspace FS Graph Transition Requirements
 
 Date: 2026-04-13
 Status: active
-Scope: compatibility-led requirements for lifting `workspace_fs` into graph-capable `world_state/traversal` inputs without breaking the existing filesystem model
+Scope: compatibility-led requirements for lifting `workspace_fs` into graph-capable `world_state/graph` inputs without breaking the existing filesystem model
 
 ## Thesis
 
-`workspace_fs` must become a first-class input domain to `world_state/traversal`.
+`workspace_fs` must become a first-class input domain to `world_state/graph`.
 
 That change must not replace the existing filesystem model in one cut.
 It must preserve the current `NodeID` and path-based workspace behavior while adding a canonical lift into the spine and knowledge graph.
@@ -15,7 +15,7 @@ The core rule is simple:
 
 - `NodeID` remains the local structural identity of `workspace_fs`
 - `DomainObjectRef` becomes the cross-domain identity surface
-- `world_state/traversal` consumes lifted workspace facts and materializes current anchors from them
+- `world_state/graph` consumes lifted workspace facts and materializes current anchors from them
 
 ## Why This Change Exists
 
@@ -63,7 +63,7 @@ At the end of this change, the repo should support this layered model:
 
 - `workspace_fs` owns filesystem structure and observation of workspace state
 - `workspace_fs` publishes canonical workspace facts into the spine
-- `world_state/traversal` reduces those facts into current anchors
+- `world_state/graph` reduces those facts into current anchors
 - execution, context, and workflow code continue to resolve and use `NodeID` while graph readers use `DomainObjectRef`
 
 The first landing should make `workspace_fs` graph-capable without requiring a repo-wide replacement of `NodeID`.
@@ -212,7 +212,7 @@ Required posture:
 - keep `Basis::Node` and `Basis::Both` intact for this change
 - keep head lookup keyed by `NodeID`
 - add graph-visible refs and relations instead of replacing frame basis
-- allow `world_state/traversal` anchors to attach to both `workspace_fs:node` and `context:frame`
+- allow `world_state/graph` anchors to attach to both `workspace_fs:node` and `context:frame`
 
 This preserves current frame and head behavior while making current anchors discoverable in the graph.
 
@@ -227,7 +227,7 @@ Required rule:
 
 - node store remains the local source of structural workspace state
 - spine publication becomes the temporal source for cross-domain workspace facts
-- `world_state/traversal` derives traversal state from spine facts, not by reaching into node storage
+- `world_state/graph` derives traversal state from spine facts, not by reaching into node storage
 
 ## API And CLI Requirements
 
@@ -274,7 +274,7 @@ Wire watch promotion to emit canonical structural workspace facts at stable batc
 
 ### Phase 4
 
-Add `world_state/traversal` reducers that consume canonical workspace facts and materialize workspace-backed anchors.
+Add `world_state/graph` reducers that consume canonical workspace facts and materialize workspace-backed anchors.
 
 ### Phase 5
 

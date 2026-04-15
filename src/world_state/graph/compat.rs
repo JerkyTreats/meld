@@ -1,8 +1,8 @@
 use crate::error::StorageError;
 use crate::telemetry::DomainObjectRef;
 use crate::world_state::contracts::{ClaimKind, ClaimRecord, SettlementStatus};
-use crate::world_state::traversal::query::TraversalQuery;
-use crate::world_state::traversal::store::TraversalStore;
+use crate::world_state::graph::query::TraversalQuery;
+use crate::world_state::graph::store::TraversalStore;
 
 pub struct LegacyClaimAdapter<'a> {
     traversal: TraversalQuery<'a>,

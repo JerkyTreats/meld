@@ -1,4 +1,4 @@
-# Traversal
+# Graph
 
 Date: 2026-04-13
 Status: active
@@ -6,7 +6,7 @@ Scope: current anchor selection, lineage, provenance, and cross-domain graph wal
 
 ## Thesis
 
-`traversal` answers what is current and how to reach it.
+`graph` answers what is current and how to reach it.
 
 This is already real in the repo today:
 
@@ -15,9 +15,9 @@ This is already real in the repo today:
 - heads provide the latest selected anchor for a node and frame type
 - execution can move those anchors forward or fail to move them
 
-The job of `world_state/traversal` is to lift that existing logic into explicit spine facts and graph-readable indexes without breaking the current system.
+The job of `world_state/graph` is to lift that existing logic into explicit spine facts and graph-readable indexes without breaking the current system.
 
-## What Traversal Owns
+## What Graph Owns
 
 - current anchor selection
 - anchor lineage
@@ -25,7 +25,7 @@ The job of `world_state/traversal` is to lift that existing logic into explicit 
 - cross-domain object walk through `DomainObjectRef`
 - replayable graph materialization from spine facts
 
-## What Traversal Does Not Own
+## What Graph Does Not Own
 
 - confidence in whether the current anchor is still correct
 - contradiction handling
@@ -43,11 +43,11 @@ The current operational graph already exists in these forms:
 - head selection by node and frame type
 - task and capability work that advances or preserves those heads
 
-This means the first traversal branch is a lift and formalization task, not a greenfield invention.
+This means the first graph branch is a lift and formalization task, not a greenfield invention.
 
 ## First Branch Scope
 
-This branch should stop at traversal.
+This branch should stop at graph materialization and traversal.
 
 That means:
 
@@ -63,6 +63,6 @@ Belief work is deferred.
 - [World State Domain](../README.md)
 - [Belief](../belief/README.md)
 - [Temporal Fact Graph](temporal_fact_graph.md)
-- [Traversal Implementation Plan](implementation_plan.md)
-- [Workspace FS Traversal Transition Requirements](workspace_fs_transition_requirements.md)
+- [Graph Implementation Plan](implementation_plan.md)
+- [Workspace FS Graph Transition Requirements](workspace_fs_transition_requirements.md)
 - [Spine Concern](../../spine/README.md)

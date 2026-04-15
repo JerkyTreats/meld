@@ -8,7 +8,7 @@ Scope: canonical belief ownership, knowledge graph projection, and temporal prov
 
 `world_state` now splits into two internal concerns:
 
-- `traversal`
+- `graph`
   what is current and how to reach it
 - `belief`
   whether current should still be trusted
@@ -44,15 +44,15 @@ The durable world model is a temporal knowledge graph with:
 - the frame and head system already acts like a current-anchor graph over filesystem nodes and agent perspectives
 - the multi-domain spine already reserves `knowledge_graph` as a future attachment domain
 
-## Traversal
+## Graph
 
-- [Traversal](traversal/README.md)
+- [Graph](graph/README.md)
   current anchor selection, lineage, provenance, and graph walk
-- [Temporal Fact Graph](traversal/temporal_fact_graph.md)
-  canonical graph model for the traversal layer and its spine contract
-- [Traversal Implementation Plan](traversal/implementation_plan.md)
-  phased delivery plan and branch scope for traversal work
-- [Workspace FS Traversal Transition Requirements](traversal/workspace_fs_transition_requirements.md)
+- [Temporal Fact Graph](graph/temporal_fact_graph.md)
+  canonical graph model for the graph layer and its spine contract
+- [Graph Implementation Plan](graph/implementation_plan.md)
+  phased delivery plan and branch scope for graph work
+- [Workspace FS Graph Transition Requirements](graph/workspace_fs_transition_requirements.md)
   compatibility-led lift of `workspace_fs` into canonical graph inputs without breaking `NodeID` flows
 
 ## Belief
@@ -66,18 +66,18 @@ The durable world model is a temporal knowledge graph with:
 
 ## Required First Slice
 
-- define traversal records for current anchor, lineage, and provenance
-- define reducer inputs from spine facts into traversal projections
+- define graph records for current anchor, lineage, and provenance
+- define reducer inputs from spine facts into graph projections
 - anchor graph walk to `DomainObjectRef` so the model can extend beyond filesystem nodes
 - define a later belief layer for confidence, contradiction, and calibration
 
 ## Read With
 
 - [Observe Merge Push](../observe_merge_push.md)
-- [Traversal](traversal/README.md)
-- [Temporal Fact Graph](traversal/temporal_fact_graph.md)
-- [Traversal Implementation Plan](traversal/implementation_plan.md)
-- [Workspace FS Traversal Transition Requirements](traversal/workspace_fs_transition_requirements.md)
+- [Graph](graph/README.md)
+- [Temporal Fact Graph](graph/temporal_fact_graph.md)
+- [Graph Implementation Plan](graph/implementation_plan.md)
+- [Workspace FS Graph Transition Requirements](graph/workspace_fs_transition_requirements.md)
 - [Belief](belief/README.md)
 - [Curation In Belief](belief/curation.md)
 - [Knowledge Graph ECS Decision Memo](belief/knowledge_graph_ecs_decision_memo.md)

@@ -18,8 +18,8 @@ use meld::workspace::{read_workspace_scan_state, WorkspaceCommandService};
 use meld::world_state::{
     GraphWalkSpec, TraversalDirection, TraversalQuery, TraversalStore,
 };
-use meld::world_state::traversal::compat::LegacyClaimAdapter;
-use meld::world_state::traversal::reducer::TraversalReducer;
+use meld::world_state::graph::compat::LegacyClaimAdapter;
+use meld::world_state::graph::reducer::TraversalReducer;
 use meld::types::{FrameID, NodeID};
 
 fn create_runtime_and_traversal() -> (
