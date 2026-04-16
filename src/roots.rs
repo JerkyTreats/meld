@@ -1,22 +1,18 @@
-//! Roots domain: workspace compatibility facade over branch identity,
-//! migration bookkeeping, and operator status.
+//! Roots domain: compatibility facade over the canonical `branches` domain.
 
-pub mod catalog;
-pub mod contracts;
-pub mod format;
-pub mod ledger;
-pub mod locator;
-pub mod manifest;
-pub mod runtime;
-pub mod tooling;
+pub use crate::branches::catalog;
+pub use crate::branches::contracts;
+pub use crate::branches::format;
+pub use crate::branches::ledger;
+pub use crate::branches::locator;
+pub use crate::branches::manifest;
+pub use crate::branches::runtime;
+pub use crate::branches::tooling;
 
-pub use contracts::{
+pub use crate::branches::{
     BranchAttachmentStatus, BranchCatalog, BranchCatalogEntry, BranchHandle,
-    BranchInspectionStatus, BranchKind, BranchManifest, BranchMigrationStatus, ResolvedBranch,
-    ResolvedRoot, RootAttachmentStatus, RootCatalog, RootCatalogEntry, RootInspectionStatus,
-    RootManifest, RootMigrationLane, RootMigrationLedgerEntry, RootMigrationStatus,
-    RootMigrationStepStatus, RootStatusRow, RootsStatusOutput,
+    BranchInspectionStatus, BranchKind, BranchManifest, BranchMigrationStatus, BranchRuntime,
+    ResolvedBranch, ResolvedRoot, RootAttachmentStatus, RootCatalog, RootCatalogEntry,
+    RootInspectionStatus, RootManifest, RootMigrationLane, RootMigrationLedgerEntry,
+    RootMigrationStatus, RootMigrationStepStatus, RootRuntime, RootStatusRow, RootsStatusOutput,
 };
-pub use runtime::RootRuntime;
-
-pub type BranchRuntime = RootRuntime;

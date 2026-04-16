@@ -318,7 +318,7 @@ impl RunContext {
                 command,
                 session_id,
             ),
-            Commands::Roots { command } => crate::roots::tooling::handle_cli_command(command),
+            Commands::Branches { command } => crate::branches::tooling::handle_cli_command(command),
             Commands::Danger { .. } => Err(ApiError::ConfigError(
                 "Danger commands must run from the CLI entry point".to_string(),
             )),

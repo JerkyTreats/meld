@@ -1,8 +1,8 @@
 //! CLI help and command-name contract for telemetry and routing.
 
 use crate::cli::parse::{
-    AgentCommands, AgentPromptCommands, Commands, ContextCommands, DangerCommands,
-    ProviderCommands, RootsCommands, WorkflowCommands, WorkspaceCommands,
+    AgentCommands, AgentPromptCommands, BranchesCommands, Commands, ContextCommands,
+    DangerCommands, ProviderCommands, WorkflowCommands, WorkspaceCommands,
 };
 use crate::telemetry::summary::TypedSummaryEvent;
 
@@ -19,15 +19,20 @@ pub fn command_name(command: &Commands) -> String {
         Commands::Init { .. } => "init".to_string(),
         Commands::Context { command } => format!("context.{}", context_command_name(command)),
         Commands::Workflow { command } => format!("workflow.{}", workflow_command_name(command)),
-        Commands::Roots { command } => format!("roots.{}", roots_command_name(command)),
+        Commands::Branches { command } => format!("branches.{}", branches_command_name(command)),
         Commands::Danger { command } => format!("danger.{}", danger_command_name(command)),
     }
 }
 
-pub fn roots_command_name(command: &RootsCommands) -> &'static str {
+pub fn branches_command_name(command: &BranchesCommands) -> &'static str {
     match command {
-        RootsCommands::Status { .. } => "status",
+        BranchesCommands::Status { .. } => "status",
     }
+}
+
+#[allow(dead_code)]
+pub fn roots_command_name(command: &BranchesCommands) -> &'static str {
+    branches_command_name(command)
 }
 
 pub fn danger_command_name(command: &DangerCommands) -> &'static str {
@@ -267,25 +272,26 @@ pub fn typed_summary_event(
             duration_ms,
             error,
         )),
-        Commands::Roots { .. } => None,
+        Commands::Branches { .. } => None,
         _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{command_name, roots_command_name};
-    use crate::cli::parse::{Commands, RootsCommands};
+    use super::{branches_command_name, command_name, roots_command_name};
+    use crate::cli::parse::{BranchesCommands, Commands};
 
     #[test]
-    fn roots_command_names_are_stable() {
-        let command = RootsCommands::Status {
+    fn branch_command_names_are_stable() {
+        let command = BranchesCommands::Status {
             format: "text".to_string(),
         };
         assert_eq!(roots_command_name(&command), "status");
+        assert_eq!(branches_command_name(&command), "status");
         assert_eq!(
-            command_name(&Commands::Roots { command }),
-            "roots.status".to_string()
+            command_name(&Commands::Branches { command }),
+            "branches.status".to_string()
         );
     }
 }

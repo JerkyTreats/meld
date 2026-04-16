@@ -124,10 +124,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: WorkflowCommands,
     },
-    /// Root discovery and migration status
-    Roots {
+    /// Branch discovery and migration status
+    #[command(alias = "roots")]
+    Branches {
         #[command(subcommand)]
-        command: RootsCommands,
+        command: BranchesCommands,
     },
     /// Dangerous destructive operations for workspace runtime state
     Danger {
@@ -137,14 +138,16 @@ pub enum Commands {
 }
 
 #[derive(Subcommand)]
-pub enum RootsCommands {
-    /// Show known roots and migration status
+pub enum BranchesCommands {
+    /// Show known branches and migration status
     Status {
         /// Output format
         #[arg(long, default_value = "text")]
         format: String,
     },
 }
+
+pub type RootsCommands = BranchesCommands;
 
 #[derive(Subcommand)]
 pub enum DangerCommands {
@@ -680,17 +683,28 @@ pub enum WorkflowCommands {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, RootsCommands};
+    use super::{BranchesCommands, Cli, Commands};
     use clap::Parser;
 
     #[test]
-    fn parses_roots_status_command() {
+    fn parses_roots_status_command_alias() {
         let cli = Cli::try_parse_from(["meld", "roots", "status", "--format", "json"]).unwrap();
         match cli.command {
-            Commands::Roots {
-                command: RootsCommands::Status { format },
+            Commands::Branches {
+                command: BranchesCommands::Status { format },
             } => assert_eq!(format, "json"),
-            _ => panic!("expected roots status command"),
+            _ => panic!("expected branches status command"),
+        }
+    }
+
+    #[test]
+    fn parses_branches_status_command() {
+        let cli = Cli::try_parse_from(["meld", "branches", "status", "--format", "json"]).unwrap();
+        match cli.command {
+            Commands::Branches {
+                command: BranchesCommands::Status { format },
+            } => assert_eq!(format, "json"),
+            _ => panic!("expected branches status command"),
         }
     }
 }

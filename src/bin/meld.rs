@@ -41,10 +41,10 @@ fn main() {
         return;
     }
 
-    if let Some(result) = try_execute_roots_command(&cli) {
+    if let Some(result) = try_execute_branch_command(&cli) {
         match result {
             Ok(output) => {
-                info!("Roots command completed successfully");
+                info!("Branch command completed successfully");
                 println!("{}", output);
             }
             Err(e) => {
@@ -109,9 +109,11 @@ fn try_execute_danger_command(cli: &Cli) -> Option<Result<String, meld::error::A
     }
 }
 
-fn try_execute_roots_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
+fn try_execute_branch_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
     match &cli.command {
-        Commands::Roots { command } => Some(meld::roots::tooling::handle_cli_command(command)),
+        Commands::Branches { command } => {
+            Some(meld::branches::tooling::handle_cli_command(command))
+        }
         _ => None,
     }
 }

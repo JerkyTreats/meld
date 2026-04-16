@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod api;
+pub mod branches;
 pub mod capability;
 pub mod cli;
 pub mod concurrency;
