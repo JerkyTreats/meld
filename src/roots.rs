@@ -1,4 +1,5 @@
-//! Roots domain: root identity, migration bookkeeping, and operator status.
+//! Roots domain: workspace compatibility facade over branch identity,
+//! migration bookkeeping, and operator status.
 
 pub mod catalog;
 pub mod contracts;
@@ -17,3 +18,5 @@ pub use contracts::{
     RootMigrationStepStatus, RootStatusRow, RootsStatusOutput,
 };
 pub use runtime::RootRuntime;
+
+pub type BranchRuntime = RootRuntime;

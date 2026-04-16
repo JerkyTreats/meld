@@ -7,7 +7,7 @@ use crate::cli::{command_name, typed_summary_event};
 use crate::config::ConfigLoader;
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
-use crate::roots::{BranchHandle, RootRuntime};
+use crate::roots::{BranchHandle, BranchRuntime};
 use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::ProgressRuntime;
 use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
@@ -32,7 +32,7 @@ pub struct RunContext {
     workflow_registry: Arc<parking_lot::RwLock<crate::workflow::registry::WorkflowRegistry>>,
     progress: Arc<ProgressRuntime>,
     graph_runtime: Arc<GraphRuntime>,
-    root_runtime: RootRuntime,
+    branch_runtime: BranchRuntime,
     active_branch: BranchHandle,
 }
 
@@ -61,9 +61,9 @@ impl RunContext {
         } else {
             ConfigLoader::load(&workspace_root)?
         };
-        let root_runtime = RootRuntime::new();
-        let active_branch = root_runtime.resolve_active_branch(&workspace_root)?;
-        if let Err(err) = root_runtime.ensure_active_branch_registered(&active_branch) {
+        let branch_runtime = BranchRuntime::new();
+        let active_branch = branch_runtime.resolve_active_branch(&workspace_root)?;
+        if let Err(err) = branch_runtime.ensure_active_branch_registered(&active_branch) {
             warn!(error = %err, "failed to register active root during startup");
         }
 
@@ -147,7 +147,7 @@ impl RunContext {
                         0
                     }
                 };
-                if let Err(err) = root_runtime.record_branch_graph_catch_up_success(
+                if let Err(err) = branch_runtime.record_branch_graph_catch_up_success(
                     &active_branch,
                     last_reduced_seq,
                     applied_events,
@@ -157,7 +157,7 @@ impl RunContext {
             }
             Err(err) => {
                 warn!(error = %err, "failed to catch up graph runtime during startup");
-                if let Err(record_err) = root_runtime
+                if let Err(record_err) = branch_runtime
                     .record_branch_graph_catch_up_failure(&active_branch, &err.to_string())
                 {
                     warn!(
@@ -178,7 +178,7 @@ impl RunContext {
             workflow_registry,
             progress,
             graph_runtime,
-            root_runtime,
+            branch_runtime,
             active_branch,
         })
     }
@@ -207,14 +207,15 @@ impl RunContext {
                     }
                 };
                 if applied_events > 0 {
-                    if let Err(err) = self.root_runtime.record_branch_graph_catch_up_success(
+                    if let Err(err) = self.branch_runtime.record_branch_graph_catch_up_success(
                         &self.active_branch,
                         last_reduced_seq,
                         applied_events,
                     ) {
                         warn!(error = %err, "failed to record root graph migration after command execution");
                     }
-                } else if let Err(err) = self.root_runtime.touch_active_branch(&self.active_branch)
+                } else if let Err(err) =
+                    self.branch_runtime.touch_active_branch(&self.active_branch)
                 {
                     warn!(error = %err, "failed to update active root last seen after command execution");
                 }
@@ -222,7 +223,7 @@ impl RunContext {
             Err(err) => {
                 warn!(error = %err, "failed to catch up graph runtime after command execution");
                 if let Err(record_err) = self
-                    .root_runtime
+                    .branch_runtime
                     .record_branch_graph_catch_up_failure(&self.active_branch, &err.to_string())
                 {
                     warn!(

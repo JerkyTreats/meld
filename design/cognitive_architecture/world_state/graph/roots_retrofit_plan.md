@@ -160,7 +160,14 @@ Key seams:
 
 Status:
 
-- pending
+- completed
+
+Verification evidence:
+
+- Gate A pass via `cargo test roots_runtime --tests`
+- Gate B pass via `cargo test parses_roots_status_command`
+- Gate B pass via `cargo test roots_command_names_are_stable`
+- Gate D pass via scoped diff review before staging
 
 ## Verification Strategy
 
@@ -222,3 +229,4 @@ Checkpoint 3 notes:
 Checkpoint 4 notes:
 
 - rename preparation is complete when future `branches` extraction becomes low risk
+- internal consumers now depend on branch neutral aliases and helpers while `roots` remains the compatibility operator surface

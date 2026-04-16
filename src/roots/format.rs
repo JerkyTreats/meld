@@ -1,6 +1,6 @@
 use crate::roots::contracts::RootsStatusOutput;
 
-pub fn format_roots_status_text(output: &RootsStatusOutput) -> String {
+pub fn format_branch_status_text(output: &RootsStatusOutput) -> String {
     if output.roots.is_empty() {
         return "No roots registered".to_string();
     }
@@ -22,4 +22,8 @@ pub fn format_roots_status_text(output: &RootsStatusOutput) -> String {
         }
     }
     out.trim_end().to_string()
+}
+
+pub fn format_roots_status_text(output: &RootsStatusOutput) -> String {
+    format_branch_status_text(output)
 }
