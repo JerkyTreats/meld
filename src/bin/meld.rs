@@ -112,7 +112,10 @@ fn try_execute_danger_command(cli: &Cli) -> Option<Result<String, meld::error::A
 fn try_execute_branch_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
     match &cli.command {
         Commands::Branches { command } => {
-            Some(meld::branches::tooling::handle_cli_command(command))
+            Some(meld::branches::tooling::handle_cli_command_with_workspace(
+                command,
+                Some(cli.workspace.as_path()),
+            ))
         }
         _ => None,
     }

@@ -6,12 +6,15 @@ pub use crate::branches::format;
 pub use crate::branches::ledger;
 pub use crate::branches::locator;
 pub use crate::branches::manifest;
+pub use crate::branches::query;
 pub use crate::branches::runtime;
 pub use crate::branches::tooling;
 
 pub use crate::branches::{
     BranchAttachmentStatus, BranchCatalog, BranchCatalogEntry, BranchHandle,
-    BranchInspectionStatus, BranchKind, BranchManifest, BranchMigrationStatus, BranchRuntime,
+    BranchGraphStatusOutput, BranchGraphStatusRow, BranchInspectionStatus, BranchKind,
+    BranchManifest, BranchMigrationStatus, BranchQueryRuntime, BranchQueryScope, BranchReadFailure,
+    BranchRuntime, FederatedNeighborsOutput, FederatedReadMetadata, FederatedWalkOutput,
     ResolvedBranch, ResolvedRoot, RootAttachmentStatus, RootCatalog, RootCatalogEntry,
     RootInspectionStatus, RootManifest, RootMigrationLane, RootMigrationLedgerEntry,
     RootMigrationStatus, RootMigrationStepStatus, RootRuntime, RootStatusRow, RootsStatusOutput,

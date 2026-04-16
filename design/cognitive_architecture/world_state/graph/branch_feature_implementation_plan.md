@@ -126,7 +126,16 @@ Verification gates:
 
 Status:
 
-- pending
+- completed
+
+Verification evidence:
+
+- Gate A pass via `cargo test parses_branches_graph_neighbors_command`
+- Gate A pass via `cargo test branch_command_names_are_stable`
+- Gate B pass via `cargo test roots_runtime --tests`
+- Gate D pass via `cargo test branches_query --tests`
+- Gate A pass via `cargo test test_build_logging_config_default --bin meld`
+- Gate E pass via staged diff review before commit
 
 ## Verification Strategy
 

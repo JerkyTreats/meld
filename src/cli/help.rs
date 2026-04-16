@@ -30,6 +30,9 @@ pub fn branches_command_name(command: &BranchesCommands) -> &'static str {
         BranchesCommands::Discover { .. } => "discover",
         BranchesCommands::Migrate { .. } => "migrate",
         BranchesCommands::Attach { .. } => "attach",
+        BranchesCommands::GraphStatus { .. } => "graph_status",
+        BranchesCommands::GraphNeighbors { .. } => "graph_neighbors",
+        BranchesCommands::GraphWalk { .. } => "graph_walk",
     }
 }
 

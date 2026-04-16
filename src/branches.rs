@@ -1,5 +1,5 @@
 //! Branches domain: canonical branch identity, migration bookkeeping,
-//! and operator status.
+//! operator status, and federated branch reads.
 
 #[path = "roots/catalog.rs"]
 pub mod catalog;
@@ -13,6 +13,8 @@ pub mod ledger;
 pub mod locator;
 #[path = "roots/manifest.rs"]
 pub mod manifest;
+#[path = "roots/query.rs"]
+pub mod query;
 #[path = "roots/runtime.rs"]
 pub mod runtime;
 #[path = "roots/tooling.rs"]
@@ -24,6 +26,10 @@ pub use contracts::{
     ResolvedRoot, RootAttachmentStatus, RootCatalog, RootCatalogEntry, RootInspectionStatus,
     RootManifest, RootMigrationLane, RootMigrationLedgerEntry, RootMigrationStatus,
     RootMigrationStepStatus, RootStatusRow, RootsStatusOutput,
+};
+pub use query::{
+    BranchGraphStatusOutput, BranchGraphStatusRow, BranchQueryRuntime, BranchQueryScope,
+    BranchReadFailure, FederatedNeighborsOutput, FederatedReadMetadata, FederatedWalkOutput,
 };
 pub use runtime::RootRuntime as BranchRuntime;
 pub use runtime::RootRuntime;
