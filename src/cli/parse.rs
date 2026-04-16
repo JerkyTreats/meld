@@ -124,10 +124,25 @@ pub enum Commands {
         #[command(subcommand)]
         command: WorkflowCommands,
     },
+    /// Root discovery and migration status
+    Roots {
+        #[command(subcommand)]
+        command: RootsCommands,
+    },
     /// Dangerous destructive operations for workspace runtime state
     Danger {
         #[command(subcommand)]
         command: DangerCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RootsCommands {
+    /// Show known roots and migration status
+    Status {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
     },
 }
 
@@ -661,4 +676,21 @@ pub enum WorkflowCommands {
         #[arg(long)]
         force: bool,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands, RootsCommands};
+    use clap::Parser;
+
+    #[test]
+    fn parses_roots_status_command() {
+        let cli = Cli::try_parse_from(["meld", "roots", "status", "--format", "json"]).unwrap();
+        match cli.command {
+            Commands::Roots {
+                command: RootsCommands::Status { format },
+            } => assert_eq!(format, "json"),
+            _ => panic!("expected roots status command"),
+        }
+    }
 }

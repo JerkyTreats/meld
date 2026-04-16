@@ -7,10 +7,11 @@ use crate::cli::{command_name, typed_summary_event};
 use crate::config::ConfigLoader;
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
+use crate::roots::{ResolvedRoot, RootRuntime};
 use crate::store::persistence::SledNodeRecordStore;
+use crate::telemetry::ProgressRuntime;
 use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
 use crate::telemetry::sessions::policy::PrunePolicy;
-use crate::telemetry::ProgressRuntime;
 use crate::world_state::GraphRuntime;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,6 +32,8 @@ pub struct RunContext {
     workflow_registry: Arc<parking_lot::RwLock<crate::workflow::registry::WorkflowRegistry>>,
     progress: Arc<ProgressRuntime>,
     graph_runtime: Arc<GraphRuntime>,
+    root_runtime: RootRuntime,
+    active_root: ResolvedRoot,
 }
 
 impl RunContext {
@@ -58,6 +61,11 @@ impl RunContext {
         } else {
             ConfigLoader::load(&workspace_root)?
         };
+        let root_runtime = RootRuntime::new();
+        let active_root = root_runtime.resolve_active_root(&workspace_root)?;
+        if let Err(err) = root_runtime.ensure_active_root_registered(&active_root) {
+            warn!(error = %err, "failed to register active root during startup");
+        }
 
         let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(&workspace_root)?;
@@ -130,8 +138,34 @@ impl RunContext {
         let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(&workspace_root)?;
 
-        if let Err(err) = graph_runtime.catch_up() {
-            warn!(error = %err, "failed to catch up graph runtime during startup");
+        match graph_runtime.catch_up() {
+            Ok(applied_events) => {
+                let last_reduced_seq = match graph_runtime.traversal_store().last_reduced_seq() {
+                    Ok(seq) => seq,
+                    Err(err) => {
+                        warn!(error = %err, "failed to read last reduced seq during startup");
+                        0
+                    }
+                };
+                if let Err(err) = root_runtime.record_graph_catch_up_success(
+                    &active_root,
+                    last_reduced_seq,
+                    applied_events,
+                ) {
+                    warn!(error = %err, "failed to record root graph migration during startup");
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, "failed to catch up graph runtime during startup");
+                if let Err(record_err) =
+                    root_runtime.record_graph_catch_up_failure(&active_root, &err.to_string())
+                {
+                    warn!(
+                        error = %record_err,
+                        "failed to record root graph migration failure during startup"
+                    );
+                }
+            }
         }
 
         Ok(Self {
@@ -144,6 +178,8 @@ impl RunContext {
             workflow_registry,
             progress,
             graph_runtime,
+            root_runtime,
+            active_root,
         })
     }
 
@@ -160,8 +196,40 @@ impl RunContext {
             command,
         );
         let result = self.execute_inner(command, &session_id);
-        if let Err(err) = self.graph_runtime.catch_up() {
-            warn!(error = %err, "failed to catch up graph runtime after command execution");
+        match self.graph_runtime.catch_up() {
+            Ok(applied_events) => {
+                let last_reduced_seq = match self.graph_runtime.traversal_store().last_reduced_seq()
+                {
+                    Ok(seq) => seq,
+                    Err(err) => {
+                        warn!(error = %err, "failed to read last reduced seq after command execution");
+                        0
+                    }
+                };
+                if applied_events > 0 {
+                    if let Err(err) = self.root_runtime.record_graph_catch_up_success(
+                        &self.active_root,
+                        last_reduced_seq,
+                        applied_events,
+                    ) {
+                        warn!(error = %err, "failed to record root graph migration after command execution");
+                    }
+                } else if let Err(err) = self.root_runtime.touch_active_root(&self.active_root) {
+                    warn!(error = %err, "failed to update active root last seen after command execution");
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, "failed to catch up graph runtime after command execution");
+                if let Err(record_err) = self
+                    .root_runtime
+                    .record_graph_catch_up_failure(&self.active_root, &err.to_string())
+                {
+                    warn!(
+                        error = %record_err,
+                        "failed to record root graph migration failure after command execution"
+                    );
+                }
+            }
         }
         self.emit_command_summary(
             &session_id,
@@ -248,6 +316,7 @@ impl RunContext {
                 command,
                 session_id,
             ),
+            Commands::Roots { command } => crate::roots::tooling::handle_cli_command(command),
             Commands::Danger { .. } => Err(ApiError::ConfigError(
                 "Danger commands must run from the CLI entry point".to_string(),
             )),

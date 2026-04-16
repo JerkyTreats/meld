@@ -5,7 +5,7 @@
 use clap::Parser;
 use meld::cli::{Cli, Commands, DangerCommands, RunContext};
 use meld::config::ConfigLoader;
-use meld::logging::{init_logging, LoggingConfig};
+use meld::logging::{LoggingConfig, init_logging};
 use std::path::{Path, PathBuf};
 use std::process;
 use tracing::{error, info};
@@ -30,6 +30,21 @@ fn main() {
         match result {
             Ok(output) => {
                 info!("Danger command completed successfully");
+                println!("{}", output);
+            }
+            Err(e) => {
+                error!("Command failed: {}", e);
+                eprintln!("{}", meld::cli::map_error(&e));
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if let Some(result) = try_execute_roots_command(&cli) {
+        match result {
+            Ok(output) => {
+                info!("Roots command completed successfully");
                 println!("{}", output);
             }
             Err(e) => {
@@ -90,6 +105,13 @@ fn try_execute_danger_command(cli: &Cli) -> Option<Result<String, meld::error::A
                 *yes,
             ))
         }
+        _ => None,
+    }
+}
+
+fn try_execute_roots_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
+    match &cli.command {
+        Commands::Roots { command } => Some(meld::roots::tooling::handle_cli_command(command)),
         _ => None,
     }
 }

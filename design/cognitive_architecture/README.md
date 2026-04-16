@@ -57,6 +57,10 @@ This area does own:
   phased implementation path for contracts, reducers, indexes, and planner-facing graph reads
 - [Workspace FS Graph Transition Requirements](world_state/graph/workspace_fs_transition_requirements.md)
   compatibility requirements, code touchpoints, and phased lift of `workspace_fs` into graph inputs
+- [Branch Federation Substrate](world_state/graph/branch_federation_substrate.md)
+  canonical branch abstraction, workspace as the first branch kind, and implementation plan for federation
+- [Root Federation Runtime](world_state/graph/root_federation_runtime.md)
+  runtime discovery, safe migration, and user trigger flow for pre existing workspace roots
 - [World State Belief](world_state/belief/README.md)
   confidence, revision, contradiction, and settlement over current anchors
 - [Curation In Belief](world_state/belief/curation.md)
@@ -89,16 +93,18 @@ This area does own:
 7. [Temporal Fact Graph](world_state/graph/temporal_fact_graph.md)
 8. [Graph Implementation Plan](world_state/graph/implementation_plan.md)
 9. [Workspace FS Graph Transition Requirements](world_state/graph/workspace_fs_transition_requirements.md)
-10. [World State Belief](world_state/belief/README.md)
-11. [Curation In Belief](world_state/belief/curation.md)
-12. [Knowledge Graph ECS Decision Memo](world_state/belief/knowledge_graph_ecs_decision_memo.md)
-13. [Execution Domain](execution/README.md)
-14. [Execution Substrate](execution/substrate.md)
-15. [Execution Control](execution/control/README.md)
-16. [Execution Planning](execution/control/planning/README.md)
-17. [Spine Concern](spine/README.md)
-18. [Events Design](events/README.md)
-19. [Further Research Prompts](further_research_prompts.md)
+10. [Branch Federation Substrate](world_state/graph/branch_federation_substrate.md)
+11. [Root Federation Runtime](world_state/graph/root_federation_runtime.md)
+12. [World State Belief](world_state/belief/README.md)
+13. [Curation In Belief](world_state/belief/curation.md)
+14. [Knowledge Graph ECS Decision Memo](world_state/belief/knowledge_graph_ecs_decision_memo.md)
+15. [Execution Domain](execution/README.md)
+16. [Execution Substrate](execution/substrate.md)
+17. [Execution Control](execution/control/README.md)
+18. [Execution Planning](execution/control/planning/README.md)
+19. [Spine Concern](spine/README.md)
+20. [Events Design](events/README.md)
+21. [Further Research Prompts](further_research_prompts.md)
 
 ## Read With
 

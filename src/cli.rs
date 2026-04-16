@@ -11,8 +11,9 @@ mod route;
 pub use help::{command_name, typed_summary_event};
 pub use output::map_error;
 pub use parse::{
-    parse_provider_additional_json_file, AgentCommands, AgentPromptCommands, Cli, Commands,
-    ContextCommands, DangerCommands, ProviderCommands, WorkflowCommands, WorkspaceCommands,
+    AgentCommands, AgentPromptCommands, Cli, Commands, ContextCommands, DangerCommands,
+    ProviderCommands, RootsCommands, WorkflowCommands, WorkspaceCommands,
+    parse_provider_additional_json_file,
 };
 pub use presentation::{
     format_agent_list_result_json, format_agent_list_result_text, format_agent_show_result_json,

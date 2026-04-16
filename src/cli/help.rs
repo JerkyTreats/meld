@@ -2,7 +2,7 @@
 
 use crate::cli::parse::{
     AgentCommands, AgentPromptCommands, Commands, ContextCommands, DangerCommands,
-    ProviderCommands, WorkflowCommands, WorkspaceCommands,
+    ProviderCommands, RootsCommands, WorkflowCommands, WorkspaceCommands,
 };
 use crate::telemetry::summary::TypedSummaryEvent;
 
@@ -19,7 +19,14 @@ pub fn command_name(command: &Commands) -> String {
         Commands::Init { .. } => "init".to_string(),
         Commands::Context { command } => format!("context.{}", context_command_name(command)),
         Commands::Workflow { command } => format!("workflow.{}", workflow_command_name(command)),
+        Commands::Roots { command } => format!("roots.{}", roots_command_name(command)),
         Commands::Danger { command } => format!("danger.{}", danger_command_name(command)),
+    }
+}
+
+pub fn roots_command_name(command: &RootsCommands) -> &'static str {
+    match command {
+        RootsCommands::Status { .. } => "status",
     }
 }
 
@@ -260,6 +267,25 @@ pub fn typed_summary_event(
             duration_ms,
             error,
         )),
+        Commands::Roots { .. } => None,
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{command_name, roots_command_name};
+    use crate::cli::parse::{Commands, RootsCommands};
+
+    #[test]
+    fn roots_command_names_are_stable() {
+        let command = RootsCommands::Status {
+            format: "text".to_string(),
+        };
+        assert_eq!(roots_command_name(&command), "status");
+        assert_eq!(
+            command_name(&Commands::Roots { command }),
+            "roots.status".to_string()
+        );
     }
 }
