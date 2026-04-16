@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::{ApiError, StorageError};
-use crate::roots::contracts::{BranchKind, BranchManifest, ResolvedRoot, RootManifest};
+use crate::roots::contracts::{BranchManifest, ResolvedBranch, ResolvedRoot, RootManifest};
 
 pub const WORKSPACE_LOCATOR_VERSION: u32 = 1;
 pub const AUTHORITATIVE_STATE_VERSION: u32 = 1;
@@ -59,11 +59,11 @@ pub fn new_manifest(resolved: &ResolvedRoot, now: &str) -> RootManifest {
     }
 }
 
-pub fn new_branch_manifest(resolved: &ResolvedRoot, now: &str) -> BranchManifest {
+pub fn new_branch_manifest(resolved: &ResolvedBranch, now: &str) -> BranchManifest {
     BranchManifest {
-        branch_id: resolved.root_id.clone(),
-        branch_kind: BranchKind::WorkspaceFs,
-        canonical_locator: resolved.workspace_path.to_string_lossy().to_string(),
+        branch_id: resolved.branch_id.clone(),
+        branch_kind: resolved.branch_kind.clone(),
+        canonical_locator: resolved.canonical_locator.to_string_lossy().to_string(),
         locator_version: WORKSPACE_LOCATOR_VERSION,
         authoritative_state_version: AUTHORITATIVE_STATE_VERSION,
         derived_state_version: DERIVED_STATE_VERSION,

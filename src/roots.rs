@@ -10,10 +10,10 @@ pub mod runtime;
 pub mod tooling;
 
 pub use contracts::{
-    BranchAttachmentStatus, BranchCatalog, BranchCatalogEntry, BranchInspectionStatus, BranchKind,
-    BranchManifest, BranchMigrationStatus, ResolvedRoot, RootAttachmentStatus, RootCatalog,
-    RootCatalogEntry, RootInspectionStatus, RootManifest, RootMigrationLane,
-    RootMigrationLedgerEntry, RootMigrationStatus, RootMigrationStepStatus, RootStatusRow,
-    RootsStatusOutput,
+    BranchAttachmentStatus, BranchCatalog, BranchCatalogEntry, BranchHandle,
+    BranchInspectionStatus, BranchKind, BranchManifest, BranchMigrationStatus, ResolvedBranch,
+    ResolvedRoot, RootAttachmentStatus, RootCatalog, RootCatalogEntry, RootInspectionStatus,
+    RootManifest, RootMigrationLane, RootMigrationLedgerEntry, RootMigrationStatus,
+    RootMigrationStepStatus, RootStatusRow, RootsStatusOutput,
 };
 pub use runtime::RootRuntime;

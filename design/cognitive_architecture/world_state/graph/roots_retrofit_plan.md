@@ -125,7 +125,15 @@ Key seams:
 
 Status:
 
-- pending
+- completed
+
+Verification evidence:
+
+- Gate A pass via `cargo test roots_runtime --tests`
+- Gate C pass via `cargo test active_root_resolution_matches_active_branch_resolution`
+- Gate C pass via `cargo test resolved_root_converts_to_branch_handle`
+- Gate C pass via `cargo test resolved_branch_converts_to_root`
+- Gate D pass via scoped diff review before staging
 
 ### Checkpoint 4
 
@@ -209,6 +217,7 @@ Checkpoint 2 notes:
 Checkpoint 3 notes:
 
 - runtime seam work should remain additive and should not force the external rename
+- `RunContext` now resolves and tracks an internal branch handle while root named compatibility methods remain available
 
 Checkpoint 4 notes:
 

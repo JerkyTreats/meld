@@ -420,13 +420,92 @@ pub struct ResolvedRoot {
     pub ledger_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedBranch {
+    pub branch_id: String,
+    pub branch_kind: BranchKind,
+    pub canonical_locator: PathBuf,
+    pub data_home_path: PathBuf,
+    pub manifest_path: PathBuf,
+    pub ledger_path: PathBuf,
+}
+
+impl From<ResolvedRoot> for ResolvedBranch {
+    fn from(value: ResolvedRoot) -> Self {
+        Self {
+            branch_id: value.root_id,
+            branch_kind: BranchKind::WorkspaceFs,
+            canonical_locator: value.workspace_path,
+            data_home_path: value.data_home_path,
+            manifest_path: value.manifest_path,
+            ledger_path: value.ledger_path,
+        }
+    }
+}
+
+impl From<ResolvedBranch> for ResolvedRoot {
+    fn from(value: ResolvedBranch) -> Self {
+        Self {
+            root_id: value.branch_id,
+            workspace_path: value.canonical_locator,
+            data_home_path: value.data_home_path,
+            manifest_path: value.manifest_path,
+            ledger_path: value.ledger_path,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchHandle {
+    resolved: ResolvedBranch,
+}
+
+impl BranchHandle {
+    pub fn new(resolved: ResolvedBranch) -> Self {
+        Self { resolved }
+    }
+
+    pub fn resolved(&self) -> &ResolvedBranch {
+        &self.resolved
+    }
+
+    pub fn branch_id(&self) -> &str {
+        &self.resolved.branch_id
+    }
+
+    pub fn branch_kind(&self) -> &BranchKind {
+        &self.resolved.branch_kind
+    }
+
+    pub fn canonical_locator(&self) -> &PathBuf {
+        &self.resolved.canonical_locator
+    }
+
+    pub fn as_root(&self) -> ResolvedRoot {
+        self.resolved.clone().into()
+    }
+}
+
+impl From<ResolvedRoot> for BranchHandle {
+    fn from(value: ResolvedRoot) -> Self {
+        Self::new(value.into())
+    }
+}
+
+impl From<ResolvedBranch> for BranchHandle {
+    fn from(value: ResolvedBranch) -> Self {
+        Self::new(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        BranchAttachmentStatus, BranchInspectionStatus, BranchKind, BranchManifest,
-        BranchMigrationStatus, RootCatalog, RootCatalogEntry, RootInspectionStatus, RootManifest,
-        RootMigrationStatus,
+        BranchAttachmentStatus, BranchHandle, BranchInspectionStatus, BranchKind, BranchManifest,
+        BranchMigrationStatus, ResolvedBranch, ResolvedRoot, RootCatalog, RootCatalogEntry,
+        RootInspectionStatus, RootManifest, RootMigrationStatus,
     };
+    use std::path::PathBuf;
 
     #[test]
     fn root_manifest_converts_to_branch_manifest() {
@@ -474,5 +553,44 @@ mod tests {
         assert_eq!(branch.inspection_status, BranchInspectionStatus::Registered);
         assert_eq!(branch.migration_status, BranchMigrationStatus::Succeeded);
         assert_eq!(RootCatalog::from(branch_catalog), root_catalog);
+    }
+
+    #[test]
+    fn resolved_root_converts_to_branch_handle() {
+        let resolved_root = ResolvedRoot {
+            root_id: "root-1".to_string(),
+            workspace_path: PathBuf::from("/tmp/workspace"),
+            data_home_path: PathBuf::from("/tmp/data"),
+            manifest_path: PathBuf::from("/tmp/data/root_manifest.json"),
+            ledger_path: PathBuf::from("/tmp/data/migration_ledger.jsonl"),
+        };
+
+        let branch_handle = BranchHandle::from(resolved_root.clone());
+        assert_eq!(branch_handle.branch_id(), "root-1");
+        assert_eq!(branch_handle.branch_kind(), &BranchKind::WorkspaceFs);
+        assert_eq!(
+            branch_handle.canonical_locator(),
+            &PathBuf::from("/tmp/workspace")
+        );
+        assert_eq!(branch_handle.as_root(), resolved_root);
+    }
+
+    #[test]
+    fn resolved_branch_converts_to_root() {
+        let resolved_branch = ResolvedBranch {
+            branch_id: "branch-1".to_string(),
+            branch_kind: BranchKind::WorkspaceFs,
+            canonical_locator: PathBuf::from("/tmp/workspace"),
+            data_home_path: PathBuf::from("/tmp/data"),
+            manifest_path: PathBuf::from("/tmp/data/root_manifest.json"),
+            ledger_path: PathBuf::from("/tmp/data/migration_ledger.jsonl"),
+        };
+
+        let resolved_root: ResolvedRoot = resolved_branch.into();
+        assert_eq!(resolved_root.root_id, "branch-1");
+        assert_eq!(
+            resolved_root.workspace_path,
+            PathBuf::from("/tmp/workspace")
+        );
     }
 }

@@ -3,9 +3,9 @@ use std::path::Path;
 
 use crate::error::ApiError;
 use crate::roots::contracts::{
-    BranchAttachmentStatus, BranchCatalogEntry, BranchInspectionStatus, BranchMigrationStatus,
-    ResolvedRoot, RootMigrationLane, RootMigrationLedgerEntry, RootMigrationStepStatus,
-    RootStatusRow, RootsStatusOutput,
+    BranchAttachmentStatus, BranchCatalogEntry, BranchHandle, BranchInspectionStatus,
+    BranchMigrationStatus, ResolvedBranch, ResolvedRoot, RootMigrationLane,
+    RootMigrationLedgerEntry, RootMigrationStepStatus, RootStatusRow, RootsStatusOutput,
 };
 use crate::roots::{catalog, ledger, locator, manifest};
 
@@ -17,13 +17,26 @@ impl RootRuntime {
         Self
     }
 
+    pub fn resolve_active_branch(&self, workspace_root: &Path) -> Result<BranchHandle, ApiError> {
+        locator::resolve_active_branch(workspace_root).map(BranchHandle::from)
+    }
+
     pub fn resolve_active_root(&self, workspace_root: &Path) -> Result<ResolvedRoot, ApiError> {
-        locator::resolve_active_root(workspace_root)
+        self.resolve_active_branch(workspace_root)
+            .map(|branch| branch.as_root())
     }
 
     pub fn ensure_active_root_registered(&self, resolved: &ResolvedRoot) -> Result<(), ApiError> {
+        self.ensure_active_branch_registered(&BranchHandle::from(resolved.clone()))
+    }
+
+    pub fn ensure_active_branch_registered(&self, branch: &BranchHandle) -> Result<(), ApiError> {
+        self.ensure_branch_registered(branch.resolved())
+    }
+
+    fn ensure_branch_registered(&self, resolved: &ResolvedBranch) -> Result<(), ApiError> {
         let now = timestamp();
-        let plan_id = plan_id(&resolved.root_id, "register");
+        let plan_id = plan_id(&resolved.branch_id, "register");
 
         append_started(
             resolved,
@@ -32,13 +45,14 @@ impl RootRuntime {
             RootMigrationLane::Metadata,
             vec![format!(
                 "workspace_path={}",
-                resolved.workspace_path.display()
+                resolved.canonical_locator.display()
             )],
         )?;
 
         let mut current_manifest = manifest::load_branch(&resolved.manifest_path)?
             .unwrap_or_else(|| manifest::new_branch_manifest(resolved, &now));
-        current_manifest.canonical_locator = resolved.workspace_path.to_string_lossy().to_string();
+        current_manifest.canonical_locator =
+            resolved.canonical_locator.to_string_lossy().to_string();
         current_manifest.last_seen_at = now.clone();
         manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
 
@@ -102,11 +116,20 @@ impl RootRuntime {
     }
 
     pub fn touch_active_root(&self, resolved: &ResolvedRoot) -> Result<(), ApiError> {
+        self.touch_active_branch(&BranchHandle::from(resolved.clone()))
+    }
+
+    pub fn touch_active_branch(&self, branch: &BranchHandle) -> Result<(), ApiError> {
+        self.touch_branch(branch.resolved())
+    }
+
+    fn touch_branch(&self, resolved: &ResolvedBranch) -> Result<(), ApiError> {
         let now = timestamp();
         let mut current_manifest = manifest::load_branch(&resolved.manifest_path)?
             .unwrap_or_else(|| manifest::new_branch_manifest(resolved, &now));
         current_manifest.last_seen_at = now.clone();
-        current_manifest.canonical_locator = resolved.workspace_path.to_string_lossy().to_string();
+        current_manifest.canonical_locator =
+            resolved.canonical_locator.to_string_lossy().to_string();
         manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
 
         let catalog_path = locator::global_catalog_path()?;
@@ -146,8 +169,30 @@ impl RootRuntime {
         last_reduced_seq: u64,
         applied_events: usize,
     ) -> Result<(), ApiError> {
+        self.record_branch_graph_catch_up_success(
+            &BranchHandle::from(resolved.clone()),
+            last_reduced_seq,
+            applied_events,
+        )
+    }
+
+    pub fn record_branch_graph_catch_up_success(
+        &self,
+        branch: &BranchHandle,
+        last_reduced_seq: u64,
+        applied_events: usize,
+    ) -> Result<(), ApiError> {
+        self.record_graph_success(branch.resolved(), last_reduced_seq, applied_events)
+    }
+
+    fn record_graph_success(
+        &self,
+        resolved: &ResolvedBranch,
+        last_reduced_seq: u64,
+        applied_events: usize,
+    ) -> Result<(), ApiError> {
         let now = timestamp();
-        let plan_id = plan_id(&resolved.root_id, "graph");
+        let plan_id = plan_id(&resolved.branch_id, "graph");
 
         append_started(
             resolved,
@@ -228,8 +273,20 @@ impl RootRuntime {
         resolved: &ResolvedRoot,
         error: &str,
     ) -> Result<(), ApiError> {
+        self.record_branch_graph_catch_up_failure(&BranchHandle::from(resolved.clone()), error)
+    }
+
+    pub fn record_branch_graph_catch_up_failure(
+        &self,
+        branch: &BranchHandle,
+        error: &str,
+    ) -> Result<(), ApiError> {
+        self.record_graph_failure(branch.resolved(), error)
+    }
+
+    fn record_graph_failure(&self, resolved: &ResolvedBranch, error: &str) -> Result<(), ApiError> {
         let now = timestamp();
-        let plan_id = plan_id(&resolved.root_id, "graph_failure");
+        let plan_id = plan_id(&resolved.branch_id, "graph_failure");
         append_failed(
             resolved,
             &plan_id,
@@ -286,7 +343,7 @@ impl RootRuntime {
 }
 
 fn append_started(
-    resolved: &ResolvedRoot,
+    resolved: &ResolvedBranch,
     plan_id: &str,
     step_id: &str,
     lane: RootMigrationLane,
@@ -309,7 +366,7 @@ fn append_started(
 }
 
 fn append_verified(
-    resolved: &ResolvedRoot,
+    resolved: &ResolvedBranch,
     plan_id: &str,
     step_id: &str,
     lane: RootMigrationLane,
@@ -333,7 +390,7 @@ fn append_verified(
 }
 
 fn append_failed(
-    resolved: &ResolvedRoot,
+    resolved: &ResolvedBranch,
     plan_id: &str,
     step_id: &str,
     lane: RootMigrationLane,
