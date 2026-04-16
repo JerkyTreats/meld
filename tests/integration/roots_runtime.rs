@@ -1,4 +1,4 @@
-use meld::cli::{RootsCommands, RunContext};
+use meld::cli::{BranchesCommands, RunContext};
 use meld::config::xdg;
 use meld::roots::{RootCatalog, RootManifest, RootsStatusOutput};
 use tempfile::TempDir;
@@ -55,7 +55,7 @@ fn roots_status_lists_registered_roots() {
         let _context_a = RunContext::new(workspace_a.path().to_path_buf(), None).unwrap();
         let _context_b = RunContext::new(workspace_b.path().to_path_buf(), None).unwrap();
 
-        let output = meld::roots::tooling::handle_cli_command(&RootsCommands::Status {
+        let output = meld::branches::tooling::handle_cli_command(&BranchesCommands::Status {
             format: "json".to_string(),
         })
         .unwrap();
@@ -71,5 +71,94 @@ fn roots_status_lists_registered_roots() {
                 .iter()
                 .all(|root| !root.migration_status.is_empty())
         );
+    });
+}
+
+#[test]
+fn branches_attach_registers_dormant_workspace() {
+    let test_dir = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    with_xdg_data_home(&test_dir, || {
+        let output = meld::branches::tooling::handle_cli_command(&BranchesCommands::Attach {
+            path: workspace.path().to_path_buf(),
+            format: "json".to_string(),
+        })
+        .unwrap();
+        let parsed: RootsStatusOutput = serde_json::from_str(&output).unwrap();
+        let attached = parsed
+            .roots
+            .iter()
+            .find(|branch| {
+                branch.workspace_path == workspace.path().canonicalize().unwrap().to_string_lossy()
+            })
+            .unwrap();
+
+        assert_eq!(attached.attachment_status, "dormant");
+        assert!(attached.store_path.is_some());
+    });
+}
+
+#[test]
+fn branches_discover_registers_candidates_and_skips_tmp() {
+    let test_dir = TempDir::new().unwrap();
+
+    with_xdg_data_home(&test_dir, || {
+        let meld_home = xdg::data_home().unwrap().join("meld");
+        let real = meld_home.join("home").join("user").join("ws_dormant");
+        let tmp = meld_home.join("tmp").join("scratch");
+        std::fs::create_dir_all(real.join("store")).unwrap();
+        std::fs::create_dir_all(real.join("frames")).unwrap();
+        std::fs::create_dir_all(tmp.join("store")).unwrap();
+        std::fs::create_dir_all(tmp.join("frames")).unwrap();
+
+        let output = meld::branches::tooling::handle_cli_command(&BranchesCommands::Discover {
+            format: "json".to_string(),
+        })
+        .unwrap();
+        let parsed: RootsStatusOutput = serde_json::from_str(&output).unwrap();
+
+        assert!(
+            parsed
+                .roots
+                .iter()
+                .any(|branch| branch.workspace_path == "/home/user/ws_dormant")
+        );
+        assert!(
+            parsed
+                .roots
+                .iter()
+                .all(|branch| !branch.workspace_path.contains("/tmp/"))
+        );
+    });
+}
+
+#[test]
+fn branches_migrate_updates_registered_branch_status() {
+    let test_dir = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    with_xdg_data_home(&test_dir, || {
+        meld::branches::tooling::handle_cli_command(&BranchesCommands::Attach {
+            path: workspace.path().to_path_buf(),
+            format: "json".to_string(),
+        })
+        .unwrap();
+
+        let output = meld::branches::tooling::handle_cli_command(&BranchesCommands::Migrate {
+            format: "json".to_string(),
+        })
+        .unwrap();
+        let parsed: RootsStatusOutput = serde_json::from_str(&output).unwrap();
+        let migrated = parsed
+            .roots
+            .iter()
+            .find(|branch| {
+                branch.workspace_path == workspace.path().canonicalize().unwrap().to_string_lossy()
+            })
+            .unwrap();
+
+        assert_eq!(migrated.migration_status, "not_needed");
+        assert!(migrated.last_migration_at.is_some());
     });
 }

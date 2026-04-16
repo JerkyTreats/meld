@@ -27,6 +27,9 @@ pub fn command_name(command: &Commands) -> String {
 pub fn branches_command_name(command: &BranchesCommands) -> &'static str {
     match command {
         BranchesCommands::Status { .. } => "status",
+        BranchesCommands::Discover { .. } => "discover",
+        BranchesCommands::Migrate { .. } => "migrate",
+        BranchesCommands::Attach { .. } => "attach",
     }
 }
 

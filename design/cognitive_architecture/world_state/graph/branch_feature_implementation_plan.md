@@ -84,7 +84,19 @@ Verification gates:
 
 Status:
 
-- pending
+- completed
+
+Verification evidence:
+
+- Gate A pass via `cargo test parses_branches_attach_command`
+- Gate B pass via `cargo test roots_runtime --tests`
+- Gate C pass via `cargo test root_catalog_converts_to_branch_catalog`
+- Gate C pass via `cargo test branch_catalog_saves_as_root_compatible_file`
+- Gate C pass via `cargo test root_catalog_loads_into_branch_catalog`
+- Gate C pass via `cargo test root_manifest_converts_to_branch_manifest`
+- Gate C pass via `cargo test branch_manifest_saves_as_root_compatible_file`
+- Gate C pass via `cargo test root_manifest_loads_into_branch_manifest`
+- Gate E pass via staged diff review before commit
 
 ## Checkpoint 3
 

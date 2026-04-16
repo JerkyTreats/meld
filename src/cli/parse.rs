@@ -145,6 +145,26 @@ pub enum BranchesCommands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Discover dormant branches from the global data home
+    Discover {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Migrate all registered branches safely
+    Migrate {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Attach one explicit branch path
+    Attach {
+        /// Workspace path to attach
+        path: PathBuf,
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
 }
 
 pub type RootsCommands = BranchesCommands;
@@ -685,6 +705,7 @@ pub enum WorkflowCommands {
 mod tests {
     use super::{BranchesCommands, Cli, Commands};
     use clap::Parser;
+    use std::path::PathBuf;
 
     #[test]
     fn parses_roots_status_command_alias() {
@@ -705,6 +726,22 @@ mod tests {
                 command: BranchesCommands::Status { format },
             } => assert_eq!(format, "json"),
             _ => panic!("expected branches status command"),
+        }
+    }
+
+    #[test]
+    fn parses_branches_attach_command() {
+        let cli =
+            Cli::try_parse_from(["meld", "branches", "attach", "/tmp/ws", "--format", "json"])
+                .unwrap();
+        match cli.command {
+            Commands::Branches {
+                command: BranchesCommands::Attach { path, format },
+            } => {
+                assert_eq!(path, PathBuf::from("/tmp/ws"));
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected branches attach command"),
         }
     }
 }

@@ -1,5 +1,5 @@
 use chrono::{SecondsFormat, Utc};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::ApiError;
 use crate::roots::contracts::{
@@ -8,6 +8,7 @@ use crate::roots::contracts::{
     RootMigrationLedgerEntry, RootMigrationStepStatus, RootStatusRow, RootsStatusOutput,
 };
 use crate::roots::{catalog, ledger, locator, manifest};
+use crate::world_state::GraphRuntime;
 
 #[derive(Debug, Clone, Default)]
 pub struct RootRuntime;
@@ -31,10 +32,175 @@ impl RootRuntime {
     }
 
     pub fn ensure_active_branch_registered(&self, branch: &BranchHandle) -> Result<(), ApiError> {
-        self.ensure_branch_registered(branch.resolved())
+        self.ensure_branch_registered(
+            branch.resolved(),
+            BranchAttachmentStatus::Active,
+            Some(locator::branch_store_path(
+                &branch.resolved().data_home_path,
+            )),
+        )
     }
 
-    fn ensure_branch_registered(&self, resolved: &ResolvedBranch) -> Result<(), ApiError> {
+    pub fn attach_branch(&self, workspace_path: &Path) -> Result<RootsStatusOutput, ApiError> {
+        let branch = self.resolve_active_branch(workspace_path)?;
+        self.ensure_branch_registered(
+            branch.resolved(),
+            BranchAttachmentStatus::Dormant,
+            Some(locator::branch_store_path(
+                &branch.resolved().data_home_path,
+            )),
+        )?;
+        self.status()
+    }
+
+    pub fn discover_branches(&self) -> Result<RootsStatusOutput, ApiError> {
+        for data_home_path in locator::discover_branch_data_homes()? {
+            let recovered_workspace_path = locator::recover_workspace_path(&data_home_path)?;
+            let resolved =
+                resolved_branch_from_data_home(&data_home_path, &recovered_workspace_path);
+            let attachment_status = if recovered_workspace_path.exists() {
+                BranchAttachmentStatus::Dormant
+            } else {
+                BranchAttachmentStatus::MissingWorkspacePath
+            };
+            self.ensure_branch_registered(
+                &resolved,
+                attachment_status,
+                Some(locator::branch_store_path(&data_home_path)),
+            )?;
+        }
+        self.status()
+    }
+
+    pub fn migrate_branches(&self) -> Result<RootsStatusOutput, ApiError> {
+        let catalog_path = locator::global_catalog_path()?;
+        let branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        for entry in branch_catalog.branches {
+            let resolved = resolved_branch_from_catalog_entry(&entry);
+            let store_path = entry
+                .store_path
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| locator::branch_store_path(&resolved.data_home_path));
+            let db = sled::open(&store_path).map_err(to_api_storage_error)?;
+            let graph_runtime = GraphRuntime::new(db).map_err(ApiError::StorageError)?;
+            match graph_runtime.catch_up() {
+                Ok(applied_events) => {
+                    let last_reduced_seq = graph_runtime
+                        .traversal_store()
+                        .last_reduced_seq()
+                        .map_err(ApiError::StorageError)?;
+                    self.record_graph_success(
+                        &resolved,
+                        last_reduced_seq,
+                        applied_events,
+                        Some(store_path.clone()),
+                    )?;
+                }
+                Err(err) => {
+                    self.record_graph_failure(
+                        &resolved,
+                        &err.to_string(),
+                        Some(store_path.clone()),
+                    )?;
+                }
+            }
+        }
+        self.status()
+    }
+
+    pub fn touch_active_root(&self, resolved: &ResolvedRoot) -> Result<(), ApiError> {
+        self.touch_active_branch(&BranchHandle::from(resolved.clone()))
+    }
+
+    pub fn touch_active_branch(&self, branch: &BranchHandle) -> Result<(), ApiError> {
+        self.touch_branch(
+            branch.resolved(),
+            BranchAttachmentStatus::Active,
+            Some(locator::branch_store_path(
+                &branch.resolved().data_home_path,
+            )),
+        )
+    }
+
+    pub fn record_graph_catch_up_success(
+        &self,
+        resolved: &ResolvedRoot,
+        last_reduced_seq: u64,
+        applied_events: usize,
+    ) -> Result<(), ApiError> {
+        self.record_branch_graph_catch_up_success(
+            &BranchHandle::from(resolved.clone()),
+            last_reduced_seq,
+            applied_events,
+        )
+    }
+
+    pub fn record_branch_graph_catch_up_success(
+        &self,
+        branch: &BranchHandle,
+        last_reduced_seq: u64,
+        applied_events: usize,
+    ) -> Result<(), ApiError> {
+        self.record_graph_success(
+            branch.resolved(),
+            last_reduced_seq,
+            applied_events,
+            Some(locator::branch_store_path(
+                &branch.resolved().data_home_path,
+            )),
+        )
+    }
+
+    pub fn record_graph_catch_up_failure(
+        &self,
+        resolved: &ResolvedRoot,
+        error: &str,
+    ) -> Result<(), ApiError> {
+        self.record_branch_graph_catch_up_failure(&BranchHandle::from(resolved.clone()), error)
+    }
+
+    pub fn record_branch_graph_catch_up_failure(
+        &self,
+        branch: &BranchHandle,
+        error: &str,
+    ) -> Result<(), ApiError> {
+        self.record_graph_failure(
+            branch.resolved(),
+            error,
+            Some(locator::branch_store_path(
+                &branch.resolved().data_home_path,
+            )),
+        )
+    }
+
+    pub fn status(&self) -> Result<RootsStatusOutput, ApiError> {
+        let catalog_path = locator::global_catalog_path()?;
+        let branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let roots = branch_catalog
+            .branches
+            .into_iter()
+            .map(|branch| RootStatusRow {
+                root_id: branch.branch_id,
+                workspace_path: branch.canonical_locator,
+                data_home_path: branch.data_home_path,
+                store_path: branch.store_path,
+                attachment_status: branch.attachment_status.as_str().to_string(),
+                inspection_status: branch.inspection_status.as_str().to_string(),
+                migration_status: branch.migration_status.as_str().to_string(),
+                last_seen_at: branch.last_seen_at,
+                last_migration_at: branch.last_migration_at,
+            })
+            .collect();
+        Ok(RootsStatusOutput { roots })
+    }
+
+    fn ensure_branch_registered(
+        &self,
+        resolved: &ResolvedBranch,
+        attachment_status: BranchAttachmentStatus,
+        store_path: Option<PathBuf>,
+    ) -> Result<(), ApiError> {
         let now = timestamp();
         let plan_id = plan_id(&resolved.branch_id, "register");
 
@@ -82,7 +248,9 @@ impl RootRuntime {
             .iter()
             .find(|branch| branch.branch_id == current_manifest.branch_id)
             .cloned();
-        let last_migration_at = existing.and_then(|root| root.last_migration_at);
+        let last_migration_at = existing
+            .as_ref()
+            .and_then(|branch| branch.last_migration_at.clone());
         catalog::upsert_branch(
             &mut branch_catalog,
             BranchCatalogEntry {
@@ -90,9 +258,20 @@ impl RootRuntime {
                 branch_kind: current_manifest.branch_kind.clone(),
                 canonical_locator: current_manifest.canonical_locator.clone(),
                 data_home_path: resolved.data_home_path.to_string_lossy().to_string(),
-                attachment_status: BranchAttachmentStatus::Active,
+                store_path: store_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .or_else(|| {
+                        existing
+                            .as_ref()
+                            .and_then(|branch| branch.store_path.clone())
+                    }),
+                attachment_status,
                 inspection_status: BranchInspectionStatus::Registered,
-                migration_status: BranchMigrationStatus::Unknown,
+                migration_status: existing
+                    .as_ref()
+                    .map(|branch| branch.migration_status.clone())
+                    .unwrap_or(BranchMigrationStatus::Unknown),
                 last_seen_at: Some(now.clone()),
                 last_inspected_at: Some(now.clone()),
                 last_migration_at,
@@ -115,15 +294,12 @@ impl RootRuntime {
         Ok(())
     }
 
-    pub fn touch_active_root(&self, resolved: &ResolvedRoot) -> Result<(), ApiError> {
-        self.touch_active_branch(&BranchHandle::from(resolved.clone()))
-    }
-
-    pub fn touch_active_branch(&self, branch: &BranchHandle) -> Result<(), ApiError> {
-        self.touch_branch(branch.resolved())
-    }
-
-    fn touch_branch(&self, resolved: &ResolvedBranch) -> Result<(), ApiError> {
+    fn touch_branch(
+        &self,
+        resolved: &ResolvedBranch,
+        attachment_status: BranchAttachmentStatus,
+        store_path: Option<PathBuf>,
+    ) -> Result<(), ApiError> {
         let now = timestamp();
         let mut current_manifest = manifest::load_branch(&resolved.manifest_path)?
             .unwrap_or_else(|| manifest::new_branch_manifest(resolved, &now));
@@ -146,7 +322,15 @@ impl RootRuntime {
                 branch_kind: current_manifest.branch_kind.clone(),
                 canonical_locator: current_manifest.canonical_locator.clone(),
                 data_home_path: resolved.data_home_path.to_string_lossy().to_string(),
-                attachment_status: BranchAttachmentStatus::Active,
+                store_path: store_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .or_else(|| {
+                        existing
+                            .as_ref()
+                            .and_then(|branch| branch.store_path.clone())
+                    }),
+                attachment_status,
                 inspection_status: BranchInspectionStatus::Registered,
                 migration_status: existing
                     .as_ref()
@@ -163,33 +347,12 @@ impl RootRuntime {
         Ok(())
     }
 
-    pub fn record_graph_catch_up_success(
-        &self,
-        resolved: &ResolvedRoot,
-        last_reduced_seq: u64,
-        applied_events: usize,
-    ) -> Result<(), ApiError> {
-        self.record_branch_graph_catch_up_success(
-            &BranchHandle::from(resolved.clone()),
-            last_reduced_seq,
-            applied_events,
-        )
-    }
-
-    pub fn record_branch_graph_catch_up_success(
-        &self,
-        branch: &BranchHandle,
-        last_reduced_seq: u64,
-        applied_events: usize,
-    ) -> Result<(), ApiError> {
-        self.record_graph_success(branch.resolved(), last_reduced_seq, applied_events)
-    }
-
     fn record_graph_success(
         &self,
         resolved: &ResolvedBranch,
         last_reduced_seq: u64,
         applied_events: usize,
+        store_path: Option<PathBuf>,
     ) -> Result<(), ApiError> {
         let now = timestamp();
         let plan_id = plan_id(&resolved.branch_id, "graph");
@@ -232,6 +395,11 @@ impl RootRuntime {
 
         let catalog_path = locator::global_catalog_path()?;
         let mut branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let existing = branch_catalog
+            .branches
+            .iter()
+            .find(|branch| branch.branch_id == current_manifest.branch_id)
+            .cloned();
         catalog::upsert_branch(
             &mut branch_catalog,
             BranchCatalogEntry {
@@ -239,7 +407,18 @@ impl RootRuntime {
                 branch_kind: current_manifest.branch_kind.clone(),
                 canonical_locator: current_manifest.canonical_locator.clone(),
                 data_home_path: resolved.data_home_path.to_string_lossy().to_string(),
-                attachment_status: BranchAttachmentStatus::Active,
+                store_path: store_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .or_else(|| {
+                        existing
+                            .as_ref()
+                            .and_then(|branch| branch.store_path.clone())
+                    }),
+                attachment_status: existing
+                    .as_ref()
+                    .map(|branch| branch.attachment_status.clone())
+                    .unwrap_or(BranchAttachmentStatus::Active),
                 inspection_status: BranchInspectionStatus::Registered,
                 migration_status: if applied_events == 0 {
                     BranchMigrationStatus::NotNeeded
@@ -268,23 +447,12 @@ impl RootRuntime {
         Ok(())
     }
 
-    pub fn record_graph_catch_up_failure(
+    fn record_graph_failure(
         &self,
-        resolved: &ResolvedRoot,
+        resolved: &ResolvedBranch,
         error: &str,
+        store_path: Option<PathBuf>,
     ) -> Result<(), ApiError> {
-        self.record_branch_graph_catch_up_failure(&BranchHandle::from(resolved.clone()), error)
-    }
-
-    pub fn record_branch_graph_catch_up_failure(
-        &self,
-        branch: &BranchHandle,
-        error: &str,
-    ) -> Result<(), ApiError> {
-        self.record_graph_failure(branch.resolved(), error)
-    }
-
-    fn record_graph_failure(&self, resolved: &ResolvedBranch, error: &str) -> Result<(), ApiError> {
         let now = timestamp();
         let plan_id = plan_id(&resolved.branch_id, "graph_failure");
         append_failed(
@@ -302,6 +470,11 @@ impl RootRuntime {
 
         let catalog_path = locator::global_catalog_path()?;
         let mut branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let existing = branch_catalog
+            .branches
+            .iter()
+            .find(|branch| branch.branch_id == current_manifest.branch_id)
+            .cloned();
         catalog::upsert_branch(
             &mut branch_catalog,
             BranchCatalogEntry {
@@ -309,7 +482,18 @@ impl RootRuntime {
                 branch_kind: current_manifest.branch_kind,
                 canonical_locator: current_manifest.canonical_locator,
                 data_home_path: resolved.data_home_path.to_string_lossy().to_string(),
-                attachment_status: BranchAttachmentStatus::Active,
+                store_path: store_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .or_else(|| {
+                        existing
+                            .as_ref()
+                            .and_then(|branch| branch.store_path.clone())
+                    }),
+                attachment_status: existing
+                    .as_ref()
+                    .map(|branch| branch.attachment_status.clone())
+                    .unwrap_or(BranchAttachmentStatus::Active),
                 inspection_status: BranchInspectionStatus::Registered,
                 migration_status: BranchMigrationStatus::Failed,
                 last_seen_at: Some(now.clone()),
@@ -319,26 +503,6 @@ impl RootRuntime {
         );
         catalog::save_branch_catalog(&catalog_path, &branch_catalog)?;
         Ok(())
-    }
-
-    pub fn status(&self) -> Result<RootsStatusOutput, ApiError> {
-        let catalog_path = locator::global_catalog_path()?;
-        let branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
-        let roots = branch_catalog
-            .branches
-            .into_iter()
-            .map(|branch| RootStatusRow {
-                root_id: branch.branch_id,
-                workspace_path: branch.canonical_locator,
-                data_home_path: branch.data_home_path,
-                attachment_status: branch.attachment_status.as_str().to_string(),
-                inspection_status: branch.inspection_status.as_str().to_string(),
-                migration_status: branch.migration_status.as_str().to_string(),
-                last_seen_at: branch.last_seen_at,
-                last_migration_at: branch.last_migration_at,
-            })
-            .collect();
-        Ok(RootsStatusOutput { roots })
     }
 }
 
@@ -411,6 +575,40 @@ fn append_failed(
             verification_summary: Vec::new(),
         },
     )
+}
+
+fn resolved_branch_from_data_home(data_home_path: &Path, workspace_path: &Path) -> ResolvedBranch {
+    let normalized_path =
+        crate::tree::path::normalize_path_string(&workspace_path.to_string_lossy());
+    let branch_id = blake3::hash(normalized_path.as_bytes())
+        .to_hex()
+        .to_string();
+    ResolvedBranch {
+        branch_id,
+        branch_kind: crate::roots::BranchKind::WorkspaceFs,
+        canonical_locator: workspace_path.to_path_buf(),
+        data_home_path: data_home_path.to_path_buf(),
+        manifest_path: data_home_path.join("root_manifest.json"),
+        ledger_path: data_home_path.join("migration_ledger.jsonl"),
+    }
+}
+
+fn resolved_branch_from_catalog_entry(entry: &BranchCatalogEntry) -> ResolvedBranch {
+    let data_home_path = PathBuf::from(&entry.data_home_path);
+    ResolvedBranch {
+        branch_id: entry.branch_id.clone(),
+        branch_kind: entry.branch_kind.clone(),
+        canonical_locator: PathBuf::from(&entry.canonical_locator),
+        data_home_path: data_home_path.clone(),
+        manifest_path: data_home_path.join("root_manifest.json"),
+        ledger_path: data_home_path.join("migration_ledger.jsonl"),
+    }
+}
+
+fn to_api_storage_error(error: sled::Error) -> ApiError {
+    ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::other(
+        format!("Failed to open sled database: {}", error),
+    )))
 }
 
 fn timestamp() -> String {

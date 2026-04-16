@@ -2,15 +2,18 @@ use crate::roots::contracts::RootsStatusOutput;
 
 pub fn format_branch_status_text(output: &RootsStatusOutput) -> String {
     if output.roots.is_empty() {
-        return "No roots registered".to_string();
+        return "No branches registered".to_string();
     }
 
-    let mut out = format!("Known roots: {}\n", output.roots.len());
+    let mut out = format!("Known branches: {}\n", output.roots.len());
     for root in &output.roots {
         out.push('\n');
-        out.push_str(&format!("Root ID: {}\n", root.root_id));
-        out.push_str(&format!("Workspace: {}\n", root.workspace_path));
+        out.push_str(&format!("Branch ID: {}\n", root.root_id));
+        out.push_str(&format!("Locator: {}\n", root.workspace_path));
         out.push_str(&format!("Data Home: {}\n", root.data_home_path));
+        if let Some(store_path) = &root.store_path {
+            out.push_str(&format!("Store: {}\n", store_path));
+        }
         out.push_str(&format!("Attachment: {}\n", root.attachment_status));
         out.push_str(&format!("Inspection: {}\n", root.inspection_status));
         out.push_str(&format!("Migration: {}\n", root.migration_status));
