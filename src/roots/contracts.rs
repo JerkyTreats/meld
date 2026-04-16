@@ -2,6 +2,35 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BranchKind {
+    WorkspaceFs,
+}
+
+impl BranchKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::WorkspaceFs => "workspace_fs",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchManifest {
+    pub branch_id: String,
+    pub branch_kind: BranchKind,
+    pub canonical_locator: String,
+    pub locator_version: u32,
+    pub authoritative_state_version: u32,
+    pub derived_state_version: u32,
+    pub migration_runtime_version: u32,
+    pub last_seen_at: String,
+    pub last_successful_plan_id: Option<String>,
+    pub last_successful_step_id: Option<String>,
+    pub last_reduced_seq: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RootManifest {
     pub root_id: String,
     pub workspace_path: String,
@@ -14,6 +43,60 @@ pub struct RootManifest {
     pub last_successful_step_id: Option<String>,
     #[serde(default)]
     pub last_reduced_seq: u64,
+}
+
+impl From<RootManifest> for BranchManifest {
+    fn from(value: RootManifest) -> Self {
+        Self {
+            branch_id: value.root_id,
+            branch_kind: BranchKind::WorkspaceFs,
+            canonical_locator: value.workspace_path,
+            locator_version: value.workspace_locator_version,
+            authoritative_state_version: value.authoritative_state_version,
+            derived_state_version: value.derived_state_version,
+            migration_runtime_version: value.migration_runtime_version,
+            last_seen_at: value.last_seen_at,
+            last_successful_plan_id: value.last_successful_plan_id,
+            last_successful_step_id: value.last_successful_step_id,
+            last_reduced_seq: value.last_reduced_seq,
+        }
+    }
+}
+
+impl From<BranchManifest> for RootManifest {
+    fn from(value: BranchManifest) -> Self {
+        Self {
+            root_id: value.branch_id,
+            workspace_path: value.canonical_locator,
+            workspace_locator_version: value.locator_version,
+            authoritative_state_version: value.authoritative_state_version,
+            derived_state_version: value.derived_state_version,
+            migration_runtime_version: value.migration_runtime_version,
+            last_seen_at: value.last_seen_at,
+            last_successful_plan_id: value.last_successful_plan_id,
+            last_successful_step_id: value.last_successful_step_id,
+            last_reduced_seq: value.last_reduced_seq,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BranchCatalog {
+    pub branches: Vec<BranchCatalogEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchCatalogEntry {
+    pub branch_id: String,
+    pub branch_kind: BranchKind,
+    pub canonical_locator: String,
+    pub data_home_path: String,
+    pub attachment_status: BranchAttachmentStatus,
+    pub inspection_status: BranchInspectionStatus,
+    pub migration_status: BranchMigrationStatus,
+    pub last_seen_at: Option<String>,
+    pub last_inspected_at: Option<String>,
+    pub last_migration_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -35,6 +118,74 @@ pub struct RootCatalogEntry {
     pub last_migration_at: Option<String>,
 }
 
+impl From<RootCatalog> for BranchCatalog {
+    fn from(value: RootCatalog) -> Self {
+        Self {
+            branches: value.roots.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<BranchCatalog> for RootCatalog {
+    fn from(value: BranchCatalog) -> Self {
+        Self {
+            roots: value.branches.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<RootCatalogEntry> for BranchCatalogEntry {
+    fn from(value: RootCatalogEntry) -> Self {
+        Self {
+            branch_id: value.root_id,
+            branch_kind: BranchKind::WorkspaceFs,
+            canonical_locator: value.workspace_path,
+            data_home_path: value.data_home_path,
+            attachment_status: value.attachment_status.into(),
+            inspection_status: value.inspection_status.into(),
+            migration_status: value.migration_status.into(),
+            last_seen_at: value.last_seen_at,
+            last_inspected_at: value.last_inspected_at,
+            last_migration_at: value.last_migration_at,
+        }
+    }
+}
+
+impl From<BranchCatalogEntry> for RootCatalogEntry {
+    fn from(value: BranchCatalogEntry) -> Self {
+        Self {
+            root_id: value.branch_id,
+            workspace_path: value.canonical_locator,
+            data_home_path: value.data_home_path,
+            attachment_status: value.attachment_status.into(),
+            inspection_status: value.inspection_status.into(),
+            migration_status: value.migration_status.into(),
+            last_seen_at: value.last_seen_at,
+            last_inspected_at: value.last_inspected_at,
+            last_migration_at: value.last_migration_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchAttachmentStatus {
+    Active,
+    Dormant,
+    MissingWorkspacePath,
+    Ambiguous,
+}
+
+impl BranchAttachmentStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Dormant => "dormant",
+            Self::MissingWorkspacePath => "missing_workspace_path",
+            Self::Ambiguous => "ambiguous",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RootAttachmentStatus {
@@ -51,6 +202,47 @@ impl RootAttachmentStatus {
             Self::Dormant => "dormant",
             Self::MissingWorkspacePath => "missing_workspace_path",
             Self::Ambiguous => "ambiguous",
+        }
+    }
+}
+
+impl From<RootAttachmentStatus> for BranchAttachmentStatus {
+    fn from(value: RootAttachmentStatus) -> Self {
+        match value {
+            RootAttachmentStatus::Active => Self::Active,
+            RootAttachmentStatus::Dormant => Self::Dormant,
+            RootAttachmentStatus::MissingWorkspacePath => Self::MissingWorkspacePath,
+            RootAttachmentStatus::Ambiguous => Self::Ambiguous,
+        }
+    }
+}
+
+impl From<BranchAttachmentStatus> for RootAttachmentStatus {
+    fn from(value: BranchAttachmentStatus) -> Self {
+        match value {
+            BranchAttachmentStatus::Active => Self::Active,
+            BranchAttachmentStatus::Dormant => Self::Dormant,
+            BranchAttachmentStatus::MissingWorkspacePath => Self::MissingWorkspacePath,
+            BranchAttachmentStatus::Ambiguous => Self::Ambiguous,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchInspectionStatus {
+    Unknown,
+    Registered,
+    InspectionRequired,
+    InvalidCandidate,
+}
+
+impl BranchInspectionStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Registered => "registered",
+            Self::InspectionRequired => "inspection_required",
+            Self::InvalidCandidate => "invalid_candidate",
         }
     }
 }
@@ -75,6 +267,51 @@ impl RootInspectionStatus {
     }
 }
 
+impl From<RootInspectionStatus> for BranchInspectionStatus {
+    fn from(value: RootInspectionStatus) -> Self {
+        match value {
+            RootInspectionStatus::Unknown => Self::Unknown,
+            RootInspectionStatus::Registered => Self::Registered,
+            RootInspectionStatus::InspectionRequired => Self::InspectionRequired,
+            RootInspectionStatus::InvalidCandidate => Self::InvalidCandidate,
+        }
+    }
+}
+
+impl From<BranchInspectionStatus> for RootInspectionStatus {
+    fn from(value: BranchInspectionStatus) -> Self {
+        match value {
+            BranchInspectionStatus::Unknown => Self::Unknown,
+            BranchInspectionStatus::Registered => Self::Registered,
+            BranchInspectionStatus::InspectionRequired => Self::InspectionRequired,
+            BranchInspectionStatus::InvalidCandidate => Self::InvalidCandidate,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchMigrationStatus {
+    Unknown,
+    NotNeeded,
+    ReplayNeeded,
+    InProgress,
+    Failed,
+    Succeeded,
+}
+
+impl BranchMigrationStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::NotNeeded => "not_needed",
+            Self::ReplayNeeded => "replay_needed",
+            Self::InProgress => "in_progress",
+            Self::Failed => "failed",
+            Self::Succeeded => "succeeded",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RootMigrationStatus {
@@ -95,6 +332,32 @@ impl RootMigrationStatus {
             Self::InProgress => "in_progress",
             Self::Failed => "failed",
             Self::Succeeded => "succeeded",
+        }
+    }
+}
+
+impl From<RootMigrationStatus> for BranchMigrationStatus {
+    fn from(value: RootMigrationStatus) -> Self {
+        match value {
+            RootMigrationStatus::Unknown => Self::Unknown,
+            RootMigrationStatus::NotNeeded => Self::NotNeeded,
+            RootMigrationStatus::ReplayNeeded => Self::ReplayNeeded,
+            RootMigrationStatus::InProgress => Self::InProgress,
+            RootMigrationStatus::Failed => Self::Failed,
+            RootMigrationStatus::Succeeded => Self::Succeeded,
+        }
+    }
+}
+
+impl From<BranchMigrationStatus> for RootMigrationStatus {
+    fn from(value: BranchMigrationStatus) -> Self {
+        match value {
+            BranchMigrationStatus::Unknown => Self::Unknown,
+            BranchMigrationStatus::NotNeeded => Self::NotNeeded,
+            BranchMigrationStatus::ReplayNeeded => Self::ReplayNeeded,
+            BranchMigrationStatus::InProgress => Self::InProgress,
+            BranchMigrationStatus::Failed => Self::Failed,
+            BranchMigrationStatus::Succeeded => Self::Succeeded,
         }
     }
 }
@@ -155,4 +418,61 @@ pub struct ResolvedRoot {
     pub data_home_path: PathBuf,
     pub manifest_path: PathBuf,
     pub ledger_path: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BranchAttachmentStatus, BranchInspectionStatus, BranchKind, BranchManifest,
+        BranchMigrationStatus, RootCatalog, RootCatalogEntry, RootInspectionStatus, RootManifest,
+        RootMigrationStatus,
+    };
+
+    #[test]
+    fn root_manifest_converts_to_branch_manifest() {
+        let root_manifest = RootManifest {
+            root_id: "root-1".to_string(),
+            workspace_path: "/tmp/workspace".to_string(),
+            workspace_locator_version: 1,
+            authoritative_state_version: 2,
+            derived_state_version: 3,
+            migration_runtime_version: 4,
+            last_seen_at: "2026-04-15T00:00:00Z".to_string(),
+            last_successful_plan_id: Some("plan-1".to_string()),
+            last_successful_step_id: Some("step-1".to_string()),
+            last_reduced_seq: 9,
+        };
+
+        let branch_manifest = BranchManifest::from(root_manifest.clone());
+        assert_eq!(branch_manifest.branch_id, "root-1");
+        assert_eq!(branch_manifest.branch_kind, BranchKind::WorkspaceFs);
+        assert_eq!(branch_manifest.canonical_locator, "/tmp/workspace");
+        assert_eq!(RootManifest::from(branch_manifest), root_manifest);
+    }
+
+    #[test]
+    fn root_catalog_converts_to_branch_catalog() {
+        let root_catalog = RootCatalog {
+            roots: vec![RootCatalogEntry {
+                root_id: "root-1".to_string(),
+                workspace_path: "/tmp/workspace".to_string(),
+                data_home_path: "/tmp/data".to_string(),
+                attachment_status: super::RootAttachmentStatus::Active,
+                inspection_status: RootInspectionStatus::Registered,
+                migration_status: RootMigrationStatus::Succeeded,
+                last_seen_at: Some("2026-04-15T00:00:00Z".to_string()),
+                last_inspected_at: Some("2026-04-15T00:00:00Z".to_string()),
+                last_migration_at: Some("2026-04-15T00:00:00Z".to_string()),
+            }],
+        };
+
+        let branch_catalog = super::BranchCatalog::from(root_catalog.clone());
+        assert_eq!(branch_catalog.branches.len(), 1);
+        let branch = &branch_catalog.branches[0];
+        assert_eq!(branch.branch_kind, BranchKind::WorkspaceFs);
+        assert_eq!(branch.attachment_status, BranchAttachmentStatus::Active);
+        assert_eq!(branch.inspection_status, BranchInspectionStatus::Registered);
+        assert_eq!(branch.migration_status, BranchMigrationStatus::Succeeded);
+        assert_eq!(RootCatalog::from(branch_catalog), root_catalog);
+    }
 }

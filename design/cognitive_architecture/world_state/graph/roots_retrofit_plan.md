@@ -84,7 +84,20 @@ Key seams:
 
 Status:
 
-- pending
+- completed
+
+Verification evidence:
+
+- Gate A pass via `cargo test roots_runtime --tests`
+- Gate B pass via `cargo test parses_roots_status_command`
+- Gate B pass via `cargo test roots_command_names_are_stable`
+- Gate C pass via `cargo test root_manifest_converts_to_branch_manifest`
+- Gate C pass via `cargo test root_catalog_converts_to_branch_catalog`
+- Gate C pass via `cargo test branch_manifest_saves_as_root_compatible_file`
+- Gate C pass via `cargo test root_manifest_loads_into_branch_manifest`
+- Gate C pass via `cargo test branch_catalog_saves_as_root_compatible_file`
+- Gate C pass via `cargo test root_catalog_loads_into_branch_catalog`
+- Gate D pass via scoped diff review before staging
 
 ### Checkpoint 3
 
@@ -191,6 +204,7 @@ Checkpoint 1 notes:
 Checkpoint 2 notes:
 
 - branch awareness should first appear as internal types and conversions
+- current on disk root file names and CLI terms remain unchanged after this checkpoint
 
 Checkpoint 3 notes:
 

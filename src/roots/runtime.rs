@@ -3,9 +3,9 @@ use std::path::Path;
 
 use crate::error::ApiError;
 use crate::roots::contracts::{
-    ResolvedRoot, RootAttachmentStatus, RootCatalogEntry, RootInspectionStatus, RootMigrationLane,
-    RootMigrationLedgerEntry, RootMigrationStatus, RootMigrationStepStatus, RootStatusRow,
-    RootsStatusOutput,
+    BranchAttachmentStatus, BranchCatalogEntry, BranchInspectionStatus, BranchMigrationStatus,
+    ResolvedRoot, RootMigrationLane, RootMigrationLedgerEntry, RootMigrationStepStatus,
+    RootStatusRow, RootsStatusOutput,
 };
 use crate::roots::{catalog, ledger, locator, manifest};
 
@@ -36,11 +36,11 @@ impl RootRuntime {
             )],
         )?;
 
-        let mut current_manifest = manifest::load(&resolved.manifest_path)?
-            .unwrap_or_else(|| manifest::new_manifest(resolved, &now));
-        current_manifest.workspace_path = resolved.workspace_path.to_string_lossy().to_string();
+        let mut current_manifest = manifest::load_branch(&resolved.manifest_path)?
+            .unwrap_or_else(|| manifest::new_branch_manifest(resolved, &now));
+        current_manifest.canonical_locator = resolved.workspace_path.to_string_lossy().to_string();
         current_manifest.last_seen_at = now.clone();
-        manifest::save(&resolved.manifest_path, &current_manifest)?;
+        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
 
         append_verified(
             resolved,
@@ -62,32 +62,33 @@ impl RootRuntime {
         )?;
 
         let catalog_path = locator::global_catalog_path()?;
-        let mut root_catalog = catalog::load(&catalog_path)?;
-        let existing = root_catalog
-            .roots
+        let mut branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let existing = branch_catalog
+            .branches
             .iter()
-            .find(|root| root.root_id == current_manifest.root_id)
+            .find(|branch| branch.branch_id == current_manifest.branch_id)
             .cloned();
         let last_migration_at = existing.and_then(|root| root.last_migration_at);
-        catalog::upsert(
-            &mut root_catalog,
-            RootCatalogEntry {
-                root_id: current_manifest.root_id.clone(),
-                workspace_path: current_manifest.workspace_path.clone(),
+        catalog::upsert_branch(
+            &mut branch_catalog,
+            BranchCatalogEntry {
+                branch_id: current_manifest.branch_id.clone(),
+                branch_kind: current_manifest.branch_kind.clone(),
+                canonical_locator: current_manifest.canonical_locator.clone(),
                 data_home_path: resolved.data_home_path.to_string_lossy().to_string(),
-                attachment_status: RootAttachmentStatus::Active,
-                inspection_status: RootInspectionStatus::Registered,
-                migration_status: RootMigrationStatus::Unknown,
+                attachment_status: BranchAttachmentStatus::Active,
+                inspection_status: BranchInspectionStatus::Registered,
+                migration_status: BranchMigrationStatus::Unknown,
                 last_seen_at: Some(now.clone()),
                 last_inspected_at: Some(now.clone()),
                 last_migration_at,
             },
         );
-        catalog::save(&catalog_path, &root_catalog)?;
+        catalog::save_branch_catalog(&catalog_path, &branch_catalog)?;
 
         current_manifest.last_successful_plan_id = Some(plan_id.clone());
         current_manifest.last_successful_step_id = Some("refresh_catalog_entry".to_string());
-        manifest::save(&resolved.manifest_path, &current_manifest)?;
+        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
 
         append_verified(
             resolved,
@@ -102,39 +103,40 @@ impl RootRuntime {
 
     pub fn touch_active_root(&self, resolved: &ResolvedRoot) -> Result<(), ApiError> {
         let now = timestamp();
-        let mut current_manifest = manifest::load(&resolved.manifest_path)?
-            .unwrap_or_else(|| manifest::new_manifest(resolved, &now));
+        let mut current_manifest = manifest::load_branch(&resolved.manifest_path)?
+            .unwrap_or_else(|| manifest::new_branch_manifest(resolved, &now));
         current_manifest.last_seen_at = now.clone();
-        current_manifest.workspace_path = resolved.workspace_path.to_string_lossy().to_string();
-        manifest::save(&resolved.manifest_path, &current_manifest)?;
+        current_manifest.canonical_locator = resolved.workspace_path.to_string_lossy().to_string();
+        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
 
         let catalog_path = locator::global_catalog_path()?;
-        let mut root_catalog = catalog::load(&catalog_path)?;
-        let existing = root_catalog
-            .roots
+        let mut branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let existing = branch_catalog
+            .branches
             .iter()
-            .find(|root| root.root_id == current_manifest.root_id)
+            .find(|branch| branch.branch_id == current_manifest.branch_id)
             .cloned();
-        catalog::upsert(
-            &mut root_catalog,
-            RootCatalogEntry {
-                root_id: current_manifest.root_id.clone(),
-                workspace_path: current_manifest.workspace_path.clone(),
+        catalog::upsert_branch(
+            &mut branch_catalog,
+            BranchCatalogEntry {
+                branch_id: current_manifest.branch_id.clone(),
+                branch_kind: current_manifest.branch_kind.clone(),
+                canonical_locator: current_manifest.canonical_locator.clone(),
                 data_home_path: resolved.data_home_path.to_string_lossy().to_string(),
-                attachment_status: RootAttachmentStatus::Active,
-                inspection_status: RootInspectionStatus::Registered,
+                attachment_status: BranchAttachmentStatus::Active,
+                inspection_status: BranchInspectionStatus::Registered,
                 migration_status: existing
                     .as_ref()
-                    .map(|root| root.migration_status.clone())
-                    .unwrap_or(RootMigrationStatus::Unknown),
+                    .map(|branch| branch.migration_status.clone())
+                    .unwrap_or(BranchMigrationStatus::Unknown),
                 last_seen_at: Some(now.clone()),
                 last_inspected_at: existing
                     .as_ref()
-                    .and_then(|root| root.last_inspected_at.clone()),
-                last_migration_at: existing.and_then(|root| root.last_migration_at),
+                    .and_then(|branch| branch.last_inspected_at.clone()),
+                last_migration_at: existing.and_then(|branch| branch.last_migration_at),
             },
         );
-        catalog::save(&catalog_path, &root_catalog)?;
+        catalog::save_branch_catalog(&catalog_path, &branch_catalog)?;
         Ok(())
     }
 
@@ -158,11 +160,11 @@ impl RootRuntime {
             ],
         )?;
 
-        let mut current_manifest = manifest::load(&resolved.manifest_path)?
-            .unwrap_or_else(|| manifest::new_manifest(resolved, &now));
+        let mut current_manifest = manifest::load_branch(&resolved.manifest_path)?
+            .unwrap_or_else(|| manifest::new_branch_manifest(resolved, &now));
         current_manifest.last_seen_at = now.clone();
         current_manifest.last_reduced_seq = last_reduced_seq;
-        manifest::save(&resolved.manifest_path, &current_manifest)?;
+        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
 
         append_verified(
             resolved,
@@ -184,30 +186,31 @@ impl RootRuntime {
         )?;
 
         let catalog_path = locator::global_catalog_path()?;
-        let mut root_catalog = catalog::load(&catalog_path)?;
-        catalog::upsert(
-            &mut root_catalog,
-            RootCatalogEntry {
-                root_id: current_manifest.root_id.clone(),
-                workspace_path: current_manifest.workspace_path.clone(),
+        let mut branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        catalog::upsert_branch(
+            &mut branch_catalog,
+            BranchCatalogEntry {
+                branch_id: current_manifest.branch_id.clone(),
+                branch_kind: current_manifest.branch_kind.clone(),
+                canonical_locator: current_manifest.canonical_locator.clone(),
                 data_home_path: resolved.data_home_path.to_string_lossy().to_string(),
-                attachment_status: RootAttachmentStatus::Active,
-                inspection_status: RootInspectionStatus::Registered,
+                attachment_status: BranchAttachmentStatus::Active,
+                inspection_status: BranchInspectionStatus::Registered,
                 migration_status: if applied_events == 0 {
-                    RootMigrationStatus::NotNeeded
+                    BranchMigrationStatus::NotNeeded
                 } else {
-                    RootMigrationStatus::Succeeded
+                    BranchMigrationStatus::Succeeded
                 },
                 last_seen_at: Some(now.clone()),
                 last_inspected_at: Some(now.clone()),
                 last_migration_at: Some(now.clone()),
             },
         );
-        catalog::save(&catalog_path, &root_catalog)?;
+        catalog::save_branch_catalog(&catalog_path, &branch_catalog)?;
 
         current_manifest.last_successful_plan_id = Some(plan_id.clone());
         current_manifest.last_successful_step_id = Some("mark_derived_version".to_string());
-        manifest::save(&resolved.manifest_path, &current_manifest)?;
+        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
 
         append_verified(
             resolved,
@@ -235,46 +238,47 @@ impl RootRuntime {
             error.to_string(),
         )?;
 
-        let mut current_manifest = manifest::load(&resolved.manifest_path)?
-            .unwrap_or_else(|| manifest::new_manifest(resolved, &now));
+        let mut current_manifest = manifest::load_branch(&resolved.manifest_path)?
+            .unwrap_or_else(|| manifest::new_branch_manifest(resolved, &now));
         current_manifest.last_seen_at = now.clone();
-        manifest::save(&resolved.manifest_path, &current_manifest)?;
+        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
 
         let catalog_path = locator::global_catalog_path()?;
-        let mut root_catalog = catalog::load(&catalog_path)?;
-        catalog::upsert(
-            &mut root_catalog,
-            RootCatalogEntry {
-                root_id: current_manifest.root_id,
-                workspace_path: current_manifest.workspace_path,
+        let mut branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        catalog::upsert_branch(
+            &mut branch_catalog,
+            BranchCatalogEntry {
+                branch_id: current_manifest.branch_id,
+                branch_kind: current_manifest.branch_kind,
+                canonical_locator: current_manifest.canonical_locator,
                 data_home_path: resolved.data_home_path.to_string_lossy().to_string(),
-                attachment_status: RootAttachmentStatus::Active,
-                inspection_status: RootInspectionStatus::Registered,
-                migration_status: RootMigrationStatus::Failed,
+                attachment_status: BranchAttachmentStatus::Active,
+                inspection_status: BranchInspectionStatus::Registered,
+                migration_status: BranchMigrationStatus::Failed,
                 last_seen_at: Some(now.clone()),
                 last_inspected_at: Some(now.clone()),
                 last_migration_at: Some(now),
             },
         );
-        catalog::save(&catalog_path, &root_catalog)?;
+        catalog::save_branch_catalog(&catalog_path, &branch_catalog)?;
         Ok(())
     }
 
     pub fn status(&self) -> Result<RootsStatusOutput, ApiError> {
         let catalog_path = locator::global_catalog_path()?;
-        let root_catalog = catalog::load(&catalog_path)?;
-        let roots = root_catalog
-            .roots
+        let branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let roots = branch_catalog
+            .branches
             .into_iter()
-            .map(|root| RootStatusRow {
-                root_id: root.root_id,
-                workspace_path: root.workspace_path,
-                data_home_path: root.data_home_path,
-                attachment_status: root.attachment_status.as_str().to_string(),
-                inspection_status: root.inspection_status.as_str().to_string(),
-                migration_status: root.migration_status.as_str().to_string(),
-                last_seen_at: root.last_seen_at,
-                last_migration_at: root.last_migration_at,
+            .map(|branch| RootStatusRow {
+                root_id: branch.branch_id,
+                workspace_path: branch.canonical_locator,
+                data_home_path: branch.data_home_path,
+                attachment_status: branch.attachment_status.as_str().to_string(),
+                inspection_status: branch.inspection_status.as_str().to_string(),
+                migration_status: branch.migration_status.as_str().to_string(),
+                last_seen_at: branch.last_seen_at,
+                last_migration_at: branch.last_migration_at,
             })
             .collect();
         Ok(RootsStatusOutput { roots })
