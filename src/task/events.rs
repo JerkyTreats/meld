@@ -3,9 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::events::{DomainObjectRef, EventEnvelope, EventRelation};
 use crate::task::TaskInitializationPayload;
-use crate::telemetry::contracts::{DomainObjectRef, EventRelation};
-use crate::telemetry::events::ProgressEnvelope;
 
 /// Structured task event emitted by the task executor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,22 +108,22 @@ pub fn target_node_id_from_init_payload(payload: &TaskInitializationPayload) -> 
         .map(ToString::to_string)
 }
 
-pub fn build_execution_task_envelope(
-    session_id: &str,
-    event: &TaskEvent,
-) -> Option<ProgressEnvelope> {
+pub fn build_execution_task_envelope(session_id: &str, event: &TaskEvent) -> Option<EventEnvelope> {
     let event_type = canonical_task_event_type(&event.event_type)?;
     let data = ExecutionTaskEventData::from(event);
     Some(
-        ProgressEnvelope::with_now_domain(
-        session_id.to_string(),
-        "execution".to_string(),
-        event.task_run_id.clone(),
-        event_type.to_string(),
-        None,
-        json!(data),
+        EventEnvelope::with_now_domain(
+            session_id.to_string(),
+            "execution".to_string(),
+            event.task_run_id.clone(),
+            event_type.to_string(),
+            None,
+            json!(data),
         )
-        .with_graph(task_event_objects(event_type, event), task_event_relations(event_type, event)),
+        .with_graph(
+            task_event_objects(event_type, event),
+            task_event_relations(event_type, event),
+        ),
     )
 }
 
@@ -165,10 +164,15 @@ fn task_event_relations(event_type: &str, event: &TaskEvent) -> Vec<EventRelatio
         let Some(artifact_id) = event.artifact_id.as_ref() else {
             return relations;
         };
-        let artifact_slot = artifact_slot_ref(&event.task_run_id, artifact_type_id_or_default(event));
+        let artifact_slot =
+            artifact_slot_ref(&event.task_run_id, artifact_type_id_or_default(event));
         relations.push(
-            EventRelation::new("attached_to", artifact_slot.clone(), task_run_ref(&event.task_run_id))
-                .expect("task artifact slot relation should be valid"),
+            EventRelation::new(
+                "attached_to",
+                artifact_slot.clone(),
+                task_run_ref(&event.task_run_id),
+            )
+            .expect("task artifact slot relation should be valid"),
         );
         relations.push(
             EventRelation::new("selected", artifact_slot, artifact_ref(artifact_id))

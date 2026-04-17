@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::context::frame::Basis;
-use crate::telemetry::contracts::{DomainObjectRef, EventRelation};
-use crate::telemetry::events::ProgressEnvelope;
+use crate::events::{DomainObjectRef, EventEnvelope, EventRelation};
 use crate::types::{FrameID, NodeID};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,8 +35,8 @@ fn context_envelope(
     data: serde_json::Value,
     objects: Vec<DomainObjectRef>,
     relations: Vec<EventRelation>,
-) -> ProgressEnvelope {
-    ProgressEnvelope::with_now_domain(
+) -> EventEnvelope {
+    EventEnvelope::with_now_domain(
         session_id.to_string(),
         "context".to_string(),
         stream_id.to_string(),
@@ -55,7 +54,7 @@ pub fn frame_added_envelope(
     frame_id: FrameID,
     frame_type: &str,
     agent_id: &str,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     let mut objects = vec![frame_ref(frame_id)];
     let mut relations = Vec::new();
     match basis {
@@ -111,7 +110,7 @@ pub fn head_selected_envelope(
     frame_type: &str,
     frame_id: FrameID,
     previous_frame_id: Option<FrameID>,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     let mut relations = vec![
         EventRelation::new(
             "attached_to",
@@ -146,7 +145,11 @@ pub fn head_selected_envelope(
             frame_id: hex::encode(frame_id),
             previous_frame_id: previous_frame_id.map(hex::encode),
         }),
-        vec![head_ref(node_id, frame_type), node_ref(node_id), frame_ref(frame_id)],
+        vec![
+            head_ref(node_id, frame_type),
+            node_ref(node_id),
+            frame_ref(frame_id),
+        ],
         relations,
     )
 }
@@ -156,7 +159,7 @@ pub fn head_tombstoned_envelope(
     node_id: NodeID,
     frame_type: &str,
     previous_frame_id: Option<FrameID>,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     let mut objects = vec![head_ref(node_id, frame_type), node_ref(node_id)];
     if let Some(previous_frame_id) = previous_frame_id {
         objects.push(frame_ref(previous_frame_id));
@@ -171,14 +174,12 @@ pub fn head_tombstoned_envelope(
             previous_frame_id: previous_frame_id.map(hex::encode),
         }),
         objects,
-        vec![
-            EventRelation::new(
-                "attached_to",
-                head_ref(node_id, frame_type),
-                node_ref(node_id),
-            )
-            .expect("head attached_to relation should be valid"),
-        ],
+        vec![EventRelation::new(
+            "attached_to",
+            head_ref(node_id, frame_type),
+            node_ref(node_id),
+        )
+        .expect("head attached_to relation should be valid")],
     )
 }
 
@@ -211,6 +212,9 @@ mod tests {
         let head_ref = head_ref(node_id, "analysis");
         assert_eq!(head_ref.domain_id, "context");
         assert_eq!(head_ref.object_kind, "head");
-        assert_eq!(head_ref.object_id, format!("{}::analysis", hex::encode(node_id)));
+        assert_eq!(
+            head_ref.object_id,
+            format!("{}::analysis", hex::encode(node_id))
+        );
     }
 }

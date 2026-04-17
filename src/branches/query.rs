@@ -8,7 +8,7 @@ use crate::branches::contracts::BranchCatalogEntry;
 use crate::branches::locator;
 use crate::branches::runtime::BranchRuntime;
 use crate::error::{ApiError, StorageError};
-use crate::telemetry::DomainObjectRef;
+use crate::events::DomainObjectRef;
 use crate::world_state::{
     GraphWalkResult, GraphWalkSpec, TraversalDirection, TraversalFactRecord, TraversalQuery,
     TraversalStore,
@@ -111,7 +111,8 @@ impl BranchQueryRuntime {
         for entry in &selection.entries {
             match self.open_traversal_store(entry) {
                 Ok(store) => {
-                    let last_reduced_seq = store.last_reduced_seq().map_err(ApiError::StorageError)?;
+                    let last_reduced_seq =
+                        store.last_reduced_seq().map_err(ApiError::StorageError)?;
                     metadata.readable_branch_ids.push(entry.branch_id.clone());
                     rows.push(BranchGraphStatusRow {
                         branch_id: entry.branch_id.clone(),
@@ -232,7 +233,11 @@ impl BranchQueryRuntime {
 
         metadata.readable_branch_ids.sort();
         let mut facts: Vec<TraversalFactRecord> = visited_facts.into_values().collect();
-        facts.sort_by(|left, right| left.seq.cmp(&right.seq).then(left.fact_id.cmp(&right.fact_id)));
+        facts.sort_by(|left, right| {
+            left.seq
+                .cmp(&right.seq)
+                .then(left.fact_id.cmp(&right.fact_id))
+        });
 
         Ok(FederatedWalkOutput {
             metadata,

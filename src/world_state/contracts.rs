@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::telemetry::{DomainObjectRef, EventRelation};
+use crate::events::{DomainObjectRef, EventRelation};
 
 pub type ClaimId = String;
 pub type EvidenceId = String;

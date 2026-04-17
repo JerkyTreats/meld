@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 
 use crate::error::StorageError;
-use crate::telemetry::{DomainObjectRef, EventRelation};
+use crate::events::{DomainObjectRef, EventRelation};
 use crate::world_state::graph::contracts::{
     AnchorProvenanceRecord, AnchorSelectionRecord, GraphWalkResult, GraphWalkSpec,
     TraversalDirection, TraversalFactRecord,
@@ -59,15 +59,23 @@ impl TraversalStore {
             facts: db.open_tree(TREE_FACTS).map_err(to_storage_io)?,
             fact_objects: db.open_tree(TREE_FACT_OBJECTS).map_err(to_storage_io)?,
             object_facts: db.open_tree(TREE_OBJECT_FACTS).map_err(to_storage_io)?,
-            outgoing_relations: db.open_tree(TREE_OUTGOING_RELATIONS).map_err(to_storage_io)?,
-            incoming_relations: db.open_tree(TREE_INCOMING_RELATIONS).map_err(to_storage_io)?,
+            outgoing_relations: db
+                .open_tree(TREE_OUTGOING_RELATIONS)
+                .map_err(to_storage_io)?,
+            incoming_relations: db
+                .open_tree(TREE_INCOMING_RELATIONS)
+                .map_err(to_storage_io)?,
             anchors: db.open_tree(TREE_ANCHORS).map_err(to_storage_io)?,
             current_anchor: db.open_tree(TREE_CURRENT_ANCHOR).map_err(to_storage_io)?,
             anchor_history: db.open_tree(TREE_ANCHOR_HISTORY).map_err(to_storage_io)?,
             anchor_lineage: db.open_tree(TREE_ANCHOR_LINEAGE).map_err(to_storage_io)?,
-            source_fact_index: db.open_tree(TREE_SOURCE_FACT_INDEX).map_err(to_storage_io)?,
+            source_fact_index: db
+                .open_tree(TREE_SOURCE_FACT_INDEX)
+                .map_err(to_storage_io)?,
             seq_index: db.open_tree(TREE_SEQ_INDEX).map_err(to_storage_io)?,
-            subject_perspective_index: db.open_tree(TREE_SUBJECT_PERSPECTIVE).map_err(to_storage_io)?,
+            subject_perspective_index: db
+                .open_tree(TREE_SUBJECT_PERSPECTIVE)
+                .map_err(to_storage_io)?,
             runtime_meta: db.open_tree(TREE_RUNTIME_META).map_err(to_storage_io)?,
             db,
         })
@@ -83,7 +91,10 @@ impl TraversalStore {
 
     pub fn put_fact(&self, fact: &TraversalFactRecord) -> Result<(), StorageError> {
         self.facts
-            .insert(fact.fact_id.as_bytes(), serde_json::to_vec(fact).map_err(to_storage_data)?)
+            .insert(
+                fact.fact_id.as_bytes(),
+                serde_json::to_vec(fact).map_err(to_storage_data)?,
+            )
             .map_err(to_storage_io)?;
         self.seq_index
             .insert(
@@ -193,8 +204,15 @@ impl TraversalStore {
         Ok(())
     }
 
-    pub fn get_anchor(&self, anchor_id: &str) -> Result<Option<AnchorSelectionRecord>, StorageError> {
-        let Some(raw) = self.anchors.get(anchor_id.as_bytes()).map_err(to_storage_io)? else {
+    pub fn get_anchor(
+        &self,
+        anchor_id: &str,
+    ) -> Result<Option<AnchorSelectionRecord>, StorageError> {
+        let Some(raw) = self
+            .anchors
+            .get(anchor_id.as_bytes())
+            .map_err(to_storage_io)?
+        else {
             return Ok(None);
         };
         Ok(Some(serde_json::from_slice(&raw).map_err(to_storage_data)?))
@@ -258,7 +276,11 @@ impl TraversalStore {
             perspective_kind,
             perspective_id
         );
-        let Some(raw) = self.subject_perspective_index.get(key.as_bytes()).map_err(to_storage_io)? else {
+        let Some(raw) = self
+            .subject_perspective_index
+            .get(key.as_bytes())
+            .map_err(to_storage_io)?
+        else {
             return Ok(None);
         };
         let anchor_id = String::from_utf8(raw.to_vec()).map_err(to_storage_utf8)?;
@@ -271,7 +293,10 @@ impl TraversalStore {
     ) -> Result<Vec<AnchorSelectionRecord>, StorageError> {
         let mut out = Vec::new();
         let prefix = format!("{}::", subject.index_key());
-        for item in self.subject_perspective_index.scan_prefix(prefix.as_bytes()) {
+        for item in self
+            .subject_perspective_index
+            .scan_prefix(prefix.as_bytes())
+        {
             let (_, value) = item.map_err(to_storage_io)?;
             let anchor_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
             if let Some(record) = self.get_anchor(&anchor_id)? {
@@ -299,7 +324,11 @@ impl TraversalStore {
         Ok(out)
     }
 
-    pub fn put_anchor_lineage(&self, anchor_id: &str, superseded_by_anchor_id: &str) -> Result<(), StorageError> {
+    pub fn put_anchor_lineage(
+        &self,
+        anchor_id: &str,
+        superseded_by_anchor_id: &str,
+    ) -> Result<(), StorageError> {
         self.anchor_lineage
             .insert(
                 encode_membership_key(anchor_id, superseded_by_anchor_id).as_bytes(),
@@ -381,7 +410,10 @@ impl TraversalStore {
         current_only: bool,
     ) -> Result<Vec<DomainObjectRef>, StorageError> {
         let mut neighbors = BTreeSet::new();
-        if matches!(direction, TraversalDirection::Outgoing | TraversalDirection::Both) {
+        if matches!(
+            direction,
+            TraversalDirection::Outgoing | TraversalDirection::Both
+        ) {
             self.collect_neighbors(
                 &self.outgoing_relations,
                 object,
@@ -391,7 +423,10 @@ impl TraversalStore {
                 &mut neighbors,
             )?;
         }
-        if matches!(direction, TraversalDirection::Incoming | TraversalDirection::Both) {
+        if matches!(
+            direction,
+            TraversalDirection::Incoming | TraversalDirection::Both
+        ) {
             self.collect_neighbors(
                 &self.incoming_relations,
                 object,
@@ -472,8 +507,13 @@ impl TraversalStore {
             if let Some(tree) = tree {
                 for item in tree.scan_prefix(relation_prefix.as_bytes()) {
                     let (_, value) = item.map_err(to_storage_io)?;
-                    let record: RelationRecord = serde_json::from_slice(&value).map_err(to_storage_data)?;
-                    if !self.relation_visible(&record, spec.relation_types.as_deref(), spec.current_only)? {
+                    let record: RelationRecord =
+                        serde_json::from_slice(&value).map_err(to_storage_data)?;
+                    if !self.relation_visible(
+                        &record,
+                        spec.relation_types.as_deref(),
+                        spec.current_only,
+                    )? {
                         continue;
                     }
                     visited_relations.push(record.relation);
@@ -482,7 +522,8 @@ impl TraversalStore {
                 for tree in [&self.outgoing_relations, &self.incoming_relations] {
                     for item in tree.scan_prefix(relation_prefix.as_bytes()) {
                         let (_, value) = item.map_err(to_storage_io)?;
-                        let record: RelationRecord = serde_json::from_slice(&value).map_err(to_storage_data)?;
+                        let record: RelationRecord =
+                            serde_json::from_slice(&value).map_err(to_storage_data)?;
                         if !self.relation_visible(
                             &record,
                             spec.relation_types.as_deref(),
@@ -525,7 +566,10 @@ impl TraversalStore {
         current_only: bool,
     ) -> Result<bool, StorageError> {
         if let Some(types) = relation_types {
-            if !types.iter().any(|value| value == &record.relation.relation_type) {
+            if !types
+                .iter()
+                .any(|value| value == &record.relation.relation_type)
+            {
                 return Ok(false);
             }
         }

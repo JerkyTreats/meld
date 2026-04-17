@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 
 use crate::error::StorageError;
-use crate::telemetry::DomainObjectRef;
+use crate::events::DomainObjectRef;
 use crate::world_state::contracts::{ClaimRecord, EvidenceRecord};
 
 const TREE_FACTS: &str = "world_state_facts";
@@ -50,10 +50,16 @@ impl WorldStateStore {
             claims: db.open_tree(TREE_CLAIMS).map_err(to_storage_io)?,
             evidence: db.open_tree(TREE_EVIDENCE).map_err(to_storage_io)?,
             claim_evidence: db.open_tree(TREE_CLAIM_EVIDENCE).map_err(to_storage_io)?,
-            active_by_subject: db.open_tree(TREE_ACTIVE_BY_SUBJECT).map_err(to_storage_io)?,
-            history_by_subject: db.open_tree(TREE_HISTORY_BY_SUBJECT).map_err(to_storage_io)?,
+            active_by_subject: db
+                .open_tree(TREE_ACTIVE_BY_SUBJECT)
+                .map_err(to_storage_io)?,
+            history_by_subject: db
+                .open_tree(TREE_HISTORY_BY_SUBJECT)
+                .map_err(to_storage_io)?,
             supersession: db.open_tree(TREE_SUPERSESSION).map_err(to_storage_io)?,
-            source_fact_index: db.open_tree(TREE_SOURCE_FACT_INDEX).map_err(to_storage_io)?,
+            source_fact_index: db
+                .open_tree(TREE_SOURCE_FACT_INDEX)
+                .map_err(to_storage_io)?,
             seq_index: db.open_tree(TREE_SEQ_INDEX).map_err(to_storage_io)?,
             db,
         })
@@ -117,7 +123,11 @@ impl WorldStateStore {
     }
 
     pub fn get_claim(&self, claim_id: &str) -> Result<Option<ClaimRecord>, StorageError> {
-        let Some(raw) = self.claims.get(claim_id.as_bytes()).map_err(to_storage_io)? else {
+        let Some(raw) = self
+            .claims
+            .get(claim_id.as_bytes())
+            .map_err(to_storage_io)?
+        else {
             return Ok(None);
         };
         let parsed = serde_json::from_slice(&raw).map_err(to_storage_data)?;
@@ -166,7 +176,11 @@ impl WorldStateStore {
     }
 
     pub fn get_evidence(&self, evidence_id: &str) -> Result<Option<EvidenceRecord>, StorageError> {
-        let Some(raw) = self.evidence.get(evidence_id.as_bytes()).map_err(to_storage_io)? else {
+        let Some(raw) = self
+            .evidence
+            .get(evidence_id.as_bytes())
+            .map_err(to_storage_io)?
+        else {
             return Ok(None);
         };
         let parsed = serde_json::from_slice(&raw).map_err(to_storage_data)?;

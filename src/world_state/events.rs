@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::telemetry::events::ProgressEnvelope;
-use crate::telemetry::{DomainObjectRef, EventRelation};
+use crate::events::{DomainObjectRef, EventEnvelope, EventRelation};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimAddedEventData {
@@ -41,8 +40,8 @@ fn world_state_envelope(
     data: serde_json::Value,
     objects: Vec<DomainObjectRef>,
     relations: Vec<EventRelation>,
-) -> ProgressEnvelope {
-    ProgressEnvelope::with_now_domain(
+) -> EventEnvelope {
+    EventEnvelope::with_now_domain(
         session_id.to_string(),
         "world_state".to_string(),
         stream_id.to_string(),
@@ -53,7 +52,7 @@ fn world_state_envelope(
     .with_graph(objects, relations)
 }
 
-pub fn claim_added_envelope(session_id: &str, data: ClaimAddedEventData) -> ProgressEnvelope {
+pub fn claim_added_envelope(session_id: &str, data: ClaimAddedEventData) -> EventEnvelope {
     world_state_envelope(
         session_id,
         &data.claim_id,
@@ -67,7 +66,7 @@ pub fn claim_added_envelope(session_id: &str, data: ClaimAddedEventData) -> Prog
 pub fn claim_superseded_envelope(
     session_id: &str,
     data: ClaimSupersededEventData,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     world_state_envelope(
         session_id,
         &data.claim_id,
@@ -84,7 +83,7 @@ pub fn evidence_attached_envelope(
     data: EvidenceAttachedEventData,
     objects: Vec<DomainObjectRef>,
     relations: Vec<EventRelation>,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     world_state_envelope(
         session_id,
         claim_id,

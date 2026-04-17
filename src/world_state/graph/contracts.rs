@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::StorageError;
-use crate::telemetry::{DomainObjectRef, EventRelation};
+use crate::events::{DomainObjectRef, EventRelation};
 
 pub type AnchorId = String;
 pub type TraversalFactId = String;

@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::telemetry::events::ProgressEnvelope;
-use crate::telemetry::{DomainObjectRef, EventRelation};
+use crate::events::{DomainObjectRef, EventEnvelope, EventRelation};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnchorSelectedEventData {
@@ -34,8 +33,8 @@ fn traversal_envelope(
     data: serde_json::Value,
     objects: Vec<DomainObjectRef>,
     relations: Vec<EventRelation>,
-) -> ProgressEnvelope {
-    ProgressEnvelope::with_now_domain(
+) -> EventEnvelope {
+    EventEnvelope::with_now_domain(
         session_id.to_string(),
         "world_state".to_string(),
         stream_id.to_string(),
@@ -46,7 +45,7 @@ fn traversal_envelope(
     .with_graph(objects, relations)
 }
 
-pub fn anchor_selected_envelope(session_id: &str, data: AnchorSelectedEventData) -> ProgressEnvelope {
+pub fn anchor_selected_envelope(session_id: &str, data: AnchorSelectedEventData) -> EventEnvelope {
     traversal_envelope(
         session_id,
         &data.anchor_id,
@@ -60,7 +59,7 @@ pub fn anchor_selected_envelope(session_id: &str, data: AnchorSelectedEventData)
 pub fn anchor_superseded_envelope(
     session_id: &str,
     data: AnchorSupersededEventData,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     traversal_envelope(
         session_id,
         &data.anchor_id,

@@ -1,14 +1,14 @@
 use std::path::Path;
 
+use crate::branches::format::{
+    format_branch_graph_status_text, format_branches_status_text, format_federated_neighbors_text,
+    format_federated_walk_text,
+};
 use crate::branches::query::BranchQueryScope;
+use crate::branches::{BranchQueryRuntime, BranchRuntime};
 use crate::cli::BranchesCommands;
 use crate::error::{ApiError, StorageError};
-use crate::branches::format::{
-    format_branch_graph_status_text, format_federated_neighbors_text, format_federated_walk_text,
-    format_branches_status_text,
-};
-use crate::branches::{BranchQueryRuntime, BranchRuntime};
-use crate::telemetry::DomainObjectRef;
+use crate::events::DomainObjectRef;
 use crate::world_state::{GraphWalkSpec, TraversalDirection};
 
 pub fn handle_cli_command(command: &BranchesCommands) -> Result<String, ApiError> {
@@ -41,10 +41,8 @@ pub fn handle_cli_command_with_workspace(
             branch_ids,
             format,
         } => {
-            let output = BranchQueryRuntime::new().graph_status(
-                parse_scope(scope, branch_ids)?,
-                workspace_root,
-            )?;
+            let output = BranchQueryRuntime::new()
+                .graph_status(parse_scope(scope, branch_ids)?, workspace_root)?;
             render_output(format, &output, format_branch_graph_status_text)
         }
         BranchesCommands::GraphNeighbors {

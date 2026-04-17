@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::telemetry::contracts::{DomainObjectRef, EventRelation};
-use crate::telemetry::events::ProgressEnvelope;
+use crate::events::{DomainObjectRef, EventEnvelope, EventRelation};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionWorkflowTurnEventData {
@@ -47,8 +46,8 @@ fn workflow_envelope(
     session_id: &str,
     event_type: &str,
     data: ExecutionWorkflowTurnEventData,
-) -> ProgressEnvelope {
-    ProgressEnvelope::with_now_domain(
+) -> EventEnvelope {
+    EventEnvelope::with_now_domain(
         session_id.to_string(),
         "execution".to_string(),
         data.workflow_id.clone(),
@@ -62,21 +61,21 @@ fn workflow_envelope(
 pub fn workflow_turn_started_envelope(
     session_id: &str,
     data: ExecutionWorkflowTurnEventData,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     workflow_envelope(session_id, "execution.workflow.turn_started", data)
 }
 
 pub fn workflow_turn_completed_envelope(
     session_id: &str,
     data: ExecutionWorkflowTurnEventData,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     workflow_envelope(session_id, "execution.workflow.turn_completed", data)
 }
 
 pub fn workflow_turn_failed_envelope(
     session_id: &str,
     data: ExecutionWorkflowTurnEventData,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     workflow_envelope(session_id, "execution.workflow.turn_failed", data)
 }
 
@@ -159,13 +158,11 @@ fn workspace_node_ref(node_id: &str) -> Option<DomainObjectRef> {
 }
 
 fn frame_ref(frame_id: &str) -> DomainObjectRef {
-    DomainObjectRef::new("context", "frame", frame_id)
-        .expect("frame ref should be valid")
+    DomainObjectRef::new("context", "frame", frame_id).expect("frame ref should be valid")
 }
 
 fn plan_ref(plan_id: &str) -> DomainObjectRef {
-    DomainObjectRef::new("execution", "plan", plan_id)
-        .expect("plan ref should be valid")
+    DomainObjectRef::new("execution", "plan", plan_id).expect("plan ref should be valid")
 }
 
 #[cfg(test)]

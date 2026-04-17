@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::telemetry::contracts::{DomainObjectRef, EventRelation};
-use crate::telemetry::events::ProgressEnvelope;
+use crate::events::{DomainObjectRef, EventEnvelope, EventRelation};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GenerationStartedEventData {
@@ -86,8 +85,8 @@ fn control_envelope(
     plan_id: &str,
     event_type: &str,
     data: serde_json::Value,
-) -> ProgressEnvelope {
-    ProgressEnvelope::with_now_domain(
+) -> EventEnvelope {
+    EventEnvelope::with_now_domain(
         session_id.to_string(),
         "execution".to_string(),
         plan_id.to_string(),
@@ -100,7 +99,7 @@ fn control_envelope(
 pub fn generation_started_envelope(
     session_id: &str,
     data: GenerationStartedEventData,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     control_envelope(
         session_id,
         &data.plan_id,
@@ -109,7 +108,7 @@ pub fn generation_started_envelope(
     )
 }
 
-pub fn level_started_envelope(session_id: &str, data: LevelStartedEventData) -> ProgressEnvelope {
+pub fn level_started_envelope(session_id: &str, data: LevelStartedEventData) -> EventEnvelope {
     control_envelope(
         session_id,
         &data.plan_id,
@@ -118,10 +117,7 @@ pub fn level_started_envelope(session_id: &str, data: LevelStartedEventData) -> 
     )
 }
 
-pub fn level_completed_envelope(
-    session_id: &str,
-    data: LevelCompletedEventData,
-) -> ProgressEnvelope {
+pub fn level_completed_envelope(session_id: &str, data: LevelCompletedEventData) -> EventEnvelope {
     control_envelope(
         session_id,
         &data.plan_id,
@@ -130,7 +126,7 @@ pub fn level_completed_envelope(
     )
 }
 
-pub fn node_started_envelope(session_id: &str, data: NodeStartedEventData) -> ProgressEnvelope {
+pub fn node_started_envelope(session_id: &str, data: NodeStartedEventData) -> EventEnvelope {
     control_envelope(
         session_id,
         &data.plan_id,
@@ -139,10 +135,7 @@ pub fn node_started_envelope(session_id: &str, data: NodeStartedEventData) -> Pr
     )
 }
 
-pub fn node_completed_envelope(
-    session_id: &str,
-    data: NodeCompletedEventData,
-) -> ProgressEnvelope {
+pub fn node_completed_envelope(session_id: &str, data: NodeCompletedEventData) -> EventEnvelope {
     control_envelope(
         session_id,
         &data.plan_id,
@@ -172,7 +165,7 @@ pub fn node_completed_envelope(
     )
 }
 
-pub fn node_failed_envelope(session_id: &str, data: NodeFailedEventData) -> ProgressEnvelope {
+pub fn node_failed_envelope(session_id: &str, data: NodeFailedEventData) -> EventEnvelope {
     control_envelope(
         session_id,
         &data.plan_id,
@@ -181,21 +174,19 @@ pub fn node_failed_envelope(session_id: &str, data: NodeFailedEventData) -> Prog
     )
     .with_graph(
         vec![plan_ref(&data.plan_id), workspace_node_ref(&data.node_id)],
-        vec![
-            EventRelation::new(
-                "targets",
-                plan_ref(&data.plan_id),
-                workspace_node_ref(&data.node_id),
-            )
-            .expect("control target relation should be valid"),
-        ],
+        vec![EventRelation::new(
+            "targets",
+            plan_ref(&data.plan_id),
+            workspace_node_ref(&data.node_id),
+        )
+        .expect("control target relation should be valid")],
     )
 }
 
 pub fn generation_failed_envelope(
     session_id: &str,
     data: GenerationFailedEventData,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     control_envelope(
         session_id,
         &data.plan_id,
@@ -207,7 +198,7 @@ pub fn generation_failed_envelope(
 pub fn generation_completed_envelope(
     session_id: &str,
     data: GenerationCompletedEventData,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     control_envelope(
         session_id,
         &data.plan_id,

@@ -1,5 +1,5 @@
 use crate::error::StorageError;
-use crate::telemetry::DomainObjectRef;
+use crate::events::DomainObjectRef;
 use crate::world_state::graph::contracts::{
     AnchorProvenanceRecord, AnchorSelectionRecord, GraphWalkResult, GraphWalkSpec,
     TraversalDirection, TraversalFactRecord,

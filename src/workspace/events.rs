@@ -3,9 +3,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::events::{DomainObjectRef, EventEnvelope, EventRelation};
 use crate::store::NodeRecord;
-use crate::telemetry::contracts::{DomainObjectRef, EventRelation};
-use crate::telemetry::events::ProgressEnvelope;
 use crate::tree::path::{canonicalize_path, normalize_path_string};
 use crate::types::NodeID;
 
@@ -45,8 +44,8 @@ fn workspace_envelope(
     data: serde_json::Value,
     objects: Vec<DomainObjectRef>,
     relations: Vec<EventRelation>,
-) -> ProgressEnvelope {
-    ProgressEnvelope::with_now_domain(
+) -> EventEnvelope {
+    EventEnvelope::with_now_domain(
         session_id.to_string(),
         "workspace_fs".to_string(),
         stream_id.to_string(),
@@ -57,7 +56,7 @@ fn workspace_envelope(
     .with_graph(objects, relations)
 }
 
-pub fn source_attached_envelope(session_id: &str, workspace_root: &Path) -> ProgressEnvelope {
+pub fn source_attached_envelope(session_id: &str, workspace_root: &Path) -> EventEnvelope {
     let source = source_ref(workspace_root).expect("workspace source ref should be valid");
     let stream_id = source.object_id.clone();
     workspace_envelope(
@@ -77,7 +76,7 @@ pub fn scan_started_envelope(
     session_id: &str,
     workspace_root: &Path,
     node_count: usize,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     let source = source_ref(workspace_root).expect("workspace source ref should be valid");
     let stream_id = source.object_id.clone();
     workspace_envelope(
@@ -98,7 +97,7 @@ pub fn scan_completed_envelope(
     session_id: &str,
     workspace_root: &Path,
     node_count: usize,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     let source = source_ref(workspace_root).expect("workspace source ref should be valid");
     let stream_id = source.object_id.clone();
     workspace_envelope(
@@ -119,7 +118,7 @@ pub fn snapshot_materialized_envelope(
     session_id: &str,
     workspace_root: &Path,
     root_node_id: NodeID,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     let source = source_ref(workspace_root).expect("workspace source ref should be valid");
     let snapshot = snapshot_ref(root_node_id).expect("workspace snapshot ref should be valid");
     let stream_id = source.object_id.clone();
@@ -133,10 +132,8 @@ pub fn snapshot_materialized_envelope(
             root_node_id: hex::encode(root_node_id),
         }),
         vec![source.clone(), snapshot.clone()],
-        vec![
-            EventRelation::new("belongs_to", snapshot, source)
-                .expect("workspace belongs_to relation should be valid"),
-        ],
+        vec![EventRelation::new("belongs_to", snapshot, source)
+            .expect("workspace belongs_to relation should be valid")],
     )
 }
 
@@ -145,9 +142,10 @@ pub fn snapshot_selected_envelope(
     workspace_root: &Path,
     root_node_id: NodeID,
     previous_root_node_id: Option<NodeID>,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     let source = source_ref(workspace_root).expect("workspace source ref should be valid");
-    let head = snapshot_head_ref(workspace_root).expect("workspace snapshot head ref should be valid");
+    let head =
+        snapshot_head_ref(workspace_root).expect("workspace snapshot head ref should be valid");
     let snapshot = snapshot_ref(root_node_id).expect("workspace snapshot ref should be valid");
     let stream_id = source.object_id.clone();
     let mut relations = vec![
@@ -189,7 +187,7 @@ pub fn node_observed_envelope(
     workspace_root: &Path,
     root_node_id: NodeID,
     record: &NodeRecord,
-) -> ProgressEnvelope {
+) -> EventEnvelope {
     let source = source_ref(workspace_root).expect("workspace source ref should be valid");
     let snapshot = snapshot_ref(root_node_id).expect("workspace snapshot ref should be valid");
     let node = node_ref(record.node_id).expect("workspace node ref should be valid");
