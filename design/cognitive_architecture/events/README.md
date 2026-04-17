@@ -44,9 +44,10 @@ After this doc pass, the event spine plan should answer these questions without 
 ## Read Order
 
 1. [Event Spine Requirements](event_manager_requirements.md)
-2. [Event Spine Refactor](telemetry_refactor.md)
-3. [Multi-Domain Spine](multi_domain_spine.md)
-4. [Event Management Research](research.md)
+2. [Event Domain Extraction Spec](event_domain_extraction_spec.md)
+3. [Event Spine Refactor](telemetry_refactor.md)
+4. [Multi-Domain Spine](multi_domain_spine.md)
+5. [Event Management Research](research.md)
 
 ## Boundary
 
