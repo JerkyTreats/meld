@@ -1,5 +1,5 @@
 use crate::error::StorageError;
-use crate::telemetry::DomainObjectRef;
+use crate::events::DomainObjectRef;
 use crate::world_state::contracts::{ClaimKind, ClaimRecord, SettlementStatus};
 use crate::world_state::graph::query::TraversalQuery;
 use crate::world_state::graph::store::TraversalStore;

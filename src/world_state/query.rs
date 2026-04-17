@@ -1,5 +1,5 @@
 use crate::error::StorageError;
-use crate::telemetry::DomainObjectRef;
+use crate::events::DomainObjectRef;
 use crate::world_state::contracts::{ClaimRecord, ProvenanceRecord};
 use crate::world_state::store::WorldStateStore;
 
