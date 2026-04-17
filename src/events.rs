@@ -13,6 +13,9 @@ pub mod store;
 pub mod subscription;
 
 pub use contracts::{DomainObjectRef, EventRelation};
+pub use ingress::{EventBus, EventIngestor, SharedIngestor};
+pub use runtime::EventRuntime;
+pub use store::EventStore;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventRecord {

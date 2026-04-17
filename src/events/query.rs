@@ -1,1 +1,1 @@
-pub use crate::telemetry::sinks::store::ProgressStore as EventQueryStore;
+pub use crate::events::store::EventStore as EventQueryStore;
