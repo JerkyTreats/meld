@@ -15,3 +15,4 @@ This project prioritizes domain clarity and ownership over backward compatibilit
 - Use `type!:` or `type(scope)!:` for breaking changes.
 - Add a `BREAKING CHANGE:` footer with a concise migration impact note.
 - Keep user facing impact explicit in pull request notes review notes and release notes.
+- Temporary migration shims are governed separately by [Compatibility Shim Policy](compatibility_shim_policy.md).
