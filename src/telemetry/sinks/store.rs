@@ -7,36 +7,15 @@ use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 
 use crate::error::StorageError;
+use crate::session::contracts::{SessionMeta as Meta, SessionRecord as Record};
+use crate::session::storage::SessionStore;
 use crate::telemetry::events::ProgressEvent;
-use crate::telemetry::sessions::policy::SessionStatus;
-use crate::telemetry::types::now_millis;
 
-const TREE_SESSIONS: &str = "obs_sessions";
 const TREE_EVENTS: &str = "obs_events";
-const TREE_META: &str = "obs_session_meta";
 const TREE_SPINE_EVENTS: &str = "obs_spine_events";
 const TREE_SESSION_EVENT_INDEX: &str = "obs_session_event_index";
 const TREE_SPINE_META: &str = "obs_spine_meta";
 const EVENT_KEY_PAD: usize = 20;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionRecord {
-    pub session_id: String,
-    pub command: String,
-    pub started_at_ms: u64,
-    pub ended_at_ms: Option<u64>,
-    pub status: SessionStatus,
-    pub status_text: String,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionMeta {
-    #[serde(default = "default_next_seq")]
-    pub next_seq: u64,
-    pub latest_status: SessionStatus,
-    pub updated_at_ms: u64,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SpineMeta {
@@ -46,31 +25,27 @@ struct SpineMeta {
 #[derive(Clone)]
 pub struct ProgressStore {
     db: Db,
-    sessions: Tree,
+    session_store: SessionStore,
     legacy_events: Tree,
     spine_events: Tree,
     session_event_index: Tree,
-    meta: Tree,
     spine_meta: Tree,
 }
 
 impl ProgressStore {
     pub fn new(db: Db) -> Result<Self, StorageError> {
-        let sessions = db.open_tree(TREE_SESSIONS).map_err(to_storage_io)?;
         let legacy_events = db.open_tree(TREE_EVENTS).map_err(to_storage_io)?;
         let spine_events = db.open_tree(TREE_SPINE_EVENTS).map_err(to_storage_io)?;
         let session_event_index = db
             .open_tree(TREE_SESSION_EVENT_INDEX)
             .map_err(to_storage_io)?;
-        let meta = db.open_tree(TREE_META).map_err(to_storage_io)?;
         let spine_meta = db.open_tree(TREE_SPINE_META).map_err(to_storage_io)?;
         Ok(Self {
+            session_store: SessionStore::new(db.clone())?,
             db,
-            sessions,
             legacy_events,
             spine_events,
             session_event_index,
-            meta,
             spine_meta,
         })
     }
@@ -83,54 +58,24 @@ impl ProgressStore {
         &self.db
     }
 
-    pub fn put_session(&self, record: &SessionRecord) -> Result<(), StorageError> {
-        let key = record.session_id.as_bytes();
-        let value = serde_json::to_vec(record).map_err(to_storage_data)?;
-        self.sessions.insert(key, value).map_err(to_storage_io)?;
-        Ok(())
+    pub fn put_session(&self, record: &Record) -> Result<(), StorageError> {
+        self.session_store.put_session(record)
     }
 
-    pub fn get_session(&self, session_id: &str) -> Result<Option<SessionRecord>, StorageError> {
-        let Some(raw) = self
-            .sessions
-            .get(session_id.as_bytes())
-            .map_err(to_storage_io)?
-        else {
-            return Ok(None);
-        };
-        let parsed = serde_json::from_slice(&raw).map_err(to_storage_data)?;
-        Ok(Some(parsed))
+    pub fn get_session(&self, session_id: &str) -> Result<Option<Record>, StorageError> {
+        self.session_store.get_session(session_id)
     }
 
-    pub fn list_sessions(&self) -> Result<Vec<SessionRecord>, StorageError> {
-        let mut out = Vec::new();
-        for result in self.sessions.iter() {
-            let (_, value) = result.map_err(to_storage_io)?;
-            let rec: SessionRecord = serde_json::from_slice(&value).map_err(to_storage_data)?;
-            out.push(rec);
-        }
-        out.sort_by_key(|s| std::cmp::Reverse(s.started_at_ms));
-        Ok(out)
+    pub fn list_sessions(&self) -> Result<Vec<Record>, StorageError> {
+        self.session_store.list_sessions()
     }
 
-    pub fn put_meta(&self, session_id: &str, meta: &SessionMeta) -> Result<(), StorageError> {
-        let value = serde_json::to_vec(meta).map_err(to_storage_data)?;
-        self.meta
-            .insert(session_id.as_bytes(), value)
-            .map_err(to_storage_io)?;
-        Ok(())
+    pub fn put_meta(&self, session_id: &str, meta: &Meta) -> Result<(), StorageError> {
+        self.session_store.put_meta(session_id, meta)
     }
 
-    pub fn get_meta(&self, session_id: &str) -> Result<Option<SessionMeta>, StorageError> {
-        let Some(raw) = self
-            .meta
-            .get(session_id.as_bytes())
-            .map_err(to_storage_io)?
-        else {
-            return Ok(None);
-        };
-        let parsed = serde_json::from_slice(&raw).map_err(to_storage_data)?;
-        Ok(Some(parsed))
+    pub fn get_meta(&self, session_id: &str) -> Result<Option<Meta>, StorageError> {
+        self.session_store.get_meta(session_id)
     }
 
     pub fn append_event(&self, event: &ProgressEvent) -> Result<(), StorageError> {
@@ -162,7 +107,10 @@ impl ProgressStore {
         Ok(out)
     }
 
-    pub fn read_all_events_after(&self, after_seq: u64) -> Result<Vec<ProgressEvent>, StorageError> {
+    pub fn read_all_events_after(
+        &self,
+        after_seq: u64,
+    ) -> Result<Vec<ProgressEvent>, StorageError> {
         let mut out = Vec::new();
         for result in self.spine_events.iter() {
             let (_, value) = result.map_err(to_storage_io)?;
@@ -184,22 +132,7 @@ impl ProgressStore {
     }
 
     pub fn mark_interrupted_sessions(&self) -> Result<usize, StorageError> {
-        let mut changed = 0usize;
-        let sessions = self.list_sessions()?;
-        for mut session in sessions {
-            if session.status == SessionStatus::Active {
-                session.status = SessionStatus::Interrupted;
-                session.status_text = "interrupted".to_string();
-                self.put_session(&session)?;
-                if let Some(mut meta) = self.get_meta(&session.session_id)? {
-                    meta.latest_status = SessionStatus::Interrupted;
-                    meta.updated_at_ms = now_millis();
-                    self.put_meta(&session.session_id, &meta)?;
-                }
-                changed += 1;
-            }
-        }
-        Ok(changed)
+        self.session_store.mark_interrupted_sessions()
     }
 
     pub fn prune_completed(
@@ -208,42 +141,8 @@ impl ProgressStore {
         max_age_ms: u64,
         now_ms: u64,
     ) -> Result<usize, StorageError> {
-        let mut completed: Vec<SessionRecord> = self
-            .list_sessions()?
-            .into_iter()
-            .filter(|session| {
-                session.status == SessionStatus::Completed || session.status == SessionStatus::Failed
-            })
-            .collect();
-
-        completed.sort_by_key(|session| session.started_at_ms);
-        let mut removed = 0usize;
-
-        for session in &completed {
-            let ended = session.ended_at_ms.unwrap_or(session.started_at_ms);
-            let age = now_ms.saturating_sub(ended);
-            if age > max_age_ms {
-                self.delete_session(&session.session_id)?;
-                removed += 1;
-            }
-        }
-
-        let mut remaining: Vec<SessionRecord> = self
-            .list_sessions()?
-            .into_iter()
-            .filter(|session| {
-                session.status == SessionStatus::Completed || session.status == SessionStatus::Failed
-            })
-            .collect();
-        remaining.sort_by_key(|session| std::cmp::Reverse(session.started_at_ms));
-        if remaining.len() > max_completed {
-            for session in remaining.iter().skip(max_completed) {
-                self.delete_session(&session.session_id)?;
-                removed += 1;
-            }
-        }
-
-        Ok(removed)
+        self.session_store
+            .prune_completed(max_completed, max_age_ms, now_ms)
     }
 
     pub fn flush(&self) -> Result<(), StorageError> {
@@ -256,12 +155,7 @@ impl ProgressStore {
     }
 
     pub fn delete_session(&self, session_id: &str) -> Result<(), StorageError> {
-        self.sessions
-            .remove(session_id.as_bytes())
-            .map_err(to_storage_io)?;
-        self.meta
-            .remove(session_id.as_bytes())
-            .map_err(to_storage_io)?;
+        self.session_store.delete_session(session_id)?;
 
         let prefix = format!("{session_id}:");
         let legacy_keys: Vec<Vec<u8>> = self
@@ -277,9 +171,11 @@ impl ProgressStore {
             .session_event_index
             .scan_prefix(prefix.as_bytes())
             .filter_map(|result| {
-                result
-                    .ok()
-                    .and_then(|(key, value)| decode_event(&value).ok().map(|event| (key.to_vec(), event.seq)))
+                result.ok().and_then(|(key, value)| {
+                    decode_event(&value)
+                        .ok()
+                        .map(|event| (key.to_vec(), event.seq))
+                })
             })
             .collect();
         for (key, seq) in session_keys {
@@ -338,13 +234,11 @@ impl ProgressStore {
 
     fn put_spine_meta(&self, meta: &SpineMeta) -> Result<(), StorageError> {
         let value = serde_json::to_vec(meta).map_err(to_storage_data)?;
-        self.spine_meta.insert(b"global", value).map_err(to_storage_io)?;
+        self.spine_meta
+            .insert(b"global", value)
+            .map_err(to_storage_io)?;
         Ok(())
     }
-}
-
-fn default_next_seq() -> u64 {
-    1
 }
 
 fn encode_legacy_event_key(session_id: &str, seq: u64) -> String {

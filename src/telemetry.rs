@@ -11,6 +11,7 @@ pub mod sessions;
 pub mod sinks;
 pub mod summary;
 
+pub use crate::session::{PrunePolicy, SessionStatus};
 pub use contracts::{DomainObjectRef, EventRelation};
 pub use events::{
     FrameMetadataValidationEventData, ProgressEvent, PromptContextLineageEventData,
@@ -18,6 +19,5 @@ pub use events::{
     SessionStartedData, SummaryEventData, WorkflowForceResetEventData, WorkflowTargetEventData,
     WorkflowTurnEventData,
 };
-pub use sessions::policy::{PrunePolicy, SessionStatus};
 pub use sessions::ProgressRuntime;
 pub use types::{new_session_id, now_millis};

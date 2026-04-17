@@ -1,17 +1,18 @@
 //! CLI route: shared runtime context and top-level command dispatch only.
 
 use crate::api::ContextApi;
+use crate::branches::{BranchHandle, BranchRuntime};
 use crate::cli::parse::Commands;
 use crate::cli::progress::LiveProgressHandle;
+use crate::cli::session::{finish_command_session, start_command_session};
 use crate::cli::{command_name, typed_summary_event};
 use crate::config::ConfigLoader;
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
-use crate::branches::{BranchHandle, BranchRuntime};
+use crate::session::PrunePolicy;
 use crate::store::persistence::SledNodeRecordStore;
-use crate::telemetry::ProgressRuntime;
 use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
-use crate::telemetry::sessions::policy::PrunePolicy;
+use crate::telemetry::ProgressRuntime;
 use crate::world_state::GraphRuntime;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -187,7 +188,7 @@ impl RunContext {
     pub fn execute(&self, command: &Commands) -> Result<String, ApiError> {
         let started = Instant::now();
         let command_name = command_name(command);
-        let session_id = self.progress.start_command_session(command_name)?;
+        let session_id = start_command_session(&self.progress, &command_name)?;
         self.api
             .set_progress_context(Arc::clone(&self.progress), session_id.clone());
         let mut live_progress = LiveProgressHandle::start_if_supported(
@@ -241,7 +242,7 @@ impl RunContext {
         );
         let ok = result.is_ok();
         let err = result.as_ref().err().map(|e| e.to_string());
-        self.progress.finish_command_session(&session_id, ok, err)?;
+        finish_command_session(&self.progress, &session_id, ok, err)?;
         self.api.clear_progress_context();
         if let Some(handle) = live_progress.as_mut() {
             handle.stop();

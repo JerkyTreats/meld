@@ -3,9 +3,9 @@
 use std::sync::{mpsc::Receiver, Arc, Mutex};
 
 use crate::error::StorageError;
+use crate::session::contracts::SessionMeta as Meta;
 use crate::telemetry::events::{ProgressEnvelope, ProgressEvent};
-use crate::telemetry::sessions::policy::SessionStatus;
-use crate::telemetry::sinks::store::{ProgressStore, SessionMeta};
+use crate::telemetry::sinks::store::ProgressStore;
 use crate::telemetry::types::now_millis;
 
 pub struct EventIngestor {
@@ -31,11 +31,7 @@ impl EventIngestor {
         let mut meta = self
             .store
             .get_meta(&envelope.session)?
-            .unwrap_or(SessionMeta {
-                next_seq: 1,
-                latest_status: SessionStatus::Active,
-                updated_at_ms: now_millis(),
-            });
+            .unwrap_or(Meta::active(now_millis()));
 
         let seq = self.store.allocate_next_seq()?;
         let event = ProgressEvent::from_envelope(envelope, seq);
