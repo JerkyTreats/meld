@@ -13,6 +13,7 @@ use crate::control::events::{
     LevelStartedEventData, NodeCompletedEventData, NodeFailedEventData, NodeStartedEventData,
 };
 use crate::error::ApiError;
+use crate::events::EventEnvelope;
 use crate::telemetry::ProgressRuntime;
 use crate::types::FrameID;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -180,7 +181,10 @@ impl GenerationExecutor {
                                     path: item.path.clone(),
                                     frame_id: hex::encode(frame_id),
                                     program_kind: item.program.kind_str().to_string(),
-                                    workflow_id: item.program.workflow_id().map(ToString::to_string),
+                                    workflow_id: item
+                                        .program
+                                        .workflow_id()
+                                        .map(ToString::to_string),
                                 },
                             ),
                         );
@@ -204,7 +208,10 @@ impl GenerationExecutor {
                                     path: item.path.clone(),
                                     error: err.to_string(),
                                     program_kind: item.program.kind_str().to_string(),
-                                    workflow_id: item.program.workflow_id().map(ToString::to_string),
+                                    workflow_id: item
+                                        .program
+                                        .workflow_id()
+                                        .map(ToString::to_string),
                                 },
                             ),
                         );
@@ -300,11 +307,7 @@ impl GenerationExecutor {
         self.wait_timeout
     }
 
-    fn emit_envelope(
-        &self,
-        session_id: Option<&str>,
-        envelope: crate::telemetry::events::ProgressEnvelope,
-    ) {
+    fn emit_envelope(&self, session_id: Option<&str>, envelope: EventEnvelope) {
         if let (Some(progress), Some(session_id)) = (self.progress.as_ref(), session_id) {
             let mut envelope = envelope;
             envelope.session = session_id.to_string();

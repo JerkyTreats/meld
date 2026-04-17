@@ -13,6 +13,7 @@ use crate::context::query::get_node_query;
 use crate::context::query::{compose_frames, CompositionPolicy};
 use crate::context::queue::FrameGenerationQueue;
 use crate::error::ApiError;
+use crate::events::EventEnvelope;
 use crate::heads::HeadIndex;
 use crate::metadata::frame_write_contract::{
     build_generated_metadata, generated_metadata_input_from_payload, validate_frame_metadata,
@@ -114,7 +115,11 @@ impl ContextApi {
         }
     }
 
-    pub fn set_progress_context(&self, runtime: Arc<ProgressRuntime>, session_id: impl Into<String>) {
+    pub fn set_progress_context(
+        &self,
+        runtime: Arc<ProgressRuntime>,
+        session_id: impl Into<String>,
+    ) {
         *self.progress_context.write() = Some(ProgressEmitterContext {
             runtime,
             session_id: session_id.into(),
@@ -820,7 +825,7 @@ impl ContextApi {
         self.progress_context.read().clone()
     }
 
-    fn emit_context_envelope(&self, envelope: crate::telemetry::events::ProgressEnvelope) {
+    fn emit_context_envelope(&self, envelope: EventEnvelope) {
         let Some(context) = self.current_progress_context() else {
             return;
         };
