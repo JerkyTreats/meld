@@ -1,10 +1,6 @@
 use crate::error::StorageError;
-use crate::telemetry::events::{ProgressEnvelope, ProgressEvent};
-use crate::telemetry::sinks::store::ProgressStore;
-use crate::telemetry::DomainObjectRef;
-use crate::world_state::contracts::{
-    ClaimKind, ClaimRecord, EvidenceRecord, SettlementStatus,
-};
+use crate::events::{DomainObjectRef, EventEnvelope, EventRecord, EventStore};
+use crate::world_state::contracts::{ClaimKind, ClaimRecord, EvidenceRecord, SettlementStatus};
 use crate::world_state::events::{
     claim_added_envelope, claim_superseded_envelope, evidence_attached_envelope,
     ClaimAddedEventData, ClaimSupersededEventData, EvidenceAttachedEventData,
@@ -15,12 +11,12 @@ use crate::world_state::store::{StoredWorldStateFact, WorldStateStore};
 pub struct WorldStateReducer {
     pub current_claims: CurrentClaimProjection,
     pub provenance: ClaimProvenanceProjection,
-    pub emitted_envelopes: Vec<ProgressEnvelope>,
+    pub emitted_envelopes: Vec<EventEnvelope>,
 }
 
 impl WorldStateReducer {
     pub fn replay_from_spine(
-        spine: &ProgressStore,
+        spine: &EventStore,
         store: &WorldStateStore,
         after_seq: u64,
     ) -> Result<Self, StorageError> {
@@ -38,7 +34,7 @@ impl WorldStateReducer {
     fn apply_event(
         &mut self,
         store: &WorldStateStore,
-        event: &ProgressEvent,
+        event: &EventRecord,
     ) -> Result<(), StorageError> {
         if event.domain_id != "execution" {
             return Ok(());
@@ -49,34 +45,19 @@ impl WorldStateReducer {
                 let Some(subject) = find_object_ref(&event.objects, "workspace_fs", "node") else {
                     return Ok(());
                 };
-                self.materialize_claim(
-                    store,
-                    event,
-                    subject,
-                    ClaimKind::GenerationSucceeded,
-                )?;
+                self.materialize_claim(store, event, subject, ClaimKind::GenerationSucceeded)?;
             }
             "execution.control.node_failed" => {
                 let Some(subject) = find_object_ref(&event.objects, "workspace_fs", "node") else {
                     return Ok(());
                 };
-                self.materialize_claim(
-                    store,
-                    event,
-                    subject,
-                    ClaimKind::GenerationFailed,
-                )?;
+                self.materialize_claim(store, event, subject, ClaimKind::GenerationFailed)?;
             }
             "execution.task.artifact_emitted" => {
                 let Some(subject) = find_object_ref(&event.objects, "execution", "task_run") else {
                     return Ok(());
                 };
-                self.materialize_claim(
-                    store,
-                    event,
-                    subject,
-                    ClaimKind::ArtifactAvailable,
-                )?;
+                self.materialize_claim(store, event, subject, ClaimKind::ArtifactAvailable)?;
             }
             _ => {}
         }
@@ -87,12 +68,17 @@ impl WorldStateReducer {
     fn materialize_claim(
         &mut self,
         store: &WorldStateStore,
-        event: &ProgressEvent,
+        event: &EventRecord,
         subject: DomainObjectRef,
         claim_kind: ClaimKind,
     ) -> Result<(), StorageError> {
         let subject_key = subject.index_key();
-        let claim_id = format!("claim::{}::{}::{}", claim_kind.as_str(), subject_key, event.seq);
+        let claim_id = format!(
+            "claim::{}::{}::{}",
+            claim_kind.as_str(),
+            subject_key,
+            event.seq
+        );
         let source_fact_id = source_fact_id(event.seq);
         let evidence_id = format!("evidence::{claim_id}");
 
@@ -113,8 +99,10 @@ impl WorldStateReducer {
                 continue;
             }
 
-            let superseded_fact_id =
-                format!("world_state::claim_superseded::{}::{}", active_claim.claim_id, event.seq);
+            let superseded_fact_id = format!(
+                "world_state::claim_superseded::{}::{}",
+                active_claim.claim_id, event.seq
+            );
             let mut superseded_claim = active_claim.clone();
             superseded_claim.status = SettlementStatus::Superseded;
             superseded_claim.superseded_by = Some(claim_id.clone());
@@ -194,8 +182,12 @@ impl WorldStateReducer {
 
         self.current_claims
             .activate(subject_key, claim_id.clone(), event.seq);
-        self.provenance
-            .add_evidence(&claim_id, evidence_id.clone(), source_fact_id.clone(), event.seq);
+        self.provenance.add_evidence(
+            &claim_id,
+            evidence_id.clone(),
+            source_fact_id.clone(),
+            event.seq,
+        );
         self.emitted_envelopes.push(claim_added_envelope(
             &event.session,
             ClaimAddedEventData {

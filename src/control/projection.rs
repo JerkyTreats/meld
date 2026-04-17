@@ -3,9 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::from_value;
 
 use crate::error::StorageError;
+use crate::events::{EventRecord, EventStore};
 use crate::task::ExecutionTaskEventData;
-use crate::telemetry::events::ProgressEvent;
-use crate::telemetry::sinks::store::ProgressStore;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExecutionProjection {
@@ -18,7 +17,7 @@ pub struct ExecutionProjection {
 }
 
 impl ExecutionProjection {
-    pub fn replay_from_store(store: &ProgressStore, after_seq: u64) -> Result<Self, StorageError> {
+    pub fn replay_from_store(store: &EventStore, after_seq: u64) -> Result<Self, StorageError> {
         let mut projection = Self::default();
         for event in store.read_all_events_after(after_seq)? {
             projection.apply(&event)?;
@@ -26,16 +25,14 @@ impl ExecutionProjection {
         Ok(projection)
     }
 
-    pub fn apply(&mut self, event: &ProgressEvent) -> Result<(), StorageError> {
+    pub fn apply(&mut self, event: &EventRecord) -> Result<(), StorageError> {
         if event.domain_id != "execution" {
             return Ok(());
         }
 
         self.last_applied_seq = self.last_applied_seq.max(event.seq);
         match event.event_type.as_str() {
-            "execution.task.requested"
-            | "execution.task.started"
-            | "execution.task.progressed" => {
+            "execution.task.requested" | "execution.task.started" | "execution.task.progressed" => {
                 let data = parse_task_event_data(event)?;
                 self.active_tasks.insert(data.task_run_id.clone());
                 self.blocked_tasks.remove(&data.task_run_id);
@@ -87,7 +84,7 @@ impl ExecutionProjection {
     }
 }
 
-fn parse_task_event_data(event: &ProgressEvent) -> Result<ExecutionTaskEventData, StorageError> {
+fn parse_task_event_data(event: &EventRecord) -> Result<ExecutionTaskEventData, StorageError> {
     from_value(event.data.clone()).map_err(|err| {
         StorageError::IoError(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -105,7 +102,7 @@ mod tests {
     fn task_events_drive_projection_state() {
         let mut projection = ExecutionProjection::default();
 
-        let requested = ProgressEvent {
+        let requested = EventRecord {
             ts: "2026-01-01T00:00:00.000Z".to_string(),
             recorded_at: "2026-01-01T00:00:00.000Z".to_string(),
             session: "session".to_string(),
@@ -132,7 +129,7 @@ mod tests {
             }),
         };
 
-        let succeeded = ProgressEvent {
+        let succeeded = EventRecord {
             seq: 2,
             event_type: "execution.task.succeeded".to_string(),
             ..requested.clone()

@@ -1,7 +1,5 @@
 use crate::error::StorageError;
-use crate::telemetry::events::{ProgressEnvelope, ProgressEvent};
-use crate::telemetry::sinks::store::ProgressStore;
-use crate::telemetry::DomainObjectRef;
+use crate::events::{DomainObjectRef, EventEnvelope, EventRecord, EventStore};
 use crate::world_state::graph::contracts::{
     AnchorSelectionRecord, PerspectiveKey, TraversalFactRecord,
 };
@@ -15,13 +13,13 @@ use crate::world_state::graph::store::TraversalStore;
 pub struct TraversalReducer {
     pub current_anchors: CurrentAnchorProjection,
     pub lineage: AnchorLineageProjection,
-    pub emitted_envelopes: Vec<ProgressEnvelope>,
+    pub emitted_envelopes: Vec<EventEnvelope>,
     pub applied_events: usize,
 }
 
 impl TraversalReducer {
     pub fn replay_from_spine(
-        spine: &ProgressStore,
+        spine: &EventStore,
         store: &TraversalStore,
         after_seq: u64,
     ) -> Result<Self, StorageError> {
@@ -42,7 +40,11 @@ impl TraversalReducer {
         Ok(reducer)
     }
 
-    fn apply_event(&mut self, store: &TraversalStore, event: &ProgressEvent) -> Result<(), StorageError> {
+    fn apply_event(
+        &mut self,
+        store: &TraversalStore,
+        event: &EventRecord,
+    ) -> Result<(), StorageError> {
         if !is_traversal_relevant(event) {
             return Ok(());
         }
@@ -63,14 +65,12 @@ impl TraversalReducer {
                 let Some(source) = find_object_ref(&event.objects, "workspace_fs", "source") else {
                     return Ok(());
                 };
-                let Some(snapshot) = find_object_ref(&event.objects, "workspace_fs", "snapshot") else {
+                let Some(snapshot) = find_object_ref(&event.objects, "workspace_fs", "snapshot")
+                else {
                     return Ok(());
                 };
-                let anchor_ref = DomainObjectRef::new(
-                    "workspace_fs",
-                    "snapshot_head",
-                    &source.object_id,
-                )?;
+                let anchor_ref =
+                    DomainObjectRef::new("workspace_fs", "snapshot_head", &source.object_id)?;
                 let perspective = PerspectiveKey::new("snapshot", "current")?;
                 self.select_anchor(
                     store,
@@ -116,18 +116,26 @@ impl TraversalReducer {
                     let mut ended = current.clone();
                     ended.ended_at_seq = Some(event.seq);
                     store.put_anchor(&ended)?;
-                    store.clear_current_anchor(&ended.anchor_ref, &ended.subject, &ended.perspective)?;
-                    self.current_anchors.end(&ended.anchor_ref.index_key(), event.seq);
+                    store.clear_current_anchor(
+                        &ended.anchor_ref,
+                        &ended.subject,
+                        &ended.perspective,
+                    )?;
+                    self.current_anchors
+                        .end(&ended.anchor_ref.index_key(), event.seq);
                 }
             }
             "execution.task.artifact_emitted" => {
-                let Some(task_run) = find_object_ref(&event.objects, "execution", "task_run") else {
+                let Some(task_run) = find_object_ref(&event.objects, "execution", "task_run")
+                else {
                     return Ok(());
                 };
-                let Some(artifact) = find_object_ref(&event.objects, "execution", "artifact") else {
+                let Some(artifact) = find_object_ref(&event.objects, "execution", "artifact")
+                else {
                     return Ok(());
                 };
-                let Some(slot_ref) = find_object_ref(&event.objects, "execution", "artifact_slot") else {
+                let Some(slot_ref) = find_object_ref(&event.objects, "execution", "artifact_slot")
+                else {
                     return Ok(());
                 };
                 let artifact_type_id = slot_ref
@@ -155,7 +163,7 @@ impl TraversalReducer {
     fn select_anchor(
         &mut self,
         store: &TraversalStore,
-        event: &ProgressEvent,
+        event: &EventRecord,
         anchor_ref: DomainObjectRef,
         subject: DomainObjectRef,
         perspective: PerspectiveKey,
@@ -238,7 +246,7 @@ impl TraversalReducer {
     }
 }
 
-fn is_traversal_relevant(event: &ProgressEvent) -> bool {
+fn is_traversal_relevant(event: &EventRecord) -> bool {
     matches!(
         event.domain_id.as_str(),
         "workspace_fs" | "context" | "execution"

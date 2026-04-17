@@ -3,12 +3,12 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::error::StorageError;
-use crate::telemetry::sinks::store::ProgressStore;
+use crate::events::EventStore;
 use crate::world_state::graph::reducer::TraversalReducer;
 use crate::world_state::graph::store::TraversalStore;
 
 pub struct GraphRuntime {
-    spine: Arc<ProgressStore>,
+    spine: Arc<EventStore>,
     traversal: Arc<TraversalStore>,
     catch_up_lock: Mutex<()>,
 }
@@ -16,7 +16,7 @@ pub struct GraphRuntime {
 impl GraphRuntime {
     pub fn new(db: sled::Db) -> Result<Self, StorageError> {
         Ok(Self {
-            spine: ProgressStore::shared(db.clone())?,
+            spine: EventStore::shared(db.clone())?,
             traversal: TraversalStore::shared(db)?,
             catch_up_lock: Mutex::new(()),
         })
@@ -37,4 +37,3 @@ impl GraphRuntime {
         Arc::clone(&self.traversal)
     }
 }
-

@@ -1,5 +1,5 @@
 use crate::cli::parse::{Commands, ContextCommands};
-use crate::telemetry::events::ProgressEvent;
+use crate::events::EventRecord;
 use crate::telemetry::ProgressRuntime;
 use owo_colors::OwoColorize;
 use serde_json::Value;
@@ -138,7 +138,7 @@ impl LivePanelReducer {
         }
     }
 
-    fn apply(&mut self, event: &ProgressEvent) {
+    fn apply(&mut self, event: &EventRecord) {
         match event.event_type.as_str() {
             "plan_constructed" => {
                 self.total_nodes = read_usize(&event.data, "total_nodes");
@@ -580,8 +580,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn event(seq: u64, event_type: &str, data: Value) -> ProgressEvent {
-        ProgressEvent {
+    fn event(seq: u64, event_type: &str, data: Value) -> EventRecord {
+        EventRecord {
             ts: "2026-03-07T00:00:00.000Z".to_string(),
             recorded_at: "2026-03-07T00:00:00.000Z".to_string(),
             session: "s1".to_string(),
