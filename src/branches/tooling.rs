@@ -3,11 +3,11 @@ use std::path::Path;
 use crate::branches::query::BranchQueryScope;
 use crate::cli::BranchesCommands;
 use crate::error::{ApiError, StorageError};
-use crate::roots::format::{
+use crate::branches::format::{
     format_branch_graph_status_text, format_federated_neighbors_text, format_federated_walk_text,
-    format_roots_status_text,
+    format_branches_status_text,
 };
-use crate::roots::{BranchQueryRuntime, BranchRuntime};
+use crate::branches::{BranchQueryRuntime, BranchRuntime};
 use crate::telemetry::DomainObjectRef;
 use crate::world_state::{GraphWalkSpec, TraversalDirection};
 
@@ -22,19 +22,19 @@ pub fn handle_cli_command_with_workspace(
     match command {
         BranchesCommands::Status { format } => {
             let output = BranchRuntime::new().status()?;
-            render_output(format, &output, format_roots_status_text)
+            render_output(format, &output, format_branches_status_text)
         }
         BranchesCommands::Discover { format } => {
             let output = BranchRuntime::new().discover_branches()?;
-            render_output(format, &output, format_roots_status_text)
+            render_output(format, &output, format_branches_status_text)
         }
         BranchesCommands::Migrate { format } => {
             let output = BranchRuntime::new().migrate_branches()?;
-            render_output(format, &output, format_roots_status_text)
+            render_output(format, &output, format_branches_status_text)
         }
         BranchesCommands::Attach { path, format } => {
             let output = BranchRuntime::new().attach_branch(path)?;
-            render_output(format, &output, format_roots_status_text)
+            render_output(format, &output, format_branches_status_text)
         }
         BranchesCommands::GraphStatus {
             scope,
@@ -154,8 +154,7 @@ fn object_ref(
     object_kind: &str,
     object_id: &str,
 ) -> Result<DomainObjectRef, ApiError> {
-    DomainObjectRef::new(domain, object_kind, object_id)
-        .map_err(|err| ApiError::StorageError(err))
+    DomainObjectRef::new(domain, object_kind, object_id).map_err(ApiError::StorageError)
 }
 
 fn relation_types_filter(relation_types: &[String]) -> Option<&[String]> {

@@ -125,7 +125,6 @@ pub enum Commands {
         command: WorkflowCommands,
     },
     /// Branch discovery and migration status
-    #[command(alias = "roots")]
     Branches {
         #[command(subcommand)]
         command: BranchesCommands,
@@ -244,8 +243,6 @@ pub enum BranchesCommands {
         format: String,
     },
 }
-
-pub type RootsCommands = BranchesCommands;
 
 #[derive(Subcommand)]
 pub enum DangerCommands {
@@ -784,17 +781,6 @@ mod tests {
     use super::{BranchesCommands, Cli, Commands};
     use clap::Parser;
     use std::path::PathBuf;
-
-    #[test]
-    fn parses_roots_status_command_alias() {
-        let cli = Cli::try_parse_from(["meld", "roots", "status", "--format", "json"]).unwrap();
-        match cli.command {
-            Commands::Branches {
-                command: BranchesCommands::Status { format },
-            } => assert_eq!(format, "json"),
-            _ => panic!("expected branches status command"),
-        }
-    }
 
     #[test]
     fn parses_branches_status_command() {

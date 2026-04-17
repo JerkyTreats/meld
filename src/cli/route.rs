@@ -7,7 +7,7 @@ use crate::cli::{command_name, typed_summary_event};
 use crate::config::ConfigLoader;
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
-use crate::roots::{BranchHandle, BranchRuntime};
+use crate::branches::{BranchHandle, BranchRuntime};
 use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::ProgressRuntime;
 use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
@@ -64,7 +64,7 @@ impl RunContext {
         let branch_runtime = BranchRuntime::new();
         let active_branch = branch_runtime.resolve_active_branch(&workspace_root)?;
         if let Err(err) = branch_runtime.ensure_active_branch_registered(&active_branch) {
-            warn!(error = %err, "failed to register active root during startup");
+            warn!(error = %err, "failed to register active branch during startup");
         }
 
         let (store_path, frame_storage_path, artifact_storage_path) =
@@ -152,7 +152,7 @@ impl RunContext {
                     last_reduced_seq,
                     applied_events,
                 ) {
-                    warn!(error = %err, "failed to record root graph migration during startup");
+                    warn!(error = %err, "failed to record branch graph migration during startup");
                 }
             }
             Err(err) => {
@@ -162,7 +162,7 @@ impl RunContext {
                 {
                     warn!(
                         error = %record_err,
-                        "failed to record root graph migration failure during startup"
+                        "failed to record branch graph migration failure during startup"
                     );
                 }
             }
@@ -212,12 +212,12 @@ impl RunContext {
                         last_reduced_seq,
                         applied_events,
                     ) {
-                        warn!(error = %err, "failed to record root graph migration after command execution");
+                        warn!(error = %err, "failed to record branch graph migration after command execution");
                     }
                 } else if let Err(err) =
                     self.branch_runtime.touch_active_branch(&self.active_branch)
                 {
-                    warn!(error = %err, "failed to update active root last seen after command execution");
+                    warn!(error = %err, "failed to update active branch last seen after command execution");
                 }
             }
             Err(err) => {
@@ -228,7 +228,7 @@ impl RunContext {
                 {
                     warn!(
                         error = %record_err,
-                        "failed to record root graph migration failure after command execution"
+                        "failed to record branch graph migration failure after command execution"
                     );
                 }
             }

@@ -36,11 +36,6 @@ pub fn branches_command_name(command: &BranchesCommands) -> &'static str {
     }
 }
 
-#[allow(dead_code)]
-pub fn roots_command_name(command: &BranchesCommands) -> &'static str {
-    branches_command_name(command)
-}
-
 pub fn danger_command_name(command: &DangerCommands) -> &'static str {
     match command {
         DangerCommands::Flush { .. } => "flush",
@@ -285,7 +280,7 @@ pub fn typed_summary_event(
 
 #[cfg(test)]
 mod tests {
-    use super::{branches_command_name, command_name, roots_command_name};
+    use super::{branches_command_name, command_name};
     use crate::cli::parse::{BranchesCommands, Commands};
 
     #[test]
@@ -293,7 +288,6 @@ mod tests {
         let command = BranchesCommands::Status {
             format: "text".to_string(),
         };
-        assert_eq!(roots_command_name(&command), "status");
         assert_eq!(branches_command_name(&command), "status");
         assert_eq!(
             command_name(&Commands::Branches { command }),

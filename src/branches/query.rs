@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::branches::catalog;
 use crate::branches::contracts::BranchCatalogEntry;
 use crate::branches::locator;
-use crate::branches::runtime::RootRuntime;
+use crate::branches::runtime::BranchRuntime;
 use crate::error::{ApiError, StorageError};
 use crate::telemetry::DomainObjectRef;
 use crate::world_state::{
@@ -85,7 +85,7 @@ pub struct FederatedWalkOutput {
 
 #[derive(Debug, Clone, Default)]
 pub struct BranchQueryRuntime {
-    branch_runtime: RootRuntime,
+    branch_runtime: BranchRuntime,
 }
 
 #[derive(Debug, Clone)]
@@ -250,7 +250,7 @@ impl BranchQueryRuntime {
         workspace_root: Option<&Path>,
     ) -> Result<BranchSelection, ApiError> {
         let catalog_path = locator::global_catalog_path()?;
-        let branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let branch_catalog = catalog::load(&catalog_path)?;
         let entries = match &scope {
             BranchQueryScope::All => branch_catalog.branches,
             BranchQueryScope::Active => {

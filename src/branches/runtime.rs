@@ -1,34 +1,25 @@
 use chrono::{SecondsFormat, Utc};
 use std::path::{Path, PathBuf};
 
-use crate::error::ApiError;
-use crate::roots::contracts::{
+use crate::branches::contracts::{
     BranchAttachmentStatus, BranchCatalogEntry, BranchHandle, BranchInspectionStatus,
-    BranchMigrationStatus, ResolvedBranch, ResolvedRoot, RootMigrationLane,
-    RootMigrationLedgerEntry, RootMigrationStepStatus, RootStatusRow, RootsStatusOutput,
+    BranchMigrationLane, BranchMigrationLedgerEntry, BranchMigrationStatus,
+    BranchMigrationStepStatus, BranchStatusRow, BranchesStatusOutput, ResolvedBranch,
 };
-use crate::roots::{catalog, ledger, locator, manifest};
+use crate::branches::{catalog, ledger, locator, manifest};
+use crate::error::ApiError;
 use crate::world_state::GraphRuntime;
 
 #[derive(Debug, Clone, Default)]
-pub struct RootRuntime;
+pub struct BranchRuntime;
 
-impl RootRuntime {
+impl BranchRuntime {
     pub fn new() -> Self {
         Self
     }
 
     pub fn resolve_active_branch(&self, workspace_root: &Path) -> Result<BranchHandle, ApiError> {
         locator::resolve_active_branch(workspace_root).map(BranchHandle::from)
-    }
-
-    pub fn resolve_active_root(&self, workspace_root: &Path) -> Result<ResolvedRoot, ApiError> {
-        self.resolve_active_branch(workspace_root)
-            .map(|branch| branch.as_root())
-    }
-
-    pub fn ensure_active_root_registered(&self, resolved: &ResolvedRoot) -> Result<(), ApiError> {
-        self.ensure_active_branch_registered(&BranchHandle::from(resolved.clone()))
     }
 
     pub fn ensure_active_branch_registered(&self, branch: &BranchHandle) -> Result<(), ApiError> {
@@ -41,7 +32,7 @@ impl RootRuntime {
         )
     }
 
-    pub fn attach_branch(&self, workspace_path: &Path) -> Result<RootsStatusOutput, ApiError> {
+    pub fn attach_branch(&self, workspace_path: &Path) -> Result<BranchesStatusOutput, ApiError> {
         let branch = self.resolve_active_branch(workspace_path)?;
         self.ensure_branch_registered(
             branch.resolved(),
@@ -53,7 +44,7 @@ impl RootRuntime {
         self.status()
     }
 
-    pub fn discover_branches(&self) -> Result<RootsStatusOutput, ApiError> {
+    pub fn discover_branches(&self) -> Result<BranchesStatusOutput, ApiError> {
         for data_home_path in locator::discover_branch_data_homes()? {
             let recovered_workspace_path = locator::recover_workspace_path(&data_home_path)?;
             let resolved =
@@ -72,9 +63,9 @@ impl RootRuntime {
         self.status()
     }
 
-    pub fn migrate_branches(&self) -> Result<RootsStatusOutput, ApiError> {
+    pub fn migrate_branches(&self) -> Result<BranchesStatusOutput, ApiError> {
         let catalog_path = locator::global_catalog_path()?;
-        let branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let branch_catalog = catalog::load(&catalog_path)?;
         for entry in branch_catalog.branches {
             let resolved = resolved_branch_from_catalog_entry(&entry);
             let store_path = entry
@@ -109,10 +100,6 @@ impl RootRuntime {
         self.status()
     }
 
-    pub fn touch_active_root(&self, resolved: &ResolvedRoot) -> Result<(), ApiError> {
-        self.touch_active_branch(&BranchHandle::from(resolved.clone()))
-    }
-
     pub fn touch_active_branch(&self, branch: &BranchHandle) -> Result<(), ApiError> {
         self.touch_branch(
             branch.resolved(),
@@ -120,19 +107,6 @@ impl RootRuntime {
             Some(locator::branch_store_path(
                 &branch.resolved().data_home_path,
             )),
-        )
-    }
-
-    pub fn record_graph_catch_up_success(
-        &self,
-        resolved: &ResolvedRoot,
-        last_reduced_seq: u64,
-        applied_events: usize,
-    ) -> Result<(), ApiError> {
-        self.record_branch_graph_catch_up_success(
-            &BranchHandle::from(resolved.clone()),
-            last_reduced_seq,
-            applied_events,
         )
     }
 
@@ -152,14 +126,6 @@ impl RootRuntime {
         )
     }
 
-    pub fn record_graph_catch_up_failure(
-        &self,
-        resolved: &ResolvedRoot,
-        error: &str,
-    ) -> Result<(), ApiError> {
-        self.record_branch_graph_catch_up_failure(&BranchHandle::from(resolved.clone()), error)
-    }
-
     pub fn record_branch_graph_catch_up_failure(
         &self,
         branch: &BranchHandle,
@@ -174,15 +140,15 @@ impl RootRuntime {
         )
     }
 
-    pub fn status(&self) -> Result<RootsStatusOutput, ApiError> {
+    pub fn status(&self) -> Result<BranchesStatusOutput, ApiError> {
         let catalog_path = locator::global_catalog_path()?;
-        let branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
-        let roots = branch_catalog
+        let branch_catalog = catalog::load(&catalog_path)?;
+        let branches = branch_catalog
             .branches
             .into_iter()
-            .map(|branch| RootStatusRow {
-                root_id: branch.branch_id,
-                workspace_path: branch.canonical_locator,
+            .map(|branch| BranchStatusRow {
+                branch_id: branch.branch_id,
+                canonical_locator: branch.canonical_locator,
                 data_home_path: branch.data_home_path,
                 store_path: branch.store_path,
                 attachment_status: branch.attachment_status.as_str().to_string(),
@@ -192,7 +158,7 @@ impl RootRuntime {
                 last_migration_at: branch.last_migration_at,
             })
             .collect();
-        Ok(RootsStatusOutput { roots })
+        Ok(BranchesStatusOutput { branches })
     }
 
     fn ensure_branch_registered(
@@ -207,34 +173,34 @@ impl RootRuntime {
         append_started(
             resolved,
             &plan_id,
-            "write_root_manifest",
-            RootMigrationLane::Metadata,
+            "write_branch_manifest",
+            BranchMigrationLane::Metadata,
             vec![format!(
                 "workspace_path={}",
                 resolved.canonical_locator.display()
             )],
         )?;
 
-        let mut current_manifest = manifest::load_branch(&resolved.manifest_path)?
+        let mut current_manifest = manifest::load(&resolved.manifest_path)?
             .unwrap_or_else(|| manifest::new_branch_manifest(resolved, &now));
         current_manifest.canonical_locator =
             resolved.canonical_locator.to_string_lossy().to_string();
         current_manifest.last_seen_at = now.clone();
-        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
+        manifest::save(&resolved.manifest_path, &current_manifest)?;
 
         append_verified(
             resolved,
             &plan_id,
-            "write_root_manifest",
-            RootMigrationLane::Metadata,
-            vec!["root manifest persisted".to_string()],
+            "write_branch_manifest",
+            BranchMigrationLane::Metadata,
+            vec!["branch manifest persisted".to_string()],
         )?;
 
         append_started(
             resolved,
             &plan_id,
             "refresh_catalog_entry",
-            RootMigrationLane::Metadata,
+            BranchMigrationLane::Metadata,
             vec![format!(
                 "data_home_path={}",
                 resolved.data_home_path.display()
@@ -242,7 +208,7 @@ impl RootRuntime {
         )?;
 
         let catalog_path = locator::global_catalog_path()?;
-        let mut branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let mut branch_catalog = catalog::load(&catalog_path)?;
         let existing = branch_catalog
             .branches
             .iter()
@@ -277,18 +243,18 @@ impl RootRuntime {
                 last_migration_at,
             },
         );
-        catalog::save_branch_catalog(&catalog_path, &branch_catalog)?;
+        catalog::save(&catalog_path, &branch_catalog)?;
 
         current_manifest.last_successful_plan_id = Some(plan_id.clone());
         current_manifest.last_successful_step_id = Some("refresh_catalog_entry".to_string());
-        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
+        manifest::save(&resolved.manifest_path, &current_manifest)?;
 
         append_verified(
             resolved,
             &plan_id,
             "refresh_catalog_entry",
-            RootMigrationLane::Metadata,
-            vec!["root catalog updated".to_string()],
+            BranchMigrationLane::Metadata,
+            vec!["branch catalog updated".to_string()],
         )?;
 
         Ok(())
@@ -301,15 +267,15 @@ impl RootRuntime {
         store_path: Option<PathBuf>,
     ) -> Result<(), ApiError> {
         let now = timestamp();
-        let mut current_manifest = manifest::load_branch(&resolved.manifest_path)?
+        let mut current_manifest = manifest::load(&resolved.manifest_path)?
             .unwrap_or_else(|| manifest::new_branch_manifest(resolved, &now));
         current_manifest.last_seen_at = now.clone();
         current_manifest.canonical_locator =
             resolved.canonical_locator.to_string_lossy().to_string();
-        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
+        manifest::save(&resolved.manifest_path, &current_manifest)?;
 
         let catalog_path = locator::global_catalog_path()?;
-        let mut branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let mut branch_catalog = catalog::load(&catalog_path)?;
         let existing = branch_catalog
             .branches
             .iter()
@@ -343,7 +309,7 @@ impl RootRuntime {
                 last_migration_at: existing.and_then(|branch| branch.last_migration_at),
             },
         );
-        catalog::save_branch_catalog(&catalog_path, &branch_catalog)?;
+        catalog::save(&catalog_path, &branch_catalog)?;
         Ok(())
     }
 
@@ -361,24 +327,24 @@ impl RootRuntime {
             resolved,
             &plan_id,
             "replay_spine_into_traversal",
-            RootMigrationLane::Derived,
+            BranchMigrationLane::Derived,
             vec![
                 format!("applied_events={}", applied_events),
                 format!("last_reduced_seq={}", last_reduced_seq),
             ],
         )?;
 
-        let mut current_manifest = manifest::load_branch(&resolved.manifest_path)?
+        let mut current_manifest = manifest::load(&resolved.manifest_path)?
             .unwrap_or_else(|| manifest::new_branch_manifest(resolved, &now));
         current_manifest.last_seen_at = now.clone();
         current_manifest.last_reduced_seq = last_reduced_seq;
-        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
+        manifest::save(&resolved.manifest_path, &current_manifest)?;
 
         append_verified(
             resolved,
             &plan_id,
             "replay_spine_into_traversal",
-            RootMigrationLane::Derived,
+            BranchMigrationLane::Derived,
             vec!["traversal replay completed".to_string()],
         )?;
 
@@ -386,7 +352,7 @@ impl RootRuntime {
             resolved,
             &plan_id,
             "mark_derived_version",
-            RootMigrationLane::Derived,
+            BranchMigrationLane::Derived,
             vec![format!(
                 "derived_state_version={}",
                 current_manifest.derived_state_version
@@ -394,7 +360,7 @@ impl RootRuntime {
         )?;
 
         let catalog_path = locator::global_catalog_path()?;
-        let mut branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let mut branch_catalog = catalog::load(&catalog_path)?;
         let existing = branch_catalog
             .branches
             .iter()
@@ -430,17 +396,17 @@ impl RootRuntime {
                 last_migration_at: Some(now.clone()),
             },
         );
-        catalog::save_branch_catalog(&catalog_path, &branch_catalog)?;
+        catalog::save(&catalog_path, &branch_catalog)?;
 
         current_manifest.last_successful_plan_id = Some(plan_id.clone());
         current_manifest.last_successful_step_id = Some("mark_derived_version".to_string());
-        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
+        manifest::save(&resolved.manifest_path, &current_manifest)?;
 
         append_verified(
             resolved,
             &plan_id,
             "mark_derived_version",
-            RootMigrationLane::Derived,
+            BranchMigrationLane::Derived,
             vec!["derived migration status persisted".to_string()],
         )?;
 
@@ -459,17 +425,17 @@ impl RootRuntime {
             resolved,
             &plan_id,
             "replay_spine_into_traversal",
-            RootMigrationLane::Derived,
+            BranchMigrationLane::Derived,
             error.to_string(),
         )?;
 
-        let mut current_manifest = manifest::load_branch(&resolved.manifest_path)?
+        let mut current_manifest = manifest::load(&resolved.manifest_path)?
             .unwrap_or_else(|| manifest::new_branch_manifest(resolved, &now));
         current_manifest.last_seen_at = now.clone();
-        manifest::save_branch(&resolved.manifest_path, &current_manifest)?;
+        manifest::save(&resolved.manifest_path, &current_manifest)?;
 
         let catalog_path = locator::global_catalog_path()?;
-        let mut branch_catalog = catalog::load_branch_catalog(&catalog_path)?;
+        let mut branch_catalog = catalog::load(&catalog_path)?;
         let existing = branch_catalog
             .branches
             .iter()
@@ -501,7 +467,7 @@ impl RootRuntime {
                 last_migration_at: Some(now),
             },
         );
-        catalog::save_branch_catalog(&catalog_path, &branch_catalog)?;
+        catalog::save(&catalog_path, &branch_catalog)?;
         Ok(())
     }
 }
@@ -510,16 +476,16 @@ fn append_started(
     resolved: &ResolvedBranch,
     plan_id: &str,
     step_id: &str,
-    lane: RootMigrationLane,
+    lane: BranchMigrationLane,
     observed_inputs: Vec<String>,
 ) -> Result<(), ApiError> {
     ledger::append(
         &resolved.ledger_path,
-        &RootMigrationLedgerEntry {
+        &BranchMigrationLedgerEntry {
             plan_id: plan_id.to_string(),
             step_id: step_id.to_string(),
             lane,
-            status: RootMigrationStepStatus::Started,
+            status: BranchMigrationStepStatus::Started,
             started_at: timestamp(),
             finished_at: None,
             error_summary: None,
@@ -533,17 +499,17 @@ fn append_verified(
     resolved: &ResolvedBranch,
     plan_id: &str,
     step_id: &str,
-    lane: RootMigrationLane,
+    lane: BranchMigrationLane,
     verification_summary: Vec<String>,
 ) -> Result<(), ApiError> {
     let now = timestamp();
     ledger::append(
         &resolved.ledger_path,
-        &RootMigrationLedgerEntry {
+        &BranchMigrationLedgerEntry {
             plan_id: plan_id.to_string(),
             step_id: step_id.to_string(),
             lane,
-            status: RootMigrationStepStatus::Verified,
+            status: BranchMigrationStepStatus::Verified,
             started_at: now.clone(),
             finished_at: Some(now),
             error_summary: None,
@@ -557,17 +523,17 @@ fn append_failed(
     resolved: &ResolvedBranch,
     plan_id: &str,
     step_id: &str,
-    lane: RootMigrationLane,
+    lane: BranchMigrationLane,
     error_summary: String,
 ) -> Result<(), ApiError> {
     let now = timestamp();
     ledger::append(
         &resolved.ledger_path,
-        &RootMigrationLedgerEntry {
+        &BranchMigrationLedgerEntry {
             plan_id: plan_id.to_string(),
             step_id: step_id.to_string(),
             lane,
-            status: RootMigrationStepStatus::Failed,
+            status: BranchMigrationStepStatus::Failed,
             started_at: now.clone(),
             finished_at: Some(now),
             error_summary: Some(error_summary),
@@ -585,11 +551,11 @@ fn resolved_branch_from_data_home(data_home_path: &Path, workspace_path: &Path) 
         .to_string();
     ResolvedBranch {
         branch_id,
-        branch_kind: crate::roots::BranchKind::WorkspaceFs,
+        branch_kind: crate::branches::BranchKind::WorkspaceFs,
         canonical_locator: workspace_path.to_path_buf(),
         data_home_path: data_home_path.to_path_buf(),
-        manifest_path: data_home_path.join("root_manifest.json"),
-        ledger_path: data_home_path.join("migration_ledger.jsonl"),
+        manifest_path: data_home_path.join("branch_manifest.json"),
+        ledger_path: data_home_path.join("branch_migration_ledger.jsonl"),
     }
 }
 
@@ -600,8 +566,8 @@ fn resolved_branch_from_catalog_entry(entry: &BranchCatalogEntry) -> ResolvedBra
         branch_kind: entry.branch_kind.clone(),
         canonical_locator: PathBuf::from(&entry.canonical_locator),
         data_home_path: data_home_path.clone(),
-        manifest_path: data_home_path.join("root_manifest.json"),
-        ledger_path: data_home_path.join("migration_ledger.jsonl"),
+        manifest_path: data_home_path.join("branch_manifest.json"),
+        ledger_path: data_home_path.join("branch_migration_ledger.jsonl"),
     }
 }
 
@@ -615,6 +581,6 @@ fn timestamp() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
-fn plan_id(root_id: &str, phase: &str) -> String {
-    format!("{}::{}::{}", phase, root_id, timestamp())
+fn plan_id(branch_id: &str, phase: &str) -> String {
+    format!("{}::{}::{}", phase, branch_id, timestamp())
 }

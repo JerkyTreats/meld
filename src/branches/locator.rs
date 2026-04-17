@@ -2,12 +2,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::xdg;
+use crate::branches::contracts::{BranchKind, ResolvedBranch};
 use crate::error::ApiError;
-use crate::roots::contracts::{BranchKind, ResolvedBranch, ResolvedRoot};
 use crate::tree::path::{canonicalize_path, normalize_path_string};
 
-const ROOT_MANIFEST_FILE: &str = "root_manifest.json";
-const MIGRATION_LEDGER_FILE: &str = "migration_ledger.jsonl";
+const BRANCH_MANIFEST_FILE: &str = "branch_manifest.json";
+const BRANCH_MIGRATION_LEDGER_FILE: &str = "branch_migration_ledger.jsonl";
 
 #[derive(Debug, Clone, Default)]
 pub struct WorkspaceBranchAdapter;
@@ -25,8 +25,8 @@ impl WorkspaceBranchAdapter {
         Ok(ResolvedBranch {
             branch_id,
             branch_kind: BranchKind::WorkspaceFs,
-            manifest_path: data_home_path.join(ROOT_MANIFEST_FILE),
-            ledger_path: data_home_path.join(MIGRATION_LEDGER_FILE),
+            manifest_path: data_home_path.join(BRANCH_MANIFEST_FILE),
+            ledger_path: data_home_path.join(BRANCH_MIGRATION_LEDGER_FILE),
             canonical_locator,
             data_home_path,
         })
@@ -37,17 +37,13 @@ pub fn resolve_active_branch(workspace_root: &Path) -> Result<ResolvedBranch, Ap
     WorkspaceBranchAdapter.resolve_active_branch(workspace_root)
 }
 
-pub fn resolve_active_root(workspace_root: &Path) -> Result<ResolvedRoot, ApiError> {
-    resolve_active_branch(workspace_root).map(Into::into)
-}
-
 pub fn global_catalog_path() -> Result<std::path::PathBuf, ApiError> {
     let Some(data_home) = xdg::data_home() else {
         return Err(ApiError::ConfigError(
             "Could not determine XDG data home directory".to_string(),
         ));
     };
-    Ok(data_home.join("meld").join("root_catalog.json"))
+    Ok(data_home.join("meld").join("branch_catalog.json"))
 }
 
 pub fn branch_store_path(data_home_path: &Path) -> PathBuf {
@@ -117,7 +113,7 @@ fn recover_workspace_path_from_meld_home(
 }
 
 fn is_branch_candidate(path: &Path) -> bool {
-    path.join(ROOT_MANIFEST_FILE).exists()
+    path.join(BRANCH_MANIFEST_FILE).exists()
         || (path.join("store").is_dir()
             && (path.join("frames").is_dir()
                 || path.join("workflow").is_dir()
@@ -137,24 +133,17 @@ fn is_temp_candidate(meld_home: &Path, path: &Path) -> bool {
 mod tests {
     use super::{
         branch_store_path, discover_branch_data_homes_under, recover_workspace_path_from_meld_home,
-        resolve_active_branch, resolve_active_root,
+        resolve_active_branch,
     };
-    use crate::roots::BranchKind;
+    use crate::branches::BranchKind;
     use std::path::{Path, PathBuf};
 
     #[test]
-    fn active_root_resolution_matches_active_branch_resolution() {
+    fn active_branch_resolution_produces_workspace_fs_kind() {
         let temp = tempfile::tempdir().unwrap();
         let resolved_branch = resolve_active_branch(temp.path()).unwrap();
-        let resolved_root = resolve_active_root(temp.path()).unwrap();
-
-        assert_eq!(resolved_branch.branch_id, resolved_root.root_id);
         assert_eq!(resolved_branch.branch_kind, BranchKind::WorkspaceFs);
-        assert_eq!(
-            resolved_branch.canonical_locator,
-            resolved_root.workspace_path
-        );
-        assert_eq!(resolved_branch.data_home_path, resolved_root.data_home_path);
+        assert_eq!(resolved_branch.canonical_locator, temp.path().canonicalize().unwrap());
     }
 
     #[test]

@@ -26,6 +26,12 @@
 
 - For every user request that asks for a commit, review [Commit Policy](governance/commit_policy.md) before running `git commit` or `git commit --amend`.
 
+## Response Style Rule
+
+- Do not overuse bullet lists in user-facing responses.
+- Prefer short paragraphs when the content is clearer in prose.
+- Use bullets only when the content is naturally list-shaped, such as distinct items, steps, or options.
+
 ## Comment Policy 
 
 Use comments appropriately, following the idiomatic guide in [Commenting Policy](governance/commenting_policy.md).

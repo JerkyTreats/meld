@@ -2,10 +2,10 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
+use crate::branches::contracts::BranchMigrationLedgerEntry;
 use crate::error::{ApiError, StorageError};
-use crate::roots::contracts::RootMigrationLedgerEntry;
 
-pub fn append(path: &Path, entry: &RootMigrationLedgerEntry) -> Result<(), ApiError> {
+pub fn append(path: &Path, entry: &BranchMigrationLedgerEntry) -> Result<(), ApiError> {
     let parent = path.parent().ok_or_else(|| {
         ApiError::ConfigError(format!(
             "Migration ledger path missing parent: {}",

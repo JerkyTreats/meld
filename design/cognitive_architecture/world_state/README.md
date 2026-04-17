@@ -54,6 +54,8 @@ The durable world model is a temporal knowledge graph with:
   phased delivery plan and branch scope for graph work
 - [Workspace FS Graph Transition Requirements](graph/workspace_fs_transition_requirements.md)
   compatibility-led lift of `workspace_fs` into canonical graph inputs without breaking `NodeID` flows
+- [Root Federation Runtime](graph/root_federation_runtime.md)
+  runtime discovery, safe migration, and operator trigger flow for federated roots
 
 ## Belief
 
@@ -78,6 +80,7 @@ The durable world model is a temporal knowledge graph with:
 - [Temporal Fact Graph](graph/temporal_fact_graph.md)
 - [Graph Implementation Plan](graph/implementation_plan.md)
 - [Workspace FS Graph Transition Requirements](graph/workspace_fs_transition_requirements.md)
+- [Root Federation Runtime](graph/root_federation_runtime.md)
 - [Belief](belief/README.md)
 - [Curation In Belief](belief/curation.md)
 - [Knowledge Graph ECS Decision Memo](belief/knowledge_graph_ecs_decision_memo.md)

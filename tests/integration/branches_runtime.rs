@@ -1,12 +1,12 @@
 use meld::cli::{BranchesCommands, RunContext};
 use meld::config::xdg;
-use meld::roots::{RootCatalog, RootManifest, RootsStatusOutput};
+use meld::branches::{BranchCatalog, BranchManifest, BranchesStatusOutput};
 use tempfile::TempDir;
 
 use crate::integration::with_xdg_data_home;
 
 #[test]
-fn startup_registers_active_root_and_writes_ledger() {
+fn startup_registers_active_branch_and_writes_ledger() {
     let test_dir = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
 
@@ -14,39 +14,39 @@ fn startup_registers_active_root_and_writes_ledger() {
         let _context = RunContext::new(workspace.path().to_path_buf(), None).unwrap();
 
         let data_home = xdg::workspace_data_dir(workspace.path()).unwrap();
-        let manifest_path = data_home.join("root_manifest.json");
-        let ledger_path = data_home.join("migration_ledger.jsonl");
+        let manifest_path = data_home.join("branch_manifest.json");
+        let ledger_path = data_home.join("branch_migration_ledger.jsonl");
         let catalog_path = xdg::data_home()
             .unwrap()
             .join("meld")
-            .join("root_catalog.json");
+            .join("branch_catalog.json");
 
-        assert!(manifest_path.exists(), "root manifest should exist");
-        assert!(ledger_path.exists(), "migration ledger should exist");
-        assert!(catalog_path.exists(), "root catalog should exist");
+        assert!(manifest_path.exists(), "branch manifest should exist");
+        assert!(ledger_path.exists(), "branch migration ledger should exist");
+        assert!(catalog_path.exists(), "branch catalog should exist");
 
-        let manifest: RootManifest =
+        let manifest: BranchManifest =
             serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
-        let catalog: RootCatalog =
+        let catalog: BranchCatalog =
             serde_json::from_str(&std::fs::read_to_string(&catalog_path).unwrap()).unwrap();
 
         assert_eq!(
-            manifest.workspace_path,
+            manifest.canonical_locator,
             workspace.path().canonicalize().unwrap().to_string_lossy()
         );
         assert!(manifest.last_successful_step_id.is_some());
-        assert_eq!(catalog.roots.len(), 1);
-        assert_eq!(catalog.roots[0].workspace_path, manifest.workspace_path);
+        assert_eq!(catalog.branches.len(), 1);
+        assert_eq!(catalog.branches[0].canonical_locator, manifest.canonical_locator);
 
         let ledger = std::fs::read_to_string(&ledger_path).unwrap();
-        assert!(ledger.contains("\"step_id\":\"write_root_manifest\""));
+        assert!(ledger.contains("\"step_id\":\"write_branch_manifest\""));
         assert!(ledger.contains("\"step_id\":\"refresh_catalog_entry\""));
         assert!(ledger.contains("\"step_id\":\"mark_derived_version\""));
     });
 }
 
 #[test]
-fn roots_status_lists_registered_roots() {
+fn branches_status_lists_registered_branches() {
     let test_dir = TempDir::new().unwrap();
     let workspace_a = TempDir::new().unwrap();
     let workspace_b = TempDir::new().unwrap();
@@ -59,17 +59,17 @@ fn roots_status_lists_registered_roots() {
             format: "json".to_string(),
         })
         .unwrap();
-        let parsed: RootsStatusOutput = serde_json::from_str(&output).unwrap();
+        let parsed: BranchesStatusOutput = serde_json::from_str(&output).unwrap();
 
-        assert_eq!(parsed.roots.len(), 2);
-        assert!(parsed.roots.iter().any(|root| {
-            root.workspace_path == workspace_a.path().canonicalize().unwrap().to_string_lossy()
+        assert_eq!(parsed.branches.len(), 2);
+        assert!(parsed.branches.iter().any(|branch| {
+            branch.canonical_locator == workspace_a.path().canonicalize().unwrap().to_string_lossy()
         }));
         assert!(
             parsed
-                .roots
+                .branches
                 .iter()
-                .all(|root| !root.migration_status.is_empty())
+                .all(|branch| !branch.migration_status.is_empty())
         );
     });
 }
@@ -85,12 +85,12 @@ fn branches_attach_registers_dormant_workspace() {
             format: "json".to_string(),
         })
         .unwrap();
-        let parsed: RootsStatusOutput = serde_json::from_str(&output).unwrap();
+        let parsed: BranchesStatusOutput = serde_json::from_str(&output).unwrap();
         let attached = parsed
-            .roots
+            .branches
             .iter()
             .find(|branch| {
-                branch.workspace_path == workspace.path().canonicalize().unwrap().to_string_lossy()
+                branch.canonical_locator == workspace.path().canonicalize().unwrap().to_string_lossy()
             })
             .unwrap();
 
@@ -116,19 +116,19 @@ fn branches_discover_registers_candidates_and_skips_tmp() {
             format: "json".to_string(),
         })
         .unwrap();
-        let parsed: RootsStatusOutput = serde_json::from_str(&output).unwrap();
+        let parsed: BranchesStatusOutput = serde_json::from_str(&output).unwrap();
 
         assert!(
             parsed
-                .roots
+                .branches
                 .iter()
-                .any(|branch| branch.workspace_path == "/home/user/ws_dormant")
+                .any(|branch| branch.canonical_locator == "/home/user/ws_dormant")
         );
         assert!(
             parsed
-                .roots
+                .branches
                 .iter()
-                .all(|branch| !branch.workspace_path.contains("/tmp/"))
+                .all(|branch| !branch.canonical_locator.contains("/tmp/"))
         );
     });
 }
@@ -149,12 +149,12 @@ fn branches_migrate_updates_registered_branch_status() {
             format: "json".to_string(),
         })
         .unwrap();
-        let parsed: RootsStatusOutput = serde_json::from_str(&output).unwrap();
+        let parsed: BranchesStatusOutput = serde_json::from_str(&output).unwrap();
         let migrated = parsed
-            .roots
+            .branches
             .iter()
             .find(|branch| {
-                branch.workspace_path == workspace.path().canonicalize().unwrap().to_string_lossy()
+                branch.canonical_locator == workspace.path().canonicalize().unwrap().to_string_lossy()
             })
             .unwrap();
 

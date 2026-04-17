@@ -66,6 +66,7 @@ Belief work is deferred.
 - [Graph Implementation Plan](implementation_plan.md)
 - [Workspace FS Graph Transition Requirements](workspace_fs_transition_requirements.md)
 - [Branch Federation Substrate](branch_federation_substrate.md)
+- [Branch Lift Plan](branch_lift_plan.md)
 - [Root Federation Runtime](root_federation_runtime.md)
 - [Root Migration Architecture](root_migration_architecture.md)
 - [Root Migration First Slice](root_migration_first_slice.md)
