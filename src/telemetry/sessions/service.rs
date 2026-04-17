@@ -9,7 +9,6 @@ use crate::error::ApiError;
 use crate::events::{EventRuntime, EventStore};
 use crate::session as lifecycle;
 use crate::session::events::{session_ended_envelope, session_started_envelope};
-use crate::telemetry::events::ProgressEnvelope;
 
 #[derive(Clone)]
 pub struct ProgressRuntime {
@@ -74,7 +73,7 @@ impl ProgressRuntime {
         )
     }
 
-    pub fn emit_envelope(&self, envelope: ProgressEnvelope) -> Result<(), ApiError> {
+    pub fn emit_envelope(&self, envelope: crate::events::EventEnvelope) -> Result<(), ApiError> {
         self.events.emit_envelope(envelope)
     }
 
@@ -117,7 +116,7 @@ impl ProgressRuntime {
         }
     }
 
-    pub fn emit_envelope_best_effort(&self, envelope: ProgressEnvelope) {
+    pub fn emit_envelope_best_effort(&self, envelope: crate::events::EventEnvelope) {
         let session_id = envelope.session.clone();
         let event_type = envelope.event_type.clone();
         if let Err(err) = self.emit_envelope(envelope) {

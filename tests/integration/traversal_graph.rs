@@ -13,23 +13,19 @@ use meld::store::{NodeRecord, NodeType, SledNodeRecordStore};
 use meld::task::{build_execution_task_envelope, TaskEvent};
 use meld::telemetry::events::ProgressEvent;
 use meld::telemetry::{DomainObjectRef, ProgressRuntime};
+use meld::types::{FrameID, NodeID};
 use meld::workflow::events::{workflow_turn_completed_envelope, ExecutionWorkflowTurnEventData};
 use meld::workspace::events::source_ref;
 use meld::workspace::{read_workspace_scan_state, WorkspaceCommandService};
+use meld::world_state::graph::compat::LegacyClaimAdapter;
+use meld::world_state::graph::reducer::TraversalReducer;
 use meld::world_state::{
     GraphRuntime, GraphWalkSpec, TraversalDirection, TraversalQuery, TraversalStore,
 };
-use meld::world_state::graph::compat::LegacyClaimAdapter;
-use meld::world_state::graph::reducer::TraversalReducer;
-use meld::types::{FrameID, NodeID};
 
 use crate::integration::with_xdg_env;
 
-fn create_runtime_and_traversal() -> (
-    Arc<ProgressRuntime>,
-    TraversalStore,
-    tempfile::TempDir,
-) {
+fn create_runtime_and_traversal() -> (Arc<ProgressRuntime>, TraversalStore, tempfile::TempDir) {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let spine_db = sled::open(temp_dir.path().join("spine")).unwrap();
     let traversal_db = sled::open(temp_dir.path().join("traversal")).unwrap();
@@ -46,12 +42,9 @@ fn create_context_api(
 ) -> ContextApi {
     let db = progress.store().db().clone();
     let node_store = Arc::new(SledNodeRecordStore::from_db(db));
-    let frame_storage = Arc::new(
-        FrameStorage::new(&temp_dir.path().join("frames")).unwrap(),
-    );
-    let prompt_context_storage = Arc::new(
-        PromptContextArtifactStorage::new(&temp_dir.path().join("artifacts")).unwrap(),
-    );
+    let frame_storage = Arc::new(FrameStorage::new(temp_dir.path().join("frames")).unwrap());
+    let prompt_context_storage =
+        Arc::new(PromptContextArtifactStorage::new(temp_dir.path().join("artifacts")).unwrap());
     let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
     let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
     let provider_registry = Arc::new(parking_lot::RwLock::new(
@@ -75,10 +68,7 @@ fn create_context_api(
 
 fn register_writer(api: &ContextApi, agent_id: &str) {
     let mut registry = api.agent_registry().write();
-    registry.register(AgentIdentity::new(
-        agent_id.to_string(),
-        AgentRole::Writer,
-    ));
+    registry.register(AgentIdentity::new(agent_id.to_string(), AgentRole::Writer));
 }
 
 fn frame_metadata(agent_id: &str) -> std::collections::HashMap<String, String> {
@@ -113,7 +103,11 @@ fn put_test_node(api: &ContextApi, workspace_root: &Path, node_id: NodeID) {
         .unwrap();
 }
 
-fn append(runtime: &ProgressRuntime, envelope: meld::telemetry::events::ProgressEnvelope, seq: u64) {
+fn append(
+    runtime: &ProgressRuntime,
+    envelope: meld::telemetry::events::ProgressEnvelope,
+    seq: u64,
+) {
     runtime
         .store()
         .append_event(&ProgressEvent::from_envelope(envelope, seq))
@@ -228,7 +222,10 @@ fn facts_for_object_are_seq_ordered() {
         .facts_for_object(&node_ref(node_id), 0)
         .unwrap();
 
-    assert_eq!(facts.iter().map(|fact| fact.seq).collect::<Vec<_>>(), vec![1, 2]);
+    assert_eq!(
+        facts.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
 }
 
 #[test]
@@ -332,7 +329,12 @@ fn replay_rebuilds_same_context_heads() {
     let session_id = progress
         .start_command_session("traversal.context".to_string())
         .unwrap();
-    let api = create_context_api(&workspace_root, Arc::clone(&progress), &session_id, &temp_dir);
+    let api = create_context_api(
+        &workspace_root,
+        Arc::clone(&progress),
+        &session_id,
+        &temp_dir,
+    );
     register_writer(&api, "writer");
 
     let node_id = [16u8; 32];
@@ -346,7 +348,8 @@ fn replay_rebuilds_same_context_heads() {
         frame_metadata("writer"),
     )
     .unwrap();
-    api.put_frame(node_id, frame_a, "writer".to_string()).unwrap();
+    api.put_frame(node_id, frame_a, "writer".to_string())
+        .unwrap();
 
     let frame_b = Frame::new(
         Basis::Node(node_id),
@@ -356,16 +359,20 @@ fn replay_rebuilds_same_context_heads() {
         frame_metadata("writer"),
     )
     .unwrap();
-    let latest_frame = api.put_frame(node_id, frame_b, "writer".to_string()).unwrap();
+    let latest_frame = api
+        .put_frame(node_id, frame_b, "writer".to_string())
+        .unwrap();
 
-    let traversal_a = TraversalStore::new(sled::open(temp_dir.path().join("traversal_a")).unwrap()).unwrap();
+    let traversal_a =
+        TraversalStore::new(sled::open(temp_dir.path().join("traversal_a")).unwrap()).unwrap();
     replay(&progress, &traversal_a);
     let current_a = TraversalQuery::new(&traversal_a)
         .current_frame_head(&node_ref(node_id), "analysis")
         .unwrap()
         .unwrap();
 
-    let traversal_b = TraversalStore::new(sled::open(temp_dir.path().join("traversal_b")).unwrap()).unwrap();
+    let traversal_b =
+        TraversalStore::new(sled::open(temp_dir.path().join("traversal_b")).unwrap()).unwrap();
     replay(&progress, &traversal_b);
     let current_b = TraversalQuery::new(&traversal_b)
         .current_frame_head(&node_ref(node_id), "analysis")
@@ -387,7 +394,12 @@ fn current_frame_head_matches_legacy_head_index() {
     let session_id = progress
         .start_command_session("traversal.context".to_string())
         .unwrap();
-    let api = create_context_api(&workspace_root, Arc::clone(&progress), &session_id, &temp_dir);
+    let api = create_context_api(
+        &workspace_root,
+        Arc::clone(&progress),
+        &session_id,
+        &temp_dir,
+    );
     register_writer(&api, "writer");
 
     let node_id = [17u8; 32];
@@ -403,14 +415,18 @@ fn current_frame_head_matches_legacy_head_index() {
     .unwrap();
     let frame_id = api.put_frame(node_id, frame, "writer".to_string()).unwrap();
 
-    let traversal = TraversalStore::new(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
+    let traversal =
+        TraversalStore::new(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
     replay(&progress, &traversal);
     let current = TraversalQuery::new(&traversal)
         .current_frame_head(&node_ref(node_id), "analysis")
         .unwrap()
         .unwrap();
 
-    assert_eq!(api.get_head(&node_id, "analysis").unwrap().unwrap(), frame_id);
+    assert_eq!(
+        api.get_head(&node_id, "analysis").unwrap().unwrap(),
+        frame_id
+    );
     assert_eq!(current.target.object_id, hex::encode(frame_id));
 }
 
@@ -426,7 +442,12 @@ fn current_snapshot_matches_workspace_root_hash() {
     let session_id = progress
         .start_command_session("traversal.scan".to_string())
         .unwrap();
-    let api = create_context_api(&workspace_root, Arc::clone(&progress), &session_id, &temp_dir);
+    let api = create_context_api(
+        &workspace_root,
+        Arc::clone(&progress),
+        &session_id,
+        &temp_dir,
+    );
 
     WorkspaceCommandService::scan(
         &api,
@@ -438,7 +459,8 @@ fn current_snapshot_matches_workspace_root_hash() {
     .unwrap();
 
     let scan_state = read_workspace_scan_state(&api, &workspace_root).unwrap();
-    let traversal = TraversalStore::new(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
+    let traversal =
+        TraversalStore::new(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
     replay(&progress, &traversal);
     let query = TraversalQuery::new(&traversal);
     let source = source_ref(&workspace_root).unwrap();
@@ -603,7 +625,13 @@ fn graph_runtime_repeated_catch_up_is_idempotent() {
         .unwrap();
 
     assert_eq!(current.target.object_id, hex::encode(frame_id));
-    assert_eq!(query.anchor_history(&head_ref(node_id, "analysis")).unwrap().len(), 1);
+    assert_eq!(
+        query
+            .anchor_history(&head_ref(node_id, "analysis"))
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(traversal.last_reduced_seq().unwrap(), 1);
 }
 
@@ -616,12 +644,12 @@ fn run_context_scan_bootstraps_graph_runtime() {
         std::fs::write(workspace_root.join("doc.txt"), "hello").unwrap();
 
         let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
-        run_context.execute(&Commands::Scan { force: true }).unwrap();
+        run_context
+            .execute(&Commands::Scan { force: true })
+            .unwrap();
 
-        let traversal = TraversalStore::new(
-            run_context.progress_runtime().store().db().clone(),
-        )
-        .unwrap();
+        let traversal =
+            TraversalStore::new(run_context.progress_runtime().store().db().clone()).unwrap();
         let source = source_ref(&workspace_root).unwrap();
         let current = TraversalQuery::new(&traversal)
             .current_snapshot_for_source(&source)

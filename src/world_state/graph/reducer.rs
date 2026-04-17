@@ -160,6 +160,7 @@ impl TraversalReducer {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn select_anchor(
         &mut self,
         store: &TraversalStore,

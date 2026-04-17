@@ -1,7 +1,7 @@
 # Event Extraction Plan
 
 Date: 2026-04-17
-Status: active
+Status: completed
 Scope: phased implementation plan for extracting canonical event ownership into `events`
 
 ## Overview
@@ -258,6 +258,34 @@ Verification:
 - [Multi-Domain Spine](multi_domain_spine.md)
 
 ## Exception List
+
+- Phase 4 parity verification used integration targets instead of `--lib` because
+  `task_executor_publishes_canonical_events` and `projection_matches_live_execution`
+  live in `tests/integration`
+- Phase 5 replay verification used the integration target for
+  `replay_rebuilds_execution_projection` for the same reason
+- Phase 6 downstream verification used the integration target for
+  `telemetry_is_downstream_only`
+
+## Gate Evidence
+
+Completed commits:
+
+1. `84ac3cf` `design(events): define event extraction execution plan`
+2. `0d6a85e` `refactor(events): add canonical event contracts and compatibility shims`
+3. `6e35861` `refactor(session): split minimal session lifecycle from telemetry`
+4. `8f62b12` `refactor(events): extract canonical append and replay runtime`
+5. `963b9c9` `refactor(events): cut producers over to canonical event runtime`
+6. `d390500` `refactor(events): retarget replay consumers to canonical store`
+7. `9146b12` `refactor(telemetry): reduce telemetry to downstream compatibility`
+
+Final verification completed after Phase 6:
+
+- full `cargo test`
+- `cargo test --bin meld`
+- `cargo fmt --check`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- final telemetry search gates in `src`
 
 - telemetry compatibility names may remain temporarily during migration
 - downstream renaming such as `observability` is out of scope for this plan

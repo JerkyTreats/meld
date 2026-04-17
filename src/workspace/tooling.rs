@@ -194,6 +194,7 @@ pub fn handle_validate_command(
     Ok(format_validate_result_text(&result))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_watch_command(
     api: Arc<ContextApi>,
     workspace_root: &Path,

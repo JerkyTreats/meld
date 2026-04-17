@@ -24,6 +24,7 @@ impl EventBus {
         (Self { sender }, receiver)
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn emit_envelope(
         &self,
         envelope: EventEnvelope,
@@ -31,6 +32,7 @@ impl EventBus {
         self.sender.try_send(envelope)
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn emit(
         &self,
         session: impl Into<String>,

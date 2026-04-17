@@ -2,16 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::session::policy::SessionStatus;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionKind {
+    #[default]
     Command,
-}
-
-impl Default for SessionKind {
-    fn default() -> Self {
-        Self::Command
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

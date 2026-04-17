@@ -197,9 +197,10 @@ pub fn find_traversal_prerequisite_expansion(
     package_spec
         .expansions
         .iter()
-        .find_map(|expansion| match expansion {
-            PackageExpansionSpec::TraversalPrerequisite(spec) => Some(spec),
+        .map(|expansion| match expansion {
+            PackageExpansionSpec::TraversalPrerequisite(spec) => spec,
         })
+        .next()
         .ok_or_else(|| {
             ApiError::ConfigError(format!(
                 "Package '{}' is missing traversal prerequisite expansion",
