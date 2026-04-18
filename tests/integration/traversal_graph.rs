@@ -18,6 +18,7 @@ use meld::workflow::events::{workflow_turn_completed_envelope, ExecutionWorkflow
 use meld::workspace::events::source_ref;
 use meld::workspace::{read_workspace_scan_state, WorkspaceCommandService};
 use meld::world_state::graph::compat::LegacyClaimAdapter;
+use meld::world_state::graph::events::AnchorSelectedEventData;
 use meld::world_state::graph::reducer::TraversalReducer;
 use meld::world_state::{
     GraphRuntime, GraphWalkSpec, TraversalDirection, TraversalQuery, TraversalStore,
@@ -617,6 +618,15 @@ fn graph_runtime_repeated_catch_up_is_idempotent() {
     assert_eq!(runtime.catch_up().unwrap(), 1);
     assert_eq!(runtime.catch_up().unwrap(), 0);
 
+    let derived_events: Vec<_> = progress
+        .store()
+        .read_all_events_after(0)
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.event_type == "world_state.anchor_selected")
+        .collect();
+    assert_eq!(derived_events.len(), 1);
+
     let traversal = runtime.traversal_store();
     let query = TraversalQuery::new(traversal.as_ref());
     let current = query
@@ -632,7 +642,74 @@ fn graph_runtime_repeated_catch_up_is_idempotent() {
             .len(),
         1
     );
-    assert_eq!(traversal.last_reduced_seq().unwrap(), 1);
+    assert_eq!(traversal.last_reduced_seq().unwrap(), 2);
+}
+
+#[test]
+fn graph_runtime_persists_anchor_selected_events_idempotently() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(temp_dir.path().join("spine")).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
+    let runtime = GraphRuntime::new(db).unwrap();
+    let node_id = [26u8; 32];
+    let frame_id = [27u8; 32];
+
+    append(
+        &progress,
+        head_selected_envelope("session_a", node_id, "analysis", frame_id, None),
+        1,
+    );
+
+    assert_eq!(runtime.catch_up().unwrap(), 1);
+    assert_eq!(runtime.catch_up().unwrap(), 0);
+
+    let derived: Vec<_> = progress
+        .store()
+        .read_all_events_after(0)
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.event_type == "world_state.anchor_selected")
+        .collect();
+    assert_eq!(derived.len(), 1);
+
+    let data: AnchorSelectedEventData = serde_json::from_value(derived[0].data.clone()).unwrap();
+    assert_eq!(derived[0].record_id.as_deref(), Some(data.fact_id.as_str()));
+}
+
+#[test]
+fn derived_anchor_events_are_readable_from_spine_after_restart() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("spine");
+    let db = sled::open(&db_path).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
+    let runtime = GraphRuntime::new(db.clone()).unwrap();
+    let node_id = [28u8; 32];
+    let frame_id = [29u8; 32];
+
+    append(
+        &progress,
+        head_selected_envelope("session_a", node_id, "analysis", frame_id, None),
+        1,
+    );
+
+    assert_eq!(runtime.catch_up().unwrap(), 1);
+    drop(runtime);
+    drop(progress);
+    drop(db);
+
+    let reopened_db = sled::open(&db_path).unwrap();
+    let reopened_progress = Arc::new(ProgressRuntime::new(reopened_db.clone()).unwrap());
+    let reopened_runtime = GraphRuntime::new(reopened_db).unwrap();
+
+    let derived: Vec<_> = reopened_progress
+        .store()
+        .read_all_events_after(0)
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.event_type == "world_state.anchor_selected")
+        .collect();
+    assert_eq!(derived.len(), 1);
+    assert_eq!(reopened_runtime.catch_up().unwrap(), 0);
 }
 
 #[test]

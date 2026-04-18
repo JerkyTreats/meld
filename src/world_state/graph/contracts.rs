@@ -57,6 +57,8 @@ pub struct AnchorSelectionRecord {
     pub selected_at_seq: u64,
     pub ended_at_seq: Option<u64>,
     pub ended_by_anchor_id: Option<AnchorId>,
+    #[serde(default)]
+    pub ended_by_fact_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +75,8 @@ pub struct TraversalFactRecord {
 pub struct AnchorProvenanceRecord {
     pub anchor_id: AnchorId,
     pub source_fact_ids: Vec<String>,
+    #[serde(default)]
+    pub derived_fact_ids: Vec<String>,
     pub objects: Vec<DomainObjectRef>,
     pub relations: Vec<EventRelation>,
 }
@@ -128,6 +132,7 @@ mod tests {
             selected_at_seq: 1,
             ended_at_seq: None,
             ended_by_anchor_id: None,
+            ended_by_fact_id: None,
         };
 
         let serialized = serde_json::to_string(&record).unwrap();

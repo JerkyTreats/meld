@@ -355,9 +355,11 @@ impl TraversalStore {
                 relations.extend(fact.relations);
             }
         }
+        let derived_fact_ids = derived_fact_ids_for_anchor(&anchor);
         Ok(AnchorProvenanceRecord {
             anchor_id: anchor_id.to_string(),
             source_fact_ids: anchor.source_fact_ids,
+            derived_fact_ids,
             objects: objects.into_iter().collect(),
             relations,
         })
@@ -611,6 +613,14 @@ fn encode_subject_perspective_key(
     perspective: &crate::world_state::graph::contracts::PerspectiveKey,
 ) -> String {
     format!("{}::{}", subject.index_key(), perspective.index_key())
+}
+
+fn derived_fact_ids_for_anchor(anchor: &AnchorSelectionRecord) -> Vec<String> {
+    let mut derived = vec![anchor.created_by_fact_id.clone()];
+    if let Some(ended_by_fact_id) = &anchor.ended_by_fact_id {
+        derived.push(ended_by_fact_id.clone());
+    }
+    derived
 }
 
 fn to_storage_io(err: sled::Error) -> StorageError {

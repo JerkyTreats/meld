@@ -15,6 +15,7 @@ pub struct TraversalReducer {
     pub lineage: AnchorLineageProjection,
     pub emitted_envelopes: Vec<EventEnvelope>,
     pub applied_events: usize,
+    pub last_seen_seq: u64,
 }
 
 impl TraversalReducer {
@@ -28,14 +29,14 @@ impl TraversalReducer {
             lineage: AnchorLineageProjection::default(),
             emitted_envelopes: Vec::new(),
             applied_events: 0,
+            last_seen_seq: after_seq,
         };
-        let mut last_reduced_seq = after_seq;
         for event in spine.read_all_events_after(after_seq)? {
-            reducer.apply_event(store, &event)?;
-            last_reduced_seq = event.seq;
-            reducer.applied_events += 1;
+            reducer.last_seen_seq = event.seq;
+            if reducer.apply_event(store, &event)? {
+                reducer.applied_events += 1;
+            }
         }
-        store.set_last_reduced_seq(last_reduced_seq)?;
         store.flush()?;
         Ok(reducer)
     }
@@ -44,9 +45,9 @@ impl TraversalReducer {
         &mut self,
         store: &TraversalStore,
         event: &EventRecord,
-    ) -> Result<(), StorageError> {
-        if !is_traversal_relevant(event) {
-            return Ok(());
+    ) -> Result<bool, StorageError> {
+        if !is_traversal_source_event(event) {
+            return Ok(false);
         }
 
         let source_fact_id = format!("spine::{}", event.seq);
@@ -63,11 +64,11 @@ impl TraversalReducer {
         match event.event_type.as_str() {
             "workspace_fs.snapshot_selected" => {
                 let Some(source) = find_object_ref(&event.objects, "workspace_fs", "source") else {
-                    return Ok(());
+                    return Ok(true);
                 };
                 let Some(snapshot) = find_object_ref(&event.objects, "workspace_fs", "snapshot")
                 else {
-                    return Ok(());
+                    return Ok(true);
                 };
                 let anchor_ref =
                     DomainObjectRef::new("workspace_fs", "snapshot_head", &source.object_id)?;
@@ -84,13 +85,13 @@ impl TraversalReducer {
             }
             "context.head_selected" => {
                 let Some(head_ref) = find_object_ref(&event.objects, "context", "head") else {
-                    return Ok(());
+                    return Ok(true);
                 };
                 let Some(subject) = find_object_ref(&event.objects, "workspace_fs", "node") else {
-                    return Ok(());
+                    return Ok(true);
                 };
                 let Some(target) = find_object_ref(&event.objects, "context", "frame") else {
-                    return Ok(());
+                    return Ok(true);
                 };
                 let frame_type = head_ref
                     .object_id
@@ -110,7 +111,7 @@ impl TraversalReducer {
             }
             "context.head_tombstoned" => {
                 let Some(head_ref) = find_object_ref(&event.objects, "context", "head") else {
-                    return Ok(());
+                    return Ok(true);
                 };
                 if let Some(current) = store.current_anchor(&head_ref)? {
                     let mut ended = current.clone();
@@ -128,15 +129,15 @@ impl TraversalReducer {
             "execution.task.artifact_emitted" => {
                 let Some(task_run) = find_object_ref(&event.objects, "execution", "task_run")
                 else {
-                    return Ok(());
+                    return Ok(true);
                 };
                 let Some(artifact) = find_object_ref(&event.objects, "execution", "artifact")
                 else {
-                    return Ok(());
+                    return Ok(true);
                 };
                 let Some(slot_ref) = find_object_ref(&event.objects, "execution", "artifact_slot")
                 else {
-                    return Ok(());
+                    return Ok(true);
                 };
                 let artifact_type_id = slot_ref
                     .object_id
@@ -157,7 +158,7 @@ impl TraversalReducer {
             _ => {}
         }
 
-        Ok(())
+        Ok(true)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -192,8 +193,11 @@ impl TraversalReducer {
             return Ok(());
         }
         if let Some(mut current) = store.current_anchor(&anchor_ref)? {
+            let superseded_fact_id =
+                format!("world_state::anchor_superseded::{}", current.anchor_id);
             current.ended_at_seq = Some(event.seq);
             current.ended_by_anchor_id = Some(anchor_id.clone());
+            current.ended_by_fact_id = Some(superseded_fact_id.clone());
             store.put_anchor(&current)?;
             store.put_anchor_lineage(&current.anchor_id, &anchor_id)?;
             self.current_anchors.end(&anchor_ref.index_key(), event.seq);
@@ -202,7 +206,7 @@ impl TraversalReducer {
             self.emitted_envelopes.push(anchor_superseded_envelope(
                 &event.session,
                 AnchorSupersededEventData {
-                    fact_id: format!("world_state::anchor_superseded::{}", current.anchor_id),
+                    fact_id: superseded_fact_id,
                     anchor_id: current.anchor_id.clone(),
                     anchor_ref: anchor_ref.clone(),
                     superseded_by_anchor_id: anchor_id.clone(),
@@ -223,6 +227,7 @@ impl TraversalReducer {
             selected_at_seq: event.seq,
             ended_at_seq: None,
             ended_by_anchor_id: None,
+            ended_by_fact_id: None,
         };
         store.put_anchor(&record)?;
         store.set_current_anchor(&record)?;
@@ -247,7 +252,7 @@ impl TraversalReducer {
     }
 }
 
-fn is_traversal_relevant(event: &EventRecord) -> bool {
+fn is_traversal_source_event(event: &EventRecord) -> bool {
     matches!(
         event.domain_id.as_str(),
         "workspace_fs" | "context" | "execution"

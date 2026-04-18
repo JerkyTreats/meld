@@ -122,6 +122,7 @@ impl EventStore {
     }
 
     fn write_event(&self, event: &EventRecord) -> Result<(), StorageError> {
+        self.advance_next_seq_past(event.seq)?;
         let key = encode_spine_key(event.seq);
         let index_key = encode_session_event_index_key(&event.session, event.seq);
         let value = serde_json::to_vec(event).map_err(to_storage_data)?;
@@ -275,6 +276,15 @@ impl EventStore {
             return Ok(None);
         };
         Ok(Some(decode_seq(&raw)?))
+    }
+
+    fn advance_next_seq_past(&self, seq: u64) -> Result<(), StorageError> {
+        let mut meta = self.get_spine_meta()?.unwrap_or(SpineMeta { next_seq: 1 });
+        if meta.next_seq <= seq {
+            meta.next_seq = seq + 1;
+            self.put_spine_meta(&meta)?;
+        }
+        Ok(())
     }
 }
 

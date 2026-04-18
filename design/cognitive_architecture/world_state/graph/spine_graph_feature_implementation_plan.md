@@ -72,11 +72,14 @@ Goal:
 
 Status:
 
-- pending
+- completed
 
 Verification evidence:
 
-- pending
+- Gate pass via `cargo test traversal_graph --tests`
+- Gate pass via `cargo test world_state::graph --lib`
+- Gate pass via `cargo test event_spine --tests`
+- Gate pass via manual diff review of checkpoint 3 files before commit
 
 ## Checkpoint 4
 

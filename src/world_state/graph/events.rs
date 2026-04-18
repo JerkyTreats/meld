@@ -54,6 +54,7 @@ pub fn anchor_selected_envelope(session_id: &str, data: AnchorSelectedEventData)
         vec![data.anchor_ref, data.subject, data.target],
         Vec::new(),
     )
+    .with_record_id(data.fact_id)
 }
 
 pub fn anchor_superseded_envelope(
@@ -68,4 +69,5 @@ pub fn anchor_superseded_envelope(
         vec![data.anchor_ref],
         Vec::new(),
     )
+    .with_record_id(data.fact_id)
 }

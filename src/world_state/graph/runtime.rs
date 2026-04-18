@@ -30,6 +30,14 @@ impl GraphRuntime {
             self.traversal.as_ref(),
             after_seq,
         )?;
+        let mut last_persisted_seq = reducer.last_seen_seq;
+        for envelope in reducer.emitted_envelopes {
+            let seq = self.spine.append_envelope_idempotent(envelope)?;
+            last_persisted_seq = last_persisted_seq.max(seq);
+        }
+        self.spine.flush()?;
+        self.traversal.set_last_reduced_seq(last_persisted_seq)?;
+        self.traversal.flush()?;
         Ok(reducer.applied_events)
     }
 
