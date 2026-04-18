@@ -77,6 +77,13 @@ impl ProgressRuntime {
         self.events.emit_envelope(envelope)
     }
 
+    pub fn emit_envelope_idempotent(
+        &self,
+        envelope: crate::events::EventEnvelope,
+    ) -> Result<(), ApiError> {
+        self.events.emit_envelope_idempotent(envelope)
+    }
+
     pub fn emit_event_best_effort(&self, session_id: &str, event_type: &str, data: Value) {
         if let Err(err) = self.emit_event(session_id, event_type, data) {
             warn!(
@@ -125,6 +132,19 @@ impl ProgressRuntime {
                 event_type = %event_type,
                 error = %err,
                 "failed to emit envelope"
+            );
+        }
+    }
+
+    pub fn emit_envelope_idempotent_best_effort(&self, envelope: crate::events::EventEnvelope) {
+        let session_id = envelope.session.clone();
+        let event_type = envelope.event_type.clone();
+        if let Err(err) = self.emit_envelope_idempotent(envelope) {
+            warn!(
+                session_id = %session_id,
+                event_type = %event_type,
+                error = %err,
+                "failed to emit idempotent envelope"
             );
         }
     }

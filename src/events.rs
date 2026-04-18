@@ -22,6 +22,8 @@ pub struct EventRecord {
     pub ts: String,
     #[serde(default)]
     pub recorded_at: String,
+    #[serde(default)]
+    pub record_id: Option<String>,
     pub session: String,
     pub seq: u64,
     #[serde(default = "default_domain_id")]
@@ -45,6 +47,7 @@ pub struct EventRecord {
 pub struct EventEnvelope {
     pub ts: String,
     pub recorded_at: String,
+    pub record_id: Option<String>,
     pub session: String,
     pub domain_id: String,
     pub stream_id: String,
@@ -86,6 +89,7 @@ impl EventEnvelope {
         Self {
             ts,
             recorded_at,
+            record_id: None,
             session: session.into(),
             domain_id: domain_id.into(),
             stream_id: stream_id.into(),
@@ -126,6 +130,7 @@ impl EventEnvelope {
         Self {
             ts: ts.clone(),
             recorded_at: ts,
+            record_id: None,
             session: session.into(),
             domain_id: domain_id.into(),
             stream_id: stream_id.into(),
@@ -152,6 +157,11 @@ impl EventEnvelope {
         self.occurred_at = Some(occurred_at.into());
         self
     }
+
+    pub fn with_record_id(mut self, record_id: impl Into<String>) -> Self {
+        self.record_id = Some(record_id.into());
+        self
+    }
 }
 
 impl EventRecord {
@@ -159,6 +169,7 @@ impl EventRecord {
         Self {
             ts: envelope.ts,
             recorded_at: envelope.recorded_at,
+            record_id: envelope.record_id,
             session: envelope.session,
             seq,
             domain_id: envelope.domain_id,

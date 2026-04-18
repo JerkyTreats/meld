@@ -72,6 +72,10 @@ impl EventRuntime {
         Ok(())
     }
 
+    pub fn emit_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<(), ApiError> {
+        self.emit_envelope(envelope)
+    }
+
     pub fn emit_envelopes<I>(&self, envelopes: I) -> Result<(), ApiError>
     where
         I: IntoIterator<Item = EventEnvelope>,
@@ -82,6 +86,13 @@ impl EventRuntime {
         self.ingestor.drain()?;
         self.store.flush()?;
         Ok(())
+    }
+
+    pub fn emit_envelopes_idempotent<I>(&self, envelopes: I) -> Result<(), ApiError>
+    where
+        I: IntoIterator<Item = EventEnvelope>,
+    {
+        self.emit_envelopes(envelopes)
     }
 
     pub fn emit_event_best_effort(&self, session_id: &str, event_type: &str, data: Value) {
@@ -132,6 +143,19 @@ impl EventRuntime {
                 event_type = %event_type,
                 error = %err,
                 "failed to emit envelope"
+            );
+        }
+    }
+
+    pub fn emit_envelope_idempotent_best_effort(&self, envelope: EventEnvelope) {
+        let session_id = envelope.session.clone();
+        let event_type = envelope.event_type.clone();
+        if let Err(err) = self.emit_envelope_idempotent(envelope) {
+            warn!(
+                session_id = %session_id,
+                event_type = %event_type,
+                error = %err,
+                "failed to emit idempotent envelope"
             );
         }
     }

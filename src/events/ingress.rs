@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::error::StorageError;
 use crate::events::store::EventStore;
-use crate::events::{EventEnvelope, EventRecord};
+use crate::events::EventEnvelope;
 
 const DEFAULT_EVENT_BUS_CAPACITY: usize = 1024;
 
@@ -64,9 +64,7 @@ impl EventIngestor {
     }
 
     fn ingest_one(&self, envelope: EventEnvelope) -> Result<(), StorageError> {
-        let seq = self.store.allocate_next_seq()?;
-        let event = EventRecord::from_envelope(envelope, seq);
-        self.store.append_event(&event)?;
+        self.store.append_envelope_idempotent(envelope)?;
         Ok(())
     }
 }

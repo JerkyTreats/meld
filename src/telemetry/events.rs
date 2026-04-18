@@ -189,6 +189,7 @@ mod tests {
         let event = ProgressEvent {
             ts: "2026-02-14T12:34:56.789Z".to_string(),
             recorded_at: "2026-02-14T12:34:56.789Z".to_string(),
+            record_id: None,
             session: "s1".to_string(),
             seq: 1,
             domain_id: "telemetry".to_string(),

@@ -105,6 +105,7 @@ mod tests {
         let requested = EventRecord {
             ts: "2026-01-01T00:00:00.000Z".to_string(),
             recorded_at: "2026-01-01T00:00:00.000Z".to_string(),
+            record_id: None,
             session: "session".to_string(),
             seq: 1,
             domain_id: "execution".to_string(),

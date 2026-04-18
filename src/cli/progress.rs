@@ -584,6 +584,7 @@ mod tests {
         EventRecord {
             ts: "2026-03-07T00:00:00.000Z".to_string(),
             recorded_at: "2026-03-07T00:00:00.000Z".to_string(),
+            record_id: None,
             session: "s1".to_string(),
             seq,
             domain_id: "telemetry".to_string(),

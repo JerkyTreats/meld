@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 
 use crate::error::StorageError;
+use crate::events::EventEnvelope;
 use crate::events::EventRecord;
 use crate::session::contracts::{SessionMeta as Meta, SessionRecord as Record};
 use crate::session::storage::SessionStore;
@@ -13,6 +14,7 @@ const TREE_EVENTS: &str = "obs_events";
 const TREE_SPINE_EVENTS: &str = "obs_spine_events";
 const TREE_SESSION_EVENT_INDEX: &str = "obs_session_event_index";
 const TREE_SPINE_META: &str = "obs_spine_meta";
+const TREE_SPINE_RECORD_INDEX: &str = "obs_spine_record_index";
 const EVENT_KEY_PAD: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +30,7 @@ pub struct EventStore {
     spine_events: Tree,
     session_event_index: Tree,
     spine_meta: Tree,
+    spine_record_index: Tree,
 }
 
 impl EventStore {
@@ -38,6 +41,9 @@ impl EventStore {
             .open_tree(TREE_SESSION_EVENT_INDEX)
             .map_err(to_storage_io)?;
         let spine_meta = db.open_tree(TREE_SPINE_META).map_err(to_storage_io)?;
+        let spine_record_index = db
+            .open_tree(TREE_SPINE_RECORD_INDEX)
+            .map_err(to_storage_io)?;
         Ok(Self {
             session_store: SessionStore::new(db.clone())?,
             db,
@@ -45,6 +51,7 @@ impl EventStore {
             spine_events,
             session_event_index,
             spine_meta,
+            spine_record_index,
         })
     }
 
@@ -77,6 +84,44 @@ impl EventStore {
     }
 
     pub fn append_event(&self, event: &EventRecord) -> Result<(), StorageError> {
+        self.write_event(event)?;
+        Ok(())
+    }
+
+    pub fn append_event_idempotent(&self, event: &EventRecord) -> Result<u64, StorageError> {
+        let Some(record_id) = event.record_id.as_deref() else {
+            self.append_event(event)?;
+            return Ok(event.seq);
+        };
+
+        if let Some(existing_seq) = self.lookup_record_seq(record_id)? {
+            return Ok(existing_seq);
+        }
+
+        self.write_event(event)?;
+        Ok(event.seq)
+    }
+
+    pub fn append_envelope(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
+        let seq = self.allocate_next_seq()?;
+        let event = EventRecord::from_envelope(envelope, seq);
+        self.append_event(&event)?;
+        Ok(seq)
+    }
+
+    pub fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
+        if let Some(record_id) = envelope.record_id.as_deref() {
+            if let Some(existing_seq) = self.lookup_record_seq(record_id)? {
+                return Ok(existing_seq);
+            }
+        }
+
+        let seq = self.allocate_next_seq()?;
+        let event = EventRecord::from_envelope(envelope, seq);
+        self.append_event_idempotent(&event)
+    }
+
+    fn write_event(&self, event: &EventRecord) -> Result<(), StorageError> {
         let key = encode_spine_key(event.seq);
         let index_key = encode_session_event_index_key(&event.session, event.seq);
         let value = serde_json::to_vec(event).map_err(to_storage_data)?;
@@ -86,6 +131,11 @@ impl EventStore {
         self.session_event_index
             .insert(index_key.as_bytes(), value)
             .map_err(to_storage_io)?;
+        if let Some(record_id) = event.record_id.as_deref() {
+            self.spine_record_index
+                .insert(record_id.as_bytes(), &encode_seq(event.seq))
+                .map_err(to_storage_io)?;
+        }
         Ok(())
     }
 
@@ -162,26 +212,8 @@ impl EventStore {
             self.legacy_events.remove(key).map_err(to_storage_io)?;
         }
 
-        let session_keys: Vec<(Vec<u8>, u64)> = self
-            .session_event_index
-            .scan_prefix(prefix.as_bytes())
-            .filter_map(|result| {
-                result.ok().and_then(|(key, value)| {
-                    decode_event(&value)
-                        .ok()
-                        .map(|event| (key.to_vec(), event.seq))
-                })
-            })
-            .collect();
-        for (key, seq) in session_keys {
-            self.session_event_index
-                .remove(key)
-                .map_err(to_storage_io)?;
-            self.spine_events
-                .remove(encode_spine_key(seq).as_bytes())
-                .map_err(to_storage_io)?;
-        }
-
+        // Session retention only removes session metadata and legacy event rows.
+        // Canonical spine history remains append only even after session cleanup.
         Ok(())
     }
 
@@ -233,6 +265,17 @@ impl EventStore {
             .map_err(to_storage_io)?;
         Ok(())
     }
+
+    fn lookup_record_seq(&self, record_id: &str) -> Result<Option<u64>, StorageError> {
+        let Some(raw) = self
+            .spine_record_index
+            .get(record_id.as_bytes())
+            .map_err(to_storage_io)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(decode_seq(&raw)?))
+    }
 }
 
 fn encode_legacy_event_key(session_id: &str, seq: u64) -> String {
@@ -245,6 +288,20 @@ fn encode_spine_key(seq: u64) -> String {
 
 fn encode_session_event_index_key(session_id: &str, seq: u64) -> String {
     format!("{session_id}:{seq:0EVENT_KEY_PAD$}")
+}
+
+fn encode_seq(seq: u64) -> [u8; 8] {
+    seq.to_be_bytes()
+}
+
+fn decode_seq(raw: &[u8]) -> Result<u64, StorageError> {
+    let bytes: [u8; 8] = raw.try_into().map_err(|_| {
+        StorageError::IoError(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid spine record index payload",
+        ))
+    })?;
+    Ok(u64::from_be_bytes(bytes))
 }
 
 fn decode_event(raw: &[u8]) -> Result<EventRecord, StorageError> {
@@ -282,6 +339,7 @@ mod tests {
         let e2 = EventRecord {
             ts: "2".to_string(),
             recorded_at: "2".to_string(),
+            record_id: None,
             session: session.to_string(),
             seq: 2,
             domain_id: "telemetry".to_string(),
@@ -296,6 +354,7 @@ mod tests {
         let e1 = EventRecord {
             ts: "1".to_string(),
             recorded_at: "1".to_string(),
+            record_id: None,
             session: session.to_string(),
             seq: 1,
             domain_id: "telemetry".to_string(),
@@ -323,6 +382,7 @@ mod tests {
         let e1 = EventRecord {
             ts: "1".to_string(),
             recorded_at: "1".to_string(),
+            record_id: None,
             session: "s1".to_string(),
             seq: 1,
             domain_id: "telemetry".to_string(),
@@ -337,6 +397,7 @@ mod tests {
         let e2 = EventRecord {
             ts: "2".to_string(),
             recorded_at: "2".to_string(),
+            record_id: None,
             session: "s2".to_string(),
             seq: 2,
             domain_id: "telemetry".to_string(),
@@ -370,6 +431,7 @@ mod tests {
         let raw = serde_json::to_vec(&EventRecord {
             ts: "1".to_string(),
             recorded_at: String::new(),
+            record_id: None,
             session: session.to_string(),
             seq: 1,
             domain_id: String::new(),
