@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -8,10 +8,9 @@ use crate::branches::contracts::BranchCatalogEntry;
 use crate::branches::locator;
 use crate::branches::runtime::BranchRuntime;
 use crate::error::{ApiError, StorageError};
-use crate::events::DomainObjectRef;
+use crate::events::{DomainObjectRef, EventRelation};
 use crate::world_state::{
-    GraphWalkResult, GraphWalkSpec, TraversalDirection, TraversalFactRecord, TraversalQuery,
-    TraversalStore,
+    GraphWalkSpec, TraversalDirection, TraversalFactRecord, TraversalQuery, TraversalStore,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,15 +71,50 @@ pub struct BranchGraphStatusOutput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FederatedObjectPresence {
+    pub branch_id: String,
+    pub canonical_locator: String,
+    pub object: DomainObjectRef,
+    pub first_seen_seq: u64,
+    pub last_seen_seq: u64,
+    pub current_in_branch: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FederatedTraversalFact {
+    pub branch_id: String,
+    pub canonical_locator: String,
+    pub federated_fact_id: String,
+    pub fact: TraversalFactRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FederatedRelationRecord {
+    pub branch_id: String,
+    pub canonical_locator: String,
+    pub federated_fact_id: String,
+    pub fact_id: String,
+    pub seq: u64,
+    pub relation: EventRelation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FederatedGraphWalkResult {
+    pub visited_objects: Vec<FederatedObjectPresence>,
+    pub visited_facts: Vec<FederatedTraversalFact>,
+    pub traversed_relations: Vec<FederatedRelationRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FederatedNeighborsOutput {
     pub metadata: FederatedReadMetadata,
-    pub neighbors: Vec<DomainObjectRef>,
+    pub neighbors: Vec<FederatedObjectPresence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FederatedWalkOutput {
     pub metadata: FederatedReadMetadata,
-    pub walk: GraphWalkResult,
+    pub walk: FederatedGraphWalkResult,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -160,11 +194,16 @@ impl BranchQueryRuntime {
         let selection = self.select_branches(scope, workspace_root)?;
         let strict_scope = selection.scope.is_strict();
         let mut metadata = self.base_metadata(&selection);
-        let mut neighbors = BTreeSet::new();
+        let mut neighbors = Vec::new();
 
         for entry in &selection.entries {
             match self.query_branch(entry, |query| {
-                query.neighbors(object, direction, relation_types, current_only)
+                let branch_neighbors =
+                    query.neighbors(object, direction, relation_types, current_only)?;
+                branch_neighbors
+                    .into_iter()
+                    .map(|neighbor| object_presence(entry, query, neighbor))
+                    .collect::<Result<Vec<_>, StorageError>>()
             }) {
                 Ok(branch_neighbors) => {
                     metadata.readable_branch_ids.push(entry.branch_id.clone());
@@ -186,9 +225,14 @@ impl BranchQueryRuntime {
         }
 
         metadata.readable_branch_ids.sort();
+        neighbors.sort_by(|left, right| {
+            left.branch_id
+                .cmp(&right.branch_id)
+                .then(left.object.index_key().cmp(&right.object.index_key()))
+        });
         Ok(FederatedNeighborsOutput {
             metadata,
-            neighbors: neighbors.into_iter().collect(),
+            neighbors,
         })
     }
 
@@ -202,19 +246,41 @@ impl BranchQueryRuntime {
         let selection = self.select_branches(scope, workspace_root)?;
         let strict_scope = selection.scope.is_strict();
         let mut metadata = self.base_metadata(&selection);
-        let mut visited_objects = BTreeSet::new();
-        let mut visited_facts = BTreeMap::new();
+        let mut visited_objects = Vec::new();
+        let mut visited_facts = Vec::new();
         let mut traversed_relations = Vec::new();
 
         for entry in &selection.entries {
-            match self.query_branch(entry, |query| query.walk(start, spec)) {
-                Ok(branch_walk) => {
+            match self.query_branch(entry, |query| {
+                let mut branch_spec = spec.clone();
+                branch_spec.include_facts = true;
+                let branch_walk = query.walk(start, &branch_spec)?;
+                let object_rows = branch_walk
+                    .visited_objects
+                    .iter()
+                    .cloned()
+                    .map(|object| object_presence(entry, query, object))
+                    .collect::<Result<Vec<_>, StorageError>>()?;
+                let fact_rows = branch_walk
+                    .visited_facts
+                    .iter()
+                    .cloned()
+                    .map(|fact| federated_fact(entry, fact))
+                    .collect::<Vec<_>>();
+                let relation_rows = federated_relations(
+                    entry,
+                    &branch_walk.visited_facts,
+                    &branch_walk.traversed_relations,
+                );
+                Ok((object_rows, fact_rows, relation_rows))
+            }) {
+                Ok((branch_objects, branch_facts, branch_relations)) => {
                     metadata.readable_branch_ids.push(entry.branch_id.clone());
-                    visited_objects.extend(branch_walk.visited_objects);
-                    for fact in branch_walk.visited_facts {
-                        visited_facts.insert(fact.fact_id.clone(), fact);
+                    visited_objects.extend(branch_objects);
+                    if spec.include_facts {
+                        visited_facts.extend(branch_facts);
                     }
-                    traversed_relations.extend(branch_walk.traversed_relations);
+                    traversed_relations.extend(branch_relations);
                 }
                 Err(err) => {
                     if strict_scope {
@@ -232,18 +298,23 @@ impl BranchQueryRuntime {
         }
 
         metadata.readable_branch_ids.sort();
-        let mut facts: Vec<TraversalFactRecord> = visited_facts.into_values().collect();
-        facts.sort_by(|left, right| {
-            left.seq
-                .cmp(&right.seq)
-                .then(left.fact_id.cmp(&right.fact_id))
+        visited_objects.sort_by(|left, right| {
+            left.branch_id
+                .cmp(&right.branch_id)
+                .then(left.object.index_key().cmp(&right.object.index_key()))
+        });
+        visited_facts.sort_by(|left, right| {
+            left.branch_id
+                .cmp(&right.branch_id)
+                .then(left.fact.seq.cmp(&right.fact.seq))
+                .then(left.fact.fact_id.cmp(&right.fact.fact_id))
         });
 
         Ok(FederatedWalkOutput {
             metadata,
-            walk: GraphWalkResult {
-                visited_objects: visited_objects.into_iter().collect(),
-                visited_facts: facts,
+            walk: FederatedGraphWalkResult {
+                visited_objects,
+                visited_facts,
                 traversed_relations,
             },
         })
@@ -357,6 +428,62 @@ fn read_failure(entry: &BranchCatalogEntry, error: String) -> BranchReadFailure 
         store_path: entry.store_path.clone(),
         error,
     }
+}
+
+fn object_presence(
+    entry: &BranchCatalogEntry,
+    query: &TraversalQuery<'_>,
+    object: DomainObjectRef,
+) -> Result<FederatedObjectPresence, StorageError> {
+    let facts = query.facts_for_object(&object, 0)?;
+    let first_seen_seq = facts.first().map(|fact| fact.seq).unwrap_or_default();
+    let last_seen_seq = facts.last().map(|fact| fact.seq).unwrap_or_default();
+    Ok(FederatedObjectPresence {
+        branch_id: entry.branch_id.clone(),
+        canonical_locator: entry.canonical_locator.clone(),
+        object,
+        first_seen_seq,
+        last_seen_seq,
+        current_in_branch: !facts.is_empty(),
+    })
+}
+
+fn federated_fact(entry: &BranchCatalogEntry, fact: TraversalFactRecord) -> FederatedTraversalFact {
+    let federated_fact_id = federated_fact_id(&entry.branch_id, &fact.fact_id);
+    FederatedTraversalFact {
+        branch_id: entry.branch_id.clone(),
+        canonical_locator: entry.canonical_locator.clone(),
+        federated_fact_id,
+        fact,
+    }
+}
+
+fn federated_relations(
+    entry: &BranchCatalogEntry,
+    facts: &[TraversalFactRecord],
+    traversed_relations: &[EventRelation],
+) -> Vec<FederatedRelationRecord> {
+    let mut rows = Vec::new();
+    for relation in traversed_relations {
+        if let Some(fact) = facts
+            .iter()
+            .find(|fact| fact.relations.iter().any(|candidate| candidate == relation))
+        {
+            rows.push(FederatedRelationRecord {
+                branch_id: entry.branch_id.clone(),
+                canonical_locator: entry.canonical_locator.clone(),
+                federated_fact_id: federated_fact_id(&entry.branch_id, &fact.fact_id),
+                fact_id: fact.fact_id.clone(),
+                seq: fact.seq,
+                relation: relation.clone(),
+            });
+        }
+    }
+    rows
+}
+
+fn federated_fact_id(branch_id: &str, fact_id: &str) -> String {
+    format!("{branch_id}::{fact_id}")
 }
 
 fn no_readable_branches_error(metadata: &FederatedReadMetadata) -> ApiError {

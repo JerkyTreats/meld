@@ -89,11 +89,13 @@ Goal:
 
 Status:
 
-- pending
+- completed
 
 Verification evidence:
 
-- pending
+- Gate pass via `cargo test branches_query --tests`
+- Gate pass via `cargo test branches_runtime --tests`
+- Gate pass via manual diff review of checkpoint 4 files before commit
 
 ## Checkpoint 5
 

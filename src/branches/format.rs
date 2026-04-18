@@ -44,6 +44,7 @@ pub fn format_branch_graph_status_text(output: &BranchGraphStatusOutput) -> Stri
         output.metadata.scope,
         output.branches.len()
     );
+    out.push_str("Federation Readiness: presence-aware\n");
     for branch in &output.branches {
         out.push('\n');
         out.push_str(&format!("Branch ID: {}\n", branch.branch_id));
@@ -69,8 +70,14 @@ pub fn format_federated_neighbors_text(output: &FederatedNeighborsOutput) -> Str
     );
     for neighbor in &output.neighbors {
         out.push_str(&format!(
-            "- {}::{}::{}\n",
-            neighbor.domain_id, neighbor.object_kind, neighbor.object_id
+            "- [{}] {}::{}::{} first={} last={} current={}\n",
+            neighbor.branch_id,
+            neighbor.object.domain_id,
+            neighbor.object.object_kind,
+            neighbor.object.object_id,
+            neighbor.first_seen_seq,
+            neighbor.last_seen_seq,
+            neighbor.current_in_branch
         ));
     }
     out.trim_end().to_string()

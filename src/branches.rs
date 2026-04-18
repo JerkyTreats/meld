@@ -14,11 +14,12 @@ pub mod tooling;
 pub use contracts::{
     BranchAttachmentStatus, BranchCatalog, BranchCatalogEntry, BranchHandle,
     BranchInspectionStatus, BranchKind, BranchManifest, BranchMigrationLane,
-    BranchMigrationLedgerEntry, BranchMigrationStatus, BranchMigrationStepStatus,
-    BranchStatusRow, BranchesStatusOutput, ResolvedBranch,
+    BranchMigrationLedgerEntry, BranchMigrationStatus, BranchMigrationStepStatus, BranchStatusRow,
+    BranchesStatusOutput, ResolvedBranch,
 };
 pub use query::{
     BranchGraphStatusOutput, BranchGraphStatusRow, BranchQueryRuntime, BranchQueryScope,
-    BranchReadFailure, FederatedNeighborsOutput, FederatedReadMetadata, FederatedWalkOutput,
+    BranchReadFailure, FederatedGraphWalkResult, FederatedNeighborsOutput, FederatedObjectPresence,
+    FederatedReadMetadata, FederatedRelationRecord, FederatedTraversalFact, FederatedWalkOutput,
 };
 pub use runtime::BranchRuntime;

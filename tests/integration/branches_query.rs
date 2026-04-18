@@ -1,10 +1,10 @@
 use meld::branches::{BranchQueryRuntime, BranchQueryScope, BranchRuntime};
 use meld::context::events::{frame_added_envelope, head_selected_envelope};
 use meld::context::frame::Basis;
-use meld::task::{TaskEvent, build_execution_task_envelope};
+use meld::task::{build_execution_task_envelope, TaskEvent};
 use meld::telemetry::events::{ProgressEnvelope, ProgressEvent};
 use meld::telemetry::{DomainObjectRef, ProgressRuntime};
-use meld::workflow::events::{ExecutionWorkflowTurnEventData, workflow_turn_completed_envelope};
+use meld::workflow::events::{workflow_turn_completed_envelope, ExecutionWorkflowTurnEventData};
 use meld::world_state::{GraphRuntime, GraphWalkSpec, TraversalDirection, TraversalQuery};
 use tempfile::TempDir;
 
@@ -21,7 +21,11 @@ fn node_ref(node_id: [u8; 32]) -> DomainObjectRef {
     DomainObjectRef::new("workspace_fs", "node", hex::encode(node_id)).unwrap()
 }
 
-fn workflow_turn_data(node_id: [u8; 32], frame_id: [u8; 32], turn_id: &str) -> ExecutionWorkflowTurnEventData {
+fn workflow_turn_data(
+    node_id: [u8; 32],
+    frame_id: [u8; 32],
+    turn_id: &str,
+) -> ExecutionWorkflowTurnEventData {
     ExecutionWorkflowTurnEventData {
         workflow_id: "wf_a".to_string(),
         thread_id: "thread_a".to_string(),
@@ -82,7 +86,10 @@ fn load_branch_graph(
     );
     append(
         &progress,
-        workflow_turn_completed_envelope(session_id, workflow_turn_data(node_id, frame_id, turn_id)),
+        workflow_turn_completed_envelope(
+            session_id,
+            workflow_turn_data(node_id, frame_id, turn_id),
+        ),
         3,
     );
     append(
@@ -97,7 +104,9 @@ fn load_branch_graph(
 
 fn attach_branch(workspace: &TempDir) -> meld::branches::ResolvedBranch {
     let branch_runtime = BranchRuntime::new();
-    let resolved = branch_runtime.resolve_active_branch(workspace.path()).unwrap();
+    let resolved = branch_runtime
+        .resolve_active_branch(workspace.path())
+        .unwrap();
     branch_runtime.attach_branch(workspace.path()).unwrap();
     resolved.resolved().clone()
 }
@@ -112,7 +121,15 @@ fn federated_neighbors_match_single_branch_traversal_query() {
         let store_path = meld::branches::locator::branch_store_path(&branch.data_home_path);
         let node_id = [1u8; 32];
         let frame_id = [2u8; 32];
-        load_branch_graph(&store_path, "session_single", node_id, frame_id, "turn_a", "run_a", "artifact_a");
+        load_branch_graph(
+            &store_path,
+            "session_single",
+            node_id,
+            frame_id,
+            "turn_a",
+            "run_a",
+            "artifact_a",
+        );
 
         let local_neighbors = {
             let local_db = sled::open(&store_path).unwrap();
@@ -133,8 +150,16 @@ fn federated_neighbors_match_single_branch_traversal_query() {
             )
             .unwrap();
 
-        assert_eq!(federated.neighbors, local_neighbors);
-        assert_eq!(federated.metadata.readable_branch_ids, vec![branch.branch_id]);
+        let federated_neighbors: Vec<_> = federated
+            .neighbors
+            .iter()
+            .map(|presence| presence.object.clone())
+            .collect();
+        assert_eq!(federated_neighbors, local_neighbors);
+        assert_eq!(
+            federated.metadata.readable_branch_ids,
+            vec![branch.branch_id]
+        );
     });
 }
 
@@ -148,7 +173,15 @@ fn federated_walk_matches_single_branch_traversal_query() {
         let store_path = meld::branches::locator::branch_store_path(&branch.data_home_path);
         let node_id = [3u8; 32];
         let frame_id = [4u8; 32];
-        load_branch_graph(&store_path, "session_walk", node_id, frame_id, "turn_walk", "run_walk", "artifact_walk");
+        load_branch_graph(
+            &store_path,
+            "session_walk",
+            node_id,
+            frame_id,
+            "turn_walk",
+            "run_walk",
+            "artifact_walk",
+        );
 
         let spec = GraphWalkSpec {
             direction: TraversalDirection::Both,
@@ -175,8 +208,32 @@ fn federated_walk_matches_single_branch_traversal_query() {
             )
             .unwrap();
 
-        assert_eq!(federated.walk, local_walk);
-        assert_eq!(federated.metadata.readable_branch_ids, vec![branch.branch_id]);
+        let federated_objects: Vec<_> = federated
+            .walk
+            .visited_objects
+            .iter()
+            .map(|presence| presence.object.clone())
+            .collect();
+        let federated_facts: Vec<_> = federated
+            .walk
+            .visited_facts
+            .iter()
+            .map(|fact| fact.fact.clone())
+            .collect();
+        let federated_relations: Vec<_> = federated
+            .walk
+            .traversed_relations
+            .iter()
+            .map(|relation| relation.relation.clone())
+            .collect();
+
+        assert_eq!(federated_objects, local_walk.visited_objects);
+        assert_eq!(federated_facts, local_walk.visited_facts);
+        assert_eq!(federated_relations, local_walk.traversed_relations);
+        assert_eq!(
+            federated.metadata.readable_branch_ids,
+            vec![branch.branch_id]
+        );
     });
 }
 
@@ -224,17 +281,178 @@ fn federated_neighbors_merge_many_branches_deterministically() {
         let keys: Vec<String> = federated
             .neighbors
             .iter()
-            .map(DomainObjectRef::index_key)
+            .map(|presence| format!("{}::{}", presence.branch_id, presence.object.index_key()))
             .collect();
         let mut sorted_keys = keys.clone();
         sorted_keys.sort();
 
         assert_eq!(keys, sorted_keys);
-        assert!(keys.contains(&"execution::task_run::run_a".to_string()));
-        assert!(keys.contains(&"execution::task_run::run_b".to_string()));
+        assert!(keys
+            .iter()
+            .any(|key| key.ends_with("execution::task_run::run_a")));
+        assert!(keys
+            .iter()
+            .any(|key| key.ends_with("execution::task_run::run_b")));
         let mut expected_branch_ids = vec![branch_a.branch_id, branch_b.branch_id];
         expected_branch_ids.sort();
         assert_eq!(federated.metadata.readable_branch_ids, expected_branch_ids);
+    });
+}
+
+#[test]
+fn federated_neighbors_return_branch_annotated_presence() {
+    let test_dir = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    with_xdg_data_home(&test_dir, || {
+        let branch = attach_branch(&workspace);
+        let store_path = meld::branches::locator::branch_store_path(&branch.data_home_path);
+        let node_id = [10u8; 32];
+        let frame_id = [11u8; 32];
+        load_branch_graph(
+            &store_path,
+            "session_presence",
+            node_id,
+            frame_id,
+            "turn_presence",
+            "run_presence",
+            "artifact_presence",
+        );
+
+        let federated = BranchQueryRuntime::new()
+            .neighbors(
+                BranchQueryScope::BranchIds(vec![branch.branch_id.clone()]),
+                None,
+                &node_ref(node_id),
+                TraversalDirection::Both,
+                None,
+                true,
+            )
+            .unwrap();
+
+        assert!(federated.neighbors.iter().all(|presence| {
+            presence.branch_id == branch.branch_id
+                && presence.canonical_locator == branch.canonical_locator.to_string_lossy()
+                && presence.current_in_branch
+                && presence.last_seen_seq >= presence.first_seen_seq
+        }));
+    });
+}
+
+#[test]
+fn federated_walk_preserves_branch_scoped_fact_identity() {
+    let test_dir = TempDir::new().unwrap();
+    let workspace_a = TempDir::new().unwrap();
+    let workspace_b = TempDir::new().unwrap();
+
+    with_xdg_data_home(&test_dir, || {
+        let branch_a = attach_branch(&workspace_a);
+        let branch_b = attach_branch(&workspace_b);
+        let node_id = [12u8; 32];
+        let frame_id = [13u8; 32];
+
+        load_branch_graph(
+            &meld::branches::locator::branch_store_path(&branch_a.data_home_path),
+            "session_identity_a",
+            node_id,
+            frame_id,
+            "turn_same",
+            "run_same",
+            "artifact_same",
+        );
+        load_branch_graph(
+            &meld::branches::locator::branch_store_path(&branch_b.data_home_path),
+            "session_identity_b",
+            node_id,
+            frame_id,
+            "turn_same",
+            "run_same",
+            "artifact_same",
+        );
+
+        let walk = BranchQueryRuntime::new()
+            .walk(
+                BranchQueryScope::All,
+                None,
+                &node_ref(node_id),
+                &GraphWalkSpec {
+                    direction: TraversalDirection::Both,
+                    relation_types: None,
+                    max_depth: 2,
+                    current_only: true,
+                    include_facts: true,
+                },
+            )
+            .unwrap();
+
+        let matching_local_ids: Vec<_> = walk
+            .walk
+            .visited_facts
+            .iter()
+            .filter(|fact| fact.fact.fact_id == "traversal::fact::2")
+            .collect();
+        assert_eq!(matching_local_ids.len(), 2);
+        assert_ne!(
+            matching_local_ids[0].federated_fact_id,
+            matching_local_ids[1].federated_fact_id
+        );
+    });
+}
+
+#[test]
+fn same_object_in_many_branches_keeps_distinct_presence_rows() {
+    let test_dir = TempDir::new().unwrap();
+    let workspace_a = TempDir::new().unwrap();
+    let workspace_b = TempDir::new().unwrap();
+
+    with_xdg_data_home(&test_dir, || {
+        let branch_a = attach_branch(&workspace_a);
+        let branch_b = attach_branch(&workspace_b);
+        let node_id = [14u8; 32];
+
+        load_branch_graph(
+            &meld::branches::locator::branch_store_path(&branch_a.data_home_path),
+            "session_object_a",
+            node_id,
+            [15u8; 32],
+            "turn_a",
+            "run_a",
+            "artifact_a",
+        );
+        load_branch_graph(
+            &meld::branches::locator::branch_store_path(&branch_b.data_home_path),
+            "session_object_b",
+            node_id,
+            [16u8; 32],
+            "turn_b",
+            "run_b",
+            "artifact_b",
+        );
+
+        let walk = BranchQueryRuntime::new()
+            .walk(
+                BranchQueryScope::All,
+                None,
+                &node_ref(node_id),
+                &GraphWalkSpec {
+                    direction: TraversalDirection::Both,
+                    relation_types: None,
+                    max_depth: 1,
+                    current_only: true,
+                    include_facts: false,
+                },
+            )
+            .unwrap();
+
+        let node_rows: Vec<_> = walk
+            .walk
+            .visited_objects
+            .iter()
+            .filter(|presence| presence.object == node_ref(node_id))
+            .collect();
+        assert_eq!(node_rows.len(), 2);
+        assert_ne!(node_rows[0].branch_id, node_rows[1].branch_id);
+        assert!(node_rows.iter().all(|presence| presence.current_in_branch));
     });
 }
 
@@ -262,18 +480,16 @@ fn federated_graph_status_and_neighbors_isolate_unreadable_branches() {
         let status = BranchQueryRuntime::new()
             .graph_status(BranchQueryScope::All, None)
             .unwrap();
-        assert!(
-            status
-                .branches
-                .iter()
-                .any(|branch| branch.branch_id == healthy_branch.branch_id && branch.read_status == "ready")
-        );
-        assert!(
-            status
-                .branches
-                .iter()
-                .any(|branch| branch.branch_id == missing_branch.branch_id && branch.read_status == "unreadable")
-        );
+        assert!(status
+            .branches
+            .iter()
+            .any(|branch| branch.branch_id == healthy_branch.branch_id
+                && branch.read_status == "ready"));
+        assert!(status
+            .branches
+            .iter()
+            .any(|branch| branch.branch_id == missing_branch.branch_id
+                && branch.read_status == "unreadable"));
 
         let neighbors = BranchQueryRuntime::new()
             .neighbors(
@@ -286,8 +502,14 @@ fn federated_graph_status_and_neighbors_isolate_unreadable_branches() {
             )
             .unwrap();
 
-        assert_eq!(neighbors.metadata.readable_branch_ids, vec![healthy_branch.branch_id]);
+        assert_eq!(
+            neighbors.metadata.readable_branch_ids,
+            vec![healthy_branch.branch_id]
+        );
         assert_eq!(neighbors.metadata.skipped_branches.len(), 1);
-        assert_eq!(neighbors.metadata.skipped_branches[0].branch_id, missing_branch.branch_id);
+        assert_eq!(
+            neighbors.metadata.skipped_branches[0].branch_id,
+            missing_branch.branch_id
+        );
     });
 }
