@@ -56,11 +56,13 @@ Goal:
 
 Status:
 
-- pending
+- completed
 
 Verification evidence:
 
-- pending
+- Gate pass via `cargo test workspace_traversal --tests`
+- Gate pass via `cargo test watch_batch --lib`
+- Gate pass via manual diff review of checkpoint 2 files before commit
 
 ## Checkpoint 3
 

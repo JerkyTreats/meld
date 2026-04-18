@@ -55,7 +55,7 @@ fn workspace_lookup_path(workspace_root: &Path, path: &Path) -> PathBuf {
     ))
 }
 
-fn stored_workspace_root_hash(
+pub(crate) fn stored_workspace_root_hash(
     node_store: &dyn NodeRecordStore,
     workspace_root: &Path,
     current_root_hash: &NodeID,
@@ -596,11 +596,8 @@ impl WorkspaceCommandService {
             TreeBuilder::new(workspace_root.to_path_buf()).with_walker_config(walker_config);
         let tree = builder.build().map_err(ApiError::StorageError)?;
         let total_nodes = tree.nodes.len();
-        let previous_root_hash = stored_workspace_root_hash(
-            api.node_store().as_ref(),
-            workspace_root,
-            &tree.root_id,
-        )?;
+        let previous_root_hash =
+            stored_workspace_root_hash(api.node_store().as_ref(), workspace_root, &tree.root_id)?;
 
         if !force
             && api
@@ -771,12 +768,13 @@ impl WorkspaceCommandService {
     }
 }
 
-fn emit_workspace_scan_facts(
+pub(crate) fn emit_workspace_snapshot_facts(
     progress: &Arc<ProgressRuntime>,
     session_id: &str,
     workspace_root: &Path,
     tree: &crate::tree::builder::Tree,
     previous_root_hash: Option<&str>,
+    observed_node_ids: &[NodeID],
 ) {
     let current_root_hex = hex::encode(tree.root_id);
     if previous_root_hash.is_none() {
@@ -796,7 +794,10 @@ fn emit_workspace_scan_facts(
             previous_root_node_id,
         ));
     }
-    for (node_id, node) in &tree.nodes {
+    for node_id in observed_node_ids {
+        let Some(node) = tree.nodes.get(node_id) else {
+            continue;
+        };
         let record = match NodeRecord::from_merkle_node(*node_id, node, tree) {
             Ok(record) => record,
             Err(_) => continue,
@@ -808,6 +809,24 @@ fn emit_workspace_scan_facts(
             &record,
         ));
     }
+}
+
+fn emit_workspace_scan_facts(
+    progress: &Arc<ProgressRuntime>,
+    session_id: &str,
+    workspace_root: &Path,
+    tree: &crate::tree::builder::Tree,
+    previous_root_hash: Option<&str>,
+) {
+    let observed_node_ids: Vec<_> = tree.nodes.keys().copied().collect();
+    emit_workspace_snapshot_facts(
+        progress,
+        session_id,
+        workspace_root,
+        tree,
+        previous_root_hash,
+        &observed_node_ids,
+    );
     progress.emit_envelope_best_effort(scan_completed_envelope(
         session_id,
         workspace_root,
