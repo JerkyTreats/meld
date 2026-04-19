@@ -121,11 +121,28 @@ Goal:
 
 Status:
 
-- pending
+- completed
 
 Verification evidence:
 
-- pending
+- Gate pass via `cargo test event_spine --tests`
+- Gate pass via `cargo test workspace_traversal --tests`
+- Gate pass via `cargo test watch_batch --lib`
+- Gate pass via `cargo test traversal_graph --tests`
+- Gate pass via `cargo test branches_query --tests`
+- Gate pass via `cargo test branches_runtime --tests`
+- Gate pass via `cargo test workflow_task_compatibility --tests`
+- Gate pass via `cargo test workflow_cli --tests`
+- Gate pass via `cargo test context_generate_recursive_completes_levels_bottom_up --test integration_tests`
+- Gate pass via `cargo test --tests`
+- Gate pass via manual diff review of checkpoint 6 files before commit
+
+Closeout notes:
+
+- broader verification exposed completed task path reuse regressions in workflow CLI coverage
+- the branch now persists durable workflow thread `final_frame_id` state for task package runs
+- completed task path reuse is gated by traversal `frame_ref` anchor presence plus durable thread state
+- workflow CLI reuse tests now seed canonical task path state through one real execution before asserting reuse
 
 ## Related Documents
 
