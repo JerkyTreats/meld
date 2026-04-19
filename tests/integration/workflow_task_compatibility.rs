@@ -2,7 +2,11 @@ use crate::integration::with_xdg_env;
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
 use meld::cli::{Commands, RunContext, WorkflowCommands};
 use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
+use meld::events::DomainObjectRef;
+use meld::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
+use meld::workflow::executor::{execute_registered_workflow, WorkflowExecutionRequest};
 use meld::workflow::state_store::{WorkflowStateStore, WorkflowThreadStatus};
+use meld::world_state::{GraphRuntime, TraversalQuery, TraversalStore};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -128,6 +132,66 @@ fn spawn_docs_writer_server(expected_requests: usize) -> (String, thread::JoinHa
     (endpoint, handle)
 }
 
+fn docs_writer_frame_type() -> String {
+    "context-docs-writer".to_string()
+}
+
+fn docs_writer_profile(
+    run_context: &RunContext,
+) -> meld::workflow::registry::RegisteredWorkflowProfile {
+    let registry = run_context.workflow_registry();
+    let profile = registry
+        .read()
+        .get("docs_writer_thread_v1")
+        .cloned()
+        .unwrap();
+    profile
+}
+
+fn latest_frame_ref_task_run_id(run_context: &RunContext) -> String {
+    run_context
+        .progress_runtime()
+        .store()
+        .read_all_events_after(0)
+        .unwrap()
+        .into_iter()
+        .rev()
+        .find_map(|event| {
+            if event.event_type != "execution.task.artifact_emitted" {
+                return None;
+            }
+            if event
+                .data
+                .get("artifact_type_id")
+                .and_then(|value| value.as_str())
+                != Some("frame_ref")
+            {
+                return None;
+            }
+            event
+                .data
+                .get("task_run_id")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+        })
+        .unwrap()
+}
+
+fn current_frame_ref_anchor(
+    run_context: &RunContext,
+    task_run_id: &str,
+) -> meld::world_state::graph::contracts::AnchorSelectionRecord {
+    let traversal =
+        TraversalStore::new(run_context.progress_runtime().store().db().clone()).unwrap();
+    TraversalQuery::new(&traversal)
+        .current_artifact_for_task_run(
+            &DomainObjectRef::new("execution", "task_run", task_run_id).unwrap(),
+            "frame_ref",
+        )
+        .unwrap()
+        .unwrap()
+}
+
 #[test]
 fn workflow_execute_routes_docs_writer_through_task_path() {
     let temp_dir = TempDir::new().unwrap();
@@ -171,6 +235,11 @@ fn workflow_execute_routes_docs_writer_through_task_path() {
         assert!(output.contains("workflow_id=docs_writer_thread_v1"));
         assert!(output.contains("skipped=false"));
 
+        let task_run_id = latest_frame_ref_task_run_id(&run_context);
+        let anchor = current_frame_ref_anchor(&run_context, &task_run_id);
+        assert_eq!(anchor.target.domain_id, "execution");
+        assert_eq!(anchor.target.object_kind, "artifact");
+
         let node_id = meld::workspace::resolve_workspace_node_id(
             run_context.api(),
             &workspace_root,
@@ -194,7 +263,7 @@ fn workflow_execute_routes_docs_writer_through_task_path() {
 }
 
 #[test]
-fn workflow_execute_reuses_existing_final_head_when_task_thread_state_drifted() {
+fn workflow_task_path_fails_when_required_frame_ref_anchor_is_missing() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         meld::init::initialize_workflows(false).unwrap();
@@ -216,7 +285,67 @@ fn workflow_execute_reuses_existing_final_head_when_task_thread_state_drifted() 
             .execute(&Commands::Scan { force: true })
             .unwrap();
 
-        let first_output = run_context
+        let node_id = meld::workspace::resolve_workspace_node_id(
+            run_context.api(),
+            &workspace_root,
+            Some(PathBuf::from("src").as_path()),
+            None,
+            false,
+        )
+        .unwrap();
+        let profile = docs_writer_profile(&run_context);
+        let error = execute_registered_workflow(
+            run_context.api(),
+            &workspace_root,
+            &profile,
+            &WorkflowExecutionRequest {
+                node_id,
+                agent_id: "docs-writer".to_string(),
+                provider: ProviderExecutionBinding::new(
+                    "test-provider".to_string(),
+                    ProviderRuntimeOverrides::default(),
+                )
+                .unwrap(),
+                frame_type: docs_writer_frame_type(),
+                force: true,
+                path: Some("src".to_string()),
+                plan_id: None,
+                level_index: None,
+            },
+            None,
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("missing required frame_ref artifact anchor"));
+        assert_eq!(first_server_handle.join().unwrap(), 4);
+    });
+}
+
+#[test]
+fn workflow_task_path_live_and_replay_artifact_resolution_match() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        meld::init::initialize_workflows(false).unwrap();
+
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        fs::write(
+            workspace_root.join("src").join("lib.rs"),
+            "pub fn greet(name: &str) -> String { format!(\"hello {}\", name) }",
+        )
+        .unwrap();
+
+        create_test_agent("docs-writer", Some("docs_writer_thread_v1"));
+        let (endpoint, server_handle) = spawn_docs_writer_server(4);
+        create_test_provider("test-provider", &endpoint);
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&Commands::Scan { force: true })
+            .unwrap();
+        run_context
             .execute(&Commands::Workflow {
                 command: WorkflowCommands::Execute {
                     workflow_id: "docs_writer_thread_v1".to_string(),
@@ -231,56 +360,24 @@ fn workflow_execute_reuses_existing_final_head_when_task_thread_state_drifted() 
             })
             .unwrap();
 
-        assert!(first_output.contains("skipped=false"));
-        assert_eq!(first_server_handle.join().unwrap(), 4);
+        assert_eq!(server_handle.join().unwrap(), 4);
 
-        let node_id = meld::workspace::resolve_workspace_node_id(
-            run_context.api(),
-            &workspace_root,
-            Some(PathBuf::from("src").as_path()),
-            None,
-            false,
-        )
-        .unwrap();
-        let thread_payload = format!(
-            "{}:{}:{}",
-            "docs_writer_thread_v1",
-            hex::encode(node_id),
-            "context-docs-writer"
-        );
-        let thread_digest = blake3::hash(thread_payload.as_bytes()).to_hex().to_string();
-        let thread_id = format!("thread-{}", &thread_digest[..16]);
-        let state_store = WorkflowStateStore::new(&workspace_root).unwrap();
-        state_store
-            .upsert_thread(&meld::workflow::state_store::WorkflowThreadRecord {
-                thread_id: thread_id.clone(),
-                workflow_id: "docs_writer_thread_v1".to_string(),
-                node_id: hex::encode(node_id),
-                frame_type: "context-docs-writer".to_string(),
-                status: WorkflowThreadStatus::Failed,
-                next_turn_seq: 1,
-                updated_at_ms: 0,
-            })
+        let task_run_id = latest_frame_ref_task_run_id(&run_context);
+        let live_anchor = current_frame_ref_anchor(&run_context, &task_run_id);
+
+        let db = run_context.progress_runtime().store().db().clone();
+        let replay_runtime = GraphRuntime::new(db).unwrap();
+        replay_runtime.catch_up().unwrap();
+        let replay_traversal = replay_runtime.traversal_store();
+        let replay_anchor = TraversalQuery::new(replay_traversal.as_ref())
+            .current_artifact_for_task_run(
+                &DomainObjectRef::new("execution", "task_run", &task_run_id).unwrap(),
+                "frame_ref",
+            )
+            .unwrap()
             .unwrap();
 
-        let second_output = run_context
-            .execute(&Commands::Workflow {
-                command: WorkflowCommands::Execute {
-                    workflow_id: "docs_writer_thread_v1".to_string(),
-                    node: None,
-                    path: Some(PathBuf::from("src")),
-                    path_positional: None,
-                    agent: "docs-writer".to_string(),
-                    provider: "test-provider".to_string(),
-                    frame_type: None,
-                    force: false,
-                },
-            })
-            .unwrap();
-
-        assert!(second_output.contains("skipped=true"));
-
-        let repaired_thread = state_store.load_thread(&thread_id).unwrap().unwrap();
-        assert_eq!(repaired_thread.status, WorkflowThreadStatus::Completed);
+        assert_eq!(live_anchor.anchor_id, replay_anchor.anchor_id);
+        assert_eq!(live_anchor.target, replay_anchor.target);
     });
 }

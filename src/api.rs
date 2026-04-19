@@ -58,6 +58,8 @@ pub struct ContextApi {
     workspace_root: Option<PathBuf>,
     /// Optional spine emitter context for canonical context facts.
     progress_context: Arc<parking_lot::RwLock<Option<ProgressEmitterContext>>>,
+    /// Optional traversal runtime for graph backed cross domain reads.
+    graph_runtime: Arc<parking_lot::RwLock<Option<Arc<crate::world_state::GraphRuntime>>>>,
 }
 
 #[derive(Clone)]
@@ -87,6 +89,7 @@ impl ContextApi {
             lock_manager,
             workspace_root: None,
             progress_context: Arc::new(parking_lot::RwLock::new(None)),
+            graph_runtime: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -112,6 +115,7 @@ impl ContextApi {
             lock_manager,
             workspace_root: Some(workspace_root),
             progress_context: Arc::new(parking_lot::RwLock::new(None)),
+            graph_runtime: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -128,6 +132,14 @@ impl ContextApi {
 
     pub fn clear_progress_context(&self) {
         *self.progress_context.write() = None;
+    }
+
+    pub fn set_graph_runtime(&self, runtime: Arc<crate::world_state::GraphRuntime>) {
+        *self.graph_runtime.write() = Some(runtime);
+    }
+
+    pub fn graph_runtime(&self) -> Option<Arc<crate::world_state::GraphRuntime>> {
+        self.graph_runtime.read().as_ref().map(Arc::clone)
     }
 
     pub fn workspace_root(&self) -> Option<&Path> {

@@ -15,6 +15,7 @@ use crate::context::generation::provider_execution::{
 };
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
+use crate::events::DomainObjectRef;
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
 use crate::provider::ProviderExecutionBinding;
@@ -30,11 +31,11 @@ use crate::telemetry::{
     WorkflowForceResetEventData, WorkflowTargetEventData, WorkflowTurnEventData,
 };
 use crate::types::{FrameID, NodeID};
-use crate::workflow::gates::evaluate_gate;
 use crate::workflow::events::{
     workflow_turn_completed_envelope, workflow_turn_failed_envelope,
     workflow_turn_started_envelope, ExecutionWorkflowTurnEventData,
 };
+use crate::workflow::gates::evaluate_gate;
 use crate::workflow::profile::{WorkflowProfile, WorkflowTurn};
 use crate::workflow::record_contracts::{
     prompt_link_record_from_contract_v1, GateOutcome, PromptLinkRecordInputV1,
@@ -46,6 +47,7 @@ use crate::workflow::state_store::{
     WorkflowStateStore, WorkflowThreadRecord, WorkflowThreadStatus, WorkflowTurnRecord,
     WorkflowTurnStatus,
 };
+use crate::world_state::TraversalQuery;
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
@@ -100,6 +102,7 @@ pub(crate) async fn execute_registered_workflow_async(
     event_context: Option<&QueueEventContext>,
 ) -> Result<WorkflowExecutionSummary, ApiError> {
     let profile = &registered_profile.profile;
+    let uses_task_package_path = workflow_uses_task_package_path(registered_profile)?;
     let thread_id = build_thread_id(profile, request.node_id, &request.frame_type);
     let state_store = WorkflowStateStore::new(workspace_root)?;
     let node_record = api
@@ -115,17 +118,16 @@ pub(crate) async fn execute_registered_workflow_async(
     let mut start_seq = 1u32;
     let mut turn_outputs: HashMap<String, String> = HashMap::new();
     let mut completed_turns = 0usize;
-    let task_path_final_head =
-        if !request.force && workflow_uses_task_package_path(registered_profile)? {
-            api.get_head(&request.node_id, &request.frame_type)?
-        } else {
-            None
-        };
+    let task_path_final_head = if !request.force && !uses_task_package_path {
+        api.get_head(&request.node_id, &request.frame_type)?
+    } else {
+        None
+    };
 
     if let Some(existing) = state_store.load_thread(&thread_id)? {
         match existing.status {
             WorkflowThreadStatus::Completed => {
-                if !request.force {
+                if !request.force && !uses_task_package_path {
                     let head = api.get_head(&request.node_id, &request.frame_type)?;
                     emit_workflow_target_event(
                         event_context,
@@ -301,7 +303,7 @@ pub(crate) async fn execute_registered_workflow_async(
         .map(|turn| turn.seq)
         .unwrap_or_default();
 
-    if workflow_uses_task_package_path(registered_profile)? {
+    if uses_task_package_path {
         return execute_registered_workflow_via_task_async(
             api,
             workspace_root,
@@ -938,7 +940,15 @@ async fn execute_registered_workflow_via_task_async(
         }
     };
 
-    let final_frame_id = api.get_head(&request.node_id, &request.frame_type)?;
+    let graph_runtime = api.graph_runtime().ok_or_else(|| {
+        ApiError::ConfigError("Workflow task path requires graph runtime context".to_string())
+    })?;
+    graph_runtime.catch_up().map_err(ApiError::StorageError)?;
+    let final_frame_id = resolve_final_frame_from_traversal_artifact(
+        graph_runtime.as_ref(),
+        &executor,
+        &task_summary.task_run_id,
+    )?;
     state_store.upsert_thread(&WorkflowThreadRecord {
         thread_id: thread_id.to_string(),
         workflow_id: registered_profile.profile.workflow_id.clone(),
@@ -962,7 +972,7 @@ async fn execute_registered_workflow_via_task_async(
             frame_type: request.frame_type.clone(),
             plan_id: request.plan_id.clone(),
             level_index: request.level_index,
-            final_frame_id: final_frame_id.map(hex::encode),
+            final_frame_id: Some(hex::encode(final_frame_id)),
             turns_completed: Some(task_summary.completed_instances / 3),
             reused_existing_head: Some(false),
         },
@@ -972,8 +982,78 @@ async fn execute_registered_workflow_via_task_async(
         workflow_id: registered_profile.profile.workflow_id.clone(),
         thread_id: thread_id.to_string(),
         turns_completed: task_summary.completed_instances / 3,
-        final_frame_id,
+        final_frame_id: Some(final_frame_id),
     })
+}
+
+fn resolve_final_frame_from_traversal_artifact(
+    graph_runtime: &crate::world_state::GraphRuntime,
+    executor: &TaskExecutor,
+    task_run_id: &str,
+) -> Result<FrameID, ApiError> {
+    let task_run = DomainObjectRef::new("execution", "task_run", task_run_id)
+        .map_err(ApiError::StorageError)?;
+    let traversal = graph_runtime.traversal_store();
+    let query = TraversalQuery::new(traversal.as_ref());
+    let anchor = query
+        .current_artifact_for_task_run(&task_run, "frame_ref")
+        .map_err(ApiError::StorageError)?
+        .ok_or_else(|| {
+            ApiError::GenerationFailed(format!(
+                "Workflow task path missing required frame_ref artifact anchor for task run '{}'",
+                task_run_id
+            ))
+        })?;
+    resolve_frame_id_from_artifact_anchor(&anchor, executor)
+}
+
+fn resolve_frame_id_from_artifact_anchor(
+    anchor: &crate::world_state::graph::contracts::AnchorSelectionRecord,
+    executor: &TaskExecutor,
+) -> Result<FrameID, ApiError> {
+    if anchor.target.domain_id != "execution" || anchor.target.object_kind != "artifact" {
+        return Err(ApiError::GenerationFailed(format!(
+            "Workflow task path expected execution artifact anchor target, got '{}'",
+            anchor.target.index_key()
+        )));
+    }
+
+    let artifact = executor
+        .artifact_repo()
+        .get_artifact(&anchor.target.object_id)
+        .ok_or_else(|| {
+            ApiError::GenerationFailed(format!(
+                "Workflow task path could not load artifact '{}'",
+                anchor.target.object_id
+            ))
+        })?;
+    if artifact.artifact_type_id != "frame_ref" {
+        return Err(ApiError::GenerationFailed(format!(
+            "Workflow task path expected frame_ref artifact, got '{}'",
+            artifact.artifact_type_id
+        )));
+    }
+    let frame_id_hex = artifact
+        .content
+        .get("frame_id")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| {
+            ApiError::GenerationFailed(format!(
+                "Workflow task path artifact '{}' is missing frame_id",
+                artifact.artifact_id
+            ))
+        })?;
+    decode_frame_id(frame_id_hex)
+}
+
+fn decode_frame_id(value: &str) -> Result<FrameID, ApiError> {
+    let bytes = hex::decode(value).map_err(|err| {
+        ApiError::GenerationFailed(format!("Invalid frame_ref artifact frame_id: {}", err))
+    })?;
+    let array: [u8; 32] = bytes.try_into().map_err(|_| {
+        ApiError::GenerationFailed("Invalid frame_ref artifact frame_id length".to_string())
+    })?;
+    Ok(array)
 }
 
 fn register_task_path_capabilities(

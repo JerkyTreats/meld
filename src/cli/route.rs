@@ -135,6 +135,7 @@ impl RunContext {
             lock_manager,
             workspace_root.clone(),
         );
+        api.set_graph_runtime(Arc::clone(&graph_runtime));
 
         let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(&workspace_root)?;

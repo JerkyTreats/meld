@@ -105,11 +105,13 @@ Goal:
 
 Status:
 
-- pending
+- completed
 
 Verification evidence:
 
-- pending
+- Gate pass via `cargo test workflow_task_compatibility --tests`
+- Gate pass via `cargo test traversal_graph --tests`
+- Gate pass via manual diff review of checkpoint 5 files before commit
 
 ## Checkpoint 6
 
