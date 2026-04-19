@@ -5,8 +5,10 @@ use crate::capability::CapabilityCatalog;
 use crate::error::ApiError;
 use crate::task::package::{
     load_task_package_spec_for_workflow, lower_traversal_prerequisite_expansion_template,
-    prepare_workflow_task_run, PreparedTaskRun, WorkflowPackageTriggerRequest,
+    prepare_workflow_task_run, workflow_task_run_id, PreparedTaskRun,
+    WorkflowPackageTriggerRequest,
 };
+use crate::types::NodeID;
 use crate::workflow::registry::RegisteredWorkflowProfile;
 use std::path::Path;
 
@@ -15,6 +17,14 @@ pub fn workflow_uses_task_package_path(
     registered_profile: &RegisteredWorkflowProfile,
 ) -> Result<bool, ApiError> {
     Ok(load_task_package_spec_for_workflow(registered_profile)?.is_some())
+}
+
+/// Returns the deterministic task run id for one workflow target.
+pub fn workflow_task_run_id_for_target(
+    registered_profile: &RegisteredWorkflowProfile,
+    node_id: NodeID,
+) -> String {
+    workflow_task_run_id(&registered_profile.profile.workflow_id, node_id)
 }
 
 /// Prepares one registered workflow through the generic task package path.

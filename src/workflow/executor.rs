@@ -20,7 +20,8 @@ use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
 use crate::provider::ProviderExecutionBinding;
 use crate::task::templates::{
-    prepare_registered_workflow_task_run, workflow_uses_task_package_path,
+    prepare_registered_workflow_task_run, workflow_task_run_id_for_target,
+    workflow_uses_task_package_path,
 };
 use crate::task::{
     execute_task_to_completion, load_task_package_spec_for_workflow, TaskExecutor,
@@ -127,8 +128,17 @@ pub(crate) async fn execute_registered_workflow_async(
     if let Some(existing) = state_store.load_thread(&thread_id)? {
         match existing.status {
             WorkflowThreadStatus::Completed => {
-                if !request.force && !uses_task_package_path {
-                    let head = api.get_head(&request.node_id, &request.frame_type)?;
+                if !request.force {
+                    let head = if uses_task_package_path {
+                        Some(resolve_completed_task_path_final_frame(
+                            api,
+                            registered_profile,
+                            request,
+                            &existing,
+                        )?)
+                    } else {
+                        api.get_head(&request.node_id, &request.frame_type)?
+                    };
                     emit_workflow_target_event(
                         event_context,
                         "workflow_target_completed",
@@ -165,6 +175,7 @@ pub(crate) async fn execute_registered_workflow_async(
                         status: WorkflowThreadStatus::Completed,
                         next_turn_seq: profile.turns.len() as u32 + 1,
                         updated_at_ms: now_millis(),
+                        final_frame_id: Some(hex::encode(head)),
                     })?;
                     emit_workflow_target_event(
                         event_context,
@@ -212,6 +223,7 @@ pub(crate) async fn execute_registered_workflow_async(
             status: WorkflowThreadStatus::Completed,
             next_turn_seq: profile.turns.len() as u32 + 1,
             updated_at_ms: now_millis(),
+            final_frame_id: Some(hex::encode(head)),
         })?;
         emit_workflow_target_event(
             event_context,
@@ -269,6 +281,7 @@ pub(crate) async fn execute_registered_workflow_async(
         status: WorkflowThreadStatus::Running,
         next_turn_seq: start_seq,
         updated_at_ms: now_millis(),
+        final_frame_id: None,
     })?;
 
     emit_workflow_target_event(
@@ -588,6 +601,7 @@ pub(crate) async fn execute_registered_workflow_async(
                         status: WorkflowThreadStatus::Failed,
                         next_turn_seq: turn.seq,
                         updated_at_ms: now_millis(),
+                        final_frame_id: final_frame_id.map(hex::encode),
                     })?;
                     return Err(err);
                 }
@@ -655,6 +669,7 @@ pub(crate) async fn execute_registered_workflow_async(
                         status: WorkflowThreadStatus::Failed,
                         next_turn_seq: turn.seq,
                         updated_at_ms: now_millis(),
+                        final_frame_id: final_frame_id.map(hex::encode),
                     })?;
                     return Err(err);
                 }
@@ -723,6 +738,7 @@ pub(crate) async fn execute_registered_workflow_async(
                         status: WorkflowThreadStatus::Failed,
                         next_turn_seq: turn.seq,
                         updated_at_ms: now_millis(),
+                        final_frame_id: final_frame_id.map(hex::encode),
                     })?;
                     return Err(gate_error);
                 }
@@ -790,6 +806,7 @@ pub(crate) async fn execute_registered_workflow_async(
                 status: WorkflowThreadStatus::Running,
                 next_turn_seq: turn.seq + 1,
                 updated_at_ms: now_millis(),
+                final_frame_id: Some(hex::encode(frame_id)),
             })?;
 
             turn_outputs.insert(turn.output_type.clone(), response.content.clone());
@@ -809,6 +826,7 @@ pub(crate) async fn execute_registered_workflow_async(
                 status: WorkflowThreadStatus::Failed,
                 next_turn_seq: turn.seq,
                 updated_at_ms: now_millis(),
+                final_frame_id: final_frame_id.map(hex::encode),
             })?;
             return Err(last_error.unwrap_or_else(|| {
                 ApiError::GenerationFailed(format!(
@@ -827,6 +845,7 @@ pub(crate) async fn execute_registered_workflow_async(
         status: WorkflowThreadStatus::Completed,
         next_turn_seq: profile.turns.len() as u32 + 1,
         updated_at_ms: now_millis(),
+        final_frame_id: final_frame_id.map(hex::encode),
     })?;
 
     emit_workflow_target_event(
@@ -854,6 +873,48 @@ pub(crate) async fn execute_registered_workflow_async(
         turns_completed: completed_turns,
         final_frame_id,
     })
+}
+
+fn resolve_completed_task_path_final_frame(
+    api: &ContextApi,
+    registered_profile: &RegisteredWorkflowProfile,
+    request: &WorkflowExecutionRequest,
+    existing: &WorkflowThreadRecord,
+) -> Result<FrameID, ApiError> {
+    let graph_runtime = api.graph_runtime().ok_or_else(|| {
+        ApiError::ConfigError("Workflow task path requires graph runtime context".to_string())
+    })?;
+    graph_runtime.catch_up().map_err(ApiError::StorageError)?;
+    let task_run = DomainObjectRef::new(
+        "execution",
+        "task_run",
+        workflow_task_run_id_for_target(registered_profile, request.node_id),
+    )
+    .map_err(ApiError::StorageError)?;
+    let traversal = graph_runtime.traversal_store();
+    let query = TraversalQuery::new(traversal.as_ref());
+    let anchor = query
+        .current_artifact_for_task_run(&task_run, "frame_ref")
+        .map_err(ApiError::StorageError)?
+        .ok_or_else(|| {
+            ApiError::GenerationFailed(format!(
+                "Workflow task path missing required frame_ref artifact anchor for task run '{}'",
+                task_run.object_id
+            ))
+        })?;
+    if anchor.target.domain_id != "execution" || anchor.target.object_kind != "artifact" {
+        return Err(ApiError::GenerationFailed(format!(
+            "Workflow task path expected execution artifact anchor target, got '{}'",
+            anchor.target.index_key()
+        )));
+    }
+    let frame_id_hex = existing.final_frame_id.as_deref().ok_or_else(|| {
+        ApiError::GenerationFailed(format!(
+            "Workflow task path completed thread '{}' is missing durable final_frame_id",
+            existing.thread_id
+        ))
+    })?;
+    decode_frame_id(frame_id_hex)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -935,6 +996,7 @@ async fn execute_registered_workflow_via_task_async(
                 status: WorkflowThreadStatus::Failed,
                 next_turn_seq: 1,
                 updated_at_ms: now_millis(),
+                final_frame_id: None,
             })?;
             return Err(err);
         }
@@ -957,6 +1019,7 @@ async fn execute_registered_workflow_via_task_async(
         status: WorkflowThreadStatus::Completed,
         next_turn_seq: final_turn_seq.saturating_add(1),
         updated_at_ms: now_millis(),
+        final_frame_id: Some(hex::encode(final_frame_id)),
     })?;
 
     emit_workflow_target_event(
