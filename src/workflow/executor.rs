@@ -468,6 +468,10 @@ pub(crate) async fn execute_registered_workflow_async(
                 );
             }
 
+            if request.force {
+                api.tombstone_head(request.node_id, &turn_frame_type)?;
+            }
+
             let previous_metadata = load_previous_metadata_snapshot(api, &orchestration_request)?;
             emit_metadata_validation_event(
                 event_context,

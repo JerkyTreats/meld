@@ -1035,6 +1035,9 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
         }];
 
         if persist_frame {
+            if summary.request.force {
+                api.tombstone_head(summary.request.node_id, &summary.frame_type)?;
+            }
             let metadata = build_and_validate_generated_metadata(
                 api,
                 &summary.request,
