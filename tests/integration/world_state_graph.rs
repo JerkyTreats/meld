@@ -1,13 +1,11 @@
-use meld::telemetry::{DomainObjectRef, EventRelation};
-use meld::telemetry::events::ProgressEvent;
-use meld::telemetry::sinks::store::ProgressStore;
 use meld::control::events::{
     node_completed_envelope, node_failed_envelope, NodeCompletedEventData, NodeFailedEventData,
 };
 use meld::task::{build_execution_task_envelope, TaskEvent};
-use meld::world_state::contracts::{
-    ClaimKind, ClaimRecord, EvidenceRecord, SettlementStatus,
-};
+use meld::telemetry::events::ProgressEvent;
+use meld::telemetry::sinks::store::ProgressStore;
+use meld::telemetry::{DomainObjectRef, EventRelation};
+use meld::world_state::contracts::{ClaimKind, ClaimRecord, EvidenceRecord, SettlementStatus};
 use meld::world_state::query::WorldStateQuery;
 use meld::world_state::reducer::WorldStateReducer;
 use meld::world_state::store::{StoredWorldStateFact, WorldStateStore};
@@ -221,7 +219,9 @@ fn later_generation_success_supersedes_prior_failure() {
     assert_eq!(current.len(), 1);
     assert_eq!(current[0].claim_kind, ClaimKind::GenerationSucceeded);
     assert_eq!(history.len(), 2);
-    assert!(history.iter().any(|claim| claim.status == SettlementStatus::Superseded));
+    assert!(history
+        .iter()
+        .any(|claim| claim.status == SettlementStatus::Superseded));
     assert!(reducer
         .provenance
         .supersession_chain_by_claim

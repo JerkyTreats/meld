@@ -14,8 +14,9 @@ pub fn load(path: &Path) -> Result<Option<BranchManifest>, ApiError> {
         return Ok(None);
     }
     let content = fs::read_to_string(path).map_err(StorageError::IoError)?;
-    let manifest = serde_json::from_str(&content)
-        .map_err(|err| ApiError::ConfigError(format!("Failed to parse branch manifest: {}", err)))?;
+    let manifest = serde_json::from_str(&content).map_err(|err| {
+        ApiError::ConfigError(format!("Failed to parse branch manifest: {}", err))
+    })?;
     Ok(Some(manifest))
 }
 

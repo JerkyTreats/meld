@@ -35,7 +35,13 @@ pub struct ClaimProvenanceProjection {
 }
 
 impl ClaimProvenanceProjection {
-    pub fn add_evidence(&mut self, claim_id: &str, evidence_id: String, source_fact_id: String, seq: u64) {
+    pub fn add_evidence(
+        &mut self,
+        claim_id: &str,
+        evidence_id: String,
+        source_fact_id: String,
+        seq: u64,
+    ) {
         self.evidence_ids_by_claim
             .entry(claim_id.to_string())
             .or_default()

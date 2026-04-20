@@ -1,6 +1,6 @@
+use meld::branches::{BranchCatalog, BranchManifest, BranchesStatusOutput};
 use meld::cli::{BranchesCommands, RunContext};
 use meld::config::xdg;
-use meld::branches::{BranchCatalog, BranchManifest, BranchesStatusOutput};
 use tempfile::TempDir;
 
 use crate::integration::with_xdg_data_home;
@@ -36,7 +36,10 @@ fn startup_registers_active_branch_and_writes_ledger() {
         );
         assert!(manifest.last_successful_step_id.is_some());
         assert_eq!(catalog.branches.len(), 1);
-        assert_eq!(catalog.branches[0].canonical_locator, manifest.canonical_locator);
+        assert_eq!(
+            catalog.branches[0].canonical_locator,
+            manifest.canonical_locator
+        );
 
         let ledger = std::fs::read_to_string(&ledger_path).unwrap();
         assert!(ledger.contains("\"step_id\":\"write_branch_manifest\""));
@@ -65,12 +68,10 @@ fn branches_status_lists_registered_branches() {
         assert!(parsed.branches.iter().any(|branch| {
             branch.canonical_locator == workspace_a.path().canonicalize().unwrap().to_string_lossy()
         }));
-        assert!(
-            parsed
-                .branches
-                .iter()
-                .all(|branch| !branch.migration_status.is_empty())
-        );
+        assert!(parsed
+            .branches
+            .iter()
+            .all(|branch| !branch.migration_status.is_empty()));
     });
 }
 
@@ -90,7 +91,8 @@ fn branches_attach_registers_dormant_workspace() {
             .branches
             .iter()
             .find(|branch| {
-                branch.canonical_locator == workspace.path().canonicalize().unwrap().to_string_lossy()
+                branch.canonical_locator
+                    == workspace.path().canonicalize().unwrap().to_string_lossy()
             })
             .unwrap();
 
@@ -118,18 +120,14 @@ fn branches_discover_registers_candidates_and_skips_tmp() {
         .unwrap();
         let parsed: BranchesStatusOutput = serde_json::from_str(&output).unwrap();
 
-        assert!(
-            parsed
-                .branches
-                .iter()
-                .any(|branch| branch.canonical_locator == "/home/user/ws_dormant")
-        );
-        assert!(
-            parsed
-                .branches
-                .iter()
-                .all(|branch| !branch.canonical_locator.contains("/tmp/"))
-        );
+        assert!(parsed
+            .branches
+            .iter()
+            .any(|branch| branch.canonical_locator == "/home/user/ws_dormant"));
+        assert!(parsed
+            .branches
+            .iter()
+            .all(|branch| !branch.canonical_locator.contains("/tmp/")));
     });
 }
 
@@ -154,7 +152,8 @@ fn branches_migrate_updates_registered_branch_status() {
             .branches
             .iter()
             .find(|branch| {
-                branch.canonical_locator == workspace.path().canonicalize().unwrap().to_string_lossy()
+                branch.canonical_locator
+                    == workspace.path().canonicalize().unwrap().to_string_lossy()
             })
             .unwrap();
 

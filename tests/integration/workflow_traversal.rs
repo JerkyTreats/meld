@@ -56,10 +56,12 @@ fn workflow_turn_completed_links_turn_node_and_frame() {
         .relations
         .iter()
         .any(|relation| relation.relation_type == "produced"));
-    assert!(envelope
-        .relations
-        .iter()
-        .filter(|relation| relation.relation_type == "belongs_to")
-        .count()
-        >= 2);
+    assert!(
+        envelope
+            .relations
+            .iter()
+            .filter(|relation| relation.relation_type == "belongs_to")
+            .count()
+            >= 2
+    );
 }

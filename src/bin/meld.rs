@@ -5,7 +5,7 @@
 use clap::Parser;
 use meld::cli::{Cli, Commands, DangerCommands, RunContext};
 use meld::config::ConfigLoader;
-use meld::logging::{LoggingConfig, init_logging};
+use meld::logging::{init_logging, LoggingConfig};
 use std::path::{Path, PathBuf};
 use std::process;
 use tracing::{error, info};

@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::xdg;
 use crate::branches::contracts::{BranchKind, ResolvedBranch};
+use crate::config::xdg;
 use crate::error::ApiError;
 use crate::tree::path::{canonicalize_path, normalize_path_string};
 
@@ -143,7 +143,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let resolved_branch = resolve_active_branch(temp.path()).unwrap();
         assert_eq!(resolved_branch.branch_kind, BranchKind::WorkspaceFs);
-        assert_eq!(resolved_branch.canonical_locator, temp.path().canonicalize().unwrap());
+        assert_eq!(
+            resolved_branch.canonical_locator,
+            temp.path().canonicalize().unwrap()
+        );
     }
 
     #[test]

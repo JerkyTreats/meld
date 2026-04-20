@@ -6,8 +6,8 @@ use crate::capability::{
 };
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
-use crate::task::executor::TaskExecutor;
 use crate::task::events::build_execution_task_envelope;
+use crate::task::executor::TaskExecutor;
 use crate::task::ArtifactRecord;
 use crate::task::{compile_task_expansion_request, parse_task_expansion_request_artifact};
 use crate::telemetry::WorkflowTurnEventData;
@@ -226,9 +226,10 @@ fn emit_workflow_turn_event(
     payload: WorkflowTurnEventData,
 ) {
     let envelope = match event_type {
-        "execution.workflow.turn_started" => {
-            workflow_turn_started_envelope(&event_context.session_id, ExecutionWorkflowTurnEventData::from(payload))
-        }
+        "execution.workflow.turn_started" => workflow_turn_started_envelope(
+            &event_context.session_id,
+            ExecutionWorkflowTurnEventData::from(payload),
+        ),
         "execution.workflow.turn_completed" => workflow_turn_completed_envelope(
             &event_context.session_id,
             ExecutionWorkflowTurnEventData::from(payload),

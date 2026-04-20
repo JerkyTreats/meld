@@ -2,9 +2,9 @@
 
 pub mod binding;
 pub mod commands;
+pub mod events;
 pub mod executor;
 pub mod facade;
-pub mod events;
 pub mod gates;
 pub mod normalization;
 pub mod profile;

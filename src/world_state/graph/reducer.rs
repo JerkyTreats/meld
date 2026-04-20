@@ -5,8 +5,8 @@ use crate::world_state::graph::contracts::{
     TraversalIntent,
 };
 use crate::world_state::graph::events::{
-    AnchorSelectedEventData, AnchorSupersededEventData, anchor_selected_envelope,
-    anchor_superseded_envelope,
+    anchor_selected_envelope, anchor_superseded_envelope, AnchorSelectedEventData,
+    AnchorSupersededEventData,
 };
 use crate::world_state::graph::projection::{AnchorLineageProjection, CurrentAnchorProjection};
 use crate::world_state::graph::store::TraversalStore;

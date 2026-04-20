@@ -291,12 +291,8 @@ impl TaskExecutor {
         self.completed_instances
             .insert(record.capability_instance_id.clone());
 
-        let mut event = Self::build_task_event(
-            task_id,
-            task_run_id,
-            target_node_id,
-            "task_succeeded",
-        );
+        let mut event =
+            Self::build_task_event(task_id, task_run_id, target_node_id, "task_succeeded");
         event.capability_instance_id = Some(record.capability_instance_id.clone());
         event.invocation_id = Some(record.invocation_id.clone());
         event.attempt_index = Some(record.attempt_index);
@@ -330,12 +326,7 @@ impl TaskExecutor {
         self.in_flight_instances
             .remove(&record.capability_instance_id);
 
-        let mut event = Self::build_task_event(
-            task_id,
-            task_run_id,
-            target_node_id,
-            "task_failed",
-        );
+        let mut event = Self::build_task_event(task_id, task_run_id, target_node_id, "task_failed");
         event.capability_instance_id = Some(record.capability_instance_id.clone());
         event.invocation_id = Some(record.invocation_id.clone());
         event.attempt_index = Some(record.attempt_index);

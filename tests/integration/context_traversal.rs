@@ -67,10 +67,7 @@ fn create_test_node_record(node_id: NodeID) -> NodeRecord {
 
 fn register_agent(api: &ContextApi, agent_id: &str) {
     let mut registry = api.agent_registry().write();
-    registry.register(AgentIdentity::new(
-        agent_id.to_string(),
-        AgentRole::Writer,
-    ));
+    registry.register(AgentIdentity::new(agent_id.to_string(), AgentRole::Writer));
 }
 
 fn frame_metadata(agent_id: &str) -> std::collections::HashMap<String, String> {
@@ -89,7 +86,9 @@ fn frame_metadata(agent_id: &str) -> std::collections::HashMap<String, String> {
 fn put_frame_emits_frame_and_head_events() {
     let (api, progress, session_id, _temp_dir) = create_test_api();
     let node_id: NodeID = [9u8; 32];
-    api.node_store().put(&create_test_node_record(node_id)).unwrap();
+    api.node_store()
+        .put(&create_test_node_record(node_id))
+        .unwrap();
     register_agent(&api, "writer-1");
 
     let frame = Frame::new(
@@ -100,10 +99,14 @@ fn put_frame_emits_frame_and_head_events() {
         frame_metadata("writer-1"),
     )
     .unwrap();
-    let frame_id = api.put_frame(node_id, frame, "writer-1".to_string()).unwrap();
+    let frame_id = api
+        .put_frame(node_id, frame, "writer-1".to_string())
+        .unwrap();
 
     let events = progress.store().read_events_after(&session_id, 0).unwrap();
-    assert!(events.iter().any(|event| event.event_type == "context.frame_added"));
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == "context.frame_added"));
     let head_event = events
         .iter()
         .find(|event| event.event_type == "context.head_selected")
@@ -122,7 +125,9 @@ fn put_frame_emits_frame_and_head_events() {
 fn tombstone_head_emits_head_tombstoned() {
     let (api, progress, session_id, _temp_dir) = create_test_api();
     let node_id: NodeID = [10u8; 32];
-    api.node_store().put(&create_test_node_record(node_id)).unwrap();
+    api.node_store()
+        .put(&create_test_node_record(node_id))
+        .unwrap();
     register_agent(&api, "writer-1");
 
     let frame = Frame::new(
@@ -133,7 +138,8 @@ fn tombstone_head_emits_head_tombstoned() {
         frame_metadata("writer-1"),
     )
     .unwrap();
-    api.put_frame(node_id, frame, "writer-1".to_string()).unwrap();
+    api.put_frame(node_id, frame, "writer-1".to_string())
+        .unwrap();
     api.tombstone_head(node_id, "analysis").unwrap();
 
     let events = progress.store().read_events_after(&session_id, 0).unwrap();

@@ -345,7 +345,9 @@ impl WatchDaemon {
         };
 
         if agents.is_empty() {
-            warn!("No agents registered, skipping contextframe creation. Please configure agents in your config file.");
+            warn!(
+                "No agents registered, skipping contextframe creation. Please configure agents in your config file."
+            );
             return Ok(());
         }
 

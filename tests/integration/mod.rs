@@ -3,6 +3,8 @@
 mod agent_authorization;
 mod agent_cli;
 mod blake3_verification;
+mod branches_query;
+mod branches_runtime;
 mod capability_contracts;
 mod capability_invocation;
 mod config_integration;
@@ -21,8 +23,6 @@ mod model_providers;
 mod node_deletion;
 mod progress_observability;
 mod provider_cli;
-mod branches_query;
-mod branches_runtime;
 mod store_integration;
 mod task_artifact_repo;
 mod task_bottom_up_compile_shape;

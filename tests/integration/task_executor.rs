@@ -283,8 +283,12 @@ fn task_executor_publishes_canonical_events() {
 
 #[test]
 fn task_artifact_event_emits_task_and_artifact_refs() {
-    let mut executor =
-        TaskExecutor::new(compiled_task(), init_payload_with_node(), "repo_docs_writer").unwrap();
+    let mut executor = TaskExecutor::new(
+        compiled_task(),
+        init_payload_with_node(),
+        "repo_docs_writer",
+    )
+    .unwrap();
     let payloads = executor
         .release_ready_invocations(CapabilityExecutionContext::default())
         .unwrap();
@@ -346,8 +350,12 @@ fn task_artifact_event_emits_task_and_artifact_refs() {
 
 #[test]
 fn task_run_emits_target_node_ref_from_init_payload() {
-    let mut executor =
-        TaskExecutor::new(compiled_task(), init_payload_with_node(), "repo_docs_writer").unwrap();
+    let mut executor = TaskExecutor::new(
+        compiled_task(),
+        init_payload_with_node(),
+        "repo_docs_writer",
+    )
+    .unwrap();
 
     let _ = executor
         .release_ready_invocations(CapabilityExecutionContext::default())

@@ -43,21 +43,13 @@ fn replay_rebuilds_execution_projection() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
     let runtime = ProgressRuntime::new(db).unwrap();
-    let session_id = runtime.start_command_session("projection".to_string()).unwrap();
+    let session_id = runtime
+        .start_command_session("projection".to_string())
+        .unwrap();
 
     let task_one = task_event_data("task_one", "run_one");
-    emit_task_event(
-        &runtime,
-        &session_id,
-        "execution.task.requested",
-        &task_one,
-    );
-    emit_task_event(
-        &runtime,
-        &session_id,
-        "execution.task.started",
-        &task_one,
-    );
+    emit_task_event(&runtime, &session_id, "execution.task.requested", &task_one);
+    emit_task_event(&runtime, &session_id, "execution.task.started", &task_one);
     let mut task_one_artifact = task_one.clone();
     task_one_artifact.artifact_id = Some("artifact_one".to_string());
     task_one_artifact.artifact_type_id = Some("resolved_node_ref".to_string());
@@ -67,34 +59,14 @@ fn replay_rebuilds_execution_projection() {
         "execution.task.artifact_emitted",
         &task_one_artifact,
     );
-    emit_task_event(
-        &runtime,
-        &session_id,
-        "execution.task.succeeded",
-        &task_one,
-    );
+    emit_task_event(&runtime, &session_id, "execution.task.succeeded", &task_one);
 
     let mut task_two = task_event_data("task_two", "run_two");
-    emit_task_event(
-        &runtime,
-        &session_id,
-        "execution.task.requested",
-        &task_two,
-    );
+    emit_task_event(&runtime, &session_id, "execution.task.requested", &task_two);
     task_two.blocked_reason = Some("missing_input".to_string());
-    emit_task_event(
-        &runtime,
-        &session_id,
-        "execution.task.blocked",
-        &task_two,
-    );
+    emit_task_event(&runtime, &session_id, "execution.task.blocked", &task_two);
     task_two.error = Some("provider failed".to_string());
-    emit_task_event(
-        &runtime,
-        &session_id,
-        "execution.task.failed",
-        &task_two,
-    );
+    emit_task_event(&runtime, &session_id, "execution.task.failed", &task_two);
 
     let projection = ExecutionProjection::replay_from_store(runtime.store(), 0).unwrap();
 
@@ -117,21 +89,13 @@ fn projection_matches_live_execution() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
     let runtime = ProgressRuntime::new(db).unwrap();
-    let session_id = runtime.start_command_session("projection".to_string()).unwrap();
+    let session_id = runtime
+        .start_command_session("projection".to_string())
+        .unwrap();
     let task = task_event_data("task_one", "run_one");
 
-    emit_task_event(
-        &runtime,
-        &session_id,
-        "execution.task.requested",
-        &task,
-    );
-    emit_task_event(
-        &runtime,
-        &session_id,
-        "execution.task.started",
-        &task,
-    );
+    emit_task_event(&runtime, &session_id, "execution.task.requested", &task);
+    emit_task_event(&runtime, &session_id, "execution.task.started", &task);
     let mut artifact_event = task.clone();
     artifact_event.artifact_id = Some("artifact_one".to_string());
     artifact_event.artifact_type_id = Some("resolved_node_ref".to_string());
@@ -141,12 +105,7 @@ fn projection_matches_live_execution() {
         "execution.task.artifact_emitted",
         &artifact_event,
     );
-    emit_task_event(
-        &runtime,
-        &session_id,
-        "execution.task.succeeded",
-        &task,
-    );
+    emit_task_event(&runtime, &session_id, "execution.task.succeeded", &task);
 
     let mut live_projection = ExecutionProjection::default();
     let mut last_seq = 0;
