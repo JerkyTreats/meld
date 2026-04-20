@@ -38,6 +38,7 @@ Required PLAN structure:
 - development phases with dependency order
 - per phase goal tasks exit criteria and key seams
 - verification strategy and gate definitions
+- formatter check gate using the repository formatter before test gates
 - implementation order summary
 - related documentation links
 - short exception list for non default path command behavior
@@ -57,6 +58,7 @@ Commit model:
 
 Tracking requirements:
 - update task completion status in PLAN as work lands
+- run and record formatter check evidence before test evidence for each phase that changes source or Markdown files
 - capture verification evidence for each phase gate
 - add phase completion notes with unresolved risks when present
 
