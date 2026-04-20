@@ -1,65 +1,78 @@
 # Events Design
 
-Date: 2026-04-12
+Date: 2026-04-20
 Status: active
-Scope: implementable design set for the shared event spine
+Scope: declarative design for the shared event spine
 
 ## Intent
 
-This directory is the active plan for the event spine.
-It should be read as one design set, not as disconnected notes.
+`events` is the canonical spine for promoted semantic facts.
 
-The design goal is one durable spine for promoted semantic facts across `sensory`, `world_state`, `execution`, and attached object domains such as the workspace tree.
+The design goal is one durable temporal ledger across `workspace_fs`, `context`, `execution`, `world_state`, and later `sensory`.
 
-## Review Of Current State
-
-The repo already has useful spine pieces:
-
-- `src/telemetry/events.rs` defines a durable envelope
-- `src/telemetry/routing/ingestor.rs` already serializes append through one ingestor
-- `src/telemetry/sinks/store.rs` already persists ordered records
-- `src/task/events.rs` already contains much of the execution vocabulary
-- `src/workspace/watch/events.rs` already models local batching before promotion
-
-The current system is not yet a true spine:
-
-- sequence is session scoped rather than runtime wide
-- `ProgressRuntime::emit_event` drains and flushes on every emit
-- execution facts are split between durable telemetry and task-local `Vec<TaskEvent>`
-- telemetry still owns too much transport and naming surface
-- raw watch and workflow behavior are not separated cleanly from promoted semantic facts
-
-## What This Design Set Must Produce
-
-After this doc pass, the event spine plan should answer these questions without hand waving:
-
-- what the canonical envelope is
-- what sequence model the spine uses
-- what belongs in the spine and what stays outside it
-- which event families land first
-- which current files change first
-- what compatibility rules protect the migration
-- what tests prove parity and replay correctness
-
-## Read Order
-
-1. [Event Spine Requirements](event_manager_requirements.md)
-2. [Event Domain Extraction Spec](event_domain_extraction_spec.md)
-3. [Event Spine Refactor](telemetry_refactor.md)
-4. [Multi-Domain Spine](multi_domain_spine.md)
-5. [Event Management Research](research.md)
+Implementation history lives in [Completed Events](../../completed/events/README.md).
 
 ## Boundary
 
-`events` is not `telemetry`.
+`events` owns:
 
-- `events` owns ingress, sequence, durability, replay, subscription, and compatibility rules
-- `sensory`, `world_state`, and `execution` own event meaning and reducer logic
-- `telemetry` consumes the spine for observability, summaries, metrics, and external export
+- canonical envelope
+- ingress
+- sequence
+- durable append
+- replay
+- subscription
+- stored envelope compatibility
+- graph attachment primitives
+
+Domain owners own event meaning:
+
+- `workspace_fs` owns workspace facts
+- `context` owns frame and head facts
+- `execution` owns task, control, workflow, and artifact facts
+- `world_state` owns derived graph and later belief facts
+- `sensory` owns observation promotion rules
+
+`telemetry` is downstream.
+It consumes spine history for summaries, metrics, operator feedback, and compatibility.
+
+## Spine Contract
+
+The spine contract requires:
+
+- one runtime-wide sequence
+- append-only canonical history
+- stable `record_id` support for idempotent derived facts
+- domain and stream identity
+- explicit event type
+- explicit recorded time
+- optional occurred time
+- optional content hash
+- graph object refs
+- graph relation edges
+- legacy read compatibility
+
+## Inclusion Rule
+
+Only promoted semantic facts belong in the canonical spine.
+
+Raw sensory pulses, raw file watcher noise, transient worker chatter, and presentation summaries stay outside the canonical correctness path.
+
+## Active Documents
+
+- [Event Spine Requirements](event_manager_requirements.md)
+  canonical envelope, ownership, ordering, durability, and replay requirements
+- [Multi-Domain Spine](multi_domain_spine.md)
+  cross-domain ledger model and reference contract
+
+## Completed History
+
+- [Completed Events](../../completed/events/README.md)
+  extraction plan, refactor plan, and research history
 
 ## Read With
 
 - [Spine Concern](../spine/README.md)
+- [World State Domain](../world_state/README.md)
+- [Graph](../world_state/graph/README.md)
 - [Execution Control](../execution/control/README.md)
-- [Task Network](../execution/control/task_network.md)
-- [Runtime Model](../execution/control/runtime/README.md)

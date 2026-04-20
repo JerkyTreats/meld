@@ -1,8 +1,14 @@
 # Roots Retrofit Plan
 
 Date: 2026-04-15
-Status: active
+Status: completed and superseded by branches
 Scope: phased implementation path from current roots migration support to branch ready workspace federation substrate
+
+## Status Note
+
+This is a completed retrofit tracker.
+The canonical implementation now lives in `branches`, and `roots` remains a compatibility facade.
+Use [Branch Feature Implementation Plan](branch_feature_implementation_plan.md) and [Spine Graph Completion Review](spine_graph_completion_plan.md) for current status.
 
 ## Overview
 
@@ -196,11 +202,11 @@ Gate D:
 
 ## Related Documentation
 
-- [Branch Federation Substrate](branch_federation_substrate.md)
+- [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md)
 - [Root Federation Runtime](root_federation_runtime.md)
 - [Root Migration Architecture](root_migration_architecture.md)
 - [Root Migration First Slice](root_migration_first_slice.md)
-- [Graph](README.md)
+- [Graph](../../../cognitive_architecture/world_state/graph/README.md)
 
 ## Exception List
 

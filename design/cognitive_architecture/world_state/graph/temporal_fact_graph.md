@@ -1,19 +1,19 @@
 # Temporal Fact Graph
 
-Date: 2026-04-12
+Date: 2026-04-20
 Status: active
 Scope: canonical graph model for `world_state/graph`, built downstream of the shared event spine
 
 ## Thesis
 
-The canonical graph for `world_state/graph` should be a temporal fact graph.
+The canonical graph for `world_state/graph` is a temporal fact graph.
 
 This means:
 
 - the spine is the durable history of semantic fact commits
 - the graph is the current graph surface
 - the graph is materialized from spine history
-- the graph can emit new curation facts into the spine, but it does not rewrite history directly
+- the graph emits derived anchor facts into the spine, but it does not rewrite history directly
 
 This is the clean split between:
 
@@ -24,14 +24,16 @@ This is the clean split between:
 
 Do not make the graph and the spine the same storage role.
 
-The spine should own:
+The spine owns:
 
 - durable append
 - total commit order
 - replay
 - cross-domain attachment
+- idempotent record lookup through `record_id`
+- compatibility reads for legacy telemetry events
 
-Graph materialization should own:
+Graph materialization owns:
 
 - current anchors
 - current relations
@@ -77,11 +79,11 @@ A temporal fact graph gives both.
 
 ## Object Identity
 
-The graph must stop assuming filesystem identity is universal.
+The graph no longer assumes filesystem identity is universal.
 
-The cross-domain anchor should be `DomainObjectRef`.
+The cross-domain anchor is `DomainObjectRef`.
 
-Each durable object reference should carry:
+Each durable object reference carries:
 
 - `domain_id`
 - `object_kind`
@@ -98,33 +100,44 @@ Examples:
 - world state entity
 - claim
 
-`world_state` may also maintain an internal entity identifier for live materialization, but the public durable anchor should remain `DomainObjectRef`.
+`world_state` may still add internal entity identifiers later, but the public durable anchor remains `DomainObjectRef`.
 
 ## Fact Shape
 
-Each spine fact that is relevant to `world_state` should be reducible into a typed fact record.
+Each spine fact that is relevant to `world_state` is reducible into a typed traversal fact record.
 
-Minimum durable fact shape:
+The canonical event record carries:
 
 ```rust
-struct TemporalFactRecord {
-    fact_id: String,
-    seq: u64,
+pub struct EventRecord {
+    pub ts: String,
+    pub recorded_at: String,
+    pub record_id: Option<String>,
+    pub session: String,
+    pub seq: u64,
     domain_id: String,
     stream_id: String,
     event_type: String,
-    occurred_at: String,
-    recorded_at: String,
+    occurred_at: Option<String>,
     content_hash: Option<String>,
     objects: Vec<DomainObjectRef>,
-    relations: Vec<FactRelation>,
-    payload: serde_json::Value,
+    relations: Vec<EventRelation>,
+    data: serde_json::Value,
 }
+```
 
-struct FactRelation {
-    relation_type: String,
-    src: DomainObjectRef,
-    dst: DomainObjectRef,
+Legacy telemetry events read through serde defaults and normalize to the canonical fields.
+
+The traversal materialization record carries:
+
+```rust
+pub struct TraversalFactRecord {
+    pub fact_id: TraversalFactId,
+    pub source_spine_fact_id: String,
+    pub seq: u64,
+    pub event_type: String,
+    pub objects: Vec<DomainObjectRef>,
+    pub relations: Vec<EventRelation>,
 }
 ```
 
@@ -152,7 +165,7 @@ The traversal graph should carry:
 - entity nodes
 - anchor nodes
 - typed relations
-- evidence links where available
+- source fact links where available
 - provenance links
 - current head selection
 - current lineage state
@@ -163,13 +176,13 @@ That is the job of `world_state/belief`.
 
 ## Authority Model
 
-Authority should flow one way:
+Authority flows one way:
 
 - spine to graph is authoritative
 
 Feedback still exists:
 
-- reducers may publish new curation facts back into the spine
+- reducers may publish derived anchor facts back into the spine
 
 The safe rule is:
 
@@ -177,19 +190,19 @@ The safe rule is:
 
 So the loop is:
 
-1. `workspace_fs`, `execution`, or later `sensory` publishes semantic facts into the spine
+1. `workspace_fs`, `context`, `control`, `task`, or `workflow` publishes semantic facts into the spine
 2. `world_state/graph` reducers consume those facts
 3. reducers update current graph state
-4. reducers may emit new `world_state.*` traversal facts
+4. `GraphRuntime` appends derived `world_state.*` traversal facts idempotently
 5. later replay can rebuild the same traversal graph
 
 This preserves both provenance and replay discipline.
 
 ## Reducer Model
 
-The graph should be materialized by traversal reducers, not by arbitrary writers.
+The graph is materialized by traversal reducers, not by arbitrary writers.
 
-Reducers should be partitionable by:
+Reducers are still designed to remain partitionable by:
 
 - object identity
 - relation family
@@ -198,16 +211,18 @@ Reducers should be partitionable by:
 
 This is the path to high parallelism.
 
-The first reducer families should be:
+Reducer families are:
 
-- observation attachment
-  attach promoted observations and execution outcomes to durable objects
 - anchor selection
   select the current reachable artifact, frame, or head for one object and one perspective
 - provenance threading
   preserve why one current anchor is selected
+- relation indexing
+  preserve graph adjacency for object walk and neighbor lookup
+- legacy claim compatibility
+  expose older current-claim reads over graph anchors where needed
 
-Each reducer should consume the spine, maintain one materialized view, and expose replay from the last applied `seq`.
+Each reducer consumes the spine, maintains materialized views, and exposes replay from the last applied `seq`.
 
 ## Graph Indexes
 
@@ -215,25 +230,29 @@ Do not answer graph questions by scanning the whole spine.
 
 The graph needs explicit indexes.
 
-Minimum traversal indexes:
+Traversal index contract:
 
 - `fact_id -> fact`
 - `object_ref -> fact_ids`
 - `fact_id -> object_refs`
-- `object_ref + relation_type -> current neighbors`
-- `claim_id -> supporting evidence`
-- `claim_id -> contradicting evidence`
-- `claim_id -> supersession chain`
-- `stream_id -> fact_ids`
-- `domain_id -> fact_ids`
+- outgoing relation adjacency
+- incoming relation adjacency
+- `anchor_id -> anchor`
+- `anchor_ref -> current anchor`
+- `anchor_ref -> anchor history`
+- `anchor_id -> superseded anchor ids`
+- `source_spine_fact_id -> traversal fact id`
 - `seq -> fact_id`
+- `subject + perspective -> current anchor`
 
-Minimum current state indexes:
+Legacy claim indexes also remain:
 
-- `object_ref -> current anchors`
-- `object_ref -> current relations`
-- `planner view key -> current settled value`
-- `inspection view key -> provenance bundle`
+- `claim_id -> claim`
+- `evidence_id -> evidence`
+- `subject -> active claims`
+- `subject -> claim history`
+- `claim_id -> supersession chain`
+- `source_spine_fact_id -> world state fact`
 
 These indexes are the real traversal engine.
 The spine remains the durable source.
@@ -242,16 +261,17 @@ The spine remains the durable source.
 
 A full temporal graph needs more than one traversal mode.
 
-At minimum the system should support:
+The current system supports:
 
 - temporal traversal by `seq`
 - object history traversal by `DomainObjectRef`
-- current relation traversal by settled graph adjacency
+- relation traversal by graph adjacency
 - provenance traversal from anchor to supporting facts
-- lineage traversal from current anchor to prior anchor chain
+- lineage traversal from current anchor to prior anchor chain through anchor history and supersession
+- bounded graph walk with direction, relation filters, current-only selected-edge filtering, and optional fact inclusion
 
-The first spine refactor already gives temporal traversal.
-`world_state/graph` must add object and relation traversal on top.
+The spine gives temporal traversal.
+`world_state/graph` adds object and relation traversal on top.
 
 ## What ECS Is And Is Not Here
 
@@ -275,40 +295,47 @@ If ECS is used later, it should sit behind this contract, not replace it.
 
 ## First Durable Record Families
 
-`world_state` should define typed facts for:
+`world_state` currently defines typed facts for:
 
-- `world_state.entity_attached`
 - `world_state.claim_added`
-- `world_state.claim_revised`
 - `world_state.claim_superseded`
 - `world_state.evidence_attached`
-- `world_state.calibration_recorded`
+- `world_state.anchor_selected`
+- `world_state.anchor_superseded`
 
-Each of these facts should attach to explicit `DomainObjectRef` values and explicit relation types.
+The implemented graph facts attach to explicit `DomainObjectRef` values.
+Relations are carried by source domain facts and by graph-readable envelopes where needed.
+
+Future belief facts may add claim revision, contradiction, calibration, and curation families.
 
 ## First Query Surfaces
 
-The first graph should answer these queries cheaply:
+The current graph answers these queries cheaply:
 
-- what do we currently believe about object X
-- why do we believe claim Y
-- what superseded claim Y
-- which execution outcome changed belief about object X
-- what planner-facing settled view exists for object X
+- what is the current anchor for object X and perspective Y
+- what current snapshot represents workspace source X
+- what current frame head represents workspace node X and frame type Y
+- what current artifact represents task run X and artifact type Y
+- which facts mention object X after sequence Y
+- which objects neighbor object X by relation and direction
+- what bounded subgraph is reachable from object X
+- which facts and relations explain anchor X
+- which prior anchors were replaced by anchor X
 
-If the first graph cannot answer those cleanly, it is not yet the right substrate.
+Legacy claim query still answers current claims, claim history, and claim provenance for the older settlement projection.
 
-## First Implementation Slice
+## Baseline Contract
 
-The first `world_state` landing should do five things:
+The graph baseline requires:
 
-1. Define `DomainObjectRef` and typed relation records in the spine contract
-2. Define `TemporalFactRecord` and one typed decoding layer for relevant spine facts
-3. Build one object history index and one current claim index
-4. Build one claim settlement reducer that consumes promoted facts and emits `world_state.claim_*` facts
-5. Expose one planner-facing settled belief projection and one operator-facing provenance projection
+1. `DomainObjectRef` and `EventRelation` are the graph attachment contract
+2. Canonical events carry graph objects and relations
+3. Traversal materialization keeps fact, object, relation, current anchor, history, lineage, source fact, and sequence indexes
+4. Reducers consume graph-capable source facts through explicit domain contracts
+5. Derived anchor facts are represented as spine events
+6. Traversal queries and branch annotated federated reads preserve provenance
 
-This is enough to prove the model without forcing a full graph runtime rewrite.
+The remaining work is belief and curation, not first graph materialization.
 
 ## Non Goals
 
@@ -321,7 +348,7 @@ This is enough to prove the model without forcing a full graph runtime rewrite.
 ## Read With
 
 - [World State Domain](../README.md)
-- [Traversal](README.md)
+- [Graph](README.md)
 - [Belief](../belief/README.md)
 - [Knowledge Graph ECS Decision Memo](../belief/knowledge_graph_ecs_decision_memo.md)
 - [Spine Concern](../../spine/README.md)

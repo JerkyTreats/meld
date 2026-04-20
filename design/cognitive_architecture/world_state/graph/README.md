@@ -1,6 +1,6 @@
 # Graph
 
-Date: 2026-04-13
+Date: 2026-04-20
 Status: active
 Scope: current anchor selection, lineage, provenance, and cross-domain graph walk inside `world_state`
 
@@ -8,14 +8,17 @@ Scope: current anchor selection, lineage, provenance, and cross-domain graph wal
 
 `graph` answers what is current and how to reach it.
 
-This is already real in the repo today:
+The graph contract is:
 
-- workspace nodes provide structural anchors
-- frames provide perspective-shaped knowledge artifacts
-- heads provide the latest selected anchor for a node and frame type
-- execution can move those anchors forward or fail to move them
+- the spine carries `DomainObjectRef` objects and `EventRelation` edges
+- graph materialization derives current anchors and traversal views from spine history
+- anchors are selected for a subject and perspective
+- lineage records what an anchor replaced
+- provenance records which facts made an anchor current
+- traversal exposes bounded object walks and relation adjacency
+- branch scoped reads preserve branch identity and presence
 
-The job of `world_state/graph` is to lift that existing logic into explicit spine facts and graph-readable indexes without breaking the current system.
+The job of `world_state/graph` is now to keep this materialization replayable, index backed, and narrow enough for belief to build on later.
 
 ## What Graph Owns
 
@@ -43,32 +46,37 @@ The current operational graph already exists in these forms:
 - head selection by node and frame type
 - task and capability work that advances or preserves those heads
 
-This means the first graph branch is a lift and formalization task, not a greenfield invention.
+The lift into explicit spine facts and traversal indexes is now baseline.
 
-## First Branch Scope
+## Baseline Scope
 
-This branch should stop at graph materialization and traversal.
+The graph baseline stops at graph materialization and traversal.
 
-That means:
+It includes:
 
-- event spine publication with explicit object refs and relations
+- canonical event spine publication with explicit object refs and relations
 - workspace and execution contribution to current anchor state
 - replayable current anchor materialization
-- query surfaces for current anchor, lineage, and provenance
+- query surfaces for current anchor, lineage, provenance, neighbors, and bounded walks
+- durable derived anchor events written back to the spine by `GraphRuntime`
+- branch annotated federation over traversal stores
+- one workflow task path that resolves final frame artifacts through traversal
 
 Belief work is deferred.
+
+## Remaining Limits
+
+- `world_state/belief` is outside the graph baseline
+- confidence, contradiction handling, calibration, and curation are not graph responsibilities
+- traversal only reduces source domains that publish explicit graph objects and relations
+- graph indexes are sled backed materializations, not a general graph database
+- branch federation preserves per-branch presence and provenance, but does not merge branch facts into one global authority
 
 ## Read With
 
 - [World State Domain](../README.md)
 - [Belief](../belief/README.md)
 - [Temporal Fact Graph](temporal_fact_graph.md)
-- [Graph Implementation Plan](implementation_plan.md)
-- [Workspace FS Graph Transition Requirements](workspace_fs_transition_requirements.md)
 - [Branch Federation Substrate](branch_federation_substrate.md)
-- [Branch Lift Plan](branch_lift_plan.md)
-- [Spine Graph Completion Plan](spine_graph_completion_plan.md)
-- [Root Federation Runtime](root_federation_runtime.md)
-- [Root Migration Architecture](root_migration_architecture.md)
-- [Root Migration First Slice](root_migration_first_slice.md)
+- [Completed Graph Implementation History](../../../completed/world_state/graph/README.md)
 - [Spine Concern](../../spine/README.md)

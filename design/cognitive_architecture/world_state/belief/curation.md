@@ -1,6 +1,6 @@
 # Curation In Belief
 
-Date: 2026-04-12
+Date: 2026-04-20
 Status: active
 Scope: natural runtime model for belief maintenance inside `world_state/belief`
 
@@ -105,6 +105,9 @@ That boundary keeps the world model living without turning every other domain in
 
 ## First Slice
 
+This slice is not implemented yet.
+It should build on the implemented graph substrate and legacy claim compatibility layer.
+
 - thesis, evidence, provenance, supersession, and calibration records
 - one curation replay path from promoted spine facts into current belief
 - one planner-facing current belief projection
@@ -114,7 +117,7 @@ That boundary keeps the world model living without turning every other domain in
 
 - [World State Domain](../README.md)
 - [Belief](README.md)
-- [Traversal](../traversal/README.md)
+- [Graph](../graph/README.md)
 - [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md)
 - [Spine Concern](../../spine/README.md)
 - [Observe Merge Push](../../observe_merge_push.md)

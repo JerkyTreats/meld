@@ -1,7 +1,7 @@
 # Spine Graph Feature Implementation Plan
 
 Date: 2026-04-18
-Status: active
+Status: completed
 Scope: phased delivery tracker for spine hardening, graph completion, branch federation, and first consumer integration
 
 ## Overview
@@ -146,7 +146,7 @@ Closeout notes:
 
 ## Related Documents
 
-- [Spine Graph Completion Plan](spine_graph_completion_plan.md)
+- [Spine Graph Completion Review](spine_graph_completion_plan.md)
 - [Branch Feature Implementation Plan](branch_feature_implementation_plan.md)
 
 ## Exception List

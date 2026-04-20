@@ -1,20 +1,29 @@
 # World State Domain
 
-Date: 2026-04-12
+Date: 2026-04-20
 Status: active
 Scope: canonical belief ownership, knowledge graph projection, and temporal provenance over shared observations
 
 ## Thesis
 
-`world_state` now splits into two internal concerns:
+`world_state` now has three visible strata:
 
 - `graph`
   what is current and how to reach it
+- legacy claim projection
+  compatibility over execution outcomes and graph anchors
 - `belief`
   whether current should still be trusted
 
-Within `belief`, `curation` is the primary merge activity.
-It turns observations and task outcomes into current belief.
+`graph` and the shared `events` substrate are implemented.
+They are no longer future assumptions.
+
+The graph layer consumes canonical spine events through `DomainObjectRef` objects and `EventRelation` edges, materializes traversal indexes, selects current anchors, preserves anchor lineage, and emits durable derived anchor events back into the spine.
+
+The older claim projection still exists as a compatibility surface.
+It records generation and artifact availability claims, supports provenance and supersession queries, and now also has a traversal adapter for current frame-head style claims.
+
+`belief` remains the future layer for confidence, contradiction, calibration, and curation.
 
 The durable world model is a temporal knowledge graph with:
 
@@ -36,26 +45,27 @@ The durable world model is a temporal knowledge graph with:
 
 `sensory` owns observation production.
 `execution` owns planning and side effects.
-`spine` owns ordering, replay, and cross-domain attachment primitives.
+`events` owns ordering, replay, and cross-domain attachment primitives.
+`telemetry` is now a downstream compatibility and reporting surface over that spine.
 
-## Current Anchors
+## Current Contract
 
-- the prior reducer is already a narrow belief projection fed by historical outcomes
-- the frame and head system already acts like a current-anchor graph over filesystem nodes and agent perspectives
-- the multi-domain spine already reserves `knowledge_graph` as a future attachment domain
+- canonical spine events carry graph objects and relations
+- graph materialization is replayable from spine history
+- current anchors are selected by subject and perspective
+- provenance is preserved through source facts, derived facts, and lineage
+- traversal crosses workspace, context, execution, task, workflow, and branch scoped graph surfaces
+- branch reads preserve branch presence and provenance
+- belief remains a separate layer above traversal
 
 ## Graph
 
 - [Graph](graph/README.md)
   current anchor selection, lineage, provenance, and graph walk
 - [Temporal Fact Graph](graph/temporal_fact_graph.md)
-  canonical graph model for the graph layer and its spine contract
-- [Graph Implementation Plan](graph/implementation_plan.md)
-  phased delivery plan and branch scope for graph work
-- [Workspace FS Graph Transition Requirements](graph/workspace_fs_transition_requirements.md)
-  compatibility-led lift of `workspace_fs` into canonical graph inputs without breaking `NodeID` flows
-- [Root Federation Runtime](graph/root_federation_runtime.md)
-  runtime discovery, safe migration, and operator trigger flow for federated roots
+  implemented graph model for the graph layer and its spine contract
+- [Completed Graph Implementation History](../../completed/world_state/graph/README.md)
+  completed delivery trackers, migration notes, and implementation closeout records
 
 ## Belief
 
@@ -66,21 +76,23 @@ The durable world model is a temporal knowledge graph with:
 - [Knowledge Graph ECS Decision Memo](belief/knowledge_graph_ecs_decision_memo.md)
   ECS evaluation for curation internals, migration cost, and recommendation
 
-## Required First Slice
+## First Slice Boundary
 
-- define graph records for current anchor, lineage, and provenance
-- define reducer inputs from spine facts into graph projections
-- anchor graph walk to `DomainObjectRef` so the model can extend beyond filesystem nodes
-- define a later belief layer for confidence, contradiction, and calibration
+The graph slice is now part of the baseline architecture.
+
+The remaining world-state design work starts above that baseline:
+
+- define belief records and settlement policy
+- define curation replay and worker ownership
+- decide how legacy claim projection retires into belief
+- add confidence, contradiction, calibration, and revision semantics
 
 ## Read With
 
 - [Observe Merge Push](../observe_merge_push.md)
 - [Graph](graph/README.md)
 - [Temporal Fact Graph](graph/temporal_fact_graph.md)
-- [Graph Implementation Plan](graph/implementation_plan.md)
-- [Workspace FS Graph Transition Requirements](graph/workspace_fs_transition_requirements.md)
-- [Root Federation Runtime](graph/root_federation_runtime.md)
+- [Completed Graph Implementation History](../../completed/world_state/graph/README.md)
 - [Belief](belief/README.md)
 - [Curation In Belief](belief/curation.md)
 - [Knowledge Graph ECS Decision Memo](belief/knowledge_graph_ecs_decision_memo.md)

@@ -1,247 +1,189 @@
 # Multi-Domain Spine
 
-Date: 2026-04-12
-Status: proposed
-Scope: north star for extending the first execution spine into one shared temporal ledger across cognitive domains
+Date: 2026-04-20
+Status: active
+Scope: shared temporal ledger across cognitive domains
 
 ## Intent
 
-Define how the first spine grows beyond `execution`.
+Define how many domains share one temporal spine without sharing one ownership model.
 
-The immediate refactor lands one real spine for `execution`.
-This document constrains that work so `sensory`, `world_state`, and attached object domains can join later without another envelope reset.
+The spine is the shared history ledger.
+Object stores, reducers, reference projections, and query surfaces remain domain-owned.
 
-## The Problem
+## Problem
 
-The application currently has one implicit domain: the workspace filesystem.
-`NodeID` traces to filesystem paths. `FrameID` basis traces to `NodeID`.
-Everything anchors there.
+Cross-domain temporal questions require a shared clock.
 
-Adding a second filesystem, attaching task execution records as a first-class queryable
-structure, or representing conceptual entities like "Core Thesis linked to contextual facts
-and decision points" all require a shared temporal anchor that the current model cannot provide.
+Examples:
 
-Without a shared anchor, cross-domain temporal queries are impossible:
-"what was the filesystem state when this task succeeded?" has no answer because the two
-domains do not share a clock or a sequence.
+- what workspace snapshot was current when a task emitted an artifact
+- what frame head was current when a workflow turn completed
+- what graph anchor was selected after an execution outcome
+- what belief was current when a planner chose an action
 
-## Every Domain Reduces to Three Concerns
+Without runtime-wide spine sequence and cross-domain object refs, these questions collapse into ad hoc joins across local clocks.
 
-Regardless of what a domain represents, it has three concerns:
+## Domain Concerns
 
-- **Objects**: content-addressed blobs. Each domain has its own object store.
-  Key: `Blake3Hash → bytes`. The bytes live exactly once.
-- **References**: named current-state pointers. Each domain maintains its own projection.
-  Examples: `HeadIndex`, task network state, knowledge graph current view.
-- **History**: ordered mutations. All domains share the spine.
-  The spine records when each mutation happened and what it touched.
+Every domain has three concerns:
 
-The spine is the shared history ledger. Object stores and reference projections are
-domain-owned. This is the hub-and-spoke model.
+- objects
+  durable objects owned by that domain
+- references
+  named current-state pointers or projections
+- history
+  ordered semantic facts in the spine
+
+The spine stores history.
+Domains own objects and references.
 
 ## Known Domains
 
 ### workspace_fs
 
-The current filesystem merkle tree.
+The workspace filesystem graph.
 
-Spine events: `workspace_scan_completed`, `workspace_node_changed`, `workspace_node_removed`.
-Object store: frame storage keyed by `FrameID`.
-Reference projection: `HeadIndex` over node and frame type.
+Semantic facts include:
 
-The lift from the current model is simple:
-filesystem mutations that are currently implicit during scan become explicit spine events with a `domain_id` of `workspace_fs`.
-The merkle tree hash per scan becomes a spine event payload field.
-Current state remains a projection.
+- source attached
+- scan started
+- scan completed
+- snapshot materialized
+- snapshot selected
+- node observed
+
+### context
+
+Frames, frame heads, and prompt context artifacts.
+
+Semantic facts include:
+
+- frame added
+- head selected
+- prompt context lineage where promoted
 
 ### execution
 
-Execution facts from planning, task progression, repair, and action outcome publication.
+Planning, task progression, workflow turns, repair, action outcomes, and artifacts.
 
-The first spine refactor targets this domain.
-The first event families are `execution.task.*`, `execution.control.*`, `execution.repair.*`, and `execution.artifact.*`.
+Semantic facts include:
 
-Object store: task invocation records, execution artifacts, and related content-addressed blobs.
-Reference projection: task-network state and other execution projections.
-
-This domain already exists partially in code.
-The first refactor should tag all canonical facts with `domain_id = "execution"` from day one.
+- task requested
+- task started
+- task artifact emitted
+- task failed
+- control node completed
+- control node failed
+- workflow turn completed
 
 ### world_state
 
-Curated claims, belief revisions, calibration records, and world-model projections.
+Graph anchors, graph traversal materialization, and future belief records.
 
-This domain is not landing in the first spine refactor.
-Its inclusion here constrains the envelope and reference model now.
+Semantic facts include:
 
-Spine events: `world_state.claim_added`, `world_state.belief_revised`, `world_state.claim_superseded`, `world_state.calibration_recorded`.
-Object store: evidence blobs, claim payloads, and projection snapshots where needed.
-Reference projection: current belief view and knowledge graph materialization.
+- anchor selected
+- anchor superseded
+- claim added
+- evidence attached
+- future belief revised
+- future calibration recorded
 
 ### sensory
 
 Promoted observations from lowered sensory pipelines.
 
-This domain does not publish raw high-rate lanes into the spine.
-It publishes promoted semantic observations only.
+Raw high-rate lanes do not publish directly into the spine.
+Only promoted semantic observations enter the spine.
 
-Spine events: `sensory.observe.promoted`, `sensory.observe.retracted`, `sensory.observe.window_closed`.
-Object store: optional observation summaries or referenced evidence blobs.
-Reference projection: local observation windows or promoted observation indexes.
+## Envelope Anchors
 
-## Required Envelope Fields
+The spine envelope carries:
 
-The first spine envelope should include four durable identity anchors:
-
-```rust
-struct SpineEvent {
-    ts: String,
-    session: String,
-    seq: u64,
-    domain_id: DomainId,
-    stream_id: String,
-    event_type: String,
-    content_hash: Option<Blake3Hash>,
-    data: serde_json::Value,
-}
-```
+- runtime-wide `seq`
+- owning `domain_id`
+- `stream_id`
+- `event_type`
+- optional `record_id`
+- optional `content_hash`
+- explicit `objects`
+- explicit `relations`
 
 `domain_id` enables per-domain filtering and projection without parsing `event_type`.
 
-`stream_id` anchors one task run, workspace root, belief stream, or sensory lane.
+`stream_id` anchors one task run, workspace source, branch, belief stream, or sensory lane.
 
-`content_hash` enables content-addressed lookup from an event reference without loading the full artifact.
-It is optional because not every event touches one primary content object.
-
-These fields must be present from the first spine refactor commit.
-Adding them later would force another stored event migration.
+`content_hash` links an event to content-addressed data when one primary object exists.
 
 ## DomainObjectRef
 
-Cross-domain references require a stable identity type that is not tied to any one domain's
-internal identifier scheme.
+Cross-domain references use a stable identity type that is not tied to any one domain internal identifier.
 
 ```rust
 struct DomainObjectRef {
-    domain_id: DomainId,
-    object_kind: ObjectKind,
+    domain_id: String,
+    object_kind: String,
     object_id: String,
 }
 ```
 
-A `NodeID` becomes:
-```
-DomainObjectRef { domain_id: "workspace_fs", object_kind: "node", object_id: ... }
+A workspace node becomes:
+
+```rust
+DomainObjectRef { domain_id: "workspace_fs", object_kind: "node", object_id: "..." }
 ```
 
 A task run becomes:
-```
-DomainObjectRef { domain_id: "execution", object_kind: "task_run", object_id: ... }
+
+```rust
+DomainObjectRef { domain_id: "execution", object_kind: "task_run", object_id: "..." }
 ```
 
 A world-state entity becomes:
-```
-DomainObjectRef { domain_id: "world_state", object_kind: "entity", object_id: ... }
-```
 
-Cross-domain edges in the knowledge graph are typed references between `DomainObjectRef` values.
-The spine records when those references were created.
-World-state nodes that reference execution outcomes carry `DomainObjectRef` values that point back to the execution stream.
-
-`DomainObjectRef` does not need full adoption in the first spine refactor.
-It does need to exist before the world-state graph grows into broader cross-domain references.
-The practical constraint is simple:
-new payload schemas should stop assuming that `NodeID` is the universal identity anchor.
-
-## Temporal Queries Across Domains
-
-With `domain_id`, `stream_id`, and runtime-wide `seq`, cross-domain temporal queries become straightforward:
-
-**"What was the workspace state when task T completed?"**
-
-1. Find the `execution.task.succeeded` event for task T in the spine. Its sequence is S.
-2. Find the latest `workspace_scan_completed` event for the relevant workspace with seq ≤ S.
-3. That event's payload carries the merkle tree hash representing the workspace state at that time.
-
-**"What world-state belief was in effect when frame F was written?"**
-
-1. Find the `frame_written` event for frame F. Its sequence is S.
-2. Find the latest `world_state.belief_revised` event for the relevant belief stream with seq ≤ S.
-3. Resolve the referenced world-state object or projection snapshot.
-
-These queries do not require joins across systems with different clocks. The spine sequence
-is the shared clock.
-
-## Batch Events for Bulk Operations
-
-A workspace scan may change thousands of nodes. Emitting one spine event per node is
-impractical under the current eager flush model and may be impractical even under a batched
-model for large workspaces.
-
-The solution is batch events:
-
-```json
-{
-  "domain_id": "workspace_fs",
-  "stream_id": "workspace::<root>",
-  "event_type": "workspace_scan_batch",
-  "content_hash": "hash_of_new_merkle_root",
-  "data": {
-    "workspace_id": "...",
-    "previous_merkle_root": "...",
-    "new_merkle_root": "...",
-    "changed_node_count": 47,
-    "change_summary_ref": "hash_of_detailed_diff_blob"
-  }
-}
+```rust
+DomainObjectRef { domain_id: "world_state", object_kind: "entity", object_id: "..." }
 ```
 
-The detailed diff that lists changed nodes plus old and new hashes is stored as a content-addressed blob referenced by `change_summary_ref`.
+Cross-domain edges use typed `EventRelation` values between `DomainObjectRef` values.
+
+## Temporal Queries
+
+With `domain_id`, `stream_id`, `DomainObjectRef`, relations, and runtime-wide `seq`, cross-domain temporal queries become replayable:
+
+- find the source event
+- take its sequence
+- query the latest relevant projection at or before that sequence
+- hydrate provenance through object refs and relations
+
+The spine sequence is the shared clock.
+
+## Batch Facts
+
+Large domains may publish compact batch facts.
+
+A batch fact should preserve:
+
+- source object
+- summary counts
+- content hash or artifact ref for detailed data
+- relation edges needed for graph traversal
+- sequence position for replay
+
+The detailed payload may live in a domain-owned object store.
 The spine event stays compact.
-Consumers that need the full diff load it from the content store.
 
-## Genesis Events for Bootstrapping
+## Genesis Facts
 
-When a domain is first attached to the spine, its current state predates the spine.
-A genesis event captures the baseline:
+When a domain joins the spine with existing state, a genesis fact may capture the baseline.
 
-```json
-{
-  "domain_id": "workspace_fs",
-  "stream_id": "workspace::<root>",
-  "event_type": "workspace_domain_genesis",
-  "content_hash": "hash_of_initial_merkle_root",
-  "data": {
-    "workspace_id": "...",
-    "initial_merkle_root": "...",
-    "node_count": 312,
-    "genesis_reason": "spine_attach"
-  }
-}
-```
-
-After genesis, all subsequent mutations emit delta events. Replaying the genesis event
-plus all subsequent delta events reconstructs the full domain state.
-
-## Constraint On The Immediate Refactor
-
-The [Event Spine Refactor](telemetry_refactor.md) is the concrete next work.
-Its scope is the `execution` domain only.
-
-The constraints this document imposes on that work are narrow:
-
-1. Add `domain_id`, `stream_id`, and optional `content_hash` to the spine envelope.
-2. Default all first-slice canonical facts to `domain_id = "execution"`.
-3. Make `seq` runtime wide from the first real spine commit.
-4. Do not assume `NodeID` is the universal identity anchor in new payload schemas.
-5. Keep raw sensory lanes outside the canonical spine.
-
-Everything else in the first refactor may stay scoped to execution.
-The hub-and-spoke model is the north star, not the immediate implementation target.
+After genesis, subsequent mutations emit delta facts.
+Replaying genesis plus later deltas reconstructs that domain projection.
 
 ## Read With
 
 - [Event Spine Requirements](event_manager_requirements.md)
-- [Event Spine Refactor](telemetry_refactor.md)
-- [Event Management Research](research.md)
+- [World State Domain](../world_state/README.md)
+- [Graph](../world_state/graph/README.md)
 - [Execution Control](../execution/control/README.md)

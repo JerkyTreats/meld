@@ -1,6 +1,6 @@
 # Belief
 
-Date: 2026-04-13
+Date: 2026-04-20
 Status: active
 Scope: confidence, revision, contradiction, and settlement inside `world_state`
 
@@ -33,14 +33,16 @@ That means belief should build on:
 ## Current Status
 
 The repo has a real traversal substrate today.
-It does not yet have a fully explicit belief layer.
+It also has a legacy claim projection for generation outcomes and artifact availability.
+
+It does not yet have a fully explicit belief layer with confidence, contradiction, calibration, and curation semantics.
 
 This area is where curation, settlement, and possible ECS-shaped internals belong after traversal is stable.
 
 ## Read With
 
 - [World State Domain](../README.md)
-- [Traversal](../traversal/README.md)
+- [Graph](../graph/README.md)
 - [Curation In Belief](curation.md)
 - [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md)
 - [Observe Merge Push](../../observe_merge_push.md)

@@ -9,7 +9,7 @@ Scope: directly implementable migration from the current telemetry runtime into 
 Turn the current telemetry centered implementation into a canonical event spine for the first `execution` slice.
 
 This document is the implementation plan.
-Target requirements live in [Event Spine Requirements](event_manager_requirements.md).
+Target requirements live in [Event Spine Requirements](../../cognitive_architecture/events/event_manager_requirements.md).
 
 ## Closed Decisions
 

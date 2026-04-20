@@ -1,8 +1,14 @@
 # Branch Lift Plan
 
 Date: 2026-04-15
-Status: active
+Status: superseded by completed branch implementation
 Scope: full rename from `roots` to `branches` and the remaining implementation lift to federated workspace reads through the branch substrate
+
+## Status Note
+
+This is a historical lift plan.
+The canonical `branches` domain, `roots` compatibility facade, dormant branch workflows, and federated query facade have landed.
+Use [Branch Feature Implementation Plan](branch_feature_implementation_plan.md), [Spine Graph Completion Review](spine_graph_completion_plan.md), and [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md) for current status.
 
 ## Objective
 

@@ -254,8 +254,8 @@ Verification:
 
 - [Event Domain Extraction Spec](event_domain_extraction_spec.md)
 - [Event Spine Refactor](telemetry_refactor.md)
-- [Event Spine Requirements](event_manager_requirements.md)
-- [Multi-Domain Spine](multi_domain_spine.md)
+- [Event Spine Requirements](../../cognitive_architecture/events/event_manager_requirements.md)
+- [Multi-Domain Spine](../../cognitive_architecture/events/multi_domain_spine.md)
 
 ## Exception List
 

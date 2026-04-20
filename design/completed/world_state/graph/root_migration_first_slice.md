@@ -1,12 +1,18 @@
 # Root Migration First Slice
 
 Date: 2026-04-15
-Status: active
+Status: superseded by branches first slice
 Scope: concrete contracts and rollout design for root registration, migration bookkeeping, and operator visible status
+
+## Status Note
+
+This is a historical root-era first slice.
+The implementation evolved into the canonical `branches` domain with a `roots` compatibility facade.
+Use [Branch Feature Implementation Plan](branch_feature_implementation_plan.md), [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md), and [Spine Graph Completion Review](spine_graph_completion_plan.md) for current status.
 
 ## Objective
 
-This slice is the `workspace_fs` first landing under the broader branch substrate in [Branch Federation Substrate](branch_federation_substrate.md).
+This slice is the `workspace_fs` first landing under the broader branch substrate in [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md).
 
 Turn the root migration architecture into a narrow design slice that can land safely in code.
 

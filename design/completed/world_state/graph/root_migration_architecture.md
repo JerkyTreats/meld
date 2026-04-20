@@ -1,12 +1,18 @@
 # Root Migration Architecture
 
 Date: 2026-04-15
-Status: active
+Status: historical architecture note
 Scope: architectural migration model for root scoped state evolution, graph projection catch up, and federation readiness
+
+## Status Note
+
+This root-scoped architecture remains useful background for migration lanes.
+Current implementation vocabulary is branch based, with root terms preserved only for compatibility.
+Use [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md) and [Spine Graph Completion Review](spine_graph_completion_plan.md) for current status.
 
 ## Thesis
 
-This document is the `workspace_fs` compatibility and migration model inside the broader branch substrate in [Branch Federation Substrate](branch_federation_substrate.md).
+This document is the `workspace_fs` compatibility and migration model inside the broader branch substrate in [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md).
 
 Meld should not treat migration as one generic schema upgrade flow.
 

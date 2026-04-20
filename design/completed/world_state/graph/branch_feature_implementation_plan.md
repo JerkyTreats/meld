@@ -1,7 +1,7 @@
 # Branch Feature Implementation Plan
 
 Date: 2026-04-15
-Status: active
+Status: completed
 Scope: phased implementation of canonical branches, dormant branch workflows, and federated workspace reads
 
 ## Overview
@@ -161,7 +161,7 @@ Gate E:
 
 ## Related Documents
 
-- [Branch Federation Substrate](branch_federation_substrate.md)
+- [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md)
 - [Branch Lift Plan](branch_lift_plan.md)
 - [Roots Retrofit Plan](roots_retrofit_plan.md)
 

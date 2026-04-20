@@ -1,50 +1,31 @@
 # Event Spine Requirements
 
-Date: 2026-04-12
+Date: 2026-04-20
 Status: active
-Scope: canonical spine for promoted semantic facts across `sensory`, `world_state`, `execution`, and attached object domains
+Scope: canonical spine for promoted semantic facts across domains
 
 ## Objective
 
-Define what must be true for the event spine.
-This document closes the core design choices.
-Migration sequencing lives in [Event Spine Refactor](telemetry_refactor.md).
+Define what must be true for the shared event spine.
 
-## Current Baseline
-
-The current code already gives the spine a partial shape:
-
-- `src/telemetry/events.rs` defines `ProgressEvent`
-- `src/telemetry/routing/bus.rs` provides in-process ingress
-- `src/telemetry/routing/ingestor.rs` serializes append through one ingestor
-- `src/telemetry/sinks/store.rs` persists ordered records in `sled`
-- `src/telemetry/sessions/service.rs` exposes the current emission path
-- `src/task/events.rs` defines execution event vocabulary
-- `src/task/executor.rs` keeps a task-local event log outside the durable store
-- `src/workspace/watch/events.rs` batches local file changes before any semantic promotion
-
-The current gaps are:
-
-- `seq` is session scoped rather than runtime wide
-- emission drains and flushes on every event
-- execution facts are split across two event paths
-- raw local batching and promoted semantic facts are not separated clearly
-- telemetry still owns too much of the canonical path
+This document is declarative.
+Delivery history lives in [Completed Events](../../completed/events/README.md).
 
 ## Core Thesis
 
-There must be one canonical spine for promoted semantic facts.
+There is one canonical spine for promoted semantic facts.
 
 That spine must:
 
 - accept events from concurrent producers
 - assign one runtime-wide deterministic order
 - persist append-only records
+- support idempotent append for derived facts
 - support replay into reducer owned projections
+- carry explicit graph attachment metadata
 - allow downstream consumers without making them part of correctness
 
-Raw sensory pulses, transient worker chatter, and presentation summaries do not belong in the canonical spine.
-Only promoted semantic facts belong there.
+Only promoted semantic facts belong in the canonical spine.
 
 ## Ownership
 
@@ -56,8 +37,10 @@ Only promoted semantic facts belong there.
 - replay contract
 - subscription contract
 - compatibility rules for stored envelopes
+- `DomainObjectRef`
+- `EventRelation`
 
-`execution`, `world_state`, and `sensory` own:
+Domain modules own:
 
 - typed event families
 - reducer logic
@@ -69,21 +52,26 @@ Only promoted semantic facts belong there.
 - observability adapters
 - summary mapping
 - metrics and export sinks
+- compatibility names for older progress surfaces
 
 ## Canonical Envelope
 
-The canonical stored envelope for the first spine should be:
+The canonical stored envelope is:
 
 ```rust
-struct SpineEvent {
+struct EventRecord {
     ts: String,
+    recorded_at: String,
+    record_id: Option<String>,
     session: String,
     seq: u64,
     domain_id: String,
     stream_id: String,
-    #[serde(rename = "type")]
     event_type: String,
+    occurred_at: Option<String>,
     content_hash: Option<String>,
+    objects: Vec<DomainObjectRef>,
+    relations: Vec<EventRelation>,
     data: serde_json::Value,
 }
 ```
@@ -91,97 +79,101 @@ struct SpineEvent {
 Required meaning of the fields:
 
 - `ts`
-  event creation time as observed by the publisher
+  compatibility timestamp retained for older event readers
+- `recorded_at`
+  time the event was recorded into the spine
+- `record_id`
+  optional stable id for idempotent append
 - `session`
   operator or runtime session grouping
 - `seq`
   runtime-wide monotonic spine order
 - `domain_id`
-  one domain label such as `execution`, `world_state`, `sensory`, or `workspace_fs`
+  owning domain label such as `execution`, `world_state`, `sensory`, or `workspace_fs`
 - `stream_id`
-  one stable per-object or per-run stream anchor such as `task_run_id`
+  stable per-object, per-run, or per-source stream anchor
 - `event_type`
   typed semantic event name
+- `occurred_at`
+  source occurrence time when known
 - `content_hash`
-  optional link to one content-addressed object or blob summary
+  optional link to a content-addressed object or blob summary
+- `objects`
+  explicit graph objects attached by the fact
+- `relations`
+  explicit graph relations declared by the fact
 - `data`
   typed payload encoded into one stable durable envelope
 
-## Closed Design Decisions
+## Ordering Rules
 
-### One runtime-wide order
+`seq` is runtime wide.
 
-`seq` must be runtime wide.
 Session local sequence is not enough for a real spine.
-
 Without one shared order, cross-domain temporal questions have no precise answer.
-The first implementation should use one local sequencer and one local append path.
 
-### Stream identity is required
+The spine may later become distributed, but the contract remains one replayable total order per local spine.
 
-`stream_id` is required from the first landing.
+## Idempotency Rules
 
-The spine needs a stable per-run or per-object anchor that is not overloaded onto `session`.
-The first execution slice should use values such as:
+Derived facts may provide `record_id`.
 
-- `task_run_id`
-- `plan_id`
-- `workflow_id`
+Appending the same `record_id` again must return the existing sequence and must not create a duplicate fact.
 
-### Facts, not views
+Source facts without a stable `record_id` remain append-only facts.
+
+## Facts And Views
 
 The spine stores facts.
 Views are projections.
 
-Facts for the first execution slice include:
+Facts include:
 
-- `execution.task.requested`
-- `execution.task.started`
-- `execution.task.progressed`
-- `execution.task.blocked`
-- `execution.task.succeeded`
-- `execution.task.failed`
-- `execution.task.artifact_emitted`
-- `execution.repair.requested`
-- `execution.repair.applied`
-- `execution.control.dispatch_requested`
-- `execution.control.dispatch_started`
-- `execution.control.dispatch_completed`
+- workspace source and snapshot facts
+- context frame and head facts
+- execution task and artifact facts
+- workflow turn and plan linkage facts
+- control outcome facts
+- world state derived anchor facts
 
-Derived views include:
+Views include:
 
-- progress percentage
-- active task count
-- TUI lane summaries
-- retry dashboards
+- progress summaries
+- active task counts
+- traversal indexes
+- current anchors
+- branch federated query results
+- operator dashboards
 
-### Raw sensory stays outside
+## Raw Signal Rule
 
-The spine is not the raw sensory transport.
-High-rate sensory lanes lower into local observation forms first.
+The spine is not raw sensory transport.
+
+High-rate sensory lanes and raw watcher pulses lower into local observation forms first.
 Only promoted semantic observations enter the spine.
 
-### Reducers own state transitions
+## Reducer Rule
 
 Workers may emit facts.
 Reducers own canonical state transitions and projections.
+
 Workers must not mutate reducer-owned state directly.
 
 ## Domain Event Families
 
-The first landing should standardize these families:
+Current first-class families include:
 
-- `execution.session.*`
+- `workspace_fs.*`
+- `context.*`
 - `execution.task.*`
 - `execution.control.*`
-- `execution.repair.*`
-- `execution.artifact.*`
+- `execution.workflow.*`
+- `world_state.anchor_*`
 
-The next families should reserve namespace only:
+Reserved future families include:
 
 - `sensory.observe.*`
 - `sensory.promote.*`
-- `world_state.claim.*`
 - `world_state.belief.*`
 - `world_state.calibration.*`
 
@@ -189,9 +181,9 @@ The next families should reserve namespace only:
 
 - canonical records are append only
 - replay must rebuild reducer projections after restart
-- the design must define durable commit versus buffered commit
-- durability policy must be explicit rather than hidden inside one emit call
 - correction happens through later events, not in-place mutation
+- session cleanup must not delete canonical spine history
+- compatibility readers must keep old stored envelopes readable
 
 ## Ingress Requirements
 
@@ -199,9 +191,6 @@ The next families should reserve namespace only:
 - canonical ingress must be bounded
 - shutdown and cancellation behavior must be explicit
 - one slow consumer must not block append correctness
-
-The current `std::sync::mpsc` bus is acceptable as a transitional local mechanism.
-The design requirement is bounded ingress semantics, not that this exact channel survive unchanged.
 
 ## Subscription Requirements
 
@@ -212,7 +201,7 @@ The design requirement is bounded ingress semantics, not that this exact channel
 
 ## Cross-Domain References
 
-Cross-domain payloads should use one stable reference shape:
+Cross-domain payloads use `DomainObjectRef`:
 
 ```rust
 struct DomainObjectRef {
@@ -222,41 +211,27 @@ struct DomainObjectRef {
 }
 ```
 
-`object_id` may be a content hash, task run id, workspace node hash, or another stable domain identifier.
-The first spine commit does not need full `DomainObjectRef` adoption in every payload.
-It does need to stop assuming that `NodeID` is the universal anchor.
+Typed graph edges use `EventRelation`:
 
-## First Landing Constraints
+```rust
+struct EventRelation {
+    relation_type: String,
+    src: DomainObjectRef,
+    dst: DomainObjectRef,
+}
+```
 
-The first implementation slice is `execution`.
-
-That slice must:
-
-- keep existing storage and reader continuity where practical
-- introduce the canonical envelope fields now
-- shift sequence assignment to runtime-wide order now
-- make `TaskEvent` compatible with canonical spine publication
-- keep raw workspace watch batches outside the canonical spine until semantic promotion exists
-
-## Non Requirements
-
-This design does not require:
-
-- distributed consensus in the first landing
-- an external broker in the first landing
-- a full CQRS framework
-- raw sensory ingestion into the canonical spine
-- world-state ECS work before the execution slice lands
+No domain may assume `NodeID` is the universal identity anchor.
 
 ## Acceptance Conditions
 
-The spine requirements are satisfied when all of these are true:
+The spine requirements are satisfied when all of these remain true:
 
-- one canonical envelope is defined and shared
+- one canonical envelope is shared
 - runtime-wide sequence is explicit
-- typed event families are named for the first execution slice
+- idempotent derived fact append is explicit
+- typed event families are owned by domains
 - reducer ownership of state transition is explicit
 - replay can rebuild required projections
-- telemetry is downstream of the spine
-- compatibility and parity gates are defined for the migration
-- the acceptance criteria in [Event Spine Refactor](telemetry_refactor.md) are all satisfied
+- telemetry remains downstream of the spine
+- graph attachment uses explicit objects and relations
