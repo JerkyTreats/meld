@@ -8,8 +8,9 @@ pub mod runtime;
 pub mod store;
 
 pub use contracts::{
-    AnchorId, AnchorProvenanceRecord, AnchorSelectionRecord, GraphWalkResult, GraphWalkSpec,
-    PerspectiveKey, TraversalDirection, TraversalFactId, TraversalFactRecord,
+    AnchorEndInput, AnchorId, AnchorProvenanceRecord, AnchorSelectionInput, AnchorSelectionRecord,
+    GraphWalkResult, GraphWalkSpec, PerspectiveKey, TraversalDirection, TraversalFactId,
+    TraversalFactRecord, TraversalIntent,
 };
 pub use query::TraversalQuery;
 pub use runtime::GraphRuntime;

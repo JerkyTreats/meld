@@ -1,11 +1,12 @@
 use crate::error::StorageError;
-use crate::events::{DomainObjectRef, EventEnvelope, EventRecord, EventStore};
+use crate::events::{EventEnvelope, EventRecord, EventStore};
 use crate::world_state::graph::contracts::{
-    AnchorSelectionRecord, PerspectiveKey, TraversalFactRecord,
+    AnchorEndInput, AnchorSelectionInput, AnchorSelectionRecord, TraversalFactRecord,
+    TraversalIntent,
 };
 use crate::world_state::graph::events::{
-    anchor_selected_envelope, anchor_superseded_envelope, AnchorSelectedEventData,
-    AnchorSupersededEventData,
+    AnchorSelectedEventData, AnchorSupersededEventData, anchor_selected_envelope,
+    anchor_superseded_envelope,
 };
 use crate::world_state::graph::projection::{AnchorLineageProjection, CurrentAnchorProjection};
 use crate::world_state::graph::store::TraversalStore;
@@ -61,117 +62,33 @@ impl TraversalReducer {
             relations: event.relations.clone(),
         })?;
 
-        match event.event_type.as_str() {
-            "workspace_fs.snapshot_selected" => {
-                let Some(source) = find_object_ref(&event.objects, "workspace_fs", "source") else {
-                    return Ok(true);
-                };
-                let Some(snapshot) = find_object_ref(&event.objects, "workspace_fs", "snapshot")
-                else {
-                    return Ok(true);
-                };
-                let anchor_ref =
-                    DomainObjectRef::new("workspace_fs", "snapshot_head", &source.object_id)?;
-                let perspective = PerspectiveKey::new("snapshot", "current")?;
-                self.select_anchor(
-                    store,
-                    event,
-                    anchor_ref,
-                    source,
-                    perspective,
-                    snapshot,
-                    source_fact_id,
-                )?;
-            }
-            "context.head_selected" => {
-                let Some(head_ref) = find_object_ref(&event.objects, "context", "head") else {
-                    return Ok(true);
-                };
-                let Some(subject) = find_object_ref(&event.objects, "workspace_fs", "node") else {
-                    return Ok(true);
-                };
-                let Some(target) = find_object_ref(&event.objects, "context", "frame") else {
-                    return Ok(true);
-                };
-                let frame_type = head_ref
-                    .object_id
-                    .split_once("::")
-                    .map(|(_, frame_type)| frame_type.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                let perspective = PerspectiveKey::new("frame_type", frame_type)?;
-                self.select_anchor(
-                    store,
-                    event,
-                    head_ref,
-                    subject,
-                    perspective,
-                    target,
-                    source_fact_id,
-                )?;
-            }
-            "context.head_tombstoned" => {
-                let Some(head_ref) = find_object_ref(&event.objects, "context", "head") else {
-                    return Ok(true);
-                };
-                if let Some(current) = store.current_anchor(&head_ref)? {
-                    let mut ended = current.clone();
-                    ended.ended_at_seq = Some(event.seq);
-                    store.put_anchor(&ended)?;
-                    store.clear_current_anchor(
-                        &ended.anchor_ref,
-                        &ended.subject,
-                        &ended.perspective,
-                    )?;
-                    self.current_anchors
-                        .end(&ended.anchor_ref.index_key(), event.seq);
+        for intent in reducer_intents_for_event(event, &source_fact_id)? {
+            match intent {
+                TraversalIntent::SelectAnchor(input) => {
+                    self.select_anchor(store, event, input)?;
+                }
+                TraversalIntent::EndAnchor(input) => {
+                    self.end_anchor(store, input)?;
                 }
             }
-            "execution.task.artifact_emitted" => {
-                let Some(task_run) = find_object_ref(&event.objects, "execution", "task_run")
-                else {
-                    return Ok(true);
-                };
-                let Some(artifact) = find_object_ref(&event.objects, "execution", "artifact")
-                else {
-                    return Ok(true);
-                };
-                let Some(slot_ref) = find_object_ref(&event.objects, "execution", "artifact_slot")
-                else {
-                    return Ok(true);
-                };
-                let artifact_type_id = slot_ref
-                    .object_id
-                    .rsplit_once("::")
-                    .map(|(_, artifact_type_id)| artifact_type_id.to_string())
-                    .unwrap_or_else(|| "artifact".to_string());
-                let perspective = PerspectiveKey::new("artifact_type", artifact_type_id)?;
-                self.select_anchor(
-                    store,
-                    event,
-                    slot_ref,
-                    task_run,
-                    perspective,
-                    artifact,
-                    source_fact_id,
-                )?;
-            }
-            _ => {}
         }
 
         Ok(true)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn select_anchor(
         &mut self,
         store: &TraversalStore,
         event: &EventRecord,
-        anchor_ref: DomainObjectRef,
-        subject: DomainObjectRef,
-        perspective: PerspectiveKey,
-        target: DomainObjectRef,
-        source_fact_id: String,
+        input: AnchorSelectionInput,
     ) -> Result<(), StorageError> {
+        let AnchorSelectionInput {
+            anchor_ref,
+            subject,
+            perspective,
+            target,
+            source_fact_id,
+        } = input;
         let anchor_id = format!("anchor::{}::{}", anchor_ref.index_key(), event.seq);
         if let Some(existing) = store.get_anchor(&anchor_id)? {
             if let Some(current) = store.current_anchor(&anchor_ref)? {
@@ -250,6 +167,22 @@ impl TraversalReducer {
         ));
         Ok(())
     }
+
+    fn end_anchor(
+        &mut self,
+        store: &TraversalStore,
+        input: AnchorEndInput,
+    ) -> Result<(), StorageError> {
+        if let Some(current) = store.current_anchor(&input.anchor_ref)? {
+            let mut ended = current.clone();
+            ended.ended_at_seq = Some(input.ended_at_seq);
+            store.put_anchor(&ended)?;
+            store.clear_current_anchor(&ended.anchor_ref, &ended.subject, &ended.perspective)?;
+            self.current_anchors
+                .end(&ended.anchor_ref.index_key(), input.ended_at_seq);
+        }
+        Ok(())
+    }
 }
 
 fn is_traversal_source_event(event: &EventRecord) -> bool {
@@ -259,13 +192,22 @@ fn is_traversal_source_event(event: &EventRecord) -> bool {
     )
 }
 
-fn find_object_ref(
-    objects: &[DomainObjectRef],
-    domain_id: &str,
-    object_kind: &str,
-) -> Option<DomainObjectRef> {
-    objects
-        .iter()
-        .find(|object| object.domain_id == domain_id && object.object_kind == object_kind)
-        .cloned()
+fn reducer_intents_for_event(
+    event: &EventRecord,
+    source_fact_id: &str,
+) -> Result<Vec<TraversalIntent>, StorageError> {
+    let mut intents = Vec::new();
+    intents.extend(crate::workspace::reducer::graph_reducer_intents_for_event(
+        event,
+        source_fact_id,
+    )?);
+    intents.extend(crate::context::reducer::graph_reducer_intents_for_event(
+        event,
+        source_fact_id,
+    )?);
+    intents.extend(crate::task::reducer::graph_reducer_intents_for_event(
+        event,
+        source_fact_id,
+    )?);
+    Ok(intents)
 }

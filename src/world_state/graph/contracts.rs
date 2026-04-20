@@ -62,6 +62,27 @@ pub struct AnchorSelectionRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnchorSelectionInput {
+    pub anchor_ref: DomainObjectRef,
+    pub subject: DomainObjectRef,
+    pub perspective: PerspectiveKey,
+    pub target: DomainObjectRef,
+    pub source_fact_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnchorEndInput {
+    pub anchor_ref: DomainObjectRef,
+    pub ended_at_seq: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TraversalIntent {
+    SelectAnchor(AnchorSelectionInput),
+    EndAnchor(AnchorEndInput),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraversalFactRecord {
     pub fact_id: TraversalFactId,
     pub source_spine_fact_id: String,
