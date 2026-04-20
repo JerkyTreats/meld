@@ -1,19 +1,23 @@
 //! CLI route: shared runtime context and top-level command dispatch only.
 
 use crate::api::ContextApi;
+use crate::branches::{BranchHandle, BranchRuntime};
 use crate::cli::parse::Commands;
 use crate::cli::progress::LiveProgressHandle;
+use crate::cli::session::{finish_command_session, start_command_session};
 use crate::cli::{command_name, typed_summary_event};
 use crate::config::ConfigLoader;
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
+use crate::session::PrunePolicy;
 use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
-use crate::telemetry::sessions::policy::PrunePolicy;
 use crate::telemetry::ProgressRuntime;
+use crate::world_state::GraphRuntime;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::warn;
 
 /// Runtime context for CLI execution: workspace, config paths, and domain facades.
 /// Built from workspace path and optional config path using ConfigLoader only.
@@ -28,6 +32,9 @@ pub struct RunContext {
     artifact_storage_path: PathBuf,
     workflow_registry: Arc<parking_lot::RwLock<crate::workflow::registry::WorkflowRegistry>>,
     progress: Arc<ProgressRuntime>,
+    graph_runtime: Arc<GraphRuntime>,
+    branch_runtime: BranchRuntime,
+    active_branch: BranchHandle,
 }
 
 impl RunContext {
@@ -55,6 +62,11 @@ impl RunContext {
         } else {
             ConfigLoader::load(&workspace_root)?
         };
+        let branch_runtime = BranchRuntime::new();
+        let active_branch = branch_runtime.resolve_active_branch(&workspace_root)?;
+        if let Err(err) = branch_runtime.ensure_active_branch_registered(&active_branch) {
+            warn!(error = %err, "failed to register active branch during startup");
+        }
 
         let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(&workspace_root)?;
@@ -70,7 +82,8 @@ impl RunContext {
             )))
         })?;
         let node_store = Arc::new(SledNodeRecordStore::from_db(db.clone()));
-        let progress = Arc::new(ProgressRuntime::new(db).map_err(ApiError::StorageError)?);
+        let progress = Arc::new(ProgressRuntime::new(db.clone()).map_err(ApiError::StorageError)?);
+        let graph_runtime = Arc::new(GraphRuntime::new(db).map_err(ApiError::StorageError)?);
 
         std::fs::create_dir_all(&frame_storage_path)
             .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
@@ -122,9 +135,40 @@ impl RunContext {
             lock_manager,
             workspace_root.clone(),
         );
+        api.set_graph_runtime(Arc::clone(&graph_runtime));
 
         let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(&workspace_root)?;
+
+        match graph_runtime.catch_up() {
+            Ok(applied_events) => {
+                let last_reduced_seq = match graph_runtime.traversal_store().last_reduced_seq() {
+                    Ok(seq) => seq,
+                    Err(err) => {
+                        warn!(error = %err, "failed to read last reduced seq during startup");
+                        0
+                    }
+                };
+                if let Err(err) = branch_runtime.record_branch_graph_catch_up_success(
+                    &active_branch,
+                    last_reduced_seq,
+                    applied_events,
+                ) {
+                    warn!(error = %err, "failed to record branch graph migration during startup");
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, "failed to catch up graph runtime during startup");
+                if let Err(record_err) = branch_runtime
+                    .record_branch_graph_catch_up_failure(&active_branch, &err.to_string())
+                {
+                    warn!(
+                        error = %record_err,
+                        "failed to record branch graph migration failure during startup"
+                    );
+                }
+            }
+        }
 
         Ok(Self {
             api: Arc::new(api),
@@ -135,6 +179,9 @@ impl RunContext {
             artifact_storage_path,
             workflow_registry,
             progress,
+            graph_runtime,
+            branch_runtime,
+            active_branch,
         })
     }
 
@@ -142,13 +189,52 @@ impl RunContext {
     pub fn execute(&self, command: &Commands) -> Result<String, ApiError> {
         let started = Instant::now();
         let command_name = command_name(command);
-        let session_id = self.progress.start_command_session(command_name)?;
+        let session_id = start_command_session(&self.progress, &command_name)?;
+        self.api
+            .set_progress_context(Arc::clone(&self.progress), session_id.clone());
         let mut live_progress = LiveProgressHandle::start_if_supported(
             Arc::clone(&self.progress),
             &session_id,
             command,
         );
         let result = self.execute_inner(command, &session_id);
+        match self.graph_runtime.catch_up() {
+            Ok(applied_events) => {
+                let last_reduced_seq = match self.graph_runtime.traversal_store().last_reduced_seq()
+                {
+                    Ok(seq) => seq,
+                    Err(err) => {
+                        warn!(error = %err, "failed to read last reduced seq after command execution");
+                        0
+                    }
+                };
+                if applied_events > 0 {
+                    if let Err(err) = self.branch_runtime.record_branch_graph_catch_up_success(
+                        &self.active_branch,
+                        last_reduced_seq,
+                        applied_events,
+                    ) {
+                        warn!(error = %err, "failed to record branch graph migration after command execution");
+                    }
+                } else if let Err(err) =
+                    self.branch_runtime.touch_active_branch(&self.active_branch)
+                {
+                    warn!(error = %err, "failed to update active branch last seen after command execution");
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, "failed to catch up graph runtime after command execution");
+                if let Err(record_err) = self
+                    .branch_runtime
+                    .record_branch_graph_catch_up_failure(&self.active_branch, &err.to_string())
+                {
+                    warn!(
+                        error = %record_err,
+                        "failed to record branch graph migration failure after command execution"
+                    );
+                }
+            }
+        }
         self.emit_command_summary(
             &session_id,
             command,
@@ -157,7 +243,8 @@ impl RunContext {
         );
         let ok = result.is_ok();
         let err = result.as_ref().err().map(|e| e.to_string());
-        self.progress.finish_command_session(&session_id, ok, err)?;
+        finish_command_session(&self.progress, &session_id, ok, err)?;
+        self.api.clear_progress_context();
         if let Some(handle) = live_progress.as_mut() {
             handle.stop();
         }
@@ -233,6 +320,7 @@ impl RunContext {
                 command,
                 session_id,
             ),
+            Commands::Branches { command } => crate::branches::tooling::handle_cli_command(command),
             Commands::Danger { .. } => Err(ApiError::ConfigError(
                 "Danger commands must run from the CLI entry point".to_string(),
             )),

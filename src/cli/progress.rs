@@ -1,5 +1,5 @@
 use crate::cli::parse::{Commands, ContextCommands};
-use crate::telemetry::events::ProgressEvent;
+use crate::events::EventRecord;
 use crate::telemetry::ProgressRuntime;
 use owo_colors::OwoColorize;
 use serde_json::Value;
@@ -138,13 +138,13 @@ impl LivePanelReducer {
         }
     }
 
-    fn apply(&mut self, event: &ProgressEvent) {
+    fn apply(&mut self, event: &EventRecord) {
         match event.event_type.as_str() {
             "plan_constructed" => {
                 self.total_nodes = read_usize(&event.data, "total_nodes");
                 self.total_levels = read_usize(&event.data, "total_levels");
             }
-            "level_started" => {
+            "level_started" | "execution.control.level_started" => {
                 self.current_level = read_usize(&event.data, "level_index");
             }
             "queue_stats" => {
@@ -153,7 +153,7 @@ impl LivePanelReducer {
                 self.queue_processing =
                     read_usize(&event.data, "processing").unwrap_or(self.queue_processing);
             }
-            "node_generation_started" => {
+            "node_generation_started" | "execution.control.node_started" => {
                 if read_string(&event.data, "program_kind").as_deref() == Some("workflow") {
                     self.workflow_mode = true;
                 }
@@ -170,7 +170,7 @@ impl LivePanelReducer {
                     );
                 }
             }
-            "workflow_turn_started" => {
+            "workflow_turn_started" | "execution.workflow.turn_started" => {
                 self.workflow_mode = true;
                 if let Some(turn_id) = read_string(&event.data, "turn_id") {
                     *self.active_turns.entry(turn_id.clone()).or_insert(0) += 1;
@@ -186,21 +186,27 @@ impl LivePanelReducer {
                     }
                 }
             }
-            "workflow_turn_completed" | "workflow_turn_failed" => {
+            "workflow_turn_completed"
+            | "workflow_turn_failed"
+            | "execution.workflow.turn_completed"
+            | "execution.workflow.turn_failed" => {
                 if let Some(turn_id) = read_string(&event.data, "turn_id") {
                     decrement_counter(&mut self.active_turns, &turn_id);
                 }
-                if event.event_type == "workflow_turn_failed" {
+                if matches!(
+                    event.event_type.as_str(),
+                    "workflow_turn_failed" | "execution.workflow.turn_failed"
+                ) {
                     self.latest_message = read_string(&event.data, "error");
                 }
             }
-            "node_generation_completed" => {
+            "node_generation_completed" | "execution.control.node_completed" => {
                 self.completed += 1;
                 if let Some(node_id) = read_string(&event.data, "node_id") {
                     self.active_targets.remove(&node_id);
                 }
             }
-            "node_generation_failed" => {
+            "node_generation_failed" | "execution.control.node_failed" => {
                 self.failed += 1;
                 self.latest_message = read_string(&event.data, "error");
                 if let Some(node_id) = read_string(&event.data, "node_id") {
@@ -574,12 +580,20 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn event(seq: u64, event_type: &str, data: Value) -> ProgressEvent {
-        ProgressEvent {
+    fn event(seq: u64, event_type: &str, data: Value) -> EventRecord {
+        EventRecord {
             ts: "2026-03-07T00:00:00.000Z".to_string(),
+            recorded_at: "2026-03-07T00:00:00.000Z".to_string(),
+            record_id: None,
             session: "s1".to_string(),
             seq,
+            domain_id: "telemetry".to_string(),
+            stream_id: "s1".to_string(),
             event_type: event_type.to_string(),
+            occurred_at: None,
+            content_hash: None,
+            objects: Vec::new(),
+            relations: Vec::new(),
             data,
         }
     }

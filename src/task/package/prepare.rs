@@ -29,6 +29,15 @@ use std::path::Path;
 const TARGET_NODE_REF_ARTIFACT_TYPE_ID: &str = "resolved_node_ref";
 const TRAVERSAL_INSTANCE_ID: &str = "capinst_traversal";
 
+/// Returns the deterministic task run id used by workflow-backed task packages.
+pub fn workflow_task_run_id(workflow_id: &str, target_node_id: NodeID) -> String {
+    format!(
+        "taskrun::{}::{}",
+        workflow_id,
+        &hex::encode(target_node_id)[..16]
+    )
+}
+
 /// Resolves a workflow package request into shared package context.
 pub fn prepare_workflow_package_context(
     api: &ContextApi,
@@ -197,9 +206,10 @@ pub fn find_traversal_prerequisite_expansion(
     package_spec
         .expansions
         .iter()
-        .find_map(|expansion| match expansion {
-            PackageExpansionSpec::TraversalPrerequisite(spec) => Some(spec),
+        .map(|expansion| match expansion {
+            PackageExpansionSpec::TraversalPrerequisite(spec) => spec,
         })
+        .next()
         .ok_or_else(|| {
             ApiError::ConfigError(format!(
                 "Package '{}' is missing traversal prerequisite expansion",
@@ -387,11 +397,7 @@ pub fn build_task_initialization_payload(
             },
         ],
         task_run_context: TaskRunContext {
-            task_run_id: format!(
-                "taskrun::{}::{}",
-                profile.workflow_id,
-                &hex::encode(target_node_id)[..16]
-            ),
+            task_run_id: workflow_task_run_id(&profile.workflow_id, target_node_id),
             session_id: request.session_id.clone(),
             trigger: "workflow.docs_writer.run".to_string(),
         },

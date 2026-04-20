@@ -779,11 +779,13 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
 
         let level_started_count = events
             .iter()
-            .filter(|e| e.event_type == "level_started")
+            .filter(|e| e.event_type == "execution.control.level_started")
             .count();
         assert_eq!(level_started_count, 1);
 
-        assert!(events.iter().any(|e| e.event_type == "generation_started"));
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == "execution.control.generation_started"));
         assert!(events
             .iter()
             .any(|e| e.event_type == "workflow_target_started"));
@@ -870,7 +872,7 @@ fn context_generate_recursive_completes_levels_bottom_up() {
 
         let completed_levels: Vec<u64> = events
             .iter()
-            .filter(|event| event.event_type == "node_generation_completed")
+            .filter(|event| event.event_type == "execution.control.node_completed")
             .map(|event| {
                 event
                     .data
@@ -885,7 +887,7 @@ fn context_generate_recursive_completes_levels_bottom_up() {
         let level_completed_positions: Vec<(u64, usize)> = events
             .iter()
             .enumerate()
-            .filter(|(_, event)| event.event_type == "level_completed")
+            .filter(|(_, event)| event.event_type == "execution.control.level_completed")
             .map(|(index, event)| {
                 (
                     event
@@ -991,6 +993,81 @@ fn workflow_force_generate_tombstones_stale_final_head_and_emits_reset_event() {
                 .and_then(|value| value.as_str()),
             Some(hex::encode(stale_frame_id).as_str())
         );
+    });
+}
+
+#[test]
+fn single_shot_force_generate_replaces_stale_attested_head() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(&workspace_root).unwrap();
+        let target = workspace_root.join("doc.md");
+        fs::write(&target, "# hello").unwrap();
+
+        create_test_writer_agent("force-single-agent");
+        let response_body = r#"{"id":"test","object":"chat.completion","created":0,"model":"gpt-4-test","choices":[{"index":0,"message":{"role":"assistant","content":"fresh documentation"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        let (endpoint, rx, handle) = spawn_completion_server(response_body, 1);
+        create_test_openai_provider("force-single-provider", "gpt-4-test", &endpoint);
+
+        let cli = RunContext::new(workspace_root.clone(), None).unwrap();
+        cli.execute(&Commands::Scan { force: true }).unwrap();
+
+        let node_id = resolve_workspace_node_id(
+            cli.api(),
+            &workspace_root,
+            Some(target.as_path()),
+            None,
+            false,
+        )
+        .unwrap();
+        let frame_type = "context-force-single-agent".to_string();
+        let stale_frame = Frame::new(
+            Basis::Node(node_id),
+            b"stale documentation".to_vec(),
+            frame_type.clone(),
+            "force-single-agent".to_string(),
+            build_generated_metadata(&generated_metadata_input_from_payload(
+                "force-single-agent",
+                "force-single-provider",
+                "gpt-4-test",
+                "openai",
+                "stale prompt",
+                "stale context",
+            )),
+        )
+        .unwrap();
+        let stale_frame_id = cli
+            .api()
+            .put_frame(node_id, stale_frame, "force-single-agent".to_string())
+            .unwrap();
+
+        let output = cli
+            .execute(&Commands::Context {
+                command: ContextCommands::Generate {
+                    node: None,
+                    path: Some(target.clone()),
+                    path_positional: None,
+                    agent: Some("force-single-agent".to_string()),
+                    provider: Some("force-single-provider".to_string()),
+                    workflow_id: None,
+                    provider_model: None,
+                    provider_additional_json_file: None,
+                    frame_type: Some(frame_type.clone()),
+                    force: true,
+                    no_recursive: false,
+                },
+            })
+            .unwrap();
+
+        assert!(output.contains("Generation completed: generated=1, failed=0"));
+        let _request_body = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        handle.join().unwrap();
+
+        let head = cli.api().get_head(&node_id, &frame_type).unwrap().unwrap();
+        assert_ne!(head, stale_frame_id);
+        let frame = cli.api().frame_storage().get(&head).unwrap().unwrap();
+        assert_eq!(frame.text_content().unwrap(), "fresh documentation");
     });
 }
 

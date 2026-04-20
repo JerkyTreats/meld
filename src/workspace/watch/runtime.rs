@@ -14,15 +14,22 @@ use crate::tree::path::canonicalize_path;
 use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
 use crate::workflow::executor::{execute_registered_workflow, WorkflowExecutionRequest};
+use crate::workspace::commands::{emit_workspace_snapshot_facts, stored_workspace_root_hash};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
+
+struct TreeUpdateOutcome {
+    tree: crate::tree::builder::Tree,
+    previous_root_hash: Option<String>,
+    observed_nodes: Vec<NodeID>,
+}
 
 /// Watch mode daemon
 pub struct WatchDaemon {
@@ -257,26 +264,41 @@ impl WatchDaemon {
             }
         }
 
-        let affected_nodes = self.update_tree_for_paths(&affected_paths)?;
+        let update = self.update_tree_for_paths(&affected_paths)?;
+
+        if let (Some(session_id), Some(progress)) = (&self.config.session_id, &self.config.progress)
+        {
+            emit_workspace_snapshot_facts(
+                progress,
+                session_id,
+                &self.config.workspace_root,
+                &update.tree,
+                update.previous_root_hash.as_deref(),
+                &update.observed_nodes,
+            );
+        }
 
         if self.config.auto_create_frames {
-            self.ensure_agent_frames_batched(&affected_nodes)?;
+            self.ensure_agent_frames_batched(&update.observed_nodes)?;
         }
 
         info!(
             event_count = events.len(),
-            affected_nodes = affected_nodes.len(),
+            affected_nodes = update.observed_nodes.len(),
             "Processed change events"
         );
         self.emit_event_best_effort(
             "batch_processed",
-            json!({ "event_count": events.len(), "affected_nodes": affected_nodes.len() }),
+            json!({ "event_count": events.len(), "affected_nodes": update.observed_nodes.len() }),
         );
 
         Ok(())
     }
 
-    fn update_tree_for_paths(&self, paths: &HashSet<PathBuf>) -> Result<Vec<NodeID>, ApiError> {
+    fn update_tree_for_paths(
+        &self,
+        paths: &HashSet<PathBuf>,
+    ) -> Result<TreeUpdateOutcome, ApiError> {
         let walker_config = WalkerConfig {
             follow_symlinks: false,
             ignore_patterns: self.config.ignore_patterns.clone(),
@@ -285,27 +307,18 @@ impl WatchDaemon {
         let builder =
             TreeBuilder::new(self.config.workspace_root.clone()).with_walker_config(walker_config);
         let tree = builder.build().map_err(ApiError::from)?;
+        let previous_root_hash = stored_workspace_root_hash(
+            self.api.node_store().as_ref(),
+            &self.config.workspace_root,
+            &tree.root_id,
+        )?;
 
         let _ = ignore::maybe_sync_gitignore_after_tree(
             &self.config.workspace_root,
             tree.find_gitignore_node_id().as_ref(),
         );
 
-        let mut affected_nodes = Vec::new();
-
-        for node_id in tree.nodes.keys() {
-            let node_record = self.api.node_store().get(node_id).map_err(ApiError::from)?;
-            if let Some(record) = node_record {
-                let canonical_path = canonicalize_path(&record.path).unwrap_or(record.path.clone());
-                if paths.iter().any(|p| {
-                    canonicalize_path(p)
-                        .map(|cp| cp == canonical_path)
-                        .unwrap_or(false)
-                }) {
-                    affected_nodes.push(*node_id);
-                }
-            }
-        }
+        let affected_nodes = collect_observed_nodes(&tree, paths);
 
         NodeRecord::populate_store_from_tree(
             self.api.node_store().as_ref() as &dyn NodeRecordStore,
@@ -313,33 +326,11 @@ impl WatchDaemon {
         )
         .map_err(ApiError::from)?;
 
-        let mut all_affected = affected_nodes.clone();
-        for node_id in &affected_nodes {
-            self.collect_ancestors(*node_id, &mut all_affected)?;
-        }
-
-        Ok(all_affected)
-    }
-
-    fn collect_ancestors(
-        &self,
-        node_id: NodeID,
-        collected: &mut Vec<NodeID>,
-    ) -> Result<(), ApiError> {
-        let node_record = self
-            .api
-            .node_store()
-            .get(&node_id)
-            .map_err(ApiError::from)?;
-        if let Some(record) = node_record {
-            if let Some(parent_id) = record.parent {
-                if !collected.contains(&parent_id) {
-                    collected.push(parent_id);
-                    self.collect_ancestors(parent_id, collected)?;
-                }
-            }
-        }
-        Ok(())
+        Ok(TreeUpdateOutcome {
+            tree,
+            previous_root_hash,
+            observed_nodes: affected_nodes,
+        })
     }
 
     /// Ensure contextframes exist for all agents for the given nodes (batched)
@@ -354,7 +345,9 @@ impl WatchDaemon {
         };
 
         if agents.is_empty() {
-            warn!("No agents registered, skipping contextframe creation. Please configure agents in your config file.");
+            warn!(
+                "No agents registered, skipping contextframe creation. Please configure agents in your config file."
+            );
             return Ok(());
         }
 
@@ -599,6 +592,38 @@ impl WatchDaemon {
     }
 }
 
+fn collect_observed_nodes(
+    tree: &crate::tree::builder::Tree,
+    paths: &HashSet<PathBuf>,
+) -> Vec<NodeID> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+
+    let canonical_paths: Vec<PathBuf> = paths
+        .iter()
+        .map(|path| canonicalize_path(path).unwrap_or_else(|_| path.clone()))
+        .collect();
+    let mut observed = BTreeSet::new();
+    observed.insert(tree.root_id);
+
+    for (node_id, node) in &tree.nodes {
+        let Ok(record) = NodeRecord::from_merkle_node(*node_id, node, tree) else {
+            continue;
+        };
+        let canonical_record_path =
+            canonicalize_path(&record.path).unwrap_or_else(|_| record.path.clone());
+        if canonical_paths
+            .iter()
+            .any(|path| canonical_record_path == *path || path.starts_with(&canonical_record_path))
+        {
+            observed.insert(*node_id);
+        }
+    }
+
+    observed.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,7 +635,9 @@ mod tests {
     use crate::provider::ProviderRegistry;
     use crate::store::persistence::SledNodeRecordStore;
     use crate::store::{NodeRecord, NodeType};
+    use crate::telemetry::ProgressRuntime;
     use crate::workflow::registry::WorkflowRegistry;
+    use crate::workspace::events::WorkspaceNodeObservedEventData;
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -670,6 +697,27 @@ mod tests {
             }
             std::fs::write(output_path, content).unwrap();
         }
+    }
+
+    fn create_watch_test_runtime(
+        temp: &TempDir,
+        workspace_root: PathBuf,
+    ) -> (WatchDaemon, Arc<ProgressRuntime>, String) {
+        let api = Arc::new(create_test_api(&workspace_root));
+        let progress_db = sled::open(temp.path().join("progress")).unwrap();
+        let progress = Arc::new(ProgressRuntime::new(progress_db).unwrap());
+        let session_id = progress
+            .start_command_session("workspace.watch".to_string())
+            .unwrap();
+        let config = WatchConfig {
+            workspace_root,
+            session_id: Some(session_id.clone()),
+            progress: Some(Arc::clone(&progress)),
+            auto_create_frames: false,
+            ..WatchConfig::default()
+        };
+        let daemon = WatchDaemon::new(api, config).unwrap();
+        (daemon, progress, session_id)
     }
 
     #[test]
@@ -760,5 +808,159 @@ mod tests {
         }
 
         daemon.ensure_agent_frames_batched(&[node_id]).unwrap();
+    }
+
+    #[test]
+    fn watch_batch_emits_canonical_workspace_snapshot_facts() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let target = workspace_root.join("doc.txt");
+        std::fs::write(&target, "hello").unwrap();
+
+        let (daemon, progress, session_id) =
+            create_watch_test_runtime(&temp, workspace_root.clone());
+        daemon
+            .process_events(vec![ChangeEvent::Modified(target)])
+            .unwrap();
+
+        let emitted = progress.store().read_events_after(&session_id, 0).unwrap();
+        assert!(emitted
+            .iter()
+            .any(|event| event.event_type == "file_changed"));
+        assert!(emitted
+            .iter()
+            .any(|event| event.event_type == "batch_processed"));
+        assert!(emitted
+            .iter()
+            .any(|event| event.event_type == "workspace_fs.source_attached"));
+        assert!(emitted
+            .iter()
+            .any(|event| event.event_type == "workspace_fs.snapshot_materialized"));
+        assert!(emitted
+            .iter()
+            .any(|event| event.event_type == "workspace_fs.snapshot_selected"));
+        assert!(emitted
+            .iter()
+            .any(|event| event.event_type == "workspace_fs.node_observed"));
+    }
+
+    #[test]
+    fn watch_batch_reuses_source_identity() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let target = workspace_root.join("doc.txt");
+        std::fs::write(&target, "hello").unwrap();
+
+        let (daemon, progress, session_id) =
+            create_watch_test_runtime(&temp, workspace_root.clone());
+        daemon
+            .process_events(vec![ChangeEvent::Modified(target.clone())])
+            .unwrap();
+
+        std::fs::write(&target, "hello again").unwrap();
+        daemon
+            .process_events(vec![ChangeEvent::Modified(target)])
+            .unwrap();
+
+        let events = progress.store().read_events_after(&session_id, 0).unwrap();
+        let mut source_ids = std::collections::BTreeSet::new();
+        for event in events
+            .iter()
+            .filter(|event| event.domain_id == "workspace_fs" && !event.objects.is_empty())
+        {
+            for object in &event.objects {
+                if object.object_kind == "source" {
+                    source_ids.insert(object.object_id.clone());
+                }
+            }
+        }
+        assert_eq!(source_ids.len(), 1);
+    }
+
+    #[test]
+    fn watch_batch_only_selects_snapshot_when_root_hash_changes() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let target = workspace_root.join("doc.txt");
+        std::fs::write(&target, "hello").unwrap();
+
+        let (daemon, progress, session_id) =
+            create_watch_test_runtime(&temp, workspace_root.clone());
+        daemon
+            .process_events(vec![ChangeEvent::Modified(target.clone())])
+            .unwrap();
+        let first_selected = progress
+            .store()
+            .read_events_after(&session_id, 0)
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event_type == "workspace_fs.snapshot_selected")
+            .count();
+
+        daemon
+            .process_events(vec![ChangeEvent::Modified(target.clone())])
+            .unwrap();
+        let same_root_selected = progress
+            .store()
+            .read_events_after(&session_id, 0)
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event_type == "workspace_fs.snapshot_selected")
+            .count();
+        assert_eq!(same_root_selected, first_selected);
+
+        std::fs::write(&target, "changed").unwrap();
+        daemon
+            .process_events(vec![ChangeEvent::Modified(target)])
+            .unwrap();
+        let changed_root_selected = progress
+            .store()
+            .read_events_after(&session_id, 0)
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event_type == "workspace_fs.snapshot_selected")
+            .count();
+        assert!(changed_root_selected > same_root_selected);
+    }
+
+    #[test]
+    fn watch_batch_emits_observed_nodes_for_affected_scope_only() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        let docs = workspace_root.join("docs");
+        let notes = workspace_root.join("notes");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::create_dir_all(&notes).unwrap();
+        let changed = docs.join("doc.txt");
+        let untouched = notes.join("other.txt");
+        std::fs::write(&changed, "hello").unwrap();
+        std::fs::write(&untouched, "unchanged").unwrap();
+
+        let (daemon, progress, session_id) =
+            create_watch_test_runtime(&temp, workspace_root.clone());
+        daemon
+            .process_events(vec![ChangeEvent::Modified(changed.clone())])
+            .unwrap();
+
+        let observed_paths: Vec<String> = progress
+            .store()
+            .read_events_after(&session_id, 0)
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event_type == "workspace_fs.node_observed")
+            .map(|event| {
+                serde_json::from_value::<WorkspaceNodeObservedEventData>(event.data).unwrap()
+            })
+            .map(|data| data.path)
+            .collect();
+
+        assert!(observed_paths.iter().any(|path| path.ends_with("doc.txt")));
+        assert!(observed_paths.iter().any(|path| path.ends_with("docs")));
+        assert!(!observed_paths
+            .iter()
+            .any(|path| path.ends_with("other.txt")));
     }
 }

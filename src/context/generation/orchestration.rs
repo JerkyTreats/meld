@@ -98,6 +98,10 @@ pub async fn execute_generation_request(
         );
     }
 
+    if request.force {
+        api.tombstone_head(request.node_id, &request.frame_type)?;
+    }
+
     let previous_metadata = load_previous_metadata_snapshot(api, request)?;
     emit_metadata_validation_event(
         event_context,

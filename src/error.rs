@@ -19,6 +19,9 @@ pub enum StorageError {
     #[error("Invalid path: {0}")]
     InvalidPath(String),
 
+    #[error("Backpressure: {0}")]
+    Backpressure(String),
+
     #[error("Storage I/O error: {0}")]
     IoError(#[from] std::io::Error),
 }
@@ -33,6 +36,7 @@ impl Clone for StorageError {
                 actual: *actual,
             },
             StorageError::InvalidPath(path) => StorageError::InvalidPath(path.clone()),
+            StorageError::Backpressure(message) => StorageError::Backpressure(message.clone()),
             StorageError::IoError(err) => {
                 StorageError::IoError(std::io::Error::new(err.kind(), err.to_string()))
             }

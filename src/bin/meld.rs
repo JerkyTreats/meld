@@ -41,6 +41,21 @@ fn main() {
         return;
     }
 
+    if let Some(result) = try_execute_branch_command(&cli) {
+        match result {
+            Ok(output) => {
+                info!("Branch command completed successfully");
+                println!("{}", output);
+            }
+            Err(e) => {
+                error!("Command failed: {}", e);
+                eprintln!("{}", meld::cli::map_error(&e));
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
     // Create CLI context
     let context = match RunContext::new(cli.workspace.clone(), cli.config.clone()) {
         Ok(ctx) => {
@@ -88,6 +103,18 @@ fn try_execute_danger_command(cli: &Cli) -> Option<Result<String, meld::error::A
                 cli.config.as_deref(),
                 *dry_run,
                 *yes,
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn try_execute_branch_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
+    match &cli.command {
+        Commands::Branches { command } => {
+            Some(meld::branches::tooling::handle_cli_command_with_workspace(
+                command,
+                Some(cli.workspace.as_path()),
             ))
         }
         _ => None,

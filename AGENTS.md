@@ -16,6 +16,7 @@
 
 - [Commit Policy](governance/commit_policy.md)
 - [Compatibility Policy](governance/compatibility_policy.md)
+- [Compatibility Shim Policy](governance/compatibility_shim_policy.md)
 - [CLI Targeting Policy](governance/cli_targeting_policy.md)
 - [Docs Style Policy](governance/docs_style_policy.md)
 - [Policy Proposal Flow](governance/policy_proposal_flow.md)
@@ -25,6 +26,12 @@
 ## Commit Governance Rule
 
 - For every user request that asks for a commit, review [Commit Policy](governance/commit_policy.md) before running `git commit` or `git commit --amend`.
+
+## Response Style Rule
+
+- Do not overuse bullet lists in user-facing responses.
+- Prefer short paragraphs when the content is clearer in prose.
+- Use bullets only when the content is naturally list-shaped, such as distinct items, steps, or options.
 
 ## Comment Policy 
 

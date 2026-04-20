@@ -1,8 +1,8 @@
 //! CLI help and command-name contract for telemetry and routing.
 
 use crate::cli::parse::{
-    AgentCommands, AgentPromptCommands, Commands, ContextCommands, DangerCommands,
-    ProviderCommands, WorkflowCommands, WorkspaceCommands,
+    AgentCommands, AgentPromptCommands, BranchesCommands, Commands, ContextCommands,
+    DangerCommands, ProviderCommands, WorkflowCommands, WorkspaceCommands,
 };
 use crate::telemetry::summary::TypedSummaryEvent;
 
@@ -19,7 +19,20 @@ pub fn command_name(command: &Commands) -> String {
         Commands::Init { .. } => "init".to_string(),
         Commands::Context { command } => format!("context.{}", context_command_name(command)),
         Commands::Workflow { command } => format!("workflow.{}", workflow_command_name(command)),
+        Commands::Branches { command } => format!("branches.{}", branches_command_name(command)),
         Commands::Danger { command } => format!("danger.{}", danger_command_name(command)),
+    }
+}
+
+pub fn branches_command_name(command: &BranchesCommands) -> &'static str {
+    match command {
+        BranchesCommands::Status { .. } => "status",
+        BranchesCommands::Discover { .. } => "discover",
+        BranchesCommands::Migrate { .. } => "migrate",
+        BranchesCommands::Attach { .. } => "attach",
+        BranchesCommands::GraphStatus { .. } => "graph_status",
+        BranchesCommands::GraphNeighbors { .. } => "graph_neighbors",
+        BranchesCommands::GraphWalk { .. } => "graph_walk",
     }
 }
 
@@ -260,6 +273,25 @@ pub fn typed_summary_event(
             duration_ms,
             error,
         )),
+        Commands::Branches { .. } => None,
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{branches_command_name, command_name};
+    use crate::cli::parse::{BranchesCommands, Commands};
+
+    #[test]
+    fn branch_command_names_are_stable() {
+        let command = BranchesCommands::Status {
+            format: "text".to_string(),
+        };
+        assert_eq!(branches_command_name(&command), "status");
+        assert_eq!(
+            command_name(&Commands::Branches { command }),
+            "branches.status".to_string()
+        );
     }
 }

@@ -1,62 +1,8 @@
 //! Event schema for telemetry.
 
-use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProgressEvent {
-    pub ts: String,
-    pub session: String,
-    pub seq: u64,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    pub data: Value,
-}
-
-#[derive(Debug, Clone)]
-pub struct ProgressEnvelope {
-    pub ts: String,
-    pub session: String,
-    pub event_type: String,
-    pub data: Value,
-}
-
-impl ProgressEnvelope {
-    pub fn new(ts: String, session: String, event_type: impl Into<String>, data: Value) -> Self {
-        Self {
-            ts,
-            session,
-            event_type: event_type.into(),
-            data,
-        }
-    }
-
-    pub fn with_now(
-        session: impl Into<String>,
-        event_type: impl Into<String>,
-        data: Value,
-    ) -> Self {
-        Self {
-            ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-            session: session.into(),
-            event_type: event_type.into(),
-            data,
-        }
-    }
-}
-
-impl ProgressEvent {
-    pub fn from_envelope(envelope: ProgressEnvelope, seq: u64) -> Self {
-        Self {
-            ts: envelope.ts,
-            session: envelope.session,
-            seq,
-            event_type: envelope.event_type,
-            data: envelope.data,
-        }
-    }
-}
+pub use crate::events::compat::{ProgressEnvelope, ProgressEvent};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionStartedData {
@@ -242,23 +188,40 @@ mod tests {
     fn event_round_trip() {
         let event = ProgressEvent {
             ts: "2026-02-14T12:34:56.789Z".to_string(),
+            recorded_at: "2026-02-14T12:34:56.789Z".to_string(),
+            record_id: None,
             session: "s1".to_string(),
             seq: 1,
+            domain_id: "telemetry".to_string(),
+            stream_id: "s1".to_string(),
             event_type: "session_started".to_string(),
+            occurred_at: None,
+            content_hash: None,
+            objects: Vec::new(),
+            relations: Vec::new(),
             data: json!({ "command": "scan" }),
         };
         let serialized = serde_json::to_string(&event).unwrap();
         let parsed: ProgressEvent = serde_json::from_str(&serialized).unwrap();
         assert_eq!(parsed.session, "s1");
         assert_eq!(parsed.seq, 1);
+        assert_eq!(parsed.domain_id, "telemetry");
+        assert_eq!(parsed.stream_id, "s1");
         assert_eq!(parsed.event_type, "session_started");
     }
 
     #[test]
     fn unknown_fields_are_ignored() {
         let raw = r#"{"ts":"2026-02-14T12:34:56.789Z","session":"s1","seq":1,"type":"session_started","data":{"command":"scan"},"future":"ok"}"#;
-        let parsed: ProgressEvent = serde_json::from_str(raw).unwrap();
+        let parsed = serde_json::from_str::<ProgressEvent>(raw)
+            .unwrap()
+            .normalize_legacy_defaults();
         assert_eq!(parsed.session, "s1");
+        assert_eq!(parsed.recorded_at, parsed.ts);
+        assert_eq!(parsed.domain_id, "telemetry");
+        assert_eq!(parsed.stream_id, "s1");
+        assert!(parsed.objects.is_empty());
+        assert!(parsed.relations.is_empty());
     }
 
     #[test]
@@ -266,6 +229,7 @@ mod tests {
         let env = ProgressEnvelope::with_now("s1", "session_started", json!({}));
         let parsed = chrono::DateTime::parse_from_rfc3339(&env.ts).unwrap();
         assert_eq!(env.ts.len(), 24);
+        assert_eq!(env.recorded_at, env.ts);
         assert_eq!(env.ts.chars().nth(19), Some('.'));
         assert!(env.ts.ends_with('Z'));
         assert!(parsed.timestamp_subsec_millis() <= 999);

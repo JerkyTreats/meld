@@ -3,12 +3,7 @@
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
 use meld::cli::{Commands, RunContext, WorkflowCommands};
 use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
-use meld::context::frame::{Basis, Frame};
 use meld::error::ApiError;
-use meld::metadata::frame_write_contract::{
-    build_generated_metadata, generated_metadata_input_from_payload,
-};
-use meld::workflow::state_store::{WorkflowStateStore, WorkflowThreadRecord, WorkflowThreadStatus};
 use meld::workflow::{build_target_execution_request, execute_workflow_target};
 use std::fs;
 use std::io::{Read, Write};
@@ -23,42 +18,6 @@ use crate::integration::with_xdg_env;
 
 fn initialize_default_workflows() {
     meld::init::initialize_workflows(false).unwrap();
-}
-
-fn create_test_agent(
-    agent_id: &str,
-    role: AgentRole,
-    workflow_id: Option<&str>,
-) -> Result<PathBuf, ApiError> {
-    if workflow_id.is_some() {
-        initialize_default_workflows();
-    }
-    let agents_dir = XdgAgentStorage::new().agents_dir()?;
-    fs::create_dir_all(&agents_dir)
-        .map_err(|err| ApiError::ConfigError(format!("Failed to create agents dir: {}", err)))?;
-    let config_path = agents_dir.join(format!("{}.toml", agent_id));
-
-    let agent_config = AgentConfig {
-        agent_id: agent_id.to_string(),
-        role,
-        system_prompt: None,
-        system_prompt_path: None,
-        workflow_id: workflow_id.map(ToString::to_string),
-        metadata: Default::default(),
-    };
-
-    let toml = toml::to_string(&agent_config)
-        .map_err(|err| ApiError::ConfigError(format!("Failed to encode agent config: {}", err)))?;
-    fs::write(&config_path, toml)
-        .map_err(|err| ApiError::ConfigError(format!("Failed to write agent config: {}", err)))?;
-    Ok(config_path)
-}
-
-fn create_test_provider(
-    provider_name: &str,
-    provider_type: ProviderType,
-) -> Result<PathBuf, ApiError> {
-    create_test_provider_with_endpoint(provider_name, provider_type, "http://127.0.0.1:9")
 }
 
 fn create_test_provider_with_endpoint(
@@ -249,6 +208,83 @@ fn spawn_capture_server(
     (endpoint, rx, handle)
 }
 
+fn spawn_docs_writer_server(expected_requests: usize) -> (String, thread::JoinHandle<usize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+
+    let handle = thread::spawn(move || {
+        let mut handled = 0usize;
+        while handled < expected_requests {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let mut header_end = None;
+
+            loop {
+                let read = stream.read(&mut chunk).unwrap();
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if header_end.is_none() {
+                    header_end = find_header_end(&buffer);
+                }
+                if let Some(end) = header_end {
+                    let headers = String::from_utf8_lossy(&buffer[..end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let lower = line.to_ascii_lowercase();
+                            lower
+                                .strip_prefix("content-length:")
+                                .and_then(|value| value.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if buffer.len() >= end + content_length {
+                        break;
+                    }
+                }
+            }
+
+            let request_body = String::from_utf8_lossy(&buffer);
+            let completion = if request_body.contains("Build evidence for README generation") {
+                r#"{"claims":[{"claim_id":"c1","statement":"Provides greeting helpers.","evidence_path":"src/lib.rs","evidence_symbol":"greet","evidence_quote":"pub fn greet(name: &str) -> String"}]}"#
+            } else if request_body.contains("Validate each claim against the provided evidence") {
+                r#"{"verified_claims":[{"claim_id":"c1","statement":"Provides greeting helpers.","evidence_path":"src/lib.rs","evidence_symbol":"greet","evidence_quote":"pub fn greet(name: &str) -> String"}],"rejected_claims":[],"reasons":[]}"#
+            } else if request_body.contains("Build a structured README draft") {
+                r#"{"title":"Workflow Library","purpose":"Provides greeting helpers.","usage":"Call greet with a user name."}"#
+            } else {
+                "# Workflow Library\n\n## Purpose\n\nProvides greeting helpers.\n\n## Usage\n\nCall `greet` with a user name."
+            };
+            let response_body = format!(
+                r#"{{"id":"test","object":"chat.completion","created":0,"model":"test-model","choices":[{{"index":0,"message":{{"role":"assistant","content":{}}},"finish_reason":"stop"}}],"usage":{{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}}}"#,
+                serde_json::to_string(completion).unwrap()
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            handled += 1;
+        }
+        handled
+    });
+
+    (endpoint, handle)
+}
+
+fn workflow_thread_id(node_id: meld::types::NodeID, frame_type: &str) -> String {
+    let thread_payload = format!(
+        "{}:{}:{}",
+        "docs_writer_thread_v1",
+        hex::encode(node_id),
+        frame_type
+    );
+    let thread_digest = blake3::hash(thread_payload.as_bytes()).to_hex().to_string();
+    format!("thread-{}", &thread_digest[..16])
+}
+
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
     buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
@@ -302,17 +338,19 @@ fn workflow_execute_uses_workflow_runtime_and_can_skip_completed_thread() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         let workspace_root = temp_dir.path().join("workspace");
-        fs::create_dir_all(&workspace_root).unwrap();
-        let file_path = workspace_root.join("doc.md");
-        fs::write(&file_path, "# hello").unwrap();
-
-        create_test_agent(
-            "docs-writer",
-            AgentRole::Writer,
-            Some("docs_writer_thread_v1"),
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        let target_path = workspace_root.join("src");
+        fs::write(
+            target_path.join("lib.rs"),
+            "pub fn greet(name: &str) -> String { format!(\"hello {}\", name) }",
         )
         .unwrap();
-        create_test_provider("test-provider", ProviderType::LocalCustom).unwrap();
+
+        initialize_default_workflows();
+        create_workflow_test_agent("docs-writer", Some("docs_writer_thread_v1")).unwrap();
+        let (endpoint, server_handle) = spawn_docs_writer_server(4);
+        create_test_provider_with_endpoint("test-provider", ProviderType::LocalCustom, &endpoint)
+            .unwrap();
 
         let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
         run_context
@@ -322,60 +360,37 @@ fn workflow_execute_uses_workflow_runtime_and_can_skip_completed_thread() {
         let node_id = meld::workspace::resolve_workspace_node_id(
             run_context.api(),
             &workspace_root,
-            Some(file_path.as_path()),
+            Some(target_path.as_path()),
             None,
             false,
         )
         .unwrap();
 
-        let frame_type = "context-docs-writer".to_string();
-        let frame = Frame::new(
-            Basis::Node(node_id),
-            b"seed".to_vec(),
-            frame_type.clone(),
-            "docs-writer".to_string(),
-            build_generated_metadata(&generated_metadata_input_from_payload(
-                "docs-writer",
-                "test-provider",
-                "test-model",
-                "local",
-                "seed prompt",
-                "seed context",
-            )),
-        )
-        .unwrap();
-        let _frame_id = run_context
-            .api()
-            .put_frame(node_id, frame, "docs-writer".to_string())
-            .unwrap();
+        let thread_id = workflow_thread_id(node_id, "context-docs-writer");
 
-        let thread_payload = format!(
-            "{}:{}:{}",
-            "docs_writer_thread_v1",
-            hex::encode(node_id),
-            frame_type
-        );
-        let thread_digest = blake3::hash(thread_payload.as_bytes()).to_hex().to_string();
-        let thread_id = format!("thread-{}", &thread_digest[..16]);
-        let state_store = WorkflowStateStore::new(&workspace_root).unwrap();
-        state_store
-            .upsert_thread(&WorkflowThreadRecord {
-                thread_id: thread_id.clone(),
-                workflow_id: "docs_writer_thread_v1".to_string(),
-                node_id: hex::encode(node_id),
-                frame_type: "context-docs-writer".to_string(),
-                status: WorkflowThreadStatus::Completed,
-                next_turn_seq: 5,
-                updated_at_ms: 0,
+        let first_output = run_context
+            .execute(&Commands::Workflow {
+                command: WorkflowCommands::Execute {
+                    workflow_id: "docs_writer_thread_v1".to_string(),
+                    node: None,
+                    path: Some(PathBuf::from("src")),
+                    path_positional: None,
+                    agent: "docs-writer".to_string(),
+                    provider: "test-provider".to_string(),
+                    frame_type: None,
+                    force: true,
+                },
             })
             .unwrap();
+        assert!(first_output.contains("skipped=false"));
+        assert_eq!(server_handle.join().unwrap(), 4);
 
         let output = run_context
             .execute(&Commands::Workflow {
                 command: WorkflowCommands::Execute {
                     workflow_id: "docs_writer_thread_v1".to_string(),
-                    node: Some(hex::encode(node_id)),
-                    path: None,
+                    node: None,
+                    path: Some(PathBuf::from("src")),
                     path_positional: None,
                     agent: "docs-writer".to_string(),
                     provider: "test-provider".to_string(),
@@ -395,17 +410,19 @@ fn workflow_facade_maps_completed_thread_reuse_to_target_result() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         let workspace_root = temp_dir.path().join("workspace");
-        fs::create_dir_all(&workspace_root).unwrap();
-        let file_path = workspace_root.join("doc.md");
-        fs::write(&file_path, "# hello").unwrap();
-
-        create_test_agent(
-            "docs-writer",
-            AgentRole::Writer,
-            Some("docs_writer_thread_v1"),
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        let target_path = workspace_root.join("src");
+        fs::write(
+            target_path.join("lib.rs"),
+            "pub fn greet(name: &str) -> String { format!(\"hello {}\", name) }",
         )
         .unwrap();
-        create_test_provider("test-provider", ProviderType::LocalCustom).unwrap();
+
+        initialize_default_workflows();
+        create_workflow_test_agent("docs-writer", Some("docs_writer_thread_v1")).unwrap();
+        let (endpoint, server_handle) = spawn_docs_writer_server(4);
+        create_test_provider_with_endpoint("test-provider", ProviderType::LocalCustom, &endpoint)
+            .unwrap();
 
         let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
         run_context
@@ -415,51 +432,33 @@ fn workflow_facade_maps_completed_thread_reuse_to_target_result() {
         let node_id = meld::workspace::resolve_workspace_node_id(
             run_context.api(),
             &workspace_root,
-            Some(file_path.as_path()),
+            Some(target_path.as_path()),
             None,
             false,
         )
         .unwrap();
 
-        let frame = Frame::new(
-            Basis::Node(node_id),
-            b"seed".to_vec(),
-            "context-docs-writer".to_string(),
-            "docs-writer".to_string(),
-            build_generated_metadata(&generated_metadata_input_from_payload(
-                "docs-writer",
-                "test-provider",
-                "test-model",
-                "local",
-                "seed prompt",
-                "seed context",
-            )),
-        )
-        .unwrap();
-        let frame_id = run_context
-            .api()
-            .put_frame(node_id, frame, "docs-writer".to_string())
-            .unwrap();
-
-        let thread_payload = format!(
-            "{}:{}:{}",
-            "docs_writer_thread_v1",
-            hex::encode(node_id),
-            "context-docs-writer"
-        );
-        let thread_digest = blake3::hash(thread_payload.as_bytes()).to_hex().to_string();
-        let thread_id = format!("thread-{}", &thread_digest[..16]);
-        let state_store = WorkflowStateStore::new(&workspace_root).unwrap();
-        state_store
-            .upsert_thread(&WorkflowThreadRecord {
-                thread_id: thread_id.clone(),
-                workflow_id: "docs_writer_thread_v1".to_string(),
-                node_id: hex::encode(node_id),
-                frame_type: "context-docs-writer".to_string(),
-                status: WorkflowThreadStatus::Completed,
-                next_turn_seq: 5,
-                updated_at_ms: 0,
+        let thread_id = workflow_thread_id(node_id, "context-docs-writer");
+        let first_output = run_context
+            .execute(&Commands::Workflow {
+                command: WorkflowCommands::Execute {
+                    workflow_id: "docs_writer_thread_v1".to_string(),
+                    node: None,
+                    path: Some(PathBuf::from("src")),
+                    path_positional: None,
+                    agent: "docs-writer".to_string(),
+                    provider: "test-provider".to_string(),
+                    frame_type: None,
+                    force: true,
+                },
             })
+            .unwrap();
+        assert!(first_output.contains("skipped=false"));
+        assert_eq!(server_handle.join().unwrap(), 4);
+        let first_frame_id = run_context
+            .api()
+            .get_head(&node_id, "context-docs-writer")
+            .unwrap()
             .unwrap();
 
         let request = build_target_execution_request(
@@ -479,11 +478,10 @@ fn workflow_facade_maps_completed_thread_reuse_to_target_result() {
             None,
         )
         .unwrap();
-
         let result =
             execute_workflow_target(run_context.api(), &workspace_root, &request, None).unwrap();
 
-        assert_eq!(result.final_frame_id, frame_id);
+        assert_eq!(result.final_frame_id, first_frame_id);
         assert!(result.reused_existing_head);
         assert_eq!(result.workflow_id.as_deref(), Some("docs_writer_thread_v1"));
         assert_eq!(result.thread_id.as_deref(), Some(thread_id.as_str()));

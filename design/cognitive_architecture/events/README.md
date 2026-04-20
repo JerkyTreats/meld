@@ -1,42 +1,78 @@
 # Events Design
 
-Date: 2026-04-05
+Date: 2026-04-20
 Status: active
-Scope: shared event architecture for sensory, world state, execution, replay, and downstream telemetry consumption
+Scope: declarative design for the shared event spine
 
 ## Intent
 
-This area defines the shared event architecture for the cognitive loop.
+`events` is the canonical spine for promoted semantic facts.
 
-The design goal is one durable event spine for cross-domain runtime behavior.
-That spine should support:
+The design goal is one durable temporal ledger across `workspace_fs`, `context`, `execution`, `world_state`, and later `sensory`.
 
-- ordered domain facts
-- reducer driven state projection
-- replay after restart
-- downstream telemetry consumption
-- live views such as TUI or diagnostics
-
-## Document Split
-
-This area is intentionally split into two documents with different purposes.
-
-- [Event Manager Requirements](event_manager_requirements.md)
-  declarative requirements for what should be true
-- [Telemetry Refactor](telemetry_refactor.md)
-  migration path for how to move from the current telemetry centered implementation to the target design
+Implementation history lives in [Completed Events](../../completed/events/README.md).
 
 ## Boundary
 
-`events` is not the same concern as `telemetry`.
+`events` owns:
 
-- `events` owns ingress, ordering, reduction boundaries, durability, replay, and subscription semantics
-- sensory, world state, and execution own domain event meaning and projection rules
-- `telemetry` consumes the event stream for observability, summaries, metrics, and external export
+- canonical envelope
+- ingress
+- sequence
+- durable append
+- replay
+- subscription
+- stored envelope compatibility
+- graph attachment primitives
+
+Domain owners own event meaning:
+
+- `workspace_fs` owns workspace facts
+- `context` owns frame and head facts
+- `execution` owns task, control, workflow, and artifact facts
+- `world_state` owns derived graph and later belief facts
+- `sensory` owns observation promotion rules
+
+`telemetry` is downstream.
+It consumes spine history for summaries, metrics, operator feedback, and compatibility.
+
+## Spine Contract
+
+The spine contract requires:
+
+- one runtime-wide sequence
+- append-only canonical history
+- stable `record_id` support for idempotent derived facts
+- domain and stream identity
+- explicit event type
+- explicit recorded time
+- optional occurred time
+- optional content hash
+- graph object refs
+- graph relation edges
+- legacy read compatibility
+
+## Inclusion Rule
+
+Only promoted semantic facts belong in the canonical spine.
+
+Raw sensory pulses, raw file watcher noise, transient worker chatter, and presentation summaries stay outside the canonical correctness path.
+
+## Active Documents
+
+- [Event Spine Requirements](event_manager_requirements.md)
+  canonical envelope, ownership, ordering, durability, and replay requirements
+- [Multi-Domain Spine](multi_domain_spine.md)
+  cross-domain ledger model and reference contract
+
+## Completed History
+
+- [Completed Events](../../completed/events/README.md)
+  extraction plan, refactor plan, and research history
 
 ## Read With
 
+- [Spine Concern](../spine/README.md)
+- [World State Domain](../world_state/README.md)
+- [Graph](../world_state/graph/README.md)
 - [Execution Control](../execution/control/README.md)
-- [Task Network](../execution/control/task_network.md)
-- [Event Management Research](research.md)
-- [Runtime Model](../execution/control/runtime/README.md)

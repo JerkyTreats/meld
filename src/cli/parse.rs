@@ -124,10 +124,123 @@ pub enum Commands {
         #[command(subcommand)]
         command: WorkflowCommands,
     },
+    /// Branch discovery and migration status
+    Branches {
+        #[command(subcommand)]
+        command: BranchesCommands,
+    },
     /// Dangerous destructive operations for workspace runtime state
     Danger {
         #[command(subcommand)]
         command: DangerCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BranchesCommands {
+    /// Show known branches and migration status
+    Status {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Discover dormant branches from the global data home
+    Discover {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Migrate all registered branches safely
+    Migrate {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Attach one explicit branch path
+    Attach {
+        /// Workspace path to attach
+        path: PathBuf,
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Show federated graph readiness for selected branches
+    GraphStatus {
+        /// Branch scope to query
+        #[arg(long, default_value = "all")]
+        scope: String,
+        /// One or more explicit branch ids when scope is branch
+        #[arg(long = "branch-id")]
+        branch_ids: Vec<String>,
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Query federated neighbors across selected branches
+    GraphNeighbors {
+        /// Branch scope to query
+        #[arg(long, default_value = "all")]
+        scope: String,
+        /// One or more explicit branch ids when scope is branch
+        #[arg(long = "branch-id")]
+        branch_ids: Vec<String>,
+        /// Domain id for the start object
+        #[arg(long)]
+        domain: String,
+        /// Object kind for the start object
+        #[arg(long = "object-kind")]
+        object_kind: String,
+        /// Object id for the start object
+        #[arg(long = "object-id")]
+        object_id: String,
+        /// Traversal direction
+        #[arg(long, default_value = "both")]
+        direction: String,
+        /// Relation type filters
+        #[arg(long = "relation-type")]
+        relation_types: Vec<String>,
+        /// Limit to current relations only
+        #[arg(long)]
+        current_only: bool,
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Query federated graph walks across selected branches
+    GraphWalk {
+        /// Branch scope to query
+        #[arg(long, default_value = "all")]
+        scope: String,
+        /// One or more explicit branch ids when scope is branch
+        #[arg(long = "branch-id")]
+        branch_ids: Vec<String>,
+        /// Domain id for the start object
+        #[arg(long)]
+        domain: String,
+        /// Object kind for the start object
+        #[arg(long = "object-kind")]
+        object_kind: String,
+        /// Object id for the start object
+        #[arg(long = "object-id")]
+        object_id: String,
+        /// Traversal direction
+        #[arg(long, default_value = "both")]
+        direction: String,
+        /// Relation type filters
+        #[arg(long = "relation-type")]
+        relation_types: Vec<String>,
+        /// Maximum traversal depth
+        #[arg(long, default_value_t = 1)]
+        max_depth: usize,
+        /// Limit to current relations only
+        #[arg(long)]
+        current_only: bool,
+        /// Include facts in the walk response
+        #[arg(long)]
+        include_facts: bool,
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
     },
 }
 
@@ -661,4 +774,92 @@ pub enum WorkflowCommands {
         #[arg(long)]
         force: bool,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BranchesCommands, Cli, Commands};
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parses_branches_status_command() {
+        let cli = Cli::try_parse_from(["meld", "branches", "status", "--format", "json"]).unwrap();
+        match cli.command {
+            Commands::Branches {
+                command: BranchesCommands::Status { format },
+            } => assert_eq!(format, "json"),
+            _ => panic!("expected branches status command"),
+        }
+    }
+
+    #[test]
+    fn parses_branches_attach_command() {
+        let cli =
+            Cli::try_parse_from(["meld", "branches", "attach", "/tmp/ws", "--format", "json"])
+                .unwrap();
+        match cli.command {
+            Commands::Branches {
+                command: BranchesCommands::Attach { path, format },
+            } => {
+                assert_eq!(path, PathBuf::from("/tmp/ws"));
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected branches attach command"),
+        }
+    }
+
+    #[test]
+    fn parses_branches_graph_neighbors_command() {
+        let cli = Cli::try_parse_from([
+            "meld",
+            "branches",
+            "graph-neighbors",
+            "--scope",
+            "branch",
+            "--branch-id",
+            "branch-a",
+            "--domain",
+            "workspace_fs",
+            "--object-kind",
+            "node",
+            "--object-id",
+            "node-a",
+            "--direction",
+            "both",
+            "--relation-type",
+            "points_to",
+            "--current-only",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Branches {
+                command:
+                    BranchesCommands::GraphNeighbors {
+                        scope,
+                        branch_ids,
+                        domain,
+                        object_kind,
+                        object_id,
+                        direction,
+                        relation_types,
+                        current_only,
+                        format,
+                    },
+            } => {
+                assert_eq!(scope, "branch");
+                assert_eq!(branch_ids, vec!["branch-a".to_string()]);
+                assert_eq!(domain, "workspace_fs");
+                assert_eq!(object_kind, "node");
+                assert_eq!(object_id, "node-a");
+                assert_eq!(direction, "both");
+                assert_eq!(relation_types, vec!["points_to".to_string()]);
+                assert!(current_only);
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected branches graph-neighbors command"),
+        }
+    }
 }

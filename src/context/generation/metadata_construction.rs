@@ -60,15 +60,16 @@ pub fn build_and_validate_generated_metadata(
     metadata_builder: &GeneratedMetadataBuilder,
 ) -> Result<FrameMetadata, ApiError> {
     let generated_metadata = metadata_builder(input);
-    let previous_metadata =
-        if let Some(previous_frame_id) = api.get_head(&request.node_id, &request.frame_type)? {
-            api.frame_storage()
-                .get(&previous_frame_id)
-                .map_err(ApiError::from)?
-                .map(|frame| frame.metadata)
-        } else {
-            None
-        };
+    let previous_metadata = if request.force {
+        None
+    } else if let Some(previous_frame_id) = api.get_head(&request.node_id, &request.frame_type)? {
+        api.frame_storage()
+            .get(&previous_frame_id)
+            .map_err(ApiError::from)?
+            .map(|frame| frame.metadata)
+    } else {
+        None
+    };
 
     validate_frame_metadata(FrameMetadataValidationInput {
         metadata: &generated_metadata,

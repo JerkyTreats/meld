@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod api;
+pub mod branches;
 pub mod capability;
 pub mod cli;
 pub mod concurrency;
@@ -12,6 +13,7 @@ pub mod config;
 pub mod context;
 pub mod control;
 pub mod error;
+pub mod events;
 pub mod heads;
 pub mod ignore;
 pub mod init;
@@ -20,6 +22,7 @@ pub mod merkle_traversal;
 pub mod metadata;
 pub mod prompt_context;
 pub mod provider;
+pub mod session;
 pub mod store;
 pub mod task;
 pub mod telemetry;
@@ -28,3 +31,4 @@ pub mod types;
 pub mod views;
 pub mod workflow;
 pub mod workspace;
+pub mod world_state;

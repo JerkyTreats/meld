@@ -14,6 +14,7 @@ pub mod init;
 pub mod invocation;
 pub mod package;
 pub mod readiness;
+pub(crate) mod reducer;
 pub mod runtime;
 pub mod templates;
 
@@ -24,7 +25,9 @@ pub use contracts::{
     ArtifactRepoRecord, CapabilityInvocationRecord, CompiledTaskRecord, TaskDefinition,
     TaskDependencyEdge, TaskDependencyKind, TaskInitSlotSpec,
 };
-pub use events::TaskEvent;
+pub use events::{
+    build_execution_task_envelope, canonical_task_event_type, ExecutionTaskEventData, TaskEvent,
+};
 pub use executor::TaskExecutor;
 pub use expansion::{
     compile_task_expansion_request, parse_task_expansion_request_artifact, CompiledTaskDelta,

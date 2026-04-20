@@ -2,12 +2,14 @@
 //! Owns context behavior; CLI, agent adapter, and workspace watch consume via explicit contracts.
 
 pub mod capability;
+pub mod events;
 pub mod facade;
 pub mod frame;
 pub(crate) mod frame_metadata_keys;
 pub mod generation;
 pub mod query;
 pub mod queue;
+pub(crate) mod reducer;
 pub mod summary;
 pub mod tooling;
 pub mod types;

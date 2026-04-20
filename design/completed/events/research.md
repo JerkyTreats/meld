@@ -342,10 +342,10 @@ That gives you a single feedback spine without forcing an early jump to external
 
 ### Internal
 
-- [Task Network](../execution/control/task_network.md)
-- [Runtime Model](../execution/control/runtime/README.md)
-- [Observability specification](../completed/observability/observability_spec.md)
-- [Telemetry Event Engine Spec](../completed/refactor/telemetry/telemetry_event_engine_spec.md)
+- [Task Network](../../cognitive_architecture/execution/control/task_network.md)
+- [Runtime Model](../../cognitive_architecture/execution/control/runtime/README.md)
+- [Observability specification](../observability/observability_spec.md)
+- [Telemetry Event Engine Spec](../refactor/telemetry/telemetry_event_engine_spec.md)
 
 ### Rust ecosystem
 

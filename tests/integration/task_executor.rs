@@ -5,8 +5,8 @@ use meld::capability::{
     ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec, ScopeContract,
 };
 use meld::task::{
-    compile_task_definition, ArtifactProducerRef, ArtifactRecord, InitArtifactValue,
-    TaskDefinition, TaskExecutor, TaskInitSlotSpec, TaskRunContext,
+    build_execution_task_envelope, compile_task_definition, ArtifactProducerRef, ArtifactRecord,
+    InitArtifactValue, TaskDefinition, TaskExecutor, TaskInitSlotSpec, TaskRunContext,
 };
 use serde_json::json;
 
@@ -164,6 +164,24 @@ fn init_payload() -> meld::task::TaskInitializationPayload {
     }
 }
 
+fn init_payload_with_node() -> meld::task::TaskInitializationPayload {
+    meld::task::TaskInitializationPayload {
+        task_id: "task_docs_writer".to_string(),
+        compiled_task_ref: "compiled_task_docs_writer".to_string(),
+        init_artifacts: vec![InitArtifactValue {
+            init_slot_id: "target_selector".to_string(),
+            artifact_type_id: "target_selector".to_string(),
+            schema_version: 1,
+            content: json!({ "path": "docs", "node_id": "node_root" }),
+        }],
+        task_run_context: TaskRunContext {
+            task_run_id: "taskrun_1".to_string(),
+            session_id: Some("session_1".to_string()),
+            trigger: "workflow.execute".to_string(),
+        },
+    }
+}
+
 #[test]
 fn task_executor_assembles_payload_and_records_events() {
     let mut executor =
@@ -226,4 +244,136 @@ fn task_executor_unblocks_downstream_after_artifact_persist() {
         .events()
         .iter()
         .any(|event| event.event_type == "task_succeeded"));
+}
+
+#[test]
+fn task_executor_publishes_canonical_events() {
+    let mut executor =
+        TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+
+    let _ = executor
+        .release_ready_invocations(CapabilityExecutionContext::default())
+        .unwrap();
+
+    let envelopes = executor
+        .events()
+        .iter()
+        .filter_map(|event| build_execution_task_envelope("session_1", event))
+        .collect::<Vec<_>>();
+
+    assert!(envelopes
+        .iter()
+        .any(|event| event.event_type == "execution.task.requested"));
+    assert!(envelopes
+        .iter()
+        .any(|event| event.event_type == "execution.task.started"));
+    assert!(envelopes
+        .iter()
+        .any(|event| event.event_type == "execution.task.progressed"));
+    assert!(envelopes.iter().all(|event| event.domain_id == "execution"));
+    assert!(envelopes.iter().all(|event| event.stream_id == "taskrun_1"));
+    assert!(envelopes
+        .iter()
+        .any(|event| event.event_type == "execution.task.started"
+            && event
+                .objects
+                .iter()
+                .any(|object| object.object_kind == "task_run")));
+}
+
+#[test]
+fn task_artifact_event_emits_task_and_artifact_refs() {
+    let mut executor = TaskExecutor::new(
+        compiled_task(),
+        init_payload_with_node(),
+        "repo_docs_writer",
+    )
+    .unwrap();
+    let payloads = executor
+        .release_ready_invocations(CapabilityExecutionContext::default())
+        .unwrap();
+
+    executor
+        .record_success(
+            &payloads[0].invocation_id,
+            vec![ArtifactRecord {
+                artifact_id: "artifact_resolved".to_string(),
+                artifact_type_id: "resolved_node_ref".to_string(),
+                schema_version: 1,
+                content: json!({ "node_id": "node_root" }),
+                producer: ArtifactProducerRef {
+                    task_id: "task_docs_writer".to_string(),
+                    capability_instance_id: "capinst_resolve".to_string(),
+                    invocation_id: Some(payloads[0].invocation_id.clone()),
+                    output_slot_id: Some("resolved_node_ref".to_string()),
+                },
+            }],
+        )
+        .unwrap();
+
+    let artifact_event = executor
+        .events()
+        .iter()
+        .find(|event| event.event_type == "task_artifact_emitted")
+        .unwrap();
+    let envelope = build_execution_task_envelope("session_1", artifact_event).unwrap();
+
+    assert!(envelope
+        .objects
+        .iter()
+        .any(|object| object.object_kind == "task_run"));
+    assert!(envelope
+        .objects
+        .iter()
+        .any(|object| object.object_kind == "node"));
+    assert!(envelope
+        .objects
+        .iter()
+        .any(|object| object.object_kind == "artifact_slot"));
+    assert!(envelope
+        .objects
+        .iter()
+        .any(|object| object.object_kind == "artifact"));
+    assert!(envelope
+        .relations
+        .iter()
+        .any(|relation| relation.relation_type == "targets"));
+    assert!(envelope
+        .relations
+        .iter()
+        .any(|relation| relation.relation_type == "attached_to"));
+    assert!(envelope
+        .relations
+        .iter()
+        .any(|relation| relation.relation_type == "selected"));
+}
+
+#[test]
+fn task_run_emits_target_node_ref_from_init_payload() {
+    let mut executor = TaskExecutor::new(
+        compiled_task(),
+        init_payload_with_node(),
+        "repo_docs_writer",
+    )
+    .unwrap();
+
+    let _ = executor
+        .release_ready_invocations(CapabilityExecutionContext::default())
+        .unwrap();
+
+    let envelope = executor
+        .events()
+        .iter()
+        .filter_map(|event| build_execution_task_envelope("session_1", event))
+        .find(|event| event.event_type == "execution.task.progressed")
+        .unwrap();
+
+    assert!(envelope
+        .objects
+        .iter()
+        .any(|object| object.domain_id == "workspace_fs" && object.object_kind == "node"));
+    assert!(envelope
+        .relations
+        .iter()
+        .any(|relation| relation.relation_type == "targets"));
 }

@@ -5,7 +5,7 @@ use crate::error::ApiError;
 use crate::task::contracts::{
     ArtifactProducerRef, ArtifactRecord, CapabilityInvocationRecord, CompiledTaskRecord,
 };
-use crate::task::events::TaskEvent;
+use crate::task::events::{target_node_id_from_init_payload, TaskEvent};
 use crate::task::expansion::{CompiledTaskDelta, TaskExpansionRecord};
 use crate::task::init::{validate_task_initialization, TaskInitializationPayload};
 use crate::task::invocation::assemble_invocation_payload;
@@ -29,6 +29,26 @@ pub struct TaskExecutor {
 }
 
 impl TaskExecutor {
+    fn build_task_event(
+        task_id: impl Into<String>,
+        task_run_id: impl Into<String>,
+        target_node_id: Option<String>,
+        event_type: &str,
+    ) -> TaskEvent {
+        let mut event = TaskEvent::new(event_type, task_id, task_run_id);
+        event.target_node_id = target_node_id;
+        event
+    }
+
+    fn new_task_event(&self, event_type: &str) -> TaskEvent {
+        Self::build_task_event(
+            self.compiled_task.task_id.clone(),
+            self.init_payload.task_run_context.task_run_id.clone(),
+            target_node_id_from_init_payload(&self.init_payload),
+            event_type,
+        )
+    }
+
     /// Creates one live task executor and seeds init artifacts into the repo.
     pub fn new(
         compiled_task: CompiledTaskRecord,
@@ -56,11 +76,13 @@ impl TaskExecutor {
             })?;
         }
 
-        let events = vec![TaskEvent::new(
+        let mut requested = TaskEvent::new(
             "task_requested",
             compiled_task.task_id.clone(),
             init_payload.task_run_context.task_run_id.clone(),
-        )];
+        );
+        requested.target_node_id = target_node_id_from_init_payload(&init_payload);
+        let events = vec![requested];
 
         Ok(Self {
             compiled_task,
@@ -134,19 +156,11 @@ impl TaskExecutor {
         let ready = self.ready_capability_instances();
         if !self.started {
             self.started = true;
-            self.events.push(TaskEvent::new(
-                "task_started",
-                self.compiled_task.task_id.clone(),
-                self.init_payload.task_run_context.task_run_id.clone(),
-            ));
+            self.events.push(self.new_task_event("task_started"));
         }
 
         if ready.is_empty() {
-            let mut event = TaskEvent::new(
-                "task_blocked",
-                self.compiled_task.task_id.clone(),
-                self.init_payload.task_run_context.task_run_id.clone(),
-            );
+            let mut event = self.new_task_event("task_blocked");
             event.blocked_reason = Some("no_ready_capability_instances".to_string());
             event.ready_count = Some(0);
             event.running_count = Some(self.in_flight_instances.len());
@@ -220,11 +234,7 @@ impl TaskExecutor {
                 attempt_index,
             });
 
-            let mut event = TaskEvent::new(
-                "task_progressed",
-                self.compiled_task.task_id.clone(),
-                self.init_payload.task_run_context.task_run_id.clone(),
-            );
+            let mut event = self.new_task_event("task_progressed");
             event.capability_instance_id = Some(capability_instance_id.clone());
             event.invocation_id = Some(invocation_id);
             event.attempt_index = Some(attempt_index);
@@ -244,6 +254,9 @@ impl TaskExecutor {
         invocation_id: &str,
         emitted_artifacts: Vec<ArtifactRecord>,
     ) -> Result<(), ApiError> {
+        let task_id = self.compiled_task.task_id.clone();
+        let task_run_id = self.init_payload.task_run_context.task_run_id.clone();
+        let target_node_id = target_node_id_from_init_payload(&self.init_payload);
         let record = self
             .invocation_records
             .iter_mut()
@@ -259,10 +272,11 @@ impl TaskExecutor {
             record.emitted_artifacts.push(artifact.artifact_id.clone());
             self.artifact_repo.append_artifact(artifact.clone())?;
 
-            let mut event = TaskEvent::new(
+            let mut event = Self::build_task_event(
+                task_id.clone(),
+                task_run_id.clone(),
+                target_node_id.clone(),
                 "task_artifact_emitted",
-                self.compiled_task.task_id.clone(),
-                self.init_payload.task_run_context.task_run_id.clone(),
             );
             event.capability_instance_id = Some(record.capability_instance_id.clone());
             event.invocation_id = Some(record.invocation_id.clone());
@@ -277,11 +291,8 @@ impl TaskExecutor {
         self.completed_instances
             .insert(record.capability_instance_id.clone());
 
-        let mut event = TaskEvent::new(
-            "task_succeeded",
-            self.compiled_task.task_id.clone(),
-            self.init_payload.task_run_context.task_run_id.clone(),
-        );
+        let mut event =
+            Self::build_task_event(task_id, task_run_id, target_node_id, "task_succeeded");
         event.capability_instance_id = Some(record.capability_instance_id.clone());
         event.invocation_id = Some(record.invocation_id.clone());
         event.attempt_index = Some(record.attempt_index);
@@ -297,6 +308,9 @@ impl TaskExecutor {
         failure_summary: ArtifactRecord,
         error: impl Into<String>,
     ) -> Result<(), ApiError> {
+        let task_id = self.compiled_task.task_id.clone();
+        let task_run_id = self.init_payload.task_run_context.task_run_id.clone();
+        let target_node_id = target_node_id_from_init_payload(&self.init_payload);
         let record = self
             .invocation_records
             .iter_mut()
@@ -312,11 +326,7 @@ impl TaskExecutor {
         self.in_flight_instances
             .remove(&record.capability_instance_id);
 
-        let mut event = TaskEvent::new(
-            "task_failed",
-            self.compiled_task.task_id.clone(),
-            self.init_payload.task_run_context.task_run_id.clone(),
-        );
+        let mut event = Self::build_task_event(task_id, task_run_id, target_node_id, "task_failed");
         event.capability_instance_id = Some(record.capability_instance_id.clone());
         event.invocation_id = Some(record.invocation_id.clone());
         event.attempt_index = Some(record.attempt_index);
@@ -404,11 +414,7 @@ impl TaskExecutor {
         for artifact in delta.init_artifacts {
             self.artifact_repo.append_artifact(artifact.clone())?;
 
-            let mut event = TaskEvent::new(
-                "task_artifact_emitted",
-                self.compiled_task.task_id.clone(),
-                self.init_payload.task_run_context.task_run_id.clone(),
-            );
+            let mut event = self.new_task_event("task_artifact_emitted");
             event.capability_instance_id = Some("__task_init__".to_string());
             event.artifact_id = Some(artifact.artifact_id.clone());
             event.artifact_type_id = Some(artifact.artifact_type_id.clone());
@@ -428,11 +434,7 @@ impl TaskExecutor {
             source_artifact_id: source_artifact_id.to_string(),
         });
 
-        let mut event = TaskEvent::new(
-            "task_expansion_applied",
-            self.compiled_task.task_id.clone(),
-            self.init_payload.task_run_context.task_run_id.clone(),
-        );
+        let mut event = self.new_task_event("task_expansion_applied");
         event.artifact_id = Some(source_artifact_id.to_string());
         event.artifact_type_id = Some(expansion_kind.to_string());
         event.ready_count = Some(self.ready_capability_instances().len());

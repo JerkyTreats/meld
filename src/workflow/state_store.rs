@@ -38,6 +38,8 @@ pub struct WorkflowThreadRecord {
     pub status: WorkflowThreadStatus,
     pub next_turn_seq: u32,
     pub updated_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_frame_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -321,6 +323,7 @@ mod tests {
             status: WorkflowThreadStatus::Running,
             next_turn_seq: 2,
             updated_at_ms: 1,
+            final_frame_id: None,
         };
         store.upsert_thread(&thread).unwrap();
 

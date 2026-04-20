@@ -2,6 +2,7 @@
 
 pub mod binding;
 pub mod commands;
+pub mod events;
 pub mod executor;
 pub mod facade;
 pub mod gates;
