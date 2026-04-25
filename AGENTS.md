@@ -15,6 +15,7 @@
 ## Governance Index
 
 - [Commit Policy](governance/commit_policy.md)
+- [Assessment By Domain Policy](governance/assessment_by_domain_policy.md)
 - [Compatibility Policy](governance/compatibility_policy.md)
 - [Compatibility Shim Policy](governance/compatibility_shim_policy.md)
 - [CLI Targeting Policy](governance/cli_targeting_policy.md)
