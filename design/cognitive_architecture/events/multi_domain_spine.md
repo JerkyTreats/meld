@@ -1,14 +1,14 @@
-# Multi-Domain Spine
+# Multi-Domain Event Ledger
 
-Date: 2026-04-20
+Date: 2026-04-22
 Status: active
 Scope: shared temporal ledger across cognitive domains
 
 ## Intent
 
-Define how many domains share one temporal spine without sharing one ownership model.
+Define how many domains share one temporal event ledger without sharing one ownership model.
 
-The spine is the shared history ledger.
+Events are the shared history ledger.
 Object stores, reducers, reference projections, and query surfaces remain domain-owned.
 
 ## Problem
@@ -22,7 +22,7 @@ Examples:
 - what graph anchor was selected after an execution outcome
 - what belief was current when a planner chose an action
 
-Without runtime-wide spine sequence and cross-domain object refs, these questions collapse into ad hoc joins across local clocks.
+Without runtime-wide event sequence and cross-domain object refs, these questions collapse into ad hoc joins across local clocks.
 
 ## Domain Concerns
 
@@ -33,9 +33,9 @@ Every domain has three concerns:
 - references
   named current-state pointers or projections
 - history
-  ordered semantic facts in the spine
+  ordered semantic facts in the event ledger
 
-The spine stores history.
+Events store history.
 Domains own objects and references.
 
 ## Known Domains
@@ -77,7 +77,7 @@ Semantic facts include:
 - control node failed
 - workflow turn completed
 
-### world_state
+### world_model
 
 Graph anchors, graph traversal materialization, and future belief records.
 
@@ -94,12 +94,12 @@ Semantic facts include:
 
 Promoted observations from lowered sensory pipelines.
 
-Raw high-rate lanes do not publish directly into the spine.
-Only promoted semantic observations enter the spine.
+Raw high-rate lanes do not publish directly into events.
+Only promoted semantic observations enter events.
 
 ## Envelope Anchors
 
-The spine envelope carries:
+The event envelope carries:
 
 - runtime-wide `seq`
 - owning `domain_id`
@@ -140,7 +140,7 @@ A task run becomes:
 DomainObjectRef { domain_id: "execution", object_kind: "task_run", object_id: "..." }
 ```
 
-A world-state entity becomes:
+A world-model entity becomes:
 
 ```rust
 DomainObjectRef { domain_id: "world_state", object_kind: "entity", object_id: "..." }
@@ -157,7 +157,7 @@ With `domain_id`, `stream_id`, `DomainObjectRef`, relations, and runtime-wide `s
 - query the latest relevant projection at or before that sequence
 - hydrate provenance through object refs and relations
 
-The spine sequence is the shared clock.
+The event sequence is the shared clock.
 
 ## Batch Facts
 
@@ -172,18 +172,18 @@ A batch fact should preserve:
 - sequence position for replay
 
 The detailed payload may live in a domain-owned object store.
-The spine event stays compact.
+The event record stays compact.
 
 ## Genesis Facts
 
-When a domain joins the spine with existing state, a genesis fact may capture the baseline.
+When a domain joins events with existing state, a genesis fact may capture the baseline.
 
 After genesis, subsequent mutations emit delta facts.
 Replaying genesis plus later deltas reconstructs that domain projection.
 
 ## Read With
 
-- [Event Spine Requirements](event_manager_requirements.md)
-- [World State Domain](../world_state/README.md)
+- [Event Ledger Requirements](event_manager_requirements.md)
+- [World Model Domain](../world_state/README.md)
 - [Graph](../world_state/graph/README.md)
 - [Execution Control](../execution/control/README.md)

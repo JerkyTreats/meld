@@ -1,12 +1,12 @@
-# Events Design
+# Events Domain
 
-Date: 2026-04-20
+Date: 2026-04-22
 Status: active
-Scope: declarative design for the shared event spine
+Scope: declarative design for the shared event ledger
 
 ## Intent
 
-`events` is the canonical spine for promoted semantic facts.
+`events` is the canonical ledger for promoted semantic facts.
 
 The design goal is one durable temporal ledger across `workspace_fs`, `context`, `execution`, `world_state`, and later `sensory`.
 
@@ -30,15 +30,15 @@ Domain owners own event meaning:
 - `workspace_fs` owns workspace facts
 - `context` owns frame and head facts
 - `execution` owns task, control, workflow, and artifact facts
-- `world_state` owns derived graph and later belief facts
+- world model owns derived graph and later belief facts
 - `sensory` owns observation promotion rules
 
 `telemetry` is downstream.
-It consumes spine history for summaries, metrics, operator feedback, and compatibility.
+It consumes event history for summaries, metrics, operator feedback, and compatibility.
 
-## Spine Contract
+## Event Contract
 
-The spine contract requires:
+The event contract requires:
 
 - one runtime-wide sequence
 - append-only canonical history
@@ -54,16 +54,18 @@ The spine contract requires:
 
 ## Inclusion Rule
 
-Only promoted semantic facts belong in the canonical spine.
+Only promoted semantic facts belong in the canonical event ledger.
 
 Raw sensory pulses, raw file watcher noise, transient worker chatter, and presentation summaries stay outside the canonical correctness path.
 
 ## Active Documents
 
-- [Event Spine Requirements](event_manager_requirements.md)
+- [Event Ledger Requirements](event_manager_requirements.md)
   canonical envelope, ownership, ordering, durability, and replay requirements
-- [Multi-Domain Spine](multi_domain_spine.md)
+- [Multi-Domain Event Ledger](multi_domain_spine.md)
   cross-domain ledger model and reference contract
+- [Events Crate](CRATE.md)
+  `meld-events` crate boundary, owned modules, extraction path, and forbidden dependencies
 
 ## Completed History
 
@@ -72,7 +74,6 @@ Raw sensory pulses, raw file watcher noise, transient worker chatter, and presen
 
 ## Read With
 
-- [Spine Concern](../spine/README.md)
-- [World State Domain](../world_state/README.md)
+- [World Model Domain](../world_state/README.md)
 - [Graph](../world_state/graph/README.md)
 - [Execution Control](../execution/control/README.md)

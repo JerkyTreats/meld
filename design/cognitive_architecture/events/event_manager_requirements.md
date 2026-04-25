@@ -1,21 +1,21 @@
-# Event Spine Requirements
+# Event Ledger Requirements
 
-Date: 2026-04-20
+Date: 2026-04-22
 Status: active
-Scope: canonical spine for promoted semantic facts across domains
+Scope: canonical event ledger for promoted semantic facts across domains
 
 ## Objective
 
-Define what must be true for the shared event spine.
+Define what must be true for the shared event ledger.
 
 This document is declarative.
 Delivery history lives in [Completed Events](../../completed/events/README.md).
 
 ## Core Thesis
 
-There is one canonical spine for promoted semantic facts.
+There is one canonical event ledger for promoted semantic facts.
 
-That spine must:
+That ledger must:
 
 - accept events from concurrent producers
 - assign one runtime-wide deterministic order
@@ -25,7 +25,7 @@ That spine must:
 - carry explicit graph attachment metadata
 - allow downstream consumers without making them part of correctness
 
-Only promoted semantic facts belong in the canonical spine.
+Only promoted semantic facts belong in the canonical event ledger.
 
 ## Ownership
 
@@ -81,13 +81,13 @@ Required meaning of the fields:
 - `ts`
   compatibility timestamp retained for older event readers
 - `recorded_at`
-  time the event was recorded into the spine
+  time the event was recorded into the event ledger
 - `record_id`
   optional stable id for idempotent append
 - `session`
   operator or runtime session grouping
 - `seq`
-  runtime-wide monotonic spine order
+  runtime-wide monotonic event order
 - `domain_id`
   owning domain label such as `execution`, `world_state`, `sensory`, or `workspace_fs`
 - `stream_id`
@@ -109,10 +109,10 @@ Required meaning of the fields:
 
 `seq` is runtime wide.
 
-Session local sequence is not enough for a real spine.
+Session local sequence is not enough for a real event ledger.
 Without one shared order, cross-domain temporal questions have no precise answer.
 
-The spine may later become distributed, but the contract remains one replayable total order per local spine.
+The event ledger may later become distributed, but the contract remains one replayable total order per local ledger.
 
 ## Idempotency Rules
 
@@ -124,7 +124,7 @@ Source facts without a stable `record_id` remain append-only facts.
 
 ## Facts And Views
 
-The spine stores facts.
+The event ledger stores facts.
 Views are projections.
 
 Facts include:
@@ -134,7 +134,7 @@ Facts include:
 - execution task and artifact facts
 - workflow turn and plan linkage facts
 - control outcome facts
-- world state derived anchor facts
+- world-model derived anchor facts
 
 Views include:
 
@@ -147,10 +147,10 @@ Views include:
 
 ## Raw Signal Rule
 
-The spine is not raw sensory transport.
+The event ledger is not raw sensory transport.
 
 High-rate sensory lanes and raw watcher pulses lower into local observation forms first.
-Only promoted semantic observations enter the spine.
+Only promoted semantic observations enter events.
 
 ## Reducer Rule
 
@@ -182,7 +182,7 @@ Reserved future families include:
 - canonical records are append only
 - replay must rebuild reducer projections after restart
 - correction happens through later events, not in-place mutation
-- session cleanup must not delete canonical spine history
+- session cleanup must not delete canonical event history
 - compatibility readers must keep old stored envelopes readable
 
 ## Ingress Requirements
@@ -225,7 +225,7 @@ No domain may assume `NodeID` is the universal identity anchor.
 
 ## Acceptance Conditions
 
-The spine requirements are satisfied when all of these remain true:
+The event requirements are satisfied when all of these remain true:
 
 - one canonical envelope is shared
 - runtime-wide sequence is explicit
@@ -233,5 +233,5 @@ The spine requirements are satisfied when all of these remain true:
 - typed event families are owned by domains
 - reducer ownership of state transition is explicit
 - replay can rebuild required projections
-- telemetry remains downstream of the spine
+- telemetry remains downstream of events
 - graph attachment uses explicit objects and relations

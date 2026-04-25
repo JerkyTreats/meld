@@ -50,7 +50,7 @@ This is closer to stream processing and online estimation than to deliberate wor
 `sensory` may materialize stable lowered observations for short-lived local use.
 It should not treat every raw pulse as canonical shared truth.
 
-The durable shared materialization boundary is promotion into the spine.
+The durable shared materialization boundary is promotion into events.
 Before that point, most sensory state should be:
 
 - transient
@@ -85,9 +85,9 @@ It is the shared temporal ledger that receives promoted sensory facts.
 
 That means:
 
-- raw lanes stay outside the spine
-- lowering IR usually stays outside the spine
-- promoted semantic observations enter the spine
+- raw lanes stay outside events
+- lowering IR usually stays outside events
+- promoted semantic observations enter events
 
 ## First Slice
 
@@ -99,6 +99,6 @@ That means:
 ## Read With
 
 - [Sensory Domain](README.md)
-- [Spine Concern](../spine/README.md)
+- [Events Domain](../events/README.md)
 - [Observe Merge Push](../observe_merge_push.md)
 - [Further Research Prompts](../further_research_prompts.md)

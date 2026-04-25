@@ -1,6 +1,6 @@
 # Execution Substrate
 
-Date: 2026-04-12
+Date: 2026-04-22
 Status: active
 Scope: natural runtime model for planning, dispatch, and world side effects in `execution`
 
@@ -23,14 +23,14 @@ The substrate should look like:
 - dispatch into task and capability execution
 - execution monitoring
 - repair and replanning
-- outcome publication back into the spine
+- outcome publication back into events
 
 This is closer to orchestration and action selection than to streaming or belief reduction.
 
 ## Core Primitives
 
 - goal
-  desired change in world state
+  desired change in the world model
 - plan
   chosen path from current belief toward desired state
 - task
@@ -44,10 +44,10 @@ This is closer to orchestration and action selection than to streaming or belief
 
 ## Materialization Posture
 
-`execution` should read materialized current belief from `world_state`.
+`execution` should read materialized current belief from the world model.
 It should not plan over raw event streams when a shaped world-model view exists.
 
-It should also publish material suitable for later materialization by `world_state`:
+It should also publish material suitable for later materialization by the world model:
 
 - success
 - failure
@@ -61,7 +61,7 @@ It should also publish material suitable for later materialization by `world_sta
 - dispatch into existing task and capability mechanics
 - observation waits and repair
 - replanning after outcome or belief change
-- publication of rich enough outcomes for world-state revision
+- publication of rich enough outcomes for world-model revision
 
 ## What Should Not Be Forced Into This Substrate
 
@@ -80,7 +80,7 @@ They are the execution substrate inside the loop.
 That means:
 
 - `task` and `capability` remain the natural packaging for deliberate action
-- they should not be forced to become the substrate for `sensory` or `world_state`
+- they should not be forced to become the substrate for `sensory` or the world model
 - planner to world-model coupling is the key missing bridge, not a replacement of task mechanics
 
 ## Relationship To Control
@@ -97,7 +97,7 @@ It is not a peer cognitive domain.
 - repair
 - HTN lineage above compiled tasks
 
-`execution` remains the larger cognitive concern that includes planning against world state and deliberate side effects.
+`execution` remains the larger cognitive concern that includes planning against the world model and deliberate side effects.
 
 ## Relationship To Curation
 
@@ -108,7 +108,7 @@ The substrate therefore assumes:
 
 - goals are expressed against desired world change
 - planning reads curated belief
-- execution publishes outcomes back for `world_state` to revise belief
+- execution publishes outcomes back for the world model to revise belief
 
 ## First Slice
 
@@ -122,6 +122,6 @@ The substrate therefore assumes:
 - [Execution Domain](README.md)
 - [Execution Control](control/README.md)
 - [Execution Planning](control/planning/README.md)
-- [World State Domain](../world_state/README.md)
+- [World Model Domain](../world_state/README.md)
 - [Observe Merge Push](../observe_merge_push.md)
 - [Task Network](control/task_network.md)

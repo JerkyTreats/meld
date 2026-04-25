@@ -26,8 +26,8 @@ The strongest current planning structures in this repo are:
 
 ## Next
 
-- make planning explicitly world-state-aware
-- express goals as desired world-state change
+- make planning explicitly world-model-aware
+- express goals as desired world-model change
 - let planning choose sensing when belief is missing or stale
 - preserve HTN where it is strong without forcing all planning into one formalism
 

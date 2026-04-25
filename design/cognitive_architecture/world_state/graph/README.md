@@ -2,7 +2,7 @@
 
 Date: 2026-04-20
 Status: active
-Scope: current anchor selection, lineage, provenance, and cross-domain graph walk inside `world_state`
+Scope: current anchor selection, lineage, provenance, and cross-domain graph walk inside the world model
 
 ## Thesis
 
@@ -10,15 +10,15 @@ Scope: current anchor selection, lineage, provenance, and cross-domain graph wal
 
 The graph contract is:
 
-- the spine carries `DomainObjectRef` objects and `EventRelation` edges
-- graph materialization derives current anchors and traversal views from spine history
+- canonical events carry `DomainObjectRef` objects and `EventRelation` edges
+- graph materialization derives current anchors and traversal views from event history
 - anchors are selected for a subject and perspective
 - lineage records what an anchor replaced
 - provenance records which facts made an anchor current
 - traversal exposes bounded object walks and relation adjacency
 - branch scoped reads preserve branch identity and presence
 
-The job of `world_state/graph` is now to keep this materialization replayable, index backed, and narrow enough for belief to build on later.
+The job of the graph layer is now to keep this materialization replayable, index backed, and narrow enough for belief to build on later.
 
 ## What Graph Owns
 
@@ -26,7 +26,7 @@ The job of `world_state/graph` is now to keep this materialization replayable, i
 - anchor lineage
 - provenance bundles
 - cross-domain object walk through `DomainObjectRef`
-- replayable graph materialization from spine facts
+- replayable graph materialization from event facts
 
 ## What Graph Does Not Own
 
@@ -35,7 +35,7 @@ The job of `world_state/graph` is now to keep this materialization replayable, i
 - calibration
 - Bayesian revision
 
-Those belong to `world_state/belief`.
+Those belong to world-model belief.
 
 ## Current Operational Truth
 
@@ -54,11 +54,11 @@ The graph baseline stops at graph materialization and traversal.
 
 It includes:
 
-- canonical event spine publication with explicit object refs and relations
+- canonical event publication with explicit object refs and relations
 - workspace and execution contribution to current anchor state
 - replayable current anchor materialization
 - query surfaces for current anchor, lineage, provenance, neighbors, and bounded walks
-- durable derived anchor events written back to the spine by `GraphRuntime`
+- durable derived anchor events written back to the event ledger by `GraphRuntime`
 - branch annotated federation over traversal stores
 - one workflow task path that resolves final frame artifacts through traversal
 
@@ -66,7 +66,7 @@ Belief work is deferred.
 
 ## Remaining Limits
 
-- `world_state/belief` is outside the graph baseline
+- world-model belief is outside the graph baseline
 - confidence, contradiction handling, calibration, and curation are not graph responsibilities
 - traversal only reduces source domains that publish explicit graph objects and relations
 - graph indexes are sled backed materializations, not a general graph database
@@ -74,9 +74,9 @@ Belief work is deferred.
 
 ## Read With
 
-- [World State Domain](../README.md)
+- [World Model Domain](../README.md)
 - [Belief](../belief/README.md)
 - [Temporal Fact Graph](temporal_fact_graph.md)
 - [Branch Federation Substrate](branch_federation_substrate.md)
 - [Completed Graph Implementation History](../../../completed/world_state/graph/README.md)
-- [Spine Concern](../../spine/README.md)
+- [Events Design](../../events/README.md)

@@ -1,8 +1,8 @@
 # Sensory Domain
 
-Date: 2026-04-12
+Date: 2026-04-22
 Status: active
-Scope: continuous observation, modality isolation, and diff publication into the shared spine
+Scope: continuous observation, modality isolation, and diff publication into shared events
 
 ## Thesis
 
@@ -22,11 +22,11 @@ The domain model is:
 
 - modality-specific observation workers
 - normalization from raw signal into typed observation artifacts
-- publication of observation facts into the spine
+- publication of observation facts into events
 - local backpressure policy close to the source
 
-`world_state` owns belief updates and conflict resolution.
-`spine` owns durability, ordering, replay, and subscription.
+The world model owns belief updates and conflict resolution.
+`events` owns durability, ordering, replay, and subscription.
 `control` owns task-triggered observation use cases that already exist today.
 
 ## Current Anchors
@@ -38,19 +38,19 @@ The domain model is:
 ## Substrate
 
 - [Sensory Substrate](substrate.md)
-  parallel stream compilers, lowering IR, and promotion into the shared spine
+  parallel stream compilers, lowering IR, and promotion into shared events
 
 ## Required First Slice
 
 - always-on workers for workspace, git, and other high-value modalities
 - typed observation contracts that can survive replay and cross-domain reuse
-- source-local throttling so high-volume sensors do not dominate the spine
+- source-local throttling so high-volume sensors do not dominate events
 - a clean handoff from sensory publication to curation reducers
 
 ## Read With
 
 - [Observe Merge Push](../observe_merge_push.md)
 - [Sensory Substrate](substrate.md)
-- [World State Domain](../world_state/README.md)
-- [Spine Concern](../spine/README.md)
+- [World Model Domain](../world_state/README.md)
+- [Events Domain](../events/README.md)
 - [Await Observation Semantics](../execution/control/program/await_observation_semantics.md)

@@ -117,6 +117,10 @@ It should build on the implemented graph substrate and legacy claim compatibilit
 
 - [World State Domain](../README.md)
 - [Belief](README.md)
+- [Belief Microarchitecture](microarchitecture.md)
+- [Fact To Belief](fact_to_belief.md)
+- [Comparator Model](comparator_model.md)
+- [Belief Substrate](substrate.md)
 - [Graph](../graph/README.md)
 - [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md)
 - [Spine Concern](../../spine/README.md)

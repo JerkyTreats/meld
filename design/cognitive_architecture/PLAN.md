@@ -45,6 +45,22 @@ Implementation posture:
 - [Crate Boundary Assessment By Domain](microarchitecture_assessment_by_domain.md)
 - [Complex Change Workflow Governance](../../governance/complex_change_workflow.md)
 
+## Implementation Progress
+
+Current working branch:
+- `feat/cognitive-architecture-crate-split`
+
+Committed progress:
+
+| Commit | Scope | Result |
+|--------|-------|--------|
+| `25b13cc` | Phase 0 baseline | plan, migration guides, dependency checklist, public surface inventory, and gate baseline published |
+| `037eab6` | Phase 1 events boundary | session lifecycle removed from `EventStore` and runtime idempotent append fixed |
+| `7eb71d4` | Phase 2 world model boundary | source intent moved inside world model and root reads routed through `WorldModelQueries` |
+
+Next active phase:
+- Phase 3 execution port foundation and contract extraction
+
 ## CLI Path Default Exception List
 
 Project direction is path first targeting.
@@ -105,7 +121,7 @@ Apply these rules in every phase.
 | Goal | Freeze current behavior and publish the dependency gates needed for the split |
 | Dependencies | None |
 | Docs | all `MIGRATION.md` docs in this folder and this plan |
-| Status | proposed |
+| Status | completed |
 
 | Order | Task | Completion |
 |-------|------|------------|
@@ -165,7 +181,7 @@ Apply these rules in every phase.
 | Goal | Make the event ledger independent from session lifecycle and telemetry compatibility |
 | Dependencies | Phase 0 |
 | Docs | [Events Migration](events/MIGRATION.md) |
-| Status | proposed |
+| Status | completed |
 
 | Order | Task | Completion |
 |-------|------|------------|
@@ -222,7 +238,7 @@ Apply these rules in every phase.
 | Goal | Remove source domain imports from world model reduction and replace store shaped APIs with public query surfaces |
 | Dependencies | Phase 0 and Phase 1 |
 | Docs | [World Model Migration](world_state/MIGRATION.md) |
-| Status | proposed |
+| Status | completed |
 
 | Order | Task | Completion |
 |-------|------|------------|
@@ -280,7 +296,7 @@ Apply these rules in every phase.
 | Goal | Replace `ContextApi` based execution flows with execution owned ports and stabilize execution owned request contracts |
 | Dependencies | Phase 0 and Phase 1 and Phase 2 |
 | Docs | [Execution Migration](execution/MIGRATION.md) and [Core Migration](core/MIGRATION.md) |
-| Status | proposed |
+| Status | next |
 
 | Order | Task | Completion |
 |-------|------|------------|

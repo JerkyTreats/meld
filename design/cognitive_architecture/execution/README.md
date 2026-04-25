@@ -1,6 +1,6 @@
 # Execution Domain
 
-Date: 2026-04-12
+Date: 2026-04-22
 Status: active
 Scope: world-model-aware action and the mapping from cognitive push into current execution areas
 
@@ -11,7 +11,7 @@ Within this repository, that layer is not one new monolith.
 It is the composed behavior of `goals`, `control`, `task`, `capability`, `provider`, and domain-owned capability homes.
 
 The cognitive architecture requirement is simple:
-execution must read the current world model and must publish outcomes back into the spine.
+execution must read the current world model and must publish outcomes back into events.
 
 ## Boundary
 
@@ -19,13 +19,13 @@ execution must read the current world model and must publish outcomes back into 
 
 - goal-directed planning against current belief
 - dispatch through the existing execution domains
-- publication of outcomes, failures, and learned facts back into the spine
+- publication of outcomes, failures, and learned facts back into events
 - synthesis escalation when the current capability catalog cannot satisfy a goal
 
 `goals` owns why change is needed.
 `control` owns orchestration, observation waits, and repair.
 `task` and `capability` own compiled execution units and atomic contracts.
-`world_state` owns the world model that execution reads.
+The world model owns graph and belief views that execution reads.
 
 ## Current Anchors
 
@@ -35,6 +35,8 @@ execution must read the current world model and must publish outcomes back into 
 
 ## Substrate
 
+- [Execution Crate](CRATE.md)
+  `meld-execution` crate boundary, owned modules, extraction path, and provider execution posture
 - [Execution Substrate](substrate.md)
   deliberate action over current belief through planning, control, task, and capability
 - [Execution Control](control/README.md)
@@ -55,7 +57,7 @@ execution must read the current world model and must publish outcomes back into 
 - [Execution Substrate](substrate.md)
 - [Execution Control](control/README.md)
 - [Execution Planning](control/planning/README.md)
-- [World State Domain](../world_state/README.md)
+- [World Model Domain](../world_state/README.md)
 - [Goals](../../goals/README.md)
 - [Task Network](control/task_network.md)
 - [Synthesis Overview](control/synthesis/README.md)

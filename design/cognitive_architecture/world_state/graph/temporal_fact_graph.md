@@ -1,19 +1,19 @@
 # Temporal Fact Graph
 
-Date: 2026-04-20
+Date: 2026-04-22
 Status: active
-Scope: canonical graph model for `world_state/graph`, built downstream of the shared event spine
+Scope: canonical graph model for the world-model graph, built downstream of shared events
 
 ## Thesis
 
-The canonical graph for `world_state/graph` is a temporal fact graph.
+The canonical world-model graph is a temporal fact graph.
 
 This means:
 
-- the spine is the durable history of semantic fact commits
+- events are the durable history of semantic fact commits
 - the graph is the current graph surface
-- the graph is materialized from spine history
-- the graph emits derived anchor facts into the spine, but it does not rewrite history directly
+- the graph is materialized from event history
+- the graph emits derived anchor facts into events, but it does not rewrite history directly
 
 This is the clean split between:
 
@@ -22,9 +22,9 @@ This is the clean split between:
 
 ## Core Position
 
-Do not make the graph and the spine the same storage role.
+Do not make the graph and the event ledger the same storage role.
 
-The spine owns:
+Events own:
 
 - durable append
 - total commit order
@@ -41,7 +41,7 @@ Graph materialization owns:
 - provenance views
 - planner-facing and operator-facing projections
 
-The graph surface must always be derivable from the spine.
+The graph surface must always be derivable from events.
 
 ## Canonical Model
 
@@ -68,11 +68,11 @@ The cognitive loop already implies a split:
 
 - `sensory` promotes observations
 - `execution` publishes action outcomes
-- `world_state` settles current belief
+- the world model settles current belief
 
-That means `world_state` needs two things at once:
+That means the world model needs two things at once:
 
-- durable temporal provenance from the spine
+- durable temporal provenance from events
 - fast current traversal for planning and inspection
 
 A temporal fact graph gives both.
@@ -97,14 +97,14 @@ Examples:
 - task run
 - workflow thread
 - artifact
-- world state entity
+- world-model entity
 - claim
 
-`world_state` may still add internal entity identifiers later, but the public durable anchor remains `DomainObjectRef`.
+The world model may still add internal entity identifiers later, but the public durable anchor remains `DomainObjectRef`.
 
 ## Fact Shape
 
-Each spine fact that is relevant to `world_state` is reducible into a typed traversal fact record.
+Each event fact that is relevant to the world model is reducible into a typed traversal fact record.
 
 The canonical event record carries:
 

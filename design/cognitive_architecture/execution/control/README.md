@@ -45,8 +45,8 @@ Read this directory as the detailed execution-control layer under `execution`.
 ## Read With
 
 1. [Goals](../../../goals/README.md)
-2. [World State Domain](../../world_state/README.md)
-3. [Spine Concern](../../spine/README.md)
+2. [World Model Domain](../../world_state/README.md)
+3. [Events Domain](../../events/README.md)
 4. [Capability And Task Design](../../../capabilities/README.md)
 5. [Events Design](../../events/README.md)
 6. [Multi-Domain Spine](../../events/multi_domain_spine.md)
@@ -59,7 +59,7 @@ Read this directory as the detailed execution-control layer under `execution`.
 
 ## Next
 
-- make planning explicitly world-state-aware
+- make planning explicitly world-model-aware
 - land durable task-network runtime state
 - connect observation waits to a generic information-gathering policy
 - keep HTN as one planning structure without forcing all planning into one formalism
