@@ -1037,7 +1037,9 @@ impl FrameGenerationQueue {
         // Wait for all workers to finish
         let workers = std::mem::take(&mut *self.workers.write());
         for handle in workers {
-            let _ = handle.await;
+            if let Err(err) = handle.await {
+                error!(error = %err, "frame generation queue worker exited unexpectedly");
+            }
         }
 
         info!("Stopped frame generation queue workers");
