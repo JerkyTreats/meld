@@ -1,8 +1,8 @@
-use crate::api::ContextApi;
 use crate::context::generation::contracts::{
     GeneratedMetadataBuilder, GenerationOrchestrationRequest,
 };
 use crate::error::ApiError;
+use crate::execution::ContextReadPort;
 use crate::metadata::frame_key_registry::{
     KEY_AGENT_ID, KEY_MODEL, KEY_PROVIDER, KEY_PROVIDER_TYPE,
 };
@@ -24,7 +24,7 @@ pub struct PreviousMetadataSnapshot {
 }
 
 pub fn load_previous_metadata_snapshot(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     request: &GenerationOrchestrationRequest,
 ) -> Result<PreviousMetadataSnapshot, ApiError> {
     let Some(previous_frame_id) = resolve_previous_frame_id(api, request)? else {
@@ -37,9 +37,7 @@ pub fn load_previous_metadata_snapshot(
     };
 
     let previous_metadata = api
-        .frame_storage()
-        .get(&previous_frame_id)
-        .map_err(ApiError::from)?
+        .read_frame(&previous_frame_id)?
         .map(|frame| frame.metadata);
 
     Ok(PreviousMetadataSnapshot {
@@ -57,7 +55,7 @@ pub fn load_previous_metadata_snapshot(
 }
 
 pub fn build_and_validate_generated_metadata(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     request: &GenerationOrchestrationRequest,
     input: &GeneratedFrameMetadataInput,
     metadata_builder: &GeneratedMetadataBuilder,
@@ -65,9 +63,7 @@ pub fn build_and_validate_generated_metadata(
     let generated_metadata = metadata_builder(input);
     let previous_metadata =
         if let Some(previous_frame_id) = resolve_previous_frame_id(api, request)? {
-            api.frame_storage()
-                .get(&previous_frame_id)
-                .map_err(ApiError::from)?
+            api.read_frame(&previous_frame_id)?
                 .map(|frame| frame.metadata)
         } else {
             None
@@ -87,18 +83,10 @@ pub fn build_and_validate_generated_metadata(
 }
 
 fn resolve_previous_frame_id(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     request: &GenerationOrchestrationRequest,
 ) -> Result<Option<crate::types::FrameID>, ApiError> {
-    if request.force {
-        let head_index = api.head_index().read();
-        return Ok(head_index
-            .entries_for_node(&request.node_id)
-            .into_iter()
-            .find(|entry| entry.frame_type == request.frame_type)
-            .map(|entry| entry.frame_id));
-    }
-    api.get_head(&request.node_id, &request.frame_type)
+    api.find_frame_head(&request.node_id, &request.frame_type, request.force)
 }
 
 fn force_generation_mutability_baseline(previous_metadata: FrameMetadata) -> FrameMetadata {

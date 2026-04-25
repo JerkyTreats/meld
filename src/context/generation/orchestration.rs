@@ -52,7 +52,7 @@ pub async fn execute_generation_request(
     let provider_preparation = prepare_provider_for_request(api, request)?;
 
     let prepared_lineage = prepare_generated_lineage(
-        api.prompt_context_storage(),
+        api,
         &PromptContextLineageInput {
             system_prompt: prompt_output.system_prompt.clone(),
             user_prompt_template: prompt_output.user_prompt_template.clone(),
@@ -197,6 +197,7 @@ pub async fn execute_generation_request(
     };
 
     let response = execute_completion(
+        api,
         request,
         &provider_preparation,
         prompt_output.messages,

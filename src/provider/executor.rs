@@ -1,7 +1,7 @@
-use crate::api::ContextApi;
 use crate::context::generation::contracts::GenerationOrchestrationRequest;
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
+use crate::execution::{ProviderExecutionPort, ProviderValidationPort};
 use crate::provider::{
     ChatMessage, CompletionResponse, ModelProviderClient, ProviderConfig, ProviderFactory,
 };
@@ -16,8 +16,18 @@ pub struct ProviderPreparation {
     pub client: Box<dyn ModelProviderClient>,
 }
 
-pub fn prepare_provider_for_request(
-    api: &ContextApi,
+pub fn prepare_provider_for_request<P>(
+    api: &P,
+    request: &GenerationOrchestrationRequest,
+) -> Result<ProviderPreparation, ApiError>
+where
+    P: ProviderValidationPort + ?Sized,
+{
+    api.prepare_provider_for_request(request)
+}
+
+pub fn prepare_provider_for_request_from_api(
+    api: &crate::api::ContextApi,
     request: &GenerationOrchestrationRequest,
 ) -> Result<ProviderPreparation, ApiError> {
     let provider_registry = api.provider_registry().read();
@@ -52,7 +62,21 @@ pub fn prepare_provider_for_request(
     })
 }
 
-pub async fn execute_completion(
+pub async fn execute_completion<P>(
+    api: &P,
+    request: &GenerationOrchestrationRequest,
+    preparation: &ProviderPreparation,
+    messages: Vec<ChatMessage>,
+    event_context: Option<&QueueEventContext>,
+) -> Result<CompletionResponse, ApiError>
+where
+    P: ProviderExecutionPort + ?Sized,
+{
+    api.execute_completion(request, preparation, messages, event_context)
+        .await
+}
+
+pub async fn execute_completion_from_api(
     request: &GenerationOrchestrationRequest,
     preparation: &ProviderPreparation,
     messages: Vec<ChatMessage>,

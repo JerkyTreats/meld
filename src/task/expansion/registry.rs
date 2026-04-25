@@ -1,8 +1,8 @@
 //! Task expansion dispatch into domain-owned implementations.
 
-use crate::api::ContextApi;
 use crate::capability::CapabilityCatalog;
 use crate::error::ApiError;
+use crate::execution::ContextReadPort;
 use crate::merkle_traversal::expansion::compile_traversal_prerequisite_expansion;
 use crate::task::contracts::CompiledTaskRecord;
 use crate::task::expansion::contracts::{CompiledTaskDelta, TaskExpansionRequest};
@@ -13,7 +13,7 @@ pub const WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND: &str = "workspace_write_fra
 
 /// Compiles one task expansion request into an append-only task delta.
 pub fn compile_task_expansion_request(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     compiled_task: &CompiledTaskRecord,
     expansion: &TaskExpansionRequest,
     catalog: &CapabilityCatalog,

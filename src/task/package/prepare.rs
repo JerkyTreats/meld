@@ -1,11 +1,11 @@
 //! Shared preparation helpers for workflow-backed task packages.
 
-use crate::api::ContextApi;
 use crate::capability::{
     BoundBindingValue, BoundCapabilityInstance, BoundInputWiring, BoundInputWiringSource,
     CapabilityCatalog,
 };
 use crate::error::ApiError;
+use crate::execution::{ContextReadPort, NodeResolutionPort, PromptArtifactReadPort};
 use crate::task::compiler::compile_task_definition;
 use crate::task::contracts::{TaskDefinition, TaskInitSlotSpec};
 use crate::task::expansion::{
@@ -21,7 +21,6 @@ use crate::types::NodeID;
 use crate::workflow::profile::{WorkflowGate, WorkflowProfile};
 use crate::workflow::registry::RegisteredWorkflowProfile;
 use crate::workflow::resolver::resolve_prompt_template;
-use crate::workspace::resolve_workspace_node_id;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
@@ -40,7 +39,7 @@ pub fn workflow_task_run_id(workflow_id: &str, target_node_id: NodeID) -> String
 
 /// Resolves a workflow package request into shared package context.
 pub fn prepare_workflow_package_context(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + NodeResolutionPort + PromptArtifactReadPort + ?Sized),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowPackageTriggerRequest,
@@ -50,9 +49,7 @@ pub fn prepare_workflow_package_context(
 
     let target_node_id = resolve_package_target_node_id(api, workspace_root, request)?;
     let target_node_record = api
-        .node_store()
-        .get(&target_node_id)
-        .map_err(ApiError::from)?
+        .read_node_record(&target_node_id)?
         .ok_or(ApiError::NodeNotFound(target_node_id))?;
     let traversal_expansion = find_traversal_prerequisite_expansion(package_spec)?.clone();
     let prompts_by_turn_id = prompt_map(
@@ -73,7 +70,7 @@ pub fn prepare_workflow_package_context(
 
 /// Prepares one workflow-backed task run from a package spec and package-specific expansion lowering.
 pub fn prepare_workflow_task_run<F>(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + NodeResolutionPort + PromptArtifactReadPort + ?Sized),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowPackageTriggerRequest,
@@ -220,21 +217,19 @@ pub fn find_traversal_prerequisite_expansion(
 
 /// Resolves the trigger target node for one package request.
 pub fn resolve_package_target_node_id(
-    api: &ContextApi,
+    api: &(impl NodeResolutionPort + ?Sized),
     workspace_root: &Path,
     request: &WorkflowPackageTriggerRequest,
 ) -> Result<NodeID, ApiError> {
     match request.node_id {
         Some(node_id) => Ok(node_id),
-        None => {
-            resolve_workspace_node_id(api, workspace_root, request.path.as_deref(), None, false)
-        }
+        None => api.resolve_workspace_node_id(workspace_root, request.path.as_deref(), None, false),
     }
 }
 
 /// Resolves workflow prompt text for the authored package turns.
 pub fn prompt_map(
-    api: &ContextApi,
+    api: &(impl PromptArtifactReadPort + ?Sized),
     registered_profile: &RegisteredWorkflowProfile,
     turns: &[crate::task::package::TurnSpec],
 ) -> Result<HashMap<String, String>, ApiError> {

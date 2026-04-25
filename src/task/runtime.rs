@@ -1,16 +1,15 @@
 //! Task runtime loop over ready capability invocations.
 
-use crate::api::ContextApi;
 use crate::capability::{
     CapabilityCatalog, CapabilityExecutionContext, CapabilityExecutorRegistry,
 };
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
+use crate::execution::ExecutionContext;
 use crate::task::events::build_execution_task_envelope;
 use crate::task::executor::TaskExecutor;
 use crate::task::ArtifactRecord;
 use crate::task::{compile_task_expansion_request, parse_task_expansion_request_artifact};
-use crate::telemetry::WorkflowTurnEventData;
 use crate::workflow::events::{
     workflow_turn_completed_envelope, workflow_turn_failed_envelope,
     workflow_turn_started_envelope, ExecutionWorkflowTurnEventData,
@@ -43,7 +42,7 @@ pub struct WorkflowTaskTelemetry {
 
 /// Executes one task to completion using the registered capability invokers.
 pub async fn execute_task_to_completion(
-    api: &ContextApi,
+    api: &dyn ExecutionContext,
     executor: &mut TaskExecutor,
     catalog: &CapabilityCatalog,
     registry: &CapabilityExecutorRegistry,
@@ -223,21 +222,18 @@ fn emit_new_task_events(
 fn emit_workflow_turn_event(
     event_context: &QueueEventContext,
     event_type: &str,
-    payload: WorkflowTurnEventData,
+    payload: ExecutionWorkflowTurnEventData,
 ) {
     let envelope = match event_type {
-        "execution.workflow.turn_started" => workflow_turn_started_envelope(
-            &event_context.session_id,
-            ExecutionWorkflowTurnEventData::from(payload),
-        ),
-        "execution.workflow.turn_completed" => workflow_turn_completed_envelope(
-            &event_context.session_id,
-            ExecutionWorkflowTurnEventData::from(payload),
-        ),
-        "execution.workflow.turn_failed" => workflow_turn_failed_envelope(
-            &event_context.session_id,
-            ExecutionWorkflowTurnEventData::from(payload),
-        ),
+        "execution.workflow.turn_started" => {
+            workflow_turn_started_envelope(&event_context.session_id, payload)
+        }
+        "execution.workflow.turn_completed" => {
+            workflow_turn_completed_envelope(&event_context.session_id, payload)
+        }
+        "execution.workflow.turn_failed" => {
+            workflow_turn_failed_envelope(&event_context.session_id, payload)
+        }
         _ => return,
     };
 
@@ -250,8 +246,8 @@ fn workflow_turn_event_data(
     turn_id: &str,
     final_frame_id: Option<String>,
     error: Option<String>,
-) -> WorkflowTurnEventData {
-    WorkflowTurnEventData {
+) -> ExecutionWorkflowTurnEventData {
+    ExecutionWorkflowTurnEventData {
         workflow_id: telemetry.workflow_id.clone(),
         thread_id: telemetry.thread_id.clone(),
         turn_id: turn_id.to_string(),

@@ -1,7 +1,6 @@
 //! Context capability publication and invocation.
 
 use crate::agent::profile::prompt_contract::PromptContract;
-use crate::api::ContextApi;
 use crate::capability::{
     ArtifactSchemaVersionRange, BindingSpec, BindingValueKind, CapabilityInvocationPayload,
     CapabilityInvocationResult, CapabilityInvoker, CapabilityTypeContract, EffectKind, EffectSpec,
@@ -15,6 +14,7 @@ use crate::context::generation::metadata_construction::{
 };
 use crate::context::generation::prompt_collection::build_prompt_messages;
 use crate::error::ApiError;
+use crate::execution::ExecutionContext;
 use crate::metadata::frame_write_contract::{
     build_generated_metadata, GeneratedFrameMetadataInput,
 };
@@ -199,24 +199,20 @@ impl ContextGeneratePrepareCapability {
     }
 
     fn supporting_input_content(
-        api: &ContextApi,
+        api: &dyn ExecutionContext,
         payload: &CapabilityInvocationPayload,
         artifact_type_id: &str,
         value: &Value,
     ) -> Result<String, ApiError> {
         if artifact_type_id == "frame_ref" {
             let frame_id = Self::parse_frame_id(value, &payload.invocation_id)?;
-            let frame = api
-                .frame_storage()
-                .get(&frame_id)
-                .map_err(ApiError::from)?
-                .ok_or_else(|| {
-                    ApiError::ConfigError(format!(
-                        "Capability invocation '{}' references missing frame '{}'",
-                        payload.invocation_id,
-                        hex::encode(frame_id)
-                    ))
-                })?;
+            let frame = api.read_frame(&frame_id)?.ok_or_else(|| {
+                ApiError::ConfigError(format!(
+                    "Capability invocation '{}' references missing frame '{}'",
+                    payload.invocation_id,
+                    hex::encode(frame_id)
+                ))
+            })?;
             return Ok(String::from_utf8_lossy(&frame.content).to_string());
         }
 
@@ -228,7 +224,7 @@ impl ContextGeneratePrepareCapability {
     }
 
     fn supporting_inputs(
-        api: &ContextApi,
+        api: &dyn ExecutionContext,
         payload: &CapabilityInvocationPayload,
     ) -> Result<Vec<SupportingInput>, ApiError> {
         payload
@@ -434,7 +430,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
 
     async fn invoke(
         &self,
-        api: &ContextApi,
+        api: &dyn ExecutionContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
         event_context: Option<&crate::context::queue::QueueEventContext>,
@@ -496,9 +492,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
         prompt_contract.user_prompt_file = prompt_text.clone();
         prompt_contract.user_prompt_directory = prompt_text;
         let node_record = api
-            .node_store()
-            .get(&node_id)
-            .map_err(ApiError::from)?
+            .read_node_record(&node_id)?
             .ok_or(ApiError::NodeNotFound(node_id))?;
         let mut prompt_output =
             build_prompt_messages(api, &request, &node_record, &prompt_contract)?;
@@ -506,7 +500,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
         Self::append_supporting_context(&mut prompt_output, &supporting_inputs);
 
         let prepared_lineage = prepare_generated_lineage(
-            api.prompt_context_storage(),
+            api,
             &PromptContextLineageInput {
                 system_prompt: prompt_output.system_prompt.clone(),
                 user_prompt_template: prompt_output.user_prompt_template.clone(),
@@ -981,7 +975,7 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
 
     async fn invoke(
         &self,
-        api: &ContextApi,
+        api: &dyn ExecutionContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
         _event_context: Option<&crate::context::queue::QueueEventContext>,

@@ -1,11 +1,11 @@
 //! Merkle traversal-owned task expansion content and compilation.
 
-use crate::api::ContextApi;
 use crate::capability::{
     BoundBindingValue, BoundCapabilityInstance, BoundInputWiring, BoundInputWiringSource,
     CapabilityCatalog,
 };
 use crate::error::ApiError;
+use crate::execution::ContextReadPort;
 use crate::provider::ProviderExecutionBinding;
 use crate::task::compiler::compile_task_definition;
 use crate::task::contracts::{
@@ -96,7 +96,7 @@ pub struct TraversalPrerequisiteExpansionContent {
 
 /// Compiles a traversal prerequisite expansion into a task delta.
 pub fn compile_traversal_prerequisite_expansion(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     compiled_task: &CompiledTaskRecord,
     expansion: &TaskExpansionRequest,
     catalog: &CapabilityCatalog,
@@ -470,7 +470,7 @@ pub fn compile_traversal_prerequisite_expansion(
 }
 
 fn collect_existing_frame_refs(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     nodes_by_id: &BTreeMap<String, TraversalExpansionNode>,
     frame_type: &str,
     force: bool,
@@ -485,17 +485,13 @@ fn collect_existing_frame_refs(
         let Some(frame_id) = api.get_head(&node_id, frame_type)? else {
             continue;
         };
-        let frame = api
-            .frame_storage()
-            .get(&frame_id)
-            .map_err(ApiError::from)?
-            .ok_or_else(|| {
-                ApiError::ConfigError(format!(
-                    "Missing frame '{}' for node '{}'",
-                    hex::encode(frame_id),
-                    node.node_id
-                ))
-            })?;
+        let frame = api.read_frame(&frame_id)?.ok_or_else(|| {
+            ApiError::ConfigError(format!(
+                "Missing frame '{}' for node '{}'",
+                hex::encode(frame_id),
+                node.node_id
+            ))
+        })?;
         existing.insert(
             node.node_id.clone(),
             json!({

@@ -1,6 +1,5 @@
 //! Merkle traversal capability publication and invocation.
 
-use crate::api::ContextApi;
 use crate::capability::{
     ArtifactSchemaVersionRange, BindingSpec, BindingValueKind, CapabilityInvocationPayload,
     CapabilityInvocationResult, CapabilityInvoker, CapabilityTypeContract, EffectKind, EffectSpec,
@@ -8,6 +7,7 @@ use crate::capability::{
     ScopeContract, SuppliedValueRef,
 };
 use crate::error::ApiError;
+use crate::execution::ExecutionContext;
 use crate::merkle_traversal::expansion::{
     TraversalExpansionNode, TraversalExpansionRelation, TraversalPrerequisiteExpansionContent,
     TraversalPrerequisiteExpansionTemplate,
@@ -164,7 +164,7 @@ impl MerkleTraversalCapability {
     }
 
     fn collect_nodes_and_relations(
-        api: &ContextApi,
+        api: &dyn ExecutionContext,
         ordered: &[Vec<[u8; 32]>],
     ) -> Result<
         (
@@ -182,9 +182,7 @@ impl MerkleTraversalCapability {
         for batch in ordered {
             for node_id in batch {
                 let record = api
-                    .node_store()
-                    .get(node_id)
-                    .map_err(ApiError::from)?
+                    .read_node_record(node_id)?
                     .ok_or(ApiError::NodeNotFound(*node_id))?;
                 nodes_by_id.insert(
                     *node_id,
@@ -209,9 +207,7 @@ impl MerkleTraversalCapability {
         let mut relations = Vec::new();
         for node_id in nodes_by_id.keys() {
             let record = api
-                .node_store()
-                .get(node_id)
-                .map_err(ApiError::from)?
+                .read_node_record(node_id)?
                 .ok_or(ApiError::NodeNotFound(*node_id))?;
             for child in &record.children {
                 if traversed.contains(child) {
@@ -316,7 +312,7 @@ impl CapabilityInvoker for MerkleTraversalCapability {
 
     async fn invoke(
         &self,
-        api: &ContextApi,
+        api: &dyn ExecutionContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
         _event_context: Option<&crate::context::queue::QueueEventContext>,

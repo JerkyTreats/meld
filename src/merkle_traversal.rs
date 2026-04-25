@@ -1,8 +1,8 @@
 pub mod capability;
 pub mod expansion;
 
-use crate::api::ContextApi;
 use crate::error::ApiError;
+use crate::execution::ContextReadPort;
 use crate::store::NodeType;
 use crate::types::NodeID;
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ impl OrderedMerkleNodeBatches {
 }
 
 pub fn traverse(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     target_node_id: NodeID,
     strategy: TraversalStrategy,
 ) -> Result<OrderedMerkleNodeBatches, ApiError> {
@@ -50,9 +50,7 @@ pub fn traverse(
         }
         levels.entry(depth).or_default().push(node_id);
         let record = api
-            .node_store()
-            .get(&node_id)
-            .map_err(ApiError::from)?
+            .read_node_record(&node_id)?
             .ok_or(ApiError::NodeNotFound(node_id))?;
         for child in &record.children {
             queue.push_back((*child, depth + 1));
@@ -72,13 +70,13 @@ pub fn traverse(
         .map(|nodes| match strategy {
             TraversalStrategy::DirectoriesBottomUp => nodes
                 .into_iter()
-                .filter_map(|node_id| match api.node_store().get(&node_id) {
+                .filter_map(|node_id| match api.read_node_record(&node_id) {
                     Ok(Some(record)) if matches!(record.node_type, NodeType::Directory) => {
                         Some(Ok(node_id))
                     }
                     Ok(Some(_)) => None,
                     Ok(None) => Some(Err(ApiError::NodeNotFound(node_id))),
-                    Err(err) => Some(Err(ApiError::from(err))),
+                    Err(err) => Some(Err(err)),
                 })
                 .collect::<Result<Vec<_>, ApiError>>(),
             _ => Ok(nodes),

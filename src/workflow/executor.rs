@@ -379,7 +379,7 @@ pub(crate) async fn execute_registered_workflow_async(
             let provider_preparation = prepare_provider_for_request(api, &orchestration_request)?;
 
             let prepared_lineage = prepare_generated_lineage(
-                api.prompt_context_storage(),
+                api,
                 &PromptContextLineageInput {
                     system_prompt: prompt_contract.system_prompt.clone(),
                     user_prompt_template: prompt_template.clone(),
@@ -611,6 +611,7 @@ pub(crate) async fn execute_registered_workflow_async(
             };
 
             let response = match execute_completion(
+                api,
                 &orchestration_request,
                 &provider_preparation,
                 vec![
@@ -1168,19 +1169,32 @@ fn emit_workflow_turn_event(
     payload: WorkflowTurnEventData,
 ) {
     if let Some(ctx) = event_context {
+        let payload = ExecutionWorkflowTurnEventData {
+            workflow_id: payload.workflow_id,
+            thread_id: payload.thread_id,
+            turn_id: payload.turn_id,
+            turn_seq: payload.turn_seq,
+            node_id: payload.node_id,
+            path: payload.path,
+            agent_id: payload.agent_id,
+            provider_name: payload.provider_name,
+            frame_type: payload.frame_type,
+            attempt: payload.attempt,
+            plan_id: payload.plan_id,
+            level_index: payload.level_index,
+            final_frame_id: payload.final_frame_id,
+            error: payload.error,
+        };
         let envelope = match event_type {
-            "execution.workflow.turn_started" => workflow_turn_started_envelope(
-                &ctx.session_id,
-                ExecutionWorkflowTurnEventData::from(payload),
-            ),
-            "execution.workflow.turn_completed" => workflow_turn_completed_envelope(
-                &ctx.session_id,
-                ExecutionWorkflowTurnEventData::from(payload),
-            ),
-            "execution.workflow.turn_failed" => workflow_turn_failed_envelope(
-                &ctx.session_id,
-                ExecutionWorkflowTurnEventData::from(payload),
-            ),
+            "execution.workflow.turn_started" => {
+                workflow_turn_started_envelope(&ctx.session_id, payload)
+            }
+            "execution.workflow.turn_completed" => {
+                workflow_turn_completed_envelope(&ctx.session_id, payload)
+            }
+            "execution.workflow.turn_failed" => {
+                workflow_turn_failed_envelope(&ctx.session_id, payload)
+            }
             _ => return,
         };
         ctx.progress.emit_envelope_best_effort(envelope);

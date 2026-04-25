@@ -6,6 +6,7 @@ use crate::agent::AgentRegistry;
 use crate::api::ContextApi;
 use crate::context::head::CurrentFrameHeadRead;
 use crate::error::ApiError;
+use crate::execution::ContextReadPort;
 use crate::ignore;
 use crate::store::{NodeRecord, NodeRecordStore};
 use crate::telemetry::ProgressRuntime;
@@ -132,7 +133,7 @@ pub fn read_workspace_scan_state(
 
 /// Resolve path or --node to NodeID. If include_tombstoned is true, use get_by_path (for restore).
 pub fn resolve_workspace_node_id(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     workspace_root: &Path,
     path: Option<&Path>,
     node: Option<&str>,
@@ -141,28 +142,25 @@ pub fn resolve_workspace_node_id(
     match (path, node) {
         (Some(p), None) => {
             let resolved_path = workspace_lookup_path(workspace_root, p);
-            let store = api.node_store();
             let record = if include_tombstoned {
-                store.get_by_path(&resolved_path).map_err(ApiError::from)?
+                api.read_node_record_by_path(&resolved_path, true)?
             } else {
-                store.find_by_path(&resolved_path).map_err(ApiError::from)?
+                api.read_node_record_by_path(&resolved_path, false)?
             };
             if let Some(record) = record {
                 return Ok(record.node_id);
             }
             if let Ok(canonical_path) = crate::tree::path::canonicalize_path(&resolved_path) {
                 let record = if include_tombstoned {
-                    store.get_by_path(&canonical_path).map_err(ApiError::from)?
+                    api.read_node_record_by_path(&canonical_path, true)?
                 } else {
-                    store
-                        .find_by_path(&canonical_path)
-                        .map_err(ApiError::from)?
+                    api.read_node_record_by_path(&canonical_path, false)?
                 };
                 if let Some(record) = record {
                     return Ok(record.node_id);
                 }
                 if let Some(node_id) = resolve_node_id_by_canonical_fallback(
-                    store.as_ref(),
+                    api,
                     workspace_root,
                     &canonical_path,
                     include_tombstoned,
@@ -182,12 +180,7 @@ pub fn resolve_workspace_node_id(
             }
             let mut node_id = [0u8; 32];
             node_id.copy_from_slice(&bytes);
-            if api
-                .node_store()
-                .get(&node_id)
-                .map_err(ApiError::from)?
-                .is_none()
-            {
+            if api.read_node_record(&node_id)?.is_none() {
                 return Err(ApiError::NodeNotFound(node_id));
             }
             Ok(node_id)
@@ -203,15 +196,15 @@ pub fn resolve_workspace_node_id(
 
 /// Fallback: match by canonical path when direct path lookup misses.
 pub fn resolve_node_id_by_canonical_fallback(
-    store: &dyn NodeRecordStore,
+    store: &(impl ContextReadPort + ?Sized),
     workspace_root: &Path,
     canonical_target: &Path,
     include_tombstoned: bool,
 ) -> Result<Option<NodeID>, ApiError> {
     let records = if include_tombstoned {
-        store.list_all().map_err(ApiError::from)?
+        store.list_node_records(true)?
     } else {
-        store.list_active().map_err(ApiError::from)?
+        store.list_node_records(false)?
     };
 
     for record in records {

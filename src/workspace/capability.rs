@@ -1,6 +1,5 @@
 //! Workspace capability publication and invocation.
 
-use crate::api::ContextApi;
 use crate::capability::{
     ArtifactSchemaVersionRange, BindingSpec, BindingValueKind, CapabilityInvocationPayload,
     CapabilityInvocationResult, CapabilityInvoker, CapabilityTypeContract, EffectKind, EffectSpec,
@@ -8,6 +7,7 @@ use crate::capability::{
     ScopeContract, SuppliedValueRef,
 };
 use crate::error::ApiError;
+use crate::execution::ExecutionContext;
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
 use crate::task::{
     TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID, TASK_EXPANSION_SCHEMA_VERSION,
@@ -139,7 +139,7 @@ impl CapabilityInvoker for WorkspaceResolveNodeIdCapability {
 
     async fn invoke(
         &self,
-        api: &ContextApi,
+        api: &dyn ExecutionContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
         _event_context: Option<&crate::context::queue::QueueEventContext>,
@@ -161,9 +161,7 @@ impl CapabilityInvoker for WorkspaceResolveNodeIdCapability {
             include_tombstoned,
         )?;
         let record = api
-            .node_store()
-            .get(&node_id)
-            .map_err(ApiError::from)?
+            .read_node_record(&node_id)?
             .ok_or(ApiError::NodeNotFound(node_id))?;
 
         let producer = ArtifactProducerRef {
@@ -345,7 +343,7 @@ impl CapabilityInvoker for WorkspaceFilterFrameHeadPublishCapability {
 
     async fn invoke(
         &self,
-        api: &ContextApi,
+        api: &dyn ExecutionContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
         _event_context: Option<&crate::context::queue::QueueEventContext>,
@@ -556,7 +554,7 @@ impl CapabilityInvoker for WorkspaceWriteFrameHeadCapability {
 
     async fn invoke(
         &self,
-        api: &ContextApi,
+        api: &dyn ExecutionContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
         _event_context: Option<&crate::context::queue::QueueEventContext>,
@@ -587,17 +585,13 @@ impl CapabilityInvoker for WorkspaceWriteFrameHeadCapability {
 
         let content = match api.get_head(&node_id, &frame_type)? {
             Some(frame_id) => {
-                let frame = api
-                    .frame_storage()
-                    .get(&frame_id)
-                    .map_err(ApiError::from)?
-                    .ok_or_else(|| {
-                        ApiError::ConfigError(format!(
-                            "Missing frame '{}' for publish target '{}'",
-                            hex::encode(frame_id),
-                            node_hex
-                        ))
-                    })?;
+                let frame = api.read_frame(&frame_id)?.ok_or_else(|| {
+                    ApiError::ConfigError(format!(
+                        "Missing frame '{}' for publish target '{}'",
+                        hex::encode(frame_id),
+                        node_hex
+                    ))
+                })?;
                 if let Some(parent) = output_path.parent() {
                     fs::create_dir_all(parent).map_err(|err| {
                         ApiError::StorageError(crate::error::StorageError::IoError(

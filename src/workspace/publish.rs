@@ -1,11 +1,11 @@
 //! Workspace publish helpers for frame-head-backed file writes.
 
-use crate::api::ContextApi;
 use crate::capability::{
     BoundBindingValue, BoundCapabilityInstance, BoundInputWiring, BoundInputWiringSource,
     CapabilityCatalog,
 };
 use crate::error::ApiError;
+use crate::execution::ContextReadPort;
 use crate::merkle_traversal::expansion::TraversalExpansionNode;
 use crate::store::NodeType;
 use crate::task::compiler::compile_task_definition;
@@ -262,7 +262,7 @@ pub fn compile_workspace_write_frame_head_expansion(
 }
 
 pub fn evaluate_publish_target(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     node_id: NodeID,
     node_path: &Path,
     frame_type: &str,
@@ -398,11 +398,12 @@ pub fn publish_filter_dependency(
     }
 }
 
-pub fn validate_directory_node(api: &ContextApi, node_id: &NodeID) -> Result<PathBuf, ApiError> {
+pub fn validate_directory_node(
+    api: &(impl ContextReadPort + ?Sized),
+    node_id: &NodeID,
+) -> Result<PathBuf, ApiError> {
     let record = api
-        .node_store()
-        .get(node_id)
-        .map_err(ApiError::from)?
+        .read_node_record(node_id)?
         .ok_or(ApiError::NodeNotFound(*node_id))?;
     if !matches!(record.node_type, NodeType::Directory) {
         return Err(ApiError::ConfigError(format!(

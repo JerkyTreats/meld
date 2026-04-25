@@ -1,14 +1,15 @@
 use crate::agent::profile::prompt_contract::PromptContract;
-use crate::api::{ContextApi, ContextView};
 use crate::context::generation::contracts::{GenerationOrchestrationRequest, PromptAssemblyOutput};
 use crate::error::ApiError;
+use crate::execution::ContextReadPort;
 use crate::provider::{ChatMessage, MessageRole};
 use crate::store::{NodeRecord, NodeType};
+use crate::views::{FrameFilter, OrderingPolicy};
 
 const FILE_CONTEXT_MAX_BYTES: usize = 128 * 1024;
 
 pub fn build_prompt_messages(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     request: &GenerationOrchestrationRequest,
     node_record: &NodeRecord,
     prompt_contract: &PromptContract,
@@ -79,7 +80,7 @@ pub fn build_prompt_messages(
 }
 
 fn collect_directory_child_context_text(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     node_record: &NodeRecord,
     request: &GenerationOrchestrationRequest,
 ) -> Result<String, ApiError> {
@@ -87,12 +88,14 @@ fn collect_directory_child_context_text(
         return Ok(String::new());
     }
 
-    let child_view = ContextView::builder()
-        .max_frames(1)
-        .recent()
-        .by_type(request.frame_type.clone())
-        .by_agent(request.agent_id.clone())
-        .build();
+    let child_view = crate::context::query::view::ContextView {
+        max_frames: 1,
+        ordering: OrderingPolicy::Recency,
+        filters: vec![
+            FrameFilter::ByType(request.frame_type.clone()),
+            FrameFilter::ByAgent(request.agent_id.clone()),
+        ],
+    };
 
     let mut child_sections = Vec::new();
     for child_id in &node_record.children {
@@ -124,15 +127,17 @@ fn collect_directory_child_context_text(
 }
 
 fn collect_scoped_node_frame_context(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     request: &GenerationOrchestrationRequest,
 ) -> Result<String, ApiError> {
-    let view = ContextView::builder()
-        .max_frames(10)
-        .recent()
-        .by_type(request.frame_type.clone())
-        .by_agent(request.agent_id.clone())
-        .build();
+    let view = crate::context::query::view::ContextView {
+        max_frames: 10,
+        ordering: OrderingPolicy::Recency,
+        filters: vec![
+            FrameFilter::ByType(request.frame_type.clone()),
+            FrameFilter::ByAgent(request.agent_id.clone()),
+        ],
+    };
     let context = api.get_node(request.node_id, view)?;
     Ok(context
         .frames

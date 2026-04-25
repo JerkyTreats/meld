@@ -1,8 +1,8 @@
 //! Workflow turn input and prompt resolution contracts.
 
-use crate::api::ContextApi;
 use crate::context::frame::Frame;
 use crate::error::ApiError;
+use crate::execution::{ContextReadPort, PromptArtifactReadPort};
 use crate::store::{NodeRecord, NodeType};
 use crate::types::NodeID;
 use crate::workflow::profile::{PromptRefKind, WorkflowTurn};
@@ -16,7 +16,7 @@ pub struct ResolvedTurnInputs {
 }
 
 pub fn resolve_turn_inputs(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     node_id: NodeID,
     frame_type: &str,
     turn: &WorkflowTurn,
@@ -56,7 +56,7 @@ pub fn resolve_turn_inputs(
 }
 
 pub fn resolve_prompt_template(
-    api: &ContextApi,
+    api: &(impl PromptArtifactReadPort + ?Sized),
     profile_source_path: Option<&Path>,
     prompt_ref: &str,
 ) -> Result<String, ApiError> {
@@ -104,7 +104,7 @@ fn format_input_payload(key: &str, value: &str) -> String {
 }
 
 fn collect_target_context(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     node_id: NodeID,
     frame_type: &str,
 ) -> Result<String, ApiError> {
@@ -141,7 +141,7 @@ fn collect_file_target_context(path: &Path, frames: &[Frame]) -> Result<String, 
 }
 
 fn collect_directory_target_context(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     node_record: &NodeRecord,
     frame_type: &str,
 ) -> Result<String, ApiError> {
@@ -149,9 +149,7 @@ fn collect_directory_target_context(
         .children
         .iter()
         .map(|child_id| {
-            api.node_store()
-                .get(child_id)
-                .map_err(ApiError::from)?
+            api.read_node_record(child_id)?
                 .ok_or(ApiError::NodeNotFound(*child_id))
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
@@ -179,7 +177,7 @@ fn child_context_priority(path: &Path) -> u8 {
 }
 
 fn collect_child_context_block(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     child_record: &NodeRecord,
     frame_type: &str,
 ) -> Result<String, ApiError> {
@@ -259,10 +257,11 @@ fn resolve_prompt_path(prompt_path: &str, profile_source_path: Option<&Path>) ->
     None
 }
 
-fn read_artifact_prompt(api: &ContextApi, artifact_id: &str) -> Result<String, ApiError> {
-    let bytes = api
-        .prompt_context_storage()
-        .read_by_artifact_id_verified(artifact_id)?;
+fn read_artifact_prompt(
+    api: &(impl PromptArtifactReadPort + ?Sized),
+    artifact_id: &str,
+) -> Result<String, ApiError> {
+    let bytes = api.read_prompt_artifact_bytes(artifact_id)?;
 
     String::from_utf8(bytes).map_err(|err| {
         ApiError::ConfigError(format!(
@@ -276,6 +275,7 @@ fn read_artifact_prompt(api: &ContextApi, artifact_id: &str) -> Result<String, A
 mod tests {
     use super::*;
     use crate::agent::{AgentIdentity, AgentRole};
+    use crate::api::ContextApi;
     use crate::context::frame::storage::FrameStorage;
     use crate::heads::HeadIndex;
     use crate::prompt_context::PromptContextArtifactStorage;

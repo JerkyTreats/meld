@@ -57,9 +57,10 @@ Committed progress:
 | `25b13cc` | Phase 0 baseline | plan, migration guides, dependency checklist, public surface inventory, and gate baseline published |
 | `037eab6` | Phase 1 events boundary | session lifecycle removed from `EventStore` and runtime idempotent append fixed |
 | `7eb71d4` | Phase 2 world model boundary | source intent moved inside world model and root reads routed through `WorldModelQueries` |
+| `this commit` | Phase 3 execution boundary | execution ports added, provider request contracts moved under execution, and capability plus task runtime signatures removed direct `ContextApi` dependence |
 
 Next active phase:
-- Phase 3 execution port foundation and contract extraction
+- Phase 4 workflow runtime split and root adapter cutover
 
 ## CLI Path Default Exception List
 
@@ -107,8 +108,8 @@ Apply these rules in every phase.
 | 0 | Baseline lock and boundary inventory | None | completed |
 | 1 | Events authority boundary cleanup | Phase 0 | completed |
 | 2 | World model ingestion and query boundary cleanup | Phase 0 and Phase 1 | completed |
-| 3 | Execution port foundation and contract extraction | Phase 0 and Phase 1 and Phase 2 | proposed |
-| 4 | Workflow runtime split and root adapter cutover | Phase 2 and Phase 3 | proposed |
+| 3 | Execution port foundation and contract extraction | Phase 0 and Phase 1 and Phase 2 | completed |
+| 4 | Workflow runtime split and root adapter cutover | Phase 2 and Phase 3 | next |
 | 5 | Root composition seal and public surface cleanup | Phase 1 and Phase 2 and Phase 3 and Phase 4 | proposed |
 | 6 | Physical crate extraction and declarative doc cutover | Phase 1 through Phase 5 | proposed |
 
@@ -296,19 +297,19 @@ Apply these rules in every phase.
 | Goal | Replace `ContextApi` based execution flows with execution owned ports and stabilize execution owned request contracts |
 | Dependencies | Phase 0 and Phase 1 and Phase 2 |
 | Docs | [Execution Migration](execution/MIGRATION.md) and [Core Migration](core/MIGRATION.md) |
-| Status | next |
+| Status | completed |
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Define execution owned ports for context reads, context writes, prompt artifact reads, node resolution, provider execution, provider validation, event publication, world model queries, and workflow profile loading. | Proposed |
-| 2 | Migrate capability invocation and task runtime off `ContextApi` onto those ports. | Proposed |
-| 3 | Decide ownership of `ProviderExecutionBinding` and any other provider execution request contracts that execution must own. | Proposed |
-| 4 | Remove direct telemetry compatibility type dependence from execution runtime code. | Proposed |
+| 1 | Define execution owned ports for context reads, context writes, prompt artifact reads, node resolution, provider execution, provider validation, event publication, world model queries, and workflow profile loading. | Completed |
+| 2 | Migrate capability invocation and task runtime off `ContextApi` onto those ports. | Completed |
+| 3 | Decide ownership of `ProviderExecutionBinding` and any other provider execution request contracts that execution must own. | Completed |
+| 4 | Remove direct telemetry compatibility type dependence from execution runtime code. | Completed |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| capability and task execution no longer require `ContextApi`. | Proposed |
-| execution owned request contracts are stable enough to extract without dragging provider registry and CLI code with them. | Proposed |
+| capability and task execution no longer require `ContextApi`. | Completed |
+| execution owned request contracts are stable enough to extract without dragging provider registry and CLI code with them. | Completed |
 
 | Key seams |
 |-----------|
@@ -330,6 +331,18 @@ Apply these rules in every phase.
 | Dependency closure solved |
 |---------------------------|
 | Establishes the contract layer required to split workflow runtime and root adapter code safely |
+
+| Phase 3 gate evidence | Result |
+|-----------------------|--------|
+| F0 | passed on 2026-04-25 with `cargo fmt --check` |
+| F1 | passed on 2026-04-25 with `cargo check` |
+| F2 | passed on 2026-04-25 with focused `capability_invocation`, `task_executor`, and `workflow_task_compatibility` coverage |
+| F3 | passed on 2026-04-25 with targeted `rg` audits showing runtime execution seams no longer import `ContextApi` outside tests and task runtime plus workflow event contracts no longer depend on telemetry workflow turn payloads |
+| F4 | passed on 2026-04-25 after adding `src/execution` traits and execution owned provider request contracts with `ContextApi` limited to compatibility adapters |
+
+| Phase 3 completion notes |
+|--------------------------|
+| `src/execution` now owns the first extraction safe trait surface and provider request contracts. Capability invocation, task runtime, traversal expansion, workflow resolver, package preparation, and prompt lineage helpers now consume execution ports instead of the root facade type. `ContextApi` remains only as the compatibility adapter host for these paths. |
 
 ---
 

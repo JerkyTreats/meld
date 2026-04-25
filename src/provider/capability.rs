@@ -1,6 +1,5 @@
 //! Provider capability publication and invocation.
 
-use crate::api::ContextApi;
 use crate::capability::{
     ArtifactSchemaVersionRange, BindingSpec, BindingValueKind, CapabilityInvocationPayload,
     CapabilityInvocationResult, CapabilityInvoker, CapabilityTypeContract, EffectKind, EffectSpec,
@@ -9,6 +8,7 @@ use crate::capability::{
 };
 use crate::context::generation::contracts::GenerationOrchestrationRequest;
 use crate::error::ApiError;
+use crate::execution::ExecutionContext;
 use crate::provider::executor::{execute_completion, prepare_provider_for_request};
 use crate::provider::ChatMessage;
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
@@ -136,7 +136,7 @@ impl CapabilityInvoker for ProviderExecuteChatCapability {
 
     async fn invoke(
         &self,
-        api: &ContextApi,
+        api: &dyn ExecutionContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
         event_context: Option<&crate::context::queue::QueueEventContext>,
@@ -164,6 +164,7 @@ impl CapabilityInvoker for ProviderExecuteChatCapability {
         let response = loop {
             attempt += 1;
             let response = execute_completion(
+                api,
                 &request_artifact.request,
                 &preparation,
                 request_artifact.messages.clone(),

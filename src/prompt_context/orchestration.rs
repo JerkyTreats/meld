@@ -1,11 +1,11 @@
 //! Orchestration helpers for prompt context lineage persistence.
 
 use crate::error::ApiError;
+use crate::execution::PromptArtifactReadPort;
 use crate::metadata::frame_write_contract::GeneratedFrameMetadataInput;
 use crate::metadata::prompt_link_contract::build_prompt_link_id;
 use crate::metadata::prompt_link_contract::PromptLinkContractV1;
 use crate::prompt_context::contracts::{PromptContextArtifactKind, PromptContextLineageContract};
-use crate::prompt_context::storage::PromptContextArtifactStorage;
 
 #[derive(Debug, Clone)]
 pub struct PromptContextLineageInput {
@@ -23,22 +23,22 @@ pub struct PreparedPromptContextLineage {
 }
 
 pub fn persist_prompt_context_lineage(
-    storage: &PromptContextArtifactStorage,
+    storage: &(impl PromptArtifactReadPort + ?Sized),
     input: &PromptContextLineageInput,
 ) -> Result<PromptContextLineageContract, ApiError> {
-    let system_prompt = storage.write_utf8(
+    let system_prompt = storage.write_prompt_artifact_utf8(
         PromptContextArtifactKind::SystemPrompt,
         &input.system_prompt,
     )?;
-    let user_prompt_template = storage.write_utf8(
+    let user_prompt_template = storage.write_prompt_artifact_utf8(
         PromptContextArtifactKind::UserPromptTemplate,
         &input.user_prompt_template,
     )?;
-    let rendered_prompt = storage.write_utf8(
+    let rendered_prompt = storage.write_prompt_artifact_utf8(
         PromptContextArtifactKind::RenderedPrompt,
         &input.rendered_prompt,
     )?;
-    let context_payload = storage.write_utf8(
+    let context_payload = storage.write_prompt_artifact_utf8(
         PromptContextArtifactKind::ContextPayload,
         &input.context_payload,
     )?;
@@ -55,7 +55,7 @@ pub fn persist_prompt_context_lineage(
 }
 
 pub fn prepare_generated_lineage(
-    storage: &PromptContextArtifactStorage,
+    storage: &(impl PromptArtifactReadPort + ?Sized),
     input: &PromptContextLineageInput,
     agent_id: &str,
     provider: &str,
@@ -86,6 +86,7 @@ pub fn prepare_generated_lineage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prompt_context::PromptContextArtifactStorage;
     use tempfile::TempDir;
 
     #[test]

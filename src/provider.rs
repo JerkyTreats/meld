@@ -27,7 +27,7 @@ pub mod storage;
 pub mod summary;
 pub mod tooling;
 
-pub use generation::{ProviderExecutionBinding, ProviderRuntimeOverrides};
+pub use crate::execution::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 pub use profile::{ProviderConfig, ProviderType, ValidationResult};
 
 /// Model provider configuration

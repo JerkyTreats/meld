@@ -1,11 +1,11 @@
 //! Capability invocation registry and runtime execution contracts.
 
-use crate::api::ContextApi;
 use crate::capability::catalog::CapabilityCatalog;
 use crate::capability::contracts::{BoundCapabilityInstance, CapabilityTypeContract};
 use crate::capability::runtime::{CapabilityInvocationPayload, CapabilityRuntimeInit};
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
+use crate::execution::ExecutionContext;
 use crate::task::ArtifactRecord;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
@@ -58,7 +58,7 @@ pub trait CapabilityInvoker: Send + Sync {
     /// Invokes the domain runtime for one structured payload.
     async fn invoke(
         &self,
-        api: &ContextApi,
+        api: &dyn ExecutionContext,
         runtime_init: &CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
         event_context: Option<&QueueEventContext>,

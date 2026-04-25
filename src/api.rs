@@ -913,7 +913,10 @@ impl CurrentFrameHeadRead for ContextApi {
             .current_frame_head(&node_ref(*node_id), frame_type)
             .map_err(ApiError::StorageError)?
         else {
-            return Ok(None);
+            let head_index = self.head_index.read();
+            return head_index
+                .get_head(node_id, frame_type)
+                .map_err(ApiError::from);
         };
         decode_frame_anchor_target(&anchor.target)
             .map(Some)
@@ -925,14 +928,19 @@ impl CurrentFrameHeadRead for ContextApi {
             let head_index = self.head_index.read();
             return Ok(head_index.get_all_heads_for_node(node_id));
         };
-        world_model_queries
+        let frame_ids = world_model_queries
             .current_frame_heads_for_node(&node_ref(*node_id))
             .map_err(ApiError::StorageError)?
             .into_iter()
             .map(|anchor| {
                 decode_frame_anchor_target(&anchor.target).map_err(ApiError::StorageError)
             })
-            .collect()
+            .collect::<Result<Vec<_>, ApiError>>()?;
+        if frame_ids.is_empty() {
+            let head_index = self.head_index.read();
+            return Ok(head_index.get_all_heads_for_node(node_id));
+        }
+        Ok(frame_ids)
     }
 
     fn count_nodes_for_frame_type(&self, frame_type: &str) -> Result<usize, ApiError> {
