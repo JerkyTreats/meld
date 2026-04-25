@@ -153,7 +153,7 @@ fn scan_emits_session_boundary_events() {
         cli.execute(&Commands::Scan { force: true }).unwrap();
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let scan_session = sessions
             .iter()
             .find(|s| s.command == "scan")
@@ -188,7 +188,7 @@ fn emitted_event_timestamps_are_iso_8601_with_milliseconds() {
         cli.execute(&Commands::Scan { force: true }).unwrap();
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let scan_session = sessions
             .iter()
             .find(|s| s.command == "scan")
@@ -225,7 +225,7 @@ fn scan_emits_batched_progress_events_with_monotonic_counts() {
         cli.execute(&Commands::Scan { force: true }).unwrap();
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let scan_session = sessions
             .iter()
             .find(|s| s.command == "scan")
@@ -299,7 +299,7 @@ fn failed_command_emits_session_end() {
         assert!(result.is_err());
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let failed_session = sessions
             .iter()
             .find(|s| s.command == "context.generate")
@@ -349,7 +349,7 @@ fn context_generate_plan_constructed_includes_path_field() {
         assert!(result.is_err());
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let session = sessions
             .iter()
             .find(|s| s.command == "context.generate")
@@ -446,7 +446,7 @@ fn context_generate_node_skipped_includes_path_field() {
         assert!(result.unwrap().contains("Frame already exists"));
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let session = sessions
             .iter()
             .find(|s| s.command == "context.generate")
@@ -496,7 +496,7 @@ fn context_get_emits_summary_event() {
         .unwrap();
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let context_get_session = sessions
             .iter()
             .find(|s| s.command == "context.get")
@@ -621,7 +621,7 @@ fn command_families_emit_typed_summaries_with_command_summary() {
         }
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
 
         for (_, command_name, typed_event_type) in checks {
             let session = sessions
@@ -682,7 +682,7 @@ fn workflow_execute_emits_lineage_and_provider_events() {
         assert!(result.is_err());
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let session = sessions
             .iter()
             .find(|s| s.command == "workflow.execute")
@@ -747,7 +747,7 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
         assert!(result.is_err());
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let session = sessions
             .iter()
             .find(|s| s.command == "context.generate")
@@ -846,7 +846,7 @@ fn context_generate_recursive_completes_levels_bottom_up() {
         assert!(output.contains("generated=4, failed=0"));
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let session = sessions
             .iter()
             .find(|s| s.command == "context.generate")
@@ -975,7 +975,7 @@ fn workflow_force_generate_tombstones_stale_final_head_and_emits_reset_event() {
         assert_eq!(cli.api().get_head(&node_id, &frame_type).unwrap(), None);
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let session = sessions
             .iter()
             .find(|s| s.command == "context.generate")
@@ -1111,7 +1111,7 @@ fn context_regenerate_emits_context_generation_summary() {
         assert!(result.is_err());
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let session = sessions
             .iter()
             .find(|s| s.command == "context.regenerate")
@@ -1156,7 +1156,7 @@ fn command_summary_success_is_metric_focused_and_bounded() {
         .unwrap();
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let session = sessions
             .iter()
             .find(|s| s.command == "status")
@@ -1214,7 +1214,7 @@ fn command_summary_failure_message_is_bounded() {
         assert!(result.is_err());
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let session = sessions
             .iter()
             .find(|s| s.command == "context.generate")
@@ -1267,7 +1267,7 @@ fn provider_test_failure_emits_provider_request_failed_event() {
         assert!(result.is_ok());
 
         let runtime = cli.progress_runtime();
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let session = sessions
             .iter()
             .find(|s| s.command == "provider.test")
@@ -1311,7 +1311,6 @@ fn interrupted_session_remains_readable() {
         let changed = runtime.mark_interrupted_sessions().unwrap();
         assert_eq!(changed, 1);
         let session = runtime
-            .store()
             .get_session(&session_id)
             .unwrap()
             .expect("session should exist");
@@ -1347,7 +1346,7 @@ fn pruning_removes_only_old_completed_sessions() {
             .unwrap();
         assert!(removed >= 1);
 
-        let sessions = runtime.store().list_sessions().unwrap();
+        let sessions = runtime.list_sessions().unwrap();
         let completed_count = sessions
             .iter()
             .filter(|s| s.status == SessionStatus::Completed)

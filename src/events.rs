@@ -7,7 +7,6 @@ use serde_json::Value;
 pub mod compat;
 pub mod contracts;
 pub mod ingress;
-pub mod query;
 pub mod runtime;
 pub mod store;
 pub mod subscription;

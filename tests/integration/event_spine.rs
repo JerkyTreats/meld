@@ -306,6 +306,37 @@ fn idempotent_append_reuses_existing_record_id() {
 }
 
 #[test]
+fn non_idempotent_append_keeps_duplicate_record_ids() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(dir.path()).unwrap();
+    let runtime = ProgressRuntime::new(db).unwrap();
+    let session_id = runtime.start_command_session("graph".to_string()).unwrap();
+
+    let envelope = ProgressEnvelope::with_now_domain(
+        session_id.clone(),
+        "world_state".to_string(),
+        "graph".to_string(),
+        "world_state.anchor_selected".to_string(),
+        None,
+        json!({
+            "anchor_id": "anchor_one",
+            "object_id": "object_one"
+        }),
+    )
+    .with_record_id("world_state::anchor_selected::anchor_one");
+
+    runtime.emit_envelope(envelope.clone()).unwrap();
+    runtime.emit_envelope(envelope).unwrap();
+
+    let events = runtime.store().read_all_events_after(0).unwrap();
+    let selected: Vec<_> = events
+        .iter()
+        .filter(|event| event.event_type == "world_state.anchor_selected")
+        .collect();
+    assert_eq!(selected.len(), 2);
+}
+
+#[test]
 fn legacy_records_ignore_missing_record_id() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();

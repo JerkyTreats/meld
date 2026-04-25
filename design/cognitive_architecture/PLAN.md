@@ -89,7 +89,7 @@ Apply these rules in every phase.
 | Phase | Goal | Dependencies | Status |
 |-------|------|--------------|--------|
 | 0 | Baseline lock and boundary inventory | None | completed |
-| 1 | Events authority boundary cleanup | Phase 0 | in progress |
+| 1 | Events authority boundary cleanup | Phase 0 | completed |
 | 2 | World model ingestion and query boundary cleanup | Phase 0 and Phase 1 | proposed |
 | 3 | Execution port foundation and contract extraction | Phase 0 and Phase 1 and Phase 2 | proposed |
 | 4 | Workflow runtime split and root adapter cutover | Phase 2 and Phase 3 | proposed |
@@ -169,16 +169,16 @@ Apply these rules in every phase.
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Remove `SessionStore` ownership and session lifecycle methods from `EventStore`. | Proposed |
-| 2 | Move session retention and interruption policy fully into `src/session` and root telemetry adapters. | Proposed |
-| 3 | Fix runtime idempotent append so the public runtime honors `record_id` behavior. | Proposed |
-| 4 | Move telemetry event aliases and sink compatibility out of the event authority boundary. | Proposed |
-| 5 | Normalize public event ledger naming and keep old spine names as temporary compatibility only. | Proposed |
+| 1 | Remove `SessionStore` ownership and session lifecycle methods from `EventStore`. | Completed |
+| 2 | Move session retention and interruption policy fully into `src/session` and root telemetry adapters. | Completed |
+| 3 | Fix runtime idempotent append so the public runtime honors `record_id` behavior. | Completed |
+| 4 | Move telemetry event aliases and sink compatibility out of the event authority boundary. | Completed |
+| 5 | Normalize public event ledger naming and keep old spine names as temporary compatibility only. | Completed |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| `meld-events` public APIs have no session lifecycle dependency. | Proposed |
-| world model and execution can consume event contracts without importing telemetry or session code. | Proposed |
+| `meld-events` public APIs have no session lifecycle dependency. | Completed |
+| world model and execution can consume event contracts without importing telemetry or session code. | Completed |
 
 | Key seams |
 |-----------|
@@ -200,6 +200,18 @@ Apply these rules in every phase.
 | Dependency closure solved |
 |---------------------------|
 | Unblocks world model and execution extraction on top of one stable event authority crate |
+
+| Phase 1 gate evidence | Result |
+|-----------------------|--------|
+| F0 | passed on 2026-04-25 with `cargo fmt --check` |
+| F1 | passed on 2026-04-25 with `cargo check` |
+| F2 | passed on 2026-04-25 with focused `event_spine` plus telemetry session retention coverage in `progress_observability` |
+| F3 | passed on 2026-04-25 with `rg -n 'crate::session|crate::telemetry' src/events` returning no matches |
+| F4 | passed on 2026-04-25 after removing `src/events/query.rs` and keeping telemetry compatibility outside `src/events` |
+
+| Phase 1 completion notes |
+|--------------------------|
+| `EventStore` now owns only ledger state. Non idempotent append and explicit idempotent append have distinct runtime semantics. Session reads used by telemetry verification now flow through `ProgressRuntime` rather than through the event store. |
 
 ---
 

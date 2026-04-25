@@ -64,7 +64,7 @@ impl EventIngestor {
     }
 
     fn ingest_one(&self, envelope: EventEnvelope) -> Result<(), StorageError> {
-        self.store.append_envelope_idempotent(envelope)?;
+        self.store.append_envelope(envelope)?;
         Ok(())
     }
 }

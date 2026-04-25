@@ -73,7 +73,9 @@ impl EventRuntime {
     }
 
     pub fn emit_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<(), ApiError> {
-        self.emit_envelope(envelope)
+        self.store.append_envelope_idempotent(envelope)?;
+        self.store.flush()?;
+        Ok(())
     }
 
     pub fn emit_envelopes<I>(&self, envelopes: I) -> Result<(), ApiError>
@@ -92,7 +94,11 @@ impl EventRuntime {
     where
         I: IntoIterator<Item = EventEnvelope>,
     {
-        self.emit_envelopes(envelopes)
+        for envelope in envelopes {
+            self.store.append_envelope_idempotent(envelope)?;
+        }
+        self.store.flush()?;
+        Ok(())
     }
 
     pub fn emit_event_best_effort(&self, session_id: &str, event_type: &str, data: Value) {

@@ -173,4 +173,21 @@ impl ProgressRuntime {
     pub fn store(&self) -> &EventStore {
         self.events.store()
     }
+
+    pub fn list_sessions(&self) -> Result<Vec<crate::session::SessionRecord>, ApiError> {
+        self.sessions
+            .store()
+            .list_sessions()
+            .map_err(ApiError::StorageError)
+    }
+
+    pub fn get_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::session::SessionRecord>, ApiError> {
+        self.sessions
+            .store()
+            .get_session(session_id)
+            .map_err(ApiError::StorageError)
+    }
 }

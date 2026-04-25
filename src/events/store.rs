@@ -7,8 +7,6 @@ use sled::{Db, Tree};
 use crate::error::StorageError;
 use crate::events::EventEnvelope;
 use crate::events::EventRecord;
-use crate::session::contracts::{SessionMeta as Meta, SessionRecord as Record};
-use crate::session::storage::SessionStore;
 
 const TREE_EVENTS: &str = "obs_events";
 const TREE_SPINE_EVENTS: &str = "obs_spine_events";
@@ -25,7 +23,6 @@ struct SpineMeta {
 #[derive(Clone)]
 pub struct EventStore {
     db: Db,
-    session_store: SessionStore,
     legacy_events: Tree,
     spine_events: Tree,
     session_event_index: Tree,
@@ -45,7 +42,6 @@ impl EventStore {
             .open_tree(TREE_SPINE_RECORD_INDEX)
             .map_err(to_storage_io)?;
         Ok(Self {
-            session_store: SessionStore::new(db.clone())?,
             db,
             legacy_events,
             spine_events,
@@ -61,26 +57,6 @@ impl EventStore {
 
     pub fn db(&self) -> &Db {
         &self.db
-    }
-
-    pub fn put_session(&self, record: &Record) -> Result<(), StorageError> {
-        self.session_store.put_session(record)
-    }
-
-    pub fn get_session(&self, session_id: &str) -> Result<Option<Record>, StorageError> {
-        self.session_store.get_session(session_id)
-    }
-
-    pub fn list_sessions(&self) -> Result<Vec<Record>, StorageError> {
-        self.session_store.list_sessions()
-    }
-
-    pub fn put_meta(&self, session_id: &str, meta: &Meta) -> Result<(), StorageError> {
-        self.session_store.put_meta(session_id, meta)
-    }
-
-    pub fn get_meta(&self, session_id: &str) -> Result<Option<Meta>, StorageError> {
-        self.session_store.get_meta(session_id)
     }
 
     pub fn append_event(&self, event: &EventRecord) -> Result<(), StorageError> {
@@ -177,20 +153,6 @@ impl EventStore {
         Ok(seq)
     }
 
-    pub fn mark_interrupted_sessions(&self) -> Result<usize, StorageError> {
-        self.session_store.mark_interrupted_sessions()
-    }
-
-    pub fn prune_completed(
-        &self,
-        max_completed: usize,
-        max_age_ms: u64,
-        now_ms: u64,
-    ) -> Result<usize, StorageError> {
-        self.session_store
-            .prune_completed(max_completed, max_age_ms, now_ms)
-    }
-
     pub fn flush(&self) -> Result<(), StorageError> {
         self.db.flush().map_err(to_storage_io)?;
         Ok(())
@@ -198,24 +160,6 @@ impl EventStore {
 
     pub fn encode_event_key(session_id: &str, seq: u64) -> String {
         encode_legacy_event_key(session_id, seq)
-    }
-
-    pub fn delete_session(&self, session_id: &str) -> Result<(), StorageError> {
-        self.session_store.delete_session(session_id)?;
-
-        let prefix = format!("{session_id}:");
-        let legacy_keys: Vec<Vec<u8>> = self
-            .legacy_events
-            .scan_prefix(prefix.as_bytes())
-            .filter_map(|result| result.ok().map(|(key, _)| key.to_vec()))
-            .collect();
-        for key in legacy_keys {
-            self.legacy_events.remove(key).map_err(to_storage_io)?;
-        }
-
-        // Session retention only removes session metadata and legacy event rows.
-        // Canonical spine history remains append only even after session cleanup.
-        Ok(())
     }
 
     fn read_spine_session_events_after(
