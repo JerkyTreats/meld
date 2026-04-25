@@ -5,6 +5,7 @@
 
 use crate::agent::AgentRegistry;
 use crate::concurrency::NodeLockManager;
+use crate::config::ConfigLoader;
 use crate::context::events::{
     frame_added_envelope, head_selected_envelope, head_tombstoned_envelope,
 };
@@ -25,6 +26,7 @@ use crate::store::NodeRecordStore;
 use crate::telemetry::ProgressRuntime;
 use crate::types::{FrameID, NodeID};
 use crate::views::ViewPolicy;
+use crate::workflow::registry::{RegisteredWorkflowProfile, WorkflowRegistry};
 use crate::world_state::WorldModelQueries;
 use hex;
 use std::collections::{HashSet, VecDeque};
@@ -62,6 +64,8 @@ pub struct ContextApi {
     progress_context: Arc<parking_lot::RwLock<Option<ProgressEmitterContext>>>,
     /// Optional world model query service for graph backed cross domain reads.
     world_model_queries: Arc<parking_lot::RwLock<Option<Arc<WorldModelQueries>>>>,
+    /// Optional workflow registry adapter for execution and queue hosted workflow runs.
+    workflow_registry: Arc<parking_lot::RwLock<Option<Arc<parking_lot::RwLock<WorkflowRegistry>>>>>,
 }
 
 #[derive(Clone)]
@@ -92,6 +96,7 @@ impl ContextApi {
             workspace_root: None,
             progress_context: Arc::new(parking_lot::RwLock::new(None)),
             world_model_queries: Arc::new(parking_lot::RwLock::new(None)),
+            workflow_registry: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -118,6 +123,7 @@ impl ContextApi {
             workspace_root: Some(workspace_root),
             progress_context: Arc::new(parking_lot::RwLock::new(None)),
             world_model_queries: Arc::new(parking_lot::RwLock::new(None)),
+            workflow_registry: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -142,6 +148,38 @@ impl ContextApi {
 
     pub fn world_model_queries(&self) -> Option<Arc<WorldModelQueries>> {
         self.world_model_queries.read().as_ref().map(Arc::clone)
+    }
+
+    pub fn set_workflow_registry(&self, registry: Arc<parking_lot::RwLock<WorkflowRegistry>>) {
+        *self.workflow_registry.write() = Some(registry);
+    }
+
+    pub fn workflow_registry(&self) -> Option<Arc<parking_lot::RwLock<WorkflowRegistry>>> {
+        self.workflow_registry.read().as_ref().map(Arc::clone)
+    }
+
+    pub fn load_workflow_profile(
+        &self,
+        workflow_id: &str,
+    ) -> Result<RegisteredWorkflowProfile, ApiError> {
+        if let Some(registry) = self.workflow_registry() {
+            let registry = registry.read();
+            return registry.get(workflow_id).cloned().ok_or_else(|| {
+                ApiError::ConfigError(format!("Workflow not found: {}", workflow_id))
+            });
+        }
+
+        let workspace_root = self.workspace_root().ok_or_else(|| {
+            ApiError::ConfigError(
+                "Workflow profile loading requires workspace root context".to_string(),
+            )
+        })?;
+        let config = ConfigLoader::load(workspace_root)?;
+        let registry = WorkflowRegistry::load(&config.workflows)?;
+        registry
+            .get(workflow_id)
+            .cloned()
+            .ok_or_else(|| ApiError::ConfigError(format!("Workflow not found: {}", workflow_id)))
     }
 
     pub fn workspace_root(&self) -> Option<&Path> {

@@ -7,6 +7,7 @@ mod parse;
 mod presentation;
 mod progress;
 mod route;
+mod runtime_assembly;
 mod session;
 
 pub use help::{command_name, typed_summary_event};

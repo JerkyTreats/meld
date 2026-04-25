@@ -1,21 +1,16 @@
 //! CLI route: shared runtime context and top-level command dispatch only.
 
-use crate::api::ContextApi;
 use crate::branches::{BranchHandle, BranchRuntime};
 use crate::cli::parse::Commands;
 use crate::cli::progress::LiveProgressHandle;
+use crate::cli::runtime_assembly::CliRuntimeAssembly;
 use crate::cli::session::{finish_command_session, start_command_session};
 use crate::cli::{command_name, typed_summary_event};
 use crate::config::ConfigLoader;
-use crate::context::head::backfill_legacy_heads_into_spine;
 use crate::error::ApiError;
-use crate::heads::HeadIndex;
 use crate::session::PrunePolicy;
-use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
 use crate::telemetry::ProgressRuntime;
-use crate::world_state::graph::runtime::GraphRuntime;
-use crate::world_state::WorldModelQueries;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -24,7 +19,7 @@ use tracing::warn;
 /// Runtime context for CLI execution: workspace, config paths, and domain facades.
 /// Built from workspace path and optional config path using ConfigLoader only.
 pub struct RunContext {
-    api: Arc<ContextApi>,
+    assembly: CliRuntimeAssembly,
     workspace_root: PathBuf,
     config_path: Option<PathBuf>,
     #[allow(dead_code)]
@@ -32,29 +27,26 @@ pub struct RunContext {
     frame_storage_path: PathBuf,
     #[allow(dead_code)]
     artifact_storage_path: PathBuf,
-    workflow_registry: Arc<parking_lot::RwLock<crate::workflow::registry::WorkflowRegistry>>,
-    progress: Arc<ProgressRuntime>,
-    graph_runtime: Arc<GraphRuntime>,
     branch_runtime: BranchRuntime,
     active_branch: BranchHandle,
 }
 
 impl RunContext {
     /// Reference to the underlying context API.
-    pub fn api(&self) -> &ContextApi {
-        &self.api
+    pub fn api(&self) -> &crate::api::ContextApi {
+        self.assembly.api().as_ref()
     }
 
     /// Progress runtime for session and event emission.
     pub fn progress_runtime(&self) -> Arc<ProgressRuntime> {
-        Arc::clone(&self.progress)
+        Arc::clone(self.assembly.progress())
     }
 
     /// Workflow profile registry.
     pub fn workflow_registry(
         &self,
     ) -> Arc<parking_lot::RwLock<crate::workflow::registry::WorkflowRegistry>> {
-        Arc::clone(&self.workflow_registry)
+        Arc::clone(self.assembly.workflow_registry())
     }
 
     /// Create run context from workspace root and optional config path. Uses ConfigLoader only.
@@ -72,91 +64,15 @@ impl RunContext {
 
         let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(&workspace_root)?;
-        let workflow_registry =
-            crate::workflow::registry::WorkflowRegistry::load(&config.workflows)?;
+        let assembly = CliRuntimeAssembly::load(&workspace_root, &config)?;
 
-        std::fs::create_dir_all(&store_path)
-            .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
-
-        let db = sled::open(&store_path).map_err(|e| {
-            ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::other(
-                format!("Failed to open sled database: {}", e),
-            )))
-        })?;
-        let node_store = Arc::new(SledNodeRecordStore::from_db(db.clone()));
-        let progress = Arc::new(ProgressRuntime::new(db.clone()).map_err(ApiError::StorageError)?);
-        let graph_runtime = Arc::new(GraphRuntime::new(db).map_err(ApiError::StorageError)?);
-        let world_model_queries = Arc::new(WorldModelQueries::new(Arc::clone(&graph_runtime)));
-
-        std::fs::create_dir_all(&frame_storage_path)
-            .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
-        std::fs::create_dir_all(&artifact_storage_path)
-            .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
-        let frame_storage = Arc::new(
-            crate::context::frame::open_storage(&frame_storage_path)
-                .map_err(ApiError::StorageError)?,
-        );
-        let prompt_context_storage = Arc::new(
-            crate::prompt_context::PromptContextArtifactStorage::new(&artifact_storage_path)
-                .map_err(ApiError::StorageError)?,
-        );
-        let head_index_path = HeadIndex::persistence_path(&workspace_root);
-        let head_index = Arc::new(parking_lot::RwLock::new(
-            HeadIndex::load_from_disk(&head_index_path).unwrap_or_else(|e| {
-                tracing::warn!(
-                    "Failed to load head index from disk: {}, starting with empty index",
-                    e
-                );
-                HeadIndex::new()
-            }),
-        ));
-        {
-            let head_index_guard = head_index.read();
-            if let Err(err) = backfill_legacy_heads_into_spine(
-                &progress,
-                &head_index_guard,
-                frame_storage.as_ref(),
-                "context_head_backfill",
-            ) {
-                tracing::warn!(error = %err, "failed to backfill legacy heads into spine");
-            }
-        }
-
-        let mut agent_registry = crate::agent::AgentRegistry::new();
-        agent_registry.load_from_config(&config)?;
-        agent_registry.load_from_xdg()?;
-
-        let mut provider_registry = crate::provider::ProviderRegistry::new();
-        provider_registry.load_from_config(&config)?;
-        provider_registry.load_from_xdg()?;
-
-        for agent in agent_registry.list_all() {
-            crate::workflow::binding::validate_agent_binding(agent, &workflow_registry)?;
-        }
-
-        let agent_registry = Arc::new(parking_lot::RwLock::new(agent_registry));
-        let provider_registry = Arc::new(parking_lot::RwLock::new(provider_registry));
-        let lock_manager = Arc::new(crate::concurrency::NodeLockManager::new());
-        let workflow_registry = Arc::new(parking_lot::RwLock::new(workflow_registry));
-
-        let api = ContextApi::with_workspace_root(
-            node_store,
-            frame_storage,
-            head_index,
-            prompt_context_storage,
-            agent_registry,
-            provider_registry,
-            lock_manager,
-            workspace_root.clone(),
-        );
-        api.set_world_model_queries(world_model_queries);
-
-        let (store_path, frame_storage_path, artifact_storage_path) =
-            config.system.storage.resolve_paths(&workspace_root)?;
-
-        match graph_runtime.catch_up() {
+        match assembly.graph_runtime().catch_up() {
             Ok(applied_events) => {
-                let last_reduced_seq = match graph_runtime.traversal_store().last_reduced_seq() {
+                let last_reduced_seq = match assembly
+                    .graph_runtime()
+                    .traversal_store()
+                    .last_reduced_seq()
+                {
                     Ok(seq) => seq,
                     Err(err) => {
                         warn!(error = %err, "failed to read last reduced seq during startup");
@@ -185,15 +101,12 @@ impl RunContext {
         }
 
         Ok(Self {
-            api: Arc::new(api),
+            assembly,
             workspace_root,
             config_path,
             store_path,
             frame_storage_path,
             artifact_storage_path,
-            workflow_registry,
-            progress,
-            graph_runtime,
             branch_runtime,
             active_branch,
         })
@@ -203,18 +116,23 @@ impl RunContext {
     pub fn execute(&self, command: &Commands) -> Result<String, ApiError> {
         let started = Instant::now();
         let command_name = command_name(command);
-        let session_id = start_command_session(&self.progress, &command_name)?;
-        self.api
-            .set_progress_context(Arc::clone(&self.progress), session_id.clone());
+        let session_id = start_command_session(self.assembly.progress().as_ref(), &command_name)?;
+        self.assembly
+            .api()
+            .set_progress_context(Arc::clone(self.assembly.progress()), session_id.clone());
         let mut live_progress = LiveProgressHandle::start_if_supported(
-            Arc::clone(&self.progress),
+            Arc::clone(self.assembly.progress()),
             &session_id,
             command,
         );
         let result = self.execute_inner(command, &session_id);
-        match self.graph_runtime.catch_up() {
+        match self.assembly.graph_runtime().catch_up() {
             Ok(applied_events) => {
-                let last_reduced_seq = match self.graph_runtime.traversal_store().last_reduced_seq()
+                let last_reduced_seq = match self
+                    .assembly
+                    .graph_runtime()
+                    .traversal_store()
+                    .last_reduced_seq()
                 {
                     Ok(seq) => seq,
                     Err(err) => {
@@ -257,26 +175,26 @@ impl RunContext {
         );
         let ok = result.is_ok();
         let err = result.as_ref().err().map(|e| e.to_string());
-        finish_command_session(&self.progress, &session_id, ok, err)?;
-        self.api.clear_progress_context();
+        finish_command_session(self.assembly.progress().as_ref(), &session_id, ok, err)?;
+        self.assembly.api().clear_progress_context();
         if let Some(handle) = live_progress.as_mut() {
             handle.stop();
         }
-        let _ = self.progress.prune(PrunePolicy::default());
+        let _ = self.assembly.progress().prune(PrunePolicy::default());
         result
     }
 
     fn execute_inner(&self, command: &Commands, session_id: &str) -> Result<String, ApiError> {
         match command {
             Commands::Scan { force } => crate::workspace::tooling::handle_scan_command(
-                self.api.as_ref(),
+                self.assembly.api().as_ref(),
                 &self.workspace_root,
-                &self.progress,
+                self.assembly.progress(),
                 *force,
                 session_id,
             ),
             Commands::Workspace { command } => crate::workspace::tooling::handle_cli_command(
-                self.api.as_ref(),
+                self.assembly.api().as_ref(),
                 &self.workspace_root,
                 &self.store_path,
                 &self.frame_storage_path,
@@ -290,7 +208,7 @@ impl RunContext {
                 breakdown,
                 test_connectivity,
             } => crate::workspace::tooling::handle_status_command(
-                self.api.as_ref(),
+                self.assembly.api().as_ref(),
                 &self.workspace_root,
                 &self.store_path,
                 format,
@@ -301,16 +219,16 @@ impl RunContext {
                 *test_connectivity,
             ),
             Commands::Validate => crate::workspace::tooling::handle_validate_command(
-                self.api.as_ref(),
+                self.assembly.api().as_ref(),
                 &self.workspace_root,
                 &self.frame_storage_path,
             ),
             Commands::Agent { command } => {
-                crate::agent::tooling::handle_cli_command(self.api.as_ref(), command)
+                crate::agent::tooling::handle_cli_command(self.assembly.api().as_ref(), command)
             }
             Commands::Provider { command } => crate::provider::tooling::handle_cli_command(
-                self.api.as_ref(),
-                &self.progress,
+                self.assembly.api().as_ref(),
+                self.assembly.progress(),
                 command,
                 session_id,
             ),
@@ -318,19 +236,19 @@ impl RunContext {
                 crate::init::tooling::handle_cli_command(*force, *list)
             }
             Commands::Context { command } => crate::context::tooling::handle_cli_command(
-                Arc::clone(&self.api),
+                Arc::clone(self.assembly.api()),
                 &self.workspace_root,
-                &self.workflow_registry.read(),
-                &self.progress,
+                &self.assembly.workflow_registry().read(),
+                self.assembly.progress(),
                 command,
                 session_id,
             ),
             Commands::Workflow { command } => crate::workflow::tooling::handle_cli_command(
-                self.api.as_ref(),
+                self.assembly.api().as_ref(),
                 &self.workspace_root,
                 self.config_path.as_deref(),
-                &self.workflow_registry,
-                &self.progress,
+                self.assembly.workflow_registry(),
+                self.assembly.progress(),
                 command,
                 session_id,
             ),
@@ -343,11 +261,11 @@ impl RunContext {
                 batch_window_ms,
                 foreground: _,
             } => crate::workspace::tooling::handle_watch_command(
-                Arc::clone(&self.api),
+                Arc::clone(self.assembly.api()),
                 &self.workspace_root,
                 self.config_path.as_deref(),
-                &self.workflow_registry,
-                &self.progress,
+                self.assembly.workflow_registry(),
+                self.assembly.progress(),
                 *debounce_ms,
                 *batch_window_ms,
                 session_id,
@@ -377,7 +295,7 @@ impl RunContext {
         };
         let typed_summary = typed_summary_event(command, ok, duration_ms, error.as_deref());
         emit_command_summary(
-            self.progress.as_ref(),
+            self.assembly.progress().as_ref(),
             session_id,
             &command_name(command),
             typed_summary,

@@ -57,10 +57,11 @@ Committed progress:
 | `25b13cc` | Phase 0 baseline | plan, migration guides, dependency checklist, public surface inventory, and gate baseline published |
 | `037eab6` | Phase 1 events boundary | session lifecycle removed from `EventStore` and runtime idempotent append fixed |
 | `7eb71d4` | Phase 2 world model boundary | source intent moved inside world model and root reads routed through `WorldModelQueries` |
-| `this commit` | Phase 3 execution boundary | execution ports added, provider request contracts moved under execution, and capability plus task runtime signatures removed direct `ContextApi` dependence |
+| `f78708c` | Phase 3 execution boundary | execution ports added, provider request contracts moved under execution, and capability plus task runtime signatures removed direct `ContextApi` dependence |
+| `this commit` | Phase 4 workflow and assembly boundary | workflow runtime moved onto execution ports and root assembly now owns CLI runtime wiring plus profile adapters |
 
 Next active phase:
-- Phase 4 workflow runtime split and root adapter cutover
+- Phase 5 root composition seal and public surface cleanup
 
 ## CLI Path Default Exception List
 
@@ -109,7 +110,7 @@ Apply these rules in every phase.
 | 1 | Events authority boundary cleanup | Phase 0 | completed |
 | 2 | World model ingestion and query boundary cleanup | Phase 0 and Phase 1 | completed |
 | 3 | Execution port foundation and contract extraction | Phase 0 and Phase 1 and Phase 2 | completed |
-| 4 | Workflow runtime split and root adapter cutover | Phase 2 and Phase 3 | next |
+| 4 | Workflow runtime split and root adapter cutover | Phase 2 and Phase 3 | completed |
 | 5 | Root composition seal and public surface cleanup | Phase 1 and Phase 2 and Phase 3 and Phase 4 | proposed |
 | 6 | Physical crate extraction and declarative doc cutover | Phase 1 through Phase 5 | proposed |
 
@@ -353,20 +354,20 @@ Apply these rules in every phase.
 | Goal | Separate execution owned workflow runtime from CLI, config, and root product routing code, then cut root adapters over to public crate APIs |
 | Dependencies | Phase 2 and Phase 3 |
 | Docs | [Execution Migration](execution/MIGRATION.md) and [Core Migration](core/MIGRATION.md) |
-| Status | proposed |
+| Status | completed |
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Split workflow runtime authority files from workflow command and tooling adapters. | Proposed |
-| 2 | Move config loading, workspace node resolution, provider existence checks, and product routing behind root adapters and ports. | Proposed |
-| 3 | Introduce one runtime assembly layer in root `meld` that wires events, world model, execution, and root adapters explicitly. | Proposed |
-| 4 | Stop storing graph runtime and progress emission state as ambient mutable dependencies inside root facades. | Proposed |
-| 5 | Route root command handlers to public execution and world model APIs rather than internal module paths. | Proposed |
+| 1 | Split workflow runtime authority files from workflow command and tooling adapters. | Completed |
+| 2 | Move config loading, workspace node resolution, provider existence checks, and product routing behind root adapters and ports. | Completed |
+| 3 | Introduce one runtime assembly layer in root `meld` that wires events, world model, execution, and root adapters explicitly. | Completed |
+| 4 | Stop storing graph runtime and progress emission state as ambient mutable dependencies inside root facades. | Completed |
+| 5 | Route root command handlers to public execution and world model APIs rather than internal module paths. | Completed |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| workflow runtime is execution owned and depends on ports only. | Proposed |
-| root `meld` is the explicit product shell and adapter host rather than an ambient dependency source. | Proposed |
+| workflow runtime is execution owned and depends on ports only. | Completed |
+| root `meld` is the explicit product shell and adapter host rather than an ambient dependency source. | Completed |
 
 | Key seams |
 |-----------|
@@ -392,6 +393,19 @@ Apply these rules in every phase.
 | Dependency closure solved |
 |---------------------------|
 | Completes the split between execution authority and root product composition |
+
+| Phase 4 gate evidence | Result |
+|-----------------------|--------|
+| F0 | passed on 2026-04-25 with `cargo fmt --check` |
+| F1 | passed on 2026-04-25 with `cargo check` |
+| F2 | passed on 2026-04-25 with focused `workflow_cli`, `workflow_task_compatibility`, and `provider_cli` coverage |
+| F3 | passed on 2026-04-25 with targeted `rg` audits showing workflow runtime no longer imports `ConfigLoader`, `WorkflowRegistry::load`, workspace node resolution, or provider registry validation hooks |
+| F4 | passed on 2026-04-25 after routing workflow target execution through workflow profile load ports and introducing explicit CLI runtime assembly wiring |
+| F5 | passed on 2026-04-25 with full `cargo test` regression coverage |
+
+| Phase 4 completion notes |
+|--------------------------|
+| Root CLI runtime ownership now sits in `src/cli/runtime_assembly.rs`. `RunContext` delegates to that assembly instead of carrying raw runtime fields directly. Workflow facade no longer loads config or registries on its own, and workflow executor plus task path execution now consume execution ports and world model query ports rather than the root facade type directly. |
 
 ---
 

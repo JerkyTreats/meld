@@ -308,3 +308,18 @@ impl ProviderExecutionPort for ContextApi {
         .await
     }
 }
+
+impl WorkflowProfileLoadPort for ContextApi {
+    fn load_workflow_profile(
+        &self,
+        workflow_id: &str,
+    ) -> Result<RegisteredWorkflowProfile, ApiError> {
+        ContextApi::load_workflow_profile(self, workflow_id)
+    }
+}
+
+impl WorldModelQueryPort for ContextApi {
+    fn world_model_queries(&self) -> Option<Arc<WorldModelQueries>> {
+        ContextApi::world_model_queries(self)
+    }
+}

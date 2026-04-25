@@ -1,7 +1,6 @@
 //! Workflow runtime executor for bound agent turn workflows.
 
 use crate::agent::profile::prompt_contract::PromptContract;
-use crate::api::ContextApi;
 use crate::capability::{CapabilityCatalog, CapabilityExecutorRegistry};
 use crate::context::frame::{Basis, Frame};
 use crate::context::generation::contracts::{
@@ -16,6 +15,7 @@ use crate::context::generation::provider_execution::{
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::events::DomainObjectRef;
+use crate::execution::{ExecutionContext, WorldModelQueryPort};
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
 use crate::provider::ProviderExecutionBinding;
@@ -73,7 +73,7 @@ pub struct WorkflowExecutionSummary {
 }
 
 pub fn execute_registered_workflow(
-    api: &ContextApi,
+    api: &(impl ExecutionContext + WorldModelQueryPort),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
@@ -95,7 +95,7 @@ pub fn execute_registered_workflow(
 }
 
 pub(crate) async fn execute_registered_workflow_async(
-    api: &ContextApi,
+    api: &(impl ExecutionContext + WorldModelQueryPort),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
@@ -106,9 +106,7 @@ pub(crate) async fn execute_registered_workflow_async(
     let thread_id = build_thread_id(profile, request.node_id, &request.frame_type);
     let state_store = WorkflowStateStore::new(workspace_root)?;
     let node_record = api
-        .node_store()
-        .get(&request.node_id)
-        .map_err(ApiError::from)?
+        .read_node_record(&request.node_id)?
         .ok_or(ApiError::NodeNotFound(request.node_id))?;
     let target_path = request
         .path
@@ -880,7 +878,7 @@ pub(crate) async fn execute_registered_workflow_async(
 }
 
 fn resolve_completed_task_path_final_frame(
-    api: &ContextApi,
+    api: &(impl ExecutionContext + WorldModelQueryPort),
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
     existing: &WorkflowThreadRecord,
@@ -920,7 +918,7 @@ fn resolve_completed_task_path_final_frame(
 
 #[allow(clippy::too_many_arguments)]
 async fn execute_registered_workflow_via_task_async(
-    api: &ContextApi,
+    api: &(impl ExecutionContext + WorldModelQueryPort),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,

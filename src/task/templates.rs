@@ -1,8 +1,8 @@
 //! Task template materialization entrypoints.
 
-use crate::api::ContextApi;
 use crate::capability::CapabilityCatalog;
 use crate::error::ApiError;
+use crate::execution::{ContextReadPort, NodeResolutionPort, PromptArtifactReadPort};
 use crate::task::package::{
     load_task_package_spec_for_workflow, lower_traversal_prerequisite_expansion_template,
     prepare_workflow_task_run, workflow_task_run_id, PreparedTaskRun,
@@ -29,7 +29,7 @@ pub fn workflow_task_run_id_for_target(
 
 /// Prepares one registered workflow through the generic task package path.
 pub fn prepare_registered_workflow_task_run(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + NodeResolutionPort + PromptArtifactReadPort + ?Sized),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowPackageTriggerRequest,

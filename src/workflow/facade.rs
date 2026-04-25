@@ -1,22 +1,23 @@
 //! Workflow public facade for target scoped execution.
 
-use crate::api::ContextApi;
-use crate::config::ConfigLoader;
 use crate::context::generation::{
     TargetExecutionProgramKind, TargetExecutionRequest, TargetExecutionResult,
 };
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
+use crate::execution::{ContextReadPort, WorkflowProfileLoadPort};
 use crate::provider::ProviderExecutionBinding;
 use crate::store::NodeType;
 use crate::workflow::executor::{
     execute_registered_workflow, execute_registered_workflow_async, WorkflowExecutionRequest,
 };
-use crate::workflow::registry::{RegisteredWorkflowProfile, WorkflowRegistry};
+use crate::workflow::registry::RegisteredWorkflowProfile;
 use std::path::Path;
 
 pub fn execute_workflow_target(
-    api: &ContextApi,
+    api: &(impl WorkflowProfileLoadPort
+          + crate::execution::ExecutionContext
+          + crate::execution::WorldModelQueryPort),
     workspace_root: &Path,
     request: &TargetExecutionRequest,
     event_context: Option<&QueueEventContext>,
@@ -26,22 +27,20 @@ pub fn execute_workflow_target(
             "Workflow target execution requires a workflow backed execution program".to_string(),
         )
     })?;
-    let config = ConfigLoader::load(workspace_root)?;
-    let registry = WorkflowRegistry::load(&config.workflows)?;
-    let registered_profile = registry
-        .get(workflow_id)
-        .ok_or_else(|| ApiError::ConfigError(format!("Workflow not found: {}", workflow_id)))?;
+    let registered_profile = api.load_workflow_profile(workflow_id)?;
     execute_registered_workflow_target(
         api,
         workspace_root,
-        registered_profile,
+        &registered_profile,
         request,
         event_context,
     )
 }
 
 pub async fn execute_workflow_target_async(
-    api: &ContextApi,
+    api: &(impl WorkflowProfileLoadPort
+          + crate::execution::ExecutionContext
+          + crate::execution::WorldModelQueryPort),
     workspace_root: &Path,
     request: &TargetExecutionRequest,
     event_context: Option<&QueueEventContext>,
@@ -51,15 +50,11 @@ pub async fn execute_workflow_target_async(
             "Workflow target execution requires a workflow backed execution program".to_string(),
         )
     })?;
-    let config = ConfigLoader::load(workspace_root)?;
-    let registry = WorkflowRegistry::load(&config.workflows)?;
-    let registered_profile = registry
-        .get(workflow_id)
-        .ok_or_else(|| ApiError::ConfigError(format!("Workflow not found: {}", workflow_id)))?;
+    let registered_profile = api.load_workflow_profile(workflow_id)?;
     execute_registered_workflow_target_async(
         api,
         workspace_root,
-        registered_profile,
+        &registered_profile,
         request,
         event_context,
     )
@@ -67,7 +62,7 @@ pub async fn execute_workflow_target_async(
 }
 
 pub fn execute_registered_workflow_target(
-    api: &ContextApi,
+    api: &(impl crate::execution::ExecutionContext + crate::execution::WorldModelQueryPort),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &TargetExecutionRequest,
@@ -114,7 +109,7 @@ pub fn execute_registered_workflow_target(
 }
 
 pub async fn execute_registered_workflow_target_async(
-    api: &ContextApi,
+    api: &(impl crate::execution::ExecutionContext + crate::execution::WorldModelQueryPort),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &TargetExecutionRequest,
@@ -163,7 +158,7 @@ pub async fn execute_registered_workflow_target_async(
 
 #[allow(clippy::too_many_arguments)]
 pub fn build_target_execution_request(
-    api: &ContextApi,
+    api: &(impl ContextReadPort + ?Sized),
     node_id: crate::types::NodeID,
     agent_id: String,
     provider: ProviderExecutionBinding,
@@ -175,9 +170,7 @@ pub fn build_target_execution_request(
     level_index: Option<usize>,
 ) -> Result<TargetExecutionRequest, ApiError> {
     let record = api
-        .node_store()
-        .get(&node_id)
-        .map_err(ApiError::from)?
+        .read_node_record(&node_id)?
         .ok_or(ApiError::NodeNotFound(node_id))?;
     Ok(TargetExecutionRequest {
         node_id,
