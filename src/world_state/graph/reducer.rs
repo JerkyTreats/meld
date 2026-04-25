@@ -196,18 +196,5 @@ fn reducer_intents_for_event(
     event: &EventRecord,
     source_fact_id: &str,
 ) -> Result<Vec<TraversalIntent>, StorageError> {
-    let mut intents = Vec::new();
-    intents.extend(crate::workspace::reducer::graph_reducer_intents_for_event(
-        event,
-        source_fact_id,
-    )?);
-    intents.extend(crate::context::reducer::graph_reducer_intents_for_event(
-        event,
-        source_fact_id,
-    )?);
-    intents.extend(crate::task::reducer::graph_reducer_intents_for_event(
-        event,
-        source_fact_id,
-    )?);
-    Ok(intents)
+    crate::world_state::graph::source_intent::traversal_intents_for_event(event, source_fact_id)
 }

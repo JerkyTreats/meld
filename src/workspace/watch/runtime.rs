@@ -3,6 +3,7 @@
 use super::events::{ChangeEvent, EventBatcher, WatchConfig};
 use crate::agent::AgentIdentity;
 use crate::api::ContextApi;
+use crate::context::head::backfill_legacy_heads_into_spine;
 use crate::context::queue::{FrameGenerationQueue, QueueEventContext};
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
@@ -53,6 +54,21 @@ impl WatchDaemon {
                 );
             } else {
                 info!("Starting with empty head index");
+            }
+        }
+        if let Some(progress) = &config.progress {
+            let session_id = config
+                .session_id
+                .as_deref()
+                .unwrap_or("context_head_backfill");
+            let head_index = api.head_index().read();
+            if let Err(err) = backfill_legacy_heads_into_spine(
+                progress,
+                &head_index,
+                api.frame_storage(),
+                session_id,
+            ) {
+                warn!(error = %err, "failed to backfill legacy heads into spine");
             }
         }
 

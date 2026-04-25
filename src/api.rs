@@ -9,6 +9,7 @@ use crate::context::events::{
     frame_added_envelope, head_selected_envelope, head_tombstoned_envelope,
 };
 use crate::context::frame::{Basis, Frame, FrameStorage};
+use crate::context::head::{decode_frame_anchor_target, node_ref, CurrentFrameHeadRead};
 use crate::context::query::get_node_query;
 use crate::context::query::{compose_frames, CompositionPolicy};
 use crate::context::queue::FrameGenerationQueue;
@@ -24,6 +25,7 @@ use crate::store::NodeRecordStore;
 use crate::telemetry::ProgressRuntime;
 use crate::types::{FrameID, NodeID};
 use crate::views::ViewPolicy;
+use crate::world_state::WorldModelQueries;
 use hex;
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
@@ -44,7 +46,7 @@ pub struct ContextApi {
     node_store: Arc<dyn NodeRecordStore + Send + Sync>,
     /// Frame storage for content-addressed frame storage
     frame_storage: Arc<FrameStorage>,
-    /// Head index for O(1) head resolution
+    /// Legacy compatibility head index.
     head_index: Arc<parking_lot::RwLock<HeadIndex>>,
     /// Prompt context artifact storage for filesystem CAS payload lineage.
     prompt_context_storage: Arc<PromptContextArtifactStorage>,
@@ -58,8 +60,8 @@ pub struct ContextApi {
     workspace_root: Option<PathBuf>,
     /// Optional spine emitter context for canonical context facts.
     progress_context: Arc<parking_lot::RwLock<Option<ProgressEmitterContext>>>,
-    /// Optional traversal runtime for graph backed cross domain reads.
-    graph_runtime: Arc<parking_lot::RwLock<Option<Arc<crate::world_state::GraphRuntime>>>>,
+    /// Optional world model query service for graph backed cross domain reads.
+    world_model_queries: Arc<parking_lot::RwLock<Option<Arc<WorldModelQueries>>>>,
 }
 
 #[derive(Clone)]
@@ -89,7 +91,7 @@ impl ContextApi {
             lock_manager,
             workspace_root: None,
             progress_context: Arc::new(parking_lot::RwLock::new(None)),
-            graph_runtime: Arc::new(parking_lot::RwLock::new(None)),
+            world_model_queries: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -115,7 +117,7 @@ impl ContextApi {
             lock_manager,
             workspace_root: Some(workspace_root),
             progress_context: Arc::new(parking_lot::RwLock::new(None)),
-            graph_runtime: Arc::new(parking_lot::RwLock::new(None)),
+            world_model_queries: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -134,12 +136,12 @@ impl ContextApi {
         *self.progress_context.write() = None;
     }
 
-    pub fn set_graph_runtime(&self, runtime: Arc<crate::world_state::GraphRuntime>) {
-        *self.graph_runtime.write() = Some(runtime);
+    pub fn set_world_model_queries(&self, queries: Arc<WorldModelQueries>) {
+        *self.world_model_queries.write() = Some(queries);
     }
 
-    pub fn graph_runtime(&self) -> Option<Arc<crate::world_state::GraphRuntime>> {
-        self.graph_runtime.read().as_ref().map(Arc::clone)
+    pub fn world_model_queries(&self) -> Option<Arc<WorldModelQueries>> {
+        self.world_model_queries.read().as_ref().map(Arc::clone)
     }
 
     pub fn workspace_root(&self) -> Option<&Path> {
@@ -183,10 +185,7 @@ impl ContextApi {
         let start = Instant::now();
         debug!("Retrieving node context");
 
-        let frame_ids = {
-            let head_index = self.head_index.read();
-            head_index.get_all_heads_for_node(&node_id)
-        };
+        let frame_ids = self.current_frame_heads_for_node(&node_id)?;
 
         let view_policy: ViewPolicy = view.into();
 
@@ -330,6 +329,8 @@ impl ContextApi {
             previous_metadata: previous_metadata.as_ref(),
         })?;
 
+        let session_id = self.context_write_session_id()?;
+
         // Store frame
         self.frame_storage.store(&frame).map_err(ApiError::from)?;
 
@@ -360,25 +361,21 @@ impl ContextApi {
             "Frame created"
         );
 
-        let session_id = self
-            .current_progress_context()
-            .map(|context| context.session_id)
-            .unwrap_or_else(|| "context_api".to_string());
-        self.emit_context_envelope(frame_added_envelope(
+        self.emit_context_envelope_required(frame_added_envelope(
             &session_id,
             node_id,
             &frame.basis,
             frame.frame_id,
             &frame.frame_type,
             &frame.agent_id,
-        ));
-        self.emit_context_envelope(head_selected_envelope(
+        ))?;
+        self.emit_context_envelope_required(head_selected_envelope(
             &session_id,
             node_id,
             &frame.frame_type,
             frame.frame_id,
             previous_head,
-        ));
+        ))?;
 
         Ok(frame.frame_id)
     }
@@ -424,20 +421,34 @@ impl ContextApi {
             });
         }
         let to_tombstone = self.collect_subtree_node_ids(node_id)?;
+        let head_entries = {
+            let head_index = self.head_index.read();
+            head_index
+                .active_entries()
+                .into_iter()
+                .filter(|entry| to_tombstone.contains(&entry.node_id))
+                .collect::<Vec<_>>()
+        };
+        let session_id = self.context_write_session_id()?;
         let mut nodes_tombstoned = 0u64;
-        let mut head_entries_tombstoned = 0u64;
         for &nid in &to_tombstone {
             self.node_store.tombstone(&nid).map_err(ApiError::from)?;
             nodes_tombstoned += 1;
             let mut head_index = self.head_index.write();
-            let before = head_index.get_all_heads_for_node(&nid).len();
             head_index.tombstone_heads_for_node(&nid);
-            head_entries_tombstoned += before as u64;
+        }
+        for entry in &head_entries {
+            self.emit_context_envelope_required(head_tombstoned_envelope(
+                &session_id,
+                entry.node_id,
+                &entry.frame_type,
+                Some(entry.frame_id),
+            ))?;
         }
         self.persist_indices()?;
         Ok(TombstoneResult {
             nodes_tombstoned,
-            head_entries_tombstoned,
+            head_entries_tombstoned: head_entries.len() as u64,
         })
     }
 
@@ -450,6 +461,7 @@ impl ContextApi {
     ) -> Result<Option<FrameID>, ApiError> {
         let lock = self.lock_manager.get_lock(&node_id);
         let _guard = lock.write();
+        let session_id = self.context_write_session_id()?;
 
         let previous_head = {
             let mut head_index = self.head_index.write();
@@ -460,16 +472,12 @@ impl ContextApi {
             self.persist_indices()?;
         }
 
-        let session_id = self
-            .current_progress_context()
-            .map(|context| context.session_id)
-            .unwrap_or_else(|| "context_api".to_string());
-        self.emit_context_envelope(head_tombstoned_envelope(
+        self.emit_context_envelope_required(head_tombstoned_envelope(
             &session_id,
             node_id,
             frame_type,
             previous_head,
-        ));
+        ))?;
 
         Ok(previous_head)
     }
@@ -488,20 +496,35 @@ impl ContextApi {
             });
         }
         let to_restore = self.collect_subtree_node_ids(node_id)?;
+        let head_entries = {
+            let head_index = self.head_index.read();
+            to_restore
+                .iter()
+                .flat_map(|nid| head_index.entries_for_node(nid))
+                .filter(|entry| entry.tombstoned_at.is_some())
+                .collect::<Vec<_>>()
+        };
+        let session_id = self.context_write_session_id()?;
         let mut nodes_restored = 0u64;
-        let mut head_entries_restored = 0u64;
         for &nid in &to_restore {
             self.node_store.restore(&nid).map_err(ApiError::from)?;
             nodes_restored += 1;
             let mut head_index = self.head_index.write();
-            let before = head_index.get_all_heads_for_node(&nid).len();
             head_index.restore_heads_for_node(&nid);
-            head_entries_restored += before as u64;
+        }
+        for entry in &head_entries {
+            self.emit_context_envelope_required(head_selected_envelope(
+                &session_id,
+                entry.node_id,
+                &entry.frame_type,
+                entry.frame_id,
+                None,
+            ))?;
         }
         self.persist_indices()?;
         Ok(RestoreResult {
             nodes_restored,
-            head_entries_restored,
+            head_entries_restored: head_entries.len() as u64,
         })
     }
 
@@ -581,16 +604,13 @@ impl ContextApi {
             .map_err(ApiError::from)?
             .ok_or(ApiError::NodeNotFound(node_id))?;
 
-        // Compose frames
-        let head_index = self.head_index.read();
         let composed = compose_frames(
             node_id,
             &policy,
             self.node_store.as_ref(),
             &self.frame_storage,
-            &head_index,
+            self,
         )?;
-        drop(head_index);
 
         Ok(composed)
     }
@@ -723,18 +743,21 @@ impl ContextApi {
         node_id: &NodeID,
         frame_type: &str,
     ) -> Result<Option<FrameID>, ApiError> {
-        let head_index = self.head_index.read();
-        head_index
-            .get_head(node_id, frame_type)
-            .map_err(ApiError::from)
+        CurrentFrameHeadRead::current_frame_head(self, node_id, frame_type)
     }
 
     /// Get all head frame IDs for a node
     ///
     /// Returns all frame IDs that are heads for the specified node.
     pub fn get_all_heads(&self, node_id: &NodeID) -> Vec<FrameID> {
-        let head_index = self.head_index.read();
-        head_index.get_all_heads_for_node(node_id)
+        CurrentFrameHeadRead::current_frame_heads_for_node(self, node_id).unwrap_or_else(|err| {
+            warn!(
+                node_id = %hex::encode(node_id),
+                error = %err,
+                "failed to read current frame heads"
+            );
+            Vec::new()
+        })
     }
 
     /// Get latest context (most recent frame)
@@ -828,7 +851,9 @@ impl ContextApi {
         &self.node_store
     }
 
-    /// Get access to head index (for tooling)
+    /// Get access to the legacy compatibility head index.
+    ///
+    /// Current head reads should use `get_head` or `CurrentFrameHeadRead`.
     pub fn head_index(&self) -> &Arc<parking_lot::RwLock<HeadIndex>> {
         &self.head_index
     }
@@ -837,11 +862,26 @@ impl ContextApi {
         self.progress_context.read().clone()
     }
 
+    fn context_write_session_id(&self) -> Result<String, ApiError> {
+        if let Some(context) = self.current_progress_context() {
+            return Ok(context.session_id);
+        }
+        Ok("context_api".to_string())
+    }
+
     fn emit_context_envelope(&self, envelope: EventEnvelope) {
         let Some(context) = self.current_progress_context() else {
             return;
         };
         context.runtime.emit_envelope_best_effort(envelope);
+    }
+
+    fn emit_context_envelope_required(&self, envelope: EventEnvelope) -> Result<(), ApiError> {
+        if let Some(context) = self.current_progress_context() {
+            return context.runtime.emit_envelope(envelope);
+        }
+        self.emit_context_envelope(envelope);
+        Ok(())
     }
 
     /// Get access to agent registry (for tooling)
@@ -854,6 +894,55 @@ impl ContextApi {
         &self,
     ) -> &Arc<parking_lot::RwLock<crate::provider::ProviderRegistry>> {
         &self.provider_registry
+    }
+}
+
+impl CurrentFrameHeadRead for ContextApi {
+    fn current_frame_head(
+        &self,
+        node_id: &NodeID,
+        frame_type: &str,
+    ) -> Result<Option<FrameID>, ApiError> {
+        let Some(world_model_queries) = self.world_model_queries() else {
+            let head_index = self.head_index.read();
+            return head_index
+                .get_head(node_id, frame_type)
+                .map_err(ApiError::from);
+        };
+        let Some(anchor) = world_model_queries
+            .current_frame_head(&node_ref(*node_id), frame_type)
+            .map_err(ApiError::StorageError)?
+        else {
+            return Ok(None);
+        };
+        decode_frame_anchor_target(&anchor.target)
+            .map(Some)
+            .map_err(ApiError::StorageError)
+    }
+
+    fn current_frame_heads_for_node(&self, node_id: &NodeID) -> Result<Vec<FrameID>, ApiError> {
+        let Some(world_model_queries) = self.world_model_queries() else {
+            let head_index = self.head_index.read();
+            return Ok(head_index.get_all_heads_for_node(node_id));
+        };
+        world_model_queries
+            .current_frame_heads_for_node(&node_ref(*node_id))
+            .map_err(ApiError::StorageError)?
+            .into_iter()
+            .map(|anchor| {
+                decode_frame_anchor_target(&anchor.target).map_err(ApiError::StorageError)
+            })
+            .collect()
+    }
+
+    fn count_nodes_for_frame_type(&self, frame_type: &str) -> Result<usize, ApiError> {
+        let Some(world_model_queries) = self.world_model_queries() else {
+            let head_index = self.head_index.read();
+            return Ok(head_index.count_nodes_for_frame_type(frame_type));
+        };
+        world_model_queries
+            .current_frame_head_count_by_type(frame_type)
+            .map_err(ApiError::StorageError)
     }
 }
 

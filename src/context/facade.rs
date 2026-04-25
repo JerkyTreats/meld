@@ -7,6 +7,7 @@ pub use crate::context::generation::{
     FailurePolicy, GenerationExecutor, GenerationItem, GenerationNodeType, GenerationPlan,
     GenerationResult, PlanPriority, QueueSubmitter,
 };
+pub use crate::context::head::{CurrentFrameHead, CurrentFrameHeadRead};
 pub use crate::context::query::{ContextView, ContextViewBuilder, NodeContext};
 pub use crate::context::queue::{
     FrameGenerationQueue, GenerationConfig, GenerationRequestOptions, Priority, QueueEventContext,

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::error::StorageError;
-use crate::events::EventStore;
+use crate::events::{EventEnvelope, EventStore};
 use crate::world_state::graph::reducer::TraversalReducer;
 use crate::world_state::graph::store::TraversalStore;
 
@@ -43,5 +43,11 @@ impl GraphRuntime {
 
     pub fn traversal_store(&self) -> Arc<TraversalStore> {
         Arc::clone(&self.traversal)
+    }
+
+    pub fn append_envelope(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
+        let seq = self.spine.append_envelope(envelope)?;
+        self.spine.flush()?;
+        Ok(seq)
     }
 }

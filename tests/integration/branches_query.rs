@@ -5,7 +5,9 @@ use meld::task::{build_execution_task_envelope, TaskEvent};
 use meld::telemetry::events::{ProgressEnvelope, ProgressEvent};
 use meld::telemetry::{DomainObjectRef, ProgressRuntime};
 use meld::workflow::events::{workflow_turn_completed_envelope, ExecutionWorkflowTurnEventData};
-use meld::world_state::{GraphRuntime, GraphWalkSpec, TraversalDirection, TraversalQuery};
+use meld::world_state::graph::query::TraversalQuery;
+use meld::world_state::graph::runtime::GraphRuntime;
+use meld::world_state::{GraphWalkSpec, TraversalDirection};
 use tempfile::TempDir;
 
 use crate::integration::with_xdg_data_home;
@@ -133,7 +135,8 @@ fn federated_neighbors_match_single_branch_traversal_query() {
 
         let local_neighbors = {
             let local_db = sled::open(&store_path).unwrap();
-            let local_traversal = meld::world_state::TraversalStore::new(local_db).unwrap();
+            let local_traversal =
+                meld::world_state::graph::store::TraversalStore::new(local_db).unwrap();
             TraversalQuery::new(&local_traversal)
                 .neighbors(&node_ref(node_id), TraversalDirection::Both, None, true)
                 .unwrap()
@@ -193,7 +196,8 @@ fn federated_walk_matches_single_branch_traversal_query() {
 
         let local_walk = {
             let local_db = sled::open(&store_path).unwrap();
-            let local_traversal = meld::world_state::TraversalStore::new(local_db).unwrap();
+            let local_traversal =
+                meld::world_state::graph::store::TraversalStore::new(local_db).unwrap();
             TraversalQuery::new(&local_traversal)
                 .walk(&node_ref(node_id), &spec)
                 .unwrap()

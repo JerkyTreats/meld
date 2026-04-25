@@ -307,6 +307,44 @@ impl TraversalStore {
         Ok(out)
     }
 
+    pub fn current_anchors_by_perspective(
+        &self,
+        perspective_kind: &str,
+        perspective_id: &str,
+    ) -> Result<Vec<AnchorSelectionRecord>, StorageError> {
+        // Demotion-phase scan. A perspective-first index can replace this if
+        // coverage and status reads become hot.
+        let mut seen = BTreeSet::new();
+        let mut out = Vec::new();
+        for item in self.subject_perspective_index.iter() {
+            let (_, value) = item.map_err(to_storage_io)?;
+            let anchor_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
+            if !seen.insert(anchor_id.clone()) {
+                continue;
+            }
+            if let Some(record) = self.get_anchor(&anchor_id)? {
+                if record.perspective.perspective_kind == perspective_kind
+                    && record.perspective.perspective_id == perspective_id
+                    && record.ended_at_seq.is_none()
+                {
+                    out.push(record);
+                }
+            }
+        }
+        out.sort_by_key(|record| record.selected_at_seq);
+        Ok(out)
+    }
+
+    pub fn current_anchor_count_by_perspective(
+        &self,
+        perspective_kind: &str,
+        perspective_id: &str,
+    ) -> Result<usize, StorageError> {
+        Ok(self
+            .current_anchors_by_perspective(perspective_kind, perspective_id)?
+            .len())
+    }
+
     pub fn anchor_history(
         &self,
         anchor_ref: &DomainObjectRef,

@@ -5,6 +5,7 @@ pub mod projection;
 pub mod query;
 pub mod reducer;
 pub mod runtime;
+mod source_intent;
 pub mod store;
 
 pub use contracts::{
@@ -13,5 +14,3 @@ pub use contracts::{
     TraversalFactRecord, TraversalIntent,
 };
 pub use query::TraversalQuery;
-pub use runtime::GraphRuntime;
-pub use store::TraversalStore;

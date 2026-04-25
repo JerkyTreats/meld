@@ -7,6 +7,7 @@ pub mod facade;
 pub mod frame;
 pub(crate) mod frame_metadata_keys;
 pub mod generation;
+pub mod head;
 pub mod query;
 pub mod queue;
 pub(crate) mod reducer;
@@ -21,6 +22,7 @@ pub use generation::{
     GenerationResult, PlanPriority, QueueSubmitter, TargetExecutionProgram,
     TargetExecutionProgramKind, TargetExecutionRequest, TargetExecutionResult,
 };
+pub use head::{CurrentFrameHead, CurrentFrameHeadRead};
 pub use queue::{
     FrameGenerationQueue, GenerationConfig, GenerationRequest, GenerationRequestOptions, Priority,
     QueueEventContext, QueueStats,

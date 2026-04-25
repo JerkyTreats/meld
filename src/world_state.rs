@@ -5,6 +5,7 @@ pub mod events;
 pub mod legacy_claims;
 pub mod projection;
 pub mod query;
+pub mod query_runtime;
 pub mod reducer;
 pub mod store;
 
@@ -13,9 +14,8 @@ pub use contracts::{
     SettlementStatus, WorldStateFactId,
 };
 pub use graph::{
-    AnchorId, AnchorProvenanceRecord, AnchorSelectionRecord, GraphRuntime, GraphWalkResult,
-    GraphWalkSpec, PerspectiveKey, TraversalDirection, TraversalFactId, TraversalFactRecord,
-    TraversalQuery, TraversalStore,
+    AnchorId, AnchorProvenanceRecord, AnchorSelectionRecord, GraphWalkResult, GraphWalkSpec,
+    PerspectiveKey, TraversalDirection, TraversalFactId, TraversalFactRecord, TraversalQuery,
 };
 pub use query::WorldStateQuery;
-pub use store::WorldStateStore;
+pub use query_runtime::WorldModelQueries;

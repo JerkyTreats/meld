@@ -1,6 +1,8 @@
-//! Frame Heads
+//! Legacy frame head compatibility index.
 //!
-//! Provides O(1) access to the "latest" frame for a given node and frame type.
+//! The event spine and graph anchors are the source of truth for current heads
+//! when a graph runtime is configured. This index remains for legacy workspace
+//! migration, graphless tests, restore compatibility, and tombstone compacting.
 
 use crate::error::StorageError;
 use crate::types::{FrameID, NodeID};
@@ -16,6 +18,14 @@ const HEAD_INDEX_VERSION_V2: u32 = 2;
 /// Head entry with optional tombstone marker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct HeadEntry {
+    pub frame_id: FrameID,
+    pub tombstoned_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyHeadEntry {
+    pub node_id: NodeID,
+    pub frame_type: String,
     pub frame_id: FrameID,
     pub tombstoned_at: Option<u64>,
 }
@@ -151,6 +161,40 @@ impl HeadIndex {
             }
         }
         node_ids.len()
+    }
+
+    pub fn active_entries(&self) -> Vec<LegacyHeadEntry> {
+        self.heads
+            .iter()
+            .filter_map(|((node_id, frame_type), entry)| {
+                if entry.tombstoned_at.is_some() {
+                    return None;
+                }
+                Some(LegacyHeadEntry {
+                    node_id: *node_id,
+                    frame_type: frame_type.clone(),
+                    frame_id: entry.frame_id,
+                    tombstoned_at: entry.tombstoned_at,
+                })
+            })
+            .collect()
+    }
+
+    pub fn entries_for_node(&self, node_id: &NodeID) -> Vec<LegacyHeadEntry> {
+        self.heads
+            .iter()
+            .filter_map(|((nid, frame_type), entry)| {
+                if nid != node_id {
+                    return None;
+                }
+                Some(LegacyHeadEntry {
+                    node_id: *nid,
+                    frame_type: frame_type.clone(),
+                    frame_id: entry.frame_id,
+                    tombstoned_at: entry.tombstoned_at,
+                })
+            })
+            .collect()
     }
 
     /// Get the persistence path for a workspace root

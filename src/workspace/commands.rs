@@ -4,6 +4,7 @@
 
 use crate::agent::AgentRegistry;
 use crate::api::ContextApi;
+use crate::context::head::CurrentFrameHeadRead;
 use crate::error::ApiError;
 use crate::ignore;
 use crate::store::{NodeRecord, NodeRecordStore};
@@ -261,10 +262,9 @@ impl WorkspaceCommandService {
         agent_registry: &AgentRegistry,
     ) -> Result<WorkspaceStatusResult, ApiError> {
         let node_store = api.node_store().as_ref() as &dyn NodeRecordStore;
-        let head_index = api.head_index().read();
         section::build_workspace_status(
             node_store,
-            &head_index,
+            api,
             agent_registry,
             &request.workspace_root,
             &request.store_path,
@@ -315,9 +315,9 @@ impl WorkspaceCommandService {
             }
         };
 
-        let head_index = api.head_index().read();
-        for node_id in head_index.get_all_node_ids() {
-            let frame_ids = head_index.get_all_heads_for_node(&node_id);
+        for record in api.node_store().list_active().map_err(ApiError::from)? {
+            let node_id = record.node_id;
+            let frame_ids = api.current_frame_heads_for_node(&node_id)?;
             for frame_id in frame_ids {
                 if api
                     .frame_storage()
@@ -333,7 +333,6 @@ impl WorkspaceCommandService {
                 }
             }
         }
-        drop(head_index);
 
         let frame_count = if frame_storage_path.exists() {
             count_frame_files(frame_storage_path)?
@@ -403,7 +402,7 @@ impl WorkspaceCommandService {
             let n = set.len() as u64;
             let mut total_heads = 0u64;
             for nid in &set {
-                total_heads += api.head_index().read().get_all_heads_for_node(nid).len() as u64;
+                total_heads += api.current_frame_heads_for_node(nid)?.len() as u64;
             }
             return Ok(format!(
                 "Would delete {} nodes, {} head entries.",
@@ -450,7 +449,7 @@ impl WorkspaceCommandService {
             let n = set.len() as u64;
             let mut total_heads = 0u64;
             for nid in &set {
-                total_heads += api.head_index().read().get_all_heads_for_node(nid).len() as u64;
+                total_heads += api.current_frame_heads_for_node(nid)?.len() as u64;
             }
             return Ok(format!(
                 "Would restore {} nodes, {} head entries.",

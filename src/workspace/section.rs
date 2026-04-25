@@ -1,8 +1,8 @@
 //! Internal workspace-section build used by status and unified_status.
 
 use crate::agent::{AgentRegistry, AgentRole};
+use crate::context::head::CurrentFrameHeadRead;
 use crate::error::ApiError;
-use crate::heads::HeadIndex;
 use crate::store::NodeRecord;
 use crate::store::NodeRecordStore;
 use crate::types::NodeID;
@@ -13,12 +13,12 @@ use crate::workspace::types::{
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-/// Build workspace status from store, head index, agent registry, and workspace root.
+/// Build workspace status from store, current frame heads, agent registry, and workspace root.
 ///
 /// When `include_breakdown` is true, the tree section includes top-level path breakdown.
 pub fn build_workspace_status(
     node_store: &dyn NodeRecordStore,
-    head_index: &HeadIndex,
+    head_reader: &dyn CurrentFrameHeadRead,
     agent_registry: &AgentRegistry,
     workspace_root: &Path,
     store_path: &Path,
@@ -140,7 +140,7 @@ pub fn build_workspace_status(
     let mut context_coverage: Vec<ContextCoverageEntry> = Vec::new();
     for agent_id in agent_ids.drain() {
         let frame_type = format!("context-{}", agent_id);
-        let nodes_with_frame = head_index.count_nodes_for_frame_type(&frame_type) as u64;
+        let nodes_with_frame = head_reader.count_nodes_for_frame_type(&frame_type)? as u64;
         let nodes_without_frame = total_nodes.saturating_sub(nodes_with_frame);
         let coverage_pct = if total_nodes > 0 {
             Some((nodes_with_frame * 100) / total_nodes)

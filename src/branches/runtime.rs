@@ -8,7 +8,7 @@ use crate::branches::contracts::{
 };
 use crate::branches::{catalog, ledger, locator, manifest};
 use crate::error::ApiError;
-use crate::world_state::GraphRuntime;
+use crate::world_state::graph::runtime::GraphRuntime;
 
 #[derive(Debug, Clone, Default)]
 pub struct BranchRuntime;

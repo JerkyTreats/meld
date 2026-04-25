@@ -48,7 +48,6 @@ use crate::workflow::state_store::{
     WorkflowStateStore, WorkflowThreadRecord, WorkflowThreadStatus, WorkflowTurnRecord,
     WorkflowTurnStatus,
 };
-use crate::world_state::TraversalQuery;
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
@@ -885,19 +884,16 @@ fn resolve_completed_task_path_final_frame(
     request: &WorkflowExecutionRequest,
     existing: &WorkflowThreadRecord,
 ) -> Result<FrameID, ApiError> {
-    let graph_runtime = api.graph_runtime().ok_or_else(|| {
-        ApiError::ConfigError("Workflow task path requires graph runtime context".to_string())
+    let world_model = api.world_model_queries().ok_or_else(|| {
+        ApiError::ConfigError("Workflow task path requires world model query context".to_string())
     })?;
-    graph_runtime.catch_up().map_err(ApiError::StorageError)?;
     let task_run = DomainObjectRef::new(
         "execution",
         "task_run",
         workflow_task_run_id_for_target(registered_profile, request.node_id),
     )
     .map_err(ApiError::StorageError)?;
-    let traversal = graph_runtime.traversal_store();
-    let query = TraversalQuery::new(traversal.as_ref());
-    let anchor = query
+    let anchor = world_model
         .current_artifact_for_task_run(&task_run, "frame_ref")
         .map_err(ApiError::StorageError)?
         .ok_or_else(|| {
@@ -1006,12 +1002,11 @@ async fn execute_registered_workflow_via_task_async(
         }
     };
 
-    let graph_runtime = api.graph_runtime().ok_or_else(|| {
-        ApiError::ConfigError("Workflow task path requires graph runtime context".to_string())
+    let world_model = api.world_model_queries().ok_or_else(|| {
+        ApiError::ConfigError("Workflow task path requires world model query context".to_string())
     })?;
-    graph_runtime.catch_up().map_err(ApiError::StorageError)?;
     let final_frame_id = resolve_final_frame_from_traversal_artifact(
-        graph_runtime.as_ref(),
+        world_model.as_ref(),
         &executor,
         &task_summary.task_run_id,
     )?;
@@ -1054,15 +1049,13 @@ async fn execute_registered_workflow_via_task_async(
 }
 
 fn resolve_final_frame_from_traversal_artifact(
-    graph_runtime: &crate::world_state::GraphRuntime,
+    world_model: &crate::world_state::WorldModelQueries,
     executor: &TaskExecutor,
     task_run_id: &str,
 ) -> Result<FrameID, ApiError> {
     let task_run = DomainObjectRef::new("execution", "task_run", task_run_id)
         .map_err(ApiError::StorageError)?;
-    let traversal = graph_runtime.traversal_store();
-    let query = TraversalQuery::new(traversal.as_ref());
-    let anchor = query
+    let anchor = world_model
         .current_artifact_for_task_run(&task_run, "frame_ref")
         .map_err(ApiError::StorageError)?
         .ok_or_else(|| {

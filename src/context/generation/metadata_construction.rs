@@ -3,6 +3,9 @@ use crate::context::generation::contracts::{
     GeneratedMetadataBuilder, GenerationOrchestrationRequest,
 };
 use crate::error::ApiError;
+use crate::metadata::frame_key_registry::{
+    KEY_AGENT_ID, KEY_MODEL, KEY_PROVIDER, KEY_PROVIDER_TYPE,
+};
 use crate::metadata::frame_types::FrameMetadata;
 use crate::metadata::frame_write_contract::GeneratedFrameMetadataInput;
 use crate::metadata::frame_write_contract::{
@@ -24,7 +27,7 @@ pub fn load_previous_metadata_snapshot(
     api: &ContextApi,
     request: &GenerationOrchestrationRequest,
 ) -> Result<PreviousMetadataSnapshot, ApiError> {
-    let Some(previous_frame_id) = api.get_head(&request.node_id, &request.frame_type)? else {
+    let Some(previous_frame_id) = resolve_previous_frame_id(api, request)? else {
         return Ok(PreviousMetadataSnapshot {
             frame_id: None,
             prompt_digest: None,
@@ -60,15 +63,19 @@ pub fn build_and_validate_generated_metadata(
     metadata_builder: &GeneratedMetadataBuilder,
 ) -> Result<FrameMetadata, ApiError> {
     let generated_metadata = metadata_builder(input);
+    let previous_metadata =
+        if let Some(previous_frame_id) = resolve_previous_frame_id(api, request)? {
+            api.frame_storage()
+                .get(&previous_frame_id)
+                .map_err(ApiError::from)?
+                .map(|frame| frame.metadata)
+        } else {
+            None
+        };
     let previous_metadata = if request.force {
-        None
-    } else if let Some(previous_frame_id) = api.get_head(&request.node_id, &request.frame_type)? {
-        api.frame_storage()
-            .get(&previous_frame_id)
-            .map_err(ApiError::from)?
-            .map(|frame| frame.metadata)
+        previous_metadata.map(force_generation_mutability_baseline)
     } else {
-        None
+        previous_metadata
     };
 
     validate_frame_metadata(FrameMetadataValidationInput {
@@ -77,4 +84,29 @@ pub fn build_and_validate_generated_metadata(
         previous_metadata: previous_metadata.as_ref(),
     })?;
     Ok(generated_metadata)
+}
+
+fn resolve_previous_frame_id(
+    api: &ContextApi,
+    request: &GenerationOrchestrationRequest,
+) -> Result<Option<crate::types::FrameID>, ApiError> {
+    if request.force {
+        let head_index = api.head_index().read();
+        return Ok(head_index
+            .entries_for_node(&request.node_id)
+            .into_iter()
+            .find(|entry| entry.frame_type == request.frame_type)
+            .map(|entry| entry.frame_id));
+    }
+    api.get_head(&request.node_id, &request.frame_type)
+}
+
+fn force_generation_mutability_baseline(previous_metadata: FrameMetadata) -> FrameMetadata {
+    let mut baseline = FrameMetadata::new();
+    for key in [KEY_AGENT_ID, KEY_PROVIDER, KEY_MODEL, KEY_PROVIDER_TYPE] {
+        if let Some(value) = previous_metadata.get(key) {
+            baseline.insert(key.to_string(), value.clone());
+        }
+    }
+    baseline
 }

@@ -90,7 +90,7 @@ Apply these rules in every phase.
 |-------|------|--------------|--------|
 | 0 | Baseline lock and boundary inventory | None | completed |
 | 1 | Events authority boundary cleanup | Phase 0 | completed |
-| 2 | World model ingestion and query boundary cleanup | Phase 0 and Phase 1 | proposed |
+| 2 | World model ingestion and query boundary cleanup | Phase 0 and Phase 1 | completed |
 | 3 | Execution port foundation and contract extraction | Phase 0 and Phase 1 and Phase 2 | proposed |
 | 4 | Workflow runtime split and root adapter cutover | Phase 2 and Phase 3 | proposed |
 | 5 | Root composition seal and public surface cleanup | Phase 1 and Phase 2 and Phase 3 and Phase 4 | proposed |
@@ -226,15 +226,15 @@ Apply these rules in every phase.
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Define the source intent boundary for graph materialization and remove direct imports of workspace, context, and task reducers from world model code. | Proposed |
-| 2 | Hide `TraversalStore`, `WorldStateStore`, and `GraphRuntime` from the long term public world model surface. | Proposed |
-| 3 | Publish query services for anchor reads, traversal reads, provenance reads, and legacy claim compatibility reads. | Proposed |
-| 4 | Remove direct `GraphRuntime` storage from root facades and move world model runtime access to explicit wiring. | Proposed |
+| 1 | Define the source intent boundary for graph materialization and remove direct imports of workspace, context, and task reducers from world model code. | Completed |
+| 2 | Hide `TraversalStore`, `WorldStateStore`, and `GraphRuntime` from the long term public world model surface. | Completed |
+| 3 | Publish query services for anchor reads, traversal reads, provenance reads, and legacy claim compatibility reads. | Completed |
+| 4 | Remove direct `GraphRuntime` storage from root facades and move world model runtime access to explicit wiring. | Completed |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| world model no longer imports source domain internals to interpret events. | Proposed |
-| execution and root code consume world model reads through public query contracts rather than raw stores and runtime types. | Proposed |
+| world model no longer imports source domain internals to interpret events. | Completed |
+| execution and root code consume world model reads through public query contracts rather than raw stores and runtime types. | Completed |
 
 | Key seams |
 |-----------|
@@ -258,6 +258,18 @@ Apply these rules in every phase.
 | Dependency closure solved |
 |---------------------------|
 | Creates the world model public contracts that execution can depend on without reaching into internals |
+
+| Phase 2 gate evidence | Result |
+|-----------------------|--------|
+| F0 | passed on 2026-04-25 with `cargo fmt --check` |
+| F1 | passed on 2026-04-25 with `cargo check` |
+| F2 | passed on 2026-04-25 with focused `traversal_graph`, `world_state_graph`, `workflow_task_compatibility`, and `branches_query` integration coverage |
+| F3 | passed on 2026-04-25 with `rg -n 'crate::workspace::reducer|crate::context::reducer|crate::task::reducer' src/world_state` returning no matches |
+| F4 | passed on 2026-04-25 after demoting top level `GraphRuntime`, `TraversalStore`, and `WorldStateStore` exports and wiring root reads through `WorldModelQueries` |
+
+| Phase 2 completion notes |
+|--------------------------|
+| World model now decodes traversal source intent from event contracts inside `src/world_state`, not by reaching into source reducers. Root read paths use `WorldModelQueries` instead of storing raw `GraphRuntime` inside `ContextApi`. Top level world model exports now emphasize query contracts over store and runtime types. |
 
 ---
 

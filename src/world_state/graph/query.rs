@@ -95,6 +95,25 @@ impl<'a> TraversalQuery<'a> {
         self.current_anchor_for_subject(node, "frame_type", frame_type)
     }
 
+    pub fn current_frame_heads_for_node(
+        &self,
+        node: &DomainObjectRef,
+    ) -> Result<Vec<AnchorSelectionRecord>, StorageError> {
+        Ok(self
+            .current_anchors_for_subject(node)?
+            .into_iter()
+            .filter(|anchor| anchor.perspective.perspective_kind == "frame_type")
+            .collect())
+    }
+
+    pub fn current_frame_head_count_by_type(
+        &self,
+        frame_type: &str,
+    ) -> Result<usize, StorageError> {
+        self.store
+            .current_anchor_count_by_perspective("frame_type", frame_type)
+    }
+
     pub fn current_artifact_for_task_run(
         &self,
         task_run: &DomainObjectRef,

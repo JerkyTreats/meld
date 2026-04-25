@@ -6,8 +6,8 @@
 
 use super::view_policy::{FrameFilter, OrderingPolicy};
 use crate::context::frame::{Frame, FrameStorage};
+use crate::context::head::CurrentFrameHeadRead;
 use crate::error::ApiError;
-use crate::heads::HeadIndex;
 use crate::store::NodeRecordStore;
 use crate::types::NodeID;
 use serde::{Deserialize, Serialize};
@@ -124,14 +124,13 @@ fn collect_frames_from_source(
     context: &CompositionContext,
     _node_store: &dyn NodeRecordStore,
     frame_storage: &FrameStorage,
-    head_index: &HeadIndex,
+    head_reader: &dyn CurrentFrameHeadRead,
 ) -> Result<Vec<(NodeID, Frame)>, ApiError> {
     let mut frames = Vec::new();
 
     match source {
         CompositionSource::CurrentNode => {
-            // Get all frame types for current node
-            let frame_ids = head_index.get_all_heads_for_node(&target_node_id);
+            let frame_ids = head_reader.current_frame_heads_for_node(&target_node_id)?;
             for frame_id in frame_ids {
                 if let Some(frame) = frame_storage.get(&frame_id).map_err(ApiError::from)? {
                     frames.push((target_node_id, frame));
@@ -140,7 +139,7 @@ fn collect_frames_from_source(
         }
         CompositionSource::ParentDirectory => {
             if let Some(parent_id) = context.parent_node_id {
-                let frame_ids = head_index.get_all_heads_for_node(&parent_id);
+                let frame_ids = head_reader.current_frame_heads_for_node(&parent_id)?;
                 for frame_id in frame_ids {
                     if let Some(frame) = frame_storage.get(&frame_id).map_err(ApiError::from)? {
                         frames.push((parent_id, frame));
@@ -150,7 +149,7 @@ fn collect_frames_from_source(
         }
         CompositionSource::Siblings => {
             for sibling_id in &context.sibling_node_ids {
-                let frame_ids = head_index.get_all_heads_for_node(sibling_id);
+                let frame_ids = head_reader.current_frame_heads_for_node(sibling_id)?;
                 for frame_id in frame_ids {
                     if let Some(frame) = frame_storage.get(&frame_id).map_err(ApiError::from)? {
                         frames.push((*sibling_id, frame));
@@ -160,7 +159,7 @@ fn collect_frames_from_source(
         }
         CompositionSource::RelatedNodes(related_ids) => {
             for related_id in related_ids {
-                let frame_ids = head_index.get_all_heads_for_node(related_id);
+                let frame_ids = head_reader.current_frame_heads_for_node(related_id)?;
                 for frame_id in frame_ids {
                     if let Some(frame) = frame_storage.get(&frame_id).map_err(ApiError::from)? {
                         frames.push((*related_id, frame));
@@ -183,7 +182,7 @@ fn collect_frames_from_source(
 /// * `policy` - Composition policy specifying sources, filters, ordering, and bounds
 /// * `node_store` - Node record store for accessing node relationships
 /// * `frame_storage` - Frame storage for retrieving frames
-/// * `head_index` - Head index for O(1) head resolution
+/// * `head_reader` - Current frame head reader
 ///
 /// # Returns
 /// * `Vec<Frame>` - Composed frames in policy-determined order
@@ -199,7 +198,7 @@ pub fn compose_frames(
     policy: &CompositionPolicy,
     node_store: &dyn NodeRecordStore,
     frame_storage: &FrameStorage,
-    head_index: &HeadIndex,
+    head_reader: &dyn CurrentFrameHeadRead,
 ) -> Result<Vec<Frame>, ApiError> {
     // Build composition context
     let target_record = node_store
@@ -240,7 +239,7 @@ pub fn compose_frames(
             &context,
             node_store,
             frame_storage,
-            head_index,
+            head_reader,
         )?;
         candidate_frames.extend(source_frames);
     }

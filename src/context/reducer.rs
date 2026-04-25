@@ -4,6 +4,7 @@ use crate::world_state::graph::contracts::{
     AnchorEndInput, AnchorSelectionInput, PerspectiveKey, TraversalIntent,
 };
 
+#[allow(dead_code)]
 pub(crate) fn graph_reducer_intents_for_event(
     event: &EventRecord,
     source_fact_id: &str,
@@ -45,6 +46,7 @@ pub(crate) fn graph_reducer_intents_for_event(
     }
 }
 
+#[allow(dead_code)]
 fn find_object_ref(
     objects: &[DomainObjectRef],
     domain_id: &str,

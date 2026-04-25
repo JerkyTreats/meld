@@ -9,9 +9,9 @@ use crate::branches::locator;
 use crate::branches::runtime::BranchRuntime;
 use crate::error::{ApiError, StorageError};
 use crate::events::{DomainObjectRef, EventRelation};
-use crate::world_state::{
-    GraphWalkSpec, TraversalDirection, TraversalFactRecord, TraversalQuery, TraversalStore,
-};
+use crate::world_state::graph::query::TraversalQuery;
+use crate::world_state::graph::store::TraversalStore;
+use crate::world_state::{GraphWalkSpec, TraversalDirection, TraversalFactRecord};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BranchQueryScope {

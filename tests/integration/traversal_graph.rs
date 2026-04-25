@@ -7,6 +7,7 @@ use meld::cli::{Commands, RunContext};
 use meld::concurrency::NodeLockManager;
 use meld::context::events::{frame_added_envelope, head_ref, head_selected_envelope};
 use meld::context::frame::{Basis, Frame, FrameStorage};
+use meld::context::head::backfill_legacy_heads_into_spine;
 use meld::heads::HeadIndex;
 use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::{NodeRecord, NodeType, SledNodeRecordStore};
@@ -19,10 +20,11 @@ use meld::workspace::events::source_ref;
 use meld::workspace::{read_workspace_scan_state, WorkspaceCommandService};
 use meld::world_state::graph::compat::LegacyClaimAdapter;
 use meld::world_state::graph::events::AnchorSelectedEventData;
+use meld::world_state::graph::query::TraversalQuery;
 use meld::world_state::graph::reducer::TraversalReducer;
-use meld::world_state::{
-    GraphRuntime, GraphWalkSpec, TraversalDirection, TraversalQuery, TraversalStore,
-};
+use meld::world_state::graph::runtime::GraphRuntime;
+use meld::world_state::graph::store::TraversalStore;
+use meld::world_state::{GraphWalkSpec, TraversalDirection, WorldModelQueries};
 
 use crate::integration::with_xdg_env;
 
@@ -428,6 +430,88 @@ fn current_frame_head_matches_legacy_head_index() {
         api.get_head(&node_id, "analysis").unwrap().unwrap(),
         frame_id
     );
+    assert_eq!(current.target.object_id, hex::encode(frame_id));
+}
+
+#[test]
+fn api_get_head_uses_graph_when_runtime_is_configured() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let workspace_root = temp_dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace_root).unwrap();
+
+    let spine_db = sled::open(temp_dir.path().join("spine")).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(spine_db.clone()).unwrap());
+    let graph_runtime = Arc::new(GraphRuntime::new(spine_db).unwrap());
+    let session_id = progress
+        .start_command_session("traversal.context".to_string())
+        .unwrap();
+    let api = create_context_api(
+        &workspace_root,
+        Arc::clone(&progress),
+        &session_id,
+        &temp_dir,
+    );
+    api.set_world_model_queries(Arc::new(WorldModelQueries::new(Arc::clone(&graph_runtime))));
+    register_writer(&api, "writer");
+
+    let node_id = [18u8; 32];
+    put_test_node(&api, &workspace_root, node_id);
+    let frame = Frame::new(
+        Basis::Node(node_id),
+        b"hello".to_vec(),
+        "analysis".to_string(),
+        "writer".to_string(),
+        frame_metadata("writer"),
+    )
+    .unwrap();
+    let frame_id = api.put_frame(node_id, frame, "writer".to_string()).unwrap();
+    api.head_index()
+        .write()
+        .tombstone_head(&node_id, "analysis");
+
+    assert_eq!(api.get_head(&node_id, "analysis").unwrap(), Some(frame_id));
+}
+
+#[test]
+fn legacy_head_backfill_populates_graph_anchor_idempotently() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(temp_dir.path().join("spine")).unwrap();
+    let progress = ProgressRuntime::new(db.clone()).unwrap();
+    let graph_runtime = GraphRuntime::new(db).unwrap();
+    let frame_storage = FrameStorage::new(temp_dir.path().join("frames")).unwrap();
+    let mut head_index = HeadIndex::new();
+    let node_id = [19u8; 32];
+    let frame = Frame::new(
+        Basis::Node(node_id),
+        b"hello".to_vec(),
+        "analysis".to_string(),
+        "writer".to_string(),
+        frame_metadata("writer"),
+    )
+    .unwrap();
+    let frame_id = frame.frame_id;
+    frame_storage.store(&frame).unwrap();
+    head_index
+        .update_head(&node_id, "analysis", &frame_id)
+        .unwrap();
+
+    backfill_legacy_heads_into_spine(&progress, &head_index, &frame_storage, "backfill").unwrap();
+    backfill_legacy_heads_into_spine(&progress, &head_index, &frame_storage, "backfill").unwrap();
+    let head_selected_count = progress
+        .store()
+        .read_all_events_after(0)
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.event_type == "context.head_selected")
+        .count();
+    assert_eq!(head_selected_count, 1);
+
+    graph_runtime.catch_up().unwrap();
+    let traversal = graph_runtime.traversal_store();
+    let current = TraversalQuery::new(traversal.as_ref())
+        .current_frame_head(&node_ref(node_id), "analysis")
+        .unwrap()
+        .unwrap();
     assert_eq!(current.target.object_id, hex::encode(frame_id));
 }
 
