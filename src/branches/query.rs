@@ -145,8 +145,7 @@ impl BranchQueryRuntime {
         for entry in &selection.entries {
             match self.open_traversal_store(entry) {
                 Ok(store) => {
-                    let last_reduced_seq =
-                        store.last_reduced_seq().map_err(ApiError::StorageError)?;
+                    let last_reduced_seq = store.last_reduced_seq().map_err(ApiError::from)?;
                     metadata.readable_branch_ids.push(entry.branch_id.clone());
                     rows.push(BranchGraphStatusRow {
                         branch_id: entry.branch_id.clone(),
@@ -384,7 +383,7 @@ impl BranchQueryRuntime {
     {
         let store = self.open_traversal_store(entry)?;
         let query = TraversalQuery::new(store.as_ref());
-        f(&query).map_err(ApiError::StorageError)
+        f(&query).map_err(ApiError::from)
     }
 
     fn open_traversal_store(
@@ -399,7 +398,7 @@ impl BranchQueryRuntime {
             )));
         }
         let db = sled::open(&store_path).map_err(to_api_storage_error)?;
-        TraversalStore::shared(db).map_err(ApiError::StorageError)
+        TraversalStore::shared(db).map_err(ApiError::from)
     }
 }
 

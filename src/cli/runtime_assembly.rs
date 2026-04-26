@@ -38,8 +38,8 @@ impl CliRuntimeAssembly {
             )))
         })?;
         let node_store = Arc::new(SledNodeRecordStore::from_db(db.clone()));
-        let progress = Arc::new(ProgressRuntime::new(db.clone()).map_err(ApiError::StorageError)?);
-        let graph_runtime = Arc::new(GraphRuntime::new(db).map_err(ApiError::StorageError)?);
+        let progress = Arc::new(ProgressRuntime::new(db.clone()).map_err(ApiError::from)?);
+        let graph_runtime = Arc::new(GraphRuntime::new(db).map_err(ApiError::from)?);
         let world_model_queries = Arc::new(WorldModelQueries::new(Arc::clone(&graph_runtime)));
 
         std::fs::create_dir_all(&frame_storage_path)
@@ -47,12 +47,11 @@ impl CliRuntimeAssembly {
         std::fs::create_dir_all(&artifact_storage_path)
             .map_err(|e| ApiError::StorageError(crate::error::StorageError::IoError(e)))?;
         let frame_storage = Arc::new(
-            crate::context::frame::open_storage(&frame_storage_path)
-                .map_err(ApiError::StorageError)?,
+            crate::context::frame::open_storage(&frame_storage_path).map_err(ApiError::from)?,
         );
         let prompt_context_storage = Arc::new(
             crate::prompt_context::PromptContextArtifactStorage::new(&artifact_storage_path)
-                .map_err(ApiError::StorageError)?,
+                .map_err(ApiError::from)?,
         );
         let head_index_path = HeadIndex::persistence_path(workspace_root);
         let head_index = Arc::new(parking_lot::RwLock::new(

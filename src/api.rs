@@ -193,9 +193,7 @@ impl ContextApi {
             {
                 let head_index = self.head_index.read();
                 let path = HeadIndex::persistence_path(workspace_root);
-                head_index
-                    .save_to_disk(&path)
-                    .map_err(ApiError::StorageError)?;
+                head_index.save_to_disk(&path).map_err(ApiError::from)?;
             }
         }
         Ok(())
@@ -756,7 +754,7 @@ impl ContextApi {
             agent_id.clone(),
             metadata,
         )
-        .map_err(ApiError::StorageError)?;
+        .map_err(ApiError::from)?;
 
         // Store frame
         let frame_id = self.put_frame(node_id, frame, agent_id)?;
@@ -949,7 +947,7 @@ impl CurrentFrameHeadRead for ContextApi {
         };
         let Some(anchor) = world_model_queries
             .current_frame_head(&node_ref(*node_id), frame_type)
-            .map_err(ApiError::StorageError)?
+            .map_err(ApiError::from)?
         else {
             let head_index = self.head_index.read();
             return head_index
@@ -958,7 +956,7 @@ impl CurrentFrameHeadRead for ContextApi {
         };
         decode_frame_anchor_target(&anchor.target)
             .map(Some)
-            .map_err(ApiError::StorageError)
+            .map_err(ApiError::from)
     }
 
     fn current_frame_heads_for_node(&self, node_id: &NodeID) -> Result<Vec<FrameID>, ApiError> {
@@ -968,11 +966,9 @@ impl CurrentFrameHeadRead for ContextApi {
         };
         let frame_ids = world_model_queries
             .current_frame_heads_for_node(&node_ref(*node_id))
-            .map_err(ApiError::StorageError)?
+            .map_err(ApiError::from)?
             .into_iter()
-            .map(|anchor| {
-                decode_frame_anchor_target(&anchor.target).map_err(ApiError::StorageError)
-            })
+            .map(|anchor| decode_frame_anchor_target(&anchor.target).map_err(ApiError::from))
             .collect::<Result<Vec<_>, ApiError>>()?;
         if frame_ids.is_empty() {
             let head_index = self.head_index.read();
@@ -988,7 +984,7 @@ impl CurrentFrameHeadRead for ContextApi {
         };
         world_model_queries
             .current_frame_head_count_by_type(frame_type)
-            .map_err(ApiError::StorageError)
+            .map_err(ApiError::from)
     }
 }
 

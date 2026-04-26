@@ -891,10 +891,10 @@ fn resolve_completed_task_path_final_frame(
         "task_run",
         workflow_task_run_id_for_target(registered_profile, request.node_id),
     )
-    .map_err(ApiError::StorageError)?;
+    .map_err(ApiError::from)?;
     let anchor = world_model
         .current_artifact_for_task_run(&task_run, "frame_ref")
-        .map_err(ApiError::StorageError)?
+        .map_err(ApiError::from)?
         .ok_or_else(|| {
             ApiError::GenerationFailed(format!(
                 "Workflow task path missing required frame_ref artifact anchor for task run '{}'",
@@ -1052,11 +1052,11 @@ fn resolve_final_frame_from_traversal_artifact(
     executor: &TaskExecutor,
     task_run_id: &str,
 ) -> Result<FrameID, ApiError> {
-    let task_run = DomainObjectRef::new("execution", "task_run", task_run_id)
-        .map_err(ApiError::StorageError)?;
+    let task_run =
+        DomainObjectRef::new("execution", "task_run", task_run_id).map_err(ApiError::from)?;
     let anchor = world_model
         .current_artifact_for_task_run(&task_run, "frame_ref")
-        .map_err(ApiError::StorageError)?
+        .map_err(ApiError::from)?
         .ok_or_else(|| {
             ApiError::GenerationFailed(format!(
                 "Workflow task path missing required frame_ref artifact anchor for task run '{}'",

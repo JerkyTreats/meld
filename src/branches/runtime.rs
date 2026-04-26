@@ -74,13 +74,13 @@ impl BranchRuntime {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| locator::branch_store_path(&resolved.data_home_path));
             let db = sled::open(&store_path).map_err(to_api_storage_error)?;
-            let graph_runtime = GraphRuntime::new(db).map_err(ApiError::StorageError)?;
+            let graph_runtime = GraphRuntime::new(db).map_err(ApiError::from)?;
             match graph_runtime.catch_up() {
                 Ok(applied_events) => {
                     let last_reduced_seq = graph_runtime
                         .traversal_store()
                         .last_reduced_seq()
-                        .map_err(ApiError::StorageError)?;
+                        .map_err(ApiError::from)?;
                     self.record_graph_success(
                         &resolved,
                         last_reduced_seq,

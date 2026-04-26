@@ -14,8 +14,7 @@ pub struct WorkspaceBranchAdapter;
 
 impl WorkspaceBranchAdapter {
     pub fn resolve_active_branch(&self, workspace_root: &Path) -> Result<ResolvedBranch, ApiError> {
-        let canonical_locator =
-            canonicalize_path(workspace_root).map_err(ApiError::StorageError)?;
+        let canonical_locator = canonicalize_path(workspace_root).map_err(ApiError::from)?;
         let data_home_path = xdg::workspace_data_dir(&canonical_locator)?;
         let normalized_path = normalize_path_string(&canonical_locator.to_string_lossy());
         let branch_id = blake3::hash(normalized_path.as_bytes())

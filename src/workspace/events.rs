@@ -225,24 +225,36 @@ pub fn node_observed_envelope(
 
 pub fn source_ref(workspace_root: &Path) -> Result<DomainObjectRef, crate::error::StorageError> {
     let canonical = canonicalize_path(workspace_root)?;
-    DomainObjectRef::new(
+    Ok(DomainObjectRef::new(
         "workspace_fs",
         "source",
         normalize_path_string(&canonical.to_string_lossy()),
-    )
+    )?)
 }
 
 pub fn snapshot_ref(root_node_id: NodeID) -> Result<DomainObjectRef, crate::error::StorageError> {
-    DomainObjectRef::new("workspace_fs", "snapshot", hex::encode(root_node_id))
+    Ok(DomainObjectRef::new(
+        "workspace_fs",
+        "snapshot",
+        hex::encode(root_node_id),
+    )?)
 }
 
 pub fn snapshot_head_ref(
     workspace_root: &Path,
 ) -> Result<DomainObjectRef, crate::error::StorageError> {
     let source = source_ref(workspace_root)?;
-    DomainObjectRef::new("workspace_fs", "snapshot_head", source.object_id)
+    Ok(DomainObjectRef::new(
+        "workspace_fs",
+        "snapshot_head",
+        source.object_id,
+    )?)
 }
 
 pub fn node_ref(node_id: NodeID) -> Result<DomainObjectRef, crate::error::StorageError> {
-    DomainObjectRef::new("workspace_fs", "node", hex::encode(node_id))
+    Ok(DomainObjectRef::new(
+        "workspace_fs",
+        "node",
+        hex::encode(node_id),
+    )?)
 }

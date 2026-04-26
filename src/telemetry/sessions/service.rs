@@ -52,7 +52,9 @@ impl ProgressRuntime {
         event_type: &str,
         data: Value,
     ) -> Result<(), ApiError> {
-        self.events.emit_event(session_id, event_type, data)
+        self.events
+            .emit_event(session_id, event_type, data)
+            .map_err(ApiError::from)
     }
 
     pub fn emit_domain_event(
@@ -64,25 +66,29 @@ impl ProgressRuntime {
         content_hash: Option<String>,
         data: Value,
     ) -> Result<(), ApiError> {
-        self.events.emit_domain_event(
-            session_id,
-            domain_id,
-            stream_id,
-            event_type,
-            content_hash,
-            data,
-        )
+        self.events
+            .emit_domain_event(
+                session_id,
+                domain_id,
+                stream_id,
+                event_type,
+                content_hash,
+                data,
+            )
+            .map_err(ApiError::from)
     }
 
     pub fn emit_envelope(&self, envelope: crate::events::EventEnvelope) -> Result<(), ApiError> {
-        self.events.emit_envelope(envelope)
+        self.events.emit_envelope(envelope).map_err(ApiError::from)
     }
 
     pub fn emit_envelope_idempotent(
         &self,
         envelope: crate::events::EventEnvelope,
     ) -> Result<(), ApiError> {
-        self.events.emit_envelope_idempotent(envelope)
+        self.events
+            .emit_envelope_idempotent(envelope)
+            .map_err(ApiError::from)
     }
 
     pub fn emit_event_best_effort(&self, session_id: &str, event_type: &str, data: Value) {
@@ -152,10 +158,7 @@ impl ProgressRuntime {
 
     pub fn mark_interrupted_sessions(&self) -> Result<usize, ApiError> {
         let changed = self.sessions.mark_interrupted_sessions()?;
-        self.events
-            .store()
-            .flush()
-            .map_err(ApiError::StorageError)?;
+        self.events.store().flush().map_err(ApiError::from)?;
         Ok(changed)
     }
 
@@ -164,10 +167,7 @@ impl ProgressRuntime {
         policy: crate::telemetry::sessions::policy::Policy,
     ) -> Result<usize, ApiError> {
         let pruned = self.sessions.prune(policy)?;
-        self.events
-            .store()
-            .flush()
-            .map_err(ApiError::StorageError)?;
+        self.events.store().flush().map_err(ApiError::from)?;
         Ok(pruned)
     }
 
@@ -179,7 +179,7 @@ impl ProgressRuntime {
         self.sessions
             .store()
             .list_sessions()
-            .map_err(ApiError::StorageError)
+            .map_err(ApiError::from)
     }
 
     pub fn get_session(
@@ -189,6 +189,6 @@ impl ProgressRuntime {
         self.sessions
             .store()
             .get_session(session_id)
-            .map_err(ApiError::StorageError)
+            .map_err(ApiError::from)
     }
 }

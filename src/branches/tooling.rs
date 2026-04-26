@@ -152,7 +152,7 @@ fn object_ref(
     object_kind: &str,
     object_id: &str,
 ) -> Result<DomainObjectRef, ApiError> {
-    DomainObjectRef::new(domain, object_kind, object_id).map_err(ApiError::StorageError)
+    DomainObjectRef::new(domain, object_kind, object_id).map_err(ApiError::from)
 }
 
 fn relation_types_filter(relation_types: &[String]) -> Option<&[String]> {

@@ -7,9 +7,20 @@ description = "Deterministic filesystem state management using Merkle trees"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jerkytreats/meld"
 
+[workspace]
+members = [
+    "crates/meld-events",
+    "crates/meld-execution",
+    "crates/meld-world-model",
+]
+resolver = "2"
+
 [dependencies]
 # Hashing
 blake3 = "1.5"
+meld-events = { path = "crates/meld-events" }
+meld-execution = { path = "crates/meld-execution" }
+meld-world-model = { path = "crates/meld-world-model" }
 
 # Merkle tree for frame sets
 rs_merkle = "1.5"

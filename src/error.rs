@@ -287,3 +287,32 @@ impl From<config::ConfigError> for ApiError {
         ApiError::ConfigError(err.to_string())
     }
 }
+
+impl From<meld_events::error::StorageError> for StorageError {
+    fn from(err: meld_events::error::StorageError) -> Self {
+        match err {
+            meld_events::error::StorageError::InvalidPath(path) => StorageError::InvalidPath(path),
+            meld_events::error::StorageError::Backpressure(message) => {
+                StorageError::Backpressure(message)
+            }
+            meld_events::error::StorageError::IoError(err) => StorageError::IoError(err),
+        }
+    }
+}
+
+impl From<meld_events::error::ApiError> for ApiError {
+    fn from(err: meld_events::error::ApiError) -> Self {
+        match err {
+            meld_events::error::ApiError::StorageError(err) => {
+                ApiError::StorageError(StorageError::from(err))
+            }
+            meld_events::error::ApiError::ConfigError(message) => ApiError::ConfigError(message),
+        }
+    }
+}
+
+impl From<meld_events::error::StorageError> for ApiError {
+    fn from(err: meld_events::error::StorageError) -> Self {
+        ApiError::StorageError(StorageError::from(err))
+    }
+}
