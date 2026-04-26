@@ -1,5 +1,6 @@
 use crate::error::StorageError;
-use crate::events::{EventEnvelope, EventRecord, EventStore};
+use crate::events::store::EventStore;
+use crate::events::{EventEnvelope, EventRecord};
 use crate::world_state::graph::contracts::{
     AnchorEndInput, AnchorSelectionInput, AnchorSelectionRecord, TraversalFactRecord,
     TraversalIntent,

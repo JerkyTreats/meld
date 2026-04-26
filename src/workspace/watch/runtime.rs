@@ -652,7 +652,7 @@ mod tests {
     use crate::store::persistence::SledNodeRecordStore;
     use crate::store::{NodeRecord, NodeType};
     use crate::telemetry::ProgressRuntime;
-    use crate::workflow::registry::WorkflowRegistry;
+    use crate::workflow::WorkflowRegistry;
     use crate::workspace::events::WorkspaceNodeObservedEventData;
     use std::path::Path;
     use tempfile::TempDir;

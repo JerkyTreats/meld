@@ -1,14 +1,15 @@
 use crate::integration::with_xdg_env;
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
 use meld::cli::{Commands, RunContext, WorkflowCommands};
+use meld::compat::{GraphRuntime, TraversalStore};
 use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
 use meld::events::DomainObjectRef;
 use meld::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
-use meld::workflow::executor::{execute_registered_workflow, WorkflowExecutionRequest};
-use meld::workflow::state_store::{WorkflowStateStore, WorkflowThreadStatus};
+use meld::workflow::{
+    execute_registered_workflow, RegisteredWorkflowProfile, WorkflowExecutionRequest,
+    WorkflowStateStore, WorkflowThreadStatus,
+};
 use meld::world_state::graph::query::TraversalQuery;
-use meld::world_state::graph::runtime::GraphRuntime;
-use meld::world_state::graph::store::TraversalStore;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -138,9 +139,7 @@ fn docs_writer_frame_type() -> String {
     "context-docs-writer".to_string()
 }
 
-fn docs_writer_profile(
-    run_context: &RunContext,
-) -> meld::workflow::registry::RegisteredWorkflowProfile {
+fn docs_writer_profile(run_context: &RunContext) -> RegisteredWorkflowProfile {
     let registry = run_context.workflow_registry();
     let profile = registry
         .read()

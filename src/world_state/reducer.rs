@@ -1,5 +1,6 @@
 use crate::error::StorageError;
-use crate::events::{DomainObjectRef, EventEnvelope, EventRecord, EventStore};
+use crate::events::store::EventStore;
+use crate::events::{DomainObjectRef, EventEnvelope, EventRecord};
 use crate::world_state::contracts::{ClaimKind, ClaimRecord, EvidenceRecord, SettlementStatus};
 use crate::world_state::events::{
     claim_added_envelope, claim_superseded_envelope, evidence_attached_envelope,

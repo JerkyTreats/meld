@@ -58,10 +58,11 @@ Committed progress:
 | `037eab6` | Phase 1 events boundary | session lifecycle removed from `EventStore` and runtime idempotent append fixed |
 | `7eb71d4` | Phase 2 world model boundary | source intent moved inside world model and root reads routed through `WorldModelQueries` |
 | `f78708c` | Phase 3 execution boundary | execution ports added, provider request contracts moved under execution, and capability plus task runtime signatures removed direct `ContextApi` dependence |
-| `this commit` | Phase 4 workflow and assembly boundary | workflow runtime moved onto execution ports and root assembly now owns CLI runtime wiring plus profile adapters |
+| `9bf4c5a` | Phase 4 workflow and assembly boundary | workflow runtime moved onto execution ports and root assembly now owns CLI runtime wiring plus profile adapters |
+| `this commit` | Phase 5 public surface cleanup | legacy runtime and store seams moved under `compat`, root adapters use workflow authority exports, and primary event plus root surfaces no longer advertise temporary types |
 
 Next active phase:
-- Phase 5 root composition seal and public surface cleanup
+- Phase 6 physical crate extraction and declarative doc cutover
 
 ## CLI Path Default Exception List
 
@@ -111,7 +112,7 @@ Apply these rules in every phase.
 | 2 | World model ingestion and query boundary cleanup | Phase 0 and Phase 1 | completed |
 | 3 | Execution port foundation and contract extraction | Phase 0 and Phase 1 and Phase 2 | completed |
 | 4 | Workflow runtime split and root adapter cutover | Phase 2 and Phase 3 | completed |
-| 5 | Root composition seal and public surface cleanup | Phase 1 and Phase 2 and Phase 3 and Phase 4 | proposed |
+| 5 | Root composition seal and public surface cleanup | Phase 1 and Phase 2 and Phase 3 and Phase 4 | completed |
 | 6 | Physical crate extraction and declarative doc cutover | Phase 1 through Phase 5 | proposed |
 
 ---
@@ -416,23 +417,24 @@ Apply these rules in every phase.
 | Goal | Reduce root exports, formalize compatibility shims, and ensure each authority crate surface is narrow and declarative |
 | Dependencies | Phase 1 and Phase 2 and Phase 3 and Phase 4 |
 | Docs | [Core Migration](core/MIGRATION.md), [Events Migration](events/MIGRATION.md), [World Model Migration](world_state/MIGRATION.md), and [Execution Migration](execution/MIGRATION.md) |
-| Status | proposed |
+| Status | completed |
 
 | Order | Task | Completion |
 |-------|------|------------|
-| 1 | Reduce `src/lib.rs` to authority aligned exports and temporary compatibility re exports only. | Proposed |
-| 2 | Remove long term public exposure of temporary runtime and store types from root and extracted surfaces. | Proposed |
-| 3 | Add clear compatibility wrappers for any old import paths that still need a transition window. | Proposed |
-| 4 | Audit all direct crate internal reach through from root adapter code and replace them with public API calls. | Proposed |
+| 1 | Reduce `src/lib.rs` to authority aligned exports and temporary compatibility re exports only. | Completed |
+| 2 | Remove long term public exposure of temporary runtime and store types from root and extracted surfaces. | Completed |
+| 3 | Add clear compatibility wrappers for any old import paths that still need a transition window. | Completed |
+| 4 | Audit all direct crate internal reach through from root adapter code and replace them with public API calls. | Completed |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| root `meld` surface reflects composition and compatibility, not domain authority leakage. | Proposed |
-| authority crate public APIs are stable enough for physical extraction. | Proposed |
+| root `meld` surface reflects composition and compatibility, not domain authority leakage. | Completed |
+| authority crate public APIs are stable enough for physical extraction. | Completed |
 
 | Key seams |
 |-----------|
 | [src/lib.rs](../../src/lib.rs) |
+| [src/compat.rs](../../src/compat.rs) |
 | [src/world_state.rs](../../src/world_state.rs) |
 | [src/events.rs](../../src/events.rs) |
 | [src/workflow.rs](../../src/workflow.rs) |
@@ -449,6 +451,18 @@ Apply these rules in every phase.
 | Dependency closure solved |
 |---------------------------|
 | Establishes the stable public surfaces needed for the final crate extraction move |
+
+| Phase 5 gate evidence | Result |
+|-----------------------|--------|
+| F0 | passed on 2026-04-26 with `cargo fmt --check` |
+| F1 | passed on 2026-04-26 with `cargo check` |
+| F3 | passed on 2026-04-26 with targeted `rg` audits showing root adapter code no longer imports workflow registry or command contracts through deep internal module paths and legacy runtime store seams now route through `meld::compat` |
+| F4 | passed on 2026-04-26 after adding [src/compat.rs](../../src/compat.rs), removing the primary `EventStore` reexport from [src/events.rs](../../src/events.rs), marking [src/lib.rs](../../src/lib.rs) `api` as doc hidden, and promoting workflow authority exports in [src/workflow.rs](../../src/workflow.rs) |
+| F5 | passed on 2026-04-26 with full `cargo test` regression coverage |
+
+| Phase 5 completion notes |
+|--------------------------|
+| Temporary runtime and store seams now have one explicit compatibility namespace in [src/compat.rs](../../src/compat.rs). External characterization tests import `ContextApi`, `GraphRuntime`, `TraversalStore`, and `WorldStateStore` through that namespace, while root adapter code now consumes top level workflow exports rather than reaching through `workflow::registry` and `workflow::commands` paths directly. |
 
 ---
 

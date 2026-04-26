@@ -9,7 +9,7 @@ use crate::error::ApiError;
 use crate::ignore;
 use crate::telemetry::ProgressRuntime;
 use crate::workflow::binding::validate_agent_binding;
-use crate::workflow::registry::WorkflowRegistry;
+use crate::workflow::WorkflowRegistry;
 use crate::workspace::events::scan_started_envelope;
 use crate::workspace::{
     format_unified_status_text, format_workspace_status_text, WatchConfig, WatchDaemon,

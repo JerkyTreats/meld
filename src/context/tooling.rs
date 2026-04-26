@@ -8,7 +8,7 @@ use crate::context::query::get_node_for_cli;
 use crate::error::ApiError;
 use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 use crate::telemetry::ProgressRuntime;
-use crate::workflow::registry::WorkflowRegistry;
+use crate::workflow::WorkflowRegistry;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

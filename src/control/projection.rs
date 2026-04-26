@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::from_value;
 
 use crate::error::StorageError;
-use crate::events::{EventRecord, EventStore};
+use crate::events::store::EventStore;
+use crate::events::EventRecord;
 use crate::task::ExecutionTaskEventData;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

@@ -1,6 +1,6 @@
 use meld::agent::profile::prompt_contract::PromptContract;
 use meld::agent::{AgentIdentity, AgentRole};
-use meld::api::ContextApi;
+use meld::compat::ContextApi;
 use meld::context::frame::{storage::FrameStorage, Basis, Frame};
 use meld::context::generation::contracts::GenerationOrchestrationRequest;
 use meld::context::generation::metadata_construction::build_and_validate_generated_metadata;

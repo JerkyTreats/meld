@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use meld::agent::{AgentIdentity, AgentRegistry, AgentRole};
-use meld::api::ContextApi;
+use meld::compat::ContextApi;
 use meld::concurrency::NodeLockManager;
 use meld::context::frame::{Basis, Frame, FrameStorage};
 use meld::heads::HeadIndex;

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use meld::agent::AgentRegistry;
-use meld::api::ContextApi;
+use meld::compat::ContextApi;
 use meld::concurrency::NodeLockManager;
 use meld::heads::HeadIndex;
 use meld::prompt_context::PromptContextArtifactStorage;

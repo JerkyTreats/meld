@@ -6,7 +6,8 @@ use serde_json::Value;
 use tracing::warn;
 
 use crate::error::ApiError;
-use crate::events::{EventRuntime, EventStore};
+use crate::events::store::EventStore;
+use crate::events::EventRuntime;
 use crate::session as lifecycle;
 use crate::session::events::{session_ended_envelope, session_started_envelope};
 

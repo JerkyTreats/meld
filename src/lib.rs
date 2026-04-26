@@ -4,10 +4,12 @@
 //! hash-based tracking of filesystem state and associated context.
 
 pub mod agent;
+#[doc(hidden)]
 pub mod api;
 pub mod branches;
 pub mod capability;
 pub mod cli;
+pub mod compat;
 pub mod concurrency;
 pub mod config;
 pub mod context;

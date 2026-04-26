@@ -2,8 +2,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use meld::agent::{AgentIdentity, AgentRegistry, AgentRole};
-use meld::api::ContextApi;
 use meld::cli::{Commands, RunContext};
+use meld::compat::{ContextApi, GraphRuntime, TraversalStore};
 use meld::concurrency::NodeLockManager;
 use meld::context::events::{frame_added_envelope, head_ref, head_selected_envelope};
 use meld::context::frame::{Basis, Frame, FrameStorage};
@@ -22,8 +22,6 @@ use meld::world_state::graph::compat::LegacyClaimAdapter;
 use meld::world_state::graph::events::AnchorSelectedEventData;
 use meld::world_state::graph::query::TraversalQuery;
 use meld::world_state::graph::reducer::TraversalReducer;
-use meld::world_state::graph::runtime::GraphRuntime;
-use meld::world_state::graph::store::TraversalStore;
 use meld::world_state::{GraphWalkSpec, TraversalDirection, WorldModelQueries};
 
 use crate::integration::with_xdg_env;

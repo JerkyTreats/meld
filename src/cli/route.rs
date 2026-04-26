@@ -43,9 +43,7 @@ impl RunContext {
     }
 
     /// Workflow profile registry.
-    pub fn workflow_registry(
-        &self,
-    ) -> Arc<parking_lot::RwLock<crate::workflow::registry::WorkflowRegistry>> {
+    pub fn workflow_registry(&self) -> Arc<parking_lot::RwLock<crate::workflow::WorkflowRegistry>> {
         Arc::clone(self.assembly.workflow_registry())
     }
 

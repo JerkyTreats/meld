@@ -1,7 +1,7 @@
 //! Watch events, batching, and configuration.
 
 use crate::context::queue::GenerationConfig;
-use crate::workflow::registry::WorkflowRegistry;
+use crate::workflow::WorkflowRegistry;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

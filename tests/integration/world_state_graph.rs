@@ -1,3 +1,4 @@
+use meld::compat::WorldStateStore;
 use meld::control::events::{
     node_completed_envelope, node_failed_envelope, NodeCompletedEventData, NodeFailedEventData,
 };
@@ -8,7 +9,7 @@ use meld::telemetry::{DomainObjectRef, EventRelation};
 use meld::world_state::contracts::{ClaimKind, ClaimRecord, EvidenceRecord, SettlementStatus};
 use meld::world_state::query::WorldStateQuery;
 use meld::world_state::reducer::WorldStateReducer;
-use meld::world_state::store::{StoredWorldStateFact, WorldStateStore};
+use meld::world_state::store::StoredWorldStateFact;
 
 #[test]
 fn world_state_records_round_trip() {

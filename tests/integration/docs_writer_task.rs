@@ -209,7 +209,7 @@ fn register_phase_four_capabilities(
 }
 
 fn apply_initial_expansion(
-    api: &meld::api::ContextApi,
+    api: &meld::compat::ContextApi,
     executor: &mut TaskExecutor,
     catalog: &CapabilityCatalog,
     registry: &CapabilityExecutorRegistry,

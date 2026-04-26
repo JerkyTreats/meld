@@ -10,7 +10,7 @@
 //! - Worker lifecycle
 
 use meld::agent::{AgentIdentity, AgentRole};
-use meld::api::ContextApi;
+use meld::compat::ContextApi;
 use meld::context::frame::storage::FrameStorage;
 use meld::context::frame::{Basis, Frame};
 use meld::context::queue::{

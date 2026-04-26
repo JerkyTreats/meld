@@ -7,7 +7,7 @@ use crate::error::ApiError;
 use crate::heads::HeadIndex;
 use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::ProgressRuntime;
-use crate::workflow::registry::WorkflowRegistry;
+use crate::workflow::WorkflowRegistry;
 use crate::world_state::graph::runtime::GraphRuntime;
 use crate::world_state::WorldModelQueries;
 use std::path::PathBuf;

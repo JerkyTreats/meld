@@ -3,7 +3,8 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::error::StorageError;
-use crate::events::{EventEnvelope, EventStore};
+use crate::events::store::EventStore;
+use crate::events::EventEnvelope;
 use crate::world_state::graph::reducer::TraversalReducer;
 use crate::world_state::graph::store::TraversalStore;
 
