@@ -33,6 +33,10 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: Format
+        shell: bash
+        run: cargo fmt --all --check
+
       - name: Build
         shell: bash
         run: |
@@ -159,7 +163,7 @@ jobs:
               fi
             fi
 
-            if git diff-tree --no-commit-id --name-only -r "$sha" | grep -Eq '^(src/|Cargo\.toml$|Cargo\.lock$|build\.rs$)'; then
+            if git diff-tree --no-commit-id --name-only -r "$sha" | grep -Eq '^(src/|crates/|Cargo\.toml$|Cargo\.lock$|build\.rs$)'; then
               saw_release_relevant_change=true
             else
               continue
@@ -255,7 +259,18 @@ jobs:
         run: |
           set -euo pipefail
           next_version="${{ steps.plan.outputs.next_version }}"
-          sed -i -E "0,/^version = \".*\"/s//version = \"${next_version}\"/" Cargo.toml
+          manifests=(
+            Cargo.toml
+            crates/meld-events/Cargo.toml
+            crates/meld-execution/Cargo.toml
+            crates/meld-world-model/Cargo.toml
+          )
+          for manifest in "${manifests[@]}"; do
+            sed -i -E "0,/^version = \".*\"/s//version = \"${next_version}\"/" "$manifest"
+            sed -i -E "s/(meld-events = \\{ path = \"[^\"]+\", version = \")[^\"]+\"/\\1${next_version}\"/" "$manifest"
+            sed -i -E "s/(meld-execution = \\{ path = \"[^\"]+\", version = \")[^\"]+\"/\\1${next_version}\"/" "$manifest"
+            sed -i -E "s/(meld-world-model = \\{ path = \"[^\"]+\", version = \")[^\"]+\"/\\1${next_version}\"/" "$manifest"
+          done
 
       - name: Update changelog entry
         if: ${{ steps.plan.outputs.release_required == 'true' }}
@@ -287,27 +302,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if git diff --quiet -- Cargo.toml CHANGELOG.md; then
+          if git diff --quiet -- Cargo.toml crates/meld-events/Cargo.toml crates/meld-execution/Cargo.toml crates/meld-world-model/Cargo.toml CHANGELOG.md; then
             echo "release_sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
             exit 0
           fi
 
           release_tag="${{ steps.plan.outputs.release_tag }}"
-          git add Cargo.toml CHANGELOG.md
+          git add Cargo.toml crates/meld-events/Cargo.toml crates/meld-execution/Cargo.toml crates/meld-world-model/Cargo.toml CHANGELOG.md
           git commit -m "ci(release): bump version to ${release_tag} [skip ci]"
           git push origin HEAD:master
           echo "release_sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
-
-      - name: Validate package before publish
-        if: ${{ steps.plan.outputs.release_required == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f Cargo.lock ]]; then
-            cargo publish --dry-run --locked
-          else
-            cargo publish --dry-run
-          fi
 
       - name: Publish to crates.io
         if: ${{ steps.plan.outputs.release_required == 'true' }}
@@ -322,28 +326,39 @@ jobs:
             exit 1
           fi
 
-          set +e
-          if [[ -f Cargo.lock ]]; then
-            cargo publish --locked 2>&1 | tee /tmp/cargo-publish.log
-            publish_status="${PIPESTATUS[0]}"
-          else
-            cargo publish 2>&1 | tee /tmp/cargo-publish.log
-            publish_status="${PIPESTATUS[0]}"
-          fi
-          set -e
+          published_any=false
+          packages=(meld-events meld-execution meld-world-model meld)
+          for package in "${packages[@]}"; do
+            if [[ -f Cargo.lock ]]; then
+              cargo publish --package "$package" --dry-run --locked
+            else
+              cargo publish --package "$package" --dry-run
+            fi
 
-          if [[ "$publish_status" -eq 0 ]]; then
-            echo "published=true" >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
+            set +e
+            if [[ -f Cargo.lock ]]; then
+              cargo publish --package "$package" --locked 2>&1 | tee "/tmp/cargo-publish-${package}.log"
+              publish_status="${PIPESTATUS[0]}"
+            else
+              cargo publish --package "$package" 2>&1 | tee "/tmp/cargo-publish-${package}.log"
+              publish_status="${PIPESTATUS[0]}"
+            fi
+            set -e
 
-          if grep -Eqi "already uploaded|already exists" /tmp/cargo-publish.log; then
-            echo "published=false" >>"$GITHUB_OUTPUT"
-            echo "Crate version already exists on crates.io. Continuing."
-            exit 0
-          fi
+            if [[ "$publish_status" -eq 0 ]]; then
+              published_any=true
+              sleep 30
+              continue
+            fi
 
-          exit "$publish_status"
+            if grep -Eqi "already uploaded|already exists" "/tmp/cargo-publish-${package}.log"; then
+              echo "Crate package ${package} version already exists on crates.io. Continuing."
+              continue
+            fi
+
+            exit "$publish_status"
+          done
+          echo "published=${published_any}" >>"$GITHUB_OUTPUT"
 
       - name: Create and push tag
         if: ${{ steps.plan.outputs.release_required == 'true' }}

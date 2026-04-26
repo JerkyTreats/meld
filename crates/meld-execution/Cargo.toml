@@ -1,7 +1,11 @@
 [package]
 name = "meld-execution"
-version = "0.1.0"
+version = "2.4.0"
 edition = "2021"
+authors = ["Meld Contributors"]
+description = "Execution authority contracts and runtime ports for Meld"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jerkytreats/meld"
 
 [dependencies]
 async-trait = "0.1"

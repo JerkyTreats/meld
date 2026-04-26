@@ -18,9 +18,9 @@ resolver = "2"
 [dependencies]
 # Hashing
 blake3 = "1.5"
-meld-events = { path = "crates/meld-events" }
-meld-execution = { path = "crates/meld-execution" }
-meld-world-model = { path = "crates/meld-world-model" }
+meld-events = { path = "crates/meld-events", version = "2.4.0" }
+meld-execution = { path = "crates/meld-execution", version = "2.4.0" }
+meld-world-model = { path = "crates/meld-world-model", version = "2.4.0" }
 
 # Merkle tree for frame sets
 rs_merkle = "1.5"
