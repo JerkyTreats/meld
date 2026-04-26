@@ -1,26 +1,21 @@
 # World Model Crate
 
-Date: 2026-04-22
-Status: active experiment
-Scope: `meld-world-model` crate boundary for graph, anchors, provenance, belief, and planner-facing views
+Date: 2026-04-26
+Status: declarative
+Scope: `meld-world-model` crate for graph, anchors, provenance, and planner facing world model reads
 
-## Intent
+## Identity
 
-`meld-world-model` owns the system world model.
-It materializes event history into graph anchors, provenance, evidence, belief revisions, and planner-facing views.
+`meld-world-model` is the source of truth for graph materialization and legacy world state claim projections.
+Root `meld` consumes this crate through a compatibility shim in [src/world_state.rs](../../../src/world_state.rs).
 
-The current Rust module name is `world_state`.
-That name remains a compatibility path until the crate migration is complete.
+The live implementation is in:
 
-## Target Crate
+- [crates/meld-world-model/src/lib.rs](../../../crates/meld-world-model/src/lib.rs)
+- [crates/meld-world-model/src/world_state.rs](../../../crates/meld-world-model/src/world_state.rs)
+- [crates/meld-world-model/src/world_state](../../../crates/meld-world-model/src/world_state)
 
-`meld-world-model`
-
-Rust import name:
-
-```rust
-meld_world_model
-```
+The product facing module name remains `world_state` for compatibility even though the authority crate name is `meld-world-model`.
 
 ## Owns
 
@@ -28,62 +23,52 @@ meld_world_model
 - traversal store and query
 - current anchor selection
 - anchor lineage
-- provenance bundles
-- branch annotated world-model reads
-- legacy claim compatibility during migration
-- belief keys
-- evidence attachment
-- belief revision
-- belief views for planning
+- graph walk queries
+- planner facing query runtime
+- legacy claim projections
+- world state claim storage
+- evidence attachment and provenance queries
 
 ## Does Not Own
 
-- event append and sequencing
-- source-domain truth for workspace, context, task, or workflow
-- planner policy
-- task dispatch
+- canonical event append
+- execution policy
 - provider execution
+- workspace source truth
+- context source truth
+- task dispatch
 - CLI formatting
 
-## Current Code Areas
+## Public Surface
 
-- `src/world_state.rs`
-- `src/world_state/contracts.rs`
-- `src/world_state/events.rs`
-- `src/world_state/graph.rs`
-- `src/world_state/graph`
-- `src/world_state/legacy_claims.rs`
-- `src/world_state/projection.rs`
-- `src/world_state/query.rs`
-- `src/world_state/reducer.rs`
-- `src/world_state/store.rs`
+Primary exports are:
 
-## Extraction Blockers
+- graph contracts and query types from `world_state::graph`
+- claim and evidence contracts from `world_state::contracts`
+- `WorldModelQueries`
+- `WorldStateQuery`
 
-- graph reduction directly calls source-domain reducer functions in `workspace`, `context`, and `task`
-- public exports expose `TraversalStore` and `WorldStateStore` too broadly
-- belief contracts are not yet stable enough for a public crate boundary
-- the module and docs still mix world-state and world-model language
+Compatibility only surfaces remain available through root `meld::compat`:
 
-## Target Dependencies
+- `GraphRuntime`
+- `TraversalStore`
+- `WorldStateStore`
 
-| From | To | Reason |
-| --- | --- | --- |
-| `meld-world-model` | `meld-events` | replay source, object refs, relation edges, derived fact append |
+## Dependency Rule
 
-## Forbidden Direction
+`meld-world-model` depends on `meld-events` for replay source and object graph contracts.
 
-`meld-world-model` must not depend on `meld-execution`, root `meld`, CLI, provider, task internals, context internals, or workspace internals.
+`meld-world-model` does not depend on root `meld`, CLI, provider internals, context internals, workspace internals, or execution internals.
 
-Source domains publish event facts.
-The world model consumes those facts through `meld-events`.
+Source domains publish facts through events.
+The world model reduces those facts without importing source domain reducers.
 
-## Migration Path
+## Product Integration
 
-1. Rename docs to World Model while keeping `world_state` as the current code path.
-2. Move world-model contracts behind a narrow public API.
-3. Invert graph reducer source hooks so source domains do not get imported by graph reduction.
-4. Extract graph and legacy claim compatibility into `meld-world-model`.
-5. Add belief internals after `BeliefKey` and `BeliefView` are stable.
-6. Add a temporary `world_state` compatibility re-export from root `meld`.
+Root `meld` keeps:
 
+- branch and CLI adapters
+- compatibility paths for runtime and store seams
+- product specific presentation and routing
+
+The authority implementation no longer lives under `src/world_state`.

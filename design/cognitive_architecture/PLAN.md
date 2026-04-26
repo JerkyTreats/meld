@@ -60,7 +60,8 @@ Committed progress:
 | `f78708c` | Phase 3 execution boundary | execution ports added, provider request contracts moved under execution, and capability plus task runtime signatures removed direct `ContextApi` dependence |
 | `9bf4c5a` | Phase 4 workflow and assembly boundary | workflow runtime moved onto execution ports and root assembly now owns CLI runtime wiring plus profile adapters |
 | `1983b18` | Phase 5 public surface cleanup | legacy runtime and store seams moved under `compat`, root adapters use workflow authority exports, and primary event plus root surfaces no longer advertise temporary types |
-| `this commit` | Phase 6 workspace extraction slice | `meld-events` and `meld-world-model` now compile as workspace crates and root `meld` consumes those extracted authorities through crate dependencies |
+| `505901e` | Phase 6 workspace extraction slice | `meld-events` and `meld-world-model` now compile as workspace crates and root `meld` consumes those extracted authorities through crate dependencies |
+| `this commit` | Phase 6 authority cleanup slice | dead in tree events and world model copies removed and extracted crate docs rewritten to declarative truth for those completed authorities |
 
 Next active phase:
 - Phase 6 execution extraction and declarative doc cutover
@@ -516,7 +517,7 @@ Apply these rules in every phase.
 
 | Phase 6 current slice notes |
 |-----------------------------|
-| Workspace members now exist for `meld-events`, `meld-world-model`, and `meld-execution`. `meld-events` and `meld-world-model` host copied implementation modules and root `meld` now reexports those extracted authorities from dependency crates. `meld-execution` currently exists as the extracted boundary crate for provider execution request contracts only. Execution runtime implementation and declarative `CRATE.md` rewrites remain the open Phase 6 work. |
+| Workspace members now exist for `meld-events`, `meld-world-model`, and `meld-execution`. `meld-events` and `meld-world-model` host the live authority implementations, root `meld` reexports those extracted authorities from dependency crates, and the dead in tree copies under `src/events` and `src/world_state` are removed. `meld-execution` currently exists as the extracted boundary crate for provider execution request contracts only. Execution runtime implementation and final declarative execution crate docs remain the open Phase 6 work. |
 
 ## Cross Phase Gates
 

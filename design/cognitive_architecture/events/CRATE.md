@@ -1,80 +1,69 @@
 # Events Crate
 
-Date: 2026-04-22
-Status: active experiment
-Scope: `meld-events` crate boundary for the canonical event ledger
+Date: 2026-04-26
+Status: declarative
+Scope: `meld-events` crate for canonical event ledger ownership
 
-## Intent
+## Identity
 
-`meld-events` owns the durable temporal ledger.
-It replaces the separate spine concern as the routing point for append, replay, sequencing, and cross-domain references.
+`meld-events` is the source of truth for canonical event storage and replay.
+Root `meld` consumes this crate through a thin reexport shim in [src/events.rs](../../../src/events.rs).
 
-The crate exists to make event truth independent from world-model, execution, CLI, and telemetry code.
+The live implementation is in:
 
-## Target Crate
-
-`meld-events`
+- [crates/meld-events/src/lib.rs](../../../crates/meld-events/src/lib.rs)
+- [crates/meld-events/src/events.rs](../../../crates/meld-events/src/events.rs)
+- [crates/meld-events/src/events](../../../crates/meld-events/src/events)
 
 ## Owns
 
-- canonical event envelope
-- runtime-wide sequence
-- durable append
-- idempotent derived append through `record_id`
-- replay after sequence
-- event query primitives
-- event subscription shape
-- graph attachment primitives
+- canonical `EventEnvelope` and `EventRecord`
 - `DomainObjectRef`
 - `EventRelation`
-- stored envelope compatibility
+- runtime wide sequencing
+- durable append
+- idempotent append through `record_id`
+- replay after sequence
+- event bus ingestion
+- event runtime helpers
+- stored envelope compatibility aliases
 
 ## Does Not Own
 
-- event meaning for product domains
+- product domain meaning
 - graph materialization
-- belief revision
-- planner policy
-- task execution
+- world model reduction
+- execution policy
 - session lifecycle policy
 - telemetry summaries
+- CLI behavior
 
-## Current Code Areas
+## Public Surface
 
-- `src/events.rs`
-- `src/events/contracts.rs`
-- `src/events/ingress.rs`
-- `src/events/query.rs`
-- `src/events/runtime.rs`
-- `src/events/store.rs`
-- `src/events/subscription.rs`
-- `src/events/compat.rs`
+Primary exports are:
 
-## Extraction Blockers
+- `EventEnvelope`
+- `EventRecord`
+- `EventRuntime`
+- `EventBus`
+- `EventIngestor`
+- `SharedIngestor`
+- `DomainObjectRef`
+- `EventRelation`
+- `store::EventStore`
 
-- `EventStore` still depends on session storage and session lifecycle operations.
-- `telemetry` still re-exports event compatibility surfaces.
-- Some names still say spine even though the owning crate should be events.
+## Dependency Rule
 
-## Target Dependencies
+`meld-events` does not depend on `meld-world-model`, `meld-execution`, or root `meld`.
 
-| From | To | Reason |
-| --- | --- | --- |
-| `meld-events` | storage library crates | durable event trees |
-| `meld-events` | serde and time crates | event serialization and timestamps |
+Domain builders in other crates construct envelopes through this public contract and do not extend the event crate with domain specific meaning.
 
-## Forbidden Direction
+## Product Integration
 
-`meld-events` must not depend on `meld-world-model`, `meld-execution`, or root `meld`.
+Root `meld` keeps:
 
-Domain event builders may live in their owning domains.
-They should construct event envelopes through the public event contract.
+- telemetry session lifecycle compatibility
+- adapter level reexports
+- higher level domain event builders
 
-## Migration Path
-
-1. Move event reference contracts into `meld-events`.
-2. Remove session lifecycle methods from `EventStore`.
-3. Keep telemetry compatibility as an adapter outside `meld-events`.
-4. Move append, replay, ingress, runtime, and query code.
-5. Add contract tests proving world-model and execution code can use only the public event API.
-
+`telemetry` compatibility now sits above the event authority crate rather than inside it.
