@@ -214,5 +214,8 @@ fn build_generate_provider_binding(
         provider_model.map(str::to_string),
         provider_additional_json.unwrap_or_default(),
     )?;
-    ProviderExecutionBinding::new(provider_name, provider_runtime_overrides)
+    Ok(ProviderExecutionBinding::new(
+        provider_name,
+        provider_runtime_overrides,
+    )?)
 }

@@ -19,100 +19,158 @@ use async_trait::async_trait;
 use std::path::Path;
 use std::sync::Arc;
 
-pub trait ContextReadPort: Send + Sync {
-    fn get_agent(&self, agent_id: &str) -> Result<AgentIdentity, ApiError>;
-    fn get_head(&self, node_id: &NodeID, frame_type: &str) -> Result<Option<FrameID>, ApiError>;
-    fn find_frame_head(
-        &self,
-        node_id: &NodeID,
-        frame_type: &str,
-        include_tombstoned: bool,
-    ) -> Result<Option<FrameID>, ApiError>;
-    fn get_node(&self, node_id: NodeID, view: ContextView) -> Result<NodeContext, ApiError>;
-    fn context_by_type(
-        &self,
-        node_id: NodeID,
-        frame_type: &str,
-        max_frames: usize,
-    ) -> Result<NodeContext, ApiError>;
-    fn read_frame(&self, frame_id: &FrameID) -> Result<Option<Frame>, ApiError>;
-    fn read_node_record(&self, node_id: &NodeID) -> Result<Option<NodeRecord>, ApiError>;
-    fn read_node_record_by_path(
-        &self,
-        path: &Path,
-        include_tombstoned: bool,
-    ) -> Result<Option<NodeRecord>, ApiError>;
-    fn list_node_records(&self, include_tombstoned: bool) -> Result<Vec<NodeRecord>, ApiError>;
-    fn workspace_root(&self) -> Option<&Path>;
+pub trait ContextReadPort:
+    meld_execution::ContextReadPort<
+    Error = ApiError,
+    AgentIdentity = AgentIdentity,
+    NodeId = NodeID,
+    FrameId = FrameID,
+    ContextView = ContextView,
+    NodeContext = NodeContext,
+    Frame = Frame,
+    NodeRecord = NodeRecord,
+>
+{
 }
 
-pub trait ContextWritePort: Send + Sync {
-    fn put_frame(
-        &self,
-        node_id: NodeID,
-        frame: Frame,
-        agent_id: String,
-    ) -> Result<FrameID, ApiError>;
-    fn tombstone_head(
-        &self,
-        node_id: NodeID,
-        frame_type: &str,
-    ) -> Result<Option<FrameID>, ApiError>;
+impl<T> ContextReadPort for T where
+    T: meld_execution::ContextReadPort<
+        Error = ApiError,
+        AgentIdentity = AgentIdentity,
+        NodeId = NodeID,
+        FrameId = FrameID,
+        ContextView = ContextView,
+        NodeContext = NodeContext,
+        Frame = Frame,
+        NodeRecord = NodeRecord,
+    >
+{
 }
 
-pub trait PromptArtifactReadPort: Send + Sync {
-    fn read_prompt_artifact_bytes(&self, artifact_id: &str) -> Result<Vec<u8>, ApiError>;
-    fn write_prompt_artifact_utf8(
-        &self,
-        kind: PromptContextArtifactKind,
-        value: &str,
-    ) -> Result<PromptContextArtifactRef, ApiError>;
+pub trait ContextWritePort:
+    meld_execution::ContextWritePort<
+    Error = ApiError,
+    NodeId = NodeID,
+    FrameId = FrameID,
+    Frame = Frame,
+>
+{
 }
 
-pub trait NodeResolutionPort: Send + Sync {
-    fn resolve_workspace_node_id(
-        &self,
-        workspace_root: &Path,
-        path: Option<&Path>,
-        node: Option<&str>,
-        include_tombstoned: bool,
-    ) -> Result<NodeID, ApiError>;
+impl<T> ContextWritePort for T where
+    T: meld_execution::ContextWritePort<
+        Error = ApiError,
+        NodeId = NodeID,
+        FrameId = FrameID,
+        Frame = Frame,
+    >
+{
 }
 
-pub trait ProviderValidationPort: Send + Sync {
-    fn prepare_provider_for_request(
-        &self,
-        request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
-    ) -> Result<ProviderPreparation, ApiError>;
-
-    fn validate_provider_binding(&self, binding: &ProviderExecutionBinding)
-        -> Result<(), ApiError>;
+pub trait PromptArtifactReadPort:
+    meld_execution::PromptArtifactReadPort<
+    Error = ApiError,
+    ArtifactKind = PromptContextArtifactKind,
+    ArtifactRef = PromptContextArtifactRef,
+>
+{
 }
 
-#[async_trait]
-pub trait ProviderExecutionPort: Send + Sync {
-    async fn execute_completion(
-        &self,
-        request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
-        preparation: &ProviderPreparation,
-        messages: Vec<ChatMessage>,
-        event_context: Option<&QueueEventContext>,
-    ) -> Result<CompletionResponse, ApiError>;
+impl<T> PromptArtifactReadPort for T where
+    T: meld_execution::PromptArtifactReadPort<
+        Error = ApiError,
+        ArtifactKind = PromptContextArtifactKind,
+        ArtifactRef = PromptContextArtifactRef,
+    >
+{
 }
 
-pub trait EventPublicationPort: Send + Sync {
-    fn publish_execution_envelope(&self, envelope: EventEnvelope) -> Result<(), ApiError>;
+pub trait NodeResolutionPort:
+    meld_execution::NodeResolutionPort<Error = ApiError, NodeId = NodeID>
+{
 }
 
-pub trait WorldModelQueryPort: Send + Sync {
-    fn world_model_queries(&self) -> Option<Arc<WorldModelQueries>>;
+impl<T> NodeResolutionPort for T where
+    T: meld_execution::NodeResolutionPort<Error = ApiError, NodeId = NodeID>
+{
 }
 
-pub trait WorkflowProfileLoadPort: Send + Sync {
-    fn load_workflow_profile(
-        &self,
-        workflow_id: &str,
-    ) -> Result<RegisteredWorkflowProfile, ApiError>;
+pub trait ProviderValidationPort:
+    meld_execution::ProviderValidationPort<
+    Error = ApiError,
+    GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest,
+    ProviderPreparation = ProviderPreparation,
+>
+{
+}
+
+impl<T> ProviderValidationPort for T where
+    T: meld_execution::ProviderValidationPort<
+        Error = ApiError,
+        GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest,
+        ProviderPreparation = ProviderPreparation,
+    >
+{
+}
+
+pub trait ProviderExecutionPort:
+    meld_execution::ProviderExecutionPort<
+    Error = ApiError,
+    GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest,
+    ProviderPreparation = ProviderPreparation,
+    ChatMessage = ChatMessage,
+    QueueEventContext = QueueEventContext,
+    CompletionResponse = CompletionResponse,
+>
+{
+}
+
+impl<T> ProviderExecutionPort for T where
+    T: meld_execution::ProviderExecutionPort<
+        Error = ApiError,
+        GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest,
+        ProviderPreparation = ProviderPreparation,
+        ChatMessage = ChatMessage,
+        QueueEventContext = QueueEventContext,
+        CompletionResponse = CompletionResponse,
+    >
+{
+}
+
+pub trait EventPublicationPort:
+    meld_execution::EventPublicationPort<Error = ApiError, EventEnvelope = EventEnvelope>
+{
+}
+
+impl<T> EventPublicationPort for T where
+    T: meld_execution::EventPublicationPort<Error = ApiError, EventEnvelope = EventEnvelope>
+{
+}
+
+pub trait WorldModelQueryPort:
+    meld_execution::WorldModelQueryPort<WorldModelQueries = WorldModelQueries>
+{
+}
+
+impl<T> WorldModelQueryPort for T where
+    T: meld_execution::WorldModelQueryPort<WorldModelQueries = WorldModelQueries>
+{
+}
+
+pub trait WorkflowProfileLoadPort:
+    meld_execution::WorkflowProfileLoadPort<
+    Error = ApiError,
+    WorkflowProfile = RegisteredWorkflowProfile,
+>
+{
+}
+
+impl<T> WorkflowProfileLoadPort for T where
+    T: meld_execution::WorkflowProfileLoadPort<
+        Error = ApiError,
+        WorkflowProfile = RegisteredWorkflowProfile,
+    >
+{
 }
 
 pub trait ExecutionContext:
@@ -135,7 +193,16 @@ impl<T> ExecutionContext for T where
 {
 }
 
-impl ContextReadPort for ContextApi {
+impl meld_execution::ContextReadPort for ContextApi {
+    type AgentIdentity = AgentIdentity;
+    type ContextView = ContextView;
+    type Error = ApiError;
+    type Frame = Frame;
+    type FrameId = FrameID;
+    type NodeContext = NodeContext;
+    type NodeId = NodeID;
+    type NodeRecord = NodeRecord;
+
     fn get_agent(&self, agent_id: &str) -> Result<AgentIdentity, ApiError> {
         ContextApi::get_agent(self, agent_id)
     }
@@ -205,7 +272,12 @@ impl ContextReadPort for ContextApi {
     }
 }
 
-impl ContextWritePort for ContextApi {
+impl meld_execution::ContextWritePort for ContextApi {
+    type Error = ApiError;
+    type Frame = Frame;
+    type FrameId = FrameID;
+    type NodeId = NodeID;
+
     fn put_frame(
         &self,
         node_id: NodeID,
@@ -224,7 +296,11 @@ impl ContextWritePort for ContextApi {
     }
 }
 
-impl PromptArtifactReadPort for ContextApi {
+impl meld_execution::PromptArtifactReadPort for ContextApi {
+    type ArtifactKind = PromptContextArtifactKind;
+    type ArtifactRef = PromptContextArtifactRef;
+    type Error = ApiError;
+
     fn read_prompt_artifact_bytes(&self, artifact_id: &str) -> Result<Vec<u8>, ApiError> {
         self.prompt_context_storage()
             .read_by_artifact_id_verified(artifact_id)
@@ -239,7 +315,11 @@ impl PromptArtifactReadPort for ContextApi {
     }
 }
 
-impl PromptArtifactReadPort for PromptContextArtifactStorage {
+impl meld_execution::PromptArtifactReadPort for PromptContextArtifactStorage {
+    type ArtifactKind = PromptContextArtifactKind;
+    type ArtifactRef = PromptContextArtifactRef;
+    type Error = ApiError;
+
     fn read_prompt_artifact_bytes(&self, artifact_id: &str) -> Result<Vec<u8>, ApiError> {
         self.read_by_artifact_id_verified(artifact_id)
     }
@@ -253,7 +333,10 @@ impl PromptArtifactReadPort for PromptContextArtifactStorage {
     }
 }
 
-impl NodeResolutionPort for ContextApi {
+impl meld_execution::NodeResolutionPort for ContextApi {
+    type Error = ApiError;
+    type NodeId = NodeID;
+
     fn resolve_workspace_node_id(
         &self,
         workspace_root: &Path,
@@ -271,7 +354,11 @@ impl NodeResolutionPort for ContextApi {
     }
 }
 
-impl ProviderValidationPort for ContextApi {
+impl meld_execution::ProviderValidationPort for ContextApi {
+    type Error = ApiError;
+    type GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest;
+    type ProviderPreparation = ProviderPreparation;
+
     fn prepare_provider_for_request(
         &self,
         request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
@@ -291,7 +378,14 @@ impl ProviderValidationPort for ContextApi {
 }
 
 #[async_trait]
-impl ProviderExecutionPort for ContextApi {
+impl meld_execution::ProviderExecutionPort for ContextApi {
+    type ChatMessage = ChatMessage;
+    type CompletionResponse = CompletionResponse;
+    type Error = ApiError;
+    type GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest;
+    type ProviderPreparation = ProviderPreparation;
+    type QueueEventContext = QueueEventContext;
+
     async fn execute_completion(
         &self,
         request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
@@ -309,7 +403,10 @@ impl ProviderExecutionPort for ContextApi {
     }
 }
 
-impl WorkflowProfileLoadPort for ContextApi {
+impl meld_execution::WorkflowProfileLoadPort for ContextApi {
+    type Error = ApiError;
+    type WorkflowProfile = RegisteredWorkflowProfile;
+
     fn load_workflow_profile(
         &self,
         workflow_id: &str,
@@ -318,7 +415,9 @@ impl WorkflowProfileLoadPort for ContextApi {
     }
 }
 
-impl WorldModelQueryPort for ContextApi {
+impl meld_execution::WorldModelQueryPort for ContextApi {
+    type WorldModelQueries = WorldModelQueries;
+
     fn world_model_queries(&self) -> Option<Arc<WorldModelQueries>> {
         ContextApi::world_model_queries(self)
     }

@@ -39,4 +39,4 @@ Later phases may refine names, but new responsibilities should not appear withou
 
 - [PLAN](../PLAN.md)
 - [Core Migration](MIGRATION.md)
-- [Execution Migration](../execution/MIGRATION.md)
+- [Execution Contract Extraction](../completed/execution_contract_extraction.md)

@@ -1,15 +1,15 @@
 # Execution Crate
 
 Date: 2026-04-23
-Status: active experiment
-Scope: `meld-execution` crate boundary for planning, control, tasks, capability, workflow, and execution ports
+Status: declarative contract boundary
+Scope: `meld-execution` crate boundary for execution-owned contracts and runtime ports
 
 ## Intent
 
-`meld-execution` owns deliberate action.
-It reads planner-facing world-model views, chooses work, dispatches task and capability execution, requests provider work through a port, and publishes outcomes back into events.
+`meld-execution` owns the public contract boundary for deliberate action.
+It defines the provider execution request shape and the ports that let execution code read context, dispatch provider work, query the world model, load workflow profiles, and publish outcomes without depending on root `meld`.
 
-The crate groups execution concerns instead of splitting every current top-level module into a crate.
+Root `meld` remains the product shell and adapter host for current concrete runtime implementations.
 
 ## Target Crate
 
@@ -17,14 +17,16 @@ The crate groups execution concerns instead of splitting every current top-level
 
 ## Owns
 
-- planning contracts and policy
-- control state and repair
-- task compilation and runtime
-- capability contracts and invocation
-- workflow execution
-- provider execution port
-- outcome fact publication
-- missing evidence requests from planning
+- provider execution binding contracts
+- provider runtime override validation
+- context read and write port contracts
+- prompt artifact read and write port contracts
+- node resolution port contract
+- provider validation and execution port contracts
+- event publication port contract
+- world-model query port contract
+- workflow profile load port contract
+- combined execution context contract
 
 ## Does Not Own
 
@@ -34,42 +36,37 @@ The crate groups execution concerns instead of splitting every current top-level
 - workspace source truth
 - context storage truth
 - provider registry and concrete client ownership
+- concrete task, capability, workflow, and provider client implementations in the current root product shell
 - CLI formatting
 - app config loading
 
 ## Current Code Areas
 
-- `src/control.rs`
-- `src/control`
-- `src/task.rs`
-- `src/task`
-- `src/capability.rs`
-- `src/capability`
-- `src/workflow.rs`
-- `src/workflow`
-- `src/merkle_traversal.rs`
-- `src/merkle_traversal`
-- provider execution contracts that execution needs
+- `crates/meld-execution/src/execution/contracts.rs`
+- `crates/meld-execution/src/execution/ports.rs`
+- root adapter bindings in `src/execution/ports.rs`
+- root compatibility reexports in `src/execution/contracts.rs`
 
 ## Provider Posture
 
 Provider execution policy belongs with execution.
 Concrete provider registry, provider configuration, provider diagnostics, and provider CLI management remain in root `meld` for now.
 
-Execution should depend on a provider execution port, not on root `meld`.
+Execution code should depend on the provider execution port, not on root `meld`.
 
 ## Context And Provider Reliance
 
-`meld-execution` will rely on context and provider capabilities in the current product shape.
+`meld-execution` relies on context and provider capabilities in the current product shape.
 
 That reliance should be explicit.
-Execution owns the ports it needs:
+The extracted crate owns the ports it needs:
 
 - context read port
 - context write port for produced artifacts and frames
 - provider execution port
 - event publication port
 - world-model query port
+- workflow profile load port
 
 Root `meld` supplies adapters for those ports during runtime wiring.
 
@@ -86,19 +83,18 @@ That would make execution own memory, frame storage, prompt assembly, provider c
 
 If a later crate becomes useful, prefer a generation-focused crate over a provider-focused crate.
 
-## Extraction Blockers
+## Root Adapter Posture
 
-- many execution paths accept `ContextApi` directly
-- provider modules mix execution, configuration, diagnostics, concrete clients, and CLI tooling
-- workflow currently reaches into context, prompt context, metadata, provider, task, and capability internals
-- task and capability contracts are useful but still tied to context runtime
+Root `meld` binds the associated-type port contracts to the product's current concrete types.
+Those wrappers are compatibility adapters, not the long-term authority surface.
+
+The extraction intentionally does not move concrete task, capability, workflow, context, or provider client modules into `meld-execution` while those implementations still depend on root-owned storage, config, CLI, and provider registry concerns.
 
 ## Target Dependencies
 
 | From | To | Reason |
 | --- | --- | --- |
-| `meld-execution` | `meld-events` | outcome publication and event contracts |
-| `meld-execution` | `meld-world-model` public contracts | planner-facing belief and graph views |
+| `meld-execution` | none of the root `meld` crate | contract boundary must remain root independent |
 
 ## Forbidden Direction
 
@@ -106,10 +102,9 @@ If a later crate becomes useful, prefer a generation-focused crate over a provid
 
 Execution may request context, workspace, or provider capabilities only through explicit ports.
 
-## Migration Path
+## Public Contract Shape
 
-1. Define execution ports for context reads, artifact writes, provider execution, and event publication.
-2. Make planner inputs consume world-model views through public contracts.
-3. Move task and capability contracts first.
-4. Move workflow and control after `ContextApi` coupling is reduced.
-5. Keep concrete provider and context adapters in root `meld` until a stable generation crate boundary appears.
+The port traits are associated-type contracts so `meld-execution` can define the execution boundary without importing root data types.
+Root `meld` supplies the concrete bindings for `ContextApi`, prompt artifact storage, provider execution, workflow profile loading, and world-model query access.
+
+This keeps the dependency direction stable while leaving room to move concrete runtime modules later, once context, generation, and provider ownership are also crate-ready.

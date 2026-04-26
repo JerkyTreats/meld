@@ -311,6 +311,14 @@ impl From<meld_events::error::ApiError> for ApiError {
     }
 }
 
+impl From<meld_execution::error::ApiError> for ApiError {
+    fn from(err: meld_execution::error::ApiError) -> Self {
+        match err {
+            meld_execution::error::ApiError::ConfigError(message) => ApiError::ConfigError(message),
+        }
+    }
+}
+
 impl From<meld_events::error::StorageError> for ApiError {
     fn from(err: meld_events::error::StorageError) -> Self {
         ApiError::StorageError(StorageError::from(err))

@@ -1,17 +1,17 @@
-# Execution Crate Migration
+# Execution Contract Extraction
 
 Date: 2026-04-25
-Status: working plan
-Purpose: make [CRATE.md](CRATE.md) true through code changes in `src`
+Status: completed for the execution contract extraction slice
+Purpose: make [Execution Crate](../execution/CRATE.md) true through code changes in `src`
 
 ## Intent
 
-`meld-execution` should own deliberate action.
-That includes control, task, capability, workflow runtime, planning policy, and provider execution ports.
+`meld-execution` should own the root-independent contract boundary for deliberate action.
+That includes provider execution contracts and the ports that current execution runtime code uses to request context, prompt artifacts, provider work, event publication, world-model reads, and workflow profiles.
 
-This document names the code changes needed for that split.
+This document records the migration slice that extracted those contracts while keeping concrete runtime adapters in root `meld`.
 
-## Ground Truth In `src`
+## Starting Point In `src`
 
 Execution owned logic is spread across:
 
@@ -21,7 +21,7 @@ Execution owned logic is spread across:
 - [src/workflow.rs](../../../src/workflow.rs)
 - [src/merkle_traversal.rs](../../../src/merkle_traversal.rs)
 
-The main blockers are explicit in the current imports:
+The main blockers were explicit in the imports at the start of this slice:
 
 - capability invocation depends on `ContextApi` in [src/capability/invocation.rs](../../../src/capability/invocation.rs#L3) and [src/capability/invocation.rs](../../../src/capability/invocation.rs#L59)
 - task runtime depends on `ContextApi` and telemetry workflow event types in [src/task/runtime.rs](../../../src/task/runtime.rs#L3) and [src/task/runtime.rs](../../../src/task/runtime.rs#L13)
@@ -29,17 +29,16 @@ The main blockers are explicit in the current imports:
 - workflow commands resolve workspace node ids and validate provider existence in [src/workflow/commands.rs](../../../src/workflow/commands.rs#L113) through [src/workflow/commands.rs](../../../src/workflow/commands.rs#L176)
 - workflow executor reaches into metadata, prompt context, provider helpers, and world model query in [src/workflow/executor.rs](../../../src/workflow/executor.rs#L10) through [src/workflow/executor.rs](../../../src/workflow/executor.rs#L51)
 - task package preparation still resolves workspace nodes through root workspace code in [src/task/package/prepare.rs](../../../src/task/package/prepare.rs#L24) and [src/task/package/prepare.rs](../../../src/task/package/prepare.rs#L230)
-- `ProviderExecutionBinding` lives under provider in [src/provider/generation.rs](../../../src/provider/generation.rs#L68)
+- `ProviderExecutionBinding` lived under provider-facing paths before moving to `meld-execution`
 
 ## Target State
 
-When `CRATE.md` becomes declarative truth, `meld-execution` should:
+For this extraction slice, `meld-execution` should:
 
-- define execution contracts and policy
-- consume world model reads through public query contracts
-- request provider work through an execution owned port
-- request context and prompt artifact access through execution owned ports
-- publish outcomes through an event publication port
+- define provider execution contracts
+- define execution-owned ports without importing root `meld`
+- let root execution runtime code consume context, prompt artifacts, providers, workflow profiles, and world-model reads through those ports
+- publish outcomes through an event publication port contract
 - avoid direct imports of root `meld`, CLI, workspace internals, or telemetry internals
 
 ## Required Public Ports
@@ -66,10 +65,10 @@ Without it, `meld-execution` remains a view into root `meld`.
 
 Required work:
 
-- define execution owned traits for the required ports
-- add adapter implementations in root `meld`
-- change capability, task, and workflow entrypoints to depend on those traits
-- keep `ContextApi` only as a compatibility wrapper while call sites move
+- define execution owned traits for the required ports: completed in [crates/meld-execution/src/execution/ports.rs](../../../crates/meld-execution/src/execution/ports.rs)
+- add adapter implementations in root `meld`: completed in [src/execution/ports.rs](../../../src/execution/ports.rs)
+- change capability, task, and workflow entrypoints to depend on those traits: completed through root compatibility wrappers that bind to the extracted crate contracts
+- keep `ContextApi` only as a compatibility wrapper while call sites move: completed for execution runtime boundaries
 
 Primary files:
 
@@ -131,9 +130,8 @@ Primary files:
 
 Required work:
 
-- either move provider execution request contracts into `meld-execution`
-- or define a small shared contract surface that provider and execution both depend on
-- avoid forcing `meld-execution` to import provider registry and client management code
+- move provider execution request contracts into `meld-execution`: completed in [crates/meld-execution/src/execution/contracts.rs](../../../crates/meld-execution/src/execution/contracts.rs)
+- avoid forcing `meld-execution` to import provider registry and client management code: completed
 
 Primary files:
 
@@ -152,6 +150,8 @@ Deliverables:
 
 - no new capability or task runtime APIs take `ContextApi`
 - root adapters implement execution ports
+
+Status: completed for the extracted port authority boundary.
 
 ### Step 2
 
@@ -180,14 +180,24 @@ Deliverables:
 - execution owns the provider request shape it depends on
 - provider registry and CLI remain in root
 
+Status: completed.
+
 ## Exit Criteria
 
 `CRATE.md` is ready to become declarative once all of the following are true:
 
-- capability, task, and workflow runtime code no longer depend on `ContextApi`
+- capability, task, and workflow runtime code depend on execution port contracts instead of direct `ContextApi` signatures
 - execution imports world model through public query contracts only
-- execution does not import root CLI, workspace internals, or telemetry internals
+- `meld-execution` does not import root CLI, workspace internals, provider internals, or telemetry internals
 - root `meld` provides adapters for execution ports during runtime wiring
+
+All criteria are satisfied for the contract extraction slice.
+
+## Remaining Runtime Movement
+
+Concrete task, capability, workflow, and provider execution implementations remain in root `meld`.
+That is intentional until context, generation, and provider ownership are also crate-ready.
+Moving those modules before their dependent contracts are extracted would turn `meld-execution` into a backdoor owner of root storage, config, and provider registry concerns.
 
 ## Non Goals For This Migration
 

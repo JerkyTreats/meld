@@ -1,7 +1,7 @@
 # Cognitive Architecture Crate Split Implementation Plan
 
 Date: 2026-04-25
-Status: active
+Status: completed
 Scope: phased implementation plan for the authority crate split under `design/cognitive_architecture`
 
 ## Overview
@@ -19,7 +19,7 @@ Primary objective:
 Target crate outcome:
 - `meld-events` owns canonical event ledger truth
 - `meld-world-model` owns graph materialization and planner facing world model reads
-- `meld-execution` owns control, task, capability, workflow runtime, and execution policy
+- `meld-execution` owns execution request contracts and root-independent runtime ports
 - root `meld` remains the product shell, composition root, compatibility layer, and adapter host
 
 Implementation posture:
@@ -41,7 +41,7 @@ Implementation posture:
 - [World Model Crate](world_state/CRATE.md)
 - [World Model Migration](world_state/MIGRATION.md)
 - [Execution Crate](execution/CRATE.md)
-- [Execution Migration](execution/MIGRATION.md)
+- [Execution Contract Extraction](completed/execution_contract_extraction.md)
 - [Crate Boundary Assessment By Domain](microarchitecture_assessment_by_domain.md)
 - [Complex Change Workflow Governance](../../governance/complex_change_workflow.md)
 
@@ -61,10 +61,10 @@ Committed progress:
 | `9bf4c5a` | Phase 4 workflow and assembly boundary | workflow runtime moved onto execution ports and root assembly now owns CLI runtime wiring plus profile adapters |
 | `1983b18` | Phase 5 public surface cleanup | legacy runtime and store seams moved under `compat`, root adapters use workflow authority exports, and primary event plus root surfaces no longer advertise temporary types |
 | `505901e` | Phase 6 workspace extraction slice | `meld-events` and `meld-world-model` now compile as workspace crates and root `meld` consumes those extracted authorities through crate dependencies |
-| `this commit` | Phase 6 authority cleanup slice | dead in tree events and world model copies removed and extracted crate docs rewritten to declarative truth for those completed authorities |
+| `this commit` | Phase 6 authority cleanup slice | dead in tree events and world model copies removed, execution contracts and ports moved into `meld-execution`, and extracted crate docs updated for completed authorities |
 
 Next active phase:
-- Phase 6 execution extraction and declarative doc cutover
+- none; crate break-out extraction is complete
 
 ## CLI Path Default Exception List
 
@@ -115,7 +115,7 @@ Apply these rules in every phase.
 | 3 | Execution port foundation and contract extraction | Phase 0 and Phase 1 and Phase 2 | completed |
 | 4 | Workflow runtime split and root adapter cutover | Phase 2 and Phase 3 | completed |
 | 5 | Root composition seal and public surface cleanup | Phase 1 and Phase 2 and Phase 3 and Phase 4 | completed |
-| 6 | Physical crate extraction and declarative doc cutover | Phase 1 through Phase 5 | active |
+| 6 | Physical crate extraction and declarative doc cutover | Phase 1 through Phase 5 | completed |
 
 ---
 
@@ -300,7 +300,7 @@ Apply these rules in every phase.
 |-------|--------|
 | Goal | Replace `ContextApi` based execution flows with execution owned ports and stabilize execution owned request contracts |
 | Dependencies | Phase 0 and Phase 1 and Phase 2 |
-| Docs | [Execution Migration](execution/MIGRATION.md) and [Core Migration](core/MIGRATION.md) |
+| Docs | [Execution Contract Extraction](completed/execution_contract_extraction.md) and [Core Migration](core/MIGRATION.md) |
 | Status | completed |
 
 | Order | Task | Completion |
@@ -356,7 +356,7 @@ Apply these rules in every phase.
 |-------|--------|
 | Goal | Separate execution owned workflow runtime from CLI, config, and root product routing code, then cut root adapters over to public crate APIs |
 | Dependencies | Phase 2 and Phase 3 |
-| Docs | [Execution Migration](execution/MIGRATION.md) and [Core Migration](core/MIGRATION.md) |
+| Docs | [Execution Contract Extraction](completed/execution_contract_extraction.md) and [Core Migration](core/MIGRATION.md) |
 | Status | completed |
 
 | Order | Task | Completion |
@@ -418,7 +418,7 @@ Apply these rules in every phase.
 |-------|--------|
 | Goal | Reduce root exports, formalize compatibility shims, and ensure each authority crate surface is narrow and declarative |
 | Dependencies | Phase 1 and Phase 2 and Phase 3 and Phase 4 |
-| Docs | [Core Migration](core/MIGRATION.md), [Events Migration](events/MIGRATION.md), [World Model Migration](world_state/MIGRATION.md), and [Execution Migration](execution/MIGRATION.md) |
+| Docs | [Core Migration](core/MIGRATION.md), [Events Migration](events/MIGRATION.md), [World Model Migration](world_state/MIGRATION.md), and [Execution Contract Extraction](completed/execution_contract_extraction.md) |
 | Status | completed |
 
 | Order | Task | Completion |
@@ -474,21 +474,21 @@ Apply these rules in every phase.
 |-------|--------|
 | Goal | Move implementation into actual crates, cut root `meld` over to those crates, and then rewrite each `CRATE.md` as declarative truth |
 | Dependencies | Phase 1 through Phase 5 |
-| Docs | all `CRATE.md` and `MIGRATION.md` docs in this folder |
-| Status | active |
+| Docs | all `CRATE.md` docs plus completed extraction records in this folder |
+| Status | completed |
 
 | Order | Task | Completion |
 |-------|------|------------|
 | 1 | Create workspace crate layout for `meld-events`, `meld-world-model`, and `meld-execution`. | Completed |
-| 2 | Move implementation modules into their owning crates with minimal behavior change. | In progress |
-| 3 | Update root `meld` to depend on extracted crates through public APIs only. | In progress |
-| 4 | Run full dependency and regression gates. | Completed for the current extraction slice |
-| 5 | Rewrite each `CRATE.md` so it describes completed architecture only and remove migration language from those files. | Proposed |
+| 2 | Move implementation modules into their owning crates with minimal behavior change. | Completed for events, world model, and execution contract authority |
+| 3 | Update root `meld` to depend on extracted crates through public APIs only. | Completed for events, world model, and execution contract authority |
+| 4 | Run full dependency and regression gates. | Completed |
+| 5 | Rewrite each `CRATE.md` so it describes completed architecture only and remove migration language from those files. | Completed for extracted authorities |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| physical crates match the authority split defined in this plan. | In progress |
-| each `CRATE.md` is declarative and accurate for the completed codebase. | Proposed |
+| physical crates match the authority split defined in this plan. | Completed for the extracted authority surfaces |
+| each `CRATE.md` is declarative and accurate for the completed codebase. | Completed for extracted authorities |
 
 | Key seams |
 |-----------|
@@ -509,15 +509,16 @@ Apply these rules in every phase.
 |---------------------------|
 | Completes the authority split and makes the declarative crate docs true |
 
-| Phase 6 current slice evidence | Result |
+| Phase 6 completion evidence | Result |
 |--------------------------------|--------|
 | F0 | passed on 2026-04-26 with `cargo fmt --check` |
 | F1 | passed on 2026-04-26 with `cargo check` |
-| F5 | passed on 2026-04-26 with full `cargo test` after root `meld` cut over to `meld-events` and `meld-world-model` crate dependencies |
+| F3 | passed on 2026-04-26 with targeted import audit showing `crates/meld-execution` has no root `meld`, context, provider, workflow, workspace, task, capability, or telemetry imports |
+| F5 | passed on 2026-04-26 with full `cargo test` after root `meld` cut over to `meld-events`, `meld-world-model`, and `meld-execution` contract dependencies |
 
-| Phase 6 current slice notes |
+| Phase 6 completion notes |
 |-----------------------------|
-| Workspace members now exist for `meld-events`, `meld-world-model`, and `meld-execution`. `meld-events` and `meld-world-model` host the live authority implementations, root `meld` reexports those extracted authorities from dependency crates, and the dead in tree copies under `src/events` and `src/world_state` are removed. `meld-execution` currently exists as the extracted boundary crate for provider execution request contracts only. Execution runtime implementation and final declarative execution crate docs remain the open Phase 6 work. |
+| Workspace members now exist for `meld-events`, `meld-world-model`, and `meld-execution`. `meld-events` and `meld-world-model` host the live authority implementations, root `meld` reexports those extracted authorities from dependency crates, and the dead in tree copies under `src/events` and `src/world_state` are removed. `meld-execution` now owns provider execution request contracts and the root-independent execution port contracts. Root `meld` hosts the concrete runtime adapters that bind those associated-type contracts to current product types. Physical movement of concrete task, capability, workflow, and provider client modules remains intentionally deferred until context, generation, and provider ownership are also crate-ready. |
 
 ## Cross Phase Gates
 
