@@ -7,7 +7,7 @@ use crate::capability::{
     ScopeContract, SuppliedValueRef,
 };
 use crate::error::ApiError;
-use crate::execution::ExecutionContext;
+use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
 use crate::merkle_traversal::expansion::{
     TraversalExpansionNode, TraversalExpansionRelation, TraversalPrerequisiteExpansionContent,
     TraversalPrerequisiteExpansionTemplate,
@@ -164,7 +164,7 @@ impl MerkleTraversalCapability {
     }
 
     fn collect_nodes_and_relations(
-        api: &dyn ExecutionContext,
+        api: &dyn ExecutionRuntimeContext,
         ordered: &[Vec<[u8; 32]>],
     ) -> Result<
         (
@@ -312,10 +312,10 @@ impl CapabilityInvoker for MerkleTraversalCapability {
 
     async fn invoke(
         &self,
-        api: &dyn ExecutionContext,
+        api: &dyn ExecutionRuntimeContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
-        _event_context: Option<&crate::context::queue::QueueEventContext>,
+        _event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 

@@ -7,7 +7,7 @@ use crate::capability::{
     ScopeContract, SuppliedValueRef,
 };
 use crate::error::ApiError;
-use crate::execution::ExecutionContext;
+use crate::execution::ExecutionRuntimeContext;
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
 use crate::task::{
     TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID, TASK_EXPANSION_SCHEMA_VERSION,
@@ -139,10 +139,10 @@ impl CapabilityInvoker for WorkspaceResolveNodeIdCapability {
 
     async fn invoke(
         &self,
-        api: &dyn ExecutionContext,
+        api: &dyn ExecutionRuntimeContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
-        _event_context: Option<&crate::context::queue::QueueEventContext>,
+        _event_context: Option<&crate::execution::ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 
@@ -343,10 +343,10 @@ impl CapabilityInvoker for WorkspaceFilterFrameHeadPublishCapability {
 
     async fn invoke(
         &self,
-        api: &dyn ExecutionContext,
+        api: &dyn ExecutionRuntimeContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
-        _event_context: Option<&crate::context::queue::QueueEventContext>,
+        _event_context: Option<&crate::execution::ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 
@@ -554,10 +554,10 @@ impl CapabilityInvoker for WorkspaceWriteFrameHeadCapability {
 
     async fn invoke(
         &self,
-        api: &dyn ExecutionContext,
+        api: &dyn ExecutionRuntimeContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
-        _event_context: Option<&crate::context::queue::QueueEventContext>,
+        _event_context: Option<&crate::execution::ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 

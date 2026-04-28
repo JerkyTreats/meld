@@ -12,10 +12,9 @@ use crate::context::generation::metadata_construction::{
 use crate::context::generation::provider_execution::{
     execute_completion, prepare_provider_for_request,
 };
-use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::events::DomainObjectRef;
-use crate::execution::{ExecutionContext, WorldModelQueryPort};
+use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext, WorldModelQueryPort};
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
 use crate::provider::ProviderExecutionBinding;
@@ -73,11 +72,11 @@ pub struct WorkflowExecutionSummary {
 }
 
 pub fn execute_registered_workflow(
-    api: &(impl ExecutionContext + WorldModelQueryPort),
+    api: &(impl ExecutionRuntimeContext + WorldModelQueryPort),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
-    event_context: Option<&QueueEventContext>,
+    event_context: Option<&ExecutionEventContext>,
 ) -> Result<WorkflowExecutionSummary, ApiError> {
     let rt = tokio::runtime::Runtime::new()
         .map_err(|err| ApiError::ProviderError(format!("Failed to create runtime: {}", err)))?;
@@ -95,11 +94,11 @@ pub fn execute_registered_workflow(
 }
 
 pub(crate) async fn execute_registered_workflow_async(
-    api: &(impl ExecutionContext + WorldModelQueryPort),
+    api: &(impl ExecutionRuntimeContext + WorldModelQueryPort),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
-    event_context: Option<&QueueEventContext>,
+    event_context: Option<&ExecutionEventContext>,
 ) -> Result<WorkflowExecutionSummary, ApiError> {
     let profile = &registered_profile.profile;
     let uses_task_package_path = workflow_uses_task_package_path(registered_profile)?;
@@ -137,6 +136,7 @@ pub(crate) async fn execute_registered_workflow_async(
                         api.get_head(&request.node_id, &request.frame_type)?
                     };
                     emit_workflow_target_event(
+                        api,
                         event_context,
                         "workflow_target_completed",
                         WorkflowTargetEventData {
@@ -175,6 +175,7 @@ pub(crate) async fn execute_registered_workflow_async(
                         final_frame_id: Some(hex::encode(head)),
                     })?;
                     emit_workflow_target_event(
+                        api,
                         event_context,
                         "workflow_target_completed",
                         WorkflowTargetEventData {
@@ -223,6 +224,7 @@ pub(crate) async fn execute_registered_workflow_async(
             final_frame_id: Some(hex::encode(head)),
         })?;
         emit_workflow_target_event(
+            api,
             event_context,
             "workflow_target_completed",
             WorkflowTargetEventData {
@@ -252,6 +254,7 @@ pub(crate) async fn execute_registered_workflow_async(
         let previous_head = api.tombstone_head(request.node_id, &request.frame_type)?;
         if let Some(previous_frame_id) = previous_head {
             emit_workflow_force_reset_event(
+                api,
                 event_context,
                 "workflow_target_force_reset",
                 WorkflowForceResetEventData {
@@ -282,6 +285,7 @@ pub(crate) async fn execute_registered_workflow_async(
     })?;
 
     emit_workflow_target_event(
+        api,
         event_context,
         "workflow_target_started",
         WorkflowTargetEventData {
@@ -397,6 +401,7 @@ pub(crate) async fn execute_registered_workflow_async(
             );
 
             emit_workflow_turn_event(
+                api,
                 event_context,
                 "execution.workflow.turn_started",
                 WorkflowTurnEventData {
@@ -458,11 +463,11 @@ pub(crate) async fn execute_registered_workflow_async(
                         .clone(),
                     lineage_failure_policy: "deterministic_orphan_keep".to_string(),
                 };
-                ctx.progress.emit_event_best_effort(
-                    &ctx.session_id,
+                api.emit_progress_event(
+                    ctx,
                     "prompt_context_lineage_prepared",
                     json!(lineage_event),
-                );
+                )?;
             }
 
             if request.force {
@@ -471,6 +476,7 @@ pub(crate) async fn execute_registered_workflow_async(
 
             let previous_metadata = load_previous_metadata_snapshot(api, &orchestration_request)?;
             emit_metadata_validation_event(
+                api,
                 event_context,
                 "frame_metadata_validation_started",
                 FrameMetadataValidationEventData {
@@ -505,6 +511,7 @@ pub(crate) async fn execute_registered_workflow_async(
             ) {
                 Ok(metadata) => {
                     emit_metadata_validation_event(
+                        api,
                         event_context,
                         "frame_metadata_validation_succeeded",
                         FrameMetadataValidationEventData {
@@ -545,6 +552,7 @@ pub(crate) async fn execute_registered_workflow_async(
                         updated_at_ms: now_millis(),
                     })?;
                     emit_metadata_validation_event(
+                        api,
                         event_context,
                         "frame_metadata_validation_failed",
                         FrameMetadataValidationEventData {
@@ -571,6 +579,7 @@ pub(crate) async fn execute_registered_workflow_async(
                         },
                     );
                     emit_workflow_turn_event(
+                        api,
                         event_context,
                         "execution.workflow.turn_failed",
                         WorkflowTurnEventData {
@@ -640,6 +649,7 @@ pub(crate) async fn execute_registered_workflow_async(
                         updated_at_ms: now_millis(),
                     })?;
                     emit_workflow_turn_event(
+                        api,
                         event_context,
                         "execution.workflow.turn_failed",
                         WorkflowTurnEventData {
@@ -708,6 +718,7 @@ pub(crate) async fn execute_registered_workflow_async(
                     updated_at_ms: now_millis(),
                 })?;
                 emit_workflow_turn_event(
+                    api,
                     event_context,
                     "execution.workflow.turn_failed",
                     WorkflowTurnEventData {
@@ -780,6 +791,7 @@ pub(crate) async fn execute_registered_workflow_async(
             })?;
 
             emit_workflow_turn_event(
+                api,
                 event_context,
                 "execution.workflow.turn_completed",
                 WorkflowTurnEventData {
@@ -851,6 +863,7 @@ pub(crate) async fn execute_registered_workflow_async(
     })?;
 
     emit_workflow_target_event(
+        api,
         event_context,
         "workflow_target_completed",
         WorkflowTargetEventData {
@@ -878,7 +891,7 @@ pub(crate) async fn execute_registered_workflow_async(
 }
 
 fn resolve_completed_task_path_final_frame(
-    api: &(impl ExecutionContext + WorldModelQueryPort),
+    api: &(impl ExecutionRuntimeContext + WorldModelQueryPort),
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
     existing: &WorkflowThreadRecord,
@@ -918,11 +931,11 @@ fn resolve_completed_task_path_final_frame(
 
 #[allow(clippy::too_many_arguments)]
 async fn execute_registered_workflow_via_task_async(
-    api: &(impl ExecutionContext + WorldModelQueryPort),
+    api: &(impl ExecutionRuntimeContext + WorldModelQueryPort),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
-    event_context: Option<&QueueEventContext>,
+    event_context: Option<&ExecutionEventContext>,
     state_store: &WorkflowStateStore,
     thread_id: &str,
     target_path: &str,
@@ -1021,6 +1034,7 @@ async fn execute_registered_workflow_via_task_async(
     })?;
 
     emit_workflow_target_event(
+        api,
         event_context,
         "workflow_target_completed",
         WorkflowTargetEventData {
@@ -1151,18 +1165,19 @@ fn register_task_path_capabilities(
 }
 
 fn emit_workflow_target_event(
-    event_context: Option<&QueueEventContext>,
+    api: &(impl ExecutionRuntimeContext + ?Sized),
+    event_context: Option<&ExecutionEventContext>,
     event_type: &str,
     payload: WorkflowTargetEventData,
 ) {
     if let Some(ctx) = event_context {
-        ctx.progress
-            .emit_event_best_effort(&ctx.session_id, event_type, json!(payload));
+        let _ = api.emit_progress_event(ctx, event_type, json!(payload));
     }
 }
 
 fn emit_workflow_turn_event(
-    event_context: Option<&QueueEventContext>,
+    api: &(impl ExecutionRuntimeContext + ?Sized),
+    event_context: Option<&ExecutionEventContext>,
     event_type: &str,
     payload: WorkflowTurnEventData,
 ) {
@@ -1195,29 +1210,29 @@ fn emit_workflow_turn_event(
             }
             _ => return,
         };
-        ctx.progress.emit_envelope_best_effort(envelope);
+        let _ = api.publish_execution_envelope(ctx, envelope);
     }
 }
 
 fn emit_workflow_force_reset_event(
-    event_context: Option<&QueueEventContext>,
+    api: &(impl ExecutionRuntimeContext + ?Sized),
+    event_context: Option<&ExecutionEventContext>,
     event_type: &str,
     payload: WorkflowForceResetEventData,
 ) {
     if let Some(ctx) = event_context {
-        ctx.progress
-            .emit_event_best_effort(&ctx.session_id, event_type, json!(payload));
+        let _ = api.emit_progress_event(ctx, event_type, json!(payload));
     }
 }
 
 fn emit_metadata_validation_event(
-    event_context: Option<&QueueEventContext>,
+    api: &(impl ExecutionRuntimeContext + ?Sized),
+    event_context: Option<&ExecutionEventContext>,
     event_type: &str,
     payload: FrameMetadataValidationEventData,
 ) {
     if let Some(ctx) = event_context {
-        ctx.progress
-            .emit_event_best_effort(&ctx.session_id, event_type, json!(payload));
+        let _ = api.emit_progress_event(ctx, event_type, json!(payload));
     }
 }
 

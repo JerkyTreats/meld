@@ -3,9 +3,8 @@
 use crate::capability::{
     CapabilityCatalog, CapabilityExecutionContext, CapabilityExecutorRegistry,
 };
-use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
-use crate::execution::ExecutionContext;
+use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
 use crate::task::events::build_execution_task_envelope;
 use crate::task::executor::TaskExecutor;
 use crate::task::ArtifactRecord;
@@ -42,11 +41,11 @@ pub struct WorkflowTaskTelemetry {
 
 /// Executes one task to completion using the registered capability invokers.
 pub async fn execute_task_to_completion(
-    api: &dyn ExecutionContext,
+    api: &dyn ExecutionRuntimeContext,
     executor: &mut TaskExecutor,
     catalog: &CapabilityCatalog,
     registry: &CapabilityExecutorRegistry,
-    event_context: Option<&QueueEventContext>,
+    event_context: Option<&ExecutionEventContext>,
     workflow_telemetry: Option<&WorkflowTaskTelemetry>,
 ) -> Result<TaskRunSummary, ApiError> {
     let mut emitted_task_event_count = 0usize;
@@ -62,7 +61,7 @@ pub async fn execute_task_to_completion(
         }
 
         let ready = executor.release_ready_invocations(CapabilityExecutionContext::default())?;
-        emit_new_task_events(event_context, executor, &mut emitted_task_event_count);
+        emit_new_task_events(api, event_context, executor, &mut emitted_task_event_count);
         if ready.is_empty() {
             return Err(ApiError::GenerationFailed(format!(
                 "Task '{}' is blocked with no ready capability instances",
@@ -104,6 +103,7 @@ pub async fn execute_task_to_completion(
             ) {
                 if stage == "prepare" {
                     emit_workflow_turn_event(
+                        api,
                         ctx,
                         "execution.workflow.turn_started",
                         workflow_turn_event_data(telemetry, &payload, &turn_id, None, None),
@@ -156,13 +156,19 @@ pub async fn execute_task_to_completion(
                     ) {
                         if stage == "finalize" {
                             emit_workflow_turn_event(
+                                api,
                                 ctx,
                                 "execution.workflow.turn_completed",
                                 workflow_turn_event_data(telemetry, &payload, &turn_id, None, None),
                             );
                         }
                     }
-                    emit_new_task_events(event_context, executor, &mut emitted_task_event_count);
+                    emit_new_task_events(
+                        api,
+                        event_context,
+                        executor,
+                        &mut emitted_task_event_count,
+                    );
                 }
                 Err(err) => {
                     if let (Some(ctx), Some(telemetry), Some((turn_id, _stage))) = (
@@ -171,6 +177,7 @@ pub async fn execute_task_to_completion(
                         parse_turn_stage(&capability_instance_id),
                     ) {
                         emit_workflow_turn_event(
+                            api,
                             ctx,
                             "execution.workflow.turn_failed",
                             workflow_turn_event_data(
@@ -192,7 +199,12 @@ pub async fn execute_task_to_completion(
                         ),
                         err.to_string(),
                     )?;
-                    emit_new_task_events(event_context, executor, &mut emitted_task_event_count);
+                    emit_new_task_events(
+                        api,
+                        event_context,
+                        executor,
+                        &mut emitted_task_event_count,
+                    );
                     return Err(err);
                 }
             }
@@ -201,7 +213,8 @@ pub async fn execute_task_to_completion(
 }
 
 fn emit_new_task_events(
-    event_context: Option<&QueueEventContext>,
+    api: &dyn ExecutionRuntimeContext,
+    event_context: Option<&ExecutionEventContext>,
     executor: &TaskExecutor,
     emitted_task_event_count: &mut usize,
 ) {
@@ -212,7 +225,7 @@ fn emit_new_task_events(
 
     for event in executor.events().iter().skip(*emitted_task_event_count) {
         if let Some(envelope) = build_execution_task_envelope(&ctx.session_id, event) {
-            ctx.progress.emit_envelope_best_effort(envelope);
+            let _ = api.publish_execution_envelope(ctx, envelope);
         }
     }
 
@@ -220,7 +233,8 @@ fn emit_new_task_events(
 }
 
 fn emit_workflow_turn_event(
-    event_context: &QueueEventContext,
+    api: &dyn ExecutionRuntimeContext,
+    event_context: &ExecutionEventContext,
     event_type: &str,
     payload: ExecutionWorkflowTurnEventData,
 ) {
@@ -237,7 +251,7 @@ fn emit_workflow_turn_event(
         _ => return,
     };
 
-    event_context.progress.emit_envelope_best_effort(envelope);
+    let _ = api.publish_execution_envelope(event_context, envelope);
 }
 
 fn workflow_turn_event_data(

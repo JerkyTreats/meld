@@ -13,6 +13,7 @@ use crate::context::generation::provider_execution::{
 };
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
+use crate::execution::ExecutionEventContext;
 use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
 use crate::telemetry::{FrameMetadataValidationEventData, PromptContextLineageEventData};
 use crate::types::FrameID;
@@ -50,6 +51,7 @@ pub async fn execute_generation_request(
     let prompt_output = build_prompt_messages(api, request, &node_record, &prompt_contract)?;
 
     let provider_preparation = prepare_provider_for_request(api, request)?;
+    let execution_event_context = event_context.map(ExecutionEventContext::from);
 
     let prepared_lineage = prepare_generated_lineage(
         api,
@@ -201,7 +203,7 @@ pub async fn execute_generation_request(
         request,
         &provider_preparation,
         prompt_output.messages,
-        event_context,
+        execution_event_context.as_ref(),
     )
     .await?;
 

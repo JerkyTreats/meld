@@ -29,6 +29,7 @@ use crate::views::ViewPolicy;
 use crate::workflow::registry::{RegisteredWorkflowProfile, WorkflowRegistry};
 use crate::world_state::WorldModelQueries;
 use hex;
+use serde_json::Value;
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::path::PathBuf;
@@ -918,6 +919,24 @@ impl ContextApi {
         }
         self.emit_context_envelope(envelope);
         Ok(())
+    }
+
+    pub(crate) fn emit_progress_event_best_effort(
+        &self,
+        session_id: &str,
+        event_type: &str,
+        payload: Value,
+    ) {
+        let Some(context) = self.current_progress_context() else {
+            return;
+        };
+        context
+            .runtime
+            .emit_event_best_effort(session_id, event_type, payload);
+    }
+
+    pub(crate) fn emit_envelope_best_effort(&self, envelope: EventEnvelope) {
+        self.emit_context_envelope(envelope);
     }
 
     /// Get access to agent registry (for tooling)

@@ -8,7 +8,7 @@ use crate::capability::{
 };
 use crate::context::generation::contracts::GenerationOrchestrationRequest;
 use crate::error::ApiError;
-use crate::execution::ExecutionContext;
+use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
 use crate::provider::executor::{execute_completion, prepare_provider_for_request};
 use crate::provider::ChatMessage;
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
@@ -136,10 +136,10 @@ impl CapabilityInvoker for ProviderExecuteChatCapability {
 
     async fn invoke(
         &self,
-        api: &dyn ExecutionContext,
+        api: &dyn ExecutionRuntimeContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
-        event_context: Option<&crate::context::queue::QueueEventContext>,
+        event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 

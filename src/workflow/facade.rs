@@ -5,7 +5,7 @@ use crate::context::generation::{
 };
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
-use crate::execution::{ContextReadPort, WorkflowProfileLoadPort};
+use crate::execution::{ContextReadPort, ExecutionEventContext, WorkflowProfileLoadPort};
 use crate::provider::ProviderExecutionBinding;
 use crate::store::NodeType;
 use crate::workflow::executor::{
@@ -16,7 +16,7 @@ use std::path::Path;
 
 pub fn execute_workflow_target(
     api: &(impl WorkflowProfileLoadPort
-          + crate::execution::ExecutionContext
+          + crate::execution::ExecutionRuntimeContext
           + crate::execution::WorldModelQueryPort),
     workspace_root: &Path,
     request: &TargetExecutionRequest,
@@ -27,19 +27,20 @@ pub fn execute_workflow_target(
             "Workflow target execution requires a workflow backed execution program".to_string(),
         )
     })?;
+    let execution_event_context = event_context.map(ExecutionEventContext::from);
     let registered_profile = api.load_workflow_profile(workflow_id)?;
     execute_registered_workflow_target(
         api,
         workspace_root,
         &registered_profile,
         request,
-        event_context,
+        execution_event_context.as_ref(),
     )
 }
 
 pub async fn execute_workflow_target_async(
     api: &(impl WorkflowProfileLoadPort
-          + crate::execution::ExecutionContext
+          + crate::execution::ExecutionRuntimeContext
           + crate::execution::WorldModelQueryPort),
     workspace_root: &Path,
     request: &TargetExecutionRequest,
@@ -50,23 +51,24 @@ pub async fn execute_workflow_target_async(
             "Workflow target execution requires a workflow backed execution program".to_string(),
         )
     })?;
+    let execution_event_context = event_context.map(ExecutionEventContext::from);
     let registered_profile = api.load_workflow_profile(workflow_id)?;
     execute_registered_workflow_target_async(
         api,
         workspace_root,
         &registered_profile,
         request,
-        event_context,
+        execution_event_context.as_ref(),
     )
     .await
 }
 
 pub fn execute_registered_workflow_target(
-    api: &(impl crate::execution::ExecutionContext + crate::execution::WorldModelQueryPort),
+    api: &(impl crate::execution::ExecutionRuntimeContext + crate::execution::WorldModelQueryPort),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &TargetExecutionRequest,
-    event_context: Option<&QueueEventContext>,
+    event_context: Option<&ExecutionEventContext>,
 ) -> Result<TargetExecutionResult, ApiError> {
     if request.program.kind != TargetExecutionProgramKind::Workflow {
         return Err(ApiError::ConfigError(
@@ -109,11 +111,11 @@ pub fn execute_registered_workflow_target(
 }
 
 pub async fn execute_registered_workflow_target_async(
-    api: &(impl crate::execution::ExecutionContext + crate::execution::WorldModelQueryPort),
+    api: &(impl crate::execution::ExecutionRuntimeContext + crate::execution::WorldModelQueryPort),
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &TargetExecutionRequest,
-    event_context: Option<&QueueEventContext>,
+    event_context: Option<&ExecutionEventContext>,
 ) -> Result<TargetExecutionResult, ApiError> {
     if request.program.kind != TargetExecutionProgramKind::Workflow {
         return Err(ApiError::ConfigError(

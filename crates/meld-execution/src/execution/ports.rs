@@ -1,8 +1,14 @@
 use async_trait::async_trait;
+use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 
 use super::contracts::ProviderExecutionBinding;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionEventContext {
+    pub session_id: String,
+}
 
 pub trait ContextReadPort: Send + Sync {
     type Error;
@@ -121,7 +127,6 @@ pub trait ProviderExecutionPort: Send + Sync {
     type GenerationRequest: Sync;
     type ProviderPreparation: Sync;
     type ChatMessage: Send;
-    type QueueEventContext: Sync;
     type CompletionResponse;
 
     async fn execute_completion(
@@ -129,7 +134,7 @@ pub trait ProviderExecutionPort: Send + Sync {
         request: &Self::GenerationRequest,
         preparation: &Self::ProviderPreparation,
         messages: Vec<Self::ChatMessage>,
-        event_context: Option<&Self::QueueEventContext>,
+        event_context: Option<&ExecutionEventContext>,
     ) -> Result<Self::CompletionResponse, Self::Error>;
 }
 
@@ -137,7 +142,22 @@ pub trait EventPublicationPort: Send + Sync {
     type Error;
     type EventEnvelope;
 
-    fn publish_execution_envelope(&self, envelope: Self::EventEnvelope) -> Result<(), Self::Error>;
+    fn publish_execution_envelope(
+        &self,
+        event_context: &ExecutionEventContext,
+        envelope: Self::EventEnvelope,
+    ) -> Result<(), Self::Error>;
+}
+
+pub trait ExecutionProgressPort: Send + Sync {
+    type Error;
+
+    fn emit_progress_event(
+        &self,
+        event_context: &ExecutionEventContext,
+        event_type: &str,
+        payload: Value,
+    ) -> Result<(), Self::Error>;
 }
 
 pub trait WorldModelQueryPort: Send + Sync {
@@ -173,5 +193,15 @@ impl<T> ExecutionContext for T where
         + NodeResolutionPort
         + ProviderValidationPort
         + ProviderExecutionPort
+{
+}
+
+pub trait ExecutionRuntimeContext:
+    ExecutionContext + EventPublicationPort + ExecutionProgressPort
+{
+}
+
+impl<T> ExecutionRuntimeContext for T where
+    T: ExecutionContext + EventPublicationPort + ExecutionProgressPort
 {
 }

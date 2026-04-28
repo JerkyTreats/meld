@@ -6,6 +6,7 @@ use crate::api::ContextApi;
 use crate::context::head::backfill_legacy_heads_into_spine;
 use crate::context::queue::{FrameGenerationQueue, QueueEventContext};
 use crate::error::ApiError;
+use crate::execution::ExecutionEventContext;
 use crate::heads::HeadIndex;
 use crate::ignore;
 use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
@@ -382,6 +383,9 @@ impl WatchDaemon {
             }),
             _ => None,
         };
+        let workflow_execution_event_context = workflow_event_context
+            .as_ref()
+            .map(ExecutionEventContext::from);
         let batch_size = self.config.frame_batch_size;
         let mut created_count = 0;
         let mut skipped_count = 0;
@@ -477,7 +481,7 @@ impl WatchDaemon {
                             &self.config.workspace_root,
                             &registered_profile,
                             &request,
-                            workflow_event_context.as_ref(),
+                            workflow_execution_event_context.as_ref(),
                         ) {
                             Ok(summary) => {
                                 if summary.turns_completed == 0 {

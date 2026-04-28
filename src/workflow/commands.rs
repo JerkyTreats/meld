@@ -5,6 +5,7 @@ use crate::config::WorkflowConfig;
 use crate::context::generation::TargetExecutionProgram;
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
+use crate::execution::ExecutionEventContext;
 use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 use crate::types::NodeID;
 use crate::workflow::facade::{build_target_execution_request, execute_registered_workflow_target};
@@ -172,7 +173,7 @@ impl WorkflowCommandService {
             workspace_root,
             registered_profile,
             &execution_request,
-            event_context,
+            event_context.map(ExecutionEventContext::from).as_ref(),
         )?;
 
         Ok(WorkflowExecuteResult {

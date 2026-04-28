@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use meld_execution::{
-    ContextReadPort, ContextWritePort, ExecutionContext, NodeResolutionPort,
+    ContextReadPort, ContextWritePort, ExecutionContext, ExecutionEventContext, NodeResolutionPort,
     PromptArtifactReadPort, ProviderExecutionBinding, ProviderExecutionPort,
     ProviderRuntimeOverrides, ProviderValidationPort,
 };
@@ -175,14 +175,13 @@ impl ProviderExecutionPort for FakeExecutionContext {
     type Error = String;
     type GenerationRequest = String;
     type ProviderPreparation = String;
-    type QueueEventContext = String;
 
     async fn execute_completion(
         &self,
         request: &Self::GenerationRequest,
         preparation: &Self::ProviderPreparation,
         messages: Vec<Self::ChatMessage>,
-        _event_context: Option<&Self::QueueEventContext>,
+        _event_context: Option<&ExecutionEventContext>,
     ) -> Result<Self::CompletionResponse, Self::Error> {
         Ok(format!("{preparation}:{request}:{}", messages.len()))
     }

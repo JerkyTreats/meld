@@ -1,7 +1,6 @@
 use crate::context::generation::contracts::GenerationOrchestrationRequest;
-use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
-use crate::execution::{ProviderExecutionPort, ProviderValidationPort};
+use crate::execution::{ExecutionEventContext, ProviderExecutionPort, ProviderValidationPort};
 use crate::provider::{
     ChatMessage, CompletionResponse, ModelProviderClient, ProviderConfig, ProviderFactory,
 };
@@ -67,7 +66,7 @@ pub async fn execute_completion<P>(
     request: &GenerationOrchestrationRequest,
     preparation: &ProviderPreparation,
     messages: Vec<ChatMessage>,
-    event_context: Option<&QueueEventContext>,
+    event_context: Option<&ExecutionEventContext>,
 ) -> Result<CompletionResponse, ApiError>
 where
     P: ProviderExecutionPort + ?Sized,
@@ -77,10 +76,11 @@ where
 }
 
 pub async fn execute_completion_from_api(
+    api: &crate::api::ContextApi,
     request: &GenerationOrchestrationRequest,
     preparation: &ProviderPreparation,
     messages: Vec<ChatMessage>,
-    event_context: Option<&QueueEventContext>,
+    event_context: Option<&ExecutionEventContext>,
 ) -> Result<CompletionResponse, ApiError> {
     let completion_options = preparation.provider_config.default_options.clone();
 
@@ -96,6 +96,7 @@ pub async fn execute_completion_from_api(
         "Provider request sent"
     );
     emit_provider_event(
+        api,
         event_context,
         "provider_request_sent",
         ProviderLifecycleEventData {
@@ -117,6 +118,7 @@ pub async fn execute_completion_from_api(
         Ok(r) => Ok(r),
         Err(e) => {
             emit_provider_event(
+                api,
                 event_context,
                 "provider_request_failed",
                 ProviderLifecycleEventData {
@@ -167,6 +169,7 @@ pub async fn execute_completion_from_api(
         "Provider response received"
     );
     emit_provider_event(
+        api,
         event_context,
         "provider_response_received",
         ProviderLifecycleEventData {
@@ -184,12 +187,18 @@ pub async fn execute_completion_from_api(
 }
 
 fn emit_provider_event(
-    event_context: Option<&QueueEventContext>,
+    api: &crate::api::ContextApi,
+    event_context: Option<&ExecutionEventContext>,
     event_type: &str,
     payload: ProviderLifecycleEventData,
 ) {
     if let Some(ctx) = event_context {
-        ctx.progress
-            .emit_event_best_effort(&ctx.session_id, event_type, json!(payload));
+        let _ =
+            <crate::api::ContextApi as meld_execution::ExecutionProgressPort>::emit_progress_event(
+                api,
+                ctx,
+                event_type,
+                json!(payload),
+            );
     }
 }

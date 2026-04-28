@@ -14,7 +14,7 @@ use crate::context::generation::metadata_construction::{
 };
 use crate::context::generation::prompt_collection::build_prompt_messages;
 use crate::error::ApiError;
-use crate::execution::ExecutionContext;
+use crate::execution::ExecutionRuntimeContext;
 use crate::metadata::frame_write_contract::{
     build_generated_metadata, GeneratedFrameMetadataInput,
 };
@@ -199,7 +199,7 @@ impl ContextGeneratePrepareCapability {
     }
 
     fn supporting_input_content(
-        api: &dyn ExecutionContext,
+        api: &dyn ExecutionRuntimeContext,
         payload: &CapabilityInvocationPayload,
         artifact_type_id: &str,
         value: &Value,
@@ -224,7 +224,7 @@ impl ContextGeneratePrepareCapability {
     }
 
     fn supporting_inputs(
-        api: &dyn ExecutionContext,
+        api: &dyn ExecutionRuntimeContext,
         payload: &CapabilityInvocationPayload,
     ) -> Result<Vec<SupportingInput>, ApiError> {
         payload
@@ -430,10 +430,10 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
 
     async fn invoke(
         &self,
-        api: &dyn ExecutionContext,
+        api: &dyn ExecutionRuntimeContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
-        event_context: Option<&crate::context::queue::QueueEventContext>,
+        event_context: Option<&crate::execution::ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 
@@ -517,8 +517,8 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
             "task_capability",
         )?;
         if let Some(ctx) = event_context {
-            ctx.progress.emit_event_best_effort(
-                &ctx.session_id,
+            api.emit_progress_event(
+                ctx,
                 "prompt_context_lineage_prepared",
                 json!(PromptContextLineageEventData {
                     node_id: hex::encode(node_id),
@@ -546,12 +546,12 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
                         .clone(),
                     lineage_failure_policy: "deterministic_orphan_keep".to_string(),
                 }),
-            );
+            )?;
         }
         let previous_metadata = load_previous_metadata_snapshot(api, &request)?;
         if let Some(ctx) = event_context {
-            ctx.progress.emit_event_best_effort(
-                &ctx.session_id,
+            api.emit_progress_event(
+                ctx,
                 "frame_metadata_validation_started",
                 json!(FrameMetadataValidationEventData {
                     node_id: hex::encode(node_id),
@@ -575,7 +575,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
                     level_index: None,
                     error: None,
                 }),
-            );
+            )?;
         }
         build_and_validate_generated_metadata(
             api,
@@ -584,8 +584,8 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
             &build_generated_metadata,
         )?;
         if let Some(ctx) = event_context {
-            ctx.progress.emit_event_best_effort(
-                &ctx.session_id,
+            api.emit_progress_event(
+                ctx,
                 "frame_metadata_validation_succeeded",
                 json!(FrameMetadataValidationEventData {
                     node_id: hex::encode(node_id),
@@ -609,7 +609,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
                     level_index: None,
                     error: None,
                 }),
-            );
+            )?;
         }
 
         let gate_inputs = supporting_inputs
@@ -975,10 +975,10 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
 
     async fn invoke(
         &self,
-        api: &dyn ExecutionContext,
+        api: &dyn ExecutionRuntimeContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
-        _event_context: Option<&crate::context::queue::QueueEventContext>,
+        _event_context: Option<&crate::execution::ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 

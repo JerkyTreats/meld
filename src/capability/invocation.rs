@@ -3,9 +3,8 @@
 use crate::capability::catalog::CapabilityCatalog;
 use crate::capability::contracts::{BoundCapabilityInstance, CapabilityTypeContract};
 use crate::capability::runtime::{CapabilityInvocationPayload, CapabilityRuntimeInit};
-use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
-use crate::execution::ExecutionContext;
+use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
 use crate::task::ArtifactRecord;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
@@ -58,10 +57,10 @@ pub trait CapabilityInvoker: Send + Sync {
     /// Invokes the domain runtime for one structured payload.
     async fn invoke(
         &self,
-        api: &dyn ExecutionContext,
+        api: &dyn ExecutionRuntimeContext,
         runtime_init: &CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
-        event_context: Option<&QueueEventContext>,
+        event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError>;
 }
 

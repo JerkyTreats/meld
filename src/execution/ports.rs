@@ -16,8 +16,11 @@ use crate::types::{FrameID, NodeID};
 use crate::workflow::registry::RegisteredWorkflowProfile;
 use crate::world_state::WorldModelQueries;
 use async_trait::async_trait;
+use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
+
+pub use meld_execution::ExecutionEventContext;
 
 pub trait ContextReadPort:
     meld_execution::ContextReadPort<
@@ -119,7 +122,6 @@ pub trait ProviderExecutionPort:
     GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest,
     ProviderPreparation = ProviderPreparation,
     ChatMessage = ChatMessage,
-    QueueEventContext = QueueEventContext,
     CompletionResponse = CompletionResponse,
 >
 {
@@ -131,7 +133,6 @@ impl<T> ProviderExecutionPort for T where
         GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest,
         ProviderPreparation = ProviderPreparation,
         ChatMessage = ChatMessage,
-        QueueEventContext = QueueEventContext,
         CompletionResponse = CompletionResponse,
     >
 {
@@ -146,6 +147,10 @@ impl<T> EventPublicationPort for T where
     T: meld_execution::EventPublicationPort<Error = ApiError, EventEnvelope = EventEnvelope>
 {
 }
+
+pub trait ExecutionProgressPort: meld_execution::ExecutionProgressPort<Error = ApiError> {}
+
+impl<T> ExecutionProgressPort for T where T: meld_execution::ExecutionProgressPort<Error = ApiError> {}
 
 pub trait WorldModelQueryPort:
     meld_execution::WorldModelQueryPort<WorldModelQueries = WorldModelQueries>
@@ -191,6 +196,24 @@ impl<T> ExecutionContext for T where
         + ProviderValidationPort
         + ProviderExecutionPort
 {
+}
+
+pub trait ExecutionRuntimeContext:
+    ExecutionContext + EventPublicationPort + ExecutionProgressPort
+{
+}
+
+impl<T> ExecutionRuntimeContext for T where
+    T: ExecutionContext + EventPublicationPort + ExecutionProgressPort
+{
+}
+
+impl From<&QueueEventContext> for meld_execution::ExecutionEventContext {
+    fn from(value: &QueueEventContext) -> Self {
+        Self {
+            session_id: value.session_id.clone(),
+        }
+    }
 }
 
 impl meld_execution::ContextReadPort for ContextApi {
@@ -384,22 +407,50 @@ impl meld_execution::ProviderExecutionPort for ContextApi {
     type Error = ApiError;
     type GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest;
     type ProviderPreparation = ProviderPreparation;
-    type QueueEventContext = QueueEventContext;
 
     async fn execute_completion(
         &self,
         request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
         preparation: &ProviderPreparation,
         messages: Vec<ChatMessage>,
-        event_context: Option<&QueueEventContext>,
+        event_context: Option<&meld_execution::ExecutionEventContext>,
     ) -> Result<CompletionResponse, ApiError> {
         crate::provider::executor::execute_completion_from_api(
+            self,
             request,
             preparation,
             messages,
             event_context,
         )
         .await
+    }
+}
+
+impl meld_execution::EventPublicationPort for ContextApi {
+    type Error = ApiError;
+    type EventEnvelope = EventEnvelope;
+
+    fn publish_execution_envelope(
+        &self,
+        _event_context: &meld_execution::ExecutionEventContext,
+        envelope: EventEnvelope,
+    ) -> Result<(), ApiError> {
+        self.emit_envelope_best_effort(envelope);
+        Ok(())
+    }
+}
+
+impl meld_execution::ExecutionProgressPort for ContextApi {
+    type Error = ApiError;
+
+    fn emit_progress_event(
+        &self,
+        event_context: &meld_execution::ExecutionEventContext,
+        event_type: &str,
+        payload: Value,
+    ) -> Result<(), ApiError> {
+        self.emit_progress_event_best_effort(&event_context.session_id, event_type, payload);
+        Ok(())
     }
 }
 
