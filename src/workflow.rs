@@ -27,5 +27,10 @@ pub use facade::{
     execute_registered_workflow_target_async, execute_workflow_target,
     execute_workflow_target_async,
 };
-pub use registry::{RegisteredWorkflowProfile, WorkflowRegistry};
+pub use meld_execution::workflow::profile::{
+    PromptRefKind, WorkflowArtifactPolicy, WorkflowFailurePolicy, WorkflowGate, WorkflowProfile,
+    WorkflowThreadPolicy, WorkflowTurn,
+};
+pub use meld_execution::workflow::registry::RegisteredWorkflowProfile;
+pub use registry::WorkflowRegistry;
 pub use state_store::{WorkflowStateStore, WorkflowThreadStatus, WorkflowTurnStatus};

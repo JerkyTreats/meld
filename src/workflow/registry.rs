@@ -3,15 +3,10 @@
 use crate::config::WorkflowConfig;
 use crate::error::ApiError;
 use crate::workflow::profile::{PromptRefKind, WorkflowProfile};
+pub use meld_execution::workflow::registry::RegisteredWorkflowProfile;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-
-#[derive(Debug, Clone)]
-pub struct RegisteredWorkflowProfile {
-    pub profile: WorkflowProfile,
-    pub source_path: Option<PathBuf>,
-}
 
 #[derive(Debug, Clone, Default)]
 pub struct WorkflowRegistry {
