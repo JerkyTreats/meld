@@ -1,14 +1,20 @@
 use crate::agent::AgentIdentity;
 use crate::api::ContextApi;
 use crate::context::frame::Frame;
+use crate::context::generation::metadata_construction::PreviousMetadataSnapshot;
 use crate::context::query::view::{ContextView, NodeContext};
 use crate::context::queue::QueueEventContext;
 use crate::context::CurrentFrameHeadRead;
 use crate::error::ApiError;
 use crate::events::EventEnvelope;
 use crate::execution::contracts::ProviderExecutionBinding;
+use crate::metadata::frame_types::FrameMetadata;
+use crate::metadata::frame_write_contract::GeneratedFrameMetadataInput;
 use crate::prompt_context::PromptContextArtifactStorage;
-use crate::prompt_context::{PromptContextArtifactKind, PromptContextArtifactRef};
+use crate::prompt_context::{
+    PreparedPromptContextLineage, PromptContextArtifactKind, PromptContextArtifactRef,
+    PromptContextLineageInput,
+};
 use crate::provider::executor::ProviderPreparation;
 use crate::provider::{ChatMessage, CompletionResponse};
 use crate::store::NodeRecord;
@@ -138,6 +144,48 @@ impl<T> ProviderExecutionPort for T where
 {
 }
 
+pub trait PromptLineagePort:
+    meld_execution::PromptLineagePort<
+    Error = ApiError,
+    PromptLineageInput = PromptContextLineageInput,
+    PreparedPromptLineage = PreparedPromptContextLineage,
+>
+{
+}
+
+impl<T> PromptLineagePort for T where
+    T: meld_execution::PromptLineagePort<
+        Error = ApiError,
+        PromptLineageInput = PromptContextLineageInput,
+        PreparedPromptLineage = PreparedPromptContextLineage,
+    >
+{
+}
+
+pub trait GeneratedMetadataPort:
+    meld_execution::GeneratedMetadataPort<
+    Error = ApiError,
+    GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest,
+    GeneratedMetadataInput = GeneratedFrameMetadataInput,
+    PreviousMetadataSnapshot = PreviousMetadataSnapshot,
+    FrameMetadata = FrameMetadata,
+    GeneratedMetadataBuilder = crate::context::generation::contracts::GeneratedMetadataBuilder,
+>
+{
+}
+
+impl<T> GeneratedMetadataPort for T where
+    T: meld_execution::GeneratedMetadataPort<
+        Error = ApiError,
+        GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest,
+        GeneratedMetadataInput = GeneratedFrameMetadataInput,
+        PreviousMetadataSnapshot = PreviousMetadataSnapshot,
+        FrameMetadata = FrameMetadata,
+        GeneratedMetadataBuilder = crate::context::generation::contracts::GeneratedMetadataBuilder,
+    >
+{
+}
+
 pub trait EventPublicationPort:
     meld_execution::EventPublicationPort<Error = ApiError, EventEnvelope = EventEnvelope>
 {
@@ -185,6 +233,8 @@ pub trait ExecutionContext:
     + NodeResolutionPort
     + ProviderValidationPort
     + ProviderExecutionPort
+    + PromptLineagePort
+    + GeneratedMetadataPort
 {
 }
 
@@ -195,6 +245,8 @@ impl<T> ExecutionContext for T where
         + NodeResolutionPort
         + ProviderValidationPort
         + ProviderExecutionPort
+        + PromptLineagePort
+        + GeneratedMetadataPort
 {
 }
 
@@ -423,6 +475,62 @@ impl meld_execution::ProviderExecutionPort for ContextApi {
             event_context,
         )
         .await
+    }
+}
+
+impl meld_execution::PromptLineagePort for ContextApi {
+    type Error = ApiError;
+    type PromptLineageInput = PromptContextLineageInput;
+    type PreparedPromptLineage = PreparedPromptContextLineage;
+
+    fn prepare_prompt_lineage(
+        &self,
+        input: &PromptContextLineageInput,
+        agent_id: &str,
+        provider: &str,
+        model: &str,
+        provider_type: &str,
+    ) -> Result<PreparedPromptContextLineage, ApiError> {
+        crate::prompt_context::prepare_generated_lineage(
+            self,
+            input,
+            agent_id,
+            provider,
+            model,
+            provider_type,
+        )
+    }
+}
+
+impl meld_execution::GeneratedMetadataPort for ContextApi {
+    type Error = ApiError;
+    type GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest;
+    type GeneratedMetadataInput = GeneratedFrameMetadataInput;
+    type PreviousMetadataSnapshot = PreviousMetadataSnapshot;
+    type FrameMetadata = FrameMetadata;
+    type GeneratedMetadataBuilder = crate::context::generation::contracts::GeneratedMetadataBuilder;
+
+    fn load_previous_metadata_snapshot(
+        &self,
+        request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
+    ) -> Result<PreviousMetadataSnapshot, ApiError> {
+        crate::context::generation::metadata_construction::load_previous_metadata_snapshot(
+            self, request,
+        )
+    }
+
+    fn build_and_validate_generated_metadata(
+        &self,
+        request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
+        input: &GeneratedFrameMetadataInput,
+        metadata_builder: &crate::context::generation::contracts::GeneratedMetadataBuilder,
+    ) -> Result<FrameMetadata, ApiError> {
+        crate::context::generation::metadata_construction::build_and_validate_generated_metadata(
+            self,
+            request,
+            input,
+            metadata_builder,
+        )
     }
 }
 

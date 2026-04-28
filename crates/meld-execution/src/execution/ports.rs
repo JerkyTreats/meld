@@ -138,6 +138,42 @@ pub trait ProviderExecutionPort: Send + Sync {
     ) -> Result<Self::CompletionResponse, Self::Error>;
 }
 
+pub trait PromptLineagePort: Send + Sync {
+    type Error;
+    type PromptLineageInput;
+    type PreparedPromptLineage;
+
+    fn prepare_prompt_lineage(
+        &self,
+        input: &Self::PromptLineageInput,
+        agent_id: &str,
+        provider: &str,
+        model: &str,
+        provider_type: &str,
+    ) -> Result<Self::PreparedPromptLineage, Self::Error>;
+}
+
+pub trait GeneratedMetadataPort: Send + Sync {
+    type Error;
+    type GenerationRequest;
+    type GeneratedMetadataInput;
+    type PreviousMetadataSnapshot;
+    type FrameMetadata;
+    type GeneratedMetadataBuilder: ?Sized;
+
+    fn load_previous_metadata_snapshot(
+        &self,
+        request: &Self::GenerationRequest,
+    ) -> Result<Self::PreviousMetadataSnapshot, Self::Error>;
+
+    fn build_and_validate_generated_metadata(
+        &self,
+        request: &Self::GenerationRequest,
+        input: &Self::GeneratedMetadataInput,
+        metadata_builder: &Self::GeneratedMetadataBuilder,
+    ) -> Result<Self::FrameMetadata, Self::Error>;
+}
+
 pub trait EventPublicationPort: Send + Sync {
     type Error;
     type EventEnvelope;
@@ -183,6 +219,8 @@ pub trait ExecutionContext:
     + NodeResolutionPort
     + ProviderValidationPort
     + ProviderExecutionPort
+    + PromptLineagePort
+    + GeneratedMetadataPort
 {
 }
 
@@ -193,6 +231,8 @@ impl<T> ExecutionContext for T where
         + NodeResolutionPort
         + ProviderValidationPort
         + ProviderExecutionPort
+        + PromptLineagePort
+        + GeneratedMetadataPort
 {
 }
 

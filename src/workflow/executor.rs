@@ -6,9 +6,6 @@ use crate::context::frame::{Basis, Frame};
 use crate::context::generation::contracts::{
     GeneratedMetadataBuilder, GenerationOrchestrationRequest,
 };
-use crate::context::generation::metadata_construction::{
-    build_and_validate_generated_metadata, load_previous_metadata_snapshot,
-};
 use crate::context::generation::provider_execution::{
     execute_completion, prepare_provider_for_request,
 };
@@ -16,7 +13,7 @@ use crate::error::ApiError;
 use crate::events::DomainObjectRef;
 use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext, WorldModelQueryPort};
 use crate::metadata::frame_write_contract::build_generated_metadata;
-use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
+use crate::prompt_context::PromptContextLineageInput;
 use crate::provider::ProviderExecutionBinding;
 use crate::task::templates::{
     prepare_registered_workflow_task_run, workflow_task_run_id_for_target,
@@ -380,8 +377,7 @@ pub(crate) async fn execute_registered_workflow_async(
             };
             let provider_preparation = prepare_provider_for_request(api, &orchestration_request)?;
 
-            let prepared_lineage = prepare_generated_lineage(
-                api,
+            let prepared_lineage = api.prepare_prompt_lineage(
                 &PromptContextLineageInput {
                     system_prompt: prompt_contract.system_prompt.clone(),
                     user_prompt_template: prompt_template.clone(),
@@ -474,7 +470,7 @@ pub(crate) async fn execute_registered_workflow_async(
                 api.tombstone_head(request.node_id, &turn_frame_type)?;
             }
 
-            let previous_metadata = load_previous_metadata_snapshot(api, &orchestration_request)?;
+            let previous_metadata = api.load_previous_metadata_snapshot(&orchestration_request)?;
             emit_metadata_validation_event(
                 api,
                 event_context,
@@ -503,8 +499,7 @@ pub(crate) async fn execute_registered_workflow_async(
                 },
             );
 
-            let generated_metadata = match build_and_validate_generated_metadata(
-                api,
+            let generated_metadata = match api.build_and_validate_generated_metadata(
                 &orchestration_request,
                 &prepared_lineage.metadata_input,
                 metadata_builder,

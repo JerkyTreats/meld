@@ -9,16 +9,13 @@ use crate::capability::{
 };
 use crate::context::frame::{Basis, Frame};
 use crate::context::generation::contracts::{GenerationOrchestrationRequest, PromptAssemblyOutput};
-use crate::context::generation::metadata_construction::{
-    build_and_validate_generated_metadata, load_previous_metadata_snapshot,
-};
 use crate::context::generation::prompt_collection::build_prompt_messages;
 use crate::error::ApiError;
 use crate::execution::ExecutionRuntimeContext;
 use crate::metadata::frame_write_contract::{
     build_generated_metadata, GeneratedFrameMetadataInput,
 };
-use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
+use crate::prompt_context::PromptContextLineageInput;
 use crate::provider::{ChatMessage, MessageRole, ProviderExecutionBinding};
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
 use crate::telemetry::{FrameMetadataValidationEventData, PromptContextLineageEventData};
@@ -499,8 +496,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
         let supporting_inputs = Self::supporting_inputs(api, payload)?;
         Self::append_supporting_context(&mut prompt_output, &supporting_inputs);
 
-        let prepared_lineage = prepare_generated_lineage(
-            api,
+        let prepared_lineage = api.prepare_prompt_lineage(
             &PromptContextLineageInput {
                 system_prompt: prompt_output.system_prompt.clone(),
                 user_prompt_template: prompt_output.user_prompt_template.clone(),
@@ -548,7 +544,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
                 }),
             )?;
         }
-        let previous_metadata = load_previous_metadata_snapshot(api, &request)?;
+        let previous_metadata = api.load_previous_metadata_snapshot(&request)?;
         if let Some(ctx) = event_context {
             api.emit_progress_event(
                 ctx,
@@ -577,8 +573,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
                 }),
             )?;
         }
-        build_and_validate_generated_metadata(
-            api,
+        api.build_and_validate_generated_metadata(
             &request,
             &prepared_lineage.metadata_input,
             &build_generated_metadata,
@@ -1032,8 +1027,7 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
             if summary.request.force {
                 api.tombstone_head(summary.request.node_id, &summary.frame_type)?;
             }
-            let metadata = build_and_validate_generated_metadata(
-                api,
+            let metadata = api.build_and_validate_generated_metadata(
                 &summary.request,
                 &summary.metadata_input,
                 &build_generated_metadata,

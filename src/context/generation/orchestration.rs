@@ -4,9 +4,6 @@ use crate::context::frame::{Basis, Frame};
 use crate::context::generation::contracts::{
     GeneratedMetadataBuilder, GenerationOrchestrationRequest,
 };
-use crate::context::generation::metadata_construction::{
-    build_and_validate_generated_metadata, load_previous_metadata_snapshot,
-};
 use crate::context::generation::prompt_collection::build_prompt_messages;
 use crate::context::generation::provider_execution::{
     execute_completion, prepare_provider_for_request,
@@ -14,9 +11,10 @@ use crate::context::generation::provider_execution::{
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::execution::ExecutionEventContext;
-use crate::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
+use crate::prompt_context::PromptContextLineageInput;
 use crate::telemetry::{FrameMetadataValidationEventData, PromptContextLineageEventData};
 use crate::types::FrameID;
+use meld_execution::{GeneratedMetadataPort, PromptLineagePort};
 use serde_json::json;
 use tracing::{debug, info};
 
@@ -53,8 +51,7 @@ pub async fn execute_generation_request(
     let provider_preparation = prepare_provider_for_request(api, request)?;
     let execution_event_context = event_context.map(ExecutionEventContext::from);
 
-    let prepared_lineage = prepare_generated_lineage(
-        api,
+    let prepared_lineage = api.prepare_prompt_lineage(
         &PromptContextLineageInput {
             system_prompt: prompt_output.system_prompt.clone(),
             user_prompt_template: prompt_output.user_prompt_template.clone(),
@@ -104,7 +101,7 @@ pub async fn execute_generation_request(
         api.tombstone_head(request.node_id, &request.frame_type)?;
     }
 
-    let previous_metadata = load_previous_metadata_snapshot(api, request)?;
+    let previous_metadata = api.load_previous_metadata_snapshot(request)?;
     emit_metadata_validation_event(
         event_context,
         "frame_metadata_validation_started",
@@ -132,8 +129,7 @@ pub async fn execute_generation_request(
         },
     );
 
-    let generated_metadata = match build_and_validate_generated_metadata(
-        api,
+    let generated_metadata = match api.build_and_validate_generated_metadata(
         request,
         &prepared_lineage.metadata_input,
         metadata_builder,
