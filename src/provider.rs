@@ -28,6 +28,10 @@ pub mod summary;
 pub mod tooling;
 
 pub use crate::execution::{ProviderExecutionBinding, ProviderRuntimeOverrides};
+pub use meld_execution::generation::{
+    ChatMessage, CompletionOptions, CompletionResponse, GeneratedFrameMetadataInput, MessageRole,
+    PromptAssemblyOutput, TokenUsage,
+};
 pub use profile::{ProviderConfig, ProviderType, ValidationResult};
 
 /// Model provider configuration
@@ -51,69 +55,6 @@ pub enum ModelProvider {
         endpoint: String, // Full endpoint URL (e.g., http://localhost:8080/v1)
         api_key: Option<String>,
     },
-}
-
-/// Chat message role
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MessageRole {
-    System,
-    User,
-    Assistant,
-}
-
-/// Chat message
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub role: MessageRole,
-    pub content: String,
-}
-
-/// Completion options
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompletionOptions {
-    pub temperature: Option<f32>,       // 0.0-2.0, default: 1.0
-    pub max_tokens: Option<u32>,        // Maximum tokens to generate
-    pub top_p: Option<f32>,             // Nucleus sampling
-    pub frequency_penalty: Option<f32>, // -2.0 to 2.0
-    pub presence_penalty: Option<f32>,  // -2.0 to 2.0
-    pub stop: Option<Vec<String>>,      // Stop sequences
-    /// Arbitrary provider-specific JSON fields merged into request payloads.
-    ///
-    /// Example:
-    /// `additional_json.lmserver_max_tool_turns = 24`
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub additional_json: BTreeMap<String, Value>,
-}
-
-impl Default for CompletionOptions {
-    fn default() -> Self {
-        Self {
-            temperature: Some(1.0),
-            max_tokens: None,
-            top_p: None,
-            frequency_penalty: None,
-            presence_penalty: None,
-            stop: None,
-            additional_json: BTreeMap::new(),
-        }
-    }
-}
-
-/// Token usage information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenUsage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
-}
-
-/// Completion response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompletionResponse {
-    pub content: String,
-    pub model: String,
-    pub usage: TokenUsage,
-    pub finish_reason: Option<String>,
 }
 
 /// Streaming completion type

@@ -8,6 +8,7 @@ use crate::metadata::frame_key_registry::{
 };
 use crate::metadata::frame_types::FrameMetadata;
 use crate::metadata::prompt_link_contract::build_prompt_link_id;
+pub use meld_execution::generation::GeneratedFrameMetadataInput;
 
 pub const METADATA_PER_KEY_MAX_BYTES: usize = 16 * 1024;
 pub const METADATA_TOTAL_MAX_BYTES: usize = 64 * 1024;
@@ -25,17 +26,6 @@ pub struct FrameMetadataValidationInput<'a> {
     pub metadata: &'a FrameMetadata,
     pub actor_agent_id: &'a str,
     pub previous_metadata: Option<&'a FrameMetadata>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct GeneratedFrameMetadataInput {
-    pub agent_id: String,
-    pub provider: String,
-    pub model: String,
-    pub provider_type: String,
-    pub prompt_digest: String,
-    pub context_digest: String,
-    pub prompt_link_id: String,
 }
 
 /// Build frame metadata for generation queue writes.
