@@ -141,7 +141,7 @@ fn validate_supported_stage_chain(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
+    use crate::execution::{ProviderExecutionBinding, ProviderRuntimeOverrides};
     use crate::task::package::{
         PrerequisiteTemplateSpec, RepeatedRegionSpec, StageChainSpec, StageSpec,
         TraversalPrerequisitePackageExpansionSpec, TurnOutputPolicySpec, TurnSpec,

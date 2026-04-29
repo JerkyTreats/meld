@@ -431,7 +431,7 @@ fn task_id(profile: &WorkflowProfile) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
+    use crate::execution::{ProviderExecutionBinding, ProviderRuntimeOverrides};
     use crate::task::package::{
         InitialSeedSpec, PrerequisiteTemplateSpec, RepeatedRegionSpec, SeedArtifactSpec,
         StageChainSpec, StageSpec, TaskTriggerSpec, TurnOutputPolicySpec, TurnSpec,

@@ -56,7 +56,7 @@ pub struct WorkflowPackageTriggerRequest {
     pub node_id: Option<NodeID>,
     pub path: Option<PathBuf>,
     pub agent_id: String,
-    pub provider: crate::provider::ProviderExecutionBinding,
+    pub provider: crate::execution::ProviderExecutionBinding,
     pub frame_type: String,
     pub force: bool,
     pub session_id: Option<String>,
