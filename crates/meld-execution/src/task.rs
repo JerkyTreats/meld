@@ -1,10 +1,18 @@
 //! Task contracts and initialization payloads.
 
+pub mod artifact_repo;
+pub mod compiler;
 pub mod contracts;
 pub mod events;
+pub mod executor;
 pub mod expansion;
 pub mod init;
+pub mod invocation;
+pub mod readiness;
+pub mod runtime;
 
+pub use artifact_repo::TaskArtifactRepo;
+pub use compiler::{compile_task_definition, TaskCompiler};
 pub use contracts::{
     artifact_matches_input_slot, ArtifactLinkRecord, ArtifactLinkRelation, ArtifactProducerRef,
     ArtifactRecord, ArtifactRepoRecord, CapabilityInvocationRecord, CompiledTaskRecord,
@@ -13,6 +21,7 @@ pub use contracts::{
 pub use events::{
     build_execution_task_envelope, canonical_task_event_type, ExecutionTaskEventData, TaskEvent,
 };
+pub use executor::TaskExecutor;
 pub use expansion::{
     parse_task_expansion_request_artifact, CompiledTaskDelta, TaskExpansionRecord,
     TaskExpansionRequest, TaskExpansionTemplate, TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID,
@@ -21,3 +30,6 @@ pub use expansion::{
 pub use init::{
     validate_task_initialization, InitArtifactValue, TaskInitializationPayload, TaskRunContext,
 };
+pub use invocation::assemble_invocation_payload;
+pub use readiness::compute_ready_capability_instances;
+pub use runtime::{execute_task_to_completion, TaskRunSummary, WorkflowTaskTelemetry};

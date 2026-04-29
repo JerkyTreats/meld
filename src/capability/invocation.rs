@@ -5,16 +5,11 @@ use crate::capability::contracts::{BoundCapabilityInstance, CapabilityTypeContra
 use crate::capability::runtime::{CapabilityInvocationPayload, CapabilityRuntimeInit};
 use crate::error::ApiError;
 use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
-use crate::task::ArtifactRecord;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Successful capability invocation output for one task-owned attempt.
-#[derive(Debug, Clone, Default)]
-pub struct CapabilityInvocationResult {
-    pub emitted_artifacts: Vec<ArtifactRecord>,
-}
+pub use meld_execution::capability::CapabilityInvocationResult;
 
 /// Domain-owned capability runtime implementation.
 #[async_trait]
