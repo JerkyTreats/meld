@@ -311,10 +311,15 @@ impl From<meld_events::error::ApiError> for ApiError {
     }
 }
 
-impl From<meld_execution::error::ApiError> for ApiError {
-    fn from(err: meld_execution::error::ApiError) -> Self {
+impl From<meld_execution::error::ExecutionInvariantError> for ApiError {
+    fn from(err: meld_execution::error::ExecutionInvariantError) -> Self {
         match err {
-            meld_execution::error::ApiError::ConfigError(message) => ApiError::ConfigError(message),
+            meld_execution::error::ExecutionInvariantError::ConfigError(message) => {
+                ApiError::ConfigError(message)
+            }
+            meld_execution::error::ExecutionInvariantError::GenerationFailed(message) => {
+                ApiError::GenerationFailed(message)
+            }
         }
     }
 }

@@ -32,5 +32,9 @@ pub use meld_execution::workflow::profile::{
     WorkflowThreadPolicy, WorkflowTurn,
 };
 pub use meld_execution::workflow::registry::RegisteredWorkflowProfile;
+pub use meld_execution::workflow::{
+    workflow_turn_completed_envelope, workflow_turn_failed_envelope,
+    workflow_turn_started_envelope, ExecutionWorkflowTurnEventData,
+};
 pub use registry::WorkflowRegistry;
 pub use state_store::{WorkflowStateStore, WorkflowThreadStatus, WorkflowTurnStatus};
