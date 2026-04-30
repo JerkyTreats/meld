@@ -1,13 +1,54 @@
 use async_trait::async_trait;
 use serde_json::Value;
 use std::path::Path;
-use std::sync::Arc;
 
 use super::contracts::ProviderExecutionBinding;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionEventContext {
     pub session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionNodeKind {
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionFrame<F> {
+    pub frame_id: F,
+    pub frame_type: String,
+    pub agent_id: String,
+    pub content: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionNodeRecord<N> {
+    pub node_id: N,
+    pub path: String,
+    pub node_kind: ExecutionNodeKind,
+    pub children: Vec<N>,
+    pub tombstoned: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionNodeContext<N, F> {
+    pub node_record: ExecutionNodeRecord<N>,
+    pub frames: Vec<ExecutionFrame<F>>,
+    pub frame_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskRunArtifactAnchor {
+    pub target_domain_id: String,
+    pub target_object_kind: String,
+    pub target_object_id: String,
+}
+
+pub trait ProviderPreparationView {
+    fn provider_type_slug(&self) -> &str;
+    fn model_name(&self) -> &str;
 }
 
 pub trait ContextReadPort: Send + Sync {
@@ -58,6 +99,20 @@ pub trait ContextReadPort: Send + Sync {
         include_tombstoned: bool,
     ) -> Result<Vec<Self::NodeRecord>, Self::Error>;
     fn workspace_root(&self) -> Option<&Path>;
+    fn read_execution_frame(
+        &self,
+        frame_id: &Self::FrameId,
+    ) -> Result<Option<ExecutionFrame<Self::FrameId>>, Self::Error>;
+    fn read_execution_node_record(
+        &self,
+        node_id: &Self::NodeId,
+    ) -> Result<Option<ExecutionNodeRecord<Self::NodeId>>, Self::Error>;
+    fn context_frames_by_type(
+        &self,
+        node_id: Self::NodeId,
+        frame_type: &str,
+        max_frames: usize,
+    ) -> Result<ExecutionNodeContext<Self::NodeId, Self::FrameId>, Self::Error>;
 }
 
 pub trait ContextWritePort: Send + Sync {
@@ -108,7 +163,7 @@ pub trait NodeResolutionPort: Send + Sync {
 pub trait ProviderValidationPort: Send + Sync {
     type Error;
     type GenerationRequest;
-    type ProviderPreparation;
+    type ProviderPreparation: ProviderPreparationView;
 
     fn prepare_provider_for_request(
         &self,
@@ -197,9 +252,13 @@ pub trait ExecutionProgressPort: Send + Sync {
 }
 
 pub trait WorldModelQueryPort: Send + Sync {
-    type WorldModelQueries;
+    type Error;
 
-    fn world_model_queries(&self) -> Option<Arc<Self::WorldModelQueries>>;
+    fn current_artifact_for_task_run(
+        &self,
+        task_run_id: &str,
+        artifact_type_id: &str,
+    ) -> Result<Option<TaskRunArtifactAnchor>, Self::Error>;
 }
 
 pub trait WorkflowProfileLoadPort: Send + Sync {

@@ -10,7 +10,6 @@ use crate::context::generation::provider_execution::{
     execute_completion, prepare_provider_for_request,
 };
 use crate::error::ApiError;
-use crate::events::DomainObjectRef;
 use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext, WorldModelQueryPort};
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::PromptContextLineageInput;
@@ -891,28 +890,19 @@ fn resolve_completed_task_path_final_frame(
     request: &WorkflowExecutionRequest,
     existing: &WorkflowThreadRecord,
 ) -> Result<FrameID, ApiError> {
-    let world_model = api.world_model_queries().ok_or_else(|| {
-        ApiError::ConfigError("Workflow task path requires world model query context".to_string())
-    })?;
-    let task_run = DomainObjectRef::new(
-        "execution",
-        "task_run",
-        workflow_task_run_id_for_target(registered_profile, request.node_id),
-    )
-    .map_err(ApiError::from)?;
-    let anchor = world_model
-        .current_artifact_for_task_run(&task_run, "frame_ref")
-        .map_err(ApiError::from)?
+    let task_run_id = workflow_task_run_id_for_target(registered_profile, request.node_id);
+    let anchor = api
+        .current_artifact_for_task_run(&task_run_id, "frame_ref")?
         .ok_or_else(|| {
             ApiError::GenerationFailed(format!(
                 "Workflow task path missing required frame_ref artifact anchor for task run '{}'",
-                task_run.object_id
+                task_run_id
             ))
         })?;
-    if anchor.target.domain_id != "execution" || anchor.target.object_kind != "artifact" {
+    if anchor.target_domain_id != "execution" || anchor.target_object_kind != "artifact" {
         return Err(ApiError::GenerationFailed(format!(
-            "Workflow task path expected execution artifact anchor target, got '{}'",
-            anchor.target.index_key()
+            "Workflow task path expected execution artifact anchor target, got '{}::{}::{}'",
+            anchor.target_domain_id, anchor.target_object_kind, anchor.target_object_id
         )));
     }
     let frame_id_hex = existing.final_frame_id.as_deref().ok_or_else(|| {
@@ -1009,14 +999,8 @@ async fn execute_registered_workflow_via_task_async(
         }
     };
 
-    let world_model = api.world_model_queries().ok_or_else(|| {
-        ApiError::ConfigError("Workflow task path requires world model query context".to_string())
-    })?;
-    let final_frame_id = resolve_final_frame_from_traversal_artifact(
-        world_model.as_ref(),
-        &executor,
-        &task_summary.task_run_id,
-    )?;
+    let final_frame_id =
+        resolve_final_frame_from_traversal_artifact(api, &executor, &task_summary.task_run_id)?;
     state_store.upsert_thread(&WorkflowThreadRecord {
         thread_id: thread_id.to_string(),
         workflow_id: registered_profile.profile.workflow_id.clone(),
@@ -1057,15 +1041,12 @@ async fn execute_registered_workflow_via_task_async(
 }
 
 fn resolve_final_frame_from_traversal_artifact(
-    world_model: &crate::world_state::WorldModelQueries,
+    api: &(impl WorldModelQueryPort + ?Sized),
     executor: &TaskExecutor,
     task_run_id: &str,
 ) -> Result<FrameID, ApiError> {
-    let task_run =
-        DomainObjectRef::new("execution", "task_run", task_run_id).map_err(ApiError::from)?;
-    let anchor = world_model
-        .current_artifact_for_task_run(&task_run, "frame_ref")
-        .map_err(ApiError::from)?
+    let anchor = api
+        .current_artifact_for_task_run(task_run_id, "frame_ref")?
         .ok_or_else(|| {
             ApiError::GenerationFailed(format!(
                 "Workflow task path missing required frame_ref artifact anchor for task run '{}'",
@@ -1076,23 +1057,23 @@ fn resolve_final_frame_from_traversal_artifact(
 }
 
 fn resolve_frame_id_from_artifact_anchor(
-    anchor: &crate::world_state::graph::contracts::AnchorSelectionRecord,
+    anchor: &crate::execution::TaskRunArtifactAnchor,
     executor: &TaskExecutor,
 ) -> Result<FrameID, ApiError> {
-    if anchor.target.domain_id != "execution" || anchor.target.object_kind != "artifact" {
+    if anchor.target_domain_id != "execution" || anchor.target_object_kind != "artifact" {
         return Err(ApiError::GenerationFailed(format!(
-            "Workflow task path expected execution artifact anchor target, got '{}'",
-            anchor.target.index_key()
+            "Workflow task path expected execution artifact anchor target, got '{}::{}::{}'",
+            anchor.target_domain_id, anchor.target_object_kind, anchor.target_object_id
         )));
     }
 
     let artifact = executor
         .artifact_repo()
-        .get_artifact(&anchor.target.object_id)
+        .get_artifact(&anchor.target_object_id)
         .ok_or_else(|| {
             ApiError::GenerationFailed(format!(
                 "Workflow task path could not load artifact '{}'",
-                anchor.target.object_id
+                anchor.target_object_id
             ))
         })?;
     if artifact.artifact_type_id != "frame_ref" {

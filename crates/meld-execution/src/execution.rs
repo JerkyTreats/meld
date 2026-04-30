@@ -6,7 +6,9 @@ pub mod ports;
 pub use contracts::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 pub use ports::{
     ContextReadPort, ContextWritePort, EventPublicationPort, ExecutionContext,
-    ExecutionEventContext, ExecutionProgressPort, ExecutionRuntimeContext, GeneratedMetadataPort,
+    ExecutionEventContext, ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind,
+    ExecutionNodeRecord, ExecutionProgressPort, ExecutionRuntimeContext, GeneratedMetadataPort,
     NodeResolutionPort, PromptArtifactReadPort, PromptLineagePort, ProviderExecutionPort,
-    ProviderValidationPort, WorkflowProfileLoadPort, WorldModelQueryPort,
+    ProviderPreparationView, ProviderValidationPort, TaskRunArtifactAnchor,
+    WorkflowProfileLoadPort, WorldModelQueryPort,
 };

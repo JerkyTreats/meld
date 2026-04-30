@@ -6,7 +6,7 @@ use crate::context::query::view::{ContextView, NodeContext};
 use crate::context::queue::QueueEventContext;
 use crate::context::CurrentFrameHeadRead;
 use crate::error::ApiError;
-use crate::events::EventEnvelope;
+use crate::events::{DomainObjectRef, EventEnvelope};
 use crate::execution::contracts::ProviderExecutionBinding;
 use crate::metadata::frame_types::FrameMetadata;
 use crate::metadata::frame_write_contract::GeneratedFrameMetadataInput;
@@ -17,16 +17,17 @@ use crate::prompt_context::{
 };
 use crate::provider::executor::ProviderPreparation;
 use crate::provider::{ChatMessage, CompletionResponse};
-use crate::store::NodeRecord;
+use crate::store::{NodeRecord, NodeType};
 use crate::types::{FrameID, NodeID};
 use crate::workflow::registry::RegisteredWorkflowProfile;
-use crate::world_state::WorldModelQueries;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::path::Path;
-use std::sync::Arc;
 
-pub use meld_execution::ExecutionEventContext;
+pub use meld_execution::{
+    ExecutionEventContext, ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind,
+    ExecutionNodeRecord, ProviderPreparationView, TaskRunArtifactAnchor,
+};
 
 pub trait ContextReadPort:
     meld_execution::ContextReadPort<
@@ -200,15 +201,9 @@ pub trait ExecutionProgressPort: meld_execution::ExecutionProgressPort<Error = A
 
 impl<T> ExecutionProgressPort for T where T: meld_execution::ExecutionProgressPort<Error = ApiError> {}
 
-pub trait WorldModelQueryPort:
-    meld_execution::WorldModelQueryPort<WorldModelQueries = WorldModelQueries>
-{
-}
+pub trait WorldModelQueryPort: meld_execution::WorldModelQueryPort<Error = ApiError> {}
 
-impl<T> WorldModelQueryPort for T where
-    T: meld_execution::WorldModelQueryPort<WorldModelQueries = WorldModelQueries>
-{
-}
+impl<T> WorldModelQueryPort for T where T: meld_execution::WorldModelQueryPort<Error = ApiError> {}
 
 pub trait WorkflowProfileLoadPort:
     meld_execution::WorkflowProfileLoadPort<
@@ -345,6 +340,32 @@ impl meld_execution::ContextReadPort for ContextApi {
     fn workspace_root(&self) -> Option<&Path> {
         ContextApi::workspace_root(self)
     }
+
+    fn read_execution_frame(
+        &self,
+        frame_id: &FrameID,
+    ) -> Result<Option<ExecutionFrame<FrameID>>, ApiError> {
+        self.read_frame(frame_id)
+            .map(|frame| frame.map(execution_frame))
+    }
+
+    fn read_execution_node_record(
+        &self,
+        node_id: &NodeID,
+    ) -> Result<Option<ExecutionNodeRecord<NodeID>>, ApiError> {
+        self.read_node_record(node_id)
+            .map(|record| record.map(execution_node_record))
+    }
+
+    fn context_frames_by_type(
+        &self,
+        node_id: NodeID,
+        frame_type: &str,
+        max_frames: usize,
+    ) -> Result<ExecutionNodeContext<NodeID, FrameID>, ApiError> {
+        let context = self.context_by_type(node_id, frame_type, max_frames)?;
+        Ok(execution_node_context(context))
+    }
 }
 
 impl meld_execution::ContextWritePort for ContextApi {
@@ -449,6 +470,16 @@ impl meld_execution::ProviderValidationPort for ContextApi {
         let _ = registry.get_or_error(&binding.provider_name)?;
         binding.runtime_overrides.validate()?;
         Ok(())
+    }
+}
+
+impl meld_execution::ProviderPreparationView for ProviderPreparation {
+    fn provider_type_slug(&self) -> &str {
+        &self.provider_type
+    }
+
+    fn model_name(&self) -> &str {
+        self.client.model_name()
     }
 }
 
@@ -575,9 +606,55 @@ impl meld_execution::WorkflowProfileLoadPort for ContextApi {
 }
 
 impl meld_execution::WorldModelQueryPort for ContextApi {
-    type WorldModelQueries = WorldModelQueries;
+    type Error = ApiError;
 
-    fn world_model_queries(&self) -> Option<Arc<WorldModelQueries>> {
-        ContextApi::world_model_queries(self)
+    fn current_artifact_for_task_run(
+        &self,
+        task_run_id: &str,
+        artifact_type_id: &str,
+    ) -> Result<Option<TaskRunArtifactAnchor>, ApiError> {
+        let Some(world_model) = ContextApi::world_model_queries(self) else {
+            return Ok(None);
+        };
+        let task_run =
+            DomainObjectRef::new("execution", "task_run", task_run_id).map_err(ApiError::from)?;
+        let anchor = world_model
+            .current_artifact_for_task_run(&task_run, artifact_type_id)
+            .map_err(ApiError::from)?;
+        Ok(anchor.map(|record| TaskRunArtifactAnchor {
+            target_domain_id: record.target.domain_id,
+            target_object_kind: record.target.object_kind,
+            target_object_id: record.target.object_id,
+        }))
+    }
+}
+
+fn execution_frame(frame: Frame) -> ExecutionFrame<FrameID> {
+    ExecutionFrame {
+        frame_id: frame.frame_id,
+        frame_type: frame.frame_type,
+        agent_id: frame.agent_id,
+        content: frame.content,
+    }
+}
+
+fn execution_node_record(record: NodeRecord) -> ExecutionNodeRecord<NodeID> {
+    ExecutionNodeRecord {
+        node_id: record.node_id,
+        path: record.path.to_string_lossy().to_string(),
+        node_kind: match record.node_type {
+            NodeType::File { .. } => ExecutionNodeKind::File,
+            NodeType::Directory => ExecutionNodeKind::Directory,
+        },
+        children: record.children,
+        tombstoned: record.tombstoned_at.is_some(),
+    }
+}
+
+fn execution_node_context(context: NodeContext) -> ExecutionNodeContext<NodeID, FrameID> {
+    ExecutionNodeContext {
+        node_record: execution_node_record(context.node_record),
+        frames: context.frames.into_iter().map(execution_frame).collect(),
+        frame_count: context.frame_count,
     }
 }
