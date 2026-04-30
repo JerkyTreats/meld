@@ -51,12 +51,12 @@ pub fn prepare_registered_workflow_task_run(
         catalog,
         &package_spec,
         |context| {
-            lower_traversal_prerequisite_expansion_template(
+            Ok(lower_traversal_prerequisite_expansion_template(
                 &registered_profile.profile,
                 request,
                 &context.traversal_expansion,
                 context,
-            )
+            )?)
         },
     )
 }

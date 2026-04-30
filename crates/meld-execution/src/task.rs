@@ -8,6 +8,7 @@ pub mod executor;
 pub mod expansion;
 pub mod init;
 pub mod invocation;
+pub mod package;
 pub mod readiness;
 pub mod runtime;
 
