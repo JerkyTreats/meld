@@ -6,7 +6,6 @@ use crate::capability::{
 };
 use crate::error::ApiError;
 use crate::execution::ContextReadPort;
-use crate::provider::ProviderExecutionBinding;
 use crate::task::compiler::compile_task_definition;
 use crate::task::contracts::{
     ArtifactProducerRef, ArtifactRecord, CompiledTaskRecord, TaskDefinition, TaskDependencyEdge,
@@ -14,85 +13,15 @@ use crate::task::contracts::{
 };
 use crate::task::expansion::{CompiledTaskDelta, TaskExpansionRequest};
 use crate::types::NodeID;
-use crate::workflow::profile::WorkflowGate;
-use crate::workspace::publish::{
-    publish_filter_dependency, publish_filter_instance_id, FrameHeadPublishTemplate,
-};
-use serde::{Deserialize, Serialize};
+use crate::workspace::publish::{publish_filter_dependency, publish_filter_instance_id};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-/// Traversed node ref carried into expansion compilation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TraversalExpansionNode {
-    pub node_id: String,
-    pub path: String,
-}
-
-/// Relation between two traversed nodes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TraversalExpansionRelation {
-    pub upstream_node_id: String,
-    pub downstream_node_id: String,
-}
-
-/// Workflow-backed repeated region template authored by the package layer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowRegionTemplate {
-    pub workflow_id: String,
-    pub agent_id: String,
-    pub provider: ProviderExecutionBinding,
-    pub frame_type: String,
-    pub force: bool,
-    pub force_init_slot_id: String,
-    pub node_ref_slot_template: String,
-    pub existing_output_slot_template: String,
-    pub existing_output_artifact_type_id: String,
-    pub turns: Vec<WorkflowTurnTemplate>,
-}
-
-/// One authored workflow turn inside a repeated region.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowTurnTemplate {
-    pub turn_id: String,
-    pub prompt_text: String,
-    pub output_type: String,
-    pub gate: WorkflowGate,
-    pub persist_frame: bool,
-    pub retry_limit: usize,
-    pub validate_json: bool,
-}
-
-/// Cross-node prerequisite mapping applied over traversal relations.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TraversalPrerequisiteTemplate {
-    pub producer_turn_id: String,
-    pub producer_stage_id: String,
-    pub producer_output_slot_id: String,
-    pub producer_artifact_type_id: String,
-    pub consumer_turn_id: String,
-    pub consumer_stage_id: String,
-    pub consumer_input_slot_id: String,
-}
-
-/// Template content authored ahead of traversal.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TraversalPrerequisiteExpansionTemplate {
-    pub repeated_region: WorkflowRegionTemplate,
-    pub prerequisite_template: TraversalPrerequisiteTemplate,
-    pub publish: Option<FrameHeadPublishTemplate>,
-}
-
-/// Fully resolved expansion content emitted after traversal succeeds.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TraversalPrerequisiteExpansionContent {
-    pub traversal_strategy: String,
-    pub node_batches: Vec<Vec<TraversalExpansionNode>>,
-    pub relations: Vec<TraversalExpansionRelation>,
-    pub repeated_region: WorkflowRegionTemplate,
-    pub prerequisite_template: TraversalPrerequisiteTemplate,
-    pub publish: Option<FrameHeadPublishTemplate>,
-}
+pub use meld_execution::traversal::{
+    TraversalExpansionNode, TraversalExpansionRelation, TraversalPrerequisiteExpansionContent,
+    TraversalPrerequisiteExpansionTemplate, TraversalPrerequisiteTemplate, WorkflowRegionTemplate,
+    WorkflowTurnTemplate,
+};
 
 /// Compiles a traversal prerequisite expansion into a task delta.
 pub fn compile_traversal_prerequisite_expansion(

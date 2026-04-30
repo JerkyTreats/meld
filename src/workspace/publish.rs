@@ -15,6 +15,7 @@ use crate::task::contracts::{
 };
 use crate::task::expansion::{CompiledTaskDelta, TaskExpansionRequest};
 use crate::types::{FrameID, NodeID};
+pub use meld_execution::publish::{FrameHeadPublishTemplate, FrameHeadWriteExpansionContent};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -26,22 +27,6 @@ pub const PUBLISH_STRATEGY_OVERWRITE_ON_NEW_HEAD: &str = "overwrite_on_new_head"
 pub const PUBLISH_STRATEGY_FORCE_OVERWRITE: &str = "force_overwrite";
 
 const PUBLISHED_HEAD_INDEX_VERSION: u32 = 1;
-
-/// Declarative publish policy attached to a traversal-backed region.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FrameHeadPublishTemplate {
-    pub file_name: String,
-    pub strategy: String,
-}
-
-/// One late-bound write expansion emitted after publish filtering.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FrameHeadWriteExpansionContent {
-    pub node_id: String,
-    pub path: String,
-    pub frame_type: String,
-    pub file_name: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishedHeadEntry {
