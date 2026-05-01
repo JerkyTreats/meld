@@ -8,14 +8,17 @@ use futures::future::BoxFuture;
 
 pub use meld_execution::task::runtime::{TaskRunSummary, WorkflowTaskTelemetry};
 
-pub async fn execute_task_to_completion(
-    api: &dyn ExecutionRuntimeContext,
+pub async fn execute_task_to_completion<A>(
+    api: &A,
     executor: &mut crate::task::TaskExecutor,
     catalog: &CapabilityCatalog,
     registry: &CapabilityExecutorRegistry,
     event_context: Option<&ExecutionEventContext>,
     workflow_telemetry: Option<&WorkflowTaskTelemetry>,
-) -> Result<TaskRunSummary, ApiError> {
+) -> Result<TaskRunSummary, ApiError>
+where
+    A: ExecutionRuntimeContext + 'static,
+{
     meld_execution::task::execute_task_to_completion(
         api,
         executor,
@@ -38,13 +41,16 @@ pub async fn execute_task_to_completion(
     .await
 }
 
-fn invoke_registered_capability<'a>(
-    api: &'a dyn ExecutionRuntimeContext,
+fn invoke_registered_capability<'a, A>(
+    api: &'a A,
     registry: &'a CapabilityExecutorRegistry,
     instance: &'a BoundCapabilityInstance,
     payload: &'a CapabilityInvocationPayload,
     event_context: Option<&'a ExecutionEventContext>,
-) -> BoxFuture<'a, Result<CapabilityInvocationResult, ApiError>> {
+) -> BoxFuture<'a, Result<CapabilityInvocationResult, ApiError>>
+where
+    A: ExecutionRuntimeContext + 'static,
+{
     Box::pin(async move {
         let runtime_init = registry.runtime_init_for(instance)?;
         let invoker = registry

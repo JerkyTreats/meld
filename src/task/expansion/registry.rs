@@ -9,12 +9,16 @@ use meld_execution::task::expansion::{
     TaskExpansionCompiler, TaskExpansionCompilerRegistry, TRAVERSAL_PREREQUISITE_EXPANSION_KIND,
     WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND,
 };
+use std::marker::PhantomData;
 
-struct TraversalPrerequisiteExpansionCompiler;
+struct TraversalPrerequisiteExpansionCompiler<A: ?Sized>(PhantomData<fn() -> A>);
 
-impl TaskExpansionCompiler for TraversalPrerequisiteExpansionCompiler {
+impl<A> TaskExpansionCompiler for TraversalPrerequisiteExpansionCompiler<A>
+where
+    A: ExecutionRuntimeContext + ?Sized,
+{
     type Error = ApiError;
-    type ExecutionApi = dyn ExecutionRuntimeContext;
+    type ExecutionApi = A;
 
     fn expansion_kind(&self) -> &'static str {
         TRAVERSAL_PREREQUISITE_EXPANSION_KIND
@@ -31,11 +35,14 @@ impl TaskExpansionCompiler for TraversalPrerequisiteExpansionCompiler {
     }
 }
 
-struct WorkspaceWriteFrameHeadExpansionCompiler;
+struct WorkspaceWriteFrameHeadExpansionCompiler<A: ?Sized>(PhantomData<fn() -> A>);
 
-impl TaskExpansionCompiler for WorkspaceWriteFrameHeadExpansionCompiler {
+impl<A> TaskExpansionCompiler for WorkspaceWriteFrameHeadExpansionCompiler<A>
+where
+    A: ExecutionRuntimeContext + ?Sized,
+{
     type Error = ApiError;
-    type ExecutionApi = dyn ExecutionRuntimeContext;
+    type ExecutionApi = A;
 
     fn expansion_kind(&self) -> &'static str {
         WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND
@@ -52,30 +59,27 @@ impl TaskExpansionCompiler for WorkspaceWriteFrameHeadExpansionCompiler {
     }
 }
 
-pub fn register_default_task_expansion_compilers(
-    registry: &mut TaskExpansionCompilerRegistry<ApiError, dyn ExecutionRuntimeContext>,
-) -> Result<(), ApiError> {
-    registry.register(TraversalPrerequisiteExpansionCompiler)?;
-    registry.register(WorkspaceWriteFrameHeadExpansionCompiler)?;
+pub fn register_default_task_expansion_compilers<A>(
+    registry: &mut TaskExpansionCompilerRegistry<ApiError, A>,
+) -> Result<(), ApiError>
+where
+    A: ExecutionRuntimeContext + 'static,
+{
+    registry.register(TraversalPrerequisiteExpansionCompiler(PhantomData))?;
+    registry.register(WorkspaceWriteFrameHeadExpansionCompiler(PhantomData))?;
     Ok(())
 }
 
-pub fn compile_task_expansion_request(
-    api: &dyn ExecutionRuntimeContext,
+pub fn compile_task_expansion_request<A>(
+    api: &A,
     compiled_task: &CompiledTaskRecord,
     expansion: &TaskExpansionRequest,
     catalog: &CapabilityCatalog,
-) -> Result<CompiledTaskDelta, ApiError> {
-    match expansion.expansion_kind.as_str() {
-        TRAVERSAL_PREREQUISITE_EXPANSION_KIND => {
-            compile_traversal_prerequisite_expansion(api, compiled_task, expansion, catalog)
-        }
-        WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND => {
-            compile_workspace_write_frame_head_expansion(compiled_task, expansion, catalog)
-        }
-        other => Err(ApiError::ConfigError(format!(
-            "Task '{}' does not support expansion kind '{}'",
-            compiled_task.task_id, other
-        ))),
-    }
+) -> Result<CompiledTaskDelta, ApiError>
+where
+    A: ExecutionRuntimeContext + 'static,
+{
+    let mut registry = TaskExpansionCompilerRegistry::new();
+    register_default_task_expansion_compilers(&mut registry)?;
+    registry.compile_task_expansion_request(api, compiled_task, expansion, catalog)
 }

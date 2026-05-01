@@ -14,14 +14,18 @@ use crate::workflow::executor::{
 use crate::workflow::registry::RegisteredWorkflowProfile;
 use std::path::Path;
 
-pub fn execute_workflow_target(
-    api: &(impl WorkflowProfileLoadPort
-          + crate::execution::ExecutionRuntimeContext
-          + crate::execution::WorldModelQueryPort),
+pub fn execute_workflow_target<A>(
+    api: &A,
     workspace_root: &Path,
     request: &TargetExecutionRequest,
     event_context: Option<&QueueEventContext>,
-) -> Result<TargetExecutionResult, ApiError> {
+) -> Result<TargetExecutionResult, ApiError>
+where
+    A: WorkflowProfileLoadPort
+        + crate::execution::ExecutionRuntimeContext
+        + crate::execution::WorldModelQueryPort
+        + 'static,
+{
     let workflow_id = request.program.workflow_id().ok_or_else(|| {
         ApiError::ConfigError(
             "Workflow target execution requires a workflow backed execution program".to_string(),
@@ -38,14 +42,18 @@ pub fn execute_workflow_target(
     )
 }
 
-pub async fn execute_workflow_target_async(
-    api: &(impl WorkflowProfileLoadPort
-          + crate::execution::ExecutionRuntimeContext
-          + crate::execution::WorldModelQueryPort),
+pub async fn execute_workflow_target_async<A>(
+    api: &A,
     workspace_root: &Path,
     request: &TargetExecutionRequest,
     event_context: Option<&QueueEventContext>,
-) -> Result<TargetExecutionResult, ApiError> {
+) -> Result<TargetExecutionResult, ApiError>
+where
+    A: WorkflowProfileLoadPort
+        + crate::execution::ExecutionRuntimeContext
+        + crate::execution::WorldModelQueryPort
+        + 'static,
+{
     let workflow_id = request.program.workflow_id().ok_or_else(|| {
         ApiError::ConfigError(
             "Workflow target execution requires a workflow backed execution program".to_string(),
@@ -63,13 +71,16 @@ pub async fn execute_workflow_target_async(
     .await
 }
 
-pub fn execute_registered_workflow_target(
-    api: &(impl crate::execution::ExecutionRuntimeContext + crate::execution::WorldModelQueryPort),
+pub fn execute_registered_workflow_target<A>(
+    api: &A,
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &TargetExecutionRequest,
     event_context: Option<&ExecutionEventContext>,
-) -> Result<TargetExecutionResult, ApiError> {
+) -> Result<TargetExecutionResult, ApiError>
+where
+    A: crate::execution::ExecutionRuntimeContext + crate::execution::WorldModelQueryPort + 'static,
+{
     if request.program.kind != TargetExecutionProgramKind::Workflow {
         return Err(ApiError::ConfigError(
             "Registered workflow target execution requires workflow program kind".to_string(),
@@ -110,13 +121,16 @@ pub fn execute_registered_workflow_target(
     })
 }
 
-pub async fn execute_registered_workflow_target_async(
-    api: &(impl crate::execution::ExecutionRuntimeContext + crate::execution::WorldModelQueryPort),
+pub async fn execute_registered_workflow_target_async<A>(
+    api: &A,
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &TargetExecutionRequest,
     event_context: Option<&ExecutionEventContext>,
-) -> Result<TargetExecutionResult, ApiError> {
+) -> Result<TargetExecutionResult, ApiError>
+where
+    A: crate::execution::ExecutionRuntimeContext + crate::execution::WorldModelQueryPort + 'static,
+{
     if request.program.kind != TargetExecutionProgramKind::Workflow {
         return Err(ApiError::ConfigError(
             "Registered workflow target execution requires workflow program kind".to_string(),

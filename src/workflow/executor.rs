@@ -67,13 +67,16 @@ pub struct WorkflowExecutionSummary {
     pub final_frame_id: Option<FrameID>,
 }
 
-pub fn execute_registered_workflow(
-    api: &(impl ExecutionRuntimeContext + WorldModelQueryPort),
+pub fn execute_registered_workflow<A>(
+    api: &A,
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
     event_context: Option<&ExecutionEventContext>,
-) -> Result<WorkflowExecutionSummary, ApiError> {
+) -> Result<WorkflowExecutionSummary, ApiError>
+where
+    A: ExecutionRuntimeContext + WorldModelQueryPort + 'static,
+{
     let rt = tokio::runtime::Runtime::new()
         .map_err(|err| ApiError::ProviderError(format!("Failed to create runtime: {}", err)))?;
 
@@ -89,13 +92,16 @@ pub fn execute_registered_workflow(
     })
 }
 
-pub(crate) async fn execute_registered_workflow_async(
-    api: &(impl ExecutionRuntimeContext + WorldModelQueryPort),
+pub(crate) async fn execute_registered_workflow_async<A>(
+    api: &A,
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
     event_context: Option<&ExecutionEventContext>,
-) -> Result<WorkflowExecutionSummary, ApiError> {
+) -> Result<WorkflowExecutionSummary, ApiError>
+where
+    A: ExecutionRuntimeContext + WorldModelQueryPort + 'static,
+{
     let profile = &registered_profile.profile;
     let uses_task_package_path = workflow_uses_task_package_path(registered_profile)?;
     let thread_id = build_thread_id(profile, request.node_id, &request.frame_type);
@@ -915,8 +921,8 @@ fn resolve_completed_task_path_final_frame(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn execute_registered_workflow_via_task_async(
-    api: &(impl ExecutionRuntimeContext + WorldModelQueryPort),
+async fn execute_registered_workflow_via_task_async<A>(
+    api: &A,
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
@@ -925,7 +931,10 @@ async fn execute_registered_workflow_via_task_async(
     thread_id: &str,
     target_path: &str,
     final_turn_seq: u32,
-) -> Result<WorkflowExecutionSummary, ApiError> {
+) -> Result<WorkflowExecutionSummary, ApiError>
+where
+    A: ExecutionRuntimeContext + WorldModelQueryPort + 'static,
+{
     let mut catalog = CapabilityCatalog::new();
     let mut registry = CapabilityExecutorRegistry::new();
     register_task_path_capabilities(&mut catalog, &mut registry)?;
