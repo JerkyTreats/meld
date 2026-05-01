@@ -6,8 +6,10 @@
 
 pub mod catalog;
 pub mod contracts;
-pub mod invocation;
 pub mod runtime;
+
+use crate::error::ApiError;
+use crate::execution::ExecutionRuntimeContext;
 
 pub use catalog::CapabilityCatalog;
 pub use contracts::{
@@ -16,8 +18,11 @@ pub use contracts::{
     EffectKind, EffectSpec, ExecutionClass, ExecutionContract, InputCardinality, InputSlotSpec,
     OutputSlotSpec, ScopeContract,
 };
-pub use invocation::{CapabilityExecutorRegistry, CapabilityInvocationResult, CapabilityInvoker};
+pub use meld_execution::capability::{CapabilityInvocationResult, CapabilityInvoker};
 pub use runtime::{
     ArtifactValueRef, CapabilityExecutionContext, CapabilityInvocationPayload,
     CapabilityRuntimeInit, InputValueSource, SuppliedInputValue, SuppliedValueRef, UpstreamLineage,
 };
+
+pub type CapabilityExecutorRegistry =
+    meld_execution::capability::CapabilityExecutorRegistry<ApiError, dyn ExecutionRuntimeContext>;

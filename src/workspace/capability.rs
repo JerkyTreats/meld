@@ -82,6 +82,9 @@ impl WorkspaceResolveNodeIdCapability {
 
 #[async_trait]
 impl CapabilityInvoker for WorkspaceResolveNodeIdCapability {
+    type Error = ApiError;
+    type ExecutionApi = dyn ExecutionRuntimeContext;
+
     fn contract(&self) -> CapabilityTypeContract {
         CapabilityTypeContract {
             capability_type_id: RESOLVE_CAPABILITY_TYPE_ID.to_string(),
@@ -264,6 +267,9 @@ impl WorkspaceFilterFrameHeadPublishCapability {
 
 #[async_trait]
 impl CapabilityInvoker for WorkspaceFilterFrameHeadPublishCapability {
+    type Error = ApiError;
+    type ExecutionApi = dyn ExecutionRuntimeContext;
+
     fn contract(&self) -> CapabilityTypeContract {
         CapabilityTypeContract {
             capability_type_id: FILTER_PUBLISH_CAPABILITY_TYPE_ID.to_string(),
@@ -497,6 +503,9 @@ impl WorkspaceWriteFrameHeadCapability {
 
 #[async_trait]
 impl CapabilityInvoker for WorkspaceWriteFrameHeadCapability {
+    type Error = ApiError;
+    type ExecutionApi = dyn ExecutionRuntimeContext;
+
     fn contract(&self) -> CapabilityTypeContract {
         CapabilityTypeContract {
             capability_type_id: WRITE_FRAME_HEAD_CAPABILITY_TYPE_ID.to_string(),

@@ -292,6 +292,9 @@ impl ContextGeneratePrepareCapability {
 
 #[async_trait]
 impl CapabilityInvoker for ContextGeneratePrepareCapability {
+    type Error = ApiError;
+    type ExecutionApi = dyn ExecutionRuntimeContext;
+
     fn contract(&self) -> CapabilityTypeContract {
         CapabilityTypeContract {
             capability_type_id: PREPARE_CAPABILITY_TYPE_ID.to_string(),
@@ -892,6 +895,9 @@ pub(crate) fn json_output_is_decodable(text: &str) -> bool {
 
 #[async_trait]
 impl CapabilityInvoker for ContextGenerateFinalizeCapability {
+    type Error = ApiError;
+    type ExecutionApi = dyn ExecutionRuntimeContext;
+
     fn contract(&self) -> CapabilityTypeContract {
         CapabilityTypeContract {
             capability_type_id: FINALIZE_CAPABILITY_TYPE_ID.to_string(),

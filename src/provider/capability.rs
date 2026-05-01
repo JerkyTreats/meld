@@ -65,6 +65,9 @@ impl ProviderExecuteChatCapability {
 
 #[async_trait]
 impl CapabilityInvoker for ProviderExecuteChatCapability {
+    type Error = ApiError;
+    type ExecutionApi = dyn ExecutionRuntimeContext;
+
     fn contract(&self) -> CapabilityTypeContract {
         CapabilityTypeContract {
             capability_type_id: CAPABILITY_TYPE_ID.to_string(),
