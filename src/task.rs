@@ -31,10 +31,10 @@ pub use events::{
 pub use executor::TaskExecutor;
 pub use expansion::{
     compile_task_expansion_request, parse_task_expansion_request_artifact, CompiledTaskDelta,
-    TaskExpansionRecord, TaskExpansionRequest, TaskExpansionTemplate,
-    TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID, TASK_EXPANSION_SCHEMA_VERSION,
-    TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID, TRAVERSAL_PREREQUISITE_EXPANSION_KIND,
-    WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND,
+    TaskExpansionCompiler, TaskExpansionCompilerRegistry, TaskExpansionRecord,
+    TaskExpansionRequest, TaskExpansionTemplate, TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID,
+    TASK_EXPANSION_SCHEMA_VERSION, TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID,
+    TRAVERSAL_PREREQUISITE_EXPANSION_KIND, WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND,
 };
 pub use init::{
     validate_task_initialization, InitArtifactValue, TaskInitializationPayload, TaskRunContext,
