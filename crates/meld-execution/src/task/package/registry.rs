@@ -7,8 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const BUILTIN_TASK_PACKAGE_IDS: [&str; 1] = ["docs_writer"];
-const BUILTIN_DOCS_WRITER_PACKAGE_SOURCE: &str =
-    include_str!("docs_writer_v2.yaml");
+const BUILTIN_DOCS_WRITER_PACKAGE_SOURCE: &str = include_str!("docs_writer_v2.yaml");
 
 /// Loads one built-in task package document by package id.
 pub fn load_builtin_task_package_spec(package_id: &str) -> Result<TaskPackageSpec, ApiError> {
