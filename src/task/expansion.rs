@@ -1,4 +1,4 @@
-//! Task expansion contracts, dispatch, and runtime helpers.
+//! Root task expansion adapters and compatibility exports.
 
 pub mod contracts;
 pub mod registry;

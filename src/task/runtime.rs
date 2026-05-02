@@ -1,9 +1,13 @@
+//! Root task runtime adapters over extracted execution behavior.
+
 use crate::capability::{
     BoundCapabilityInstance, CapabilityCatalog, CapabilityExecutorRegistry,
     CapabilityInvocationPayload, CapabilityInvocationResult,
 };
 use crate::error::ApiError;
 use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
+use crate::task::contracts::CompiledTaskRecord;
+use crate::task::expansion::{CompiledTaskDelta, TaskExpansionRequest};
 use futures::future::BoxFuture;
 
 pub use meld_execution::task::runtime::{TaskRunSummary, WorkflowTaskTelemetry};
@@ -25,15 +29,10 @@ where
         catalog,
         registry,
         |api, registry, instance, payload, event_context| {
-            invoke_registered_capability(api, registry, instance, payload, event_context)
+            invoke_capability_via_root_registry(api, registry, instance, payload, event_context)
         },
         |api, compiled_task, expansion_request, catalog| {
-            crate::task::expansion::compile_task_expansion_request(
-                api,
-                compiled_task,
-                expansion_request,
-                catalog,
-            )
+            compile_expansion_via_root_registry(api, compiled_task, expansion_request, catalog)
         },
         event_context,
         workflow_telemetry,
@@ -41,7 +40,24 @@ where
     .await
 }
 
-fn invoke_registered_capability<'a, A>(
+fn compile_expansion_via_root_registry<A>(
+    api: &A,
+    compiled_task: &CompiledTaskRecord,
+    expansion_request: &TaskExpansionRequest,
+    catalog: &CapabilityCatalog,
+) -> Result<CompiledTaskDelta, ApiError>
+where
+    A: ExecutionRuntimeContext + 'static,
+{
+    crate::task::expansion::compile_task_expansion_request(
+        api,
+        compiled_task,
+        expansion_request,
+        catalog,
+    )
+}
+
+fn invoke_capability_via_root_registry<'a, A>(
     api: &'a A,
     registry: &'a CapabilityExecutorRegistry,
     instance: &'a BoundCapabilityInstance,

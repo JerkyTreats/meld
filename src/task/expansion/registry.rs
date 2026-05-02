@@ -1,3 +1,5 @@
+//! Root domain compiler adapters for extracted task expansion dispatch.
+
 use crate::capability::CapabilityCatalog;
 use crate::error::ApiError;
 use crate::execution::ExecutionRuntimeContext;
@@ -70,6 +72,16 @@ where
     Ok(())
 }
 
+pub fn default_task_expansion_compiler_registry<A>(
+) -> Result<TaskExpansionCompilerRegistry<ApiError, A>, ApiError>
+where
+    A: ExecutionRuntimeContext + 'static,
+{
+    let mut registry = TaskExpansionCompilerRegistry::new();
+    register_default_task_expansion_compilers(&mut registry)?;
+    Ok(registry)
+}
+
 pub fn compile_task_expansion_request<A>(
     api: &A,
     compiled_task: &CompiledTaskRecord,
@@ -79,7 +91,6 @@ pub fn compile_task_expansion_request<A>(
 where
     A: ExecutionRuntimeContext + 'static,
 {
-    let mut registry = TaskExpansionCompilerRegistry::new();
-    register_default_task_expansion_compilers(&mut registry)?;
+    let registry = default_task_expansion_compiler_registry()?;
     registry.compile_task_expansion_request(api, compiled_task, expansion, catalog)
 }
