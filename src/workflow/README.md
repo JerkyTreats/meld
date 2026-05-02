@@ -43,9 +43,9 @@ Enforce deterministic workflow execution by validating agent bindings, orchestra
 
 - `execute_registered_workflow`
 - `execute_registered_workflow_async`
-- `execute_registered_workflow_via_task_async`
-- `build_thread_id`
-- `workflow_turn_frame_type`
+
+The live workflow executor algorithm, request, summary, thread id, and turn frame-type contracts are owned by `meld-execution`.
+The root module supplies compatibility entrypoints, concrete frame construction, state store location policy, and task-path capability registration.
 
 ### Workflow Facade
 
@@ -159,6 +159,7 @@ Enforce deterministic workflow execution by validating agent bindings, orchestra
 
 - Failure policy `resume_from_failed_turn` enables resuming from the first failed turn when `request.force=false`.
 - When `request.force=true`, the head is tombstoned and force reset events are emitted; existing state is ignored.
+- Root `src/workflow/executor.rs` delegates the live execution loop to `meld-execution` and supplies root-owned runtime inputs.
 - State store persists thread and turn records with status values `Pending`, `Running`, `Completed`, and `Failed`, plus `next_turn_seq` and `final_frame_id` where applicable.
 - Thread ID is computed deterministically from `workflow_id`, hex encoded `node_id`, and `frame_type` using blake3 hashing and truncating to 16 hex chars prefixed with `thread-`.
 - Intermediate turns derive frame types in format `{requested_frame_type}--workflow-turn-{seq}-{prompt_link_id}`. Final turn reuses `requested_frame_type` directly.
@@ -265,11 +266,11 @@ Construct workflow turn event envelopes via `workflow_turn_started_envelope`, `w
 
 ### Workflow Executor
 
-Use `execute_registered_workflow_async` for native async execution; it supports thread state restoration, retry logic, and gate evaluation.
+Use `execute_registered_workflow_async` for native async execution; the compatibility entrypoint constructs root runtime inputs and delegates to `meld-execution`.
 
 Call `execute_registered_workflow` with `ContextApi`, `workspace_root`, `RegisteredWorkflowProfile`, `WorkflowExecutionRequest`, and optional event context for synchronous execution.
 
-When `workflow_uses_task_package_path` returns `true`, execution delegates to `execute_registered_workflow_via_task_async` and uses task capabilities and graph traversal to resolve final frame.
+When a workflow has a task package path, execution delegates through the root task-path runtime bundle and uses task capabilities plus graph traversal to resolve the final frame.
 
 ### Workflow Facade
 

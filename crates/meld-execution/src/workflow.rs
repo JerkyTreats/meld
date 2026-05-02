@@ -1,6 +1,7 @@
 //! Workflow profile contracts.
 
 pub mod events;
+pub mod executor;
 pub mod gates;
 pub mod normalization;
 pub mod profile;
@@ -14,6 +15,10 @@ pub use events::{
     workflow_turn_completed_envelope, workflow_turn_failed_envelope,
     workflow_turn_started_envelope, ExecutionWorkflowTurnEventData,
 };
+pub use executor::{
+    execute_registered_workflow_async, FrameBuilder, NodeNotFoundBuilder, WorkflowExecutorContext,
+    WorkflowExecutorRuntime, WorkflowTaskPathExecutor,
+};
 pub use gates::{evaluate_gate, GateEvaluationResult};
 pub use normalization::normalize_output_for_gate;
 pub use profile::{
@@ -21,8 +26,9 @@ pub use profile::{
     WorkflowThreadPolicy, WorkflowTurn,
 };
 pub use progress::{
-    WorkflowExecutionRequest, WorkflowExecutionSummary, WorkflowForceResetProgressEventData,
-    WorkflowTargetProgressEventData, WorkflowTurnProgressEventData,
+    workflow_thread_id, workflow_turn_frame_type, WorkflowExecutionRequest,
+    WorkflowExecutionSummary, WorkflowForceResetProgressEventData, WorkflowTargetProgressEventData,
+    WorkflowTurnProgressEventData,
 };
 pub use record_contracts::{
     prompt_link_record_from_contract_v1, validate_prompt_link_record_references,

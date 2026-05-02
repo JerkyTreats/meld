@@ -834,6 +834,136 @@ mod tests {
     }
 
     #[test]
+    fn ensure_agent_frames_emits_watch_result_for_completed_workflow_thread() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let api = Arc::new(create_test_api(&workspace_root));
+        let node_id = crate::types::Hash::from([9u8; 32]);
+        put_test_file_node(api.as_ref(), &workspace_root, node_id);
+
+        {
+            let mut agents = api.agent_registry().write();
+            let mut bound = AgentIdentity::new("writer-bound".to_string(), AgentRole::Writer);
+            bound.workflow_id = Some("watch_skip_workflow".to_string());
+            agents.register(bound);
+        }
+
+        {
+            let mut providers = api.provider_registry().write();
+            let provider_config = ProviderConfig {
+                provider_name: Some("only-provider".to_string()),
+                provider_type: ProviderType::LocalCustom,
+                model: "test-model".to_string(),
+                api_key: None,
+                endpoint: Some("http://127.0.0.1:9".to_string()),
+                default_options: crate::provider::CompletionOptions::default(),
+            };
+            providers
+                .load_from_config(&MerkleConfig {
+                    providers: std::collections::HashMap::from([(
+                        "only-provider".to_string(),
+                        provider_config,
+                    )]),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        let workflow_dir = temp.path().join("workflows");
+        let prompt_dir = workflow_dir.join("prompts");
+        std::fs::create_dir_all(&prompt_dir).unwrap();
+        std::fs::write(prompt_dir.join("watch_skip.md"), "Summarize the target.").unwrap();
+        std::fs::write(
+            workflow_dir.join("watch_skip_workflow.yaml"),
+            r#"workflow_id: watch_skip_workflow
+version: 1
+title: Watch Skip Workflow
+description: Exercises watch workflow dispatch without provider execution
+thread_policy:
+  start_conditions: {}
+  dedupe_key_fields: []
+  max_turn_retries: 1
+turns:
+  - turn_id: summarize
+    seq: 1
+    title: Summarize
+    prompt_ref: prompts/watch_skip.md
+    input_refs:
+      - target_context
+    output_type: summary
+    gate_id: pass_gate
+    retry_limit: 1
+    timeout_ms: 60000
+gates:
+  - gate_id: pass_gate
+    gate_type: no_semantic_drift
+    required_fields: []
+    rules: null
+    fail_on_violation: false
+artifact_policy:
+  store_output: true
+  store_prompt_render: true
+  store_context_payload: true
+  max_output_bytes: 1024
+failure_policy:
+  mode: fail_fast
+  resume_from_failed_turn: true
+  stop_on_gate_fail: false
+"#,
+        )
+        .unwrap();
+        let registry = WorkflowRegistry::load(&WorkflowConfig {
+            user_profile_dir: Some(workflow_dir),
+        })
+        .unwrap();
+        let registered_profile = registry.get("watch_skip_workflow").unwrap().clone();
+        let thread_id = meld_execution::workflow::workflow_thread_id(
+            &registered_profile.profile,
+            node_id,
+            "context-writer-bound",
+        );
+        crate::workflow::state_store::WorkflowStateStore::new(&workspace_root)
+            .unwrap()
+            .upsert_thread(&crate::workflow::state_store::WorkflowThreadRecord {
+                thread_id,
+                workflow_id: "watch_skip_workflow".to_string(),
+                node_id: hex::encode(node_id),
+                frame_type: "context-writer-bound".to_string(),
+                status: crate::workflow::state_store::WorkflowThreadStatus::Completed,
+                next_turn_seq: 2,
+                updated_at_ms: crate::telemetry::now_millis(),
+                final_frame_id: None,
+            })
+            .unwrap();
+
+        let progress_db = sled::open(temp.path().join("progress-watch-workflow")).unwrap();
+        let progress = Arc::new(ProgressRuntime::new(progress_db).unwrap());
+        let session_id = progress
+            .start_command_session("workspace.watch".to_string())
+            .unwrap();
+        let config = WatchConfig {
+            workspace_root,
+            session_id: Some(session_id.clone()),
+            progress: Some(Arc::clone(&progress)),
+            workflow_registry: Some(Arc::new(parking_lot::RwLock::new(registry))),
+            ..WatchConfig::default()
+        };
+        let daemon = WatchDaemon::new(api, config).unwrap();
+
+        daemon.ensure_agent_frames_batched(&[node_id]).unwrap();
+
+        let events = progress.store().read_events_after(&session_id, 0).unwrap();
+        let result = events
+            .iter()
+            .find(|event| event.event_type == "workflow_watch_result")
+            .expect("watch workflow result should be emitted");
+        assert_eq!(result.data["workflow_id"], "watch_skip_workflow");
+        assert_eq!(result.data["turns_completed"], 0);
+        assert_eq!(result.data["skipped"], true);
+    }
+
+    #[test]
     fn watch_batch_emits_canonical_workspace_snapshot_facts() {
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");

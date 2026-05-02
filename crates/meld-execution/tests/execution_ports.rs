@@ -1,13 +1,28 @@
 use async_trait::async_trait;
 use meld_execution::{
-    ContextReadPort, ContextWritePort, ExecutionContext, ExecutionEventContext, NodeResolutionPort,
-    PromptArtifactReadPort, ProviderExecutionBinding, ProviderExecutionPort,
-    ProviderRuntimeOverrides, ProviderValidationPort,
+    ContextReadPort, ContextWritePort, ExecutionContext, ExecutionEventContext, ExecutionFrame,
+    ExecutionNodeContext, ExecutionNodeKind, ExecutionNodeRecord, GeneratedFrameMetadataInput,
+    GeneratedMetadataPort, NodeResolutionPort, PreparedPromptLineage, PreviousMetadataSnapshotView,
+    PromptArtifactReadPort, PromptLineagePort, PromptLineageRequest, PromptLinkContractView,
+    ProviderExecutionBinding, ProviderExecutionPort, ProviderPreparationView,
+    ProviderRuntimeOverrides, ProviderValidationPort, SystemPromptPort,
 };
 use std::path::{Path, PathBuf};
 
 #[derive(Default)]
 struct FakeExecutionContext;
+
+struct FakeProviderPreparation;
+
+impl ProviderPreparationView for FakeProviderPreparation {
+    fn provider_type_slug(&self) -> &str {
+        "fake"
+    }
+
+    fn model_name(&self) -> &str {
+        "fake-model"
+    }
+}
 
 impl ContextReadPort for FakeExecutionContext {
     type AgentIdentity = String;
@@ -86,6 +101,55 @@ impl ContextReadPort for FakeExecutionContext {
     fn workspace_root(&self) -> Option<&Path> {
         None
     }
+
+    fn read_execution_frame(
+        &self,
+        frame_id: &Self::FrameId,
+    ) -> Result<Option<ExecutionFrame<Self::FrameId>>, Self::Error> {
+        Ok(Some(ExecutionFrame {
+            frame_id: *frame_id,
+            frame_type: "summary".to_string(),
+            agent_id: "agent".to_string(),
+            content: frame_id.to_be_bytes().to_vec(),
+        }))
+    }
+
+    fn read_execution_node_record(
+        &self,
+        node_id: &Self::NodeId,
+    ) -> Result<Option<ExecutionNodeRecord<Self::NodeId>>, Self::Error> {
+        Ok(Some(ExecutionNodeRecord {
+            node_id: *node_id,
+            path: format!("node-{node_id}"),
+            node_kind: ExecutionNodeKind::File,
+            children: Vec::new(),
+            tombstoned: false,
+        }))
+    }
+
+    fn context_frames_by_type(
+        &self,
+        node_id: Self::NodeId,
+        frame_type: &str,
+        _max_frames: usize,
+    ) -> Result<ExecutionNodeContext<Self::NodeId, Self::FrameId>, Self::Error> {
+        Ok(ExecutionNodeContext {
+            node_record: ExecutionNodeRecord {
+                node_id,
+                path: format!("node-{node_id}"),
+                node_kind: ExecutionNodeKind::File,
+                children: Vec::new(),
+                tombstoned: false,
+            },
+            frames: vec![ExecutionFrame {
+                frame_id: 1,
+                frame_type: frame_type.to_string(),
+                agent_id: "agent".to_string(),
+                content: b"context".to_vec(),
+            }],
+            frame_count: 1,
+        })
+    }
 }
 
 impl ContextWritePort for FakeExecutionContext {
@@ -148,13 +212,13 @@ impl NodeResolutionPort for FakeExecutionContext {
 impl ProviderValidationPort for FakeExecutionContext {
     type Error = String;
     type GenerationRequest = String;
-    type ProviderPreparation = String;
+    type ProviderPreparation = FakeProviderPreparation;
 
     fn prepare_provider_for_request(
         &self,
-        request: &Self::GenerationRequest,
+        _request: &Self::GenerationRequest,
     ) -> Result<Self::ProviderPreparation, Self::Error> {
-        Ok(format!("prepared:{request}"))
+        Ok(FakeProviderPreparation)
     }
 
     fn validate_provider_binding(
@@ -174,16 +238,90 @@ impl ProviderExecutionPort for FakeExecutionContext {
     type CompletionResponse = String;
     type Error = String;
     type GenerationRequest = String;
-    type ProviderPreparation = String;
+    type ProviderPreparation = FakeProviderPreparation;
 
     async fn execute_completion(
         &self,
         request: &Self::GenerationRequest,
-        preparation: &Self::ProviderPreparation,
+        _preparation: &Self::ProviderPreparation,
         messages: Vec<Self::ChatMessage>,
         _event_context: Option<&ExecutionEventContext>,
     ) -> Result<Self::CompletionResponse, Self::Error> {
-        Ok(format!("{preparation}:{request}:{}", messages.len()))
+        Ok(format!("prepared:{request}:{}", messages.len()))
+    }
+}
+
+impl SystemPromptPort for FakeExecutionContext {
+    type Error = String;
+
+    fn load_system_prompt(&self, agent_id: &str) -> Result<String, Self::Error> {
+        Ok(format!("system:{agent_id}"))
+    }
+}
+
+impl PromptLineagePort for FakeExecutionContext {
+    type Error = String;
+    type PreparedPromptLineage = PreparedPromptLineage;
+    type PromptLineageRequest = PromptLineageRequest;
+
+    fn prepare_prompt_lineage(
+        &self,
+        input: &PromptLineageRequest,
+        _agent_id: &str,
+        _provider: &str,
+        _model: &str,
+        _provider_type: &str,
+    ) -> Result<Self::PreparedPromptLineage, Self::Error> {
+        Ok(PreparedPromptLineage {
+            prompt_link_contract: PromptLinkContractView {
+                prompt_link_id: "prompt-link-1".to_string(),
+                prompt_digest: input.rendered_prompt.clone(),
+                context_digest: input.context_payload.clone(),
+                system_prompt_artifact_id: "system".to_string(),
+                user_prompt_template_artifact_id: "template".to_string(),
+                rendered_prompt_artifact_id: "rendered".to_string(),
+                context_artifact_id: "context".to_string(),
+            },
+            metadata_input: GeneratedFrameMetadataInput {
+                agent_id: "agent".to_string(),
+                provider: "fake".to_string(),
+                model: "fake-model".to_string(),
+                provider_type: "fake".to_string(),
+                prompt_digest: input.rendered_prompt.clone(),
+                context_digest: input.context_payload.clone(),
+                prompt_link_id: "prompt-link-1".to_string(),
+            },
+        })
+    }
+}
+
+impl GeneratedMetadataPort for FakeExecutionContext {
+    type Error = String;
+    type FrameMetadata = String;
+    type GeneratedMetadataBuilder = dyn Fn(&GeneratedFrameMetadataInput) -> String + Send + Sync;
+    type GeneratedMetadataInput = GeneratedFrameMetadataInput;
+    type GenerationRequest = String;
+    type PreviousMetadataSnapshotView = PreviousMetadataSnapshotView;
+
+    fn load_previous_metadata_snapshot(
+        &self,
+        _request: &Self::GenerationRequest,
+    ) -> Result<PreviousMetadataSnapshotView, Self::Error> {
+        Ok(PreviousMetadataSnapshotView {
+            frame_id: None,
+            prompt_digest: None,
+            context_digest: None,
+            prompt_link_id: None,
+        })
+    }
+
+    fn build_and_validate_generated_metadata(
+        &self,
+        _request: &Self::GenerationRequest,
+        input: &GeneratedFrameMetadataInput,
+        metadata_builder: &Self::GeneratedMetadataBuilder,
+    ) -> Result<Self::FrameMetadata, Self::Error> {
+        Ok(metadata_builder(input))
     }
 }
 

@@ -46,6 +46,10 @@ impl WorkflowStateStore {
         })
     }
 
+    pub fn into_inner(self) -> meld_execution::workflow::WorkflowStateStore {
+        self.inner
+    }
+
     pub fn load_thread(&self, thread_id: &str) -> Result<Option<WorkflowThreadRecord>, ApiError> {
         self.inner.load_thread(thread_id).map_err(Into::into)
     }

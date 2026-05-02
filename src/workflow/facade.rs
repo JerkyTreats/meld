@@ -5,7 +5,9 @@ use crate::context::generation::{
 };
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
-use crate::execution::{ContextReadPort, ExecutionEventContext, WorkflowProfileLoadPort};
+use crate::execution::{
+    ContextReadPort, ExecutionEventContext, SystemPromptPort, WorkflowProfileLoadPort,
+};
 use crate::provider::ProviderExecutionBinding;
 use crate::store::NodeType;
 use crate::workflow::executor::{
@@ -24,6 +26,7 @@ pub fn execute_workflow_target<A>(
 where
     A: WorkflowProfileLoadPort
         + crate::execution::ExecutionRuntimeContext
+        + SystemPromptPort
         + crate::execution::WorldModelQueryPort
         + 'static,
 {
@@ -54,6 +57,7 @@ pub async fn execute_workflow_target_async<A>(
 where
     A: WorkflowProfileLoadPort
         + crate::execution::ExecutionRuntimeContext
+        + SystemPromptPort
         + crate::execution::WorldModelQueryPort
         + 'static,
 {
@@ -85,7 +89,10 @@ pub fn execute_registered_workflow_target<A>(
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<TargetExecutionResult, ApiError>
 where
-    A: crate::execution::ExecutionRuntimeContext + crate::execution::WorldModelQueryPort + 'static,
+    A: crate::execution::ExecutionRuntimeContext
+        + SystemPromptPort
+        + crate::execution::WorldModelQueryPort
+        + 'static,
 {
     if request.program.kind != TargetExecutionProgramKind::Workflow {
         return Err(ApiError::ConfigError(
@@ -137,7 +144,10 @@ pub async fn execute_registered_workflow_target_async<A>(
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<TargetExecutionResult, ApiError>
 where
-    A: crate::execution::ExecutionRuntimeContext + crate::execution::WorldModelQueryPort + 'static,
+    A: crate::execution::ExecutionRuntimeContext
+        + SystemPromptPort
+        + crate::execution::WorldModelQueryPort
+        + 'static,
 {
     if request.program.kind != TargetExecutionProgramKind::Workflow {
         return Err(ApiError::ConfigError(
