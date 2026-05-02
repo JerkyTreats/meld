@@ -1,6 +1,6 @@
 [package]
 name = "meld"
-version = "2.4.0"
+version = "2.5.0"
 edition = "2021"
 authors = ["Meld Contributors"]
 description = "Deterministic filesystem state management using Merkle trees"
@@ -18,9 +18,9 @@ resolver = "2"
 [dependencies]
 # Hashing
 blake3 = "1.5"
-meld-events = { path = "crates/meld-events", version = "2.4.0" }
-meld-execution = { path = "crates/meld-execution", version = "2.4.0" }
-meld-world-model = { path = "crates/meld-world-model", version = "2.4.0" }
+meld-events = { path = "crates/meld-events", version = "2.5.0" }
+meld-execution = { path = "crates/meld-execution", version = "2.5.0" }
+meld-world-model = { path = "crates/meld-world-model", version = "2.5.0" }
 
 # Merkle tree for frame sets
 rs_merkle = "1.5"

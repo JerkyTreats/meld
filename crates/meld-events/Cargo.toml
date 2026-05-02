@@ -1,6 +1,6 @@
 [package]
 name = "meld-events"
-version = "2.4.0"
+version = "2.5.0"
 edition = "2021"
 authors = ["Meld Contributors"]
 description = "Canonical event ledger contracts and runtime for Meld"

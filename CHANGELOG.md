@@ -1,5 +1,134 @@
 # Changelog
 
+## [2.5.0](https://github.com/JerkyTreats/meld/compare/v2.4.0...v2.5.0) — 2026-05-02
+
+### Features
+
+* **world_state:** add graph contracts store and query surface [5ae3305](https://github.com/JerkyTreats/meld/commit/5ae3305533f85ab542c877978839208e028505d0)
+* **world_state:** reduce execution facts into current claim state [25331c4](https://github.com/JerkyTreats/meld/commit/25331c4a820e3213ca36ec98b649d098c83bd488)
+* **context:** publish canonical frame and head traversal events [323d520](https://github.com/JerkyTreats/meld/commit/323d520aea04f348f777a0bcbbf2eb864661a759)
+* **workspace_fs:** publish canonical workspace traversal facts [148d642](https://github.com/JerkyTreats/meld/commit/148d6428ee8dd57a2cf59511505e4eddfcee501b)
+* **world_state:** add traversal store indexes and graph walk query [522439d](https://github.com/JerkyTreats/meld/commit/522439d9397f48321012c3c2860de6e1a0de3f7f)
+* **world_state:** route legacy claim reads through traversal indexes [1ac669f](https://github.com/JerkyTreats/meld/commit/1ac669f0d2743cbe232f7d7f04c959e0fa802821)
+* **world_state:** bootstrap graph reducer runtime [e56fc1b](https://github.com/JerkyTreats/meld/commit/e56fc1b0ec5205518fac921ed6db0c8f0e2d8f5e)
+* **roots:** register active workspaces with migration metadata [27615e6](https://github.com/JerkyTreats/meld/commit/27615e6629a024944545e938383a9b503e0f137b)
+* **branches:** add dormant branch discovery and migration flows [8b8d1e5](https://github.com/JerkyTreats/meld/commit/8b8d1e53a0e53deae840c49416069af1e245f9ad)
+* **branches:** add federated branch graph queries [4767c99](https://github.com/JerkyTreats/meld/commit/4767c99ba5975362dd65dbde2cf17d3a97fc2514)
+* **workspace:** publish canonical workspace facts from promoted watch batches [352b956](https://github.com/JerkyTreats/meld/commit/352b95627491a007c2c2fc88fe609861c2d35c13)
+* **world_state:** persist derived traversal facts through idempotent spine append [21b6181](https://github.com/JerkyTreats/meld/commit/21b61811d098e63f5c95fa83b144d0406bfe34d2)
+* **workflow:** resolve task path outputs through traversal artifact anchors [f9f0cfe](https://github.com/JerkyTreats/meld/commit/f9f0cfe6600bf296d05784cc3feed722b74c1e7a)
+
+### Bug Fixes
+
+* **refactor:** rename roots -> branches [3d38a95](https://github.com/JerkyTreats/meld/commit/3d38a95f8050a2cde65d8aa2cc092da6cfccd605)
+* **workflow:** reuse completed task path threads through traversal state [c694090](https://github.com/JerkyTreats/meld/commit/c69409058edc5a3412a1e5290c67704e7d776040)
+* **context:** honor force for frame regeneration [f79329b](https://github.com/JerkyTreats/meld/commit/f79329b7ffd9f6a8f74fe2ad7558869bfe9f48b2)
+* **context:** log queue worker shutdown failures [bdc40ea](https://github.com/JerkyTreats/meld/commit/bdc40eae6f578ff62a6c760bae3ed0a39fa8b103)
+
+### Refactors
+
+* **telemetry:** add runtime-wide spine envelope and store [bf5c927](https://github.com/JerkyTreats/meld/commit/bf5c9279c22f3117fb15a51886e503835e6e027e)
+* **execution:** define domain-owned canonical event contracts [6af5b10](https://github.com/JerkyTreats/meld/commit/6af5b10946cacddb766f41701b14214f49275016)
+* **execution:** publish canonical events from owning domains [50fa167](https://github.com/JerkyTreats/meld/commit/50fa16704fd755364e5bb0bd743f03acd37e3650)
+* **control:** reduce spine events into execution projection [0018f22](https://github.com/JerkyTreats/meld/commit/0018f22ed53b1428b9ab6c32f84af9d88f4ae72c)
+* **telemetry:** make telemetry downstream of the spine [8a64160](https://github.com/JerkyTreats/meld/commit/8a64160ff6e06d0ac7e498dcd64b11eccdc960ea)
+* **execution:** finalize spine execution slice [f37d891](https://github.com/JerkyTreats/meld/commit/f37d891bf74f6296b21def035c8d75d4bb0e5c33)
+* **telemetry:** add object refs and relations to spine events [a7ee266](https://github.com/JerkyTreats/meld/commit/a7ee26666c91730f76fc47f3e7c00d599df8072b)
+* **execution:** attach object refs to canonical execution events [07a175f](https://github.com/JerkyTreats/meld/commit/07a175f1b8eae99c1cf4b2ba5230c237b84660a8)
+* **world_state:** add traversal-native contracts and compatibility skeleton [0143f6a](https://github.com/JerkyTreats/meld/commit/0143f6a077b59dba69955308616504b8d77714f3)
+* **execution:** complete traversal refs for task and workflow events [9f1e9d8](https://github.com/JerkyTreats/meld/commit/9f1e9d827748dd1df9753f9ace27645f8a9a077e)
+* **world_state:** rename traversal module to graph [099100d](https://github.com/JerkyTreats/meld/commit/099100d9a8ba1fb3bd4beb19938c056013d1dc8a)
+* **roots:** add branch-aware metadata compatibility [947e842](https://github.com/JerkyTreats/meld/commit/947e842156a755b55ea3af2d5fd9968c17c1ee6a)
+* **roots:** add internal branch handle runtime seam [e2bd508](https://github.com/JerkyTreats/meld/commit/e2bd5089428e652bd6a9101bc8ba7fd9bc3c5c19)
+* **roots:** isolate legacy root naming behind branch aliases [3cf6159](https://github.com/JerkyTreats/meld/commit/3cf61599ca33d2ad86bca906ae3cb648e60226da)
+* **branches:** add canonical branches module and cli alias [28f91f6](https://github.com/JerkyTreats/meld/commit/28f91f6dea63e1c304fb9101def70a3b5db03768)
+* **events:** add canonical event contracts and compatibility shims [0d6a85e](https://github.com/JerkyTreats/meld/commit/0d6a85e3960b0ab66a9e10ab024c2f925d3e3e24)
+* **session:** split minimal session lifecycle from telemetry [6e35861](https://github.com/JerkyTreats/meld/commit/6e35861bfdaaefc9caa6ca6ae7f8d370af437908)
+* **events:** extract canonical append and replay runtime [8f62b12](https://github.com/JerkyTreats/meld/commit/8f62b12931dbbbd16cb662ad3e7eb77433270d2b)
+* **events:** cut producers over to canonical event runtime [963b9c9](https://github.com/JerkyTreats/meld/commit/963b9c9c74f1dbef685175354a171b8ce2ff2258)
+* **events:** retarget replay consumers to canonical store [d390500](https://github.com/JerkyTreats/meld/commit/d390500bcd8534e0267e050e8044fa8e69fac504)
+* **telemetry:** reduce telemetry to downstream compatibility [9146b12](https://github.com/JerkyTreats/meld/commit/9146b120d4b79002b041df9603e15f143d499de0)
+* **events:** finalize canonical ownership extraction [2191c03](https://github.com/JerkyTreats/meld/commit/2191c035f8bc25745d079c7138c2d0248ee8d537)
+* **events:** preserve canonical spine history across session cleanup [a239e47](https://github.com/JerkyTreats/meld/commit/a239e47e57d718cd1f76325d19a3c2ce57125679)
+* **branches:** annotate federated traversal results with branch provenance [f77357f](https://github.com/JerkyTreats/meld/commit/f77357f6fb04bb4fb9630ba87e2d3989d9cddb93)
+* **world_state:** move graph source reduction into domain reducers [45606b9](https://github.com/JerkyTreats/meld/commit/45606b9ede44457d4b847354c51b5de848cb0f35)
+* **events:** separate session lifecycle from event store [037eab6](https://github.com/JerkyTreats/meld/commit/037eab62a957c86c1e8b9dd039123b2ec01fc989)
+* **world-state:** route reads through world model queries [7eb71d4](https://github.com/JerkyTreats/meld/commit/7eb71d46e60e1e464b6e1413162b4cbea72a9c07)
+* **execution:** extract runtime ports and request contracts [f78708c](https://github.com/JerkyTreats/meld/commit/f78708c8ac00f156f82d1ac5c076493fcc0ec79c)
+* **workflow:** cut runtime through root assembly [9bf4c5a](https://github.com/JerkyTreats/meld/commit/9bf4c5a32df03cd3131ff802485e76ea5d8e9280)
+* **core:** seal legacy runtime surfaces behind compat [1983b18](https://github.com/JerkyTreats/meld/commit/1983b18ca079762de8dab4282d9afbb4211c459b)
+* **core:** remove dead in-tree authority copies [1f15f25](https://github.com/JerkyTreats/meld/commit/1f15f2510874ac95f96593955ba4ef8658c15213)
+* **execution:** extract execution authority contracts [c994026](https://github.com/JerkyTreats/meld/commit/c994026f5aac553f41f15e4645cfc27a52a3d2a7)
+* **execution:** move workflow and task contracts into crate [411c8eb](https://github.com/JerkyTreats/meld/commit/411c8ebf26113a0ca0b3776df580a25efc252367)
+* **execution:** move provider and generation dto contracts into crate [6756474](https://github.com/JerkyTreats/meld/commit/67564746a95db9c5bddc7ddb4e7c5746885c390e)
+* **execution:** replace queue event context with runtime ports [f73ac43](https://github.com/JerkyTreats/meld/commit/f73ac43a3d1e9affbc645741e7b531f4a4cac6df)
+* **execution:** route lineage and metadata through runtime ports [8607d39](https://github.com/JerkyTreats/meld/commit/8607d397d51e83555bfd8b7471ccdd6560886720)
+* **execution:** move task and workflow event ownership into crate [0809bf7](https://github.com/JerkyTreats/meld/commit/0809bf77d8d40cf20097140ce81f5ce586bbeb43)
+* **capability:** move shared catalog payloads and registry contracts into crate [eb85a56](https://github.com/JerkyTreats/meld/commit/eb85a56a95a47e1b446f5a753f6099c5516bd45b)
+* **task:** move core task engine into execution crate [28e14b2](https://github.com/JerkyTreats/meld/commit/28e14b26e42beba072ed63d1a740046741960ad4)
+* **task:** retarget package trigger bindings to execution contracts [44c8bcc](https://github.com/JerkyTreats/meld/commit/44c8bcc479136e7dde8de342a461f4a659861b8d)
+* **execution:** add execution read models and world model ports [5193006](https://github.com/JerkyTreats/meld/commit/5193006ea7d0fd49be47a96e0dfb2b9fa878951a)
+* **execution:** move traversal and publish contracts into crate [f856bff](https://github.com/JerkyTreats/meld/commit/f856bffa82059e899aabf78a16d28fb65bd9925b)
+* **task:** move package contracts and lowering into execution crate [63179ef](https://github.com/JerkyTreats/meld/commit/63179efb3aa0b6bdb1158659de65d2eb96c5a5e4)
+* **task:** move package discovery into execution crate [2893812](https://github.com/JerkyTreats/meld/commit/28938123341da95e919e0e96b92fb90001ac8199)
+* **task:** move package preparation into execution crate [4a13498](https://github.com/JerkyTreats/meld/commit/4a13498916d96d8a197f6cffd8baa7cc1f63d65c)
+* **task:** move template materialization into execution crate [879424c](https://github.com/JerkyTreats/meld/commit/879424c5be1d6517c63a04579dde6a779de6e4b4)
+* **task:** add extracted expansion compiler registry [5dc7da1](https://github.com/JerkyTreats/meld/commit/5dc7da13ab666dfb6aa72d22ab72cee09f1fa789)
+* **task:** route live expansion dispatch through compiler registry [d9961d7](https://github.com/JerkyTreats/meld/commit/d9961d712f6eac29af2cfcdd1c2e12d8d39c7f0a)
+* **capability:** converge registry ownership on meld-execution [c469ee5](https://github.com/JerkyTreats/meld/commit/c469ee5666499f7465ce74dbccaee50268b090b3)
+* **task:** remove dead root package ballast [1857105](https://github.com/JerkyTreats/meld/commit/1857105e380acf3d413956a441585a56e6831410)
+* **task:** reduce root package wrappers to adapter seams [433659f](https://github.com/JerkyTreats/meld/commit/433659f47eb75f2692d418c48ca20192748bb974)
+* **task:** seal root runtime and expansion adapters [143f3ad](https://github.com/JerkyTreats/meld/commit/143f3adbf8ba049f3a96cb9cf42da0b0e17e0252)
+* **task:** remove template compatibility shim [b8d9450](https://github.com/JerkyTreats/meld/commit/b8d94506bc93459022df3f8155cb63a65fdef938)
+* **execution:** add workflow lineage metadata and progress contracts [8ed2c3c](https://github.com/JerkyTreats/meld/commit/8ed2c3c5956aada5bbe666fd0a0e27cf89e37c62)
+* **workflow:** move resolver gates and normalization into execution crate [cd826ac](https://github.com/JerkyTreats/meld/commit/cd826ac7e8e93d5d811a8c2ce5df1f5420a003f9)
+* **workflow:** move records and state store into execution crate [9ce1b9d](https://github.com/JerkyTreats/meld/commit/9ce1b9dae72e7fd30e91a62965457577883d7b1c)
+* **workflow:** inject task path capability bundle [d225cdb](https://github.com/JerkyTreats/meld/commit/d225cdb8875b18442b3435f80730a1a805fef97c)
+* **workflow:** move executor ownership into execution crate [28419b6](https://github.com/JerkyTreats/meld/commit/28419b6a937554ef90fbc342c9e74443fa5433f3)
+* **workflow:** decompose extracted executor [529c409](https://github.com/JerkyTreats/meld/commit/529c409b8e091634b112a3c31142b280c3e5c28c)
+* **workflow:** group executor arguments into contexts [a61e619](https://github.com/JerkyTreats/meld/commit/a61e6190cf344fa841aa6d803cc550c17279f6f9)
+
+### Documentation
+
+* add spine graph completion and workflow references [987b467](https://github.com/JerkyTreats/meld/commit/987b4671fb0dc26a798dfebe255839686a851d63)
+* **design:** cleanup cognitive_architecture [a1735e7](https://github.com/JerkyTreats/meld/commit/a1735e76f5cef22ea80caa6970828ae6ba1db117)
+* **design:** cognitive_archictecture research/refinement [481c05a](https://github.com/JerkyTreats/meld/commit/481c05a7072aff361bb7dc90311427fee7933f62)
+
+### Tests
+
+* **world_state:** lock replay and query acceptance coverage [8613e2f](https://github.com/JerkyTreats/meld/commit/8613e2f584e9116d43859067779f8842c141bf15)
+* **world_state:** lock full traversal acceptance coverage [44427a5](https://github.com/JerkyTreats/meld/commit/44427a543b784f50e0f373d3162c884bebc2251c)
+* **crates:** add extracted crate contract tests [77fc600](https://github.com/JerkyTreats/meld/commit/77fc600249b7e871fa95c8e0879d2a68506f5450)
+
+### Build
+
+* **workspace:** extract events and world model crates [505901e](https://github.com/JerkyTreats/meld/commit/505901e673e38a672ca62754a2920cb346cecc67)
+
+### CI
+
+* **release:** publish workspace crates in dependency order [220ed0e](https://github.com/JerkyTreats/meld/commit/220ed0e0e4bc42fd67c14d3d357bc3da8ab2c2c4)
+
+### Chores
+
+* apply repository formatter output [11a5125](https://github.com/JerkyTreats/meld/commit/11a5125880e5c647a638160b8e5a916541dd593d)
+
+### Design
+
+* **cognitive_architecture:** define event spine execution slice [d736f91](https://github.com/JerkyTreats/meld/commit/d736f91919a1234e509c655be4c0280c45668d69)
+* **cognitive_architecture:** define temporal fact graph implementation slice [804c6c6](https://github.com/JerkyTreats/meld/commit/804c6c60532718181cce8beb9b1397a01f2acfb3)
+* **cognitive_architecture:** split world_state into traversal and belief [223e363](https://github.com/JerkyTreats/meld/commit/223e3638c72df10644d1e42f69eb760b863e93b6)
+* **events:** define event extraction execution plan [84ac3cf](https://github.com/JerkyTreats/meld/commit/84ac3cfdb450ac7f21540a44225aa1219e6f287b)
+* **world_state:** record spine graph completion evidence and close checkpoints [1954260](https://github.com/JerkyTreats/meld/commit/19542608ccc6746033ebae077d42fde182699405)
+* **cognitive-architecture:** publish split baseline artifacts [25b13cc](https://github.com/JerkyTreats/meld/commit/25b13cc4c9266364fd19282050be32626df00268)
+* **cognitive-architecture:** expand split architecture docs [b74c2b1](https://github.com/JerkyTreats/meld/commit/b74c2b1b738a14bdbc9cae4db0fa9487494f6c9d)
+
+### Policy
+
+* **governance:** define compatibility shim lifecycle [75856a0](https://github.com/JerkyTreats/meld/commit/75856a0d64847bd4e59dd45347e346e0827338fc)
+* **workflow:** require formatter evidence for complex change gates [9f09029](https://github.com/JerkyTreats/meld/commit/9f09029a3587cf5b09f7603934241418995903f4)
+* **agents:** index assessment by domain governance [a9a48a6](https://github.com/JerkyTreats/meld/commit/a9a48a658f2b721965453fa7930dda712c0e9646)
+
+
 ## [2.4.0](https://github.com/JerkyTreats/meld/compare/v2.3.1...v2.4.0) — 2026-04-12
 
 ### Features
