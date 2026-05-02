@@ -1,4 +1,4 @@
-//! Root wrappers for task template materialization.
+//! Root workflow to task adapter wrappers.
 
 use crate::capability::CapabilityCatalog;
 use crate::error::ApiError;
@@ -6,16 +6,15 @@ use crate::execution::{ContextReadPort, NodeResolutionPort, PromptArtifactReadPo
 use crate::task::package::{PreparedTaskRun, WorkflowPackageTriggerRequest};
 use crate::types::NodeID;
 use crate::workflow::registry::RegisteredWorkflowProfile;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Returns true when a registered workflow has a task package route.
 pub fn workflow_uses_task_package_path(
     registered_profile: &RegisteredWorkflowProfile,
 ) -> Result<bool, ApiError> {
-    let default_package_dir = default_task_package_dir()?;
     meld_execution::task::workflow_uses_task_package_path(
         registered_profile,
-        Some(default_package_dir.as_path()),
+        Some(crate::task::package::default_user_task_package_dir()?.as_path()),
     )
 }
 
@@ -35,26 +34,19 @@ pub fn prepare_registered_workflow_task_run(
     request: &WorkflowPackageTriggerRequest,
     catalog: &CapabilityCatalog,
 ) -> Result<PreparedTaskRun, ApiError> {
-    let default_package_dir = default_task_package_dir()?;
     meld_execution::task::prepare_registered_workflow_task_run(
         api,
         workspace_root,
         registered_profile,
         request,
         catalog,
-        Some(default_package_dir.as_path()),
+        Some(crate::task::package::default_user_task_package_dir()?.as_path()),
         |prompt_ref| {
-            crate::workflow::resolver::resolve_prompt_template(
+            crate::task::package::resolve_workflow_package_prompt_template(
                 api,
-                registered_profile.source_path.as_deref(),
+                registered_profile,
                 prompt_ref,
             )
         },
     )
-}
-
-fn default_task_package_dir() -> Result<PathBuf, ApiError> {
-    Ok(crate::config::WorkflowConfig::default()
-        .resolve_user_profile_dir()?
-        .join("packages"))
 }

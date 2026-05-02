@@ -1,10 +1,8 @@
-//! Root wrapper for extracted task package discovery.
+//! Root task package discovery adapter.
 
 use crate::error::ApiError;
 use crate::task::package::TaskPackageSpec;
 use crate::workflow::registry::RegisteredWorkflowProfile;
-use std::path::PathBuf;
-
 pub use meld_execution::task::package::{
     load_builtin_task_package_spec, load_builtin_task_package_spec_for_workflow,
 };
@@ -15,15 +13,9 @@ pub fn load_task_package_spec_for_workflow(
 ) -> Result<Option<TaskPackageSpec>, ApiError> {
     meld_execution::task::package::load_task_package_spec_for_workflow(
         registered_profile,
-        Some(default_task_package_dir()?.as_path()),
+        Some(crate::task::package::default_user_task_package_dir()?.as_path()),
     )
     .map_err(ApiError::from)
-}
-
-fn default_task_package_dir() -> Result<PathBuf, ApiError> {
-    Ok(crate::config::WorkflowConfig::default()
-        .resolve_user_profile_dir()?
-        .join("packages"))
 }
 
 #[cfg(test)]
@@ -114,5 +106,12 @@ expansions: []
             .unwrap();
 
         assert_eq!(spec.package_id, "docs_writer_override");
+    }
+
+    #[test]
+    fn resolves_default_user_package_dir() {
+        let path = crate::task::package::default_user_task_package_dir().unwrap();
+
+        assert!(path.ends_with("packages"));
     }
 }

@@ -1,4 +1,4 @@
-//! Root wrappers for extracted workflow-backed task package preparation.
+//! Root task package adapters over extracted package behavior.
 
 use crate::capability::CapabilityCatalog;
 use crate::error::ApiError;
@@ -35,9 +35,9 @@ pub fn prepare_workflow_package_context(
         request,
         package_spec,
         |prompt_ref| {
-            crate::workflow::resolver::resolve_prompt_template(
+            crate::task::package::resolve_workflow_package_prompt_template(
                 api,
-                registered_profile.source_path.as_deref(),
+                registered_profile,
                 prompt_ref,
             )
         },
@@ -65,9 +65,9 @@ where
         catalog,
         package_spec,
         |prompt_ref| {
-            crate::workflow::resolver::resolve_prompt_template(
+            crate::task::package::resolve_workflow_package_prompt_template(
                 api,
-                registered_profile.source_path.as_deref(),
+                registered_profile,
                 prompt_ref,
             )
         },
@@ -111,9 +111,9 @@ pub fn prompt_map(
     turns: &[TurnSpec],
 ) -> Result<HashMap<String, String>, ApiError> {
     meld_execution::task::package::prompt_map(turns, |prompt_ref| {
-        crate::workflow::resolver::resolve_prompt_template(
+        crate::task::package::resolve_workflow_package_prompt_template(
             api,
-            registered_profile.source_path.as_deref(),
+            registered_profile,
             prompt_ref,
         )
     })
