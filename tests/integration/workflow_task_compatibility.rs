@@ -6,8 +6,8 @@ use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
 use meld::events::DomainObjectRef;
 use meld::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 use meld::workflow::{
-    execute_registered_workflow, RegisteredWorkflowProfile, WorkflowExecutionRequest,
-    WorkflowStateStore, WorkflowThreadStatus,
+    build_workflow_task_path_runtime, execute_registered_workflow, RegisteredWorkflowProfile,
+    WorkflowExecutionRequest, WorkflowStateStore, WorkflowThreadStatus,
 };
 use meld::world_state::graph::query::TraversalQuery;
 use std::fs;
@@ -295,6 +295,7 @@ fn workflow_task_path_fails_when_required_frame_ref_anchor_is_missing() {
         )
         .unwrap();
         let profile = docs_writer_profile(&run_context);
+        let task_path_runtime = build_workflow_task_path_runtime().unwrap();
         let error = execute_registered_workflow(
             run_context.api(),
             &workspace_root,
@@ -313,6 +314,7 @@ fn workflow_task_path_fails_when_required_frame_ref_anchor_is_missing() {
                 plan_id: None,
                 level_index: None,
             },
+            &task_path_runtime,
             None,
         )
         .unwrap_err();

@@ -11,6 +11,7 @@ use crate::types::NodeID;
 use crate::workflow::facade::{build_target_execution_request, execute_registered_workflow_target};
 use crate::workflow::profile::WorkflowProfile;
 use crate::workflow::registry::WorkflowRegistry;
+use crate::workflow::task_path::build_workflow_task_path_runtime;
 use crate::workspace;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -168,11 +169,13 @@ impl WorkflowCommandService {
             event_context.map(|ctx| ctx.session_id.clone()),
             None,
         )?;
+        let task_path_runtime = build_workflow_task_path_runtime()?;
         let result = execute_registered_workflow_target(
             api,
             workspace_root,
             registered_profile,
             &execution_request,
+            &task_path_runtime,
             event_context.map(ExecutionEventContext::from).as_ref(),
         )?;
 

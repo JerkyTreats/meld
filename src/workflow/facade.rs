@@ -12,6 +12,7 @@ use crate::workflow::executor::{
     execute_registered_workflow, execute_registered_workflow_async, WorkflowExecutionRequest,
 };
 use crate::workflow::registry::RegisteredWorkflowProfile;
+use crate::workflow::task_path::build_workflow_task_path_runtime;
 use std::path::Path;
 
 pub fn execute_workflow_target<A>(
@@ -33,11 +34,13 @@ where
     })?;
     let execution_event_context = event_context.map(ExecutionEventContext::from);
     let registered_profile = api.load_workflow_profile(workflow_id)?;
+    let task_path_runtime = build_workflow_task_path_runtime()?;
     execute_registered_workflow_target(
         api,
         workspace_root,
         &registered_profile,
         request,
+        &task_path_runtime,
         execution_event_context.as_ref(),
     )
 }
@@ -61,11 +64,13 @@ where
     })?;
     let execution_event_context = event_context.map(ExecutionEventContext::from);
     let registered_profile = api.load_workflow_profile(workflow_id)?;
+    let task_path_runtime = build_workflow_task_path_runtime()?;
     execute_registered_workflow_target_async(
         api,
         workspace_root,
         &registered_profile,
         request,
+        &task_path_runtime,
         execution_event_context.as_ref(),
     )
     .await
@@ -76,6 +81,7 @@ pub fn execute_registered_workflow_target<A>(
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &TargetExecutionRequest,
+    task_path_runtime: &crate::workflow::WorkflowTaskPathRuntime,
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<TargetExecutionResult, ApiError>
 where
@@ -101,6 +107,7 @@ where
             plan_id: request.plan_id.clone(),
             level_index: request.level_index,
         },
+        task_path_runtime,
         event_context,
     )?;
 
@@ -126,6 +133,7 @@ pub async fn execute_registered_workflow_target_async<A>(
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &TargetExecutionRequest,
+    task_path_runtime: &crate::workflow::WorkflowTaskPathRuntime,
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<TargetExecutionResult, ApiError>
 where
@@ -151,6 +159,7 @@ where
             plan_id: request.plan_id.clone(),
             level_index: request.level_index,
         },
+        task_path_runtime,
         event_context,
     )
     .await?;

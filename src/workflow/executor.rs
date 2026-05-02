@@ -1,7 +1,6 @@
 //! Workflow runtime executor for bound agent turn workflows.
 
 use crate::agent::profile::prompt_contract::PromptContract;
-use crate::capability::{CapabilityCatalog, CapabilityExecutorRegistry};
 use crate::context::frame::{Basis, Frame};
 use crate::context::generation::contracts::{
     GeneratedMetadataBuilder, GenerationOrchestrationRequest,
@@ -41,6 +40,7 @@ use crate::workflow::state_store::{
     WorkflowStateStore, WorkflowThreadRecord, WorkflowThreadStatus, WorkflowTurnRecord,
     WorkflowTurnStatus,
 };
+use crate::workflow::task_path::WorkflowTaskPathRuntime;
 use meld_execution::PromptLineageRequest;
 use serde_json::json;
 use std::collections::HashMap;
@@ -71,6 +71,7 @@ pub fn execute_registered_workflow<A>(
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
+    task_path_runtime: &WorkflowTaskPathRuntime,
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<WorkflowExecutionSummary, ApiError>
 where
@@ -85,6 +86,7 @@ where
             workspace_root,
             registered_profile,
             request,
+            task_path_runtime,
             event_context,
         )
         .await
@@ -96,6 +98,7 @@ pub(crate) async fn execute_registered_workflow_async<A>(
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
+    task_path_runtime: &WorkflowTaskPathRuntime,
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<WorkflowExecutionSummary, ApiError>
 where
@@ -324,6 +327,7 @@ where
             workspace_root,
             registered_profile,
             request,
+            task_path_runtime,
             event_context,
             &state_store,
             &thread_id,
@@ -945,6 +949,7 @@ async fn execute_registered_workflow_via_task_async<A>(
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowExecutionRequest,
+    task_path_runtime: &WorkflowTaskPathRuntime,
     event_context: Option<&ExecutionEventContext>,
     state_store: &WorkflowStateStore,
     thread_id: &str,
@@ -954,9 +959,6 @@ async fn execute_registered_workflow_via_task_async<A>(
 where
     A: ExecutionRuntimeContext + WorldModelQueryPort + 'static,
 {
-    let mut catalog = CapabilityCatalog::new();
-    let mut registry = CapabilityExecutorRegistry::new();
-    register_task_path_capabilities(&mut catalog, &mut registry)?;
     let package_spec =
         load_task_package_spec_for_workflow(registered_profile)?.ok_or_else(|| {
             ApiError::ConfigError(format!(
@@ -980,7 +982,7 @@ where
             force: request.force,
             session_id: event_context.map(|ctx| ctx.session_id.clone()),
         },
-        &catalog,
+        &task_path_runtime.catalog,
     )?;
     let mut executor = TaskExecutor::new(
         prepared.compiled_task,
@@ -990,8 +992,8 @@ where
     let task_summary = match execute_task_to_completion(
         api,
         &mut executor,
-        &catalog,
-        &registry,
+        &task_path_runtime.catalog,
+        &task_path_runtime.registry,
         event_context,
         Some(&WorkflowTaskTelemetry {
             workflow_id: registered_profile.profile.workflow_id.clone(),
@@ -1131,41 +1133,6 @@ fn decode_frame_id(value: &str) -> Result<FrameID, ApiError> {
         ApiError::GenerationFailed("Invalid frame_ref artifact frame_id length".to_string())
     })?;
     Ok(array)
-}
-
-fn register_task_path_capabilities(
-    catalog: &mut CapabilityCatalog,
-    registry: &mut CapabilityExecutorRegistry,
-) -> Result<(), ApiError> {
-    registry.register(
-        catalog,
-        crate::workspace::capability::WorkspaceResolveNodeIdCapability,
-    )?;
-    registry.register(
-        catalog,
-        crate::workspace::capability::WorkspaceFilterFrameHeadPublishCapability,
-    )?;
-    registry.register(
-        catalog,
-        crate::workspace::capability::WorkspaceWriteFrameHeadCapability,
-    )?;
-    registry.register(
-        catalog,
-        crate::merkle_traversal::capability::MerkleTraversalCapability,
-    )?;
-    registry.register(
-        catalog,
-        crate::context::capability::ContextGeneratePrepareCapability,
-    )?;
-    registry.register(
-        catalog,
-        crate::provider::capability::ProviderExecuteChatCapability,
-    )?;
-    registry.register(
-        catalog,
-        crate::context::capability::ContextGenerateFinalizeCapability,
-    )?;
-    Ok(())
 }
 
 fn emit_workflow_target_event(

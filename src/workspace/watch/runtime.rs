@@ -16,6 +16,7 @@ use crate::tree::path::canonicalize_path;
 use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
 use crate::workflow::executor::{execute_registered_workflow, WorkflowExecutionRequest};
+use crate::workflow::task_path::build_workflow_task_path_runtime;
 use crate::workspace::commands::{emit_workspace_snapshot_facts, stored_workspace_root_hash};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use parking_lot::RwLock;
@@ -475,12 +476,14 @@ impl WatchDaemon {
                             plan_id: None,
                             level_index: None,
                         };
+                        let task_path_runtime = build_workflow_task_path_runtime()?;
 
                         match execute_registered_workflow(
                             self.api.as_ref(),
                             &self.config.workspace_root,
                             &registered_profile,
                             &request,
+                            &task_path_runtime,
                             workflow_execution_event_context.as_ref(),
                         ) {
                             Ok(summary) => {

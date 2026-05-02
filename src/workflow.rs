@@ -13,6 +13,7 @@ pub mod registry;
 pub mod resolver;
 pub mod state_store;
 pub mod summary;
+pub mod task_path;
 pub mod tooling;
 
 pub use commands::{
@@ -38,3 +39,4 @@ pub use meld_execution::workflow::{
 };
 pub use registry::WorkflowRegistry;
 pub use state_store::{WorkflowStateStore, WorkflowThreadStatus, WorkflowTurnStatus};
+pub use task_path::{build_workflow_task_path_runtime, WorkflowTaskPathRuntime};
