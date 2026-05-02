@@ -51,6 +51,6 @@ The world model owns belief updates and conflict resolution.
 
 - [Observe Merge Push](../observe_merge_push.md)
 - [Sensory Substrate](substrate.md)
-- [World Model Domain](../world_state/README.md)
+- [World Model Domain](../world_model/README.md)
 - [Events Domain](../events/README.md)
 - [Await Observation Semantics](../execution/control/program/await_observation_semantics.md)

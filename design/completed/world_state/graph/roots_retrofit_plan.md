@@ -162,7 +162,7 @@ Key seams:
 
 - `src/roots.rs`
 - `src/roots/tooling.rs`
-- `design/cognitive_architecture/world_state/graph/branch_federation_substrate.md`
+- `design/completed/world_state/graph/branch_federation_substrate.md`
 
 Status:
 
@@ -202,11 +202,11 @@ Gate D:
 
 ## Related Documentation
 
-- [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md)
+- [Branch Federation Substrate](branch_federation_substrate.md)
 - [Root Federation Runtime](root_federation_runtime.md)
 - [Root Migration Architecture](root_migration_architecture.md)
 - [Root Migration First Slice](root_migration_first_slice.md)
-- [Graph](../../../cognitive_architecture/world_state/graph/README.md)
+- [Graph](../../../cognitive_architecture/world_model/graph/README.md)
 
 ## Exception List
 

@@ -45,7 +45,7 @@ Read this directory as the detailed execution-control layer under `execution`.
 ## Read With
 
 1. [Goals](../../../goals/README.md)
-2. [World Model Domain](../../world_state/README.md)
+2. [World Model Domain](../../world_model/README.md)
 3. [Events Domain](../../events/README.md)
 4. [Capability And Task Design](../../../capabilities/README.md)
 5. [Events Design](../../events/README.md)

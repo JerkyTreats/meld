@@ -159,8 +159,8 @@ Still reject these moves in this slice:
 ## Read With
 
 - [World State Domain](../../../cognitive_architecture/world_state/README.md)
-- [Graph](../../../cognitive_architecture/world_state/graph/README.md)
-- [Temporal Fact Graph](../../../cognitive_architecture/world_state/graph/temporal_fact_graph.md)
+- [Graph](../../../cognitive_architecture/world_model/graph/README.md)
+- [Temporal Fact Graph](temporal_fact_graph.md)
 - [Graph Implementation Status](implementation_plan.md)
 - [Multi-Domain Spine](../../../cognitive_architecture/events/multi_domain_spine.md)
 - [Spine Concern](../../../cognitive_architecture/spine/README.md)

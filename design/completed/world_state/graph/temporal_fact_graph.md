@@ -1,7 +1,7 @@
 # Temporal Fact Graph
 
 Date: 2026-04-22
-Status: active
+Status: completed implementation archive
 Scope: canonical graph model for the world-model graph, built downstream of shared events
 
 ## Thesis
@@ -172,7 +172,7 @@ The traversal graph should carry:
 
 This layer answers what is current and how to reach it.
 It does not by itself answer whether current is still credible.
-That is the job of `world_state/belief`.
+That is the job of `world_model/belief`.
 
 ## Authority Model
 
@@ -191,7 +191,7 @@ The safe rule is:
 So the loop is:
 
 1. `workspace_fs`, `context`, `control`, `task`, or `workflow` publishes semantic facts into the spine
-2. `world_state/graph` reducers consume those facts
+2. `world_model/graph` reducers consume those facts
 3. reducers update current graph state
 4. `GraphRuntime` appends derived `world_state.*` traversal facts idempotently
 5. later replay can rebuild the same traversal graph
@@ -271,7 +271,7 @@ The current system supports:
 - bounded graph walk with direction, relation filters, current-only selected-edge filtering, and optional fact inclusion
 
 The spine gives temporal traversal.
-`world_state/graph` adds object and relation traversal on top.
+`world_model/graph` adds object and relation traversal on top.
 
 ## What ECS Is And Is Not Here
 
@@ -289,7 +289,7 @@ It is not the canonical durable graph model.
 The durable model should remain:
 
 - temporal facts in the spine
-- graph indexes and settled views in `world_state`
+- graph indexes and settled views in `world_model`
 
 If ECS is used later, it should sit behind this contract, not replace it.
 
@@ -345,11 +345,17 @@ The remaining work is belief and curation, not first graph materialization.
 - arbitrary graph query language
 - universal ECS adoption
 
+## Archive Note
+
+This document records the completed temporal fact graph baseline.
+
+The active graph contract now lives in [World Model Graph](../../../cognitive_architecture/world_model/graph/README.md). The enduring model from this document is folded into that active graph surface; this archive remains useful for implementation history and rationale.
+
 ## Read With
 
-- [World State Domain](../README.md)
-- [Graph](README.md)
-- [Belief](../belief/README.md)
-- [Knowledge Graph ECS Decision Memo](../belief/knowledge_graph_ecs_decision_memo.md)
-- [Spine Concern](../../spine/README.md)
-- [Multi-Domain Spine](../../events/multi_domain_spine.md)
+- [Completed World State Graph](README.md)
+- [Graph Implementation Status](implementation_plan.md)
+- [Spine Graph Completion Review](spine_graph_completion_plan.md)
+- [World Model Graph](../../../cognitive_architecture/world_model/graph/README.md)
+- [Belief](../../../cognitive_architecture/world_model/belief/README.md)
+- [Multi-Domain Spine](../../../cognitive_architecture/events/multi_domain_spine.md)

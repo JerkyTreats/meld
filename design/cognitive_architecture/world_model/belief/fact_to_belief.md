@@ -1,6 +1,6 @@
 # Fact To Belief
 
-Date: 2026-04-21
+Date: 2026-04-30
 Status: active
 Scope: transition from spine facts and graph anchors into belief revisions and planner views
 
@@ -9,12 +9,14 @@ Scope: transition from spine facts and graph anchors into belief revisions and p
 A fact is immutable history.
 A belief is a settled or provisional claim over that history.
 
-The planner should consume `BeliefView` records.
+The planner should consume shaped belief or world-model views.
 It should not inspect raw spine facts or traversal facts during planning.
 Facts become relevant again during task construction, evidence gathering, audit, and explanation.
 
-Fact to belief is a knowledge graph concern.
+Fact to belief is a world model concern.
 Belief view to action is an agent concern.
+
+This document describes the first bottom-up transition path. It is not the whole long-term belief architecture. Later belief work must also support top-down predictions, latent hypotheses, precision-weighted evidence, observation policy, and regime-conditioned priors.
 
 ## Enabling Base
 
@@ -22,13 +24,13 @@ Belief exists because these implemented layers now exist:
 
 - [Completed Events](../../../completed/events/README.md)
   durable spine, runtime-wide sequence, append, replay, idempotent derived facts, and graph attachment fields
-- [Completed World State Graph](../../../completed/world_state/graph/README.md)
+- [Completed World State Graph](../../completed/world_state/graph/README.md)
   current anchors, lineage, provenance, traversal indexes, and branch annotated federation
-- [Graph Implementation Status](../../../completed/world_state/graph/implementation_plan.md)
+- [Graph Implementation Status](../../completed/world_state/graph/implementation_plan.md)
   implemented `DomainObjectRef`, `EventRelation`, `GraphRuntime`, traversal queries, and graph-readable publishers
-- [Spine Graph Completion Review](../../../completed/world_state/graph/spine_graph_completion_plan.md)
+- [Spine Graph Completion Review](../../completed/world_state/graph/spine_graph_completion_plan.md)
   explicit closeout that belief and planner-facing views are next scope
-- [Temporal Fact Graph](../graph/temporal_fact_graph.md)
+- [World Model Graph](../graph/README.md)
   source model where semantic spine facts materialize graph views and future belief facts
 - [Execution Substrate](../../execution/substrate.md)
   execution must read current belief and publish success, failure, uncertainty, and gathered evidence
@@ -48,25 +50,26 @@ It does not say whether that current value should be trusted.
 `EvidenceItem`
 
 Belief-normalized record derived from one or more facts, anchors, or execution outcomes.
-It carries subject, predicate, value, polarity, source, sequence range, and provenance.
+It carries subject, predicate, value, polarity, source, sequence range, reliability or precision where available, and provenance.
 
 `BeliefKey`
 
 Stable identity for the question being settled.
 The key is the planner-visible unit of belief assessment.
+It may include or reference perspective when different agents, branches, or evidence policies can reasonably produce different current views.
 
 `BeliefRevision`
 
 Append-only settlement result for one belief key.
-It records comparator used, input evidence set, confidence, status, supersession, and provenance.
+It records comparator or inference method used, input evidence set, posterior summary, uncertainty, status, supersession, and provenance.
 
 `BeliefView`
 
 Planner-facing materialized projection.
 It hides raw fact churn and exposes planner-readable settlement state.
 
-`BeliefView` is the microarchitecture boundary.
-The knowledge graph publishes it.
+`BeliefView` is the first belief microarchitecture boundary.
+The world model publishes it.
 The agent consumes it.
 
 ## Transition
@@ -80,11 +83,20 @@ The transition from fact to belief has six stages.
 - assignment
   attach evidence to one or more `BeliefKey` values
 - assessment
-  run the selected comparator over the evidence set
+  run the selected comparator or inference method over the evidence set
 - revision
   append a `BeliefRevision` and supersede the prior revision if needed
 - projection
   update the planner-facing `BeliefView`
+
+This is the minimum path. Hierarchical belief later adds prediction and message flow:
+
+- prediction
+  emit expected evidence, lower-level state, or outcome distribution from the current posterior
+- comparison
+  compare observed evidence with prediction using an appropriate likelihood or residual form
+- epistemic escalation
+  create an observation opportunity when uncertainty or conflict remains decision-relevant
 
 ## Graph Anchor To Belief Revision
 
@@ -102,7 +114,7 @@ flowchart LR
 
 The anchor selects the current target.
 The evidence item explains why the anchor matters to a belief.
-The belief revision records whether the current target is trusted, contradicted, stale, provisional, or invalid.
+The belief revision records whether the current target is trusted, contradicted, stale, provisional, invalid, or uncertain under competing hypotheses.
 
 ## Spine To Belief View
 
@@ -119,7 +131,7 @@ flowchart LR
 
 This loop keeps the spine as the durable source.
 The belief view is current state derived from replay.
-The knowledge graph stops at shaped views.
+The world model stops at shaped views.
 
 ## Belief View To Action
 
@@ -157,9 +169,12 @@ It should not mutate old evidence edges in place.
 Planner reads:
 
 - belief status
-- confidence
+- posterior summary
+- confidence or precision
+- uncertainty
 - freshness
 - contradiction state
+- observation-needed state
 - assessment state
 - provenance summary
 
@@ -175,7 +190,7 @@ That keeps planning semantic while allowing execution to build concrete capabili
 
 ## Microarchitecture Placement
 
-Knowledge graph owns:
+World model belief owns:
 
 - evidence normalization
 - belief key assignment
@@ -183,6 +198,8 @@ Knowledge graph owns:
 - belief revision
 - belief view projection
 - provenance over belief revisions
+- uncertainty, precision, and freshness summaries
+- observation opportunities tied to belief uncertainty
 
 Agent owns:
 
@@ -207,8 +224,9 @@ Start with one belief family:
 
 - subject is a `DomainObjectRef`
 - predicate names the planner question
+- perspective is explicit or intentionally defaulted
 - evidence comes from graph anchors and execution outcomes
-- comparator emits confidence and status
+- comparator emits posterior summary, uncertainty, confidence, and status
 - belief view exposes settlement state for agent policy
 
 ## Read With
@@ -218,5 +236,4 @@ Start with one belief family:
 - [Comparator Model](comparator_model.md)
 - [Belief Substrate](substrate.md)
 - [Graph](../graph/README.md)
-- [Temporal Fact Graph](../graph/temporal_fact_graph.md)
 - [Execution Substrate](../../execution/substrate.md)

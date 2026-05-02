@@ -240,7 +240,7 @@ Implemented integration coverage includes:
 ## Read With
 
 - [World State Domain](../../../cognitive_architecture/world_state/README.md)
-- [Temporal Fact Graph](../../../cognitive_architecture/world_state/graph/temporal_fact_graph.md)
-- [Belief](../../../cognitive_architecture/world_state/belief/README.md)
+- [Temporal Fact Graph](temporal_fact_graph.md)
+- [Belief](../../../cognitive_architecture/world_model/belief/README.md)
 - [Spine Concern](../../../cognitive_architecture/spine/README.md)
 - [Multi-Domain Spine](../../../cognitive_architecture/events/multi_domain_spine.md)

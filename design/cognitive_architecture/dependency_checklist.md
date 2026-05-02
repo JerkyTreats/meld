@@ -55,5 +55,5 @@ Use these audits during phases `F3`.
 - [Crate Boundary Assessment By Domain](microarchitecture_assessment_by_domain.md)
 - [Core Migration](core/MIGRATION.md)
 - [Events Migration](events/MIGRATION.md)
-- [World Model Migration](world_state/MIGRATION.md)
+- [World Model Migration](world_model/MIGRATION.md)
 - [Execution Contract Extraction](completed/execution_contract_extraction.md)

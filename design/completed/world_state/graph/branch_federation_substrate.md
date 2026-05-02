@@ -1,7 +1,7 @@
 # Branch Federation Substrate
 
 Date: 2026-04-20
-Status: active
+Status: completed implementation archive
 Scope: declarative branch federation model for graph traversal
 
 ## Thesis
@@ -74,7 +74,7 @@ Every federated traversal must keep:
 
 ## Relationship To Graph
 
-`world_state/graph` owns local traversal materialization.
+`world_model/graph` owns local traversal materialization.
 
 `branches` owns scope selection and federated read composition.
 
@@ -87,15 +87,16 @@ Branch federation answers where graph facts and objects are present.
 It does not decide whether a current anchor is credible.
 Belief and curation decide confidence, contradiction, settlement, and calibration above the federated graph surface.
 
-## Completed History
+## Archive Note
 
-Implementation history lives in [Completed World State Graph](../../../completed/world_state/graph/README.md).
+This document records the completed branch federation substrate rationale.
 
-The archived branch substrate plan is [Branch Federation Substrate Implementation Plan](../../../completed/world_state/graph/branch_federation_substrate_implementation_plan.md).
+The active graph contract now lives in [World Model Graph](../../../cognitive_architecture/world_model/graph/README.md). Branch-scoped reads remain part of that active contract, but the detailed substrate plan belongs with the completed graph implementation archive.
 
 ## Read With
 
-- [Graph](README.md)
-- [Temporal Fact Graph](temporal_fact_graph.md)
-- [World State Domain](../README.md)
-- [Belief](../belief/README.md)
+- [Completed World State Graph](README.md)
+- [Branch Federation Substrate Implementation Plan](branch_federation_substrate_implementation_plan.md)
+- [Branch Feature Implementation Plan](branch_feature_implementation_plan.md)
+- [World Model Graph](../../../cognitive_architecture/world_model/graph/README.md)
+- [Belief](../../../cognitive_architecture/world_model/belief/README.md)

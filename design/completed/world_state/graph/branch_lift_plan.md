@@ -8,7 +8,7 @@ Scope: full rename from `roots` to `branches` and the remaining implementation l
 
 This is a historical lift plan.
 The canonical `branches` domain, `roots` compatibility facade, dormant branch workflows, and federated query facade have landed.
-Use [Branch Feature Implementation Plan](branch_feature_implementation_plan.md), [Spine Graph Completion Review](spine_graph_completion_plan.md), and [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md) for current status.
+Use [Branch Feature Implementation Plan](branch_feature_implementation_plan.md), [Spine Graph Completion Review](spine_graph_completion_plan.md), and [Branch Federation Substrate](branch_federation_substrate.md) for current status.
 
 ## Objective
 

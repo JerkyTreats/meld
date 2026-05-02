@@ -38,8 +38,8 @@ Implementation posture:
 - [Initial Port Inventory](core/port_inventory.md)
 - [Events Crate](events/CRATE.md)
 - [Events Migration](events/MIGRATION.md)
-- [World Model Crate](world_state/CRATE.md)
-- [World Model Migration](world_state/MIGRATION.md)
+- [World Model Crate](world_model/CRATE.md)
+- [World Model Migration](world_model/MIGRATION.md)
 - [Execution Crate](execution/CRATE.md)
 - [Execution Contract Extraction](completed/execution_contract_extraction.md)
 - [Crate Boundary Assessment By Domain](microarchitecture_assessment_by_domain.md)
@@ -242,7 +242,7 @@ Apply these rules in every phase.
 |-------|--------|
 | Goal | Remove source domain imports from world model reduction and replace store shaped APIs with public query surfaces |
 | Dependencies | Phase 0 and Phase 1 |
-| Docs | [World Model Migration](world_state/MIGRATION.md) |
+| Docs | [World Model Migration](world_model/MIGRATION.md) |
 | Status | completed |
 
 | Order | Task | Completion |
@@ -418,7 +418,7 @@ Apply these rules in every phase.
 |-------|--------|
 | Goal | Reduce root exports, formalize compatibility shims, and ensure each authority crate surface is narrow and declarative |
 | Dependencies | Phase 1 and Phase 2 and Phase 3 and Phase 4 |
-| Docs | [Core Migration](core/MIGRATION.md), [Events Migration](events/MIGRATION.md), [World Model Migration](world_state/MIGRATION.md), and [Execution Contract Extraction](completed/execution_contract_extraction.md) |
+| Docs | [Core Migration](core/MIGRATION.md), [Events Migration](events/MIGRATION.md), [World Model Migration](world_model/MIGRATION.md), and [Execution Contract Extraction](completed/execution_contract_extraction.md) |
 | Status | completed |
 
 | Order | Task | Completion |
@@ -480,15 +480,15 @@ Apply these rules in every phase.
 | Order | Task | Completion |
 |-------|------|------------|
 | 1 | Create workspace crate layout for `meld-events`, `meld-world-model`, and `meld-execution`. | Completed |
-| 2 | Move implementation modules into their owning crates with minimal behavior change. | Completed for events, world model, and execution contract authority |
-| 3 | Update root `meld` to depend on extracted crates through public APIs only. | Completed for events, world model, and execution contract authority |
-| 4 | Run full dependency and regression gates. | Completed |
-| 5 | Rewrite each `CRATE.md` so it describes completed architecture only and remove migration language from those files. | Completed for extracted authorities |
+| 2 | Move implementation modules into their owning crates with minimal behavior change. | Completed for events, world model, execution contracts, capability, task, workflow helpers, workflow records, workflow state, executor identity contracts, and the live workflow executor algorithm |
+| 3 | Update root `meld` to depend on extracted crates through public APIs only. | Completed; root workflow executor is a compatibility adapter that supplies product-shell runtime inputs to `meld-execution` |
+| 4 | Run full dependency and regression gates. | Completed for final workflow executor cut |
+| 5 | Rewrite each `CRATE.md` so it describes completed architecture only and remove migration language from those files. | Completed |
 
 | Exit criterion | Completion |
 |----------------|------------|
-| physical crates match the authority split defined in this plan. | Completed for the extracted authority surfaces |
-| each `CRATE.md` is declarative and accurate for the completed codebase. | Completed for extracted authorities |
+| physical crates match the authority split defined in this plan. | Completed |
+| each `CRATE.md` is declarative and accurate for the completed codebase. | Completed |
 
 | Key seams |
 |-----------|
@@ -511,14 +511,23 @@ Apply these rules in every phase.
 
 | Phase 6 completion evidence | Result |
 |--------------------------------|--------|
-| F0 | passed on 2026-04-26 with `cargo fmt --check` |
-| F1 | passed on 2026-04-26 with `cargo check` |
-| F3 | passed on 2026-04-26 with targeted import audit showing `crates/meld-execution` has no root `meld`, context, provider, workflow, workspace, task, capability, or telemetry imports |
-| F5 | passed on 2026-04-26 with full `cargo test` after root `meld` cut over to `meld-events`, `meld-world-model`, and `meld-execution` contract dependencies |
+| F0 | passed for all landed workflow slices through 2026-05-02 with `cargo fmt --check` |
+| F1 | passed for all landed workflow slices through 2026-05-02 with `cargo check` |
+| F3 | passed on 2026-05-02 with targeted import audit showing `crates/meld-execution/src/workflow` does not import root provider, context, workspace, telemetry, metadata, or API internals |
+| F5 | passed on 2026-05-02 with full `cargo test`, `cargo test -p meld-execution`, focused `workflow_contracts_conformance`, `workflow_task_compatibility`, `workflow_cli`, `progress_observability`, and watch workflow dispatch coverage |
 
 | Phase 6 completion notes |
 |-----------------------------|
-| Workspace members now exist for `meld-events`, `meld-world-model`, and `meld-execution`. `meld-events` and `meld-world-model` host the live authority implementations, root `meld` reexports those extracted authorities from dependency crates, and the dead in tree copies under `src/events` and `src/world_state` are removed. `meld-execution` now owns provider execution request contracts and the root-independent execution port contracts. Root `meld` hosts the concrete runtime adapters that bind those associated-type contracts to current product types. Physical movement of concrete task, capability, workflow, and provider client modules remains intentionally deferred until context, generation, and provider ownership are also crate-ready. |
+| Workspace members now exist for `meld-events`, `meld-world-model`, and `meld-execution`. `meld-events` and `meld-world-model` host the live authority implementations, root `meld` reexports those extracted authorities from dependency crates, and the dead in tree copies under `src/events` and `src/world_state` are removed. `meld-execution` now owns provider execution request contracts, execution ports, capability authority, task authority, workflow progress contracts, workflow helper logic, workflow record contracts, workflow state storage, deterministic workflow executor identity contracts, and the live workflow executor algorithm. Root `meld` remains the product shell through compatibility adapters, concrete frame construction, provider registry ownership, CLI/tooling, and task-path capability registration. |
+
+| Workflow extraction status | Result |
+|---------------------------|--------|
+| `8ed2c3c` | workflow lineage, metadata, and progress contracts moved into `meld-execution` |
+| `cd826ac` | workflow resolver, gates, and normalization moved into `meld-execution` |
+| `9ce1b9d` | workflow record contracts and workflow state store moved into `meld-execution` |
+| `d225cdb` | workflow task path capability assembly moved to root task path runtime bundle |
+| `this slice` | live workflow executor algorithm moved to `meld-execution`; root executor reduced to runtime input and task-path compatibility adapter |
+| Completed | root workflow surface is facade, registry, commands, tooling, task-path adapter assembly, and compatibility reexports |
 
 ## Cross Phase Gates
 

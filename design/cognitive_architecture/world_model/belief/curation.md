@@ -1,8 +1,8 @@
 # Curation In Belief
 
-Date: 2026-04-20
+Date: 2026-04-30
 Status: active
-Scope: natural runtime model for belief maintenance inside `world_state/belief`
+Scope: natural runtime model for belief maintenance inside `world_model/belief`
 
 ## Thesis
 
@@ -19,7 +19,9 @@ The substrate must support:
 - sparse attached state
 - many overlapping reducer passes
 - belief revision over time
+- hypothesis and posterior state over time
 - provenance and supersession
+- precision, freshness, and calibration state
 - projection-specific materialized views
 
 ## Natural Runtime Shape
@@ -28,8 +30,10 @@ The substrate should look like:
 
 - fact ingestors from the spine
 - belief update systems
+- hypothesis comparison systems
 - supersession systems
 - calibration systems
+- observation opportunity systems
 - projection builders for planner and operator views
 
 This is why ECS is a plausible fit here.
@@ -40,19 +44,23 @@ It gives `belief` a way to maintain identity and many sparse attached belief con
 - anchor
   cross-domain durable reference such as `DomainObjectRef`
 - entity
-  live world-state identity used to accumulate attached state
+  live world-model identity used to accumulate attached state
 - evidence component family
   support, contradiction, source, and reliability attachments
 - belief component family
-  current confidence, validity, and revision state
+  posterior summary, uncertainty, validity, and revision state
+- hypothesis component family
+  competing hidden causes, latent state alternatives, or model candidates
 - provenance component family
   why, when, and from which facts a belief changed
+- precision and freshness component family
+  reliability, decay, stale-state, and self-predicted evidence markers
 - projection
   materialized graph or query view derived from current belief state
 
 ## Materialization Posture
 
-The knowledge graph is a materialized belief view over durable facts.
+The belief layer is a materialized world-model view over durable facts.
 
 That implies:
 
@@ -69,8 +77,11 @@ The materialized belief view may be canonical as the current world model without
 - evidence fusion
 - contradiction handling
 - confidence decay and revision
+- posterior uncertainty and precision tracking
+- latent hypothesis comparison
 - supersession without provenance loss
 - calibration from later outcomes
+- observation opportunities for unresolved decision-relevant uncertainty
 - multiple projections over the same underlying belief state
 
 ## What Should Not Be Forced Into This Substrate
@@ -110,12 +121,14 @@ It should build on the implemented graph substrate and legacy claim compatibilit
 
 - thesis, evidence, provenance, supersession, and calibration records
 - one curation replay path from promoted spine facts into current belief
+- one explicit posterior or uncertainty summary
+- one observation-needed projection for missing evidence
 - one planner-facing current belief projection
 - one operator-facing inspection projection
 
 ## Read With
 
-- [World State Domain](../README.md)
+- [World Model Domain](../README.md)
 - [Belief](README.md)
 - [Belief Microarchitecture](microarchitecture.md)
 - [Fact To Belief](fact_to_belief.md)

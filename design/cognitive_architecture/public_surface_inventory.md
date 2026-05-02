@@ -34,4 +34,4 @@ This inventory is retired when Phase 5 closes and the listed surfaces are compat
 - [PLAN](PLAN.md)
 - [Core Migration](core/MIGRATION.md)
 - [Events Migration](events/MIGRATION.md)
-- [World Model Migration](world_state/MIGRATION.md)
+- [World Model Migration](world_model/MIGRATION.md)

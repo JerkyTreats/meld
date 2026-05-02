@@ -122,6 +122,6 @@ The substrate therefore assumes:
 - [Execution Domain](README.md)
 - [Execution Control](control/README.md)
 - [Execution Planning](control/planning/README.md)
-- [World Model Domain](../world_state/README.md)
+- [World Model Domain](../world_model/README.md)
 - [Observe Merge Push](../observe_merge_push.md)
 - [Task Network](control/task_network.md)

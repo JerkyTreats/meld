@@ -1,14 +1,14 @@
 # Execution Domain
 
-Date: 2026-04-22
-Status: active
+Date: 2026-05-02
+Status: completed authority boundary
 Scope: world-model-aware action and the mapping from cognitive push into current execution areas
 
 ## Thesis
 
-The system already has a strong push layer.
-Within this repository, that layer is not one new monolith.
-It is the composed behavior of `goals`, `control`, `task`, `capability`, `provider`, and domain-owned capability homes.
+The system has a strong push layer.
+Within this repository, that layer is not one monolith.
+It is the composed behavior of `goals`, `control`, `task`, `capability`, workflow execution, provider ports, and domain-owned capability homes.
 
 The cognitive architecture requirement is simple:
 execution must read the current world model and must publish outcomes back into events.
@@ -21,6 +21,8 @@ execution must read the current world model and must publish outcomes back into 
 - dispatch through the existing execution domains
 - publication of outcomes, failures, and learned facts back into events
 - synthesis escalation when the current capability catalog cannot satisfy a goal
+- workflow runtime algorithms and progress contracts
+- task and capability contracts used by execution plans
 
 `goals` owns why change is needed.
 `control` owns orchestration, observation waits, and repair.
@@ -36,7 +38,7 @@ The world model owns graph and belief views that execution reads.
 ## Substrate
 
 - [Execution Crate](CRATE.md)
-  `meld-execution` crate boundary, owned modules, extraction path, and provider execution posture
+  `meld-execution` crate boundary, owned modules, workflow runtime, task/capability authority, and provider execution posture
 - [Execution Substrate](substrate.md)
   deliberate action over current belief through planning, control, task, and capability
 - [Execution Control](control/README.md)
@@ -44,7 +46,7 @@ The world model owns graph and belief views that execution reads.
 - [Execution Planning](control/planning/README.md)
   now and next for HTN, planning, repair, and synthesis inside `execution`
 
-## Required First Slice
+## First Slice Direction
 
 - planner inputs sourced from the knowledge graph rather than only workspace state
 - goal forms expressed as desired world-model change
@@ -57,7 +59,7 @@ The world model owns graph and belief views that execution reads.
 - [Execution Substrate](substrate.md)
 - [Execution Control](control/README.md)
 - [Execution Planning](control/planning/README.md)
-- [World Model Domain](../world_state/README.md)
+- [World Model Domain](../world_model/README.md)
 - [Goals](../../goals/README.md)
 - [Task Network](control/task_network.md)
 - [Synthesis Overview](control/synthesis/README.md)

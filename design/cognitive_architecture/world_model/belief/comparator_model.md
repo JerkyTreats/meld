@@ -1,8 +1,8 @@
 # Comparator Model
 
-Date: 2026-04-21
+Date: 2026-04-30
 Status: active
-Scope: comparator families used to assess evidence and settle belief revisions
+Scope: comparator and inference families used to assess evidence, update posterior state, and settle belief revisions
 
 ## Thesis
 
@@ -14,11 +14,14 @@ The comparator does not own fact ingestion, scheduling, task execution, or plann
 Bayesian comparators are preferred because they are typed, inspectable, replayable, and calibratable.
 Semantic settlement is allowed as a provisional shortcut when no stronger comparator exists.
 
+In the broader belief architecture, "comparator" is the first implementation shape for an inference method. Some beliefs will remain simple comparator updates. Others may need factor-graph messages, variational updates, predictive residuals, or hypothesis-set scoring. The public requirement is the same: deterministic replay over explicit inputs and an inspectable posterior or revision output.
+
 ## Inputs
 
 Every comparator receives:
 
 - belief key
+- perspective or evidence policy when material
 - prior belief revision when available
 - evidence items
 - source sequence range
@@ -28,13 +31,16 @@ Every comparator receives:
 Every comparator returns:
 
 - belief status
+- posterior summary
 - confidence
 - uncertainty
+- precision or reliability notes where available
 - contributing evidence ids
 - contradicted evidence ids
+- observation need when uncertainty remains decision-relevant
 - calibration fields when available
 - explanation summary
-- next suggested posture
+- next suggested posture as an advisory signal only
 
 ## Comparator Families
 
@@ -60,6 +66,18 @@ It must mark the revision as provisional unless an explicit policy says otherwis
 No comparator exists for the belief key.
 The result should be `needs_assessment` or `needs_observation`, not a guessed belief.
 
+`MessagePassingInference`
+
+Structured inference for beliefs whose evidence forms a discrete graph, hierarchy, or factorized model.
+It may use exact constraints, belief propagation, variational messages, or local likelihood gradients.
+It should still publish a replayable `BeliefRevision` or posterior summary rather than exposing raw message state as the public contract.
+
+`PredictiveResidualInference`
+
+Narrow inference for cases where a higher-level belief predicts a lower-level continuous or modelable state and a residual representation is valid.
+It should carry precision and damping metadata.
+It should not be used as the default representation for symbolic event mismatch.
+
 ## Trust Policy
 
 Comparator kind affects default trust.
@@ -70,6 +88,8 @@ Comparator kind affects default trust.
 | `RuleComparator` | settled | medium to high | validate rule failures and false positives |
 | `SemanticSettlementComparator` | provisional | low to medium | replace with typed comparator when possible |
 | `MissingComparator` | unresolved | none | synthesize or implement a comparator later |
+| `MessagePassingInference` | provisional or settled | method dependent | compare posterior and convergence diagnostics to later outcomes |
+| `PredictiveResidualInference` | provisional or settled | method dependent | calibrate precision and residual thresholds against later observations |
 
 Semantic settlement should carry:
 
@@ -107,6 +127,7 @@ It should record:
 - evidence factors
 - factor weights
 - posterior value
+- posterior uncertainty
 - decision threshold if one is used
 - calibration target
 
@@ -143,6 +164,8 @@ External capability synthesis is adjacent but deferred.
 When a comparator needs evidence that no current capability can produce, the belief layer should emit a planning need.
 Execution may later synthesize or register a capability that gathers the missing evidence.
 
+For the research-aligned architecture, this edge is an observation opportunity. It should carry expected information gain, target belief, evidence channel, cost, delay, and expiry when those fields are known.
+
 For now, the belief layer should record:
 
 - missing evidence type
@@ -161,6 +184,7 @@ The first slice should support:
 - one deterministic rule comparator
 - one semantic settlement adapter with provisional output
 - missing comparator state
+- posterior, uncertainty, and observation-needed fields in comparator output
 - replay tests proving that the same evidence yields the same revision
 
 ## Read With

@@ -96,7 +96,7 @@ types
 views
 workflow
 workspace
-world_state
+world_model
 ```
 
 ## Domain Assessment
@@ -105,10 +105,10 @@ world_state
 | --- | --- | --- | --- | --- | --- | --- |
 | `agent` | own | Owns agent identity, profile, prompt, context access, and tooling, but not yet a planner microarchitecture over belief views | partial | [agent.rs](../../src/agent.rs), [Execution Domain](execution/README.md) | none | Define agent boundary as consumer of `BeliefView` and owner of action policy |
 | `api` | adapter | Facade currently wires runtime state including graph runtime access | partial | [api.rs](../../src/api.rs) | none | Keep API as routing only for KG and agent contracts |
-| `branches` | publish | Branches own branch identity, registration, scoped state, and federation metadata used by graph reads | complete | [branches.rs](../../src/branches.rs), [Branch Federation Substrate](world_state/graph/branch_federation_substrate.md) | none | Preserve branch provenance in KG public reads |
+| `branches` | publish | Branches own branch identity, registration, scoped state, and federation metadata used by graph reads | complete | [branches.rs](../../src/branches.rs), [World Model Graph](world_model/graph/README.md), [Completed Branch Federation Substrate](../completed/world_state/graph/branch_federation_substrate.md) | none | Preserve branch provenance in KG public reads |
 | `capability` | own | Capability contracts and invocation boundaries are already the atomic execution surface | complete | [capability.rs](../../src/capability.rs), [Execution Substrate](execution/substrate.md) | none | Keep capability under agent execution, not KG internals |
 | `cli` | adapter | CLI routes commands and formats output | partial | [cli.rs](../../src/cli.rs) | none | Add command surfaces only after KG and agent contracts exist |
-| `concurrency` | own | Existing shared limits exist, but belief leases and assessment queues are not implemented | partial | [concurrency.rs](../../src/concurrency.rs), [Belief Substrate](world_state/belief/substrate.md) | none | Define lease and worker pool primitives for KG assessment |
+| `concurrency` | own | Existing shared limits exist, but belief leases and assessment queues are not implemented | partial | [concurrency.rs](../../src/concurrency.rs), [Belief Substrate](world_model/belief/substrate.md) | none | Define lease and worker pool primitives for KG assessment |
 | `config` | consume | Config owns provider, workflow, and runtime settings today | partial | [config.rs](../../src/config.rs) | none | Add config only for enabled boundaries, worker limits, and later process wiring |
 | `context` | publish | Context publishes frames and heads into graph-readable events | partial | [context.rs](../../src/context.rs), [Graph Implementation Status](../completed/world_state/graph/implementation_plan.md) | none | Map context frames into evidence items where belief needs them |
 | `control` | own | Control owns orchestration projection and task state reduction, but planner over belief views is not implemented | partial | [control.rs](../../src/control.rs), [Execution Control](execution/control/README.md) | none | Keep control inside agent microarchitecture and consume planner decisions |
@@ -131,7 +131,7 @@ world_state
 | `views` | consume | Views shape presentation reads | partial | [views.rs](../../src/views.rs) | none | Add belief and agent status views after KG and agent query contracts exist |
 | `workflow` | publish | Workflow publishes graph-readable facts and consumes traversal for task output resolution | partial | [workflow.rs](../../src/workflow.rs), [Spine Graph Completion Review](../completed/world_state/graph/spine_graph_completion_plan.md) | none | Keep workflow in agent execution and publish outcomes as evidence |
 | `workspace` | publish | Workspace scan and watch publish promoted structural facts | partial | [workspace.rs](../../src/workspace.rs), [Workspace FS Graph Transition Status](../completed/world_state/graph/workspace_fs_transition_requirements.md) | none | Add belief evidence mapping only where workspace facts affect belief keys |
-| `world_state` | own | World state owns graph, legacy claims, projection, and query, but belief is not implemented | partial | [world_state.rs](../../src/world_state.rs), [Belief](world_state/belief/README.md) | none | Define KG boundary around graph, evidence, belief revision, and belief view API |
+| `world_model` | own | World model owns graph, legacy claims, projection, and query, but belief is not implemented | partial | [world_state.rs](../../src/world_state.rs), [Belief](world_model/belief/README.md) | none | Define KG boundary around graph, evidence, belief revision, and belief view API |
 
 ## Gaps And Follow Ups
 
@@ -181,7 +181,7 @@ Logging should observe microarchitecture boundaries but not define them.
 `metadata`
 
 Metadata policy should not become belief storage.
-Belief records should live in `world_state` unless a later contract proves a metadata projection is required.
+Belief records should live in `world_model` unless a later contract proves a metadata projection is required.
 
 `prompt_context`
 
@@ -194,7 +194,7 @@ Real implementation work appears in these domains:
 
 - `events`
   preserve spine contract as independent substrate
-- `world_state`
+- `world_model`
   define KG contracts for evidence, belief revisions, and belief views
 - `control`
   consume belief views through planner policy
@@ -243,12 +243,12 @@ This gives the system compiler-enforced architecture boundaries while preserving
 - [Assessment By Domain Policy](../../governance/assessment_by_domain_policy.md)
 - [Core Crate](core/CRATE.md)
 - [Events Crate](events/CRATE.md)
-- [World Model Crate](world_state/CRATE.md)
+- [World Model Crate](world_model/CRATE.md)
 - [Execution Crate](execution/CRATE.md)
-- [Belief](world_state/belief/README.md)
-- [Belief Microarchitecture](world_state/belief/microarchitecture.md)
-- [Fact To Belief](world_state/belief/fact_to_belief.md)
-- [Belief Substrate](world_state/belief/substrate.md)
+- [Belief](world_model/belief/README.md)
+- [Belief Microarchitecture](world_model/belief/microarchitecture.md)
+- [Fact To Belief](world_model/belief/fact_to_belief.md)
+- [Belief Substrate](world_model/belief/substrate.md)
 - [Execution Domain](execution/README.md)
 - [Events Domain](events/README.md)
 - [Multi-Domain Event Ledger](events/multi_domain_spine.md)

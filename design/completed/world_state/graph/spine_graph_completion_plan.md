@@ -114,9 +114,9 @@ Future docs should instead treat belief, curation, sensory promotion, richer pla
 
 ## Read With
 
-- [Graph](../../../cognitive_architecture/world_state/graph/README.md)
+- [Graph](../../../cognitive_architecture/world_model/graph/README.md)
 - [Graph Implementation Status](implementation_plan.md)
-- [Temporal Fact Graph](../../../cognitive_architecture/world_state/graph/temporal_fact_graph.md)
+- [Temporal Fact Graph](temporal_fact_graph.md)
 - [Workspace FS Graph Transition Status](workspace_fs_transition_requirements.md)
-- [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md)
+- [Branch Federation Substrate](branch_federation_substrate.md)
 - [Spine Concern](../../../cognitive_architecture/spine/README.md)

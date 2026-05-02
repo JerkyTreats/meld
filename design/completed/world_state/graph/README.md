@@ -8,7 +8,7 @@ Scope: completed delivery trackers, migration notes, and graph implementation cl
 
 This directory holds implementation history for the completed event spine and `world_state/graph` lift.
 
-Declarative architecture remains under [World State Domain](../../../cognitive_architecture/world_state/README.md) and [Graph](../../../cognitive_architecture/world_state/graph/README.md).
+Declarative architecture remains under [World Model Domain](../../../cognitive_architecture/world_model/README.md) and [Graph](../../../cognitive_architecture/world_model/graph/README.md).
 
 Use this archive when you need delivery evidence, migration history, or branch-era rationale.
 Use the active architecture docs when you need current domain boundaries and contracts.
@@ -37,6 +37,10 @@ The completed first slice landed:
   completed workspace publication and compatibility record
 - [Branch Federation Substrate Implementation Plan](branch_federation_substrate_implementation_plan.md)
   historical detailed branch substrate and federation plan
+- [Temporal Fact Graph](temporal_fact_graph.md)
+  archived canonical graph model and event-driven materialization rationale
+- [Branch Federation Substrate](branch_federation_substrate.md)
+  archived branch federation contract now folded into the active graph design
 - [Branch Feature Implementation Plan](branch_feature_implementation_plan.md)
   completed branch CLI, dormant workflow, migration, and federated read tracker
 - [Branch Lift Plan](branch_lift_plan.md)
@@ -52,8 +56,6 @@ The completed first slice landed:
 
 ## Active Design
 
-- [World State Domain](../../../cognitive_architecture/world_state/README.md)
-- [Graph](../../../cognitive_architecture/world_state/graph/README.md)
-- [Temporal Fact Graph](../../../cognitive_architecture/world_state/graph/temporal_fact_graph.md)
-- [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md)
-- [Belief](../../../cognitive_architecture/world_state/belief/README.md)
+- [World Model Domain](../../../cognitive_architecture/world_model/README.md)
+- [Graph](../../../cognitive_architecture/world_model/graph/README.md)
+- [Belief](../../../cognitive_architecture/world_model/belief/README.md)

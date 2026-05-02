@@ -8,11 +8,11 @@ Scope: runtime discovery, safe migration, and user trigger flow for pre existing
 
 This is a historical root-era runtime design.
 The implemented runtime is now branch based under `src/branches`, with `roots` kept as compatibility vocabulary.
-Use [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md), [Branch Feature Implementation Plan](branch_feature_implementation_plan.md), and [Spine Graph Completion Review](spine_graph_completion_plan.md) for current status.
+Use [Branch Federation Substrate](branch_federation_substrate.md), [Branch Feature Implementation Plan](branch_feature_implementation_plan.md), and [Spine Graph Completion Review](spine_graph_completion_plan.md) for current status.
 
 ## Thesis
 
-This document is the `workspace_fs` first slice under the broader branch substrate in [Branch Federation Substrate](../../../cognitive_architecture/world_state/graph/branch_federation_substrate.md).
+This document is the `workspace_fs` first slice under the broader branch substrate in [Branch Federation Substrate](branch_federation_substrate.md).
 
 Workspace root remains the local operator anchor.
 
