@@ -1,12 +1,7 @@
 use crate::workflow::profile::WorkflowGate;
+use crate::workflow::record_contracts::GateOutcome;
 use serde_json::Value;
 use std::collections::HashMap;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GateOutcome {
-    Pass,
-    Fail,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GateEvaluationResult {

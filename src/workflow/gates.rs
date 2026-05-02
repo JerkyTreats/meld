@@ -22,8 +22,8 @@ pub fn evaluate_gate(
     let result = meld_execution::workflow::gates::evaluate_gate(gate, output, input_values);
     GateEvaluationResult {
         outcome: match result.outcome {
-            meld_execution::workflow::gates::GateOutcome::Pass => GateOutcome::Pass,
-            meld_execution::workflow::gates::GateOutcome::Fail => GateOutcome::Fail,
+            meld_execution::workflow::GateOutcome::Pass => GateOutcome::Pass,
+            meld_execution::workflow::GateOutcome::Fail => GateOutcome::Fail,
         },
         reasons: result.reasons,
     }
