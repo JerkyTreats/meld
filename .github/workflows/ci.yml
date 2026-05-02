@@ -369,7 +369,20 @@ jobs:
           packages=(meld-events meld-execution meld-world-model meld)
           for package in "${packages[@]}"; do
             log_file="/tmp/cargo-publish-${package}.log"
+
+            set +e
             run_cargo_publish "$package" "dry-run" "$log_file"
+            dry_run_status="$?"
+            set -e
+
+            if [[ "$dry_run_status" -ne 0 ]]; then
+              if grep -Eqi "already uploaded|already exists" "$log_file"; then
+                echo "Crate package ${package} version already exists on crates.io. Skipping."
+                continue
+              fi
+              echo "::error::Dry-run for ${package} failed"
+              exit "$dry_run_status"
+            fi
 
             set +e
             run_cargo_publish "$package" "publish" "$log_file"
@@ -382,7 +395,7 @@ jobs:
               continue
             fi
 
-            if grep -Eqi "already uploaded|already exists" "/tmp/cargo-publish-${package}.log"; then
+            if grep -Eqi "already uploaded|already exists" "$log_file"; then
               echo "Crate package ${package} version already exists on crates.io. Continuing."
               continue
             fi
