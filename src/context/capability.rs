@@ -15,13 +15,13 @@ use crate::execution::ExecutionRuntimeContext;
 use crate::metadata::frame_write_contract::{
     build_generated_metadata, GeneratedFrameMetadataInput,
 };
-use crate::prompt_context::PromptContextLineageInput;
 use crate::provider::{ChatMessage, MessageRole, ProviderExecutionBinding};
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
 use crate::telemetry::{FrameMetadataValidationEventData, PromptContextLineageEventData};
 use crate::workflow::gates::evaluate_gate;
 use crate::workflow::profile::WorkflowGate;
 use async_trait::async_trait;
+use meld_execution::PromptLineageRequest;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -500,7 +500,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
         Self::append_supporting_context(&mut prompt_output, &supporting_inputs);
 
         let prepared_lineage = api.prepare_prompt_lineage(
-            &PromptContextLineageInput {
+            &PromptLineageRequest {
                 system_prompt: prompt_output.system_prompt.clone(),
                 user_prompt_template: prompt_output.user_prompt_template.clone(),
                 rendered_prompt: prompt_output.rendered_prompt.clone(),

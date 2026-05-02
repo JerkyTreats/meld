@@ -11,10 +11,9 @@ use crate::context::generation::provider_execution::{
 use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
 use crate::execution::ExecutionEventContext;
-use crate::prompt_context::PromptContextLineageInput;
 use crate::telemetry::{FrameMetadataValidationEventData, PromptContextLineageEventData};
 use crate::types::FrameID;
-use meld_execution::{GeneratedMetadataPort, PromptLineagePort};
+use meld_execution::{GeneratedMetadataPort, PromptLineagePort, PromptLineageRequest};
 use serde_json::json;
 use tracing::{debug, info};
 
@@ -52,7 +51,7 @@ pub async fn execute_generation_request(
     let execution_event_context = event_context.map(ExecutionEventContext::from);
 
     let prepared_lineage = api.prepare_prompt_lineage(
-        &PromptContextLineageInput {
+        &PromptLineageRequest {
             system_prompt: prompt_output.system_prompt.clone(),
             user_prompt_template: prompt_output.user_prompt_template.clone(),
             rendered_prompt: prompt_output.rendered_prompt.clone(),

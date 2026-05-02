@@ -1,7 +1,7 @@
+use crate::agent::profile::prompt_contract::PromptContract;
 use crate::agent::AgentIdentity;
 use crate::api::ContextApi;
 use crate::context::frame::Frame;
-use crate::context::generation::metadata_construction::PreviousMetadataSnapshot;
 use crate::context::query::view::{ContextView, NodeContext};
 use crate::context::queue::QueueEventContext;
 use crate::context::CurrentFrameHeadRead;
@@ -12,8 +12,7 @@ use crate::metadata::frame_types::FrameMetadata;
 use crate::metadata::frame_write_contract::GeneratedFrameMetadataInput;
 use crate::prompt_context::PromptContextArtifactStorage;
 use crate::prompt_context::{
-    PreparedPromptContextLineage, PromptContextArtifactKind, PromptContextArtifactRef,
-    PromptContextLineageInput,
+    PromptContextArtifactKind, PromptContextArtifactRef, PromptContextLineageInput,
 };
 use crate::provider::executor::ProviderPreparation;
 use crate::provider::{ChatMessage, CompletionResponse};
@@ -26,7 +25,11 @@ use std::path::Path;
 
 pub use meld_execution::{
     ExecutionEventContext, ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind,
-    ExecutionNodeRecord, ProviderPreparationView, TaskRunArtifactAnchor,
+    ExecutionNodeRecord, FrameMetadataValidationProgressEventData, PreparedPromptLineage,
+    PreviousMetadataSnapshotView, PromptContextLineageProgressEventData, PromptLineageRequest,
+    PromptLinkContractView, ProviderPreparationView, TaskRunArtifactAnchor,
+    WorkflowForceResetProgressEventData, WorkflowTargetProgressEventData,
+    WorkflowTurnProgressEventData,
 };
 
 pub trait ContextReadPort:
@@ -95,6 +98,10 @@ impl<T> PromptArtifactReadPort for T where
 {
 }
 
+pub trait SystemPromptPort: meld_execution::SystemPromptPort<Error = ApiError> {}
+
+impl<T> SystemPromptPort for T where T: meld_execution::SystemPromptPort<Error = ApiError> {}
+
 pub trait NodeResolutionPort:
     meld_execution::NodeResolutionPort<Error = ApiError, NodeId = NodeID>
 {
@@ -148,8 +155,8 @@ impl<T> ProviderExecutionPort for T where
 pub trait PromptLineagePort:
     meld_execution::PromptLineagePort<
     Error = ApiError,
-    PromptLineageInput = PromptContextLineageInput,
-    PreparedPromptLineage = PreparedPromptContextLineage,
+    PromptLineageRequest = PromptLineageRequest,
+    PreparedPromptLineage = PreparedPromptLineage,
 >
 {
 }
@@ -157,8 +164,8 @@ pub trait PromptLineagePort:
 impl<T> PromptLineagePort for T where
     T: meld_execution::PromptLineagePort<
         Error = ApiError,
-        PromptLineageInput = PromptContextLineageInput,
-        PreparedPromptLineage = PreparedPromptContextLineage,
+        PromptLineageRequest = PromptLineageRequest,
+        PreparedPromptLineage = PreparedPromptLineage,
     >
 {
 }
@@ -168,7 +175,7 @@ pub trait GeneratedMetadataPort:
     Error = ApiError,
     GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest,
     GeneratedMetadataInput = GeneratedFrameMetadataInput,
-    PreviousMetadataSnapshot = PreviousMetadataSnapshot,
+    PreviousMetadataSnapshotView = PreviousMetadataSnapshotView,
     FrameMetadata = FrameMetadata,
     GeneratedMetadataBuilder = crate::context::generation::contracts::GeneratedMetadataBuilder,
 >
@@ -180,7 +187,7 @@ impl<T> GeneratedMetadataPort for T where
         Error = ApiError,
         GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest,
         GeneratedMetadataInput = GeneratedFrameMetadataInput,
-        PreviousMetadataSnapshot = PreviousMetadataSnapshot,
+        PreviousMetadataSnapshotView = PreviousMetadataSnapshotView,
         FrameMetadata = FrameMetadata,
         GeneratedMetadataBuilder = crate::context::generation::contracts::GeneratedMetadataBuilder,
     >
@@ -411,6 +418,15 @@ impl meld_execution::PromptArtifactReadPort for ContextApi {
     }
 }
 
+impl meld_execution::SystemPromptPort for ContextApi {
+    type Error = ApiError;
+
+    fn load_system_prompt(&self, agent_id: &str) -> Result<String, ApiError> {
+        let agent = ContextApi::get_agent(self, agent_id)?;
+        Ok(PromptContract::from_agent(&agent)?.system_prompt)
+    }
+}
+
 impl meld_execution::PromptArtifactReadPort for PromptContextArtifactStorage {
     type ArtifactKind = PromptContextArtifactKind;
     type ArtifactRef = PromptContextArtifactRef;
@@ -511,25 +527,51 @@ impl meld_execution::ProviderExecutionPort for ContextApi {
 
 impl meld_execution::PromptLineagePort for ContextApi {
     type Error = ApiError;
-    type PromptLineageInput = PromptContextLineageInput;
-    type PreparedPromptLineage = PreparedPromptContextLineage;
+    type PromptLineageRequest = PromptLineageRequest;
+    type PreparedPromptLineage = PreparedPromptLineage;
 
     fn prepare_prompt_lineage(
         &self,
-        input: &PromptContextLineageInput,
+        input: &PromptLineageRequest,
         agent_id: &str,
         provider: &str,
         model: &str,
         provider_type: &str,
-    ) -> Result<PreparedPromptContextLineage, ApiError> {
-        crate::prompt_context::prepare_generated_lineage(
+    ) -> Result<PreparedPromptLineage, ApiError> {
+        let prepared = crate::prompt_context::prepare_generated_lineage(
             self,
-            input,
+            &PromptContextLineageInput {
+                system_prompt: input.system_prompt.clone(),
+                user_prompt_template: input.user_prompt_template.clone(),
+                rendered_prompt: input.rendered_prompt.clone(),
+                context_payload: input.context_payload.clone(),
+            },
             agent_id,
             provider,
             model,
             provider_type,
-        )
+        )?;
+        Ok(PreparedPromptLineage {
+            prompt_link_contract: PromptLinkContractView {
+                prompt_link_id: prepared.prompt_link_contract.prompt_link_id.clone(),
+                prompt_digest: prepared.prompt_link_contract.prompt_digest.clone(),
+                context_digest: prepared.prompt_link_contract.context_digest.clone(),
+                system_prompt_artifact_id: prepared
+                    .prompt_link_contract
+                    .system_prompt_artifact_id
+                    .clone(),
+                user_prompt_template_artifact_id: prepared
+                    .prompt_link_contract
+                    .user_prompt_template_artifact_id
+                    .clone(),
+                rendered_prompt_artifact_id: prepared
+                    .prompt_link_contract
+                    .rendered_prompt_artifact_id
+                    .clone(),
+                context_artifact_id: prepared.prompt_link_contract.context_artifact_id.clone(),
+            },
+            metadata_input: prepared.metadata_input,
+        })
     }
 }
 
@@ -537,17 +579,24 @@ impl meld_execution::GeneratedMetadataPort for ContextApi {
     type Error = ApiError;
     type GenerationRequest = crate::context::generation::contracts::GenerationOrchestrationRequest;
     type GeneratedMetadataInput = GeneratedFrameMetadataInput;
-    type PreviousMetadataSnapshot = PreviousMetadataSnapshot;
+    type PreviousMetadataSnapshotView = PreviousMetadataSnapshotView;
     type FrameMetadata = FrameMetadata;
     type GeneratedMetadataBuilder = crate::context::generation::contracts::GeneratedMetadataBuilder;
 
     fn load_previous_metadata_snapshot(
         &self,
         request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
-    ) -> Result<PreviousMetadataSnapshot, ApiError> {
-        crate::context::generation::metadata_construction::load_previous_metadata_snapshot(
-            self, request,
-        )
+    ) -> Result<PreviousMetadataSnapshotView, ApiError> {
+        let snapshot =
+            crate::context::generation::metadata_construction::load_previous_metadata_snapshot(
+                self, request,
+            )?;
+        Ok(PreviousMetadataSnapshotView {
+            frame_id: snapshot.frame_id,
+            prompt_digest: snapshot.prompt_digest,
+            context_digest: snapshot.context_digest,
+            prompt_link_id: snapshot.prompt_link_id,
+        })
     }
 
     fn build_and_validate_generated_metadata(

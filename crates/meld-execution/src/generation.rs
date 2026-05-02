@@ -90,3 +90,76 @@ pub struct GeneratedFrameMetadataInput {
     pub context_digest: String,
     pub prompt_link_id: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptLineageRequest {
+    pub system_prompt: String,
+    pub user_prompt_template: String,
+    pub rendered_prompt: String,
+    pub context_payload: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptLinkContractView {
+    pub prompt_link_id: String,
+    pub prompt_digest: String,
+    pub context_digest: String,
+    pub system_prompt_artifact_id: String,
+    pub user_prompt_template_artifact_id: String,
+    pub rendered_prompt_artifact_id: String,
+    pub context_artifact_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreparedPromptLineage {
+    pub prompt_link_contract: PromptLinkContractView,
+    pub metadata_input: GeneratedFrameMetadataInput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreviousMetadataSnapshotView {
+    pub frame_id: Option<String>,
+    pub prompt_digest: Option<String>,
+    pub context_digest: Option<String>,
+    pub prompt_link_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptContextLineageProgressEventData {
+    pub node_id: String,
+    pub agent_id: String,
+    pub provider_name: String,
+    pub frame_type: String,
+    pub prompt_link_id: String,
+    pub prompt_digest: String,
+    pub context_digest: String,
+    pub system_prompt_artifact_id: String,
+    pub user_prompt_template_artifact_id: String,
+    pub rendered_prompt_artifact_id: String,
+    pub context_artifact_id: String,
+    pub lineage_failure_policy: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrameMetadataValidationProgressEventData {
+    pub node_id: String,
+    pub path: String,
+    pub agent_id: String,
+    pub provider_name: String,
+    pub frame_type: String,
+    pub prompt_digest: String,
+    pub context_digest: String,
+    pub prompt_link_id: String,
+    pub previous_frame_id: Option<String>,
+    pub previous_prompt_digest: Option<String>,
+    pub previous_context_digest: Option<String>,
+    pub previous_prompt_link_id: Option<String>,
+    pub workflow_id: Option<String>,
+    pub thread_id: Option<String>,
+    pub turn_id: Option<String>,
+    pub turn_seq: Option<u32>,
+    pub attempt: Option<usize>,
+    pub plan_id: Option<String>,
+    pub level_index: Option<usize>,
+    pub error: Option<String>,
+}

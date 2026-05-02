@@ -3,6 +3,9 @@ use serde_json::Value;
 use std::path::Path;
 
 use super::contracts::ProviderExecutionBinding;
+use crate::generation::{
+    GeneratedFrameMetadataInput, PreviousMetadataSnapshotView, PromptLineageRequest,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionEventContext {
@@ -147,6 +150,12 @@ pub trait PromptArtifactReadPort: Send + Sync {
     ) -> Result<Self::ArtifactRef, Self::Error>;
 }
 
+pub trait SystemPromptPort: Send + Sync {
+    type Error;
+
+    fn load_system_prompt(&self, agent_id: &str) -> Result<String, Self::Error>;
+}
+
 pub trait NodeResolutionPort: Send + Sync {
     type Error;
     type NodeId;
@@ -195,12 +204,12 @@ pub trait ProviderExecutionPort: Send + Sync {
 
 pub trait PromptLineagePort: Send + Sync {
     type Error;
-    type PromptLineageInput;
+    type PromptLineageRequest;
     type PreparedPromptLineage;
 
     fn prepare_prompt_lineage(
         &self,
-        input: &Self::PromptLineageInput,
+        input: &PromptLineageRequest,
         agent_id: &str,
         provider: &str,
         model: &str,
@@ -212,19 +221,19 @@ pub trait GeneratedMetadataPort: Send + Sync {
     type Error;
     type GenerationRequest;
     type GeneratedMetadataInput;
-    type PreviousMetadataSnapshot;
+    type PreviousMetadataSnapshotView;
     type FrameMetadata;
     type GeneratedMetadataBuilder: ?Sized;
 
     fn load_previous_metadata_snapshot(
         &self,
         request: &Self::GenerationRequest,
-    ) -> Result<Self::PreviousMetadataSnapshot, Self::Error>;
+    ) -> Result<PreviousMetadataSnapshotView, Self::Error>;
 
     fn build_and_validate_generated_metadata(
         &self,
         request: &Self::GenerationRequest,
-        input: &Self::GeneratedMetadataInput,
+        input: &GeneratedFrameMetadataInput,
         metadata_builder: &Self::GeneratedMetadataBuilder,
     ) -> Result<Self::FrameMetadata, Self::Error>;
 }
@@ -275,6 +284,7 @@ pub trait ExecutionContext:
     ContextReadPort
     + ContextWritePort
     + PromptArtifactReadPort
+    + SystemPromptPort
     + NodeResolutionPort
     + ProviderValidationPort
     + ProviderExecutionPort
@@ -287,6 +297,7 @@ impl<T> ExecutionContext for T where
     T: ContextReadPort
         + ContextWritePort
         + PromptArtifactReadPort
+        + SystemPromptPort
         + NodeResolutionPort
         + ProviderValidationPort
         + ProviderExecutionPort

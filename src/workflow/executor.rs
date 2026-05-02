@@ -12,7 +12,7 @@ use crate::context::generation::provider_execution::{
 use crate::error::ApiError;
 use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext, WorldModelQueryPort};
 use crate::metadata::frame_write_contract::build_generated_metadata;
-use crate::prompt_context::PromptContextLineageInput;
+use crate::metadata::prompt_link_contract::PromptLinkContractV1;
 use crate::provider::ProviderExecutionBinding;
 use crate::task::{
     execute_task_to_completion, load_task_package_spec_for_workflow,
@@ -41,6 +41,7 @@ use crate::workflow::state_store::{
     WorkflowStateStore, WorkflowThreadRecord, WorkflowThreadStatus, WorkflowTurnRecord,
     WorkflowTurnStatus,
 };
+use meld_execution::PromptLineageRequest;
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
@@ -381,7 +382,7 @@ where
             let provider_preparation = prepare_provider_for_request(api, &orchestration_request)?;
 
             let prepared_lineage = api.prepare_prompt_lineage(
-                &PromptContextLineageInput {
+                &PromptLineageRequest {
                     system_prompt: prompt_contract.system_prompt.clone(),
                     user_prompt_template: prompt_template.clone(),
                     rendered_prompt: rendered_prompt.clone(),
@@ -765,7 +766,27 @@ where
             let frame_id = api.put_frame(request.node_id, frame, request.agent_id.clone())?;
 
             let prompt_link_record = prompt_link_record_from_contract_v1(
-                &prepared_lineage.prompt_link_contract,
+                &PromptLinkContractV1 {
+                    prompt_link_id: prepared_lineage.prompt_link_contract.prompt_link_id.clone(),
+                    prompt_digest: prepared_lineage.prompt_link_contract.prompt_digest.clone(),
+                    context_digest: prepared_lineage.prompt_link_contract.context_digest.clone(),
+                    system_prompt_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .system_prompt_artifact_id
+                        .clone(),
+                    user_prompt_template_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .user_prompt_template_artifact_id
+                        .clone(),
+                    rendered_prompt_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .rendered_prompt_artifact_id
+                        .clone(),
+                    context_artifact_id: prepared_lineage
+                        .prompt_link_contract
+                        .context_artifact_id
+                        .clone(),
+                },
                 &PromptLinkRecordInputV1 {
                     thread_id: thread_id.clone(),
                     turn_id: format!("turn-{}", turn.seq),

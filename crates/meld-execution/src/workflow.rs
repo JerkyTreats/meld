@@ -2,6 +2,7 @@
 
 pub mod events;
 pub mod profile;
+pub mod progress;
 pub mod registry;
 
 pub use events::{
@@ -11,5 +12,9 @@ pub use events::{
 pub use profile::{
     PromptRefKind, WorkflowArtifactPolicy, WorkflowFailurePolicy, WorkflowGate, WorkflowProfile,
     WorkflowThreadPolicy, WorkflowTurn,
+};
+pub use progress::{
+    WorkflowExecutionRequest, WorkflowExecutionSummary, WorkflowForceResetProgressEventData,
+    WorkflowTargetProgressEventData, WorkflowTurnProgressEventData,
 };
 pub use registry::RegisteredWorkflowProfile;
