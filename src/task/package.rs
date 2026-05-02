@@ -4,8 +4,10 @@ pub mod prepare;
 pub mod registry;
 
 use crate::error::ApiError;
-use crate::execution::PromptArtifactReadPort;
+use crate::execution::{ContextReadPort, NodeResolutionPort, PromptArtifactReadPort};
 use crate::workflow::registry::RegisteredWorkflowProfile;
+use crate::{capability::CapabilityCatalog, types::NodeID};
+use std::path::Path;
 use std::path::PathBuf;
 
 pub use meld_execution::task::package::{
@@ -42,5 +44,39 @@ pub(crate) fn resolve_workflow_package_prompt_template(
         api,
         registered_profile.source_path.as_deref(),
         prompt_ref,
+    )
+}
+
+pub fn workflow_uses_task_package_path(
+    registered_profile: &RegisteredWorkflowProfile,
+) -> Result<bool, ApiError> {
+    meld_execution::task::workflow_uses_task_package_path(
+        registered_profile,
+        Some(default_user_task_package_dir()?.as_path()),
+    )
+}
+
+pub fn workflow_task_run_id_for_target(
+    registered_profile: &RegisteredWorkflowProfile,
+    node_id: NodeID,
+) -> String {
+    meld_execution::task::workflow_task_run_id_for_target(registered_profile, node_id)
+}
+
+pub fn prepare_registered_workflow_task_run(
+    api: &(impl ContextReadPort + NodeResolutionPort + PromptArtifactReadPort + ?Sized),
+    workspace_root: &Path,
+    registered_profile: &RegisteredWorkflowProfile,
+    request: &WorkflowPackageTriggerRequest,
+    catalog: &CapabilityCatalog,
+) -> Result<PreparedTaskRun, ApiError> {
+    meld_execution::task::prepare_registered_workflow_task_run(
+        api,
+        workspace_root,
+        registered_profile,
+        request,
+        catalog,
+        Some(default_user_task_package_dir()?.as_path()),
+        |prompt_ref| resolve_workflow_package_prompt_template(api, registered_profile, prompt_ref),
     )
 }

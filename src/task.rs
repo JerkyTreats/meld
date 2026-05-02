@@ -16,7 +16,6 @@ pub mod package;
 pub mod readiness;
 pub(crate) mod reducer;
 pub mod runtime;
-pub mod templates;
 
 pub use artifact_repo::TaskArtifactRepo;
 pub use compiler::{compile_task_definition, TaskCompiler};
@@ -45,11 +44,12 @@ pub use package::{
     find_traversal_prerequisite_expansion, gate_map, load_builtin_task_package_spec,
     load_builtin_task_package_spec_for_workflow, load_task_package_spec_for_workflow,
     lower_traversal_prerequisite_expansion_template, lower_workflow_region_template,
-    prepare_workflow_package_context, prepare_workflow_task_run, prompt_map,
-    resolve_package_target_node_id, validate_workflow_package_trigger, InitialSeedSpec,
-    PackageExpansionSpec, PreparedTaskRun, PreparedWorkflowPackageContext, SeedArtifactSpec,
-    SeedSourceSpec, TargetSelectorKind, TaskPackageSpec, TaskTriggerSpec,
-    WorkflowPackageTriggerRequest,
+    prepare_registered_workflow_task_run, prepare_workflow_package_context,
+    prepare_workflow_task_run, prompt_map, resolve_package_target_node_id,
+    validate_workflow_package_trigger, workflow_task_run_id_for_target,
+    workflow_uses_task_package_path, InitialSeedSpec, PackageExpansionSpec, PreparedTaskRun,
+    PreparedWorkflowPackageContext, SeedArtifactSpec, SeedSourceSpec, TargetSelectorKind,
+    TaskPackageSpec, TaskTriggerSpec, WorkflowPackageTriggerRequest,
 };
 pub use readiness::compute_ready_capability_instances;
 pub use runtime::{execute_task_to_completion, TaskRunSummary, WorkflowTaskTelemetry};

@@ -6,10 +6,9 @@ use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
 use meld::provider::capability::ProviderExecuteChatCapability;
 use meld::provider::ProviderExecutionBinding;
 use meld::provider::ProviderRuntimeOverrides;
-use meld::task::templates::prepare_registered_workflow_task_run;
 use meld::task::{
-    compile_task_expansion_request, parse_task_expansion_request_artifact, TaskExecutor,
-    WorkflowPackageTriggerRequest,
+    compile_task_expansion_request, parse_task_expansion_request_artifact,
+    prepare_registered_workflow_task_run, TaskExecutor, WorkflowPackageTriggerRequest,
 };
 use meld::workspace::capability::WorkspaceResolveNodeIdCapability;
 use std::collections::{BTreeSet, HashMap};

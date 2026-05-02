@@ -14,14 +14,12 @@ use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext, WorldMode
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::prompt_context::PromptContextLineageInput;
 use crate::provider::ProviderExecutionBinding;
-use crate::task::templates::{
+use crate::task::{
+    execute_task_to_completion, load_task_package_spec_for_workflow,
     prepare_registered_workflow_task_run, workflow_task_run_id_for_target,
     workflow_uses_task_package_path,
 };
-use crate::task::{
-    execute_task_to_completion, load_task_package_spec_for_workflow, TaskExecutor,
-    WorkflowPackageTriggerRequest, WorkflowTaskTelemetry,
-};
+use crate::task::{TaskExecutor, WorkflowPackageTriggerRequest, WorkflowTaskTelemetry};
 use crate::telemetry::{
     now_millis, FrameMetadataValidationEventData, PromptContextLineageEventData,
     WorkflowForceResetEventData, WorkflowTargetEventData, WorkflowTurnEventData,

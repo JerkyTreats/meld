@@ -10,10 +10,10 @@ use meld::metadata::frame_write_contract::{
 };
 use meld::provider::capability::ProviderExecuteChatCapability;
 use meld::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
-use meld::task::templates::prepare_registered_workflow_task_run;
 use meld::task::{
     compile_task_expansion_request, execute_task_to_completion,
-    parse_task_expansion_request_artifact, TaskExecutor, WorkflowPackageTriggerRequest,
+    parse_task_expansion_request_artifact, prepare_registered_workflow_task_run, TaskExecutor,
+    WorkflowPackageTriggerRequest,
 };
 use meld::workspace::capability::WorkspaceResolveNodeIdCapability;
 use std::fs;
