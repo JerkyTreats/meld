@@ -2,7 +2,10 @@ use serde_json::json;
 use std::fmt::Display;
 
 use crate::error::ExecutionInvariantError;
-use crate::execution::{ExecutionEventContext, ProviderPreparationView, ProviderValidationPort};
+use crate::execution::{
+    ContextWritePort, ExecutionEventContext, GeneratedMetadataPort, ProviderPreparationView,
+    ProviderValidationPort,
+};
 use crate::generation::{
     ChatMessage, GenerationOrchestrationRequest, MessageRole, NodeId,
     PromptContextLineageProgressEventData, PromptLineageRequest,
@@ -28,22 +31,32 @@ pub(super) struct CompletedTurn {
     pub content: String,
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(super) struct TurnAttemptContext<'a, A, E>
+where
+    A: ContextWritePort + GeneratedMetadataPort,
+{
+    pub api: &'a A,
+    pub profile: &'a WorkflowProfile,
+    pub request: &'a WorkflowExecutionRequest,
+    pub runtime: &'a WorkflowExecutorRuntime<'a, A, E>,
+    pub event_context: Option<&'a ExecutionEventContext>,
+    pub thread_id: &'a str,
+    pub target_path: &'a str,
+}
+
+pub(super) struct TurnExecutionInput<'a> {
+    pub turn: &'a WorkflowTurn,
+    pub gate: &'a WorkflowGate,
+    pub system_prompt: &'a str,
+    pub prompt_template: &'a str,
+    pub rendered_prompt: &'a str,
+    pub resolved_inputs: &'a ResolvedTurnInputs,
+    pub final_turn_seq: u32,
+}
+
 pub(super) async fn execute_turn_with_retries<A, E>(
-    api: &A,
-    profile: &WorkflowProfile,
-    turn: &WorkflowTurn,
-    gate: &WorkflowGate,
-    request: &WorkflowExecutionRequest,
-    runtime: &WorkflowExecutorRuntime<'_, A, E>,
-    event_context: Option<&ExecutionEventContext>,
-    thread_id: &str,
-    target_path: &str,
-    system_prompt: &str,
-    prompt_template: &str,
-    rendered_prompt: &str,
-    resolved_inputs: &ResolvedTurnInputs,
-    final_turn_seq: u32,
+    context: TurnAttemptContext<'_, A, E>,
+    input: TurnExecutionInput<'_>,
     final_frame_id: Option<NodeId>,
 ) -> Result<CompletedTurn, E>
 where
@@ -51,6 +64,15 @@ where
     E: From<ExecutionInvariantError> + Display + Clone + Send + Sync + 'static,
     <A as ProviderValidationPort>::ProviderPreparation: ProviderPreparationView + Sync,
 {
+    let api = context.api;
+    let profile = context.profile;
+    let request = context.request;
+    let runtime = context.runtime;
+    let event_context = context.event_context;
+    let thread_id = context.thread_id;
+    let target_path = context.target_path;
+    let turn = input.turn;
+    let gate = input.gate;
     let state_store = &runtime.state_store;
     let mut attempt = 0usize;
     let mut last_error: Option<E> = None;
@@ -71,10 +93,10 @@ where
 
         let prepared_lineage = api.prepare_prompt_lineage(
             &PromptLineageRequest {
-                system_prompt: system_prompt.to_string(),
-                user_prompt_template: prompt_template.to_string(),
-                rendered_prompt: rendered_prompt.to_string(),
-                context_payload: resolved_inputs.context_payload.clone(),
+                system_prompt: input.system_prompt.to_string(),
+                user_prompt_template: input.prompt_template.to_string(),
+                rendered_prompt: input.rendered_prompt.to_string(),
+                context_payload: input.resolved_inputs.context_payload.clone(),
             },
             &request.agent_id,
             &request.provider.provider_name,
@@ -85,7 +107,7 @@ where
             &request.frame_type,
             turn,
             &prepared_lineage.prompt_link_contract.prompt_link_id,
-            turn.seq == final_turn_seq,
+            turn.seq == input.final_turn_seq,
         );
 
         emit_workflow_turn_event(
@@ -274,11 +296,11 @@ where
                 vec![
                     ChatMessage {
                         role: MessageRole::System,
-                        content: system_prompt.to_string(),
+                        content: input.system_prompt.to_string(),
                     },
                     ChatMessage {
                         role: MessageRole::User,
-                        content: rendered_prompt.to_string(),
+                        content: input.rendered_prompt.to_string(),
                     },
                 ],
                 event_context,
@@ -332,7 +354,8 @@ where
             }
         };
 
-        let gate_result = evaluate_gate(gate, &response.content, Some(&resolved_inputs.values));
+        let gate_result =
+            evaluate_gate(gate, &response.content, Some(&input.resolved_inputs.values));
         let gate_record = ThreadTurnGateRecordV1::new(
             thread_id.to_string(),
             format!("turn-{}", turn.seq),

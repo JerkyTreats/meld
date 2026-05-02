@@ -22,7 +22,9 @@ use crate::workflow::state_store::{
 };
 use crate::workflow::task_path::WorkflowTaskPathRuntime;
 pub use meld_execution::workflow::{WorkflowExecutionRequest, WorkflowExecutionSummary};
-use meld_execution::workflow::{WorkflowExecutorRuntime, WorkflowTaskPathExecutor};
+use meld_execution::workflow::{
+    WorkflowExecutorRuntime, WorkflowTaskPathExecution, WorkflowTaskPathExecutor,
+};
 
 pub fn execute_registered_workflow<A>(
     api: &A,
@@ -147,20 +149,21 @@ where
         decode_frame_id(frame_id_hex)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn execute_task_path(
         &self,
-        api: &A,
-        workspace_root: &Path,
-        registered_profile: &RegisteredWorkflowProfile,
-        request: &WorkflowExecutionRequest,
-        event_context: Option<&ExecutionEventContext>,
-        state_store: &meld_execution::workflow::WorkflowStateStore,
-        thread_id: &str,
-        target_path: &str,
-        final_turn_seq: u32,
-        now_millis: fn() -> u64,
+        execution: WorkflowTaskPathExecution<'_, A>,
     ) -> Result<WorkflowExecutionSummary, ApiError> {
+        let api = execution.api;
+        let workspace_root = execution.workspace_root;
+        let registered_profile = execution.registered_profile;
+        let request = execution.request;
+        let event_context = execution.event_context;
+        let state_store = execution.state_store;
+        let thread_id = execution.thread_id;
+        let target_path = execution.target_path;
+        let final_turn_seq = execution.final_turn_seq;
+        let now_millis = execution.now_millis;
+
         let package_spec =
             load_task_package_spec_for_workflow(registered_profile)?.ok_or_else(|| {
                 ApiError::ConfigError(format!(

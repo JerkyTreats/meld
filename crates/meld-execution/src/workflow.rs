@@ -17,7 +17,7 @@ pub use events::{
 };
 pub use executor::{
     execute_registered_workflow_async, FrameBuilder, NodeNotFoundBuilder, WorkflowExecutorContext,
-    WorkflowExecutorRuntime, WorkflowTaskPathExecutor,
+    WorkflowExecutorRuntime, WorkflowTaskPathExecution, WorkflowTaskPathExecutor,
 };
 pub use gates::{evaluate_gate, GateEvaluationResult};
 pub use normalization::normalize_output_for_gate;

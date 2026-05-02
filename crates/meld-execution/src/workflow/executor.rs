@@ -59,6 +59,19 @@ where
     pub now_millis: fn() -> u64,
 }
 
+pub struct WorkflowTaskPathExecution<'a, A> {
+    pub api: &'a A,
+    pub workspace_root: &'a Path,
+    pub registered_profile: &'a RegisteredWorkflowProfile,
+    pub request: &'a WorkflowExecutionRequest,
+    pub event_context: Option<&'a ExecutionEventContext>,
+    pub state_store: &'a WorkflowStateStore,
+    pub thread_id: &'a str,
+    pub target_path: &'a str,
+    pub final_turn_seq: u32,
+    pub now_millis: fn() -> u64,
+}
+
 #[async_trait]
 pub trait WorkflowTaskPathExecutor<A, E>: Send + Sync {
     fn uses_task_package_path(
@@ -74,19 +87,9 @@ pub trait WorkflowTaskPathExecutor<A, E>: Send + Sync {
         existing: &WorkflowThreadRecord,
     ) -> Result<NodeId, E>;
 
-    #[allow(clippy::too_many_arguments)]
     async fn execute_task_path(
         &self,
-        api: &A,
-        workspace_root: &Path,
-        registered_profile: &RegisteredWorkflowProfile,
-        request: &WorkflowExecutionRequest,
-        event_context: Option<&ExecutionEventContext>,
-        state_store: &WorkflowStateStore,
-        thread_id: &str,
-        target_path: &str,
-        final_turn_seq: u32,
-        now_millis: fn() -> u64,
+        execution: WorkflowTaskPathExecution<'_, A>,
     ) -> Result<WorkflowExecutionSummary, E>;
 }
 
@@ -360,35 +363,39 @@ where
     if uses_task_package_path {
         return runtime
             .task_path_executor
-            .execute_task_path(
+            .execute_task_path(WorkflowTaskPathExecution {
                 api,
                 workspace_root,
                 registered_profile,
                 request,
                 event_context,
                 state_store,
-                &thread_id,
-                &target_path,
+                thread_id: &thread_id,
+                target_path: &target_path,
                 final_turn_seq,
-                runtime.now_millis,
-            )
+                now_millis: runtime.now_millis,
+            })
             .await;
     }
 
     let direct_result = direct::execute_direct_turns(
-        api,
-        registered_profile,
-        request,
-        runtime,
-        event_context,
-        &thread_id,
-        &target_path,
-        start_seq,
-        turn_outputs,
-        completed_turns,
-        final_frame_id,
-        system_prompt,
-        final_turn_seq,
+        direct::DirectExecutionContext {
+            api,
+            registered_profile,
+            request,
+            runtime,
+            event_context,
+            thread_id: &thread_id,
+            target_path: &target_path,
+            system_prompt,
+            final_turn_seq,
+        },
+        direct::DirectExecutionState {
+            start_seq,
+            turn_outputs,
+            completed_turns,
+            final_frame_id,
+        },
     )
     .await?;
     completed_turns = direct_result.completed_turns;
