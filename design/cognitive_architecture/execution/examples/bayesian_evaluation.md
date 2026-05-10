@@ -154,5 +154,5 @@ Published as a task-facing capability because:
 
 - [Git Diff Summary](git_diff_summary.md)
 - [AST Change Impact](ast_change_impact.md)
-- [Await Observation Semantics](../control/program/await_observation_semantics.md)
-- [Guard Binding Semantics](../control/program/guard_binding_semantics.md)
+- [Observation Wait Semantics](../planning/observation_wait_semantics.md)
+- [Guard Expression Semantics](../planning/guard_expression_semantics.md)

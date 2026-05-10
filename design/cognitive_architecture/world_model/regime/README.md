@@ -89,6 +89,18 @@ This means one belief may be:
 
 The planner-facing view must be able to expose that difference.
 
+## Relationship To Goal Curation
+
+Regime change directly affects goal generation. The world model agent's cost-benefit comparators use regime-scoped priors. When a regime shift is detected:
+
+- **Known regime**: archived priors from the regime library provide immediate recalibration. The agent's goal generation decisions change without relearning from scratch.
+- **Novel regime**: priors widen. The agent becomes exploratory, favoring observation goals over action goals until outcome data arrives under the new regime.
+- **Regime ends**: current priors are archived for future reuse.
+
+The practical effect: regime change reshapes which goals the agent generates. During incident response, stability goals pass the cost-benefit threshold easily while documentation goals do not — not because of a hardcoded policy, but because the regime-scoped value priors reflect learned experience from prior incidents.
+
+See [Goal Curation](../agent/goal_curation.md) for the full cost-benefit evaluation mechanism.
+
 ## Queries
 
 The first durable regime query families should be:
@@ -130,3 +142,4 @@ That is enough to prevent stationary priors from becoming silent hidden assumpti
 - [Belief](../belief/README.md)
 - [Causal Layer](../causation/README.md)
 - [World Model Planner](../planner/README.md)
+- [Goal Curation](../agent/goal_curation.md)

@@ -5,7 +5,7 @@ Status: active
 
 ## Intent
 
-Define the hierarchical task model owned by `control`.
+Define the hierarchical task model owned by `execution`.
 
 ## Definition
 

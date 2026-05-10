@@ -84,16 +84,6 @@ Root `meld` supplies adapters for those ports during runtime wiring.
 This keeps the dependency direction from becoming `meld-execution` to root `meld`.
 It also lets context and provider remain in root `meld` while their long-term crate homes stay unresolved.
 
-## Rejected Near Term Shapes
-
-Do not create `meld-provider` now.
-Provider and context are coupled by generation, but that does not make them one clean crate responsibility.
-
-Do not move context and provider wholesale into `meld-execution`.
-That would make execution own memory, frame storage, prompt assembly, provider configuration, and model backend management.
-
-If a later crate becomes useful, prefer a generation-focused crate over a provider-focused crate.
-
 ## Root Adapter Posture
 
 Root `meld` binds the associated-type port contracts to the product's current concrete types.

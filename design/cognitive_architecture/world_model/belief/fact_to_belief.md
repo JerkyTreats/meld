@@ -32,7 +32,7 @@ Belief exists because these implemented layers now exist:
   explicit closeout that belief and planner-facing views are next scope
 - [World Model Graph](../graph/README.md)
   source model where semantic spine facts materialize graph views and future belief facts
-- [Execution Substrate](../../execution/substrate.md)
+- [Execution Domain](../../execution/README.md)
   execution must read current belief and publish success, failure, uncertainty, and gathered evidence
 
 ## Record Roles
@@ -236,4 +236,4 @@ Start with one belief family:
 - [Comparator Model](comparator_model.md)
 - [Belief Substrate](substrate.md)
 - [Graph](../graph/README.md)
-- [Execution Substrate](../../execution/substrate.md)
+- [Execution Domain](../../execution/README.md)

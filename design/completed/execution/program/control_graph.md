@@ -158,10 +158,9 @@ The first slice should support:
 
 ## Read With
 
-- [Execution Control](../README.md)
+- [Execution Domain](../README.md)
 - [Task Network](../task_network.md)
 - [Await Observation Semantics](await_observation_semantics.md)
 - [Guard Binding Semantics](guard_binding_semantics.md)
 - [Execution Planning](../planning/README.md)
 - [Repair Entry Model](../repair/repair_entry.md)
-- [Task Design](../../capabilities/task/README.md)

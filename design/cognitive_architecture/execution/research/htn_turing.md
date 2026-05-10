@@ -136,7 +136,7 @@ Runtime needs:
 - retry and repair counters
 - suspension and resume boundary
 
-This is a major expansion from the current deferred execution posture described in [Control Design](/home/jerkytreats/meld/design/control/README.md).
+This is a major expansion from the current deferred execution posture described in [Execution Domain](../README.md).
 
 ### Observability and audit
 

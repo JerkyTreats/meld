@@ -95,4 +95,4 @@ Published as a task-facing capability because:
 
 - [AST Change Impact](ast_change_impact.md)
 - [Bayesian Evaluation](bayesian_evaluation.md)
-- [Await Observation Semantics](../control/program/await_observation_semantics.md)
+- [Observation Wait Semantics](../planning/observation_wait_semantics.md)

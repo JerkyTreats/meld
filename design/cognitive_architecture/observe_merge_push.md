@@ -168,8 +168,8 @@ The system can grow its own sense organs.
 ## Read With
 
 - [Multi-Domain Spine](events/multi_domain_spine.md)
-- [Await Observation Semantics](execution/control/program/await_observation_semantics.md)
+- [Observation Wait Semantics](execution/planning/observation_wait_semantics.md)
 - [Bayesian Evaluation Example](execution/examples/bayesian_evaluation.md)
-- [Synthesis Overview](execution/control/synthesis/README.md)
-- [Goals](../goals/README.md)
+- [Synthesis Overview](execution/synthesis/README.md)
+- [Goals](execution/goals/README.md)
 - [HTN Turing Plan](../htn_turing.md)

@@ -241,6 +241,14 @@ Design:
 - The regime layer owns structural change and recurring contexts.
 - The planner-facing world model projection owns action-relevant reads, not execution policy or raw inference internals.
 
+## Public Interface
+
+The world model exposes a public interface that capabilities can invoke without importing world model internals. Each domain owns its routes: graph owns traversal and discovery, belief owns belief queries and key registration, agent owns identity and subscription management, planner owns action-relevant projections.
+
+This interface is the world model's equivalent of execution's Goal Set API. The two public APIs form a symmetric pair — execution's goal set curated by world model agents, world model's belief and graph queried by execution capabilities.
+
+See [World Model Public Interface](public_interface.md) for the full contract.
+
 ## Read Order
 
 1. [Events Design](../events/README.md)
@@ -252,6 +260,9 @@ Design:
 7. [Causal Layer](causation/README.md)
 8. [Regime Layer](regime/README.md)
 9. [World Model Planner](planner/README.md)
+10. [World Model Public Interface](public_interface.md)
+11. [World Model Agent](agent/README.md)
+12. [Goal Curation](agent/goal_curation.md)
 
 ## Naming Rule
 

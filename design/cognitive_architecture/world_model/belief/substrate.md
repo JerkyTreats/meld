@@ -250,4 +250,4 @@ The first substrate slice should prove:
 - [Comparator Model](comparator_model.md)
 - [Curation In Belief](curation.md)
 - [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md)
-- [Task Network](../../execution/control/task_network.md)
+- [Task Network](../../execution/task_network.md)

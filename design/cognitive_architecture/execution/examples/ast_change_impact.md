@@ -92,4 +92,4 @@ Published as a task-facing capability because:
 
 - [Git Diff Summary](git_diff_summary.md)
 - [Bayesian Evaluation](bayesian_evaluation.md)
-- [Await Observation Semantics](../control/program/await_observation_semantics.md)
+- [Observation Wait Semantics](../planning/observation_wait_semantics.md)

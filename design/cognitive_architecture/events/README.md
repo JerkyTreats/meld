@@ -76,4 +76,4 @@ Raw sensory pulses, raw file watcher noise, transient worker chatter, and presen
 
 - [World Model Domain](../world_model/README.md)
 - [Graph](../world_model/graph/README.md)
-- [Execution Control](../execution/control/README.md)
+- [Execution Domain](../execution/README.md)

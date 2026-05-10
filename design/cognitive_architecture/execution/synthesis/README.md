@@ -110,7 +110,7 @@ agent harness invocation is one capability in the synthesis chain, and its outpu
 
 ## Read With
 
-- [Control Graph Model](../program/control_graph.md)
 - [Execution Planning](../planning/README.md)
-- [Bayesian Evaluation Example](../../examples/bayesian_evaluation.md)
-- [Event Spine](../events/multi_domain_spine.md)
+- [Planning Pipeline](../planning/planning_pipeline.md)
+- [Bayesian Evaluation Example](../examples/bayesian_evaluation.md)
+- [Event Spine](../../events/multi_domain_spine.md)

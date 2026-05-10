@@ -186,4 +186,4 @@ Replaying genesis plus later deltas reconstructs that domain projection.
 - [Event Ledger Requirements](event_manager_requirements.md)
 - [World Model Domain](../world_model/README.md)
 - [Graph](../world_model/graph/README.md)
-- [Execution Control](../execution/control/README.md)
+- [Execution Domain](../execution/README.md)

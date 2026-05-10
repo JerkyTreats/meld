@@ -91,6 +91,24 @@ Comparator kind affects default trust.
 | `MessagePassingInference` | provisional or settled | method dependent | compare posterior and convergence diagnostics to later outcomes |
 | `PredictiveResidualInference` | provisional or settled | method dependent | calibrate precision and residual thresholds against later observations |
 
+## Cost-Benefit Comparator
+
+The comparator pattern extends beyond truth-assessment to action-worthiness. The world model agent uses cost-benefit comparators to decide whether belief divergence warrants goal generation.
+
+A cost-benefit comparator consumes beliefs about state, cost, and value — it is a comparator over comparator outputs. The mechanism is the same: prior + evidence → posterior with confidence and uncertainty.
+
+| Input | Source |
+| --- | --- |
+| State belief | Belief comparator output for the relevant belief key |
+| Cost belief | Learned from execution outcome facts (time, tokens, success rate) |
+| Value belief | Learned from downstream outcome correlation |
+| Inaction cost | Accumulating cost of not acting (for maintenance invariants) |
+| Regime context | Which prior set is active (from regime layer) |
+
+The cost-benefit comparator produces an act/tolerate posterior. "Tolerate" means the belief change is absorbed without goal generation — this is the frequency reduction between the belief layer and the goal layer.
+
+The full mechanism is defined in [Goal Curation](../agent/goal_curation.md).
+
 Semantic settlement should carry:
 
 - comparator kind
@@ -109,12 +127,14 @@ Semantic settlement should carry:
   structured change summary artifact used as comparator evidence
 - [AST Change Impact Example](../../execution/examples/ast_change_impact.md)
   structured public API impact artifact used as comparator evidence
-- [Await Observation Semantics](../../execution/control/program/await_observation_semantics.md)
-  control wait point for observation artifacts
-- [Guard Binding Semantics](../../execution/control/program/guard_binding_semantics.md)
-  branch decision over structured artifacts
-- [Synthesis Overview](../../execution/control/synthesis/README.md)
+- [Observation Wait Semantics](../../execution/planning/observation_wait_semantics.md)
+  data-flow dependency semantics for observation tasks
+- [Guard Expression Semantics](../../execution/planning/guard_expression_semantics.md)
+  conditional dependency edge evaluation over structured artifacts
+- [Synthesis Overview](../../execution/synthesis/README.md)
   future route for capability growth when comparator inputs cannot be produced
+- [Goal Curation](../agent/goal_curation.md)
+  cost-benefit comparator for goal generation — the action-worthiness extension of the comparator pattern
 
 ## Bayesian Comparator Shape
 
@@ -193,5 +213,5 @@ The first slice should support:
 - [Fact To Belief](fact_to_belief.md)
 - [Belief Substrate](substrate.md)
 - [Bayesian Evaluation Example](../../execution/examples/bayesian_evaluation.md)
-- [Execution Planning](../../execution/control/planning/README.md)
-- [Synthesis Overview](../../execution/control/synthesis/README.md)
+- [Execution Planning](../../execution/planning/README.md)
+- [Synthesis Overview](../../execution/synthesis/README.md)

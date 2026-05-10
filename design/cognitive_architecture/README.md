@@ -90,11 +90,7 @@ This area does own:
   ECS evaluation for curation internals, migration cost, and recommendation
 - [Execution Domain](execution/README.md)
   world-model-aware action aligned with current execution design
-- [Execution Substrate](execution/substrate.md)
-  planning and deliberate action substrate for `execution`
-- [Execution Control](execution/control/README.md)
-  control as the coordination layer inside `execution`
-- [Execution Planning](execution/control/planning/README.md)
+- [Execution Planning](execution/planning/README.md)
   HTN, planning, repair, and synthesis inside `execution`
 - [Events Design](events/README.md)
   shared event architecture, replay, sequencing, and telemetry refactor path
@@ -122,17 +118,15 @@ This area does own:
 17. [Curation In Belief](world_model/belief/curation.md)
 18. [Knowledge Graph ECS Decision Memo](world_model/belief/knowledge_graph_ecs_decision_memo.md)
 19. [Execution Domain](execution/README.md)
-20. [Execution Substrate](execution/substrate.md)
-21. [Execution Control](execution/control/README.md)
-22. [Execution Planning](execution/control/planning/README.md)
+20. [Execution Planning](execution/planning/README.md)
 23. [Events Design](events/README.md)
 24. [Further Research Prompts](further_research_prompts.md)
 
 ## Read With
 
-- [Execution Control](execution/control/README.md)
+- [Execution Planning](execution/planning/README.md)
 - [Events Design](events/README.md)
 - [Multi-Domain Event Ledger](events/multi_domain_spine.md)
 - [Bayesian Evaluation Example](execution/examples/bayesian_evaluation.md)
-- [Synthesis Overview](execution/control/synthesis/README.md)
-- [Goals](../goals/README.md)
+- [Synthesis Overview](execution/synthesis/README.md)
+- [Goals](execution/goals/README.md)

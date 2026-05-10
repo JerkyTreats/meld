@@ -194,5 +194,5 @@ The slice should explicitly defer:
 - [Belief Substrate](substrate.md)
 - [Comparator Model](comparator_model.md)
 - [Microarchitecture Assessment By Domain](../../microarchitecture_assessment_by_domain.md)
-- [Execution Substrate](../../execution/substrate.md)
+- [Execution Domain](../../execution/README.md)
 - [Spine Concern](../../spine/README.md)
