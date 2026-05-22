@@ -176,8 +176,18 @@ The public contract should therefore make perspective explicit on belief keys, e
 
 ## Active Documents
 
+- [Belief Families](belief_families.md)
+  belief family concept, grounding contract, and worked examples using the docs writer concern class
 - [Belief ECS](ECS.md)
   ECS interpretation of belief entities, components, and systems
+- [Belief Entities](entities.md)
+  stable identity, lifecycle, and authority records for belief
+- [Belief Components](components.md)
+  typed data contracts attached to belief entities
+- [Belief Systems](systems.md)
+  deterministic systems that turn evidence into revisions and views
+- [Belief Requirements](requirements.md)
+  expanded implementation requirements for belief
 - [Belief Microarchitecture](microarchitecture.md)
   event, world model, and execution boundaries for belief
 - [Fact To Belief](fact_to_belief.md)

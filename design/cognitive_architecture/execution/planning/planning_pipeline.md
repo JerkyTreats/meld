@@ -1,6 +1,6 @@
 # Planning Pipeline
 
-Date: 2026-05-05
+Date: 2026-05-18
 Status: active
 Scope: unified planning pipeline aligned to the graphs-lower-graphs execution model
 
@@ -77,21 +77,30 @@ The planning loop is a continuous process that maintains the task network graph.
 
 ### Inputs
 
-- **goal set**: desired belief states, curated by the world model agent through execution's public API
-- **world model view**: current belief, uncertainty, freshness, preconditions (subscribed, not queried directly)
-- **capability catalog**: available capabilities (compiled + synthesized)
-- **method library**: available HTN decompositions
+All planning loop inputs are expressed in the shared language ([`meld-lang`](../../meld-lang/README.md)):
+
+- **goal set**: `Vec<Goal>` — desired belief states as `Proposition` targets, curated by the world model agent through execution's public API. See [Goals and Methods](../../meld-lang/goals_and_methods.md).
+- **world state**: `WorldState` — ground propositions published by the world model's planner-facing projection. The planning loop evaluates goals and preconditions against this. See [World State and Evaluation](../../meld-lang/world_state.md).
+- **capability catalog**: available capabilities (compiled + synthesized). Resolution queries from `Operator.resolution` match against registered `CapabilityTypeContract` values.
+- **method library**: `Vec<Method>` — serialized HTN decompositions loaded at runtime. Methods match goals through pattern unification and produce `Composition` graphs. See [Goals and Methods](../../meld-lang/goals_and_methods.md).
 - **task network state**: what is currently running, completed, pending, failed
 
 ### HTN Decomposition
 
-The planning loop uses HTN decomposition to convert goals into task graphs. Decomposition selects methods that break abstract tasks into sub-tasks, recursing until all leaves are concrete Tasks (compiled capability graphs).
+The planning loop uses HTN decomposition to convert goals into task graphs. The core operation is method matching, defined in [`meld-lang`](../../meld-lang/goals_and_methods.md):
+
+1. For each active `Goal`, `unify(method.trigger, goal.target)` finds matching methods
+2. `substitute(method.composition, bindings)` produces a concrete `Composition`
+3. The composition is validated and runtime-compiled into task network mutations
+4. Each `Operator` in the composition is resolved against the capability catalog through its `Resolution` query
+
+If no method matches, the planning loop may request LLM-assisted decomposition (constructing a `Composition` directly) or report the goal as unachievable with the current catalog.
 
 The output of decomposition is a task network graph: tasks as nodes, dependency edges between them. Dependencies encode:
 
-- **data flow**: task B needs an artifact that task A produces
-- **ordering**: task B must follow task A (from HTN structure)
-- **conditional**: task B should only execute if task A's output meets a condition (guard expression on the dependency edge)
+- **data flow**: task B needs an artifact that task A produces (maps to `EdgeKind::DataFlow` in compositions)
+- **ordering**: task B must follow task A (maps to `EdgeKind::Ordering` in compositions)
+- **conditional**: task B should only execute if task A's output meets a condition (maps to `EdgeKind::Conditional` with guard expression)
 
 ```
 TaskNetworkGraph {
@@ -151,7 +160,7 @@ The planning loop does not run once and stop. It continuously monitors:
 - **world model view changes**: belief invalidations, new observations (received through the subscribed view, not from the world model directly)
 - **task network events**: task completions, failures, artifact production
 
-When conditions change, the planning loop re-evaluates the current task network graph. It identifies which parts of the HTN tree are affected (which methods have preconditions that depend on the changed conditions) and re-decomposes only those subtrees.
+When conditions change, the planning loop re-evaluates the current task network graph. For each active goal, it calls `evaluate(&world_state, &goal.target)` to check whether the goal is now satisfied, still unsatisfied (with a potentially different gap), or indeterminate (requiring observation). It identifies which parts of the HTN tree are affected — method preconditions are re-evaluated against the updated `WorldState` — and re-decomposes only those subtrees.
 
 The result is a set of task network mutations — not a new graph, but a delta against the existing graph.
 
@@ -304,14 +313,20 @@ The workflow executor's current role (advance through turns, evaluate gates, per
 
 ### Method library
 
-HTN decomposition has no domain knowledge without method definitions. A method definition should specify:
+HTN decomposition has no domain knowledge without method definitions. The `Method` type is now defined in [`meld-lang`](../../meld-lang/goals_and_methods.md) with:
 
-- preconditions over `WorldModelView`
-- the set of sub-tasks introduced
-- ordering and data-flow constraints between sub-tasks
-- expected effects on world state
-- cost estimate
-- preference ordering among alternative methods for the same abstract task
+- `trigger`: a `Proposition` pattern with `Term::Variable` for unification against goals
+- `preconditions`: `Vec<Proposition>` checked against `WorldState` after trigger unification
+- `composition`: a `Composition` template with variable references substituted from bindings
+- `net_effects`: `Vec<Effect>` for verifying goal achievement without expanding the composition
+- `cost`: `CostEstimate` for comparison and ceiling checks
+- `preference`: ordering among alternative methods for the same goal
+
+The method type and matching operations (unify, substitute) are defined. What remains:
+
+- **method authoring**: concrete methods for existing use cases (docs freshness, test status, course generation) serialized as JSON files
+- **method library loading**: runtime loading infrastructure, indexing by trigger shape, cache invalidation on file change
+- **method learning**: whether methods can be derived from successful compositions (deferred)
 
 ### Task network graph executor
 
@@ -337,4 +352,9 @@ Cost-aware plan transitions require cost estimates on tasks and a model for comp
 - [Synthesis Overview](../synthesis/README.md)
 - [Guard Expression Semantics](guard_expression_semantics.md)
 - [Observation Wait Semantics](observation_wait_semantics.md)
+- [Lang Domain](../../meld-lang/README.md)
+- [Lang Goals and Methods](../../meld-lang/goals_and_methods.md)
+- [Lang Operators and Resolution](../../meld-lang/operators.md)
+- [Lang Compositions](../../meld-lang/compositions.md)
+- [Lang World State and Evaluation](../../meld-lang/world_state.md)
 - [World Model Planner](../../world_model/planner/README.md)

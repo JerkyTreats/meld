@@ -1,15 +1,17 @@
 # Execution Planning
 
-Date: 2026-05-09
+Date: 2026-05-18
 Status: active
 Scope: planning structure inside execution
 
 ## Thesis
 
 Planning lives inside `execution`.
-It reads the goal set (curated by world model agents) and the world model view (subscribed through the agent's perspective), then maintains a task network graph that closes the gap between current belief and desired state.
+It reads the goal set (curated by world model agents) and the `WorldState` (projected by the world model through the shared language), then maintains a task network graph that closes the gap between current belief and desired state.
 
 The foundational pattern is graphs-lower-graphs: capabilities compose into tasks, tasks compose into the task network. The planning loop continuously decomposes goals via HTN methods and issues graph mutations to the task network when the plan should change.
+
+The shared typed language [`meld-lang`](../../meld-lang/README.md) provides the substrate for all planning operations. Goals are `Proposition` targets evaluated against `WorldState`. Methods match goals through pattern unification and produce `Composition` graphs. Operators resolve to capabilities through the catalog. The planning loop is mechanical — it never interprets semantic intent.
 
 ## Documents
 
@@ -30,8 +32,18 @@ The foundational pattern is graphs-lower-graphs: capabilities compose into tasks
 ## Read With
 
 - [Execution Domain](../README.md)
+- [Execution Gaps](../GAPS.md)
 - [Goals](../goals/README.md)
+- [HTN Model](htn/README.md)
+- [HTN Lineage Model](htn/lineage_model.md)
 - [Task Network](../task_network.md)
 - [Synthesis Overview](../synthesis/README.md)
+- [Guard Expression Semantics](guard_expression_semantics.md)
+- [Observation Wait Semantics](observation_wait_semantics.md)
+- [Lang Domain](../../meld-lang/README.md)
+- [Lang Goals and Methods](../../meld-lang/goals_and_methods.md)
+- [Lang Operators and Resolution](../../meld-lang/operators.md)
+- [Lang Compositions](../../meld-lang/compositions.md)
+- [Lang World State and Evaluation](../../meld-lang/world_state.md)
 - [World Model Planner](../../world_model/planner/README.md)
 - [World Model Agent](../../world_model/agent/README.md)

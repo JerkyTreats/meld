@@ -9,12 +9,18 @@ Scope: ECS interpretation of `world_model/causation` as a mechanism and interven
 `causation` is a structured interpretation domain over graph and belief outputs.
 
 It is system-heavy because it links interventions, outcomes, selection paths, and confounders into effect estimates.
-It should remain narrower than `belief`.
 It consumes settled evidence and emits mechanism-aware summaries.
+
+Detailed causal entity, component, system, and requirement definitions live in:
+
+- [Causal Entities](entities.md)
+- [Causal Components](components.md)
+- [Causal Systems](systems.md)
+- [Causal Requirements](requirements.md)
 
 ## Entities
 
-The core causal entities should be:
+The core causal entities are:
 
 - `CausalVariable`
   one modeled variable in the causal layer
@@ -24,52 +30,66 @@ The core causal entities should be:
   one attempted intervention context
 - `OutcomeLink`
   one evidence link from intervention to measured outcome
+- `ConfounderHypothesis`
+  one hidden-cause explanation candidate
+- `IdentificationAssessment`
+  one assessment of whether an effect is identifiable
 - `EffectEstimate`
   one posterior effect summary
 - `CounterfactualCase`
   one alternative-world evaluation
-- `ConfounderHypothesis`
-  one hidden-cause explanation candidate
+- `CausalAssumptionSet`
+  one explicit assumption set for an estimate or counterfactual
+- `CausalSummary`
+  one planner-facing causal projection
 
 ## Components
 
-The most useful causal components are:
+The component families are:
 
-- variable kind
-- parent refs
-- intervention target
-- intervention kind
-- measurement path
-- selection semantics
-- confounder refs
-- regime condition
-- identification status
-- effect posterior
-- uncertainty
-- provenance refs
+- identity
+- variable
+- mechanism
+- intervention
+- outcome
+- selection
+- confounding
+- identification
+- effect
+- counterfactual
+- assumption
+- provenance
 
 ## Systems
 
-The core causal systems should be:
+The core causal systems are:
 
+- variable registration
 - intervention lowering
 - outcome linking
-- selection-path interpretation
-- confounder scoring
+- measurement path interpretation
 - mechanism selection
+- confounder discovery
+- confounder scoring
+- identification assessment
 - effect estimation
 - counterfactual evaluation
+- assumption projection
 - causal summary projection
+- recovery and replay
 
 ## Role In The Set
 
-`causation` should consume graph structure and belief uncertainty, then emit effect summaries for `planner` and perspective consumers.
+`causation` consumes graph structure and belief uncertainty, then emits effect summaries for `planner` and perspective consumers.
 
-`agent` should not re-run causal estimation.
-It should consume causal summaries through an Agent-specific lens.
+`agent` consumes causal summaries through an agent-specific lens.
 
 ## Read With
 
 - [Causal Layer](README.md)
+- [Causal Entities](entities.md)
+- [Causal Components](components.md)
+- [Causal Systems](systems.md)
+- [Causal Requirements](requirements.md)
 - [Graph ECS](../graph/ECS.md)
 - [Belief ECS](../belief/ECS.md)

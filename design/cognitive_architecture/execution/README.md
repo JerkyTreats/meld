@@ -1,6 +1,6 @@
 # Execution Domain
 
-Date: 2026-05-09
+Date: 2026-05-18
 Status: active
 Scope: world-model-aware action through goal-directed planning, task network execution, and outcome publication
 
@@ -39,7 +39,8 @@ At each level, the execution model is identical: compute the ready set, dispatch
 `synthesis` owns runtime capability growth.
 `task` and `capability` own compiled execution units and atomic contracts.
 The world model agent owns normative judgment — deciding which goals should exist — and curates the goal set through execution's public API.
-The world model owns graph and belief views that execution reads through subscribed views.
+The world model owns graph and belief views that execution reads as `WorldState` — a set of ground propositions in the shared language [`meld-lang`](../meld-lang/README.md).
+`meld-lang` owns the shared typed substrate: `Proposition`, `Goal`, `Operator`, `Composition`, `WorldState`, `Effect`, `Method`, and all pure evaluation operations. Execution depends on `meld-lang` for all planning types.
 
 ## Architecture
 
@@ -94,6 +95,7 @@ flowchart TD
 ## Read With
 
 - [Observe Merge Push](../observe_merge_push.md)
+- [Lang Domain](../meld-lang/README.md)
 - [World Model Domain](../world_model/README.md)
 - [World Model Agent](../world_model/agent/README.md)
 - [World Model Planner](../world_model/planner/README.md)

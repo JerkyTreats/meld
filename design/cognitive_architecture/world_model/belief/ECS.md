@@ -13,69 +13,85 @@ It is more perspective-sensitive than `graph` because one shared substrate may p
 
 This is the clearest internal home for hybrid ECS.
 
+Detailed belief entity, component, system, and requirement definitions live in:
+
+- [Belief Entities](entities.md)
+- [Belief Components](components.md)
+- [Belief Systems](systems.md)
+- [Belief Requirements](requirements.md)
+
 ## Entities
 
-The core belief entities should be:
+The core belief entities are:
 
 - `Belief`
   one stable assessed question
-- `BeliefRevision`
-  one append-only settlement over an evidence window
 - `EvidenceItem`
   one normalized belief input
+- `BeliefRevision`
+  one append-only settlement over an evidence window
+- `AssessmentLease`
+  one durable coordination record for assessment work
+- `InferenceEpoch`
+  one bounded multi-belief inference pass
 - `HypothesisSet`
   one competing set of latent explanations
 - `ObservationOpportunity`
   one decision-relevant information need
 - `BeliefView`
   one current shaped projection for consumers
+- `CalibrationRecord`
+  one outcome-based calibration update
 
 ## Components
 
-The most useful belief components are:
+The component families are:
 
-- belief key
-- perspective key
-- prior state
+- identity
+- scope and policy
+- evidence
+- assessment
 - posterior state
-- uncertainty
-- precision
-- freshness
-- contradiction state
-- origin state
-- coverage state
-- calibration state
-- evidence refs
-- comparator kind
-- lease state
-- assessment epoch
-- provenance refs
+- conflict and hypotheses
+- observation
+- view
+- calibration
+- provenance
 
 ## Systems
 
-The core belief systems should be:
+The core belief systems are:
 
+- fact promotion
 - evidence normalization
 - belief key assignment
+- dirty marking
 - comparator scheduling
-- posterior update
+- comparator execution
+- inference epoch execution
 - revision commit
+- stale detection
+- contradiction handling
 - belief view projection
 - observation opportunity projection
+- calibration ingestion
 - recovery scan
-- stale detection
 - storm coalescing
 
 ## Role In The Set
 
 `belief` is where graph evidence becomes posterior state.
 
-`agent` should consume belief outputs through lenses and scoped views.
-`planner` should consume belief summaries rather than raw belief worker state.
-`regime` should consume contradiction, surprise, drift, and calibration signals without taking over belief revision.
+`agent` consumes belief outputs through lenses and scoped views.
+`planner` consumes belief summaries rather than raw belief worker state.
+`regime` consumes contradiction, surprise, drift, and calibration signals without taking over belief revision.
 
 ## Read With
 
 - [World Model Belief](README.md)
+- [Belief Entities](entities.md)
+- [Belief Components](components.md)
+- [Belief Systems](systems.md)
+- [Belief Requirements](requirements.md)
 - [Belief Substrate](substrate.md)
 - [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md)

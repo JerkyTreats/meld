@@ -60,23 +60,27 @@ The Agent is not the execution runtime.
 Within `world_model`, the Agent owns epistemic perspective and normative judgment.
 Within `execution`, the Agent's goals are data — the planning loop reads them and the task network works toward them.
 
-The Agent bridges the two domains through execution's public Goal Set API:
+The Agent bridges the two domains through the shared typed language [`meld-lang`](../../meld-lang/README.md) and execution's public Goal Set API:
 
 - the Agent reads its perspective-scoped belief views (world model authority)
 - the Agent evaluates beliefs through cost-benefit comparators — combining state beliefs, cost beliefs (learned from execution outcomes), and value beliefs (learned from downstream outcome correlation) into act/tolerate decisions
+- the Agent constructs `Goal` values using `meld-lang` types: the desired state is a `Proposition`, the priority is a `GoalPriority` with cost ceiling, the source records provenance as `GoalSource`
 - the Agent curates execution's goal set through the API: add, modify, remove, satisfy, suspend, resume
-- execution reacts to the current goal set without understanding why it changed
+- execution evaluates goals mechanically against `WorldState` — it never interprets semantic intent
 
 The normative framework reduces to: which belief keys the agent watches (subscription filter), and what regime-scoped priors it carries for the cost-benefit comparison on each concern class. See [Goal Curation](goal_curation.md) for the full mechanism.
 
 The boundary is:
 
-- `world_model/agent` decides what should be true (normative judgment over belief)
-- `execution` decides how to make it true (planning, task decomposition, dispatch)
+- `world_model/agent` decides what should be true (normative judgment over belief), expressed as `Proposition` targets
+- `execution` decides how to make it true (planning, task decomposition, dispatch), evaluated mechanically against `WorldState`
+
+The shared language eliminates the need for execution to interpret belief semantics. The Agent constructs a `Proposition::Holds { subject, dimension, condition }` and execution evaluates it with `evaluate(world_state, goal.target)`. The three-valued result (Satisfied, Unsatisfied, Indeterminate) drives planning decisions without any interpretation of what the dimension means. See [World State and Evaluation](../../meld-lang/world_state.md).
 
 The Agent also has read access to the active goal set. This is epistemically valuable: knowledge of active goals enables prediction (what evidence to expect), anomaly detection (goals without progress), and avoidance of redundant goal generation.
 
 See [Goals](../../execution/goals/README.md) for the full ownership split and curation API contract.
+See [Goals and Methods](../../meld-lang/goals_and_methods.md) for the concrete `Goal` type definition and construction examples.
 
 ## ECS Note
 
@@ -182,5 +186,8 @@ It should defer:
 - [Knowledge Graph ECS Decision Memo](../belief/knowledge_graph_ecs_decision_memo.md)
 - [Goal Curation](goal_curation.md)
 - [World Model Public Interface](../public_interface.md)
+- [Lang Domain](../../meld-lang/README.md)
+- [Lang Goals and Methods](../../meld-lang/goals_and_methods.md)
+- [Lang World State and Evaluation](../../meld-lang/world_state.md)
 - [Execution Domain](../../execution/README.md)
 - [Goals](../../execution/goals/README.md)

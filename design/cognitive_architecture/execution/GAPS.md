@@ -1,6 +1,6 @@
 # Execution Domain Gaps
 
-Date: 2026-05-04
+Date: 2026-05-18
 Status: active
 Scope: open contracts and undefined seams preventing a complete execution architecture
 
@@ -52,14 +52,20 @@ The world model planner layer defines:
 
 - `WorldModelView`
 - `ActionableBeliefView`
-- `ObservationPolicy`
-- `ExpectedInformationGain`
-- `DecisionRelevance`
+- `DecisionContext`
+- `ViewSnapshot`
+- `ObservationOpportunityView`
 - `AbstentionState`
 - `CausalEffectSummary`
 - `RiskEnvelope`
-- `ExecutionPreconditions`
+- `PreconditionAssessment`
+- `ConflictSummary`
+- `SensitivitySummary`
+- `AssumptionSet`
+- `HydrationHandle`
 
+The planner-side design now scopes these projections through `DecisionContext` and decomposes lower-layer packets from graph, belief, causation, regime, and agent perspective.
+The execution-side port remains open.
 The execution substrate says: "execution should read materialized current belief from the world model." The planning README says: "make planning explicitly world-model-aware" as a next item. The substrate also says: "planner to world-model coupling is the key missing bridge."
 
 ### Why It Blocks
@@ -75,7 +81,9 @@ A planning input contract on the execution side that declares what it needs from
 - **information-gathering triggers**: when does the planner request observation rather than action? what staleness or uncertainty threshold triggers sensing?
 - **replanning triggers**: what belief change events cause the planner to revise the current plan?
 
-This contract should consume the types defined in `world_model/planner` without importing world-model internals. The execution side should define a port trait (consistent with the existing port pattern in `execution/ports.rs`) that the world model planner layer satisfies.
+This contract should consume the types defined in `world_model/planner` without importing world-model internals.
+The execution side should define a port trait that follows the existing port pattern in `execution/ports.rs`.
+The world model planner layer should satisfy that trait through the public planner interface.
 
 ## Gap 4: Outcome Publication Contract
 
@@ -181,17 +189,17 @@ The gaps are not independent. Closing them in the wrong order produces circular 
 
 Current resolution state:
 
-- **Gap 1 (goal model)**: defined. Goals are belief predicates, lifecycle is specified, belief–goal bridge is drawn. Residual: generation policy, conflict resolution, multi-agent coordination.
-- **Gap 2 (planning pipeline)**: defined under graphs-lower-graphs. Two concurrent processes, graph mutations, cost-aware transitions. Residual: method library, planning algorithm, task network graph executor, switching cost model.
-- **Gap 3 (world model read interface)**: open. The goal model now makes this more concrete — goals need BeliefView reads, satisfaction checking needs continuous belief comparison, observation goals need the observation-needed signal. The read interface should be the next gap closed.
-- **Gap 4 (outcome publication)**: open. The goal model's satisfaction-through-belief-revision pattern makes this concrete — execution outcomes must become spine facts that revise beliefs that satisfy goals. The return arrow of the cognitive loop.
+- **Gap 1 (goal model)**: resolved into `meld-lang`. Goals are typed propositions in the shared language. The world model agent constructs goals as `Proposition` targets with priority and lifecycle metadata. Execution evaluates goals mechanically without interpreting semantic intent. See [Lang Goals and Methods](../meld-lang/goals_and_methods.md).
+- **Gap 2 (planning pipeline)**: substantially resolved through `meld-lang`. The planning loop reads goals and world state (both expressed as propositions), matches methods via pattern unification, compiles compositions into task network mutations. Residual: task network graph executor (upper fractal), switching cost model. See [Lang Compositions](../meld-lang/compositions.md).
+- **Gap 3 (world model read interface)**: resolved into `meld-lang`. The world model publishes `WorldState` as a set of ground propositions in the shared language. Execution evaluates propositions against this world state. The read interface is the `WorldState` type — not a bespoke port but the shared language itself. See [Lang World State](../meld-lang/world_state.md).
+- **Gap 4 (outcome publication)**: partially resolved. Execution outcomes become `Effect`s in the shared language (Assert, Retract, Update propositions). The world model receives these and translates them into belief revision. The outcome-to-effect bridge still needs implementation design.
 - **Gap 5 (workflow integration)**: continuous. Workflows remain the compatibility layer where cognitive subsystems are not yet built.
 
 Recommended next resolution:
 
-1. **Gap 3 (world model read interface)**: the goal model and planning pipeline both consume belief views. The read interface contract is now well-motivated by concrete consumers: goal satisfaction checking, planning loop world-model-view subscription, observation goal triggers from belief uncertainty.
-2. **Gap 4 (outcome publication)**: symmetric with gap 3. Execution outcomes must become evidence that revises beliefs that close the goal cycle.
-3. **Gap 2 residuals**: method library and task network graph executor are the implementation gaps that prevent end-to-end execution.
+1. **`meld-lang` first slice implementation**: the shared language crate is the foundation. Goals, world state, evaluation, unification, and validation must be implemented before the planning loop can function.
+2. **Gap 4 residual (outcome publication)**: execution outcomes must become effects that the world model can apply to revise beliefs. The `Effect` type provides the shape. The publication bridge (task_succeeded event → Effect assertion → spine fact) needs design.
+3. **Gap 2 residuals**: task network graph executor (upper fractal) and method library loading infrastructure.
 4. **Gap 5**: continuous integration as each subsystem matures.
 
 ## Read With
@@ -202,5 +210,7 @@ Recommended next resolution:
 - [Task Network](task_network.md)
 - [Planning Pipeline](planning/planning_pipeline.md)
 - [Synthesis Overview](synthesis/README.md)
+- [Lang Domain](../meld-lang/README.md)
+- [Lang Requirements](../meld-lang/requirements.md)
 - [World Model Planner](../world_model/planner/README.md)
 - [Events Design](../events/README.md)

@@ -6,7 +6,7 @@ Scope: the world model agent's process for curating execution's goal set through
 
 ## Thesis
 
-Goal curation is the agent's mechanism for translating belief state into execution commitment. The agent watches belief revisions, evaluates them through cost-benefit comparators, and emits goal mutations through execution's public API.
+Goal curation is the agent's mechanism for translating belief state into execution commitment. The agent watches belief revisions, evaluates them through cost-benefit comparators, and constructs `Goal` values in the shared language ([`meld-lang`](../../meld-lang/README.md)) that it submits to execution's public API.
 
 This is not a novel mechanism. It is the belief→goal instance of the same watching/reducing pattern that operates at every layer boundary in the architecture:
 
@@ -38,7 +38,8 @@ The comparison:
 evidence: divergence magnitude, cost posterior, value posterior, inaction accumulation
 prior: "was acting on similar divergence historically worth it?" (regime-scoped)
 posterior: act / tolerate (with confidence)
-→ if act: emit goal mutation through execution's curation API
+→ if act: construct Goal (Proposition target + GoalPriority + GoalSource in meld-lang)
+         and emit goal mutation through execution's curation API
 → if tolerate: absorb belief change, no goal mutation
 ```
 
@@ -166,19 +167,26 @@ belief revision event arrives (or freshness decay fires)
   → if act:
       → is there an existing goal addressing this? modify if needed
       → is there goal conflict? evaluate priority, may suspend other goals
+      → construct Goal in meld-lang:
+          target: Proposition (desired belief state)
+          priority: GoalPriority { urgency, cost_ceiling }
+          source: GoalSource (provenance for audit)
       → emit goal mutation: add / modify / suspend / satisfy / abandon
 ```
 
-Satisfaction checking follows the same watching pattern:
+The agent constructs goals at runtime using `meld-lang` types. No predefined goal variants — the agent composes `Proposition::Holds`, `Proposition::Exists`, or compound `All`/`Any`/`Not` propositions from its belief assessment. The urgency level is derived from the cost-benefit posterior. The cost ceiling is derived from the cost belief. See [Goals and Methods](../../meld-lang/goals_and_methods.md) for the concrete types and construction examples.
+
+Satisfaction checking follows the same watching pattern. With `meld-lang`, the planning loop handles mechanical satisfaction (evaluating `goal.target` against `WorldState`), but the agent can also proactively satisfy goals when it detects through belief revision that the desired state holds:
 
 ```
 belief revision event arrives
   → does this belief now satisfy an active goal's desired state?
-  → evaluate satisfaction criteria (predicate, confidence, freshness, stability)
-  → if satisfied: emit satisfy mutation through execution's API
+  → the world model projects updated WorldState
+  → the planning loop evaluates: evaluate(world_state, goal.target) == Satisfied?
+  → if satisfied: planning loop transitions lifecycle to Satisfied
 ```
 
-Satisfaction can occur from any source — the system's own execution, external action, or unrelated changes. The agent detects it the same way: through belief revision matching a goal's satisfaction criteria.
+Satisfaction can occur from any source — the system's own execution, external action, or unrelated changes. The world model projects belief into `WorldState`. The planning loop's `evaluate()` call detects satisfaction regardless of source.
 
 ## Relationship to Comparator Model
 
@@ -247,6 +255,9 @@ The subscription filter is derived from directive decomposition during bootstrap
 - [World Model Public Interface](../public_interface.md)
 - [Comparator Model](../belief/comparator_model.md)
 - [Goals](../../execution/goals/README.md)
+- [Lang Domain](../../meld-lang/README.md)
+- [Lang Goals and Methods](../../meld-lang/goals_and_methods.md)
+- [Lang World State and Evaluation](../../meld-lang/world_state.md)
 - [Regime Layer](../regime/README.md)
 - [Belief](../belief/README.md)
 - [Fact To Belief](../belief/fact_to_belief.md)

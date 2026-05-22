@@ -92,17 +92,19 @@ Agent registration creates the identity and perspective anchor. Subscription bin
 Owned by `world_model/planner`. These operations expose the action-relevant world model projection.
 
 ```
-// Full world model view for a perspective (belief summaries, uncertainty, freshness, regime context)
-query_world_model_view(perspective: Perspective) -> WorldModelView
+// Full world model view for a scoped planning question
+query_world_model_view(context: DecisionContext) -> WorldModelView
 
-// Observation opportunities for a subject (where expected information gain justifies observation cost)
-query_observation_opportunities(subject: DomainObjectRef, perspective: Perspective) -> Vec<ObservationOpportunity>
+// Observation opportunities where expected information gain justifies observation cost
+query_observation_opportunities(context: DecisionContext) -> Vec<ObservationOpportunityView>
 
-// Execution preconditions for a subject (world-facing conditions that must hold for action)
-query_preconditions(subject: DomainObjectRef) -> Vec<ExecutionPrecondition>
+// World-facing condition assessments for the scoped planning question
+query_preconditions(context: DecisionContext) -> Vec<PreconditionAssessment>
 ```
 
-Planner operations are read-only projections over belief, causation, and regime state. They do not expose raw inference internals.
+Planner operations are read-only deterministic projections over graph, belief, causation, and regime state.
+They do not expose raw inference internals.
+They must return view records with provenance and hydration handles, not free-form semantic summaries.
 
 ## Capability Invocation Pattern
 

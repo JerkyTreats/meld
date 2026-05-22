@@ -45,6 +45,8 @@ This area does own:
   root `meld` orchestration, CLI, config, context and provider adapters, compatibility, and runtime wiring
 - [Events Crate](events/CRATE.md)
   `meld-events` event ledger, append, replay, sequence, and reference contracts
+- [Lang Crate](meld-lang/CRATE.md)
+  `meld-lang` shared proposition language for goals, operators, compositions, and world state between world model and execution
 - [World Model Crate](world_model/CRATE.md)
   `meld-world-model` graph, anchors, provenance, belief, and planner-facing views
 - [Execution Crate](execution/CRATE.md)
@@ -92,6 +94,8 @@ This area does own:
   world-model-aware action aligned with current execution design
 - [Execution Planning](execution/planning/README.md)
   HTN, planning, repair, and synthesis inside `execution`
+- [Lang Domain](meld-lang/README.md)
+  shared typed substrate for propositions, goals, operators, and compositions consumed by both world model and execution
 - [Events Design](events/README.md)
   shared event architecture, replay, sequencing, and telemetry refactor path
 - [Further Research Prompts](further_research_prompts.md)
@@ -117,9 +121,10 @@ This area does own:
 16. [Belief Substrate](world_model/belief/substrate.md)
 17. [Curation In Belief](world_model/belief/curation.md)
 18. [Knowledge Graph ECS Decision Memo](world_model/belief/knowledge_graph_ecs_decision_memo.md)
-19. [Execution Domain](execution/README.md)
-20. [Execution Planning](execution/planning/README.md)
-23. [Events Design](events/README.md)
+19. [Lang Domain](meld-lang/README.md)
+20. [Execution Domain](execution/README.md)
+21. [Execution Planning](execution/planning/README.md)
+22. [Events Design](events/README.md)
 24. [Further Research Prompts](further_research_prompts.md)
 
 ## Read With

@@ -220,17 +220,24 @@ Primary concepts:
 
 - `WorldModelView`
 - `ActionableBeliefView`
-- `ObservationPolicy`
-- `ExpectedInformationGain`
-- `DecisionRelevance`
+- `DecisionContext`
+- `ViewSnapshot`
+- `ObservationOpportunityView`
 - `AbstentionState`
 - `CausalEffectSummary`
 - `RiskEnvelope`
-- `ExecutionPreconditions`
+- `PreconditionAssessment`
+- `ConflictSummary`
+- `SensitivitySummary`
+- `AssumptionSet`
+- `HydrationHandle`
 
 Design:
 
 - [World Model Planner](planner/README.md)
+- [Planner Entities](planner/entities.md)
+- [Planner Components](planner/components.md)
+- [Planner Systems](planner/systems.md)
 
 ## Layer Rules
 
@@ -257,12 +264,13 @@ See [World Model Public Interface](public_interface.md) for the full contract.
 4. [World Model Graph](graph/README.md)
 5. [World Model Belief](belief/README.md)
 6. [Fact To Belief](belief/fact_to_belief.md)
-7. [Causal Layer](causation/README.md)
-8. [Regime Layer](regime/README.md)
-9. [World Model Planner](planner/README.md)
-10. [World Model Public Interface](public_interface.md)
-11. [World Model Agent](agent/README.md)
-12. [Goal Curation](agent/goal_curation.md)
+7. [Belief Families](belief/belief_families.md)
+8. [Causal Layer](causation/README.md)
+9. [Regime Layer](regime/README.md)
+10. [World Model Planner](planner/README.md)
+11. [World Model Public Interface](public_interface.md)
+12. [World Model Agent](agent/README.md)
+13. [Goal Curation](agent/goal_curation.md)
 
 ## Naming Rule
 

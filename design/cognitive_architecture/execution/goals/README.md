@@ -1,6 +1,6 @@
 # Goals
 
-Date: 2026-05-08
+Date: 2026-05-18
 Status: active
 Scope: goal model bridging world-model belief and execution planning
 
@@ -98,80 +98,87 @@ Execution never needs to determine *how* satisfaction occurred. The world model 
 
 A goal is a proposition about desired world-model state, scoped to an agent's perspective.
 
+The concrete `Goal` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md), the shared proposition language between world model and execution. The world model agent constructs goals using `meld-lang` types. Execution evaluates them mechanically. The shared language eliminates the need for execution to interpret semantic intent.
+
 ```
 Goal {
-    goal_id: GoalId,
-    agent_id: AgentId,
-    desired_state: DesiredState,
-    source: GoalSource,
-    lifecycle: GoalLifecycle,
-    priority: GoalPriority,
-    satisfaction: SatisfactionCriteria,
+    goal_id: String,
+    agent_id: String,
+    target: Proposition,           // from meld-lang — what should hold
+    source: GoalSource,            // from meld-lang — why this goal exists
+    priority: GoalPriority,        // from meld-lang — urgency and cost ceiling
+    lifecycle: GoalLifecycle,      // from meld-lang — proposed/active/satisfied/...
 }
 ```
 
 ### Desired state
 
-The desired state is expressed as a condition over belief views. The system can never know the actual world state (foundational assumption from observe-merge-push). It can only know what it believes. Therefore goals are conditions on belief:
+The desired state is a `Proposition` in the shared language. The system can never know the actual world state (foundational assumption from observe-merge-push). It can only know what it believes. Therefore goals are propositions about belief:
 
 ```
-DesiredState {
-    subject: DomainObjectRef,
-    predicate: BeliefPredicate,
+// In meld-lang terms:
+Proposition::Holds {
+    subject: Term::Object(node_ref),
+    dimension: Term::Dimension("docs_freshness"),
+    condition: Condition::Above(Term::Literal(Literal::Number(0.7))),
 }
 ```
 
-A `BeliefPredicate` is a condition over the `BeliefView` fields for a given subject. Examples:
+The prior design used `DesiredState { subject, predicate: BeliefPredicate }` as a bespoke type. This is now subsumed by `Proposition::Holds`, which serves the same role but uses the shared language that both world model and execution speak natively. `BeliefPredicate` becomes `Proposition`. `DomainObjectRef` subjects become `Term::Object`. Confidence thresholds become `Condition::Above`.
 
-- "test_suite passes with confidence ≥ 0.9" — checks posterior and confidence
-- "documentation for module X is current" — checks freshness and posterior
-- "build artifact exists and is valid" — checks status and posterior
-- "uncertainty about API compatibility is below threshold" — checks uncertainty
+Examples in the shared language:
 
-The predicate does not name tasks, capabilities, or methods. It names a desired belief state. The planning loop determines how to achieve it.
+- "test_suite passes with confidence ≥ 0.9" → `Holds { subject: test_suite, dimension: "test_status", condition: Above(0.9) }`
+- "documentation for module X is current" → `Holds { subject: module_x, dimension: "docs_freshness", condition: Within(Duration::days(7)) }`
+- "build artifact exists and is valid" → `Exists { scope: build_target, artifact_type: "build_artifact" }`
+- "uncertainty about API compatibility is below threshold" → `Holds { subject: api_ref, dimension: "api_compatibility", condition: Above(0.8) }`
+
+The proposition does not name tasks, capabilities, or methods. It names a desired belief state. The planning loop determines how to achieve it through method matching and composition construction.
 
 ### Goal source
 
 Goals originate from different triggers. The source is metadata recorded by the world model agent when it curates the goal set — it explains why the goal exists for audit and explanation, but execution does not branch on it.
 
+The concrete `GoalSource` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md). It carries string descriptions for provenance and audit. Execution reads the source for lineage tracking and explanation only — it does not interpret the source to decide how to plan.
+
 ```
 enum GoalSource {
     BeliefDivergence {
-        belief_key: BeliefKey,
-        observed_state: BeliefSummary,
-        trigger_condition: BeliefPredicate,
+        dimension: String,           // which belief dimension diverged
+        observed: String,            // what the agent saw
+        desired: String,             // what the agent wants
     },
     UserDirected {
-        directive: UserDirective,
+        directive: String,           // the user's request
     },
     Maintenance {
-        invariant: BeliefPredicate,
-        monitoring_policy: MonitoringPolicy,
+        invariant_description: String,  // standing invariant
     },
-    GoalDecomposition {
-        parent_goal_id: GoalId,
+    Decomposed {
+        parent_goal_id: String,      // the parent goal this was derived from
     },
 }
 ```
 
-**Belief divergence**: the agent detected that current belief diverges from a desired state. The trigger condition records what belief state caused the agent to add this goal.
+**Belief divergence**: the agent detected that current belief diverges from a desired state. The dimension and observed/desired fields are descriptive strings for audit — the actual desired state is the goal's `target` proposition.
 
-**User directed**: a user or external system asserted a desired state directly. The world model agent translates the user directive into a goal with a belief predicate and adds it to the goal set.
+**User directed**: a user or external system asserted a desired state directly. The world model agent translates the user directive into a goal with a `Proposition` target and adds it to the goal set. User input enters the same cost-benefit evaluation pathway — it is high-weight value evidence, not a bypass (see [Goal Curation](../../world_model/agent/goal_curation.md)).
 
-**Maintenance**: the agent holds a standing invariant and monitors belief continuously. When the invariant is violated, the agent reactivates the goal. The monitoring policy defines how frequently and at what threshold the agent checks.
+**Maintenance**: the agent holds a standing invariant and monitors belief continuously. When the invariant is violated, the agent reactivates the goal. Maintenance goals may cycle between `Active` and `Satisfied` as belief moves relative to the invariant.
 
-**Goal decomposition**: the agent (or the planning loop, through the agent) decomposed a parent goal into sub-goals. Each sub-goal has its own desired state and satisfaction criteria.
+**Decomposed**: the agent (or the planning loop, through the agent) decomposed a parent goal into sub-goals. Each sub-goal has its own target proposition and lifecycle. The parent goal tracks its children. The `Decomposed` source in `meld-lang` replaces the prior `GoalDecomposition` variant.
 
 ### Goal lifecycle
+
+The concrete `GoalLifecycle` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md).
 
 ```
 enum GoalLifecycle {
     Proposed,
     Active,
-    Suspended { reason: SuspensionReason },
-    Satisfied { evidence: SatisfactionEvidence },
-    Abandoned { reason: AbandonmentReason },
-    Superseded { by: GoalId },
+    Suspended { reason: String },
+    Satisfied { at_seq: u64 },
+    Abandoned { reason: String },
 }
 ```
 
@@ -181,56 +188,61 @@ enum GoalLifecycle {
 
 **Suspended**: the goal is valid but cannot be pursued right now. The agent suspends goals when: insufficient belief to plan (observation needed first), resource contention with higher-priority goals, or dependency on another goal's completion.
 
-**Satisfied**: the desired belief state has been achieved. The world model agent marks this through the satisfy API when it detects that belief now matches the desired state. Maintenance goals may transition back to active if the agent later detects invariant violation.
+**Satisfied**: the goal's target proposition holds in the world state. The planning loop sets `Satisfied` when `evaluate(world_state, goal.target)` returns `EvalResult::Satisfied` (see [World State and Evaluation](../../meld-lang/world_state.md)). The `at_seq` field records the event sequence number at which satisfaction was confirmed. Maintenance goals may cycle back to `Active` if the agent later detects invariant violation.
 
-**Abandoned**: the goal is no longer relevant. The agent removes goals when: user cancels, regime shift invalidates premises, or goal is superseded.
+**Abandoned**: the goal is no longer relevant. The agent removes goals when: user cancels, regime shift invalidates premises, or cost exceeds remaining value.
 
-**Superseded**: replaced by a more specific or better-informed goal. The agent adds the new goal and supersedes the old one.
+The prior `Superseded { by: GoalId }` variant is absorbed into `Abandoned` — supersession is an abandonment reason, not a distinct lifecycle state.
 
-Lifecycle transitions are initiated by the world model agent (through the curation API) except for one case: the planning loop may propose suspension when it determines that a goal cannot be planned against with the current capability catalog (triggering synthesis). Even then, the suspension is communicated back to the agent for confirmation.
+Lifecycle transitions are initiated by the world model agent (Proposed → Active, Active → Suspended, Active → Abandoned) or by the planning loop's satisfaction check (Active → Satisfied). The planning loop may also propose suspension when it determines that a goal cannot be planned against with the current capability catalog (triggering synthesis). Even then, the suspension is communicated back to the agent for confirmation.
 
 ### Goal priority
 
+The concrete `GoalPriority` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md).
+
 ```
 GoalPriority {
-    urgency: UrgencyLevel,
-    importance: ImportanceLevel,
+    urgency: u32,
     cost_ceiling: Option<CostEstimate>,
-    preemption_policy: PreemptionPolicy,
 }
 ```
 
-**Urgency**: how time-sensitive is the goal? Set by the agent based on belief context.
+**Urgency**: lower number = higher urgency. 0 is most urgent. Set by the agent based on belief context — the value-to-cost ratio from the agent's cost-benefit evaluation (see [Goal Curation](../../world_model/agent/goal_curation.md)) determines the urgency level. This replaces the prior separate `urgency`/`importance` fields — importance is now expressed through urgency ordering, which is itself derived from the agent's cost-benefit posterior.
 
-**Importance**: how much does this goal matter relative to other goals? Set by the agent based on its normative framework.
+**Cost ceiling**: optional upper bound on effort expressed as a `CostEstimate` (time_ms, money_microdollars, provider_calls). If the planning loop estimates that a composition's aggregated cost exceeds the ceiling on any dimension, it rejects that composition and signals the agent. The agent may adjust the ceiling, suspend, or abandon.
 
-**Cost ceiling**: optional upper bound on effort. If the planning loop estimates cost exceeds the ceiling, it signals the agent, which may adjust the ceiling, suspend, or abandon.
-
-**Preemption policy**: what happens when this goal conflicts with other active goals? The agent sets this based on its priority framework. Execution's cost-aware plan transition logic respects preemption policy when rebalancing the task network.
+The prior `preemption_policy` field is deferred. Preemption behavior will be derived from urgency ordering and cost-aware plan transition logic as those mechanisms mature.
 
 ## Satisfaction Checking
 
-Satisfaction checking is owned by the world model agent because it requires evaluating belief.
+With `meld-lang`, satisfaction checking becomes mechanical. The planning loop evaluates `goal.target` against the current `WorldState` using the three-valued `evaluate()` function (see [World State and Evaluation](../../meld-lang/world_state.md)):
 
-```
-SatisfactionCriteria {
-    predicate: BeliefPredicate,
-    confidence_threshold: f64,
-    freshness_requirement: Option<FreshnessRequirement>,
-    stability_requirement: Option<StabilityRequirement>,
+```rust
+match evaluate(&world_state, &goal.target) {
+    EvalResult::Satisfied => {
+        // Goal achieved. Transition lifecycle to Satisfied.
+    }
+    EvalResult::Unsatisfied { gap } => {
+        // World model asserted values, but they don't meet the condition.
+        // Plan action to close the gap.
+    }
+    EvalResult::Indeterminate { missing } => {
+        // World model hasn't asserted anything about these dimensions.
+        // Plan observation to gather evidence.
+    }
 }
 ```
 
-The agent evaluates satisfaction continuously and marks goals satisfied through the API when:
+The prior `SatisfactionCriteria` type (predicate, confidence_threshold, freshness_requirement, stability_requirement) is subsumed by the `Proposition` target itself. Confidence thresholds become `Condition::Above`. Freshness requirements become `Condition::Within` on a freshness dimension. Stability requirements become a separate dimension the world model projects when it has sufficient history.
 
-1. The belief predicate evaluates to true against the current belief view
-2. The belief's confidence meets or exceeds the confidence threshold
-3. If a freshness requirement exists, the belief is sufficiently recent
-4. If a stability requirement exists, the belief has been stable for the required duration (not oscillating)
+The satisfaction check is now owned jointly:
 
-The stability requirement prevents premature satisfaction. If tests pass once but have been flaky, the goal "tests pass reliably" is not satisfied until the belief is stable.
+- **The planning loop** performs mechanical evaluation: `evaluate(world_state, goal.target) == Satisfied`. When this returns `Satisfied`, the planning loop transitions the goal's lifecycle and cleans up task network state.
+- **The world model agent** performs normative evaluation: is the goal still worth pursuing? Should the ceiling be adjusted? Should the goal be abandoned? The agent reads the goal set and evaluates belief through its cost-benefit comparators (see [Goal Curation](../../world_model/agent/goal_curation.md)).
 
-Execution does not evaluate beliefs. It receives "goal satisfied" through the API and responds by cleaning up associated task network state.
+The agent can also satisfy goals proactively — if belief revision shows the desired state holds (from external action, not system execution), the agent calls the satisfy API. The planning loop detects this on its next evaluation cycle and cleans up.
+
+Satisfaction from any source remains: the system's own execution, external action, or unrelated changes all produce belief revisions that the world model projects into `WorldState`. The planning loop's `evaluate()` call picks up satisfaction regardless of source.
 
 ## Belief Interaction Patterns
 
@@ -367,6 +379,9 @@ Can the agent learn which goals are productive from outcomes? Can it refine its 
 - [Execution Gaps](../GAPS.md)
 - [Planning Pipeline](../planning/planning_pipeline.md)
 - [Task Network](../task_network.md)
+- [Lang Domain](../../meld-lang/README.md)
+- [Lang Goals and Methods](../../meld-lang/goals_and_methods.md)
+- [Lang World State and Evaluation](../../meld-lang/world_state.md)
 - [World Model Belief](../../world_model/belief/README.md)
 - [Fact To Belief](../../world_model/belief/fact_to_belief.md)
 - [World Model Agent](../../world_model/agent/README.md)

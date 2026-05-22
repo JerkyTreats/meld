@@ -6,10 +6,10 @@ Scope: changepoints, recurring operating modes, mixture prediction, and structur
 
 ## Thesis
 
-The regime layer explains when the world model should stop treating new evidence as more of the same.
+The regime layer explains when the world model stops treating new evidence as more of the same.
 
 A sharp update in belief does not always mean a structural break.
-A structural break does not always mean the old history should be discarded.
+A structural break does not always mean the old history is discarded.
 
 The regime layer exists to preserve this distinction.
 
@@ -65,7 +65,7 @@ Use mixture prediction while the active regime remains uncertain.
 
 ## Signals
 
-The regime layer should integrate signals from:
+The regime layer integrates signals from:
 
 - prior and posterior surprise
 - repeated local contradictions
@@ -75,7 +75,7 @@ The regime layer should integrate signals from:
 - shift in relation stability
 - correlated failures across several belief families
 
-No single residual should be treated as decisive by default.
+No single residual is decisive by default.
 
 ## Relationship To Belief
 
@@ -87,7 +87,7 @@ This means one belief may be:
 - locally settled
 - globally fragile under regime uncertainty
 
-The planner-facing view must be able to expose that difference.
+The planner-facing view exposes that difference.
 
 ## Relationship To Goal Curation
 
@@ -103,18 +103,18 @@ See [Goal Curation](../agent/goal_curation.md) for the full cost-benefit evaluat
 
 ## Queries
 
-The first durable regime query families should be:
+The first durable regime query families are:
 
 - What regime is most likely active now
 - How likely is a changepoint in this recent window
 - Which beliefs are most sensitive to regime uncertainty
 - Which archived regime best explains this segment
-- What prediction should be used under unresolved regime identity
+- What prediction applies under unresolved regime identity
 - Which stress scenarios flip key beliefs or action choices
 
 ## Structural Stress
 
-Stress scenarios should be part of the regime layer, not an afterthought.
+Stress scenarios are part of the regime layer, not an afterthought.
 
 A useful stress scenario perturbs several linked evidence channels together and reports:
 
@@ -126,7 +126,7 @@ A useful stress scenario perturbs several linked evidence channels together and 
 
 ## First Design Slice
 
-The first slice should support:
+The first slice supports:
 
 - one active segment
 - one continuation model
@@ -139,6 +139,10 @@ That is enough to prevent stationary priors from becoming silent hidden assumpti
 ## Read With
 
 - [Regime ECS](ECS.md)
+- [Regime Entities](entities.md)
+- [Regime Components](components.md)
+- [Regime Systems](systems.md)
+- [Regime Requirements](requirements.md)
 - [Belief](../belief/README.md)
 - [Causal Layer](../causation/README.md)
 - [World Model Planner](../planner/README.md)

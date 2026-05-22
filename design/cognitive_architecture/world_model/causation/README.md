@@ -36,7 +36,7 @@ The causal layer does not own:
 
 ## Variable Families
 
-The first durable split should be:
+The first durable split is:
 
 - `StateVariable`
   world condition that may persist or evolve
@@ -84,7 +84,7 @@ The causal layer exists to keep those possibilities separate.
 
 ## Execution Interface
 
-Execution should publish intervention-shaped facts that support causal reasoning.
+Execution publishes intervention-shaped facts that support causal reasoning.
 
 Useful semantics include:
 
@@ -96,11 +96,11 @@ Useful semantics include:
 - rollback or compensation
 - measurement channel used for evaluation
 
-The causal layer should treat these as candidate interventions until assumptions or evidence justify stronger claims.
+The causal layer treats these as candidate interventions until assumptions or evidence justify stronger claims.
 
 ## Queries
 
-The first durable causal query families should be:
+The first durable causal query families are:
 
 - What is the posterior effect of intervention `X` on outcome `Y`
 - Which confounders still block identification for this effect
@@ -118,7 +118,7 @@ The first durable causal query families should be:
 
 ## First Design Slice
 
-The first slice should model a narrow but explicit chain:
+The first slice models a narrow but explicit chain:
 
 - intervention attempt
 - post-intervention observable state
@@ -131,6 +131,10 @@ That is enough to prevent the common failure where a selected anchor is mistaken
 ## Read With
 
 - [Causal ECS](ECS.md)
+- [Causal Entities](entities.md)
+- [Causal Components](components.md)
+- [Causal Systems](systems.md)
+- [Causal Requirements](requirements.md)
 - [Graph](../graph/README.md)
 - [Belief](../belief/README.md)
 - [Regime Layer](../regime/README.md)
