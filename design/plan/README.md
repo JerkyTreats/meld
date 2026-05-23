@@ -41,6 +41,12 @@ Each assessment is current truth. It names the exact slice that is ready, the ex
 13. `world_model`
 14. `execution`
 
+## Implementation Plans
+
+Implementation plans decompose assessed areas into phased, dependency-ordered work with tasks, exit criteria, and verification commands.
+
+- `design/plan/meld-lang/PLAN.md`
+
 ## Assessment Inventory
 
 - `design/plan/events/assessment.md`
