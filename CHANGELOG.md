@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.6.0](https://github.com/JerkyTreats/meld/compare/v2.5.0...v2.6.0) — 2026-05-23
+
+### Features
+
+* **meld-lang:** add proposition planning crate [bd28094](https://github.com/JerkyTreats/meld/commit/bd280947247905d131e845bb2e2d6e067e336ae5)
+
+### Documentation
+
+* **design:** crystallize execution domain and world model goal curation [9c21a18](https://github.com/JerkyTreats/meld/commit/9c21a189d298cd2338ae92042f5bc65bfd8cb5bc)
+
+### CI
+
+* pin workflow runner and actions [8ada88a](https://github.com/JerkyTreats/meld/commit/8ada88afba036db8b42ad826d9866d999a10d7c7)
+* install rustfmt for pinned toolchain [d900eda](https://github.com/JerkyTreats/meld/commit/d900eda474c845244adbad84fa587c6ab2bf4f48)
+
+### Design
+
+* **cognitive-architecture:** expand typed architecture plans [f85d457](https://github.com/JerkyTreats/meld/commit/f85d457e744fc3399c52812338915f9d90c6cb08)
+* **meld-lang:** add phased implementation plan [a023c8a](https://github.com/JerkyTreats/meld/commit/a023c8ab8900eea57bad387085c56d27e407b548)
+
+
 ## [2.5.0](https://github.com/JerkyTreats/meld/compare/v2.4.0...v2.5.0) — 2026-05-02
 
 ### Features
