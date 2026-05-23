@@ -268,12 +268,14 @@ jobs:
           manifests=(
             Cargo.toml
             crates/meld-events/Cargo.toml
+            crates/meld-lang/Cargo.toml
             crates/meld-execution/Cargo.toml
             crates/meld-world-model/Cargo.toml
           )
           for manifest in "${manifests[@]}"; do
             sed -i -E "0,/^version = \".*\"/s//version = \"${next_version}\"/" "$manifest"
             sed -i -E "s/(meld-events = \\{ path = \"[^\"]+\", version = \")[^\"]+\"/\\1${next_version}\"/" "$manifest"
+            sed -i -E "s/(meld-lang = \\{ path = \"[^\"]+\", version = \")[^\"]+\"/\\1${next_version}\"/" "$manifest"
             sed -i -E "s/(meld-execution = \\{ path = \"[^\"]+\", version = \")[^\"]+\"/\\1${next_version}\"/" "$manifest"
             sed -i -E "s/(meld-world-model = \\{ path = \"[^\"]+\", version = \")[^\"]+\"/\\1${next_version}\"/" "$manifest"
           done
@@ -287,6 +289,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if grep -q "^## \\[${{ steps.plan.outputs.next_version }}\\]" CHANGELOG.md; then
+            echo "Changelog already contains ${{ steps.plan.outputs.next_version }}."
+            exit 0
+          fi
           release_date="$(date +%Y-%m-%d)"
           ./scripts/release_dry_run.sh \
             --release-version "${{ steps.plan.outputs.next_version }}" \
@@ -326,13 +332,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if git diff --quiet -- Cargo.toml crates/meld-events/Cargo.toml crates/meld-execution/Cargo.toml crates/meld-world-model/Cargo.toml CHANGELOG.md; then
+          if git diff --quiet -- Cargo.toml crates/meld-events/Cargo.toml crates/meld-lang/Cargo.toml crates/meld-execution/Cargo.toml crates/meld-world-model/Cargo.toml CHANGELOG.md; then
             echo "release_sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
             exit 0
           fi
 
           release_tag="${{ steps.plan.outputs.release_tag }}"
-          git add Cargo.toml crates/meld-events/Cargo.toml crates/meld-execution/Cargo.toml crates/meld-world-model/Cargo.toml CHANGELOG.md
+          git add Cargo.toml crates/meld-events/Cargo.toml crates/meld-lang/Cargo.toml crates/meld-execution/Cargo.toml crates/meld-world-model/Cargo.toml CHANGELOG.md
           git commit -m "ci(release): bump version to ${release_tag} [skip ci]"
           git push origin HEAD:master
           echo "release_sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
@@ -397,7 +403,7 @@ jobs:
           }
 
           published_any=false
-          packages=(meld-events meld-execution meld-world-model meld)
+          packages=(meld-events meld-lang meld-execution meld-world-model meld)
           for package in "${packages[@]}"; do
             log_file="/tmp/cargo-publish-${package}.log"
 
