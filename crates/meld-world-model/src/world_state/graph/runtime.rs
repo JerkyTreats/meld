@@ -1,3 +1,19 @@
+//! Runtime wrapper for graph event reduction.
+//!
+//! `GraphRuntime` owns the event spine and traversal store that share one sled
+//! database. Reads call `catch_up` before querying so graph indexes observe all
+//! durable events seen by the runtime.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use meld_world_model::graph::runtime::GraphRuntime;
+//!
+//! let temp = tempfile::tempdir().unwrap();
+//! let runtime = GraphRuntime::new(sled::open(temp.path()).unwrap()).unwrap();
+//! assert_eq!(runtime.catch_up().unwrap(), 0);
+//! ```
+
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -8,6 +24,7 @@ use crate::events::EventEnvelope;
 use crate::world_state::graph::reducer::TraversalReducer;
 use crate::world_state::graph::store::TraversalStore;
 
+/// Event-backed graph projection runtime.
 pub struct GraphRuntime {
     spine: Arc<EventStore>,
     traversal: Arc<TraversalStore>,
@@ -15,6 +32,7 @@ pub struct GraphRuntime {
 }
 
 impl GraphRuntime {
+    /// Open the event spine and traversal store against one shared database.
     pub fn new(db: sled::Db) -> Result<Self, StorageError> {
         Ok(Self {
             spine: EventStore::shared(db.clone())?,
@@ -23,6 +41,7 @@ impl GraphRuntime {
         })
     }
 
+    /// Reduce new spine events into traversal indexes.
     pub fn catch_up(&self) -> Result<usize, StorageError> {
         let _guard = self.catch_up_lock.lock();
         let after_seq = self.traversal.last_reduced_seq()?;
@@ -42,10 +61,12 @@ impl GraphRuntime {
         Ok(reducer.applied_events)
     }
 
+    /// Clone the shared traversal store.
     pub fn traversal_store(&self) -> Arc<TraversalStore> {
         Arc::clone(&self.traversal)
     }
 
+    /// Append a source event to the spine.
     pub fn append_envelope(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
         let seq = self.spine.append_envelope(envelope)?;
         self.spine.flush()?;

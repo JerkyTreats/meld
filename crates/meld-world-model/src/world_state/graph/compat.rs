@@ -1,20 +1,29 @@
+//! Compatibility adapter from graph anchors to legacy claims.
+//!
+//! This module exists for callers that still consume claim records while the
+//! graph model is the source of truth. It maps current frame anchors into active
+//! generation-success claims without moving claim semantics into graph storage.
+
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
 use crate::world_state::contracts::{ClaimKind, ClaimRecord, SettlementStatus};
 use crate::world_state::graph::query::TraversalQuery;
 use crate::world_state::graph::store::TraversalStore;
 
+/// Adapter that exposes current frame anchors as legacy claims.
 pub struct LegacyClaimAdapter<'a> {
     traversal: TraversalQuery<'a>,
 }
 
 impl<'a> LegacyClaimAdapter<'a> {
+    /// Create an adapter over an existing traversal store.
     pub fn new(store: &'a TraversalStore) -> Self {
         Self {
             traversal: TraversalQuery::new(store),
         }
     }
 
+    /// Return current frame anchors as active generation-success claims.
     pub fn current_claims_for_object(
         &self,
         subject: &DomainObjectRef,

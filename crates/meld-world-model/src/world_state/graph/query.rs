@@ -1,3 +1,27 @@
+//! Read-only graph traversal query facade.
+//!
+//! This module exposes current anchors, anchor history, provenance, object
+//! facts, and bounded walks without exposing sled tree layout. Belief
+//! normalization consumes this facade rather than reaching into graph storage.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use meld_world_model::world_state::graph::store::TraversalStore;
+//! use meld_world_model::TraversalQuery;
+//!
+//! let temp = tempfile::tempdir().unwrap();
+//! let store = TraversalStore::new(sled::open(temp.path()).unwrap()).unwrap();
+//! let query = TraversalQuery::new(&store);
+//! let object = meld_world_model::events::DomainObjectRef::new(
+//!     "workspace_fs",
+//!     "node",
+//!     "node-a",
+//! )
+//! .unwrap();
+//! assert!(query.current_anchors_for_subject(&object).unwrap().is_empty());
+//! ```
+
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
 use crate::world_state::graph::contracts::{
@@ -6,15 +30,18 @@ use crate::world_state::graph::contracts::{
 };
 use crate::world_state::graph::store::TraversalStore;
 
+/// Read facade over graph traversal storage.
 pub struct TraversalQuery<'a> {
     store: &'a TraversalStore,
 }
 
 impl<'a> TraversalQuery<'a> {
+    /// Create a traversal query facade over an existing store.
     pub fn new(store: &'a TraversalStore) -> Self {
         Self { store }
     }
 
+    /// Read the current anchor for a logical anchor reference.
     pub fn current_anchor(
         &self,
         anchor_ref: &DomainObjectRef,
@@ -22,6 +49,7 @@ impl<'a> TraversalQuery<'a> {
         self.store.current_anchor(anchor_ref)
     }
 
+    /// Read the current anchor for one subject and perspective.
     pub fn current_anchor_for_subject(
         &self,
         subject: &DomainObjectRef,
@@ -32,6 +60,7 @@ impl<'a> TraversalQuery<'a> {
             .current_anchor_for_subject(subject, perspective_kind, perspective_id)
     }
 
+    /// Read every current anchor for one subject.
     pub fn current_anchors_for_subject(
         &self,
         subject: &DomainObjectRef,
@@ -39,6 +68,7 @@ impl<'a> TraversalQuery<'a> {
         self.store.current_anchors_for_subject(subject)
     }
 
+    /// Read anchor history for one logical anchor reference.
     pub fn anchor_history(
         &self,
         anchor_ref: &DomainObjectRef,
@@ -46,6 +76,7 @@ impl<'a> TraversalQuery<'a> {
         self.store.anchor_history(anchor_ref)
     }
 
+    /// Read adjacent objects through relation indexes.
     pub fn neighbors(
         &self,
         object: &DomainObjectRef,
@@ -57,6 +88,7 @@ impl<'a> TraversalQuery<'a> {
             .neighbors(object, direction, relation_types, current_only)
     }
 
+    /// Run a bounded graph walk from one object.
     pub fn walk(
         &self,
         start: &DomainObjectRef,
@@ -65,6 +97,7 @@ impl<'a> TraversalQuery<'a> {
         self.store.walk(start, spec)
     }
 
+    /// Read graph-readable facts for one object after a sequence cursor.
     pub fn facts_for_object(
         &self,
         object: &DomainObjectRef,
@@ -73,6 +106,7 @@ impl<'a> TraversalQuery<'a> {
         self.store.facts_for_object(object, after_seq)
     }
 
+    /// Read compact provenance for one anchor.
     pub fn provenance_for_anchor(
         &self,
         anchor_id: &str,
@@ -80,6 +114,7 @@ impl<'a> TraversalQuery<'a> {
         self.store.anchor_provenance(anchor_id)
     }
 
+    /// Read the current workspace snapshot anchor for a source object.
     pub fn current_snapshot_for_source(
         &self,
         source: &DomainObjectRef,
@@ -87,6 +122,7 @@ impl<'a> TraversalQuery<'a> {
         self.current_anchor_for_subject(source, "snapshot", "current")
     }
 
+    /// Read the current frame head anchor for a node and frame type.
     pub fn current_frame_head(
         &self,
         node: &DomainObjectRef,
@@ -95,6 +131,7 @@ impl<'a> TraversalQuery<'a> {
         self.current_anchor_for_subject(node, "frame_type", frame_type)
     }
 
+    /// Read current frame head anchors for a node.
     pub fn current_frame_heads_for_node(
         &self,
         node: &DomainObjectRef,
@@ -106,6 +143,7 @@ impl<'a> TraversalQuery<'a> {
             .collect())
     }
 
+    /// Count current frame head anchors for a frame type.
     pub fn current_frame_head_count_by_type(
         &self,
         frame_type: &str,
@@ -114,6 +152,7 @@ impl<'a> TraversalQuery<'a> {
             .current_anchor_count_by_perspective("frame_type", frame_type)
     }
 
+    /// Read the current artifact anchor for a task run and artifact type.
     pub fn current_artifact_for_task_run(
         &self,
         task_run: &DomainObjectRef,

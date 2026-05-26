@@ -1,3 +1,28 @@
+//! Catch-up-aware query facade for the graph runtime.
+//!
+//! `WorldModelQueries` is the runtime-safe read surface used by application code.
+//! Each query first catches the graph projection up to the event spine, then
+//! delegates to `TraversalQuery`.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use std::sync::Arc;
+//! use meld_world_model::world_state::graph::runtime::GraphRuntime;
+//! use meld_world_model::WorldModelQueries;
+//!
+//! let temp = tempfile::tempdir().unwrap();
+//! let runtime = Arc::new(GraphRuntime::new(sled::open(temp.path()).unwrap()).unwrap());
+//! let queries = WorldModelQueries::new(runtime);
+//! let object = meld_world_model::events::DomainObjectRef::new(
+//!     "workspace_fs",
+//!     "node",
+//!     "node-a",
+//! )
+//! .unwrap();
+//! assert!(queries.current_anchors_for_subject(&object).unwrap().is_empty());
+//! ```
+
 use std::sync::Arc;
 
 use crate::error::StorageError;
@@ -9,16 +34,19 @@ use crate::world_state::graph::contracts::{
 use crate::world_state::graph::query::TraversalQuery;
 use crate::world_state::graph::runtime::GraphRuntime;
 
+/// Graph query facade that performs runtime catch-up before reads.
 #[derive(Clone)]
 pub struct WorldModelQueries {
     graph_runtime: Arc<GraphRuntime>,
 }
 
 impl WorldModelQueries {
+    /// Create a query facade over a shared graph runtime.
     pub fn new(graph_runtime: Arc<GraphRuntime>) -> Self {
         Self { graph_runtime }
     }
 
+    /// Read the current anchor for a logical anchor reference.
     pub fn current_anchor(
         &self,
         anchor_ref: &DomainObjectRef,
@@ -26,6 +54,7 @@ impl WorldModelQueries {
         self.with_traversal_query(|query| query.current_anchor(anchor_ref))
     }
 
+    /// Read all current anchors for one subject.
     pub fn current_anchors_for_subject(
         &self,
         subject: &DomainObjectRef,
@@ -33,6 +62,7 @@ impl WorldModelQueries {
         self.with_traversal_query(|query| query.current_anchors_for_subject(subject))
     }
 
+    /// Read anchor history for one logical anchor reference.
     pub fn anchor_history(
         &self,
         anchor_ref: &DomainObjectRef,
@@ -40,6 +70,7 @@ impl WorldModelQueries {
         self.with_traversal_query(|query| query.anchor_history(anchor_ref))
     }
 
+    /// Read compact provenance for one anchor.
     pub fn provenance_for_anchor(
         &self,
         anchor_id: &str,
@@ -47,6 +78,7 @@ impl WorldModelQueries {
         self.with_traversal_query(|query| query.provenance_for_anchor(anchor_id))
     }
 
+    /// Read the current snapshot anchor for a source object.
     pub fn current_snapshot_for_source(
         &self,
         source: &DomainObjectRef,
@@ -54,6 +86,7 @@ impl WorldModelQueries {
         self.with_traversal_query(|query| query.current_snapshot_for_source(source))
     }
 
+    /// Read the current frame head anchor for a node and frame type.
     pub fn current_frame_head(
         &self,
         node: &DomainObjectRef,
@@ -62,6 +95,7 @@ impl WorldModelQueries {
         self.with_traversal_query(|query| query.current_frame_head(node, frame_type))
     }
 
+    /// Read current frame head anchors for a node.
     pub fn current_frame_heads_for_node(
         &self,
         node: &DomainObjectRef,
@@ -69,6 +103,7 @@ impl WorldModelQueries {
         self.with_traversal_query(|query| query.current_frame_heads_for_node(node))
     }
 
+    /// Count current frame head anchors for a frame type.
     pub fn current_frame_head_count_by_type(
         &self,
         frame_type: &str,
@@ -76,6 +111,7 @@ impl WorldModelQueries {
         self.with_traversal_query(|query| query.current_frame_head_count_by_type(frame_type))
     }
 
+    /// Read the current artifact anchor for a task run and artifact type.
     pub fn current_artifact_for_task_run(
         &self,
         task_run: &DomainObjectRef,
@@ -86,6 +122,7 @@ impl WorldModelQueries {
         })
     }
 
+    /// Read neighboring objects through graph relation indexes.
     pub fn neighbors(
         &self,
         object: &DomainObjectRef,
@@ -98,6 +135,7 @@ impl WorldModelQueries {
         })
     }
 
+    /// Run a bounded graph walk from one object.
     pub fn walk(
         &self,
         start: &DomainObjectRef,

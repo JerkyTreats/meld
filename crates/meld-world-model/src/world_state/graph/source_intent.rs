@@ -1,3 +1,9 @@
+//! Source-event intent extraction for graph traversal.
+//!
+//! This internal module maps event types into generic anchor intents. It keeps
+//! reducer control flow small and prevents storage code from knowing source
+//! event shapes.
+
 use crate::error::StorageError;
 use crate::events::{DomainObjectRef, EventRecord};
 use crate::world_state::graph::contracts::{

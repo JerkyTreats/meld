@@ -1,3 +1,24 @@
+//! Event-spine reducer for legacy claim state.
+//!
+//! The reducer reads execution events, materializes claim and evidence records,
+//! supersedes conflicting generation claims, and emits world-state envelopes for
+//! downstream audit. Graph traversal and belief inference are separate reducers.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use meld_world_model::events::store::EventStore;
+//! use meld_world_model::world_state::reducer::WorldStateReducer;
+//! use meld_world_model::world_state::store::WorldStateStore;
+//!
+//! let temp = tempfile::tempdir().unwrap();
+//! let db = sled::open(temp.path()).unwrap();
+//! let spine = EventStore::new(db.clone()).unwrap();
+//! let store = WorldStateStore::new(db).unwrap();
+//! let reducer = WorldStateReducer::replay_from_spine(&spine, &store, 0).unwrap();
+//! assert!(reducer.emitted_envelopes.is_empty());
+//! ```
+
 use crate::error::StorageError;
 use crate::events::store::EventStore;
 use crate::events::{DomainObjectRef, EventEnvelope, EventRecord};
@@ -9,13 +30,18 @@ use crate::world_state::events::{
 use crate::world_state::projection::{ClaimProvenanceProjection, CurrentClaimProjection};
 use crate::world_state::store::{StoredWorldStateFact, WorldStateStore};
 
+/// In-memory reducer state produced while replaying claim source events.
 pub struct WorldStateReducer {
+    /// Active claim projection observed during replay.
     pub current_claims: CurrentClaimProjection,
+    /// Claim provenance projection observed during replay.
     pub provenance: ClaimProvenanceProjection,
+    /// Derived world-state events emitted during replay.
     pub emitted_envelopes: Vec<EventEnvelope>,
 }
 
 impl WorldStateReducer {
+    /// Replay execution events after a cursor into claim storage.
     pub fn replay_from_spine(
         spine: &EventStore,
         store: &WorldStateStore,

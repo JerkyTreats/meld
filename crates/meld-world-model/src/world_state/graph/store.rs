@@ -1,3 +1,20 @@
+//! Durable graph traversal storage.
+//!
+//! The traversal store keeps graph facts, object membership, relation indexes,
+//! anchor history, current-anchor indexes, and reducer cursors. Writes are
+//! index-building operations over durable facts; query modules provide the
+//! public read surface.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use meld_world_model::world_state::graph::store::TraversalStore;
+//!
+//! let temp = tempfile::tempdir().unwrap();
+//! let store = TraversalStore::new(sled::open(temp.path()).unwrap()).unwrap();
+//! assert_eq!(store.last_reduced_seq().unwrap(), 0);
+//! ```
+
 use std::collections::{BTreeSet, VecDeque};
 use std::io;
 use std::sync::Arc;
@@ -28,6 +45,7 @@ const TREE_RUNTIME_META: &str = "traversal_runtime_meta";
 const KEY_LAST_REDUCED_SEQ: &str = "last_reduced_seq";
 const KEY_PAD: usize = 20;
 
+/// Stored relation edge plus the fact that produced it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelationRecord {
     pub relation: EventRelation,
@@ -35,6 +53,7 @@ pub struct RelationRecord {
     pub seq: u64,
 }
 
+/// Sled-backed graph traversal store.
 #[derive(Clone)]
 pub struct TraversalStore {
     db: Db,
@@ -54,6 +73,7 @@ pub struct TraversalStore {
 }
 
 impl TraversalStore {
+    /// Open all traversal trees against a shared sled database.
     pub fn new(db: Db) -> Result<Self, StorageError> {
         Ok(Self {
             facts: db.open_tree(TREE_FACTS).map_err(to_storage_io)?,
@@ -81,14 +101,17 @@ impl TraversalStore {
         })
     }
 
+    /// Open the store behind an `Arc` for runtime assembly.
     pub fn shared(db: Db) -> Result<Arc<Self>, StorageError> {
         Ok(Arc::new(Self::new(db)?))
     }
 
+    /// Return the shared sled database handle.
     pub fn db(&self) -> &Db {
         &self.db
     }
 
+    /// Store a graph-readable fact and update object and relation indexes.
     pub fn put_fact(&self, fact: &TraversalFactRecord) -> Result<(), StorageError> {
         self.facts
             .insert(
@@ -154,6 +177,7 @@ impl TraversalStore {
         Ok(())
     }
 
+    /// Read one graph-readable fact by id.
     pub fn get_fact(&self, fact_id: &str) -> Result<Option<TraversalFactRecord>, StorageError> {
         let Some(raw) = self.facts.get(fact_id.as_bytes()).map_err(to_storage_io)? else {
             return Ok(None);
@@ -161,6 +185,7 @@ impl TraversalStore {
         Ok(Some(serde_json::from_slice(&raw).map_err(to_storage_data)?))
     }
 
+    /// Read facts mentioning an object after a source sequence cursor.
     pub fn facts_for_object(
         &self,
         object: &DomainObjectRef,
@@ -181,6 +206,7 @@ impl TraversalStore {
         Ok(out)
     }
 
+    /// Store an anchor record and update history indexes.
     pub fn put_anchor(&self, anchor: &AnchorSelectionRecord) -> Result<(), StorageError> {
         self.anchors
             .insert(
@@ -204,6 +230,7 @@ impl TraversalStore {
         Ok(())
     }
 
+    /// Read one anchor record by id.
     pub fn get_anchor(
         &self,
         anchor_id: &str,
@@ -218,6 +245,7 @@ impl TraversalStore {
         Ok(Some(serde_json::from_slice(&raw).map_err(to_storage_data)?))
     }
 
+    /// Move the current-anchor index to an existing anchor record.
     pub fn set_current_anchor(&self, anchor: &AnchorSelectionRecord) -> Result<(), StorageError> {
         self.current_anchor
             .insert(
@@ -234,6 +262,7 @@ impl TraversalStore {
         Ok(())
     }
 
+    /// Clear the current-anchor index for a subject and perspective.
     pub fn clear_current_anchor(
         &self,
         anchor_ref: &DomainObjectRef,
@@ -249,6 +278,7 @@ impl TraversalStore {
         Ok(())
     }
 
+    /// Read the current anchor for a logical anchor reference.
     pub fn current_anchor(
         &self,
         anchor_ref: &DomainObjectRef,
@@ -264,6 +294,7 @@ impl TraversalStore {
         self.get_anchor(&anchor_id)
     }
 
+    /// Read the current anchor for one subject and perspective.
     pub fn current_anchor_for_subject(
         &self,
         subject: &DomainObjectRef,
@@ -287,6 +318,7 @@ impl TraversalStore {
         self.get_anchor(&anchor_id)
     }
 
+    /// Read current anchors for every perspective on one subject.
     pub fn current_anchors_for_subject(
         &self,
         subject: &DomainObjectRef,
@@ -307,6 +339,7 @@ impl TraversalStore {
         Ok(out)
     }
 
+    /// Read current anchors for one perspective across subjects.
     pub fn current_anchors_by_perspective(
         &self,
         perspective_kind: &str,
@@ -335,6 +368,7 @@ impl TraversalStore {
         Ok(out)
     }
 
+    /// Count current anchors for one perspective.
     pub fn current_anchor_count_by_perspective(
         &self,
         perspective_kind: &str,
@@ -345,6 +379,7 @@ impl TraversalStore {
             .len())
     }
 
+    /// Read all anchors ever selected for one logical anchor reference.
     pub fn anchor_history(
         &self,
         anchor_ref: &DomainObjectRef,
@@ -362,6 +397,7 @@ impl TraversalStore {
         Ok(out)
     }
 
+    /// Record that one anchor was superseded by another anchor.
     pub fn put_anchor_lineage(
         &self,
         anchor_id: &str,
@@ -376,6 +412,7 @@ impl TraversalStore {
         Ok(())
     }
 
+    /// Build compact provenance for one anchor from its source facts.
     pub fn anchor_provenance(
         &self,
         anchor_id: &str,
@@ -403,6 +440,7 @@ impl TraversalStore {
         })
     }
 
+    /// Read the last event-spine sequence reduced into this store.
     pub fn last_reduced_seq(&self) -> Result<u64, StorageError> {
         let Some(raw) = self
             .runtime_meta
@@ -415,6 +453,7 @@ impl TraversalStore {
         value.parse::<u64>().map_err(to_storage_parse)
     }
 
+    /// Persist the last event-spine sequence reduced into this store.
     pub fn set_last_reduced_seq(&self, seq: u64) -> Result<(), StorageError> {
         self.runtime_meta
             .insert(KEY_LAST_REDUCED_SEQ.as_bytes(), seq.to_string().as_bytes())
@@ -422,6 +461,7 @@ impl TraversalStore {
         Ok(())
     }
 
+    /// Flush the shared sled database.
     pub fn flush(&self) -> Result<(), StorageError> {
         self.db.flush().map_err(to_storage_io)?;
         Ok(())
@@ -442,6 +482,7 @@ impl TraversalStore {
         Ok(None)
     }
 
+    /// Read neighboring objects through relation indexes.
     pub fn neighbors(
         &self,
         object: &DomainObjectRef,
@@ -505,6 +546,7 @@ impl TraversalStore {
         Ok(())
     }
 
+    /// Run a bounded breadth-first graph walk.
     pub fn walk(
         &self,
         start: &DomainObjectRef,

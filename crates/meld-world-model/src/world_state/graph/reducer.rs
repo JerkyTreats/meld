@@ -1,3 +1,24 @@
+//! Event-spine reducer for graph traversal state.
+//!
+//! The reducer consumes source events, stores graph-readable facts, derives
+//! anchor intents, and updates current-anchor indexes. It emits traversal events
+//! only when source events imply anchor changes.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use meld_world_model::events::store::EventStore;
+//! use meld_world_model::graph::reducer::TraversalReducer;
+//! use meld_world_model::world_state::graph::store::TraversalStore;
+//!
+//! let temp = tempfile::tempdir().unwrap();
+//! let db = sled::open(temp.path()).unwrap();
+//! let spine = EventStore::new(db.clone()).unwrap();
+//! let traversal = TraversalStore::new(db).unwrap();
+//! let reducer = TraversalReducer::replay_from_spine(&spine, &traversal, 0).unwrap();
+//! assert_eq!(reducer.applied_events, 0);
+//! ```
+
 use crate::error::StorageError;
 use crate::events::store::EventStore;
 use crate::events::{EventEnvelope, EventRecord};
@@ -12,15 +33,22 @@ use crate::world_state::graph::events::{
 use crate::world_state::graph::projection::{AnchorLineageProjection, CurrentAnchorProjection};
 use crate::world_state::graph::store::TraversalStore;
 
+/// In-memory reducer state produced while replaying graph source events.
 pub struct TraversalReducer {
+    /// Current anchors observed during this replay pass.
     pub current_anchors: CurrentAnchorProjection,
+    /// Anchor lineage observed during this replay pass.
     pub lineage: AnchorLineageProjection,
+    /// Derived traversal events to append to the spine after replay.
     pub emitted_envelopes: Vec<EventEnvelope>,
+    /// Number of source events applied by this replay pass.
     pub applied_events: usize,
+    /// Highest source sequence seen by this replay pass.
     pub last_seen_seq: u64,
 }
 
 impl TraversalReducer {
+    /// Replay source events after a cursor into traversal storage.
     pub fn replay_from_spine(
         spine: &EventStore,
         store: &TraversalStore,

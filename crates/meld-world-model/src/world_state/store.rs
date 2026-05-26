@@ -1,3 +1,19 @@
+//! Durable storage for legacy claim state.
+//!
+//! The claim store keeps world-state facts, claim records, evidence, current
+//! claim indexes, and supersession edges. It remains available for compatibility
+//! while newer graph and belief domains carry richer planner-facing state.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use meld_world_model::world_state::store::WorldStateStore;
+//!
+//! let temp = tempfile::tempdir().unwrap();
+//! let store = WorldStateStore::new(sled::open(temp.path()).unwrap()).unwrap();
+//! store.flush().unwrap();
+//! ```
+
 use std::io;
 use std::sync::Arc;
 
@@ -19,6 +35,7 @@ const TREE_SOURCE_FACT_INDEX: &str = "world_state_source_fact_index";
 const TREE_SEQ_INDEX: &str = "world_state_seq_index";
 const KEY_PAD: usize = 20;
 
+/// Stored source fact for the claim projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredWorldStateFact {
     pub fact_id: String,
@@ -29,6 +46,7 @@ pub struct StoredWorldStateFact {
     pub seq: u64,
 }
 
+/// Sled-backed store for claim records and provenance indexes.
 #[derive(Clone)]
 pub struct WorldStateStore {
     db: Db,
@@ -44,6 +62,7 @@ pub struct WorldStateStore {
 }
 
 impl WorldStateStore {
+    /// Open all claim-state trees against a shared sled database.
     pub fn new(db: Db) -> Result<Self, StorageError> {
         Ok(Self {
             facts: db.open_tree(TREE_FACTS).map_err(to_storage_io)?,
@@ -65,14 +84,17 @@ impl WorldStateStore {
         })
     }
 
+    /// Open the store behind an `Arc` for runtime assembly.
     pub fn shared(db: Db) -> Result<Arc<Self>, StorageError> {
         Ok(Arc::new(Self::new(db)?))
     }
 
+    /// Return the shared sled database handle.
     pub fn db(&self) -> &Db {
         &self.db
     }
 
+    /// Store a source fact and update source indexes.
     pub fn put_fact(&self, fact: &StoredWorldStateFact) -> Result<(), StorageError> {
         self.facts
             .insert(
@@ -97,6 +119,7 @@ impl WorldStateStore {
         Ok(())
     }
 
+    /// Read one source fact by id.
     pub fn get_fact(&self, fact_id: &str) -> Result<Option<StoredWorldStateFact>, StorageError> {
         let Some(raw) = self.facts.get(fact_id.as_bytes()).map_err(to_storage_io)? else {
             return Ok(None);
@@ -105,6 +128,7 @@ impl WorldStateStore {
         Ok(Some(parsed))
     }
 
+    /// Store a claim and update subject history indexes.
     pub fn put_claim(&self, claim: &ClaimRecord) -> Result<(), StorageError> {
         let subject_key = claim.subject.index_key();
         self.claims
@@ -122,6 +146,7 @@ impl WorldStateStore {
         Ok(())
     }
 
+    /// Read one claim by id.
     pub fn get_claim(&self, claim_id: &str) -> Result<Option<ClaimRecord>, StorageError> {
         let Some(raw) = self
             .claims
@@ -134,6 +159,7 @@ impl WorldStateStore {
         Ok(Some(parsed))
     }
 
+    /// Mark a claim current for one subject.
     pub fn set_claim_active(
         &self,
         subject: &DomainObjectRef,
@@ -148,6 +174,7 @@ impl WorldStateStore {
         Ok(())
     }
 
+    /// Remove a claim from the current-claim index.
     pub fn clear_claim_active(
         &self,
         subject: &DomainObjectRef,
@@ -159,6 +186,7 @@ impl WorldStateStore {
         Ok(())
     }
 
+    /// Store claim evidence and update evidence membership indexes.
     pub fn put_evidence(&self, evidence: &EvidenceRecord) -> Result<(), StorageError> {
         self.evidence
             .insert(
@@ -175,6 +203,7 @@ impl WorldStateStore {
         Ok(())
     }
 
+    /// Read one evidence record by id.
     pub fn get_evidence(&self, evidence_id: &str) -> Result<Option<EvidenceRecord>, StorageError> {
         let Some(raw) = self
             .evidence
@@ -187,6 +216,7 @@ impl WorldStateStore {
         Ok(Some(parsed))
     }
 
+    /// Store a supersession edge between claims.
     pub fn put_supersession(
         &self,
         claim_id: &str,
@@ -201,6 +231,7 @@ impl WorldStateStore {
         Ok(())
     }
 
+    /// Read active claims for one subject.
     pub fn current_claims_for_object(
         &self,
         subject: &DomainObjectRef,
@@ -208,6 +239,7 @@ impl WorldStateStore {
         self.claims_from_index(&self.active_by_subject, &subject.index_key())
     }
 
+    /// Read active and superseded claims for one subject.
     pub fn claim_history_for_object(
         &self,
         subject: &DomainObjectRef,
@@ -215,6 +247,7 @@ impl WorldStateStore {
         self.claims_from_index(&self.history_by_subject, &subject.index_key())
     }
 
+    /// Read evidence attached to one claim.
     pub fn evidence_for_claim(&self, claim_id: &str) -> Result<Vec<EvidenceRecord>, StorageError> {
         let mut evidence = Vec::new();
         let prefix = format!("{claim_id}::");
@@ -228,6 +261,7 @@ impl WorldStateStore {
         Ok(evidence)
     }
 
+    /// Read claims that supersede the given claim.
     pub fn supersession_chain_for_claim(
         &self,
         claim_id: &str,
@@ -242,6 +276,12 @@ impl WorldStateStore {
             }
         }
         Ok(chain)
+    }
+
+    /// Flush the shared sled database.
+    pub fn flush(&self) -> Result<(), StorageError> {
+        self.db.flush().map_err(to_storage_io)?;
+        Ok(())
     }
 
     fn claims_from_index(
