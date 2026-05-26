@@ -82,11 +82,9 @@ The Agent also has read access to the active goal set. This is epistemically val
 See [Goals](../../execution/goals/README.md) for the full ownership split and curation API contract.
 See [Goals and Methods](../../meld-lang/goals_and_methods.md) for the concrete `Goal` type definition and construction examples.
 
-## ECS Note
+The Agent should consume the heavier pipelines of the other world model domains and assemble them into one perspective-scoped handoff, rather than re-owning their internal logic.
 
-The ECS interpretation for this domain lives in [Agent ECS](ECS.md).
-
-The important point is that Agent should consume the heavier systems of the other world model domains and assemble them into one perspective-scoped handoff, rather than re-owning their internal logic.
+See [Agent Spec](spec.md) for domain types, data model, and pipelines.
 
 ## Core Design Rule
 
@@ -112,7 +110,7 @@ The architecture should support:
 - independent planner-facing projections
 - stable replay and audit across all Agents
 
-The main payoff of an ECS-shaped internal substrate is here:
+The main payoff of the current spec shape is here:
 many Agents can share one identity and provenance foundation while carrying sparse, divergent, mutable world-model state without forcing one rigid record for every perspective.
 
 ## Agent Lifecycle
@@ -173,17 +171,17 @@ It should defer:
 - full multi-Agent synchronization strategy
 - shared planning between Agents
 - multi-agent goal coordination protocol
-- any requirement that other crates adopt ECS vocabulary
+- any requirement that other crates adopt world model implementation vocabulary
 
 ## Read With
 
 - [World Model Domain](../README.md)
 - [World Model Vision](../VISION.md)
 - [World Model Planner](../planner/README.md)
-- [Agent ECS](ECS.md)
+- [Agent Spec](spec.md)
 - [World Model Belief](../belief/README.md)
 - [Belief Microarchitecture](../belief/microarchitecture.md)
-- [Knowledge Graph ECS Decision Memo](../belief/knowledge_graph_ecs_decision_memo.md)
+- [Agent Spec](spec.md)
 - [Goal Curation](goal_curation.md)
 - [World Model Public Interface](../public_interface.md)
 - [Lang Domain](../../meld-lang/README.md)

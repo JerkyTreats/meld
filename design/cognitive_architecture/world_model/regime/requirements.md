@@ -156,7 +156,5 @@ Regime protects the system from silently treating structural change as ordinary 
 
 ## Read With
 
-- [Regime Entities](entities.md)
-- [Regime Components](components.md)
-- [Regime Systems](systems.md)
+- [Regime Spec](spec.md)
 - [Regime Layer](README.md)

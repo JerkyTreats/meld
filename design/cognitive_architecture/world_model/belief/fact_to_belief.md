@@ -192,6 +192,7 @@ That keeps planning semantic while allowing execution to build concrete capabili
 
 World model belief owns:
 
+- runtime belief family configuration loading and validation
 - evidence normalization
 - belief key assignment
 - comparator scheduling
@@ -220,14 +221,17 @@ Spine owns:
 
 ## First Slice
 
-Start with one belief family:
+Start with one externally configured belief family:
 
 - subject is a `DomainObjectRef`
-- predicate names the planner question
+- runtime predicate id names the planner question
 - perspective is explicit or intentionally defaulted
 - evidence comes from graph anchors and execution outcomes
-- comparator emits posterior summary, uncertainty, confidence, and status
+- generic comparator engine emits posterior summary, uncertainty, confidence, and status
 - belief view exposes settlement state for agent policy
+
+The family id, dimension id, evidence schemas, source mappings, comparator config, priors, thresholds, and planner projection fields are runtime configuration.
+They are not Rust modules, enum variants, or family-specific comparator types.
 
 ## Read With
 

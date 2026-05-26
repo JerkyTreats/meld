@@ -10,8 +10,6 @@ The world model exposes a public interface that capabilities can invoke without 
 
 The public interface defines the common contract. Implementation routes live in each owning domain: belief routes in belief, graph routes in graph, agent routes in agent. Each domain owns its operations and their semantics. The interface document defines what is available and which domain owns it.
 
-If ECS substrate consolidation proceeds, some per-domain routes may converge into unified component queries. The public contract remains stable regardless — ECS changes the implementation, not the interface.
-
 ## Interface By Domain
 
 ### Graph
@@ -54,15 +52,17 @@ query_belief(key: BeliefKey) -> Option<BeliefView>
 // Available evidence channels for a subject (what kinds of observations can feed beliefs)
 query_evidence_channels(subject: DomainObjectRef) -> Vec<EvidenceChannel>
 
-// Register a new belief key for a subject/dimension pair
+// Register a new belief key for a subject and runtime dimension id
 // Returns existing key if one already exists for the pair
-register_belief_key(subject: DomainObjectRef, dimension: BeliefDimension) -> BeliefKey
+register_belief_key(subject: DomainObjectRef, dimension_id: BeliefDimensionId) -> BeliefKey
 
 // Belief freshness summary for a subject (which beliefs are current, stale, or missing)
 query_freshness(subject: DomainObjectRef, perspective: Perspective) -> FreshnessSummary
 ```
 
 `register_belief_key` is the only write operation. It creates a belief key without settling a belief — the belief starts in an unassessed state. Evidence and comparator assessment produce the first revision.
+The dimension id must resolve through loaded runtime family configuration.
+The public interface does not require Rust enum variants for belief families.
 
 ### Agent
 
@@ -123,21 +123,15 @@ Capability: bind_agent_subscriptions
 
 Capability: register_missing_belief_keys
   Interface: belief.register_belief_key
-  Input: DomainObjectRef, Vec<BeliefDimension>
+  Input: DomainObjectRef, Vec<BeliefDimensionId>
   Output: Vec<BeliefKey>
 ```
 
 The capability is the execution-side contract. The interface operation is the world-model-side contract. The capability invokes the operation. Neither side imports the other's internals.
 
-## ECS Note
-
-In an ECS substrate, many of these operations become component queries:
-
-- "All beliefs for subject X" → entities with `BeliefView` component where subject matches
-- "All subscriptions for agent A" → entities with `Subscription` component where agent_id matches
-- "Walk from entity X" → relation component traversal
-
-The per-domain route structure remains correct as the public contract. ECS may consolidate the implementation behind those routes, but the interface operations and their owning domains stay the same. Capabilities invoke domain routes, not raw ECS queries.
+Multiple agents may query and project in parallel through agent scoped views.
+They share lower domain state and write only agent scoped projections.
+Shared graph, belief, causal, and regime writers remain domain owned.
 
 ## Relationship to Execution's Goal Set API
 

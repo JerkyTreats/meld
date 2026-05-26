@@ -138,10 +138,7 @@ That is enough to prevent stationary priors from becoming silent hidden assumpti
 
 ## Read With
 
-- [Regime ECS](ECS.md)
-- [Regime Entities](entities.md)
-- [Regime Components](components.md)
-- [Regime Systems](systems.md)
+- [Regime Spec](spec.md)
 - [Regime Requirements](requirements.md)
 - [Belief](../belief/README.md)
 - [Causal Layer](../causation/README.md)

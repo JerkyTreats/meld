@@ -1,7 +1,7 @@
 # Meld Lang Implementation Plan
 
 Date: 2026-05-20
-Status: proposed
+Status: complete
 Scope: phased implementation plan for the `meld-lang` crate — shared proposition language between world model and execution
 
 ## Overview
@@ -52,15 +52,15 @@ Outcome:
 
 | Phase | Goal | Dependencies | Status |
 |-------|------|--------------|--------|
-| 0 | Crate scaffold and baseline | None | proposed |
-| 1 | Term and Literal primitives | Phase 0 | proposed |
-| 2 | Proposition and Condition grammar | Phase 1 | proposed |
-| 3 | Effect, WorldState, and evaluation | Phase 2 | proposed |
-| 4 | Operator, Resolution, and CostEstimate | Phase 2 and Phase 3 | proposed |
-| 5 | Composition graph and structural validation | Phase 4 | proposed |
-| 6 | Goal specification | Phase 2 and Phase 4 | proposed |
-| 7 | Method, unification, and substitution | Phase 5 and Phase 6 | proposed |
-| 8 | Full evaluation loop integration | Phase 0 through Phase 7 | proposed |
+| 0 | Crate scaffold and baseline | None | complete |
+| 1 | Term and Literal primitives | Phase 0 | complete |
+| 2 | Proposition and Condition grammar | Phase 1 | complete |
+| 3 | Effect, WorldState, and evaluation | Phase 2 | complete |
+| 4 | Operator, Resolution, and CostEstimate | Phase 2 and Phase 3 | complete |
+| 5 | Composition graph and structural validation | Phase 4 | complete |
+| 6 | Goal specification | Phase 2 and Phase 4 | complete |
+| 7 | Method, unification, and substitution | Phase 5 and Phase 6 | complete |
+| 8 | Full evaluation loop integration | Phase 0 through Phase 7 | complete |
 
 ---
 
@@ -74,11 +74,11 @@ Outcome:
 
 | Task | Completion |
 |------|------------|
-| Create `crates/meld-lang/Cargo.toml` with `serde`, `serde_json`, and `meld-events` dependencies. | Proposed |
-| Create `crates/meld-lang/src/lib.rs` with module declarations. | Proposed |
-| Add `meld-lang` to workspace `Cargo.toml`. | Proposed |
-| Create empty module files for `term`, `proposition`, `effect`, `operator`, `composition`, `goal`, `method`, `world_state`, `evaluate`, `unify`, `substitute`, `validate`, `cost`. | Proposed |
-| Verify the crate compiles and `meld-events` dependency resolves. | Proposed |
+| Create `crates/meld-lang/Cargo.toml` with `serde`, `serde_json`, and `meld-events` dependencies. | Complete |
+| Create `crates/meld-lang/src/lib.rs` with module declarations. | Complete |
+| Add `meld-lang` to workspace `Cargo.toml`. | Complete |
+| Create empty module files for `term`, `proposition`, `effect`, `operator`, `composition`, `goal`, `method`, `world_state`, `evaluate`, `unify`, `substitute`, `validate`, `cost`. | Complete |
+| Verify the crate compiles and `meld-events` dependency resolves. | Complete |
 
 **Exit criteria**:
 - `meld-lang` exists in the workspace and compiles
@@ -105,11 +105,11 @@ Outcome:
 
 | Task | Completion |
 |------|------------|
-| Implement `Literal` enum: `Bool(bool)`, `Text(String)`, `Number(f64)`, `Duration(std::time::Duration)`. | Proposed |
-| Implement `Term` enum: `Object(DomainObjectRef)`, `Dimension(String)`, `ArtifactType(String)`, `Literal(Literal)`, `Variable(String)`, `Derived { source_step, field_path }`. | Proposed |
-| Derive `Debug`, `Clone`, `PartialEq`, `Serialize`, `Deserialize` on all types. | Proposed |
-| Add unit tests for `Term` and `Literal` serialization round-trip. | Proposed |
-| Add unit tests for `Term` equality across all variants. | Proposed |
+| Implement `Literal` enum: `Bool(bool)`, `Text(String)`, `Number(f64)`, `Duration(std::time::Duration)`. | Complete |
+| Implement `Term` enum: `Object(DomainObjectRef)`, `Dimension(String)`, `ArtifactType(String)`, `Literal(Literal)`, `Variable(String)`, `Derived { source_step, field_path }`. | Complete |
+| Derive `Debug`, `Clone`, `PartialEq`, `Serialize`, `Deserialize` on all types. | Complete |
+| Add unit tests for `Term` and `Literal` serialization round-trip. | Complete |
+| Add unit tests for `Term` equality across all variants. | Complete |
 
 **Exit criteria**:
 - `Term` and `Literal` compile with all variants
@@ -139,12 +139,12 @@ Outcome:
 
 | Task | Completion |
 |------|------------|
-| Implement `Condition` enum: `Above(Term)`, `Below(Term)`, `Equals(Term)`, `In(Vec<Term>)`, `Within(Term)`, `Exceeds(Term)`, `Present`, `Absent`. | Proposed |
-| Implement `Proposition` enum: `Holds { subject, dimension, condition }`, `Exists { scope, artifact_type }`, `Accessible { scope }`, `Related { src, relation, dst }`, `All(Vec<Proposition>)`, `Any(Vec<Proposition>)`, `Not(Box<Proposition>)`. | Proposed |
-| Derive required traits on all types. | Proposed |
-| Add helper method `Proposition::is_ground()` to check whether all terms are concrete (no Variable, no Derived). | Proposed |
-| Add unit tests for proposition construction, nesting (All/Any/Not), and ground checking. | Proposed |
-| Add unit tests for serialization round-trip of all proposition and condition variants including nested structures. | Proposed |
+| Implement `Condition` enum: `Above(Term)`, `Below(Term)`, `Equals(Term)`, `In(Vec<Term>)`, `Within(Term)`, `Exceeds(Term)`, `Present`, `Absent`. | Complete |
+| Implement `Proposition` enum: `Holds { subject, dimension, condition }`, `Exists { scope, artifact_type }`, `Accessible { scope }`, `Related { src, relation, dst }`, `All(Vec<Proposition>)`, `Any(Vec<Proposition>)`, `Not(Box<Proposition>)`. | Complete |
+| Derive required traits on all types. | Complete |
+| Add helper method `Proposition::is_ground()` to check whether all terms are concrete (no Variable, no Derived). | Complete |
+| Add unit tests for proposition construction, nesting (All/Any/Not), and ground checking. | Complete |
+| Add unit tests for serialization round-trip of all proposition and condition variants including nested structures. | Complete |
 
 **Exit criteria**:
 - all proposition shapes constructable from terms
@@ -178,17 +178,17 @@ Outcome:
 
 | Task | Completion |
 |------|------------|
-| Implement `Effect` enum: `Assert(Proposition)`, `Retract(Proposition)`, `Update { subject, dimension, value }`. | Proposed |
-| Implement `WorldState` with `new()` (validates ground-only), `empty()`, `satisfies()`, `propositions()`, `query()`. | Proposed |
-| Implement `EvalResult` enum: `Satisfied`, `Unsatisfied { gap }`, `Indeterminate { missing }`. | Proposed |
-| Implement `evaluate()`: pure function from `&WorldState` and `&Proposition` to `EvalResult`. | Proposed |
-| Implement `WorldState::gap()` convenience over `evaluate()`. | Proposed |
-| Implement `WorldState::apply()`: apply effects to produce new world state. | Proposed |
-| Implement `GroundingError` for world state construction with non-ground propositions. | Proposed |
-| Add evaluation rule tests for each `Proposition` variant per the spec. | Proposed |
-| Add three-valued logic tests: Satisfied, Unsatisfied (with correct gap), Indeterminate (missing dimension). | Proposed |
-| Add effect application tests: Assert (add/idempotent), Retract (remove/no-op), Update (retract+assert). | Proposed |
-| Add test: evaluate → Unsatisfied, apply effects, evaluate → Satisfied. | Proposed |
+| Implement `Effect` enum: `Assert(Proposition)`, `Retract(Proposition)`, `Update { subject, dimension, value }`. | Complete |
+| Implement `WorldState` with `new()` (validates ground-only), `empty()`, `satisfies()`, `propositions()`, `query()`. | Complete |
+| Implement `EvalResult` enum: `Satisfied`, `Unsatisfied { gap }`, `Indeterminate { missing }`. | Complete |
+| Implement `evaluate()`: pure function from `&WorldState` and `&Proposition` to `EvalResult`. | Complete |
+| Implement `WorldState::gap()` convenience over `evaluate()`. | Complete |
+| Implement `WorldState::apply()`: apply effects to produce new world state. | Complete |
+| Implement `GroundingError` for world state construction with non-ground propositions. | Complete |
+| Add evaluation rule tests for each `Proposition` variant per the spec. | Complete |
+| Add three-valued logic tests: Satisfied, Unsatisfied (with correct gap), Indeterminate (missing dimension). | Complete |
+| Add effect application tests: Assert (add/idempotent), Retract (remove/no-op), Update (retract+assert). | Complete |
+| Add test: evaluate → Unsatisfied, apply effects, evaluate → Satisfied. | Complete |
 
 **Exit criteria**:
 - `evaluate()` produces correct three-valued result for all proposition variants
@@ -223,14 +223,14 @@ Outcome:
 
 | Task | Completion |
 |------|------------|
-| Implement `CostEstimate` with `add()`, `exceeds()`, `zero()`. | Proposed |
-| Implement `SlotConstraint` with `artifact_type_id` and `required` flag. | Proposed |
-| Implement `CapabilityRef` with `capability_type_id` and `capability_version`. | Proposed |
-| Implement `Resolution` with `requires_inputs`, `requires_outputs`, `scope_kind`, `tags`, `specific`. | Proposed |
-| Implement `Operator` with `operator_id`, `preconditions`, `effects`, `cost`, `resolution`. | Proposed |
-| Derive required traits on all types. | Proposed |
-| Add cost algebra tests: addition, ceiling comparison, zero identity. | Proposed |
-| Add operator construction tests: build operator from terms, verify serialization round-trip. | Proposed |
+| Implement `CostEstimate` with `add()`, `exceeds()`, `zero()`. | Complete |
+| Implement `SlotConstraint` with `artifact_type_id` and `required` flag. | Complete |
+| Implement `CapabilityRef` with `capability_type_id` and `capability_version`. | Complete |
+| Implement `Resolution` with `requires_inputs`, `requires_outputs`, `scope_kind`, `tags`, `specific`. | Complete |
+| Implement `Operator` with `operator_id`, `preconditions`, `effects`, `cost`, `resolution`. | Complete |
+| Derive required traits on all types. | Complete |
+| Add cost algebra tests: addition, ceiling comparison, zero identity. | Complete |
+| Add operator construction tests: build operator from terms, verify serialization round-trip. | Complete |
 
 **Exit criteria**:
 - operators constructable at runtime from terms and propositions without compile-time enum variants
@@ -258,16 +258,16 @@ Outcome:
 
 | Task | Completion |
 |------|------------|
-| Implement `Step` with `step_id` and `StepKind` (Op/Goal). | Proposed |
-| Implement `Edge` with `from`, `to`, and `EdgeKind` (Ordering/DataFlow/Conditional). | Proposed |
-| Implement `Composition` with `steps` and `edges`. | Proposed |
-| Implement `ValidationResult`, `ValidationError`, `ValidationWarning` per spec. | Proposed |
-| Implement `validate()`: check dangling edges, duplicate step IDs, cycles, artifact source mismatch, invalid guard on goal step, unbound variables. | Proposed |
-| Implement `CostEstimate::aggregate()`: sum operator costs across a composition. | Proposed |
-| Add validation tests: valid composition passes, each error kind triggers on the correct input. | Proposed |
-| Add warning tests: disconnected steps, unused effects. | Proposed |
-| Add cycle detection tests: simple cycle, transitive cycle, DAG passes. | Proposed |
-| Add composition construction tests: single-step, linear chain, parallel branches, conditional edges. | Proposed |
+| Implement `Step` with `step_id` and `StepKind` (Op/Goal). | Complete |
+| Implement `Edge` with `from`, `to`, and `EdgeKind` (Ordering/DataFlow/Conditional). | Complete |
+| Implement `Composition` with `steps` and `edges`. | Complete |
+| Implement `ValidationResult`, `ValidationError`, `ValidationWarning` per spec. | Complete |
+| Implement `validate()`: check dangling edges, duplicate step IDs, cycles, artifact source mismatch, invalid guard on goal step, unbound variables. | Complete |
+| Implement `CostEstimate::aggregate()`: sum operator costs across a composition. | Complete |
+| Add validation tests: valid composition passes, each error kind triggers on the correct input. | Complete |
+| Add warning tests: disconnected steps, unused effects. | Complete |
+| Add cycle detection tests: simple cycle, transitive cycle, DAG passes. | Complete |
+| Add composition construction tests: single-step, linear chain, parallel branches, conditional edges. | Complete |
 
 **Exit criteria**:
 - compositions are constructable as data from operators and propositions
@@ -300,12 +300,12 @@ Outcome:
 
 | Task | Completion |
 |------|------------|
-| Implement `GoalPriority` with `urgency` and optional `cost_ceiling`. | Proposed |
-| Implement `GoalSource` enum: `BeliefDivergence`, `UserDirected`, `Maintenance`, `Decomposed`. | Proposed |
-| Implement `GoalLifecycle` enum: `Proposed`, `Active`, `Suspended`, `Satisfied`, `Abandoned`. | Proposed |
-| Implement `Goal` struct with `goal_id`, `agent_id`, `target`, `priority`, `source`, `lifecycle`. | Proposed |
-| Add goal construction tests: build goal from proposition target, verify round-trip. | Proposed |
-| Add test: goal target is a ground Proposition, goal lifecycle transitions. | Proposed |
+| Implement `GoalPriority` with `urgency` and optional `cost_ceiling`. | Complete |
+| Implement `GoalSource` enum: `BeliefDivergence`, `UserDirected`, `Maintenance`, `Decomposed`. | Complete |
+| Implement `GoalLifecycle` enum: `Proposed`, `Active`, `Suspended`, `Satisfied`, `Abandoned`. | Complete |
+| Implement `Goal` struct with `goal_id`, `agent_id`, `target`, `priority`, `source`, `lifecycle`. | Complete |
+| Add goal construction tests: build goal from proposition target, verify round-trip. | Complete |
+| Add test: goal target is a ground Proposition, goal lifecycle transitions. | Complete |
 
 **Exit criteria**:
 - goals constructable at runtime by composing terms into a proposition target
@@ -331,16 +331,16 @@ Outcome:
 
 | Task | Completion |
 |------|------------|
-| Implement `Bindings` with `empty()`, `bind()`, `get()`, `merge()`, `iter()`. Immutable. | Proposed |
-| Implement `unify()`: pure function from pattern `Proposition` and concrete `Proposition` to `Option<Bindings>`. | Proposed |
-| Implement `SubstitutionError` and `UnboundVariable`. | Proposed |
-| Implement `substitute()`: pure function from `Composition` and `Bindings` to `Result<Composition, SubstitutionError>`. | Proposed |
-| Implement `Method` struct with `method_id`, `trigger`, `preconditions`, `composition`, `net_effects`, `cost`, `preference`. | Proposed |
-| Add unification tests: successful bind, shape mismatch fails, double-bind conflict fails, structural unification of All/Any/Not. | Proposed |
-| Add bindings tests: immutable, merge success, merge conflict returns None. | Proposed |
-| Add substitution tests: all variables replaced, unbound variable produces error, nested operator and sub-goal substitution. | Proposed |
-| Add method matching flow test: unify trigger → check preconditions → verify net effects → substitute composition. | Proposed |
-| Add test: method deserialization from JSON string (proving runtime loadability). | Proposed |
+| Implement `Bindings` with `empty()`, `bind()`, `get()`, `merge()`, `iter()`. Immutable. | Complete |
+| Implement `unify()`: pure function from pattern `Proposition` and concrete `Proposition` to `Option<Bindings>`. | Complete |
+| Implement `SubstitutionError` and `UnboundVariable`. | Complete |
+| Implement `substitute()`: pure function from `Composition` and `Bindings` to `Result<Composition, SubstitutionError>`. | Complete |
+| Implement `Method` struct with `method_id`, `trigger`, `preconditions`, `composition`, `net_effects`, `cost`, `preference`. | Complete |
+| Add unification tests: successful bind, shape mismatch fails, double-bind conflict fails, structural unification of All/Any/Not. | Complete |
+| Add bindings tests: immutable, merge success, merge conflict returns None. | Complete |
+| Add substitution tests: all variables replaced, unbound variable produces error, nested operator and sub-goal substitution. | Complete |
+| Add method matching flow test: unify trigger → check preconditions → verify net effects → substitute composition. | Complete |
+| Add test: method deserialization from JSON string (proving runtime loadability). | Complete |
 
 **Exit criteria**:
 - `unify()` correctly binds variables from pattern to concrete proposition
@@ -377,14 +377,14 @@ Outcome:
 
 | Task | Completion |
 |------|------------|
-| Write integration test: full docs_freshness loop (construct goal → evaluate → Unsatisfied → match method → substitute → validate → apply effects → evaluate → Satisfied). | Proposed |
-| Write integration test: indeterminate path (goal about unknown dimension → evaluate → Indeterminate → observation composition → apply assert effect → evaluate → now Unsatisfied or Satisfied). | Proposed |
-| Write integration test: method loaded from JSON string, deserialized, used in matching flow. | Proposed |
-| Write integration test: multi-step composition with conditional edge, evaluate guard. | Proposed |
-| Write integration test: recursive decomposition — composition with Goal steps, verify they validate. | Proposed |
-| Add `meld-lang` as a dependency to `meld-execution` Cargo.toml (dependency wiring only, no code changes). | Proposed |
-| Add `meld-lang` as a dependency to `meld-world-model` Cargo.toml (dependency wiring only, no code changes). | Proposed |
-| Verify full crate compiles cleanly with workspace. | Proposed |
+| Write integration test: full docs_freshness loop (construct goal → evaluate → Unsatisfied → match method → substitute → validate → apply effects → evaluate → Satisfied). | Complete |
+| Write integration test: indeterminate path (goal about unknown dimension → evaluate → Indeterminate → observation composition → apply assert effect → evaluate → now Unsatisfied or Satisfied). | Complete |
+| Write integration test: method loaded from JSON string, deserialized, used in matching flow. | Complete |
+| Write integration test: multi-step composition with conditional edge, evaluate guard. | Complete |
+| Write integration test: recursive decomposition — composition with Goal steps, verify they validate. | Complete |
+| Add `meld-lang` as a dependency to `meld-execution` Cargo.toml (dependency wiring only, no code changes). | Complete |
+| Add `meld-lang` as a dependency to `meld-world-model` Cargo.toml (dependency wiring only, no code changes). | Complete |
+| Verify full crate compiles cleanly with workspace. | Complete |
 
 **Exit criteria**:
 - complete evaluation loop proven end-to-end in a single test function with no external dependencies

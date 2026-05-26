@@ -30,7 +30,7 @@ It demonstrates that the system can express a current world state, a desired goa
 
 The first subject is a docs node identified by `DomainObjectRef`.
 
-The first belief dimension is `docs_freshness`.
+The first belief dimension id is loaded from runtime configuration as `docs_freshness`.
 
 The initial `WorldState` contains a `Proposition::Holds` value for `docs_freshness` below `0.7`.
 
@@ -72,7 +72,7 @@ Applying the method effect creates a projected `WorldState` where reevaluation r
 
 `world_model/graph` owns subject identity, current anchors, lineage, and relation structure.
 
-`world_model/belief` owns confidence, uncertainty, freshness, and evidence settlement for `docs_freshness`.
+`world_model/belief` owns runtime configuration loading, confidence, uncertainty, freshness, and evidence settlement for `docs_freshness`.
 
 `world_model/planner` owns projection from internal world model state into `WorldState`.
 

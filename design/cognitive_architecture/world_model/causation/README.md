@@ -130,10 +130,7 @@ That is enough to prevent the common failure where a selected anchor is mistaken
 
 ## Read With
 
-- [Causal ECS](ECS.md)
-- [Causal Entities](entities.md)
-- [Causal Components](components.md)
-- [Causal Systems](systems.md)
+- [Causal Spec](spec.md)
 - [Causal Requirements](requirements.md)
 - [Graph](../graph/README.md)
 - [Belief](../belief/README.md)

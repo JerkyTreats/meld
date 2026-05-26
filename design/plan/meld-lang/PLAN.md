@@ -1,7 +1,7 @@
 # Meld Lang Phased Implementation Plan
 
 Date: 2026-05-22
-Status: active
+Status: complete
 
 ## Overview
 
@@ -55,15 +55,15 @@ Related plan docs:
 
 | Phase | Goal | Dependencies | Status |
 |-------|------|--------------|--------|
-| 0 | Crate scaffold and baseline | None | Proposed |
-| 1 | Term and Literal primitives | Phase 0 | Proposed |
-| 2 | Proposition and Condition grammar | Phase 1 | Proposed |
-| 3 | Effect, WorldState, and three-valued evaluation | Phase 2 | Proposed |
-| 4 | Operator, Resolution, and CostEstimate | Phase 2, Phase 3 | Proposed |
-| 5 | Composition graph and structural validation | Phase 4 | Proposed |
-| 6 | Goal specification | Phase 2, Phase 4 | Proposed |
-| 7 | Method, unification, and substitution | Phase 5, Phase 6 | Proposed |
-| 8 | Full evaluation loop integration | Phase 0 through Phase 7 | Proposed |
+| 0 | Crate scaffold and baseline | None | Complete |
+| 1 | Term and Literal primitives | Phase 0 | Complete |
+| 2 | Proposition and Condition grammar | Phase 1 | Complete |
+| 3 | Effect, WorldState, and three-valued evaluation | Phase 2 | Complete |
+| 4 | Operator, Resolution, and CostEstimate | Phase 2, Phase 3 | Complete |
+| 5 | Composition graph and structural validation | Phase 4 | Complete |
+| 6 | Goal specification | Phase 2, Phase 4 | Complete |
+| 7 | Method, unification, and substitution | Phase 5, Phase 6 | Complete |
+| 8 | Full evaluation loop integration | Phase 0 through Phase 7 | Complete |
 
 ---
 
@@ -74,31 +74,31 @@ Related plan docs:
 | Goal | Create `meld-lang` crate with correct workspace integration, `meld-events` dependency, and empty module structure. |
 | Dependencies | None |
 | Docs | [Lang Crate](../../cognitive_architecture/meld-lang/CRATE.md), [Lang Requirements](../../cognitive_architecture/meld-lang/requirements.md) |
-| Status | Proposed |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Create `crates/meld-lang/Cargo.toml` with `serde`, `serde_json`, and `meld-events` as dependencies. Verify no IO-capable dependency. | Proposed |
-| 2 | Create `crates/meld-lang/src/lib.rs` with module declarations for `term`, `proposition`, `condition`, `effect`, `world_state`, `evaluate`, `operator`, `cost`, `composition`, `validate`, `goal`, `method`, `unify`, `substitute`. | Proposed |
-| 3 | Create empty module files for each declared module. | Proposed |
-| 4 | Add `meld-lang` to root workspace `Cargo.toml` members list. | Proposed |
-| 5 | Verify `DomainObjectRef` is importable from `meld-events` within `meld-lang`. | Proposed |
+| 1 | Create `crates/meld-lang/Cargo.toml` with `serde`, `serde_json`, and `meld-events` as dependencies. Verify no IO-capable dependency. | Complete |
+| 2 | Create `crates/meld-lang/src/lib.rs` with module declarations for `term`, `proposition`, `condition`, `effect`, `world_state`, `evaluate`, `operator`, `cost`, `composition`, `validate`, `goal`, `method`, `unify`, `substitute`. | Complete |
+| 3 | Create empty module files for each declared module. | Complete |
+| 4 | Add `meld-lang` to root workspace `Cargo.toml` members list. | Complete |
+| 5 | Verify `DomainObjectRef` is importable from `meld-events` within `meld-lang`. | Complete |
 
 | Exit criterion | Status |
 |----------------|--------|
-| `cargo check -p meld-lang` succeeds. | Proposed |
-| `cargo test -p meld-lang` succeeds with zero tests. | Proposed |
-| `cargo clippy -p meld-lang -- -D warnings` succeeds. | Proposed |
-| `cargo deny check advisories licenses sources` succeeds. | Proposed |
-| `cargo audit` reports no vulnerabilities. | Proposed |
-| `Cargo.toml` contains no `tokio`, `async-trait`, `std::fs`, `std::net`, or IO-capable dependency. | Proposed |
-| `DomainObjectRef` resolves from `meld-events`. | Proposed |
-| CI pipeline updated with clippy, cargo-deny, and cargo-audit steps. | Proposed |
-| `deny.toml` exists at workspace root with configured allowlists. | Proposed |
+| `cargo check -p meld-lang` succeeds. | Complete |
+| `cargo test -p meld-lang` succeeds with zero tests. | Complete |
+| `cargo clippy -p meld-lang -- -D warnings` succeeds. | Complete |
+| `cargo deny check advisories licenses sources` succeeds. | Complete |
+| `cargo audit` reports no vulnerabilities. | Complete |
+| `Cargo.toml` contains no `tokio`, `async-trait`, `std::fs`, `std::net`, or IO-capable dependency. | Complete |
+| `DomainObjectRef` resolves from `meld-events`. | Complete |
+| CI pipeline updated with clippy, cargo-deny, and cargo-audit steps. | Complete |
+| `deny.toml` exists at workspace root with configured allowlists. | Complete |
 
 | Dependency closure solved | Status |
 |---------------------------|--------|
-| Unblocks all subsequent phases by establishing the crate in the workspace. | Proposed |
+| Unblocks all subsequent phases by establishing the crate in the workspace. | Complete |
 
 ---
 
@@ -109,25 +109,25 @@ Related plan docs:
 | Goal | Implement `Term` and `Literal` -- the atomic reference types all other types compose from. |
 | Dependencies | Phase 0 |
 | Docs | [Lang Primitives](../../cognitive_architecture/meld-lang/primitives.md) |
-| Status | Proposed |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Implement `Literal` enum with variants: `Bool(bool)`, `Text(String)`, `Number(f64)`, `Duration(std::time::Duration)`. Derive required traits. | Proposed |
-| 2 | Implement `Term` enum with variants: `Object(DomainObjectRef)`, `Dimension(String)`, `ArtifactType(String)`, `Literal(Literal)`, `Variable(String)`, `Derived { source_step: String, field_path: String }`. Derive required traits. | Proposed |
-| 3 | Add unit tests for `Literal` serialization round-trip through `serde_json` for all variants. | Proposed |
-| 4 | Add unit tests for `Term` serialization round-trip for all variants including `Object` with `DomainObjectRef`. | Proposed |
-| 5 | Add unit tests for `Term` and `Literal` `PartialEq` across all variant combinations. | Proposed |
+| 1 | Implement `Literal` enum with variants: `Bool(bool)`, `Text(String)`, `Number(f64)`, `Duration(std::time::Duration)`. Derive required traits. | Complete |
+| 2 | Implement `Term` enum with variants: `Object(DomainObjectRef)`, `Dimension(String)`, `ArtifactType(String)`, `Literal(Literal)`, `Variable(String)`, `Derived { source_step: String, field_path: String }`. Derive required traits. | Complete |
+| 3 | Add unit tests for `Literal` serialization round-trip through `serde_json` for all variants. | Complete |
+| 4 | Add unit tests for `Term` serialization round-trip for all variants including `Object` with `DomainObjectRef`. | Complete |
+| 5 | Add unit tests for `Term` and `Literal` `PartialEq` across all variant combinations. | Complete |
 
 | Exit criterion | Status |
 |----------------|--------|
-| All `Term` and `Literal` variants compile with required trait derivations. | Proposed |
-| Serialization round-trip through `serde_json` preserves all variants exactly. | Proposed |
-| `PartialEq` correctly distinguishes all variant combinations. | Proposed |
+| All `Term` and `Literal` variants compile with required trait derivations. | Complete |
+| Serialization round-trip through `serde_json` preserves all variants exactly. | Complete |
+| `PartialEq` correctly distinguishes all variant combinations. | Complete |
 
 | Dependency closure solved | Status |
 |---------------------------|--------|
-| Provides the atomic reference type consumed by Proposition, Condition, Effect, Operator, Goal, and Method. | Proposed |
+| Provides the atomic reference type consumed by Proposition, Condition, Effect, Operator, Goal, and Method. | Complete |
 
 Verification:
 - `cargo test -p meld-lang term`
@@ -149,27 +149,27 @@ Key files:
 | Goal | Implement `Proposition` and `Condition` -- the typed statement shapes the evaluator understands. |
 | Dependencies | Phase 1 |
 | Docs | [Lang Primitives](../../cognitive_architecture/meld-lang/primitives.md), [Lang Requirements](../../cognitive_architecture/meld-lang/requirements.md) |
-| Status | Proposed |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Implement `Condition` enum with variants: `Above(Term)`, `Below(Term)`, `Equals(Term)`, `In(Vec<Term>)`, `Within(Term)`, `Exceeds(Term)`, `Present`, `Absent`. Derive required traits. | Proposed |
-| 2 | Implement `Proposition` enum with variants: `Holds { subject: Term, dimension: Term, condition: Condition }`, `Exists { scope: Term, artifact_type: Term }`, `Accessible { scope: Term }`, `Related { src: Term, relation: Term, dst: Term }`, `All(Vec<Proposition>)`, `Any(Vec<Proposition>)`, `Not(Box<Proposition>)`. Derive required traits. | Proposed |
-| 3 | Add helper method `Proposition::is_ground()` that returns true when all terms are concrete -- no `Variable`, no `Derived`. Recurse through `All`/`Any`/`Not` children. | Proposed |
-| 4 | Add unit tests for proposition construction across all variants. | Proposed |
-| 5 | Add unit tests for nested `All`/`Any`/`Not` serialization round-trip. | Proposed |
-| 6 | Add unit tests for `is_ground()`: ground proposition returns true, proposition with `Variable` returns false, nested compound with one `Variable` child returns false. | Proposed |
+| 1 | Implement `Condition` enum with variants: `Above(Term)`, `Below(Term)`, `Equals(Term)`, `In(Vec<Term>)`, `Within(Term)`, `Exceeds(Term)`, `Present`, `Absent`. Derive required traits. | Complete |
+| 2 | Implement `Proposition` enum with variants: `Holds { subject: Term, dimension: Term, condition: Condition }`, `Exists { scope: Term, artifact_type: Term }`, `Accessible { scope: Term }`, `Related { src: Term, relation: Term, dst: Term }`, `All(Vec<Proposition>)`, `Any(Vec<Proposition>)`, `Not(Box<Proposition>)`. Derive required traits. | Complete |
+| 3 | Add helper method `Proposition::is_ground()` that returns true when all terms are concrete -- no `Variable`, no `Derived`. Recurse through `All`/`Any`/`Not` children. | Complete |
+| 4 | Add unit tests for proposition construction across all variants. | Complete |
+| 5 | Add unit tests for nested `All`/`Any`/`Not` serialization round-trip. | Complete |
+| 6 | Add unit tests for `is_ground()`: ground proposition returns true, proposition with `Variable` returns false, nested compound with one `Variable` child returns false. | Complete |
 
 | Exit criterion | Status |
 |----------------|--------|
-| All proposition and condition shapes constructable from terms. | Proposed |
-| `is_ground()` correctly identifies ground vs pattern propositions including nested compounds. | Proposed |
-| Nested `All`/`Any`/`Not` serialize and deserialize correctly. | Proposed |
-| Same `Proposition` type usable without wrapper types in all positions. | Proposed |
+| All proposition and condition shapes constructable from terms. | Complete |
+| `is_ground()` correctly identifies ground vs pattern propositions including nested compounds. | Complete |
+| Nested `All`/`Any`/`Not` serialize and deserialize correctly. | Complete |
+| Same `Proposition` type usable without wrapper types in all positions. | Complete |
 
 | Dependency closure solved | Status |
 |---------------------------|--------|
-| Provides the statement grammar consumed by WorldState, evaluate, Effect, Operator, Goal, and Method. | Proposed |
+| Provides the statement grammar consumed by WorldState, evaluate, Effect, Operator, Goal, and Method. | Complete |
 
 Verification:
 - `cargo test -p meld-lang proposition`
@@ -192,38 +192,38 @@ Key files:
 | Goal | Implement state change primitives, the ground proposition set, and three-valued evaluation. First testable loop: construct propositions, build world state, evaluate, apply effects, re-evaluate. |
 | Dependencies | Phase 2 |
 | Docs | [Lang Primitives](../../cognitive_architecture/meld-lang/primitives.md), [World State and Evaluation](../../cognitive_architecture/meld-lang/world_state.md) |
-| Status | Proposed |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Implement `Effect` enum: `Assert(Proposition)`, `Retract(Proposition)`, `Update { subject: Term, dimension: Term, value: Term }`. Derive required traits. | Proposed |
-| 2 | Implement `GroundingError` struct with `index: usize` and `variable: String`. | Proposed |
-| 3 | Implement `WorldState` struct with `propositions: Vec<Proposition>`. Implement `WorldState::new()` that validates all propositions are ground, rejecting `Variable` and `Derived` terms. Implement `WorldState::empty()`. | Proposed |
-| 4 | Implement `WorldState::propositions()` returning `&[Proposition]`. | Proposed |
-| 5 | Implement `EvalResult` enum: `Satisfied`, `Unsatisfied { gap: Vec<Proposition> }`, `Indeterminate { missing: Vec<Term> }`. | Proposed |
-| 6 | Implement `evaluate()` as pure function from `&WorldState` and `&Proposition` to `EvalResult`. Implement evaluation rules per spec for each proposition variant: `Holds` with condition matching, `Exists`, `Accessible`, `Related`, `All`, `Any`, `Not` with three-valued propagation. | Proposed |
-| 7 | Implement `WorldState::satisfies()` as convenience over `evaluate()`. | Proposed |
-| 8 | Implement `WorldState::gap()` returning unsatisfied and indeterminate sub-propositions. | Proposed |
-| 9 | Implement `WorldState::query()` taking a pattern proposition and returning `Vec<Bindings>` for all matches. Defer full implementation if `Bindings` is not yet available -- stub with empty return and mark for completion in Phase 7. | Proposed |
-| 10 | Implement `WorldState::apply()` applying a slice of effects to produce a new `WorldState`. Assert adds or is idempotent. Retract removes or is no-op. Update retracts existing `Holds` for subject+dimension then asserts new. Reject effects containing `Variable` terms. | Proposed |
-| 11 | Add evaluation rule tests: one test per proposition variant with expected result. | Proposed |
-| 12 | Add three-valued logic tests: `Satisfied`, `Unsatisfied` with correct gap, `Indeterminate` for missing dimension. Verify `Indeterminate` is distinct from `Unsatisfied`. | Proposed |
-| 13 | Add effect application tests: Assert add and idempotent, Retract remove and no-op, Update retract-then-assert. | Proposed |
-| 14 | Add loop test: evaluate returns `Unsatisfied`, apply effects, evaluate returns `Satisfied`. | Proposed |
-| 15 | Add grounding rejection test: `WorldState::new()` with `Variable` term returns `GroundingError`. | Proposed |
+| 1 | Implement `Effect` enum: `Assert(Proposition)`, `Retract(Proposition)`, `Update { subject: Term, dimension: Term, value: Term }`. Derive required traits. | Complete |
+| 2 | Implement `GroundingError` struct with `index: usize` and `variable: String`. | Complete |
+| 3 | Implement `WorldState` struct with `propositions: Vec<Proposition>`. Implement `WorldState::new()` that validates all propositions are ground, rejecting `Variable` and `Derived` terms. Implement `WorldState::empty()`. | Complete |
+| 4 | Implement `WorldState::propositions()` returning `&[Proposition]`. | Complete |
+| 5 | Implement `EvalResult` enum: `Satisfied`, `Unsatisfied { gap: Vec<Proposition> }`, `Indeterminate { missing: Vec<Term> }`. | Complete |
+| 6 | Implement `evaluate()` as pure function from `&WorldState` and `&Proposition` to `EvalResult`. Implement evaluation rules per spec for each proposition variant: `Holds` with condition matching, `Exists`, `Accessible`, `Related`, `All`, `Any`, `Not` with three-valued propagation. | Complete |
+| 7 | Implement `WorldState::satisfies()` as convenience over `evaluate()`. | Complete |
+| 8 | Implement `WorldState::gap()` returning unsatisfied and indeterminate sub-propositions. | Complete |
+| 9 | Implement `WorldState::query()` taking a pattern proposition and returning `Vec<Bindings>` for all matches. Defer full implementation if `Bindings` is not yet available -- stub with empty return and mark for completion in Phase 7. | Complete |
+| 10 | Implement `WorldState::apply()` applying a slice of effects to produce a new `WorldState`. Assert adds or is idempotent. Retract removes or is no-op. Update retracts existing `Holds` for subject+dimension then asserts new. Reject effects containing `Variable` terms. | Complete |
+| 11 | Add evaluation rule tests: one test per proposition variant with expected result. | Complete |
+| 12 | Add three-valued logic tests: `Satisfied`, `Unsatisfied` with correct gap, `Indeterminate` for missing dimension. Verify `Indeterminate` is distinct from `Unsatisfied`. | Complete |
+| 13 | Add effect application tests: Assert add and idempotent, Retract remove and no-op, Update retract-then-assert. | Complete |
+| 14 | Add loop test: evaluate returns `Unsatisfied`, apply effects, evaluate returns `Satisfied`. | Complete |
+| 15 | Add grounding rejection test: `WorldState::new()` with `Variable` term returns `GroundingError`. | Complete |
 
 | Exit criterion | Status |
 |----------------|--------|
-| `evaluate()` produces correct three-valued result for all proposition variants. | Proposed |
-| `Indeterminate` is distinct from `Unsatisfied` -- missing dimension vs wrong value. | Proposed |
-| Effect application is deterministic and sequential. | Proposed |
-| `WorldState::new()` rejects propositions containing `Variable` or `Derived` terms. | Proposed |
-| `WorldState::apply()` returns new state without mutating input. | Proposed |
-| First testable loop passes: evaluate, apply effects, re-evaluate to `Satisfied`. | Proposed |
+| `evaluate()` produces correct three-valued result for all proposition variants. | Complete |
+| `Indeterminate` is distinct from `Unsatisfied` -- missing dimension vs wrong value. | Complete |
+| Effect application is deterministic and sequential. | Complete |
+| `WorldState::new()` rejects propositions containing `Variable` or `Derived` terms. | Complete |
+| `WorldState::apply()` returns new state without mutating input. | Complete |
+| First testable loop passes: evaluate, apply effects, re-evaluate to `Satisfied`. | Complete |
 
 | Dependency closure solved | Status |
 |---------------------------|--------|
-| Provides the evaluation substrate for goal satisfaction checking, gap detection, and effect projection used by planning and goal curation. | Proposed |
+| Provides the evaluation substrate for goal satisfaction checking, gap detection, and effect projection used by planning and goal curation. | Complete |
 
 Verification:
 - `cargo test -p meld-lang effect`
@@ -251,29 +251,29 @@ Key files:
 | Goal | Implement the runtime-constructed operator contract, capability resolution query shape, and multi-dimensional cost algebra. |
 | Dependencies | Phase 2, Phase 3 |
 | Docs | [Operators and Resolution](../../cognitive_architecture/meld-lang/operators.md) |
-| Status | Proposed |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Implement `CostEstimate` struct with `time_ms: u64`, `money_microdollars: u64`, `provider_calls: u32`. Derive required traits. Implement `zero()`, `add()`, `exceeds()`. | Proposed |
-| 2 | Implement `SlotConstraint` struct with `artifact_type_id: String` and `required: bool`. Derive required traits. | Proposed |
-| 3 | Implement `CapabilityRef` struct with `capability_type_id: String` and `capability_version: u32`. Derive required traits. | Proposed |
-| 4 | Implement `Resolution` struct with `requires_inputs: Vec<SlotConstraint>`, `requires_outputs: Vec<SlotConstraint>`, `scope_kind: Option<String>`, `tags: Vec<String>`, `specific: Option<CapabilityRef>`. Derive required traits. | Proposed |
-| 5 | Implement `Operator` struct with `operator_id: String`, `preconditions: Vec<Proposition>`, `effects: Vec<Effect>`, `cost: CostEstimate`, `resolution: Resolution`. Derive required traits. | Proposed |
-| 6 | Add cost algebra tests: addition sums all three dimensions, `exceeds()` returns true if ANY dimension exceeds ceiling, `zero()` is identity for addition. | Proposed |
-| 7 | Add operator construction test: build operator from terms and propositions at runtime, verify serialization round-trip. | Proposed |
-| 8 | Add resolution construction test: verify all fields serialize and deserialize. | Proposed |
+| 1 | Implement `CostEstimate` struct with `time_ms: u64`, `money_microdollars: u64`, `provider_calls: u32`. Derive required traits. Implement `zero()`, `add()`, `exceeds()`. | Complete |
+| 2 | Implement `SlotConstraint` struct with `artifact_type_id: String` and `required: bool`. Derive required traits. | Complete |
+| 3 | Implement `CapabilityRef` struct with `capability_type_id: String` and `capability_version: u32`. Derive required traits. | Complete |
+| 4 | Implement `Resolution` struct with `requires_inputs: Vec<SlotConstraint>`, `requires_outputs: Vec<SlotConstraint>`, `scope_kind: Option<String>`, `tags: Vec<String>`, `specific: Option<CapabilityRef>`. Derive required traits. | Complete |
+| 5 | Implement `Operator` struct with `operator_id: String`, `preconditions: Vec<Proposition>`, `effects: Vec<Effect>`, `cost: CostEstimate`, `resolution: Resolution`. Derive required traits. | Complete |
+| 6 | Add cost algebra tests: addition sums all three dimensions, `exceeds()` returns true if ANY dimension exceeds ceiling, `zero()` is identity for addition. | Complete |
+| 7 | Add operator construction test: build operator from terms and propositions at runtime, verify serialization round-trip. | Complete |
+| 8 | Add resolution construction test: verify all fields serialize and deserialize. | Complete |
 
 | Exit criterion | Status |
 |----------------|--------|
-| Operators constructable at runtime from terms and propositions without compile-time enum variants for specific operator kinds. | Proposed |
-| Cost algebra correct for all three dimensions independently. | Proposed |
-| `exceeds()` returns true if ANY single dimension exceeds the ceiling. | Proposed |
-| All types serialize and deserialize cleanly. | Proposed |
+| Operators constructable at runtime from terms and propositions without compile-time enum variants for specific operator kinds. | Complete |
+| Cost algebra correct for all three dimensions independently. | Complete |
+| `exceeds()` returns true if ANY single dimension exceeds the ceiling. | Complete |
+| All types serialize and deserialize cleanly. | Complete |
 
 | Dependency closure solved | Status |
 |---------------------------|--------|
-| Provides the operator and cost contract consumed by Composition steps and Method cost comparison. | Proposed |
+| Provides the operator and cost contract consumed by Composition steps and Method cost comparison. | Complete |
 
 Verification:
 - `cargo test -p meld-lang operator`
@@ -297,37 +297,37 @@ Key files:
 | Goal | Implement the composition graph and the structural validation function. Compositions are the plan representation in the language. |
 | Dependencies | Phase 4 |
 | Docs | [Compositions](../../cognitive_architecture/meld-lang/compositions.md) |
-| Status | Proposed |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Implement `StepKind` enum: `Op(Operator)`, `Goal(Proposition)`. Derive required traits. | Proposed |
-| 2 | Implement `Step` struct with `step_id: String` and `kind: StepKind`. Derive required traits. | Proposed |
-| 3 | Implement `EdgeKind` enum: `Ordering`, `DataFlow { artifact_type: String }`, `Conditional { field_path: String, guard: Condition }`. Derive required traits. | Proposed |
-| 4 | Implement `Edge` struct with `from: String`, `to: String`, `kind: EdgeKind`. Derive required traits. | Proposed |
-| 5 | Implement `Composition` struct with `steps: Vec<Step>` and `edges: Vec<Edge>`. Derive required traits. | Proposed |
-| 6 | Implement `ValidationError` enum: `DanglingEdge`, `DuplicateStepId`, `CycleDetected`, `ArtifactSourceMismatch`, `InvalidGuardOnGoalStep`, `UnboundVariable`. | Proposed |
-| 7 | Implement `ValidationWarning` enum: `DisconnectedStep`, `UnusedEffects`, `HighCost`. | Proposed |
-| 8 | Implement `ValidationResult` struct with `valid: bool`, `errors: Vec<ValidationError>`, `warnings: Vec<ValidationWarning>`. | Proposed |
-| 9 | Implement `validate()` as pure function. Check: dangling edges, duplicate step IDs, cycles via topological sort, artifact source mismatch against operator resolution outputs, invalid guard on Goal step, unbound variables in post-substitution positions. | Proposed |
-| 10 | Implement `CostEstimate::aggregate()` summing operator costs across a composition. | Proposed |
-| 11 | Add validation tests: valid composition passes with no errors. | Proposed |
-| 12 | Add error tests: one test per `ValidationError` variant triggering on correct input. | Proposed |
-| 13 | Add cycle detection tests: simple cycle, transitive cycle, valid DAG passes. | Proposed |
-| 14 | Add warning tests: disconnected step, unused effects. | Proposed |
-| 15 | Add construction tests: single-step, linear chain, parallel branches, conditional edges. | Proposed |
+| 1 | Implement `StepKind` enum: `Op(Operator)`, `Goal(Proposition)`. Derive required traits. | Complete |
+| 2 | Implement `Step` struct with `step_id: String` and `kind: StepKind`. Derive required traits. | Complete |
+| 3 | Implement `EdgeKind` enum: `Ordering`, `DataFlow { artifact_type: String }`, `Conditional { field_path: String, guard: Condition }`. Derive required traits. | Complete |
+| 4 | Implement `Edge` struct with `from: String`, `to: String`, `kind: EdgeKind`. Derive required traits. | Complete |
+| 5 | Implement `Composition` struct with `steps: Vec<Step>` and `edges: Vec<Edge>`. Derive required traits. | Complete |
+| 6 | Implement `ValidationError` enum: `DanglingEdge`, `DuplicateStepId`, `CycleDetected`, `ArtifactSourceMismatch`, `InvalidGuardOnGoalStep`, `UnboundVariable`. | Complete |
+| 7 | Implement `ValidationWarning` enum: `DisconnectedStep`, `UnusedEffects`, `HighCost`. | Complete |
+| 8 | Implement `ValidationResult` struct with `valid: bool`, `errors: Vec<ValidationError>`, `warnings: Vec<ValidationWarning>`. | Complete |
+| 9 | Implement `validate()` as pure function. Check: dangling edges, duplicate step IDs, cycles via topological sort, artifact source mismatch against operator resolution outputs, invalid guard on Goal step, unbound variables in post-substitution positions. | Complete |
+| 10 | Implement `CostEstimate::aggregate()` summing operator costs across a composition. | Complete |
+| 11 | Add validation tests: valid composition passes with no errors. | Complete |
+| 12 | Add error tests: one test per `ValidationError` variant triggering on correct input. | Complete |
+| 13 | Add cycle detection tests: simple cycle, transitive cycle, valid DAG passes. | Complete |
+| 14 | Add warning tests: disconnected step, unused effects. | Complete |
+| 15 | Add construction tests: single-step, linear chain, parallel branches, conditional edges. | Complete |
 
 | Exit criterion | Status |
 |----------------|--------|
-| Compositions constructable as data from operators and propositions. | Proposed |
-| `validate()` catches all structural errors without access to capability catalog. | Proposed |
-| `validate()` does NOT check resolution or goal achievement. | Proposed |
-| Cycle detection correct for complex graphs. | Proposed |
-| `aggregate()` sums costs across all operator steps. | Proposed |
+| Compositions constructable as data from operators and propositions. | Complete |
+| `validate()` catches all structural errors without access to capability catalog. | Complete |
+| `validate()` does NOT check resolution or goal achievement. | Complete |
+| Cycle detection correct for complex graphs. | Complete |
+| `aggregate()` sums costs across all operator steps. | Complete |
 
 | Dependency closure solved | Status |
 |---------------------------|--------|
-| Provides the plan representation consumed by Method templates, substitution, and the planning loop. | Proposed |
+| Provides the plan representation consumed by Method templates, substitution, and the planning loop. | Complete |
 
 Verification:
 - `cargo test -p meld-lang composition`
@@ -353,28 +353,28 @@ Key files:
 | Goal | Implement the Goal type with lifecycle, priority, source, and agent identity. Goals are propositions with operational metadata. |
 | Dependencies | Phase 2, Phase 4 |
 | Docs | [Goals and Methods](../../cognitive_architecture/meld-lang/goals_and_methods.md), [Goals](../../cognitive_architecture/execution/goals/README.md) |
-| Status | Proposed |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Implement `GoalPriority` struct with `urgency: u32` and `cost_ceiling: Option<CostEstimate>`. Derive required traits. | Proposed |
-| 2 | Implement `GoalSource` enum: `BeliefDivergence { dimension: String, observed: String, desired: String }`, `UserDirected { directive: String }`, `Maintenance { invariant_description: String }`, `Decomposed { parent_goal_id: String }`. Derive required traits. | Proposed |
-| 3 | Implement `GoalLifecycle` enum: `Proposed`, `Active`, `Suspended { reason: String }`, `Satisfied { at_seq: u64 }`, `Abandoned { reason: String }`. Derive required traits including `Eq` on `GoalLifecycle`. | Proposed |
-| 4 | Implement `Goal` struct with `goal_id: String`, `agent_id: String`, `target: Proposition`, `priority: GoalPriority`, `source: GoalSource`, `lifecycle: GoalLifecycle`. Derive required traits. | Proposed |
-| 5 | Add goal construction test: build goal from proposition target at runtime, verify round-trip. | Proposed |
-| 6 | Add test: goal target is a ground `Proposition`, verify it works with `evaluate()` from Phase 3. | Proposed |
-| 7 | Add test: lifecycle transitions are expressible as value changes, no state machine enforcement in `meld-lang`. | Proposed |
+| 1 | Implement `GoalPriority` struct with `urgency: u32` and `cost_ceiling: Option<CostEstimate>`. Derive required traits. | Complete |
+| 2 | Implement `GoalSource` enum: `BeliefDivergence { dimension: String, observed: String, desired: String }`, `UserDirected { directive: String }`, `Maintenance { invariant_description: String }`, `Decomposed { parent_goal_id: String }`. Derive required traits. | Complete |
+| 3 | Implement `GoalLifecycle` enum: `Proposed`, `Active`, `Suspended { reason: String }`, `Satisfied { at_seq: u64 }`, `Abandoned { reason: String }`. Derive required traits including `Eq` on `GoalLifecycle`. | Complete |
+| 4 | Implement `Goal` struct with `goal_id: String`, `agent_id: String`, `target: Proposition`, `priority: GoalPriority`, `source: GoalSource`, `lifecycle: GoalLifecycle`. Derive required traits. | Complete |
+| 5 | Add goal construction test: build goal from proposition target at runtime, verify round-trip. | Complete |
+| 6 | Add test: goal target is a ground `Proposition`, verify it works with `evaluate()` from Phase 3. | Complete |
+| 7 | Add test: lifecycle transitions are expressible as value changes, no state machine enforcement in `meld-lang`. | Complete |
 
 | Exit criterion | Status |
 |----------------|--------|
-| Goals constructable at runtime by composing terms into a proposition target. | Proposed |
-| Goal target uses the same `Proposition` type as world state and operator preconditions. | Proposed |
-| All goal types serialize and deserialize correctly. | Proposed |
-| No compile-time enum for specific goal kinds. | Proposed |
+| Goals constructable at runtime by composing terms into a proposition target. | Complete |
+| Goal target uses the same `Proposition` type as world state and operator preconditions. | Complete |
+| All goal types serialize and deserialize correctly. | Complete |
+| No compile-time enum for specific goal kinds. | Complete |
 
 | Dependency closure solved | Status |
 |---------------------------|--------|
-| Provides the execution input contract consumed by the planning loop, goal set, and method matching. | Proposed |
+| Provides the execution input contract consumed by the planning loop, goal set, and method matching. | Complete |
 
 Verification:
 - `cargo test -p meld-lang goal`
@@ -396,36 +396,36 @@ Key files:
 | Goal | Implement methods, pattern unification, binding management, and composition substitution. This completes the planning loop's ability to match goals to decompositions. |
 | Dependencies | Phase 5, Phase 6 |
 | Docs | [Goals and Methods](../../cognitive_architecture/meld-lang/goals_and_methods.md) |
-| Status | Proposed |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Implement `Bindings` struct wrapping `HashMap<String, Term>`. Implement `empty()`, `bind()` returning `Option<Bindings>`, `get()`, `merge()` returning `Option<Bindings>`, `iter()`. All operations return new values. | Proposed |
-| 2 | Implement `unify()` as pure function from pattern `&Proposition` and concrete `&Proposition` to `Option<Bindings>`. Implement rules: `Variable` binds to any concrete term, concrete terms match by equality, same variable appearing twice must bind to same term, `All`/`Any`/`Not` unify structurally with pairwise children. | Proposed |
-| 3 | Implement `SubstitutionError` struct with `unbound_variables: Vec<UnboundVariable>`. Implement `UnboundVariable` struct with `step_id: String` and `variable: String`. | Proposed |
-| 4 | Implement `substitute()` as pure function from `&Composition` and `&Bindings` to `Result<Composition, SubstitutionError>`. Walk all `Term` positions in operators preconditions, effects, resolution hints, and sub-goal propositions. Replace `Variable` with bound value. Error if any variable is unbound. | Proposed |
-| 5 | Implement `Method` struct with `method_id: String`, `trigger: Proposition`, `preconditions: Vec<Proposition>`, `composition: Composition`, `net_effects: Vec<Effect>`, `cost: CostEstimate`, `preference: u32`. Derive required traits. | Proposed |
-| 6 | Complete `WorldState::query()` stub from Phase 3 using `Bindings`. | Proposed |
-| 7 | Add unification tests: successful bind, shape mismatch fails, double-bind conflict fails. | Proposed |
-| 8 | Add unification tests: structural unification of `All`/`Any`/`Not` with variable children. | Proposed |
-| 9 | Add bindings tests: immutable semantics, merge success, merge conflict returns `None`. | Proposed |
-| 10 | Add substitution tests: all variables replaced, unbound variable produces error with correct `step_id` and `variable`, nested operator and sub-goal substitution. | Proposed |
-| 11 | Add method matching flow test: `unify` trigger against goal target, check preconditions against world state, verify net effects achieve goal via `apply` and `evaluate`, substitute composition, validate result. | Proposed |
-| 12 | Add method JSON deserialization test: serialize a `Method` to JSON string, deserialize, verify structural equality with programmatic construction. | Proposed |
+| 1 | Implement `Bindings` struct wrapping `HashMap<String, Term>`. Implement `empty()`, `bind()` returning `Option<Bindings>`, `get()`, `merge()` returning `Option<Bindings>`, `iter()`. All operations return new values. | Complete |
+| 2 | Implement `unify()` as pure function from pattern `&Proposition` and concrete `&Proposition` to `Option<Bindings>`. Implement rules: `Variable` binds to any concrete term, concrete terms match by equality, same variable appearing twice must bind to same term, `All`/`Any`/`Not` unify structurally with pairwise children. | Complete |
+| 3 | Implement `SubstitutionError` struct with `unbound_variables: Vec<UnboundVariable>`. Implement `UnboundVariable` struct with `step_id: String` and `variable: String`. | Complete |
+| 4 | Implement `substitute()` as pure function from `&Composition` and `&Bindings` to `Result<Composition, SubstitutionError>`. Walk all `Term` positions in operators preconditions, effects, resolution hints, and sub-goal propositions. Replace `Variable` with bound value. Error if any variable is unbound. | Complete |
+| 5 | Implement `Method` struct with `method_id: String`, `trigger: Proposition`, `preconditions: Vec<Proposition>`, `composition: Composition`, `net_effects: Vec<Effect>`, `cost: CostEstimate`, `preference: u32`. Derive required traits. | Complete |
+| 6 | Complete `WorldState::query()` stub from Phase 3 using `Bindings`. | Complete |
+| 7 | Add unification tests: successful bind, shape mismatch fails, double-bind conflict fails. | Complete |
+| 8 | Add unification tests: structural unification of `All`/`Any`/`Not` with variable children. | Complete |
+| 9 | Add bindings tests: immutable semantics, merge success, merge conflict returns `None`. | Complete |
+| 10 | Add substitution tests: all variables replaced, unbound variable produces error with correct `step_id` and `variable`, nested operator and sub-goal substitution. | Complete |
+| 11 | Add method matching flow test: `unify` trigger against goal target, check preconditions against world state, verify net effects achieve goal via `apply` and `evaluate`, substitute composition, validate result. | Complete |
+| 12 | Add method JSON deserialization test: serialize a `Method` to JSON string, deserialize, verify structural equality with programmatic construction. | Complete |
 
 | Exit criterion | Status |
 |----------------|--------|
-| `unify()` correctly binds variables from pattern to concrete proposition. | Proposed |
-| `unify()` fails cleanly on shape mismatch or double-bind conflict. | Proposed |
-| `substitute()` replaces all variables in a composition's operators and sub-goals. | Proposed |
-| `substitute()` fails with explicit error listing unbound variables. | Proposed |
-| Methods serialize and deserialize from JSON identically to programmatic construction. | Proposed |
-| `Bindings` is immutable -- `bind()` and `merge()` return new values. | Proposed |
-| `WorldState::query()` returns correct bindings for pattern matches. | Proposed |
+| `unify()` correctly binds variables from pattern to concrete proposition. | Complete |
+| `unify()` fails cleanly on shape mismatch or double-bind conflict. | Complete |
+| `substitute()` replaces all variables in a composition's operators and sub-goals. | Complete |
+| `substitute()` fails with explicit error listing unbound variables. | Complete |
+| Methods serialize and deserialize from JSON identically to programmatic construction. | Complete |
+| `Bindings` is immutable -- `bind()` and `merge()` return new values. | Complete |
+| `WorldState::query()` returns correct bindings for pattern matches. | Complete |
 
 | Dependency closure solved | Status |
 |---------------------------|--------|
-| Provides the planning optimization path for method matching, binding substitution, and cached decomposition reuse. Completes the full type surface for the typed loop integration. | Proposed |
+| Provides the planning optimization path for method matching, binding substitution, and cached decomposition reuse. Completes the full type surface for the typed loop integration. | Complete |
 
 Verification:
 - `cargo test -p meld-lang method`
@@ -455,32 +455,32 @@ Key files:
 | Goal | Prove the complete evaluation loop end-to-end. Wire `meld-lang` as a dependency into `meld-execution` and `meld-world-model`. This is the typed loop from `design/plan/integration/typed_loop.md`. |
 | Dependencies | Phase 0 through Phase 7 |
 | Docs | [Lang Requirements](../../cognitive_architecture/meld-lang/requirements.md), [World State and Evaluation](../../cognitive_architecture/meld-lang/world_state.md), [Typed Loop Integration](../integration/typed_loop.md) |
-| Status | Proposed |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Write integration test: full docs_freshness loop. Construct initial `WorldState` with docs_freshness at 0.3. Construct `Goal` targeting docs_freshness above 0.7. Evaluate: `Unsatisfied`. Match method trigger via `unify()`. Substitute bindings into composition. Validate composition. Apply method effects. Re-evaluate: `Satisfied`. | Proposed |
-| 2 | Write integration test: indeterminate path. Construct goal about an unknown dimension not in world state. Evaluate: `Indeterminate`. Construct observation composition. Apply assert effect adding the dimension. Re-evaluate: now `Unsatisfied` or `Satisfied` depending on value. | Proposed |
-| 3 | Write integration test: method loaded from JSON string. Deserialize method. Use it in the matching flow. Verify identical behavior to programmatic construction. | Proposed |
-| 4 | Write integration test: multi-step composition with data flow and conditional edge. Verify structural validation passes. | Proposed |
-| 5 | Write integration test: recursive decomposition. Composition with `Goal` steps. Verify validation passes and sub-goals are inspectable. | Proposed |
-| 6 | Write serialization compatibility test: pin a known JSON document for each major type. Verify it deserializes correctly. This guards against accidental serialization format changes. | Proposed |
-| 7 | Add `meld-lang` as a dependency to `crates/meld-execution/Cargo.toml`. No code changes in `meld-execution`. Verify `cargo check -p meld-execution` succeeds. | Proposed |
-| 8 | Add `meld-lang` as a dependency to `crates/meld-world-model/Cargo.toml`. No code changes in `meld-world-model`. Verify `cargo check -p meld-world-model` succeeds. | Proposed |
-| 9 | Verify all public types are re-exported from `lib.rs` for clean consumer imports. | Proposed |
+| 1 | Write integration test: full docs_freshness loop. Construct initial `WorldState` with docs_freshness at 0.3. Construct `Goal` targeting docs_freshness above 0.7. Evaluate: `Unsatisfied`. Match method trigger via `unify()`. Substitute bindings into composition. Validate composition. Apply method effects. Re-evaluate: `Satisfied`. | Complete |
+| 2 | Write integration test: indeterminate path. Construct goal about an unknown dimension not in world state. Evaluate: `Indeterminate`. Construct observation composition. Apply assert effect adding the dimension. Re-evaluate: now `Unsatisfied` or `Satisfied` depending on value. | Complete |
+| 3 | Write integration test: method loaded from JSON string. Deserialize method. Use it in the matching flow. Verify identical behavior to programmatic construction. | Complete |
+| 4 | Write integration test: multi-step composition with data flow and conditional edge. Verify structural validation passes. | Complete |
+| 5 | Write integration test: recursive decomposition. Composition with `Goal` steps. Verify validation passes and sub-goals are inspectable. | Complete |
+| 6 | Write serialization compatibility test: pin a known JSON document for each major type. Verify it deserializes correctly. This guards against accidental serialization format changes. | Complete |
+| 7 | Add `meld-lang` as a dependency to `crates/meld-execution/Cargo.toml`. No code changes in `meld-execution`. Verify `cargo check -p meld-execution` succeeds. | Complete |
+| 8 | Add `meld-lang` as a dependency to `crates/meld-world-model/Cargo.toml`. No code changes in `meld-world-model`. Verify `cargo check -p meld-world-model` succeeds. | Complete |
+| 9 | Verify all public types are re-exported from `lib.rs` for clean consumer imports. | Complete |
 
 | Exit criterion | Status |
 |----------------|--------|
-| Complete evaluation loop proven end-to-end in a single test function with no external dependencies. | Proposed |
-| Three-valued evaluation distinction produces correct planning-relevant results. | Proposed |
-| Method loading from serialized form works identically to programmatic construction. | Proposed |
-| Serialization compatibility test pins at least one JSON document per major type. | Proposed |
-| `meld-execution` and `meld-world-model` compile with `meld-lang` declared as dependency. | Proposed |
-| All public types re-exported from `lib.rs`. | Proposed |
+| Complete evaluation loop proven end-to-end in a single test function with no external dependencies. | Complete |
+| Three-valued evaluation distinction produces correct planning-relevant results. | Complete |
+| Method loading from serialized form works identically to programmatic construction. | Complete |
+| Serialization compatibility test pins at least one JSON document per major type. | Complete |
+| `meld-execution` and `meld-world-model` compile with `meld-lang` declared as dependency. | Complete |
+| All public types re-exported from `lib.rs`. | Complete |
 
 | Dependency closure solved | Status |
 |---------------------------|--------|
-| Proves the typed loop integration target from `design/plan/integration/typed_loop.md`. Unblocks world model projection, goal curation, and runtime planning substrate targets. | Proposed |
+| Proves the typed loop integration target from `design/plan/integration/typed_loop.md`. Unblocks world model projection, goal curation, and runtime planning substrate targets. | Complete |
 
 Verification:
 - `cargo test -p meld-lang`

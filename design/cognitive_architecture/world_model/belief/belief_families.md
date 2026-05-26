@@ -8,33 +8,56 @@ Scope: belief family concept, grounding contract, and worked examples using the 
 
 A belief family is the grounding contract for one concern class.
 
-The belief framework defines containers: `BeliefKey`, `EvidenceItem`, `BeliefRevision`, `BeliefView`. Those containers carry typed slots — `BeliefDimension`, `BeliefPredicate`, `EvidenceValue`, `PosteriorSummary` — that the framework deliberately leaves opaque. Without grounding, the framework tracks claims about nothing.
+The belief framework defines containers: `BeliefKey`, `EvidenceItem`, `BeliefRevision`, `BeliefView`. Those containers carry runtime content slots — dimension id, predicate id, evidence schema id, evidence payload, and posterior summary — that the framework deliberately leaves opaque. Without grounding, the framework tracks claims about nothing.
 
-A belief family fills those slots for one kind of question. It defines what the belief is about, what evidence looks like, what the posterior means, which comparator runs assessment, and how cost and value are measured for goal curation. The family is the unit that makes a belief inspectable, calibratable, and semantically meaningful.
+A belief family fills those slots for one kind of question. It defines what the belief is about, what evidence looks like, what the posterior means, which comparator engine runs assessment, and how cost and value are measured for goal curation. The family is the unit that makes a belief inspectable, calibratable, and semantically meaningful.
 
-Families are not framework internals. They are domain concerns expressed in framework vocabulary. Each family should be readable by someone who understands the concern but has not read the ECS specifications.
+Families are not framework internals. They are domain concerns expressed in framework vocabulary. Each family should be readable by someone who understands the concern but has not read the consolidated domain specs.
 
-This document defines the concept of a belief family, the shared grounding types, and the registration contract that every family must satisfy. The concrete families defined here are worked examples rooted in the docs writer concern class. They demonstrate the grounding pattern, not an exhaustive family registry. Production families will be defined alongside the domains and capabilities that produce their evidence.
+This document defines the concept of a belief family, the shared grounding types, and the runtime configuration contract that every family must satisfy. The concrete families defined here are worked examples rooted in the docs writer concern class. They demonstrate the grounding pattern, not an exhaustive family registry. Production families will be defined as external configuration alongside the domains and capabilities that produce their evidence.
+
+## Runtime Configuration Boundary
+
+Belief family content is runtime configuration, not framework code.
+
+The belief framework may define generic containers, schema validators, comparator engines, stores, leases, revision records, and planner-facing views. It must not define a Rust module, enum variant, comparator type, or source mapping branch for a specific belief family.
+
+`docs_freshness` is the first loaded family configuration. It is not a Rust subsystem.
+
+Family configuration supplies:
+
+- family id
+- dimension id
+- predicate ids
+- evidence schema ids
+- source mappings
+- comparator engine id
+- comparator parameters
+- default prior
+- freshness policy
+- planner projection fields
+- config version
+
+Revisions must record the config id or config snapshot hash used for assessment so replay is stable when runtime configuration changes.
 
 ## Shared Grounding Types
 
-These types appear across all families. They are the concrete shapes that fill the opaque framework slots. The enum variants shown here are drawn from the worked examples that follow. Production variants will grow as new families are registered.
+These types appear across all families. They are the concrete shapes that fill the opaque framework slots. The examples shown here are runtime ids and schema names drawn from the worked examples that follow. Production values come from loaded family configuration.
 
-### `BeliefDimension`
+### `BeliefDimensionId`
 
-The axis of assessment. One subject may have beliefs along many dimensions.
+The runtime id for the axis of assessment. One subject may have beliefs along many dimensions.
 
 ```rust
-enum BeliefDimension {
-    // Examples from the docs writer concern class
-    ContentFreshness,
-    TestHealth,
-    ApiStability,
-    BuildValidity,
-    ExecutionCost { action_class: ActionClass },
-    ActionValue { concern_class: ConcernClass },
-    // ... additional variants registered by other families
-}
+struct BeliefDimensionId(String);
+
+// Example runtime values:
+// content_freshness
+// test_health
+// api_stability
+// build_validity
+// execution_cost
+// action_value
 ```
 
 A dimension is not a question. It is the kind of question. The question becomes specific when scoped by subject, perspective, and branch.
@@ -65,52 +88,16 @@ Predicates are evaluated by the world model agent during goal curation and satis
 
 ### `EvidenceValue`
 
-The normalized claim content carried by an `EvidenceItem`. Tagged by family so comparators can extract typed factors.
+The normalized claim content carried by an `EvidenceItem`. Tagged by runtime evidence schema id so comparator engines can extract typed factors.
 
 ```rust
-enum EvidenceValue {
-    // Content freshness
-    FileChanged { lines_added: u32, lines_removed: u32 },
-    ApiSurfaceChanged {
-        public_api_changed: bool,
-        new_exports: u32,
-        removed_exports: u32,
-        signature_changes: u32,
-    },
-    ContentAge { days_since_update: u32, no_prior_record: bool },
-    CommitActivity { commit_count: u32, since_reference: DomainObjectRef },
-    ContentWritten { frame_ref: DomainObjectRef, frame_type: FrameType },
-
-    // Test health
-    TestResult { passed: u32, failed: u32, skipped: u32, total: u32 },
-    TestFlakiness { flaky_count: u32, window_runs: u32 },
-
-    // API stability
-    ExportDelta { added: Vec<String>, removed: Vec<String>, changed: Vec<String> },
-
-    // Build validity
-    BuildOutcome { success: bool, error_count: u32, warning_count: u32 },
-    ArtifactState { artifact_ref: DomainObjectRef, valid: bool },
-
-    // Execution cost (meta-belief)
-    TaskOutcome {
-        elapsed_ms: u64,
-        token_count: u64,
-        success: bool,
-        retry_count: u32,
-    },
-
-    // Action value (meta-belief)
-    DownstreamBeliefShift {
-        target_belief_key: BeliefKey,
-        prior_posterior: f64,
-        new_posterior: f64,
-        lag_ms: u64,
-    },
+struct EvidenceValue {
+    schema_id: EvidenceSchemaId,
+    payload: serde_json::Value,
 }
 ```
 
-Each variant carries the minimum typed fields that a comparator needs to extract factors. Richer source data remains in the spine fact — the evidence value is the belief-facing projection. These variants are drawn from the worked examples below. New families register new variants.
+Each runtime schema carries the minimum typed fields that a comparator engine needs to extract factors. Richer source data remains in the spine fact — the evidence value is the belief-facing projection. The schema names in the worked examples below are loaded configuration values. New families add new runtime schemas, not Rust enum variants.
 
 ### `PosteriorSummary`
 
@@ -119,11 +106,11 @@ The assessed answer to the belief question. Shape depends on what the family is 
 ```rust
 enum PosteriorSummary {
     /// Scalar probability: "how likely is X?"
-    /// Used by: ContentFreshness, TestHealth, ApiStability, BuildValidity
+    /// Used by scalar probability families
     Probability { value: f64 },
 
     /// Cost or value distribution: "what does X cost / produce?"
-    /// Used by: ExecutionCost, ActionValue
+    /// Used by cost and value families
     Distribution { mean: f64, variance: f64, sample_count: u32 },
 }
 ```
@@ -134,7 +121,7 @@ The `Probability` variant is the common case. A belief about "are docs stale" re
 
 ## Worked Examples
 
-The families below are concrete examples grounded in the docs writer concern class and its adjacent concerns. Content Freshness is the primary example — it is traced end-to-end from spine fact through goal satisfaction. The remaining families demonstrate how the same pattern applies to related concerns, how cross-family evidence flows, and how meta-beliefs (cost and value) feed goal curation.
+The families below are concrete runtime configuration examples grounded in the docs writer concern class and its adjacent concerns. Content freshness is the primary example — it is traced end-to-end from spine fact through goal satisfaction. The remaining families demonstrate how the same pattern applies to related concerns, how cross-family evidence flows, and how meta-beliefs feed goal curation.
 
 These are not the only belief families the system will need. They are the first families that exercise the full flywheel and establish the grounding pattern for families defined later.
 
@@ -146,7 +133,7 @@ The docs writer's belief. The first family that exercises the full flywheel.
 
 | Field | Value |
 |---|---|
-| Dimension | `ContentFreshness` |
+| Dimension id | `content_freshness` |
 | Subject | `DomainObjectRef` for any documented workspace node |
 | Question | "Is this node's documentation stale relative to source changes?" |
 | Posterior shape | `Probability` — probability that docs are stale, range [0.0, 1.0] |
@@ -155,11 +142,11 @@ The docs writer's belief. The first family that exercises the full flywheel.
 
 | Source | Spine domain | Evidence value | Polarity |
 |---|---|---|---|
-| File changed in node scope | `sensory.workspace` | `FileChanged { lines_added, lines_removed }` | Supporting (staleness) |
-| Public API changed | `execution` (ast_change_impact artifact) | `ApiSurfaceChanged { public_api_changed, ... }` | Supporting (staleness) |
-| Commits accumulated | `sensory.git` | `CommitActivity { commit_count, since_reference }` | Supporting (staleness) |
-| Time since last doc update | `context` (frame age computation) | `ContentAge { days_since_update, no_prior_record }` | Supporting (staleness) |
-| Documentation written | `execution` (frame_written event) | `ContentWritten { frame_ref, frame_type }` | Contradicting (freshness) |
+| File changed in node scope | `sensory.workspace` | `file_changed` schema with `lines_added`, `lines_removed` | Supporting |
+| Public API changed | `execution` | `api_surface_changed` schema with `public_api_changed` | Supporting |
+| Commits accumulated | `sensory.git` | `commit_activity` schema with `commit_count`, `since_reference` | Supporting |
+| Time since last doc update | `context` | `content_age` schema with `days_since_update`, `no_prior_record` | Supporting |
+| Documentation written | `execution` | `content_written` schema with `frame_ref`, `frame_type` | Contradicting |
 
 ### Comparator
 
@@ -167,12 +154,12 @@ The docs writer's belief. The first family that exercises the full flywheel.
 
 | Factor | Source evidence | Weight | Normalization |
 |---|---|---|---|
-| `age` | `ContentAge.days_since_update` | 0.35 | `min(days / 30.0, 1.0)` |
-| `churn` | `FileChanged.lines_added + lines_removed` | 0.30 | `min(lines / 150.0, 1.0)` |
-| `api_change` | `ApiSurfaceChanged.public_api_changed` | 0.25 | `1.0 if true, 0.0 if false` |
-| `commit_rate` | `CommitActivity.commit_count` | 0.10 | `min(commits / 10.0, 1.0)` |
+| `age` | `content_age.days_since_update` | 0.35 | `min(days / 30.0, 1.0)` |
+| `churn` | `file_changed.lines_added + lines_removed` | 0.30 | `min(lines / 150.0, 1.0)` |
+| `api_change` | `api_surface_changed.public_api_changed` | 0.25 | `1.0 if true, 0.0 if false` |
+| `commit_rate` | `commit_activity.commit_count` | 0.10 | `min(commits / 10.0, 1.0)` |
 
-Prior: `0.3` (static default), refined by prior store keyed on `(subject, ContentFreshness)`.
+Prior: `0.3` as a configured default, refined by prior store keyed on subject and runtime dimension id.
 
 Posterior: `sigmoid(logit_prior + evidence_score * 3.0)`
 
@@ -182,7 +169,7 @@ Decision threshold for goal curation: `0.6` — posterior above this means the a
 
 ```
 BeliefViewSummary {
-    belief_key: ("src/task/executor.rs", ContentFreshness, default, main),
+    belief_key: ("src/task/executor.rs", "content_freshness", default, main),
     status: Active,
     posterior_summary: Probability { value: 0.74 },
     confidence: 0.74,
@@ -208,27 +195,27 @@ The posterior says "docs are probably stale." The freshness says "we assessed th
 
 | Concern class | `content_freshness` |
 |---|---|
-| Subscription filter | all belief keys where dimension = `ContentFreshness` |
+| Subscription filter | all belief keys where dimension id = `content_freshness` |
 | Desired state | `PosteriorBelow { threshold: 0.3 }` — docs are probably not stale |
 | Satisfaction | `All { PosteriorBelow(0.3), FresherThan(1 hour) }` |
 | Action class | `docs_writer_update` |
-| Cost measurement | elapsed_ms + token_count from `TaskOutcome` evidence |
-| Value measurement | downstream `ContentFreshness` posterior drop correlated with execution |
+| Cost measurement | elapsed_ms + token_count from `task_outcome` evidence |
+| Value measurement | downstream `content_freshness` posterior drop correlated with execution |
 
 ### End-to-End Trace
 
 ```
-Spine fact: sensory.workspace.file_change (src/task/executor.rs, +52 -35)
-  → EvidenceValue::FileChanged { lines_added: 52, lines_removed: 35 }
-  → BeliefKey("src/task/executor.rs", ContentFreshness, default, main)
+Spine fact: sensory.workspace.file_change for src/task/executor.rs
+  → EvidenceValue { schema_id: "file_changed", payload: { lines_added: 52, lines_removed: 35 } }
+  → BeliefKey("src/task/executor.rs", "content_freshness", default, main)
   → BayesianComparator(prior: 0.3, age: 0.47, churn: 0.58, api: 1.0, commits: 0.8)
   → PosteriorSummary::Probability { value: 0.74 }
   → BeliefView { status: Active, posterior: 0.74, confidence: 0.74 }
   → Agent cost-benefit: value(0.74 divergence) > cost(~8min) → act
   → Goal: "update docs for executor.rs" { desired: PosteriorBelow(0.3) }
   → Execution: docs_writer_update task
-  → Spine fact: execution.frame_written (src/task/executor.rs, readme)
-  → EvidenceValue::ContentWritten { frame_ref: ..., frame_type: readme }
+  → Spine fact: execution.frame_written for src/task/executor.rs
+  → EvidenceValue { schema_id: "content_written", payload: { frame_ref: ..., frame_type: readme } }
   → BayesianComparator(prior: 0.74, age: 0.0, churn: 0.0, api: 0.0, commits: 0.0)
   → PosteriorSummary::Probability { value: 0.05 }
   → BeliefView { status: Active, posterior: 0.05 }
@@ -243,7 +230,7 @@ Spine fact: sensory.workspace.file_change (src/task/executor.rs, +52 -35)
 
 | Field | Value |
 |---|---|
-| Dimension | `TestHealth` |
+| Dimension id | `test_health` |
 | Subject | `DomainObjectRef` for a test suite, module, or workspace |
 | Question | "Do tests pass reliably?" |
 | Posterior shape | `Probability` — probability that tests are healthy, range [0.0, 1.0] |
@@ -254,10 +241,10 @@ Note: polarity is inverted from content freshness. A high posterior here means g
 
 | Source | Spine domain | Evidence value | Polarity |
 |---|---|---|---|
-| Test run completed | `execution` | `TestResult { passed, failed, skipped, total }` | Direct observation |
-| Flakiness detected | `sensory.test` or `execution` | `TestFlakiness { flaky_count, window_runs }` | Contradicting (undermines health) |
-| Source changed in test scope | `sensory.workspace` | `FileChanged { lines_added, lines_removed }` | Supporting (uncertainty — tests may need re-run) |
-| Build failed | `execution` | `BuildOutcome { success: false, ... }` | Contradicting (tests cannot pass if build fails) |
+| Test run completed | `execution` | `test_result` schema | Direct observation |
+| Flakiness detected | `sensory.test` or `execution` | `test_flakiness` schema | Contradicting |
+| Source changed in test scope | `sensory.workspace` | `file_changed` schema | Supporting |
+| Build failed | `execution` | `build_outcome` schema | Contradicting |
 
 ### Comparator
 
@@ -269,8 +256,8 @@ Dual comparator:
 
 | Factor | Source evidence | Weight | Normalization |
 |---|---|---|---|
-| `pass_rate` | `TestResult.passed / total` | 0.50 | direct ratio |
-| `flake_rate` | `TestFlakiness.flaky_count / window_runs` | 0.30 | inverse: `1.0 - rate` |
+| `pass_rate` | `test_result.passed / total` | 0.50 | direct ratio |
+| `flake_rate` | `test_flakiness.flaky_count / window_runs` | 0.30 | inverse: `1.0 - rate` |
 | `recency` | time since last test run | 0.20 | `1.0 - min(hours / 24.0, 1.0)` |
 
 The rule comparator handles the hard signal (tests failed right now). The Bayesian comparator handles the soft signal (tests have been unreliable over time). The revision records which comparator produced the posterior and whether the result is settled (rule) or provisional (Bayesian without recent data).
@@ -292,7 +279,7 @@ The rule comparator handles the hard signal (tests failed right now). The Bayesi
 
 | Field | Value |
 |---|---|
-| Dimension | `ApiStability` |
+| Dimension id | `api_stability` |
 | Subject | `DomainObjectRef` for a module, crate, or public interface boundary |
 | Question | "Has the public API changed in ways that downstream consumers need to know about?" |
 | Posterior shape | `Probability` — probability of material API change, range [0.0, 1.0] |
@@ -301,10 +288,10 @@ The rule comparator handles the hard signal (tests failed right now). The Bayesi
 
 | Source | Spine domain | Evidence value | Polarity |
 |---|---|---|---|
-| AST impact analysis | `execution` (ast_change_impact artifact) | `ApiSurfaceChanged { ... }` | Supporting (change detected) |
-| Export delta | `sensory.code_analysis` | `ExportDelta { added, removed, changed }` | Supporting (change detected) |
-| Source churn in public modules | `sensory.workspace` | `FileChanged { ... }` | Weak supporting (may indicate change) |
-| Documentation updated for API | `execution` (frame_written) | `ContentWritten { ... }` | Contradicting (change has been documented) |
+| AST impact analysis | `execution` | `api_surface_changed` schema | Supporting |
+| Export delta | `sensory.code_analysis` | `export_delta` schema | Supporting |
+| Source churn in public modules | `sensory.workspace` | `file_changed` schema | Weak supporting |
+| Documentation updated for API | `execution` | `content_written` schema | Contradicting |
 
 ### Comparator
 
@@ -312,21 +299,21 @@ The rule comparator handles the hard signal (tests failed right now). The Bayesi
 
 | Factor | Source evidence | Weight | Normalization |
 |---|---|---|---|
-| `signature_changes` | `ApiSurfaceChanged.signature_changes` | 0.40 | `min(count / 5.0, 1.0)` |
+| `signature_changes` | `api_surface_changed.signature_changes` | 0.40 | `min(count / 5.0, 1.0)` |
 | `export_delta` | `new_exports + removed_exports` | 0.35 | `min(count / 10.0, 1.0)` |
-| `source_churn` | `FileChanged` in public module paths | 0.15 | `min(lines / 200.0, 1.0)` |
+| `source_churn` | `file_changed` in public module paths | 0.15 | `min(lines / 200.0, 1.0)` |
 | `doc_coverage` | inverse: has API change been documented? | 0.10 | `0.0 if documented, 1.0 if not` |
 
 ### Cross-Family Dependency
 
-API stability feeds content freshness. When `ApiStability` posterior crosses threshold, it produces evidence for `ContentFreshness` (the `api_change` factor). This is the first concrete instance of cross-family evidence flow: one family's revision becomes another family's evidence.
+API stability feeds content freshness. When `api_stability` posterior crosses threshold, it produces evidence for `content_freshness`. This is the first concrete instance of cross-family evidence flow: one family's revision becomes another family's evidence.
 
 The flow:
 ```
-ApiStability revision (api changed, posterior: 0.8)
-  → EvidenceValue::ApiSurfaceChanged { public_api_changed: true, ... }
-  → assigned to ContentFreshness belief key for same subject
-  → ContentFreshness comparator receives api_change = 1.0
+api_stability revision with posterior 0.8
+  → EvidenceValue { schema_id: "api_surface_changed", payload: { public_api_changed: true } }
+  → assigned to content_freshness belief key for same subject
+  → configured comparator receives api_change = 1.0
 ```
 
 This is not message passing or hierarchical inference. It is evidence that is relevant to two families simultaneously. The evidence normalizer assigns it to both belief keys. Each family's comparator uses it independently.
@@ -339,7 +326,7 @@ This is not message passing or hierarchical inference. It is evidence that is re
 
 | Field | Value |
 |---|---|
-| Dimension | `BuildValidity` |
+| Dimension id | `build_validity` |
 | Subject | `DomainObjectRef` for a build target, crate, or workspace |
 | Question | "Does the build succeed and produce valid artifacts?" |
 | Posterior shape | `Probability` — probability build is valid, range [0.0, 1.0] |
@@ -348,9 +335,9 @@ This is not message passing or hierarchical inference. It is evidence that is re
 
 | Source | Spine domain | Evidence value | Polarity |
 |---|---|---|---|
-| Build completed | `execution` | `BuildOutcome { success, error_count, warning_count }` | Direct observation |
+| Build completed | `execution` | `build_outcome` schema | Direct observation |
 | Artifact validated | `execution` | `ArtifactState { artifact_ref, valid }` | Direct observation |
-| Dependency changed | `sensory.workspace` | `FileChanged` in dependency files | Supporting (uncertainty — build may break) |
+| Dependency changed | `sensory.workspace` | `file_changed` schema in dependency files | Supporting |
 
 ### Comparator
 
@@ -372,8 +359,8 @@ Build validity is a precondition for test health. The agent's normative framewor
 
 | Field | Value |
 |---|---|
-| Dimension | `ExecutionCost { action_class }` |
-| Subject | `DomainObjectRef` for the action class (e.g., `docs_writer_update`, `test_fix`) |
+| Dimension id | `execution_cost` |
+| Subject | `DomainObjectRef` for the action class |
 | Question | "What does executing this action class cost?" |
 | Posterior shape | `Distribution { mean, variance, sample_count }` — cost distribution |
 
@@ -381,7 +368,7 @@ Build validity is a precondition for test health. The agent's normative framewor
 
 | Source | Spine domain | Evidence value | Polarity |
 |---|---|---|---|
-| Task completed | `execution` | `TaskOutcome { elapsed_ms, token_count, success, retry_count }` | Direct observation |
+| Task completed | `execution` | `task_outcome` schema | Direct observation |
 
 Every execution outcome for the action class is evidence. No other source feeds cost beliefs.
 
@@ -417,7 +404,7 @@ Cost beliefs are not goal targets. They are inputs to the cost-benefit comparato
 
 | Field | Value |
 |---|---|
-| Dimension | `ActionValue { concern_class }` |
+| Dimension id | `action_value` |
 | Subject | `DomainObjectRef` for the concern class |
 | Question | "What downstream value does acting on divergence in this concern class produce?" |
 | Posterior shape | `Distribution { mean, variance, sample_count }` — value distribution |
@@ -426,8 +413,8 @@ Cost beliefs are not goal targets. They are inputs to the cost-benefit comparato
 
 | Source | Spine domain | Evidence value | Polarity |
 |---|---|---|---|
-| Downstream belief improved after action | `world_model` | `DownstreamBeliefShift { target_key, prior_posterior, new_posterior, lag_ms }` | Supporting (action produced value) |
-| Downstream belief unchanged after action | `world_model` | `DownstreamBeliefShift { ..., delta ≈ 0 }` | Contradicting (action did not produce value) |
+| Downstream belief improved after action | `world_model` | `downstream_belief_shift` schema | Supporting |
+| Downstream belief unchanged after action | `world_model` | `downstream_belief_shift` schema | Contradicting |
 
 ### Comparator
 
@@ -441,22 +428,25 @@ Default: act on strong divergences with clear value signals (user-directed, main
 
 ---
 
-## Family Registration Contract
+## Family Runtime Configuration Contract
 
 When a new belief family is introduced, it must provide:
 
 | Requirement | Purpose |
 |---|---|
-| `BeliefDimension` variant | identity axis |
-| At least one `EvidenceValue` variant | what evidence looks like |
+| family id | stable runtime identity |
+| dimension id | identity axis |
+| At least one evidence schema | what evidence looks like |
 | `PosteriorSummary` shape | what the posterior means |
-| Default comparator selection | how assessment works |
+| Default comparator engine selection | how assessment works |
 | At least one evidence source with spine domain and event type | where evidence comes from |
 | Default prior | cold start value |
 | Freshness policy | when the belief becomes stale without new evidence |
 | Goal curation binding: desired state predicate, satisfaction criteria, action class | how the agent uses this belief |
 
 A family without all of these can exist as an ungrounded framework entity — a `BeliefKey` with `MissingComparator` status. But it cannot participate in the flywheel until grounded.
+
+The framework must load this contract from runtime configuration. Adding or changing a family must not require editing Rust source that names that family.
 
 ## Cross-Family Evidence Rules
 
@@ -466,10 +456,10 @@ Cross-family evidence is not message passing. It is shared observation:
 
 ```
 Spine fact: sensory.workspace.file_change (src/lib.rs, +30 -10)
-  → assigned to ContentFreshness("src/lib.rs") as FileChanged evidence
-  → assigned to ApiStability("src/lib.rs") as FileChanged evidence (weak)
-  → assigned to BuildValidity("workspace") as FileChanged evidence (uncertainty)
-  → assigned to TestHealth("src/lib.rs") as FileChanged evidence (uncertainty)
+  → assigned to content_freshness for src/lib.rs as file_changed evidence
+  → assigned to api_stability for src/lib.rs as file_changed evidence
+  → assigned to build_validity for workspace as file_changed evidence
+  → assigned to test_health for src/lib.rs as file_changed evidence
 ```
 
 The same fact means different things to different families. The evidence normalizer handles this through multi-assignment. The evidence role and polarity may differ per assignment.
@@ -479,17 +469,17 @@ The same fact means different things to different families. The evidence normali
 Some families have structural relationships:
 
 ```
-BuildValidity ──precondition──▶ TestHealth
+build_validity ──precondition──▶ test_health
     "tests cannot pass if build fails"
 
-ApiStability ──evidence──▶ ContentFreshness
+api_stability ──evidence──▶ content_freshness
     "api change is strong evidence of doc staleness"
 
-ContentFreshness ──evidence──▶ ActionValue(docs_writer)
+content_freshness ──evidence──▶ action_value for docs_writer
     "freshness improvement after execution calibrates value"
 
-ExecutionCost(any) ──input──▶ cost-benefit comparator
-ActionValue(any) ──input──▶ cost-benefit comparator
+execution_cost ──input──▶ cost-benefit comparator
+action_value ──input──▶ cost-benefit comparator
     "meta-beliefs feed the goal curation decision, not other families"
 ```
 
@@ -501,12 +491,12 @@ All families carry regime-scoped priors. The same family operates differently un
 
 | Family | Normal development | Incident response |
 |---|---|---|
-| ContentFreshness | standard thresholds, standard cost tolerance | near-zero value — suspend docs goals |
-| TestHealth | maintenance invariant | critical — highest priority |
-| BuildValidity | maintenance invariant | critical — highest priority |
-| ApiStability | standard monitoring | reduced monitoring — stability matters more than tracking |
-| ExecutionCost | calibrated priors | widen uncertainty — incident costs differ |
-| ActionValue | calibrated priors | reset — incident value landscape differs |
+| content_freshness | standard thresholds, standard cost tolerance | near-zero value — suspend docs goals |
+| test_health | maintenance invariant | critical — highest priority |
+| build_validity | maintenance invariant | critical — highest priority |
+| api_stability | standard monitoring | reduced monitoring — stability matters more than tracking |
+| execution_cost | calibrated priors | widen uncertainty — incident costs differ |
+| action_value | calibrated priors | reset — incident value landscape differs |
 
 When a regime shift is detected, the agent scopes all family priors to the new regime. Archived priors from previous instances of the same regime are retrieved from the regime library when available.
 
@@ -514,23 +504,22 @@ When a regime shift is detected, the agent scopes all family priors to the new r
 
 ### Domain-specific families beyond the first slice
 
-Families for dependency safety, security posture, performance regression, code complexity, and other concerns are expected but not specified. Each follows the same registration contract.
+Families for dependency safety, security posture, performance regression, code complexity, and other concerns are expected but not specified. Each follows the same runtime configuration contract.
 
 ### Hierarchical belief families
 
-A family where multiple subjects share a parent belief (e.g., "module documentation" as an aggregate over file-level freshness beliefs) requires the inference epoch mechanism. The family registration contract does not yet address aggregation.
+A family where multiple subjects share a parent belief requires the inference epoch mechanism. The runtime configuration contract does not yet address aggregation.
 
 ### Dynamic family creation
 
-An agent discovering a new concern class and registering a new family at runtime is architecturally supported (the agent bootstrap survey step discovers relevant dimensions). The creation protocol — including comparator selection, prior initialization, and evidence source binding — is not specified beyond the registration contract.
+An agent discovering a new concern class and loading a new family at runtime is architecturally supported. The creation protocol — including comparator selection, prior initialization, and evidence source binding — is not specified beyond the runtime configuration contract.
 
 ## Read With
 
 - [Belief](README.md)
 - [Fact To Belief](fact_to_belief.md)
 - [Comparator Model](comparator_model.md)
-- [Belief Entities](entities.md)
-- [Belief Components](components.md)
+- [Belief Spec](spec.md)
 - [Goal Curation](../agent/goal_curation.md)
 - [Goals](../../execution/goals/README.md)
 - [Bayesian Evaluation Example](../../execution/examples/bayesian_evaluation.md)

@@ -1,6 +1,6 @@
 # Execution Domain Gaps
 
-Date: 2026-05-18
+Date: 2026-05-23
 Status: active
 Scope: open contracts and undefined seams preventing a complete execution architecture
 
@@ -12,7 +12,7 @@ Each gap below names what is missing, why it blocks a complete architecture diag
 
 ## Gap 1: Goal Model
 
-**Status: goal model defined with ownership split, residual gaps identified.**
+**Status: resolved. Goal type implemented in `meld-lang`. Residual gaps identified.**
 
 See [Goals](goals/README.md) for the full goal model and [World Model Agent](../world_model/agent/README.md) for the curation side.
 
@@ -31,91 +31,68 @@ Residual gaps within the goal model:
 
 ## Gap 2: Planning Pipeline
 
-**Status: pipeline defined under graphs-lower-graphs model, residual gaps identified.**
+**Status: type substrate implemented in `meld-lang`. Residual runtime gaps identified.**
 
 See [Planning Pipeline](planning/planning_pipeline.md) for the unified pipeline: two concurrent processes (planning loop + task network) connected by graph mutations.
 
 The pipeline document resolves the structural gap. The previous six-stage sequential model and the separate adaptation domain both dissolved into the graphs-lower-graphs abstraction. Control flow is expressed as graph structure (conditional dependency edges, multi-dependency nodes), not as a separate compiled control program. Adaptation's reconciliation concern folds into the planning loop's cost-aware mutation decisions.
 
+`meld-lang` now provides the planning type substrate: `Method` (with trigger, preconditions, composition, net effects, cost, preference), `Composition` (step/edge graph), `Operator` (preconditions, effects, cost, resolution), `unify()`, `substitute()`, and `validate()`. Method definitions are typed values that can be serialized to and deserialized from JSON. The method matching flow — unify trigger against goal, check preconditions against world state, substitute bindings into composition, validate, project effects — is proven in integration tests.
+
 Residual gaps within the pipeline:
 
-- **method library** — the library of available HTN decompositions does not exist in design or code; method definitions need preconditions over WorldModelView, sub-task sets, ordering constraints, cost estimates, and preference ordering
-- **planning algorithm** — the search strategy for HTN decomposition is unspecified
+- **method library loading** — the `Method` type and JSON serialization exist; the runtime infrastructure for loading, indexing, and querying method libraries belongs to `meld-execution` and is not yet implemented
+- **planning algorithm** — the search strategy for HTN decomposition is unspecified; `meld-lang` provides the matching primitives but the search orchestration is an `meld-execution` concern
 - **task network graph executor** — the upper level of the fractal (graph of tasks, same execution model as graph of capabilities within a task) is not implemented; requires graph-based ready-set computation, conditional edge evaluation, and mutation acceptance
 - **switching cost model** — cost-aware plan transitions require cost estimates on tasks and a model for computing cleanup cost, sunk cost, disruption cost, and benefit estimation
 
 ## Gap 3: World Model Read Interface
 
+**Status: resolved. `WorldState` in `meld-lang` is the read interface.**
+
 ### What Exists
 
-The world model planner layer defines:
+The world model planner layer defines projection types (`WorldModelView`, `DecisionContext`, etc.) that scope beliefs through graph, belief, causation, regime, and agent perspective.
 
-- `WorldModelView`
-- `ActionableBeliefView`
-- `DecisionContext`
-- `ViewSnapshot`
-- `ObservationOpportunityView`
-- `AbstentionState`
-- `CausalEffectSummary`
-- `RiskEnvelope`
-- `PreconditionAssessment`
-- `ConflictSummary`
-- `SensitivitySummary`
-- `AssumptionSet`
-- `HydrationHandle`
+`meld-lang` now provides the execution-side read contract: `WorldState` is a set of ground propositions published by the world model's planner-facing projection. `evaluate()` checks propositions against `WorldState` with three-valued semantics (Satisfied, Unsatisfied with gap, Indeterminate for missing knowledge). `WorldState::gap()` returns unsatisfied and indeterminate sub-propositions. `WorldState::query()` performs pattern matching with variable binding.
 
-The planner-side design now scopes these projections through `DecisionContext` and decomposes lower-layer packets from graph, belief, causation, regime, and agent perspective.
-The execution-side port remains open.
-The execution substrate says: "execution should read materialized current belief from the world model." The planning README says: "make planning explicitly world-model-aware" as a next item. The substrate also says: "planner to world-model coupling is the key missing bridge."
+### Resolution
 
-### Why It Blocks
+The read interface is the shared language itself — not a bespoke port trait. The world model projects its internal state into `WorldState` (a `Vec<Proposition>` of ground terms). Execution evaluates goals, preconditions, and method triggers against this `WorldState` using pure functions. The three-valued evaluation semantics resolve the key questions:
 
-This is the most important seam in the cognitive architecture. The observe-model-act loop requires execution to read from the world model before acting. Without a defined read interface on the execution side, there is no contract for how planning consumes world-model state. The architecture diagram cannot draw the arrow from world model to execution.
+- **current belief reads**: the planner reads `WorldState` propositions — entity state, dimensions, relations, artifact existence
+- **precondition evaluation**: `evaluate(&world_state, &precondition)` returns `Satisfied`, `Unsatisfied { gap }`, or `Indeterminate { missing }`
+- **information-gathering triggers**: `Indeterminate` results (missing knowledge vs wrong value) distinguish when to observe vs when to act
+- **replanning triggers**: when `WorldState` changes such that `evaluate()` on active goal targets or composition preconditions changes result
 
-### What Would Close It
+### Residual
 
-A planning input contract on the execution side that declares what it needs from the world model:
-
-- **current belief reads**: what does the planner query? entity state, relation state, belief confidence, freshness?
-- **precondition evaluation**: how does the planner check whether a goal's preconditions hold?
-- **information-gathering triggers**: when does the planner request observation rather than action? what staleness or uncertainty threshold triggers sensing?
-- **replanning triggers**: what belief change events cause the planner to revise the current plan?
-
-This contract should consume the types defined in `world_model/planner` without importing world-model internals.
-The execution side should define a port trait that follows the existing port pattern in `execution/ports.rs`.
-The world model planner layer should satisfy that trait through the public planner interface.
+The world model planner layer must implement the projection from its internal types (`WorldModelView`, `DecisionContext`, etc.) into ground `WorldState` propositions. This is a `meld-world-model` concern — the contract shape is defined, the implementation is not.
 
 ## Gap 4: Outcome Publication Contract
 
+**Status: resolved. Execution publishes task lifecycle events to the spine. The world model consumes them and derives epistemic meaning.**
+
 ### What Exists
 
-The task network defines task lifecycle events:
+Execution publishes typed task lifecycle events to the event spine:
 
 - `task_requested`, `task_started`, `task_progressed`
 - `task_succeeded`, `task_failed`, `task_blocked`
 - `task_artifact_emitted`, `task_cancelled`
 - `repair_requested`, `repair_applied`
 
-The substrate says execution must publish: "success, failure, uncertainty discovered during action, evidence gathered during action."
+The world model reducer subscribes to these events via `replay_from_spine()` and `apply_event()`. It currently materializes claims from execution events: `GenerationSucceeded`, `GenerationFailed`, `ArtifactAvailable`. This closes the cognitive loop — execution acts, the world model observes execution's events and revises belief.
 
-### Why It Blocks
+Execution does not construct semantically rich outcomes. It does not know what "docs_freshness" means or whether a task result implies a belief should change. Execution reports what happened (succeeded, failed, artifacts produced). The world model derives what that means through its belief layer, causal layer, and agent normative framework.
 
-Task lifecycle events are internal orchestration signals. They tell the task network what happened to a task. They do not tell the world model what happened to the world.
+`meld-lang` provides `Effect` (Assert, Retract, Update) and `WorldState::apply()` for the planning loop's internal effect projection — projecting what a composition's operators *would* change if executed, before dispatching tasks. This is a planning concern (forward projection), not an outcome publication concern.
 
-The world model cannot consume "task_42 succeeded." It needs semantic outcome content: "the build now passes," "file X changed," "the API returned a 404." Outcome records must carry evidence and failure shape in a form that curation can integrate into belief revision.
+### Residual
 
-Without this contract, the architecture diagram cannot draw the return arrow from execution back to the event spine in a way that closes the cognitive loop.
+The world model's reducer currently produces coarse claims from task events. As the belief layer matures, the reducer's interpretation of execution events will grow richer — more nuanced belief revision from the same task lifecycle signals. This is a world model concern, not an execution gap.
 
-### What Would Close It
-
-An outcome record contract that bridges task completion to world-model-legible facts:
-
-- **outcome fact shape**: structured record containing what changed, what was observed, what failed, what remains uncertain
-- **evidence items**: artifacts produced during execution that the world model can normalize into evidence for belief revision
-- **failure shape**: not just "failed" but why and what was learned from the failure
-- **publication target**: events published to the spine using fact types that curation reducers can consume (likely `ObservationFact`, `ActionFact`, `OutcomeFact` from the event spine vocabulary)
-
-The outcome contract should be symmetric with the read interface: execution reads `WorldModelView` and publishes `OutcomeFact` records. The world model reads `OutcomeFact` records and updates belief.
+Execution's responsibility is to emit sufficient factual detail in its task events (what ran, what artifacts were produced, what failed and how) so that the world model has adequate signal. If the current event payloads prove insufficient for belief revision, the fix is richer event content — not execution constructing epistemic judgments.
 
 ## Gap 5: Workflow Integration Strategy
 
@@ -189,18 +166,19 @@ The gaps are not independent. Closing them in the wrong order produces circular 
 
 Current resolution state:
 
-- **Gap 1 (goal model)**: resolved into `meld-lang`. Goals are typed propositions in the shared language. The world model agent constructs goals as `Proposition` targets with priority and lifecycle metadata. Execution evaluates goals mechanically without interpreting semantic intent. See [Lang Goals and Methods](../meld-lang/goals_and_methods.md).
-- **Gap 2 (planning pipeline)**: substantially resolved through `meld-lang`. The planning loop reads goals and world state (both expressed as propositions), matches methods via pattern unification, compiles compositions into task network mutations. Residual: task network graph executor (upper fractal), switching cost model. See [Lang Compositions](../meld-lang/compositions.md).
-- **Gap 3 (world model read interface)**: resolved into `meld-lang`. The world model publishes `WorldState` as a set of ground propositions in the shared language. Execution evaluates propositions against this world state. The read interface is the `WorldState` type — not a bespoke port but the shared language itself. See [Lang World State](../meld-lang/world_state.md).
-- **Gap 4 (outcome publication)**: partially resolved. Execution outcomes become `Effect`s in the shared language (Assert, Retract, Update propositions). The world model receives these and translates them into belief revision. The outcome-to-effect bridge still needs implementation design.
+- **Gap 1 (goal model)**: **resolved and implemented.** `Goal`, `GoalPriority`, `GoalSource`, `GoalLifecycle` are implemented in `meld-lang`. Goals are typed propositions in the shared language. The world model agent constructs goals as `Proposition` targets with priority and lifecycle metadata. Execution evaluates goals mechanically without interpreting semantic intent. Residual: agent normative framework, goal conflict resolution, multi-agent coordination, goal learning. See [Lang Goals and Methods](../meld-lang/goals_and_methods.md).
+- **Gap 2 (planning pipeline)**: **type substrate implemented.** `Method`, `Composition`, `Operator`, `unify()`, `substitute()`, `validate()` are implemented in `meld-lang`. The planning loop reads goals and world state (both expressed as propositions), matches methods via pattern unification, substitutes bindings into compositions, validates, and projects effects. Proven end-to-end in integration tests. Residual: method library loading infrastructure (`meld-execution`), planning algorithm (search strategy), task network graph executor (upper fractal), switching cost model. See [Lang Compositions](../meld-lang/compositions.md).
+- **Gap 3 (world model read interface)**: **resolved and implemented.** `WorldState`, `evaluate()`, `EvalResult`, gap detection, and pattern query are implemented in `meld-lang`. The world model publishes `WorldState` as a set of ground propositions. Execution evaluates propositions with three-valued semantics. Residual: world model planner projection from internal types into ground `WorldState` propositions (`meld-world-model` concern). See [Lang World State](../meld-lang/world_state.md).
+- **Gap 4 (outcome publication)**: **resolved.** Execution publishes task lifecycle events to the spine. The world model reducer consumes them and materializes claims for belief revision. `Effect` and `WorldState::apply()` in `meld-lang` serve forward projection in the planning loop, not outcome publication. Residual: world model reducer enrichment as belief layer matures (world model concern).
 - **Gap 5 (workflow integration)**: continuous. Workflows remain the compatibility layer where cognitive subsystems are not yet built.
 
 Recommended next resolution:
 
-1. **`meld-lang` first slice implementation**: the shared language crate is the foundation. Goals, world state, evaluation, unification, and validation must be implemented before the planning loop can function.
-2. **Gap 4 residual (outcome publication)**: execution outcomes must become effects that the world model can apply to revise beliefs. The `Effect` type provides the shape. The publication bridge (task_succeeded event → Effect assertion → spine fact) needs design.
-3. **Gap 2 residuals**: task network graph executor (upper fractal) and method library loading infrastructure.
-4. **Gap 5**: continuous integration as each subsystem matures.
+1. ~~**`meld-lang` first slice implementation**~~: **complete.** All types and pure operations implemented. Full evaluation loop proven end-to-end. Consumer crates (`meld-execution`, `meld-world-model`) compile with `meld-lang` as dependency.
+2. ~~**Gap 4 residual (outcome publication)**~~: **resolved.** The loop already closes — execution emits task events, world model reducer consumes them and materializes claims. Reducer enrichment is a world model concern.
+3. **Gap 2 residuals**: method library loading infrastructure (`meld-execution`), task network graph executor (upper fractal), planning algorithm.
+4. **Gap 3 residual**: world model planner projection into `WorldState` (`meld-world-model`).
+5. **Gap 5**: continuous integration as each subsystem matures.
 
 ## Read With
 

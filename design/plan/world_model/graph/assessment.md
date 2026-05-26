@@ -2,7 +2,7 @@
 
 Status: ready
 Depends on: `design/plan/events/assessment.md`
-Design source: `design/cognitive_architecture/world_model/graph/README.md`, `design/cognitive_architecture/world_model/graph/entities.md`, `design/cognitive_architecture/world_model/graph/components.md`, `design/cognitive_architecture/world_model/graph/systems.md`, `design/cognitive_architecture/world_model/graph/requirements.md`, `design/cognitive_architecture/world_model/graph/ECS.md`
+Design source: `design/cognitive_architecture/world_model/graph/README.md`, `design/cognitive_architecture/world_model/graph/spec.md`, `design/cognitive_architecture/world_model/graph/requirements.md`
 Evidence date: 2026-05-21
 
 ## Verdict Summary

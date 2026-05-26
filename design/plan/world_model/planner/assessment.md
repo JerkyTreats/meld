@@ -2,7 +2,7 @@
 
 Status: conditionally ready
 Depends on: `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`, `design/plan/meld-lang/assessment.md`
-Design source: `design/cognitive_architecture/world_model/planner/README.md`, `design/cognitive_architecture/world_model/planner/entities.md`, `design/cognitive_architecture/world_model/planner/components.md`, `design/cognitive_architecture/world_model/planner/systems.md`, `design/cognitive_architecture/world_model/planner/ECS.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/meld-lang/world_state.md`
+Design source: `design/cognitive_architecture/world_model/planner/README.md`, `design/cognitive_architecture/world_model/planner/spec.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/meld-lang/world_state.md`
 Evidence date: 2026-05-21
 
 ## Verdict Summary
@@ -35,13 +35,13 @@ Planner projection does not own task graphs, dispatch rules, continuation state,
 
 ## Dependency Readiness
 
-Graph is ready. Belief is conditionally ready for `docs_freshness`. `meld-lang` is ready for typed-loop values and operations.
+Graph is ready. Belief is conditionally ready for externally configured `docs_freshness`. `meld-lang` is ready for typed-loop values and operations.
 
 Causation and regime are deferred for this slice.
 
 ## First-Slice Feasibility
 
-The first slice projects one `WorldState` containing the docs node and its `docs_freshness` belief value.
+The first slice projects one `WorldState` containing the docs node and its externally configured `docs_freshness` belief value.
 
 Execution can evaluate the resulting `Goal` target mechanically.
 

@@ -150,10 +150,7 @@ These are the graph affordances higher layers can rely on. New graph indexes sho
 ## Read With
 
 - [World Model Domain](../README.md)
-- [Graph ECS](ECS.md)
-- [Graph Entities](entities.md)
-- [Graph Components](components.md)
-- [Graph Systems](systems.md)
+- [Graph Spec](spec.md)
 - [Graph Requirements](requirements.md)
 - [World Model Crate](../CRATE.md)
 - [Belief](../belief/README.md)

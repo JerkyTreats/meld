@@ -23,6 +23,7 @@ It consumes:
 - promoted observations, actions, outcomes, corrections, and derived facts from `events`
 - execution outcomes and measurement artifacts as calibration evidence
 - agent perspective, observation scope, and policy-relevant questions as belief context
+- external runtime belief family configuration for semantic content, evidence schemas, comparator parameters, and planner projection fields
 
 It publishes:
 
@@ -42,7 +43,7 @@ These parts of the existing belief work remain active architecture:
 - `EvidenceItem` as normalized input from facts, anchors, outcomes, or measurements
 - `BeliefRevision` as append-only settlement over a bounded evidence window
 - `BeliefView` as the planner-facing projection over current belief state
-- comparator contracts for typed Bayesian, rule, semantic, and missing-comparator assessment
+- generic comparator engine contracts for typed Bayesian, rule, semantic, and missing-comparator assessment
 - replay from spine and graph materialization into evidence and revisions
 - lease-based assessment and recovery for concurrent belief maintenance
 - provenance over evidence, revision, and view publication
@@ -71,6 +72,7 @@ This does not mean adopting one research framework wholesale. Predictive coding,
 `belief` owns:
 
 - belief keys, belief identity, and perspective-scoped belief ownership
+- runtime family configuration loading, validation, and replay snapshot refs
 - evidence normalization and attachment to beliefs
 - priors, posteriors, uncertainty, precision, and freshness
 - contradiction handling and unresolved-conflict state
@@ -178,14 +180,8 @@ The public contract should therefore make perspective explicit on belief keys, e
 
 - [Belief Families](belief_families.md)
   belief family concept, grounding contract, and worked examples using the docs writer concern class
-- [Belief ECS](ECS.md)
-  ECS interpretation of belief entities, components, and systems
-- [Belief Entities](entities.md)
-  stable identity, lifecycle, and authority records for belief
-- [Belief Components](components.md)
-  typed data contracts attached to belief entities
-- [Belief Systems](systems.md)
-  deterministic systems that turn evidence into revisions and views
+- [Belief Spec](spec.md)
+  domain types, data model, and pipelines for belief
 - [Belief Requirements](requirements.md)
   expanded implementation requirements for belief
 - [Belief Microarchitecture](microarchitecture.md)
@@ -198,8 +194,8 @@ The public contract should therefore make perspective explicit on belief keys, e
   event-driven belief runtime, leases, recovery, staleness, and storm handling
 - [Curation In Belief](curation.md)
   natural runtime for belief maintenance and materialized belief
-- [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md)
-  hybrid ECS recommendation for belief internals
+- [Belief Spec](spec.md)
+  consolidated domain types, data model, and pipelines for belief
 
 ## First Slice
 
@@ -211,13 +207,17 @@ It should define:
 - `EvidenceItem`
 - `BeliefRevision`
 - `BeliefView`
+- runtime family configuration contracts
 - perspective identity or an explicit placeholder for it
-- comparator contracts
+- generic comparator engine contracts
 - uncertainty and freshness fields
 - observation-needed state with target evidence
 - lease-based assessment
 - replay from events and graph anchors into current belief
 - planner query over belief views only
+
+It must not define a Rust module, enum variant, comparator type, or source mapping branch for a specific belief family.
+The first family content is loaded runtime configuration.
 
 The first slice should also state what remains deferred from the research direction:
 

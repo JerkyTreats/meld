@@ -34,13 +34,13 @@ All Agents will share the underlying substrate of belief manifestation, but the 
 
 ### The Architecture of Agent Swarms 
 
-In the ECS Design Note <Rename, Link> we consider Entity Component System suitablity. Two things have changed since it was authored:
+The rejected entity-component-system design note is no longer an active architecture source. Two requirements remain:
 
 * meld-world-model has been broken out into its own crate
 * The principle of En Masse and At Will has been defined as core vision 
 
-Given this requirement, rallying around ECS as a primary architecture design choice for components of the world model crate becomes significantly more attractive. ECS should be the internal mutable substrate for world subdomain.
+Given this requirement, each world model subdomain should define one consolidated spec with domain types, data model, and pipelines.
 
-The design of World Model from research to implementation should explicitly define the Entity, Components, and Systems of a given subdomain. This consistency in design language leads to consistency of software architecture, allowing the concept of Agents to "scale horizontally"- En masse, and at will. 
+This consistency in design language leads to consistency of software architecture, allowing the concept of Agents to scale horizontally, en masse and at will.
 
-Note: Other crates are not expected to follow the ECS design pattern. Public APIs are the only consumption method, its architectural design its own concern. 
+Note: Other crates are not expected to follow world model implementation vocabulary. Public APIs are the only consumption method, and each crate owns its own architecture. 

@@ -12,10 +12,20 @@ The first slice must preserve the full boundary shape even when inference starts
 
 ## Functional Requirements
 
+### Runtime Family Configuration
+
+- Load belief family content from external runtime configuration.
+- Treat family id, dimension id, predicate ids, evidence schema ids, source mappings, priors, thresholds, factor weights, freshness policy, and planner projection fields as configuration data.
+- Keep framework code generic over loaded family ids and schema ids.
+- Do not add Rust modules, enum variants, comparator types, or source mapping match arms for specific belief families.
+- Validate loaded family configuration before evidence normalization, assignment, or assessment can run.
+- Persist a config id, config version, or config snapshot hash on each revision and lease that depends on that configuration.
+- Mark affected belief views stale when runtime family configuration or evidence policy changes.
+
 ### Identity
 
 - Define `BeliefKey` as the stable assessed question identity.
-- Include subject, dimension, predicate, perspective, branch scope, and evidence policy in key material.
+- Include subject, runtime dimension id, runtime predicate id, perspective, branch scope, and evidence policy id in key material.
 - Define durable object refs for belief, evidence, and revision records.
 - Preserve compatibility with graph and spine `DomainObjectRef`.
 
@@ -29,11 +39,11 @@ The first slice must preserve the full boundary shape even when inference starts
 
 ### Belief Assessment
 
-- Select comparator by belief policy and comparator availability.
-- Support Bayesian comparator, rule comparator, semantic settlement comparator, missing comparator, message passing inference, and predictive residual inference as method families.
+- Select comparator engine by runtime family configuration, belief policy, and comparator availability.
+- Support Bayesian comparator, rule comparator, semantic settlement comparator, missing comparator, message passing inference, and predictive residual inference as generic method engines.
 - Mark semantic settlement provisional unless policy grants settled status.
 - Emit needs-assessment or needs-observation when comparator support is missing.
-- Record comparator kind, version, config ref, input evidence ids, and contradicted evidence ids.
+- Record comparator engine id, version, config ref or snapshot hash, input evidence ids, and contradicted evidence ids.
 
 ### Revision
 
@@ -119,12 +129,12 @@ The first slice must preserve the full boundary shape even when inference starts
 
 ### Replay
 
-- Every revision is rebuildable from source refs, evidence ids, policy records, comparator version, and source cursor.
+- Every revision is rebuildable from source refs, evidence ids, policy records, comparator engine version, runtime config snapshot, and source cursor.
 - Every belief view is rebuildable from current revision, freshness state, contradiction state, observation opportunities, and provenance.
 
 ### Determinism
 
-- Same source facts, graph state, policies, comparator versions, and source cursors produce same revision outputs.
+- Same source facts, graph state, policies, comparator engine versions, runtime config snapshots, and source cursors produce same revision outputs.
 - Semantic settlement records prompt or policy version and remains provisional by default.
 
 ### Concurrency
@@ -142,14 +152,16 @@ The first slice must preserve the full boundary shape even when inference starts
 ### Evolution
 
 - First slice supports compact comparator output.
+- New belief families are added by runtime configuration, not Rust source changes.
 - Later slices add priors, posterior distributions, hidden state, inference epochs, calibration, and regime-conditioned prior selection without changing public view boundaries.
 
 ## First Slice Requirements
 
 - Implement `BeliefKey`, `EvidenceItem`, `BeliefRevision`, `BeliefView`, and `AssessmentLease`.
+- Implement runtime family configuration loading, validation, and replay snapshotting.
 - Implement evidence normalization from graph anchors and execution outcomes.
 - Implement belief key assignment.
-- Implement one typed Bayesian comparator.
+- Implement one generic typed Bayesian comparator engine driven by runtime configuration.
 - Implement one deterministic rule comparator.
 - Implement semantic settlement with provisional status.
 - Implement missing comparator state.
@@ -172,7 +184,5 @@ The first slice must preserve the full boundary shape even when inference starts
 
 ## Read With
 
-- [Belief Entities](entities.md)
-- [Belief Components](components.md)
-- [Belief Systems](systems.md)
+- [Belief Spec](spec.md)
 - [World Model Belief](README.md)

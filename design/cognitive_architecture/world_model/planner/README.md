@@ -209,7 +209,7 @@ Belief answers what appears credible, stale, uncertain, contradicted, under-obse
 PlannerBeliefInput {
     belief_key: BeliefKey,
     subject: DomainObjectRef,
-    dimension: BeliefDimension,
+    dimension_id: BeliefDimensionId,
     posterior_summary: PosteriorSummary,
     uncertainty: UncertaintySummary,
     precision: PrecisionSummary,
@@ -326,21 +326,14 @@ It should not require downstream consumers to understand raw graph traversal, ev
 
 ## Projection Structure
 
-Planner projection design is split into ECS-shaped documents:
+Planner projection design is defined in:
 
-- [Planner Entities](entities.md)
-  durable context, input packet, and output view entities
-- [Planner Components](components.md)
-  field groups and source refs that projection systems read and write
-- [Planner Systems](systems.md)
-  deterministic projection functions from lower-layer records into planner-facing views
+- [Planner Spec](spec.md)
+  domain types, data model, and projection pipelines
 
 ## Read With
 
-- [Planner ECS](ECS.md)
-- [Planner Entities](entities.md)
-- [Planner Components](components.md)
-- [Planner Systems](systems.md)
+- [Planner Spec](spec.md)
 - [World Model Belief](../belief/README.md)
 - [Causal Layer](../causation/README.md)
 - [Regime Layer](../regime/README.md)

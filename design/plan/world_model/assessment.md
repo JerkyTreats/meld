@@ -22,7 +22,7 @@ The world model owns epistemic authority. It transforms event facts into graph s
 The ready slice covers:
 
 - graph object identity and provenance
-- one `docs_freshness` belief value
+- one externally configured `docs_freshness` belief value
 - one projection into `WorldState`
 - one agent curation rule
 - one ground `Goal`
@@ -41,7 +41,7 @@ Events are ready.
 
 `meld-lang` is ready for typed-loop values and operations.
 
-Graph is ready. Belief, planner projection, and agent are conditionally ready for the first `docs_freshness` slice.
+Graph is ready. Belief, planner projection, and agent are conditionally ready for the first externally configured `docs_freshness` slice.
 
 Causation and regime are deferred.
 
@@ -71,6 +71,8 @@ Runtime loop closure remains blocked by execution runtime planning and outcome p
 ## Gaps
 
 - First `WorldState` projection must be specified as concrete code.
+- Belief runtime configuration loading must be specified before the first belief implementation.
+- World model runtime bootstrap and concurrency model must be implemented from the consolidated domain specs.
 - First agent curation rule must be implemented against projected belief.
 - Causation remains deferred.
 - Regime remains deferred.

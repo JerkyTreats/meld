@@ -10,6 +10,8 @@ Comparators are the assessment boundary between evidence and belief.
 
 A comparator consumes evidence for one `BeliefKey` and emits one proposed `BeliefRevision`.
 The comparator does not own fact ingestion, scheduling, task execution, or planner policy.
+The comparator also does not own belief family content.
+Family-specific factors, priors, evidence bindings, thresholds, and projection rules are runtime configuration.
 
 Bayesian comparators are preferred because they are typed, inspectable, replayable, and calibratable.
 Semantic settlement is allowed as a provisional shortcut when no stronger comparator exists.
@@ -18,17 +20,17 @@ In the broader belief architecture, "comparator" is the first implementation sha
 
 ## Inputs
 
-Every comparator receives:
+Every comparator engine receives:
 
 - belief key
 - perspective or evidence policy when material
 - prior belief revision when available
 - evidence items
 - source sequence range
-- comparator configuration
+- comparator engine configuration from a runtime config snapshot
 - provenance bundle
 
-Every comparator returns:
+Every comparator engine returns:
 
 - belief status
 - posterior summary
@@ -48,6 +50,7 @@ Every comparator returns:
 
 Preferred comparator for typed evidence.
 It updates a prior with measured factors and records a posterior.
+The factor names, evidence schema bindings, weights, normalizers, and projection fields come from runtime configuration.
 The existing [Bayesian Evaluation Example](../../execution/examples/bayesian_evaluation.md) is the strongest current design seed.
 
 `RuleComparator`
@@ -151,12 +154,15 @@ It should record:
 - decision threshold if one is used
 - calibration target
 
-The first practical comparator can mirror the docs writer example:
+The first practical comparator can be configured to mirror the docs writer example:
 
-- `ChangeSummary` supplies churn, age, and commit rate
-- `AstImpact` supplies public API change
+- `ChangeSummary` can supply churn, age, and commit rate through runtime evidence schema bindings
+- `AstImpact` can supply public API change through runtime evidence schema bindings
 - posterior decides whether the belief supports action
 - later execution outcome calibrates the prior
+
+The implementation must remain a generic weighted Bayesian comparator engine.
+It must not introduce a comparator type named after `docs_freshness` or any other runtime family.
 
 ## Semantic Settlement Policy
 
@@ -200,12 +206,12 @@ Implement the interface before optimizing comparator intelligence.
 
 The first slice should support:
 
-- one typed Bayesian comparator
+- one generic typed Bayesian comparator engine driven by runtime family configuration
 - one deterministic rule comparator
 - one semantic settlement adapter with provisional output
 - missing comparator state
 - posterior, uncertainty, and observation-needed fields in comparator output
-- replay tests proving that the same evidence yields the same revision
+- replay tests proving that the same evidence and config snapshot yield the same revision
 
 ## Read With
 

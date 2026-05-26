@@ -2,7 +2,7 @@
 
 Status: deferred
 Depends on: `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`, `design/plan/world_model/causation/assessment.md`
-Design source: `design/cognitive_architecture/world_model/regime/README.md`, `design/cognitive_architecture/world_model/regime/entities.md`, `design/cognitive_architecture/world_model/regime/components.md`, `design/cognitive_architecture/world_model/regime/systems.md`, `design/cognitive_architecture/world_model/regime/requirements.md`, `design/cognitive_architecture/world_model/regime/ECS.md`
+Design source: `design/cognitive_architecture/world_model/regime/README.md`, `design/cognitive_architecture/world_model/regime/spec.md`, `design/cognitive_architecture/world_model/regime/requirements.md`
 Evidence date: 2026-05-21
 
 ## Verdict Summary
@@ -49,8 +49,7 @@ Regime should not be implemented before runtime flywheel behavior works without 
 - `tests/integration/world_state_graph.rs`
 - `tests/integration/execution_projection.rs`
 - `design/cognitive_architecture/world_model/regime/README.md`
-- `design/cognitive_architecture/world_model/regime/entities.md`
-- `design/cognitive_architecture/world_model/regime/components.md`
+- `design/cognitive_architecture/world_model/regime/spec.md`
 
 ## Gaps
 

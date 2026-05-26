@@ -36,7 +36,7 @@ The substrate should look like:
 - observation opportunity systems
 - projection builders for planner and operator views
 
-This is why ECS is a plausible fit here.
+This is why sparse domain state and deterministic pipelines are needed here.
 It gives `belief` a way to maintain identity and many sparse attached belief concerns without forcing one rigid record shape for every internal operation.
 
 ## Core Primitives
@@ -102,17 +102,16 @@ It may also publish curated fact updates, but the spine remains the cross-domain
 The ordering and temporal rules are not solved by the substrate alone.
 They are inherited from spine semantics.
 
-## Relationship To ECS
+## Relationship To Spec
 
-ECS is not the doctrine of `belief`.
-It is a candidate internal substrate.
+[Belief Spec](spec.md) is the active design source.
 
 The useful boundary is:
 
-- ECS may own live mutable belief internals
+- belief may own live mutable curation internals
 - graph-shaped records and shaped query views remain the public contract
 
-That boundary keeps the world model living without turning every other domain into ECS by accident.
+That boundary keeps the world model living without leaking worker internals across domains.
 
 ## First Slice
 
@@ -135,6 +134,6 @@ It should build on the implemented graph substrate and legacy claim compatibilit
 - [Comparator Model](comparator_model.md)
 - [Belief Substrate](substrate.md)
 - [Graph](../graph/README.md)
-- [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md)
+- [Belief Spec](spec.md)
 - [Spine Concern](../../spine/README.md)
 - [Observe Merge Push](../../observe_merge_push.md)

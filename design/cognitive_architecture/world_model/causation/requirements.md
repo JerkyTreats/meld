@@ -162,7 +162,5 @@ The first slice must prevent selected anchors, temporal order, or task success f
 
 ## Read With
 
-- [Causal Entities](entities.md)
-- [Causal Components](components.md)
-- [Causal Systems](systems.md)
+- [Causal Spec](spec.md)
 - [Causal Layer](README.md)

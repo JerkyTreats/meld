@@ -1,6 +1,6 @@
 # Cognitive Architecture Implementation Plan
 
-Date: 2026-05-21
+Date: 2026-05-24
 Status: active
 Scope: declarative implementation readiness and dependency order for the cognitive architecture
 
@@ -12,40 +12,105 @@ Durable architecture lives under `design/cognitive_architecture`. This plan stat
 
 Each assessment is current truth. It names the exact slice that is ready, the exact contracts it depends on, and the exact work that is deferred.
 
-## Active Targets
+## Strategy
 
-`typed loop` is the first target. It proves that `meld-lang` can express world state, goals, methods, compositions, effects, and satisfaction without runtime dispatch.
+The first vertical slice threads the thinnest possible path through every layer of the cognitive flywheel using the `docs_freshness` scenario. Each layer implements the minimum needed to pass its output to the next. The goal is one complete flywheel turn before deepening any individual layer.
 
-`world model projection` projects graph and belief state into `meld-lang::WorldState`.
+The typed loop has already proven the full contract chain through `meld-lang` pure types and operations. The vertical slice now makes each layer real with runtime code that materializes state, revises belief, curates goals, and dispatches work.
 
-`goal curation` creates one ground `meld-lang::Goal` from one agent perspective and one watched belief family.
+## Vertical Slice: Implementation Order
 
-`runtime planning substrate` evaluates goals, selects methods, validates compositions, and prepares task network mutations.
+The `docs_freshness` scenario threads through every phase. Each phase produces the input the next phase consumes.
 
-`runtime flywheel` dispatches tasks, publishes outcome facts, and closes belief revision through the event spine.
+### Phase 1: Shared Language — `complete`
+
+Pure types and operations shared between world model and execution. `Term`, `Proposition`, `Condition`, `Effect`, `WorldState`, `Goal`, `Method`, `Composition`, `Operator`. Pure operations: `evaluate`, `unify`, `substitute`, `validate`, `apply_effects`. Full evaluation loop proven end-to-end in integration tests.
+
+Owner: `meld-lang`
+Plan: [meld-lang/PLAN.md](meld-lang/PLAN.md)
+
+### Phase 2: World Model Graph — `complete`
+
+Materialize current anchors from event spine facts. Subject identity lookup for a docs node, current anchor reads, provenance. Enough for belief to consume.
+
+Owner: `meld-world-model`
+
+### Phase 3: Belief Layer — `not started` ← next
+
+One belief family: `docs_freshness`. One evidence normalization path from graph anchors. One comparator that produces a confidence value. One compact planner-facing belief value. First layer that exercises epistemic judgment.
+
+Owner: `meld-world-model`
+Blocked by: Phase 2
+Plan: not yet written
+
+### Phase 4: Planner Projection — `not started`
+
+Convert graph plus belief internal state into ground `meld-lang::WorldState`. First projection emits `Proposition::Holds` for `docs_freshness` confidence. Bridge that makes world model state consumable by execution.
+
+Owner: `meld-world-model`
+Blocked by: Phase 3
+
+### Phase 5: Agent Goal Curation — `not started`
+
+One agent, one perspective, one curation rule: if `docs_freshness` confidence is below 0.7, create an active `Goal` requiring confidence above 0.7. First point where the system generates operational intent from belief.
+
+Owner: `meld-world-model`
+Blocked by: Phase 4
+
+### Phase 6: Execution Planning Runtime — `not started`
+
+Method library loading. Goal evaluation against `WorldState`, method matching via `unify`, composition preparation via `substitute` and `validate`. Bridges from typed planning substrate to runtime orchestration. Task network execution is deferred. First slice stops at a validated composition ready for dispatch.
+
+Owner: `meld-execution`
+Blocked by: Phase 5
+
+### Phase 7: Task Dispatch and Outcome — `not started`
+
+Bridge validated composition to the existing task and capability engine. Dispatch one task. Publish outcome events to the spine. World model reducer consumes them. The flywheel turns once.
+
+Owner: `meld-execution`
+Blocked by: Phase 6
+
+### Phase 8: Sensory — `not started`
+
+Diff-native observation for the docs node. Publishes to the event spine. Closes the loop: the system observes changes it caused and re-enters the cycle.
+
+Owner: sensory domain
+Parallel with: Phases 6 and 7. Requires only the event spine contract.
+
+## Foundation
+
+These components predate the vertical slice and support all phases.
+
+| Component | Status | Owner |
+|---|---|---|
+| `events` | complete | `meld-events` |
+| `integration/typed_loop` | complete | `meld-lang` integration tests |
 
 ## Dependency Order
 
-1. `events`
-2. `meld-lang`
-3. `world_model/graph`
-4. `world_model/belief`
-5. `world_model/planner`
-6. `world_model/agent`
-7. `execution/goals`
-8. `integration/typed_loop`
-9. `execution/planning`
-10. `sensory`
-11. `world_model/causation`
-12. `world_model/regime`
-13. `world_model`
-14. `execution`
+1. `events` — complete
+2. `meld-lang` — complete, Phase 1
+3. `world_model/graph` — complete, Phase 2
+4. `world_model/belief` — not started, Phase 3
+5. `world_model/planner` — not started, Phase 4
+6. `world_model/agent` — not started, Phase 5
+7. `execution/goals` — type contract complete in `meld-lang`, runtime Phase 6
+8. `integration/typed_loop` — complete
+9. `execution/planning` — type substrate complete in `meld-lang`, runtime Phase 6
+10. `execution/dispatch` — not started, Phase 7
+11. `sensory` — not started, Phase 8
+12. `world_model/causation` — deferred past vertical slice
+13. `world_model/regime` — deferred past vertical slice
+14. `world_model` — full integration deferred
+15. `execution` — full integration deferred
 
 ## Implementation Plans
 
 Implementation plans decompose assessed areas into phased, dependency-ordered work with tasks, exit criteria, and verification commands.
 
-- `design/plan/meld-lang/PLAN.md`
+- [meld-lang/PLAN.md](meld-lang/PLAN.md) — complete
+- `world_model/belief/PLAN.md` — not yet written, next required
 
 ## Assessment Inventory
 
@@ -66,15 +131,9 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 
 ## Scope Cuts
 
-The typed loop excludes runtime dispatch, event publication, workflow migration, task network execution, provider calls, storage, and async runtime behavior.
+The vertical slice excludes full causal effect summaries, regime sensitivity summaries, broad risk envelopes, multi-agent divergence, learned normative policy, multi-agent coordination, goal conflict resolution, broad utility estimation, task network graph execution, graph mutation acceptance, plan diffing, and switching cost model.
 
-World model projection excludes full causal effect summaries, regime sensitivity summaries, broad risk envelopes, and multi-agent divergence.
-
-Goal curation excludes learned normative policy, multi-agent coordination, goal conflict resolution, and broad utility estimation.
-
-Runtime planning substrate excludes task network execution until the graph executor, mutation acceptance, plan diffing, and switching cost contracts are specified.
-
-Runtime flywheel excludes broad multi-agent coordination and full causation or regime inference.
+Each phase implements the minimum needed for one `docs_freshness` flywheel turn. Deepening happens after the loop turns once end-to-end.
 
 ## Blocked Areas
 
@@ -82,7 +141,6 @@ Runtime flywheel excludes broad multi-agent coordination and full causation or r
 - graph mutation acceptance
 - plan diffing
 - switching cost model
-- outcome publication bridge
 - workflow integration strategy
 - causal effect estimation
 - regime inference

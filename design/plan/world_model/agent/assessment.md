@@ -2,7 +2,7 @@
 
 Status: conditionally ready
 Depends on: `design/plan/world_model/belief/assessment.md`, `design/plan/world_model/planner/assessment.md`, `design/plan/execution/goals/assessment.md`, `design/plan/meld-lang/assessment.md`
-Design source: `design/cognitive_architecture/world_model/agent/README.md`, `design/cognitive_architecture/world_model/agent/goal_curation.md`, `design/cognitive_architecture/world_model/agent/ECS.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/execution/goals/README.md`, `design/cognitive_architecture/meld-lang/goals_and_methods.md`
+Design source: `design/cognitive_architecture/world_model/agent/README.md`, `design/cognitive_architecture/world_model/agent/goal_curation.md`, `design/cognitive_architecture/world_model/agent/spec.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/execution/goals/README.md`, `design/cognitive_architecture/meld-lang/goals_and_methods.md`
 Evidence date: 2026-05-21
 
 ## Verdict Summary
@@ -19,7 +19,7 @@ The boundary is correct: agent decides what should become true, expressed as a `
 
 ## Completeness
 
-The first watched belief is `docs_freshness`.
+The first watched belief is the externally configured `docs_freshness` dimension.
 
 The first curation rule is:
 
@@ -35,7 +35,7 @@ Agent does not own the goal set store, goal lifecycle state machine, task graphs
 
 ## Dependency Readiness
 
-Belief is conditionally ready for `docs_freshness`.
+Belief is conditionally ready for externally configured `docs_freshness`.
 
 Planner projection is conditionally ready for one `WorldState`.
 
@@ -45,7 +45,7 @@ Execution goals are conditionally ready for one goal set.
 
 ## First-Slice Feasibility
 
-Agent supports the typed loop by constructing one active goal from the projected `docs_freshness` belief state.
+Agent supports the typed loop by constructing one active goal from the projected `docs_freshness` belief state loaded from runtime configuration.
 
 No multi-agent coordination or learned policy is required.
 
@@ -74,4 +74,4 @@ No multi-agent coordination or learned policy is required.
 
 ## Recommendation
 
-Proceed with one `docs_freshness` curation rule.
+Proceed with one curation rule over the externally configured `docs_freshness` dimension.

@@ -60,8 +60,6 @@ This area does own:
   founding prompt and response index
 - [Microarchitecture Assessment By Domain](microarchitecture_assessment_by_domain.md)
   domain impact review for separating events, world model, and execution responsibilities
-- [Knowledge Graph ECS Decision Memo](world_model/belief/knowledge_graph_ecs_decision_memo.md)
-  ECS evaluation for curation internals, migration cost, and recommendation
 - [Sensory Domain](sensory/README.md)
   continuous observation and diff publication
 - [Sensory Substrate](sensory/substrate.md)
@@ -88,8 +86,6 @@ This area does own:
   event-driven curation runtime, leases, recovery, staleness, and storm handling
 - [Curation In Belief](world_model/belief/curation.md)
   merge activity and natural runtime inside `world_model/belief`
-- [Knowledge Graph ECS Decision Memo](world_model/belief/knowledge_graph_ecs_decision_memo.md)
-  ECS evaluation for curation internals, migration cost, and recommendation
 - [Execution Domain](execution/README.md)
   world-model-aware action aligned with current execution design
 - [Execution Planning](execution/planning/README.md)
@@ -106,26 +102,24 @@ This area does own:
 1. [Observe Merge Push](observe_merge_push.md)
 2. [Microarchitecture Assessment By Domain](microarchitecture_assessment_by_domain.md)
 3. [Crate Split Implementation Plan](PLAN.md)
-4. [Knowledge Graph ECS Decision Memo](world_model/belief/knowledge_graph_ecs_decision_memo.md)
-5. [Sensory Domain](sensory/README.md)
-6. [Sensory Substrate](sensory/substrate.md)
-7. [World Model Domain](world_model/README.md)
-8. [World Model Graph](world_model/graph/README.md)
-9. [World Model Belief](world_model/belief/README.md)
-10. [Causal Layer](world_model/causation/README.md)
-11. [Regime Layer](world_model/regime/README.md)
-12. [World Model Planner](world_model/planner/README.md)
-13. [Belief Microarchitecture](world_model/belief/microarchitecture.md)
-14. [Fact To Belief](world_model/belief/fact_to_belief.md)
-15. [Comparator Model](world_model/belief/comparator_model.md)
-16. [Belief Substrate](world_model/belief/substrate.md)
-17. [Curation In Belief](world_model/belief/curation.md)
-18. [Knowledge Graph ECS Decision Memo](world_model/belief/knowledge_graph_ecs_decision_memo.md)
-19. [Lang Domain](meld-lang/README.md)
-20. [Execution Domain](execution/README.md)
-21. [Execution Planning](execution/planning/README.md)
-22. [Events Design](events/README.md)
-24. [Further Research Prompts](further_research_prompts.md)
+4. [Sensory Domain](sensory/README.md)
+5. [Sensory Substrate](sensory/substrate.md)
+6. [World Model Domain](world_model/README.md)
+7. [World Model Graph](world_model/graph/README.md)
+8. [World Model Belief](world_model/belief/README.md)
+9. [Causal Layer](world_model/causation/README.md)
+10. [Regime Layer](world_model/regime/README.md)
+11. [World Model Planner](world_model/planner/README.md)
+12. [Belief Microarchitecture](world_model/belief/microarchitecture.md)
+13. [Fact To Belief](world_model/belief/fact_to_belief.md)
+14. [Comparator Model](world_model/belief/comparator_model.md)
+15. [Belief Substrate](world_model/belief/substrate.md)
+16. [Curation In Belief](world_model/belief/curation.md)
+17. [Lang Domain](meld-lang/README.md)
+18. [Execution Domain](execution/README.md)
+19. [Execution Planning](execution/planning/README.md)
+20. [Events Design](events/README.md)
+21. [Further Research Prompts](further_research_prompts.md)
 
 ## Read With
 

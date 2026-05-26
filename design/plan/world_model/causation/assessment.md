@@ -2,7 +2,7 @@
 
 Status: deferred
 Depends on: `design/plan/events/assessment.md`, `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`
-Design source: `design/cognitive_architecture/world_model/causation/README.md`, `design/cognitive_architecture/world_model/causation/entities.md`, `design/cognitive_architecture/world_model/causation/components.md`, `design/cognitive_architecture/world_model/causation/systems.md`, `design/cognitive_architecture/world_model/causation/requirements.md`, `design/cognitive_architecture/world_model/causation/ECS.md`
+Design source: `design/cognitive_architecture/world_model/causation/README.md`, `design/cognitive_architecture/world_model/causation/spec.md`, `design/cognitive_architecture/world_model/causation/requirements.md`
 Evidence date: 2026-05-21
 
 ## Verdict Summary
@@ -33,7 +33,7 @@ Causation does not own event append, temporal truth materialization, generic bel
 
 Events and graph are ready.
 
-Belief is conditionally ready for `docs_freshness`.
+Belief is conditionally ready for externally configured `docs_freshness`.
 
 Outcome publication is not specified, so causation cannot participate in loop closure yet.
 
@@ -53,8 +53,7 @@ Runtime flywheel can close first through outcome facts and belief revision witho
 - `tests/integration/task_executor.rs`
 - `tests/integration/execution_projection.rs`
 - `design/cognitive_architecture/world_model/causation/README.md`
-- `design/cognitive_architecture/world_model/causation/entities.md`
-- `design/cognitive_architecture/world_model/causation/components.md`
+- `design/cognitive_architecture/world_model/causation/spec.md`
 
 ## Gaps
 

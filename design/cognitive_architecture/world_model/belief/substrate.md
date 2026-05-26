@@ -20,6 +20,7 @@ It publishes views that the agent microarchitecture consumes.
 
 The natural substrate has these parts:
 
+- runtime family configuration loader
 - spine ingestor
 - evidence normalizer
 - belief key assigner
@@ -64,13 +65,14 @@ An assessment lease records:
 
 - belief key
 - perspective or evidence policy when material
+- runtime family config ref or snapshot hash
 - assessment epoch
 - owner id
 - input sequence low
 - input sequence high
 - lease start time
 - lease expiry time
-- comparator kind
+- comparator engine id
 - status
 
 Lease states:
@@ -111,6 +113,7 @@ Stale signals include:
 - failed execution outcome contradicting prior belief
 - missing comparator for required evidence
 - changed perspective evidence policy
+- changed runtime family configuration
 - regime-conditioned prior no longer matching the active regime
 
 Planner view should expose stale state directly.
@@ -218,16 +221,16 @@ An observation opportunity should carry:
 
 Execution decides whether and how to turn that opportunity into a task.
 
-## Relationship To ECS
+## Relationship To Spec
 
-The substrate may use ECS concepts internally.
+[Belief Spec](spec.md) is the active design source.
 The public contract remains graph-shaped and view-shaped.
 
-This follows [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md):
+The durable substrate rules are:
 
-- ECS concepts may help sparse evidence, belief, provenance, and calibration state
 - canonical facts remain spine-shaped
 - public reads remain shaped belief views
+- sparse belief state is modeled as domain data, not a shared runtime doctrine
 - task and capability remain the deliberate execution substrate
 
 ## First Slice
@@ -235,9 +238,10 @@ This follows [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_me
 The first substrate slice should prove:
 
 - replay from spine to evidence
+- runtime family configuration loading, validation, and snapshotting
 - evidence to belief key assignment
 - lease acquisition and expiry
-- comparator output to revision
+- generic comparator engine output to revision
 - belief view projection
 - observation-needed projection for unresolved beliefs
 - storm coalescing for one belief key
@@ -249,5 +253,5 @@ The first substrate slice should prove:
 - [Fact To Belief](fact_to_belief.md)
 - [Comparator Model](comparator_model.md)
 - [Curation In Belief](curation.md)
-- [Knowledge Graph ECS Decision Memo](knowledge_graph_ecs_decision_memo.md)
+- [Belief Spec](spec.md)
 - [Task Network](../../execution/task_network.md)

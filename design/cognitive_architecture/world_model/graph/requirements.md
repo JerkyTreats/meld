@@ -177,7 +177,5 @@ It does not settle belief, infer causality, detect regimes, or choose actions.
 
 ## Read With
 
-- [Graph Entities](entities.md)
-- [Graph Components](components.md)
-- [Graph Systems](systems.md)
+- [Graph Spec](spec.md)
 - [Graph](README.md)
