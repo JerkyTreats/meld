@@ -114,6 +114,18 @@ impl<'a> TraversalQuery<'a> {
         self.store.anchor_provenance(anchor_id)
     }
 
+    /// Read an anchor record when callers need generic graph lifecycle state.
+    pub fn supersession_for_anchor(
+        &self,
+        anchor_id: &str,
+    ) -> Result<Option<AnchorSelectionRecord>, StorageError> {
+        Ok(self.store.get_anchor(anchor_id)?.filter(|anchor| {
+            anchor.ended_at_seq.is_some()
+                || anchor.ended_by_anchor_id.is_some()
+                || anchor.ended_by_fact_id.is_some()
+        }))
+    }
+
     /// Read the current workspace snapshot anchor for a source object.
     pub fn current_snapshot_for_source(
         &self,

@@ -22,11 +22,12 @@ use sled::{Db, Tree};
 
 use crate::belief::contracts::{
     AssessmentLease, BeliefKey, BeliefProvenanceSummary, BeliefRevision, BeliefStatus, BeliefView,
-    EvidenceAssignment, EvidenceItem, EvidenceRejection, HydrationRefs, LeaseStatus,
+    DirtyKeyState, DirtyReason, EvidenceAssignment, EvidenceItem, EvidenceRejection,
+    FreshnessReason, HydrationRefs, LeaseStatus, ObservationOpportunity, ObservationReason,
 };
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
-use crate::world_state::graph::PerspectiveKey;
+use crate::world_state::graph::{PerspectiveKey, TraversalQuery};
 
 const TREE_EVIDENCE: &str = "belief_evidence";
 const TREE_ASSIGNMENTS: &str = "belief_assignments";
@@ -112,7 +113,7 @@ impl BeliefStore {
                 serde_json::to_vec(assignment).map_err(to_storage_data)?,
             )
             .map_err(to_storage_io)?;
-        self.mark_dirty(&assignment.belief_key, assignment.source_cursor_end)?;
+        self.mark_dirty_for_assignment(assignment)?;
         Ok(())
     }
 
@@ -268,7 +269,13 @@ impl BeliefStore {
                 self.active_lease
                     .remove(lease.belief_key.index_key().as_bytes())
                     .map_err(to_storage_io)?;
-                self.mark_dirty(&lease.belief_key, lease.input_cursor_end)?;
+                self.mark_dirty_with_reason(
+                    &lease.belief_key,
+                    lease.input_cursor_end,
+                    lease.input_cursor_end,
+                    Some(lease.lease_id.clone()),
+                    DirtyReason::LeaseExpired,
+                )?;
                 recovered.push(lease);
             }
         }
@@ -320,7 +327,14 @@ impl BeliefStore {
                 revision.revision_id.as_bytes(),
             )
             .map_err(to_storage_io)?;
-        self.clear_dirty(&revision.belief_key)?;
+        match self.dirty_state(&revision.belief_key)? {
+            Some(mut dirty) if dirty.latest_seq > lease.input_cursor_end => {
+                dirty.dirty_since_seq = lease.input_cursor_end.saturating_add(1);
+                dirty.active_lease_id = None;
+                self.put_dirty_state(&dirty)?;
+            }
+            _ => self.clear_dirty(&revision.belief_key)?,
+        }
         Ok(())
     }
 
@@ -446,7 +460,7 @@ impl BeliefStore {
         &self,
         subject: &DomainObjectRef,
         perspective: &PerspectiveKey,
-    ) -> Result<Vec<crate::belief::contracts::ObservationOpportunity>, StorageError> {
+    ) -> Result<Vec<ObservationOpportunity>, StorageError> {
         Ok(self
             .views_for_subject(subject, perspective)?
             .into_iter()
@@ -471,7 +485,61 @@ impl BeliefStore {
         if newer {
             view.status = BeliefStatus::Stale;
             view.freshness.stale = true;
-            view.freshness.reason = Some("new evidence after revision high water".to_string());
+            push_reason(&mut view.freshness.reasons, FreshnessReason::NewerEvidence);
+            view.observation = Some(stale_observation(
+                key,
+                view.current_revision_id.clone(),
+                FreshnessReason::NewerEvidence,
+            ));
+            self.put_view(&view)?;
+        }
+        Ok(Some(view))
+    }
+
+    /// Recompute current view freshness from evidence, graph, config, and policy state.
+    pub fn refresh_view_freshness(
+        &self,
+        key: &BeliefKey,
+        active_config_hash: &str,
+        active_policy_id: &str,
+        graph_query: Option<&TraversalQuery<'_>>,
+    ) -> Result<Option<BeliefView>, StorageError> {
+        let Some(mut view) = self.mark_stale_if_newer_evidence(key)? else {
+            return Ok(None);
+        };
+        let revision = match view.current_revision_id.as_deref() {
+            Some(revision_id) => self.get_revision(revision_id)?,
+            None => None,
+        };
+        if let Some(revision) = revision {
+            if revision.config_snapshot_hash != active_config_hash {
+                mark_view_stale(
+                    &mut view,
+                    FreshnessReason::ConfigSnapshotChanged,
+                    "active config snapshot changed",
+                );
+            }
+            if key.evidence_policy_id != active_policy_id {
+                mark_view_stale(
+                    &mut view,
+                    FreshnessReason::EvidencePolicyChanged,
+                    "active evidence policy changed",
+                );
+            }
+            if let Some(query) = graph_query {
+                for anchor_id in &revision.provenance.graph_anchor_ids {
+                    if query.supersession_for_anchor(anchor_id)?.is_some() {
+                        mark_view_stale(
+                            &mut view,
+                            FreshnessReason::SupersededAnchor,
+                            "graph anchor was superseded",
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+        if view.freshness.stale {
             self.put_view(&view)?;
         }
         Ok(Some(view))
@@ -479,10 +547,7 @@ impl BeliefStore {
 
     /// Mark a key as needing assessment after the given source sequence.
     pub fn mark_dirty(&self, key: &BeliefKey, seq: u64) -> Result<(), StorageError> {
-        self.dirty_keys
-            .insert(key.index_key().as_bytes(), seq.to_string().as_bytes())
-            .map_err(to_storage_io)?;
-        Ok(())
+        self.mark_dirty_with_reason(key, seq, seq, None, DirtyReason::NewEvidence)
     }
 
     /// Clear dirty state after a successful commit.
@@ -501,6 +566,115 @@ impl BeliefStore {
             out.push(String::from_utf8(key.to_vec()).map_err(to_storage_utf8)?);
         }
         Ok(out)
+    }
+
+    /// Return durable dirty key records in deterministic key order.
+    pub fn dirty_key_states(&self) -> Result<Vec<DirtyKeyState>, StorageError> {
+        let mut out = Vec::new();
+        for item in self.dirty_keys.iter() {
+            let (_, value) = item.map_err(to_storage_io)?;
+            out.push(decode_dirty_state(&value)?);
+        }
+        out.sort_by(|left, right| {
+            left.belief_key
+                .index_key()
+                .cmp(&right.belief_key.index_key())
+        });
+        Ok(out)
+    }
+
+    /// Read durable dirty state for one belief key.
+    pub fn dirty_state(&self, key: &BeliefKey) -> Result<Option<DirtyKeyState>, StorageError> {
+        let Some(raw) = self
+            .dirty_keys
+            .get(key.index_key().as_bytes())
+            .map_err(to_storage_io)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(decode_dirty_state(&raw)?))
+    }
+
+    fn mark_dirty_for_assignment(
+        &self,
+        assignment: &EvidenceAssignment,
+    ) -> Result<(), StorageError> {
+        if let Some(active) = self.active_lease_for_key(&assignment.belief_key)? {
+            let dirty_since = if assignment.source_cursor_end > active.input_cursor_end {
+                assignment.source_cursor_end
+            } else {
+                active.input_cursor_end.saturating_add(1)
+            };
+            self.mark_dirty_with_reason(
+                &assignment.belief_key,
+                dirty_since,
+                assignment.source_cursor_end,
+                Some(active.lease_id),
+                DirtyReason::ActiveLeaseCoalesced,
+            )
+        } else {
+            self.mark_dirty_with_reason(
+                &assignment.belief_key,
+                assignment.source_cursor_end,
+                assignment.source_cursor_end,
+                None,
+                DirtyReason::NewEvidence,
+            )
+        }
+    }
+
+    fn mark_dirty_with_reason(
+        &self,
+        key: &BeliefKey,
+        dirty_since_seq: u64,
+        latest_seq: u64,
+        active_lease_id: Option<String>,
+        reason: DirtyReason,
+    ) -> Result<(), StorageError> {
+        let state = match self.dirty_state(key)? {
+            Some(existing) => DirtyKeyState {
+                belief_key: key.clone(),
+                dirty_since_seq: existing.dirty_since_seq.min(dirty_since_seq),
+                latest_seq: existing.latest_seq.max(latest_seq),
+                active_lease_id: active_lease_id.or(existing.active_lease_id),
+                reason,
+            },
+            None => DirtyKeyState {
+                belief_key: key.clone(),
+                dirty_since_seq,
+                latest_seq,
+                active_lease_id,
+                reason,
+            },
+        };
+        self.put_dirty_state(&state)
+    }
+
+    fn put_dirty_state(&self, state: &DirtyKeyState) -> Result<(), StorageError> {
+        self.dirty_keys
+            .insert(
+                state.belief_key.index_key().as_bytes(),
+                serde_json::to_vec(state).map_err(to_storage_data)?,
+            )
+            .map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    fn active_lease_for_key(
+        &self,
+        key: &BeliefKey,
+    ) -> Result<Option<AssessmentLease>, StorageError> {
+        let Some(active_id) = self
+            .active_lease
+            .get(key.index_key().as_bytes())
+            .map_err(to_storage_io)?
+        else {
+            return Ok(None);
+        };
+        let active_id = String::from_utf8(active_id.to_vec()).map_err(to_storage_utf8)?;
+        Ok(self
+            .get_lease(&active_id)?
+            .filter(|lease| lease.status == LeaseStatus::Leased))
     }
 
     /// Store small runtime metadata values.
@@ -553,6 +727,23 @@ impl BeliefStore {
         }
     }
 
+    /// Rebuild the current view from durable revision state without using the view cache.
+    pub fn rebuild_current_view_from_revision(
+        &self,
+        key: &BeliefKey,
+    ) -> Result<Option<BeliefView>, StorageError> {
+        let Some(revision) = self.current_revision(key)? else {
+            return Ok(None);
+        };
+        let hydration = HydrationRefs {
+            evidence_ids: revision.evidence_ids.clone(),
+            source_fact_ids: revision.provenance.source_fact_ids.clone(),
+            graph_anchor_ids: revision.provenance.graph_anchor_ids.clone(),
+            revision_id: Some(revision.revision_id.clone()),
+        };
+        Ok(Some(self.project_view(&revision, hydration)))
+    }
+
     /// Flush the shared sled database.
     pub fn flush(&self) -> Result<(), StorageError> {
         self.db.flush().map_err(to_storage_io)?;
@@ -567,6 +758,54 @@ fn decode_optional<T: serde::de::DeserializeOwned>(
         return Ok(None);
     };
     Ok(Some(serde_json::from_slice(&raw).map_err(to_storage_data)?))
+}
+
+fn decode_dirty_state(raw: &[u8]) -> Result<DirtyKeyState, StorageError> {
+    if let Ok(state) = serde_json::from_slice(raw) {
+        return Ok(state);
+    }
+    Err(StorageError::InvalidPath(
+        "dirty key state requires structured records".to_string(),
+    ))
+}
+
+fn push_reason(reasons: &mut Vec<FreshnessReason>, reason: FreshnessReason) {
+    if !reasons.contains(&reason) {
+        reasons.push(reason);
+    }
+}
+
+fn mark_view_stale(view: &mut BeliefView, reason: FreshnessReason, detail: &str) {
+    view.status = BeliefStatus::Stale;
+    view.freshness.stale = true;
+    push_reason(&mut view.freshness.reasons, reason.clone());
+    view.observation = Some(stale_observation(
+        &view.key,
+        view.current_revision_id.clone(),
+        reason,
+    ));
+    view.assessment_state = detail.to_string();
+}
+
+fn stale_observation(
+    key: &BeliefKey,
+    revision_id: Option<String>,
+    reason: FreshnessReason,
+) -> ObservationOpportunity {
+    ObservationOpportunity {
+        opportunity_id: format!(
+            "observation-{}",
+            crate::belief::config::stable_hash_hex(
+                format!("{}::{reason:?}::{revision_id:?}", key.index_key()).as_bytes()
+            )
+        ),
+        belief_key: key.clone(),
+        target_evidence_schema_id: String::new(),
+        reason: ObservationReason::StaleEvidence,
+        detail: format!("belief view is stale due to {reason:?}"),
+        source_revision_id: revision_id,
+        open: true,
+    }
 }
 
 fn to_storage_io(err: sled::Error) -> StorageError {

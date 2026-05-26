@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use meld_world_model::belief::EvidenceRejection;
@@ -7,7 +8,8 @@ use meld_world_model::belief::{
 };
 use meld_world_model::belief::{
     BeliefProvenanceSummary, BeliefRevision, ContradictionState, EvidencePolarity, FreshnessState,
-    HydrationRefs, ObservationOpportunity, PlannerProjectionSummary, PosteriorSummary,
+    HydrationRefs, ObservationOpportunity, ObservationReason, PlannerProjectionSummary,
+    PosteriorSummary, PromotedEvidenceRecord,
 };
 use meld_world_model::events::{DomainObjectRef, EventRelation};
 use meld_world_model::world_state::graph::store::TraversalStore;
@@ -75,6 +77,96 @@ fn config_json() -> &'static str {
     }"#
 }
 
+fn content_config_json() -> &'static str {
+    r#"{
+        "family_id": "docs_freshness",
+        "dimension_id": "docs_freshness",
+        "predicate_id": "confidence",
+        "evidence_policy_id": "default_policy",
+        "evidence_schemas": [
+            {
+                "schema_id": "graph_anchor_signal",
+                "required": true,
+                "role": "Support",
+                "reliability": 1.0,
+                "precision": 1.0
+            },
+            {
+                "schema_id": "content_written_signal",
+                "required": false,
+                "role": "Support",
+                "reliability": 1.0,
+                "precision": 1.0
+            },
+            {
+                "schema_id": "content_review_signal",
+                "required": false,
+                "role": "Support",
+                "reliability": 1.0,
+                "precision": 1.0
+            }
+        ],
+        "source_mappings": [
+            {
+                "mapping_id": "anchor_to_signal",
+                "source_kind": "graph_anchor",
+                "evidence_schema_id": "graph_anchor_signal",
+                "subject_from": "anchor.subject",
+                "value_field": "ended",
+                "factor_id": "freshness_signal"
+            },
+            {
+                "mapping_id": "content_written_to_signal",
+                "source_kind": "content_written",
+                "evidence_schema_id": "content_written_signal",
+                "subject_from": "record.subject",
+                "value_field": "stale_probability",
+                "factor_id": "content_written_signal"
+            },
+            {
+                "mapping_id": "content_written_to_review",
+                "source_kind": "content_written",
+                "evidence_schema_id": "content_review_signal",
+                "subject_from": "record.subject",
+                "value_field": "review_probability",
+                "factor_id": "content_review_signal"
+            }
+        ],
+        "comparator": {
+            "engine_id": "weighted_bayesian",
+            "engine_version": "1",
+            "factors": [
+                {
+                    "factor_id": "freshness_signal",
+                    "evidence_schema_id": "graph_anchor_signal",
+                    "weight": 1.0,
+                    "polarity": "Supports"
+                },
+                {
+                    "factor_id": "content_written_signal",
+                    "evidence_schema_id": "content_written_signal",
+                    "weight": 1.0,
+                    "polarity": "Supports"
+                },
+                {
+                    "factor_id": "content_review_signal",
+                    "evidence_schema_id": "content_review_signal",
+                    "weight": 1.0,
+                    "polarity": "Supports"
+                }
+            ],
+            "missing_evidence_uncertainty": 0.9
+        },
+        "default_prior": 0.8,
+        "planner_projection": {
+            "confidence_field": "confidence",
+            "threshold": 0.7,
+            "posterior_meaning": "stale_probability"
+        },
+        "config_version": "1"
+    }"#
+}
+
 fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>, DomainObjectRef) {
     let temp_dir = tempfile::tempdir().unwrap();
     let store =
@@ -108,6 +200,27 @@ fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>, DomainObjectRef) {
     store.put_anchor(&anchor).unwrap();
     store.set_current_anchor(&anchor).unwrap();
     (temp_dir, store, node)
+}
+
+fn promoted_content_record(node: DomainObjectRef, seq: u64) -> PromotedEvidenceRecord {
+    let mut fields = BTreeMap::new();
+    fields.insert("stale_probability".to_string(), EvidenceValue::Scalar(0.0));
+    fields.insert("review_probability".to_string(), EvidenceValue::Scalar(0.2));
+    PromotedEvidenceRecord {
+        source_kind: "content_written".to_string(),
+        source_id: format!("content-written-{seq}"),
+        subject: node.clone(),
+        source_fact_ids: vec![format!("spine-content-{seq}")],
+        graph_anchor_ids: vec!["anchor-a".to_string()],
+        objects: vec![node],
+        relations: Vec::new(),
+        source_cursor_start: seq,
+        source_cursor_end: seq,
+        reference_time: Some("2026-05-26T00:00:00Z".to_string()),
+        transaction_seq: seq,
+        content_hash: Some(format!("hash-{seq}")),
+        fields,
+    }
 }
 
 #[test]
@@ -190,6 +303,71 @@ fn belief_evidence_normalizes_anchor_and_preserves_provenance() {
     assert_eq!(item.graph_anchor_ids, vec!["anchor-a"]);
     assert_eq!(item.provenance.objects.len(), 2);
     assert_eq!(item.typed_value, EvidenceValue::Scalar(0.0));
+    assert_eq!(item.transaction_seq, 1);
+    assert_eq!(item.reference_time, None);
+    assert_eq!(item.content_hash, None);
+}
+
+#[test]
+fn belief_evidence_normalizes_promoted_record() {
+    let node = object("workspace_fs", "node", "node-a");
+    let snapshot = BeliefConfigLoader::load_json(content_config_json()).unwrap();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        snapshot.config,
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    );
+    let promoted = promoted_content_record(node.clone(), 2);
+
+    let evidence = normalizer.normalize_promoted(&promoted).unwrap();
+    let item = evidence
+        .iter()
+        .find(|item| item.evidence_schema_id == "content_written_signal")
+        .unwrap();
+
+    assert_eq!(item.candidate_key.subject, node);
+    assert_eq!(item.typed_value, EvidenceValue::Scalar(0.0));
+    assert_eq!(item.reference_time.as_deref(), Some("2026-05-26T00:00:00Z"));
+    assert_eq!(item.transaction_seq, 2);
+    assert_eq!(item.content_hash.as_deref(), Some("hash-2"));
+    assert!(item
+        .source_fact_ids
+        .contains(&"spine-content-2".to_string()));
+}
+
+#[test]
+fn belief_evidence_promoted_record_can_map_to_many_candidates() {
+    let node = object("workspace_fs", "node", "node-a");
+    let snapshot = BeliefConfigLoader::load_json(content_config_json()).unwrap();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        snapshot.config,
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    );
+
+    let evidence = normalizer
+        .normalize_promoted(&promoted_content_record(node, 2))
+        .unwrap();
+
+    assert_eq!(evidence.len(), 2);
+    assert_ne!(evidence[0].evidence_id, evidence[1].evidence_id);
+}
+
+#[test]
+fn belief_evidence_rejects_missing_promoted_value() {
+    let node = object("workspace_fs", "node", "node-a");
+    let snapshot = BeliefConfigLoader::load_json(content_config_json()).unwrap();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        snapshot.config,
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    );
+    let mut promoted = promoted_content_record(node, 2);
+    promoted.fields.remove("stale_probability");
+
+    let rejection = normalizer.normalize_promoted(&promoted).unwrap_err();
+
+    assert_eq!(rejection.reason, "missing promoted value field");
 }
 
 #[test]
@@ -297,6 +475,11 @@ fn configured_bayesian_comparator_uses_weights_reliability_and_precision() {
     assert_close(output.revision.confidence, 0.475);
     assert_close(output.revision.uncertainty, 0.875);
     assert_close(output.revision.precision, 0.5);
+    assert!(output
+        .revision
+        .contradiction
+        .reasons
+        .contains(&meld_world_model::ContradictionReason::WeakCoverage));
 }
 
 #[test]
@@ -375,6 +558,10 @@ fn configured_bayesian_comparator_reports_missing_required_evidence() {
             .target_evidence_schema_id,
         "graph_anchor_signal"
     );
+    assert_eq!(
+        output.revision.observation.as_ref().unwrap().reason,
+        ObservationReason::MissingRequiredEvidence
+    );
 }
 
 #[test]
@@ -407,6 +594,10 @@ fn configured_bayesian_comparator_reports_missing_assessment() {
 
     assert_eq!(output.revision.status, BeliefStatus::NeedsAssessment);
     assert_eq!(output.revision.uncertainty, 1.0);
+    assert_eq!(
+        output.revision.observation.as_ref().unwrap().reason,
+        ObservationReason::MissingComparator
+    );
 }
 
 #[test]
@@ -472,10 +663,11 @@ fn comparator_polarity_keeps_counterevidence_separate() {
     .unwrap();
 
     assert!(output.revision.contradiction.contradicted);
-    assert_eq!(
-        output.revision.contradiction.reason.as_deref(),
-        Some("contradicting evidence present")
-    );
+    assert!(output
+        .revision
+        .contradiction
+        .reasons
+        .contains(&meld_world_model::ContradictionReason::Counterevidence));
     assert_eq!(output.revision.supporting_evidence_ids.len(), 0);
     assert_eq!(output.revision.contradicted_evidence_ids.len(), 1);
     assert_close(output.revision.posterior.probability, 0.775);
@@ -633,6 +825,84 @@ fn belief_store_marks_stale_when_newer_evidence_arrives() {
 
     assert_eq!(stale.status, BeliefStatus::Stale);
     assert!(stale.freshness.stale);
+    assert!(stale
+        .freshness
+        .reasons
+        .contains(&meld_world_model::FreshnessReason::NewerEvidence));
+}
+
+#[test]
+fn belief_freshness_marks_superseded_anchor_stale() {
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_store =
+        Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
+    let runtime =
+        BeliefRuntime::from_json_config(belief_store.clone(), graph.clone(), config_json())
+            .unwrap();
+    runtime
+        .assess_subject(&node, "frame_type", "analysis", "worker-a")
+        .unwrap();
+    let view = BeliefQuery::new(belief_store.as_ref())
+        .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+        .unwrap()
+        .remove(0);
+    let mut anchor = graph.get_anchor("anchor-a").unwrap().unwrap();
+    anchor.ended_at_seq = Some(2);
+    anchor.ended_by_anchor_id = Some("anchor-b".to_string());
+    graph.put_anchor(&anchor).unwrap();
+    let graph_query = meld_world_model::TraversalQuery::new(graph.as_ref());
+
+    let stale = belief_store
+        .refresh_view_freshness(
+            &view.key,
+            "e73f2f84e30146b3",
+            "default_policy",
+            Some(&graph_query),
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(stale.status, BeliefStatus::Stale);
+    assert!(stale
+        .freshness
+        .reasons
+        .contains(&meld_world_model::FreshnessReason::SupersededAnchor));
+}
+
+#[test]
+fn belief_freshness_marks_config_and_policy_change_stale() {
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_store =
+        Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
+    let runtime =
+        BeliefRuntime::from_json_config(belief_store.clone(), graph, config_json()).unwrap();
+    runtime
+        .assess_subject(&node, "frame_type", "analysis", "worker-a")
+        .unwrap();
+    let view = BeliefQuery::new(belief_store.as_ref())
+        .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+        .unwrap()
+        .remove(0);
+
+    let stale = belief_store
+        .refresh_view_freshness(&view.key, "other-hash", "other-policy", None)
+        .unwrap()
+        .unwrap();
+
+    assert!(stale
+        .freshness
+        .reasons
+        .contains(&meld_world_model::FreshnessReason::ConfigSnapshotChanged));
+    assert!(stale
+        .freshness
+        .reasons
+        .contains(&meld_world_model::FreshnessReason::EvidencePolicyChanged));
+    assert_eq!(
+        stale.observation.as_ref().unwrap().reason,
+        ObservationReason::StaleEvidence
+    );
 }
 
 #[test]
@@ -781,6 +1051,166 @@ fn belief_store_clears_dirty_keys() {
 }
 
 #[test]
+fn belief_storm_coalescing_records_dirty_since_seq() {
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_store =
+        Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
+    let runtime =
+        BeliefRuntime::from_json_config(belief_store.clone(), graph, content_config_json())
+            .unwrap();
+    runtime
+        .assess_subject(&node, "frame_type", "analysis", "worker-a")
+        .unwrap();
+    let view = BeliefQuery::new(belief_store.as_ref())
+        .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+        .unwrap()
+        .remove(0);
+    belief_store
+        .acquire_lease(test_lease(&view, "lease-active-dirty", 1, 1))
+        .unwrap();
+    let snapshot = BeliefConfigLoader::load_json(content_config_json()).unwrap();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        snapshot.config,
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    );
+    let item = normalizer
+        .normalize_promoted(&promoted_content_record(node, 2))
+        .unwrap()
+        .into_iter()
+        .find(|item| item.evidence_schema_id == "content_written_signal")
+        .unwrap();
+    belief_store.put_evidence(&item).unwrap();
+    belief_store
+        .put_assignment(&normalizer.assign(&item).unwrap())
+        .unwrap();
+
+    let dirty = BeliefQuery::new(belief_store.as_ref())
+        .dirty_key_states()
+        .unwrap()
+        .remove(0);
+
+    assert_eq!(dirty.dirty_since_seq, 2);
+    assert_eq!(dirty.latest_seq, 2);
+    assert_eq!(dirty.active_lease_id.as_deref(), Some("lease-active-dirty"));
+    assert_eq!(
+        dirty.reason,
+        meld_world_model::DirtyReason::ActiveLeaseCoalesced
+    );
+}
+
+#[test]
+fn belief_content_written_follow_up_lowers_stale_posterior() {
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_store =
+        Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
+    let runtime =
+        BeliefRuntime::from_json_config(belief_store.clone(), graph, content_config_json())
+            .unwrap();
+    runtime
+        .assess_subject(&node, "frame_type", "analysis", "worker-a")
+        .unwrap();
+    let first = BeliefQuery::new(belief_store.as_ref())
+        .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+        .unwrap()
+        .remove(0);
+    let snapshot = BeliefConfigLoader::load_json(content_config_json()).unwrap();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        snapshot.config,
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    );
+    let item = normalizer
+        .normalize_promoted(&promoted_content_record(node.clone(), 2))
+        .unwrap()
+        .into_iter()
+        .find(|item| item.evidence_schema_id == "content_written_signal")
+        .unwrap();
+    belief_store.put_evidence(&item).unwrap();
+    belief_store
+        .put_assignment(&normalizer.assign(&item).unwrap())
+        .unwrap();
+
+    let result = runtime
+        .assess_dirty_key(&first.key, "worker-follow-up")
+        .unwrap()
+        .unwrap();
+    let second = BeliefQuery::new(belief_store.as_ref())
+        .current_view(&first.key)
+        .unwrap()
+        .unwrap();
+    let history = BeliefQuery::new(belief_store.as_ref())
+        .revision_history(&first.key)
+        .unwrap();
+
+    assert_eq!(result.evidence_count, 1);
+    assert!(second.posterior.probability < first.posterior.probability);
+    assert!(second.confidence > first.confidence);
+    assert!(!second.freshness.stale);
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[1].prior_revision_id, first.current_revision_id);
+}
+
+#[test]
+fn belief_replay_rebuilds_current_view_from_revision_head() {
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_store =
+        Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
+    let runtime =
+        BeliefRuntime::from_json_config(belief_store.clone(), graph, config_json()).unwrap();
+    runtime
+        .assess_subject(&node, "frame_type", "analysis", "worker-a")
+        .unwrap();
+    let query = BeliefQuery::new(belief_store.as_ref());
+    let view = query
+        .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+        .unwrap()
+        .remove(0);
+
+    let rebuilt = query
+        .rebuild_current_view_from_revision(&view.key)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(rebuilt, view);
+}
+
+#[test]
+fn belief_planner_boundary_uses_view_only() {
+    fn planner_read(view: &meld_world_model::BeliefView) -> (String, f64, bool, BeliefStatus) {
+        (
+            view.key.subject.index_key(),
+            view.confidence,
+            view.freshness.stale,
+            view.status.clone(),
+        )
+    }
+
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_store =
+        Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
+    let runtime =
+        BeliefRuntime::from_json_config(belief_store.clone(), graph, config_json()).unwrap();
+    runtime
+        .assess_subject(&node, "frame_type", "analysis", "worker-a")
+        .unwrap();
+    let view = BeliefQuery::new(belief_store.as_ref())
+        .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+        .unwrap()
+        .remove(0);
+
+    let (_subject, confidence, stale, status) = planner_read(&view);
+
+    assert!(confidence < 0.7);
+    assert!(!stale);
+    assert_eq!(status, BeliefStatus::Settled);
+}
+
+#[test]
 fn belief_store_persists_runtime_meta() {
     let belief_dir = tempfile::tempdir().unwrap();
     let path = belief_dir.path().join("belief");
@@ -819,7 +1249,8 @@ fn belief_store_returns_open_observation_opportunities() {
         opportunity_id: "observe-a".to_string(),
         belief_key: view.key.clone(),
         target_evidence_schema_id: "graph_anchor_signal".to_string(),
-        reason: "missing anchor".to_string(),
+        reason: ObservationReason::MissingRequiredEvidence,
+        detail: "missing anchor".to_string(),
         source_revision_id: Some(revision.revision_id.clone()),
         open: true,
     });
@@ -1047,6 +1478,79 @@ fn no_mod_rs_is_required_for_belief() {
     assert!(!std::path::Path::new("src/belief/mod.rs").exists());
 }
 
+#[test]
+fn belief_core_has_no_family_specific_rust_identifiers() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for path in [
+        "src/belief.rs",
+        "src/belief/comparator.rs",
+        "src/belief/config.rs",
+        "src/belief/contracts.rs",
+        "src/belief/evidence.rs",
+        "src/belief/query.rs",
+        "src/belief/runtime.rs",
+        "src/belief/store.rs",
+    ] {
+        let source = std::fs::read_to_string(manifest_dir.join(path)).unwrap();
+        assert!(!source.contains("DocsFreshness"));
+        assert!(!source.contains("ContentFreshness"));
+        assert!(!source.contains("DocsFreshnessBayesianComparator"));
+    }
+}
+
+#[test]
+fn belief_public_records_round_trip_through_serde() {
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_store =
+        Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
+    let runtime =
+        BeliefRuntime::from_json_config(belief_store.clone(), graph, config_json()).unwrap();
+    runtime
+        .assess_subject(&node, "frame_type", "analysis", "worker-a")
+        .unwrap();
+    let view = BeliefQuery::new(belief_store.as_ref())
+        .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+        .unwrap()
+        .remove(0);
+    let revision = belief_store
+        .current_revision(&view.key)
+        .unwrap()
+        .expect("revision");
+    let dirty = meld_world_model::DirtyKeyState {
+        belief_key: view.key.clone(),
+        dirty_since_seq: 2,
+        latest_seq: 2,
+        active_lease_id: None,
+        reason: meld_world_model::DirtyReason::NewEvidence,
+    };
+    let promoted = promoted_content_record(node, 2);
+
+    assert_eq!(
+        serde_json::from_str::<meld_world_model::BeliefView>(
+            &serde_json::to_string(&view).unwrap()
+        )
+        .unwrap(),
+        view
+    );
+    assert_eq!(
+        serde_json::from_str::<BeliefRevision>(&serde_json::to_string(&revision).unwrap()).unwrap(),
+        revision
+    );
+    assert_eq!(
+        serde_json::from_str::<meld_world_model::DirtyKeyState>(
+            &serde_json::to_string(&dirty).unwrap()
+        )
+        .unwrap(),
+        dirty
+    );
+    assert_eq!(
+        serde_json::from_str::<PromotedEvidenceRecord>(&serde_json::to_string(&promoted).unwrap())
+            .unwrap(),
+        promoted
+    );
+}
+
 fn test_revision(view: &meld_world_model::BeliefView, start: u64, end: u64) -> BeliefRevision {
     BeliefRevision {
         revision_id: format!("revision-test-{start}-{end}"),
@@ -1074,12 +1578,12 @@ fn test_revision(view: &meld_world_model::BeliefView, start: u64, end: u64) -> B
         precision: 0.5,
         freshness: FreshnessState {
             stale: false,
-            reason: None,
+            reasons: Vec::new(),
             high_water_seq: end,
         },
         contradiction: ContradictionState {
             contradicted: false,
-            reason: None,
+            reasons: Vec::new(),
             supporting_evidence_ids: Vec::new(),
             contradicted_evidence_ids: Vec::new(),
         },

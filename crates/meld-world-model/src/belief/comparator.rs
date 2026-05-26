@@ -27,9 +27,10 @@ use std::collections::BTreeSet;
 
 use crate::belief::config::stable_hash_hex;
 use crate::belief::contracts::{
-    BeliefFamilyConfig, BeliefProvenanceSummary, BeliefRevision, BeliefStatus, ContradictionState,
-    EvidenceItem, EvidencePolarity, EvidenceValue, FreshnessState, HydrationRefs,
-    ObservationOpportunity, PlannerProjectionSummary, PosteriorSummary,
+    BeliefFamilyConfig, BeliefProvenanceSummary, BeliefRevision, BeliefStatus, ContradictionReason,
+    ContradictionState, EvidenceItem, EvidencePolarity, EvidenceValue, FreshnessState,
+    HydrationRefs, ObservationOpportunity, ObservationReason, PlannerProjectionSummary,
+    PosteriorSummary,
 };
 use crate::error::StorageError;
 
@@ -151,7 +152,8 @@ impl BayesianComparator {
                 ),
                 belief_key: key.clone(),
                 target_evidence_schema_id: schema_id.clone(),
-                reason: "required evidence is missing".to_string(),
+                reason: ObservationReason::MissingRequiredEvidence,
+                detail: "required evidence is missing".to_string(),
                 source_revision_id: None,
                 open: true,
             });
@@ -180,10 +182,16 @@ impl BayesianComparator {
         ))
         .map_err(to_storage_data)?;
         let revision_id = format!("revision-{}", stable_hash_hex(&revision_seed));
+        let mut contradiction_reasons = Vec::new();
+        if !contradicted.is_empty() {
+            contradiction_reasons.push(ContradictionReason::Counterevidence);
+        }
+        if total_weight < 1.0 {
+            contradiction_reasons.push(ContradictionReason::WeakCoverage);
+        }
         let contradiction = ContradictionState {
             contradicted: !contradicted.is_empty(),
-            reason: (!contradicted.is_empty())
-                .then(|| "contradicting evidence present".to_string()),
+            reasons: contradiction_reasons,
             supporting_evidence_ids: supporting.clone(),
             contradicted_evidence_ids: contradicted.clone(),
         };
@@ -213,7 +221,7 @@ impl BayesianComparator {
             precision,
             freshness: FreshnessState {
                 stale: false,
-                reason: None,
+                reasons: Vec::new(),
                 high_water_seq: input.source_cursor_end,
             },
             contradiction,
@@ -242,6 +250,18 @@ fn missing_assessment(input: ComparatorInput) -> Result<ComparatorOutput, Storag
         "revision-{}",
         stable_hash_hex(format!("{}::missing-assessment", key.index_key()).as_bytes())
     );
+    let observation = ObservationOpportunity {
+        opportunity_id: format!(
+            "observation-{}",
+            stable_hash_hex(format!("{}::missing-comparator", key.index_key()).as_bytes())
+        ),
+        belief_key: key.clone(),
+        target_evidence_schema_id: String::new(),
+        reason: ObservationReason::MissingComparator,
+        detail: "comparator engine is not available".to_string(),
+        source_revision_id: None,
+        open: true,
+    };
     let revision = BeliefRevision {
         revision_id: revision_id.clone(),
         belief_key: key,
@@ -268,17 +288,17 @@ fn missing_assessment(input: ComparatorInput) -> Result<ComparatorOutput, Storag
         precision: 0.0,
         freshness: FreshnessState {
             stale: false,
-            reason: None,
+            reasons: Vec::new(),
             high_water_seq: input.source_cursor_end,
         },
         contradiction: ContradictionState {
             contradicted: false,
-            reason: None,
+            reasons: vec![ContradictionReason::MissingComparatorState],
             supporting_evidence_ids: Vec::new(),
             contradicted_evidence_ids: Vec::new(),
         },
         status: BeliefStatus::NeedsAssessment,
-        observation: None,
+        observation: Some(observation),
         provenance: BeliefProvenanceSummary::empty(),
     };
     Ok(ComparatorOutput {

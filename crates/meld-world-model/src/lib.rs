@@ -10,7 +10,8 @@ pub mod world_state;
 pub use belief::{
     AssessmentLease, BayesianComparator, BeliefConfigLoader, BeliefEvidenceNormalizer, BeliefKey,
     BeliefQuery, BeliefRuntime, BeliefStatus, BeliefStore, BeliefView, BranchScope,
-    ComparatorInput, ComparatorOutput, ConfigSnapshot, EvidenceItem, EvidenceRole, EvidenceValue,
-    LeaseStatus, RuntimeAssessmentResult,
+    ComparatorInput, ComparatorOutput, ConfigSnapshot, ContradictionReason, DirtyKeyState,
+    DirtyReason, EvidenceItem, EvidenceRole, EvidenceValue, FreshnessReason, LeaseStatus,
+    ObservationReason, PromotedEvidenceRecord, RuntimeAssessmentResult,
 };
 pub use world_state::*;

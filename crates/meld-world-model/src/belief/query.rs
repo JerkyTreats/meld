@@ -17,7 +17,7 @@
 //! ```
 
 use crate::belief::contracts::{
-    BeliefKey, BeliefProvenanceSummary, BeliefRevision, BeliefView, EvidenceItem,
+    BeliefKey, BeliefProvenanceSummary, BeliefRevision, BeliefView, DirtyKeyState, EvidenceItem,
     ObservationOpportunity,
 };
 use crate::belief::store::BeliefStore;
@@ -84,5 +84,18 @@ impl<'a> BeliefQuery<'a> {
     /// Read dirty key index entries for recovery and diagnostics.
     pub fn dirty_keys(&self) -> Result<Vec<String>, StorageError> {
         self.store.dirty_keys()
+    }
+
+    /// Read structured dirty key state for recovery and storm coalescing.
+    pub fn dirty_key_states(&self) -> Result<Vec<DirtyKeyState>, StorageError> {
+        self.store.dirty_key_states()
+    }
+
+    /// Rebuild the current view from durable revision state.
+    pub fn rebuild_current_view_from_revision(
+        &self,
+        key: &BeliefKey,
+    ) -> Result<Option<BeliefView>, StorageError> {
+        self.store.rebuild_current_view_from_revision(key)
     }
 }

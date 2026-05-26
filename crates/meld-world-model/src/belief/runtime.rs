@@ -100,6 +100,14 @@ impl BeliefRuntime {
         let config_json = serde_json::to_string(&self.config.config).map_err(to_storage_data)?;
         self.belief_store
             .put_config_snapshot(&self.config.hash, &config_json)?;
+        self.belief_store.put_runtime_meta(
+            &format!("active_config_hash::{}", self.config.config.family_id),
+            &self.config.hash,
+        )?;
+        self.belief_store.put_runtime_meta(
+            &format!("active_policy_id::{}", self.config.config.family_id),
+            &self.config.config.evidence_policy_id,
+        )?;
         let query = TraversalQuery::new(self.traversal_store.as_ref());
         let anchor = query
             .current_anchor_for_subject(subject, anchor_perspective_kind, anchor_perspective_id)?
@@ -178,6 +186,95 @@ impl BeliefRuntime {
     /// Recover expired assessment leases and reschedule their keys.
     pub fn recover_expired_leases(&self, current_seq: u64) -> Result<usize, StorageError> {
         Ok(self.belief_store.recover_expired_leases(current_seq)?.len())
+    }
+
+    /// Assess one dirty belief key from durable assignments.
+    pub fn assess_dirty_key(
+        &self,
+        key: &crate::belief::contracts::BeliefKey,
+        owner_id: &str,
+    ) -> Result<Option<RuntimeAssessmentResult>, StorageError> {
+        let Some(dirty) = self.belief_store.dirty_state(key)? else {
+            return Ok(None);
+        };
+        let prior = self.belief_store.current_revision(key)?;
+        let source_cursor_start = prior
+            .as_ref()
+            .map(|revision| revision.source_cursor_end.saturating_add(1))
+            .unwrap_or(dirty.dirty_since_seq)
+            .min(dirty.dirty_since_seq);
+        let source_cursor_end = dirty.latest_seq;
+        let lease = AssessmentLease {
+            lease_id: format!("lease-{}-{}", source_cursor_end, key.index_key()),
+            belief_key: key.clone(),
+            epoch: source_cursor_end,
+            owner_id: owner_id.to_string(),
+            input_cursor_start: source_cursor_start,
+            input_cursor_end: source_cursor_end,
+            started_at_seq: source_cursor_start,
+            expires_at_seq: source_cursor_end + 100,
+            comparator_engine_id: self.config.config.comparator.engine_id.clone(),
+            config_snapshot_hash: self.config.hash.clone(),
+            status: LeaseStatus::Queued,
+        };
+        let lease = match self.belief_store.acquire_lease(lease) {
+            Ok(lease) => lease,
+            Err(StorageError::Backpressure(_)) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        let evidence: Vec<_> = self
+            .belief_store
+            .evidence_for_key(key)?
+            .into_iter()
+            .filter(|item| {
+                item.source_cursor_end >= source_cursor_start
+                    && item.source_cursor_end <= source_cursor_end
+            })
+            .collect();
+        if evidence.is_empty() {
+            self.belief_store.complete_lease(&lease)?;
+            return Ok(None);
+        }
+        let output = BayesianComparator::assess(ComparatorInput {
+            config: self.config.config.clone(),
+            config_snapshot_hash: self.config.hash.clone(),
+            prior_revision: prior,
+            evidence: evidence.clone(),
+            source_cursor_start,
+            source_cursor_end,
+        })?;
+        self.belief_store
+            .commit_revision(&lease, &output.revision)?;
+        let view = self
+            .belief_store
+            .project_view(&output.revision, output.view_hydration);
+        self.belief_store.put_view(&view)?;
+        self.belief_store.complete_lease(&lease)?;
+        self.belief_store.flush()?;
+        Ok(Some(RuntimeAssessmentResult {
+            evidence_count: evidence.len(),
+            revision_id: output.revision.revision_id,
+            confidence: view.confidence,
+        }))
+    }
+
+    /// Recover expired work and assess every available dirty key once.
+    pub fn recover_and_assess_dirty(
+        &self,
+        current_seq: u64,
+        owner_id: &str,
+    ) -> Result<usize, StorageError> {
+        self.belief_store.recover_expired_leases(current_seq)?;
+        let mut committed = 0;
+        for dirty in self.belief_store.dirty_key_states()? {
+            if self
+                .assess_dirty_key(&dirty.belief_key, owner_id)?
+                .is_some()
+            {
+                committed += 1;
+            }
+        }
+        Ok(committed)
     }
 }
 

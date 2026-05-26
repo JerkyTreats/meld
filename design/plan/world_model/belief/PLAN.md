@@ -59,19 +59,14 @@ Implemented:
 - Append-only evidence, assignment, revision, current head, view, lease, rejection, config snapshot, and dirty-key storage
 - Belief runtime path from graph subject to current `BeliefView`
 - Belief query surface for current views, subject views, revision history, revision evidence, revision provenance, observation opportunities, and dirty keys
-- Stale marking for newer assigned evidence
-- Lease acquisition, completion, expired lease recovery, and dirty-key rescheduling
-- First-slice tests proving runtime config, graph evidence, assignment, comparator determinism, persisted view, stale state, lease recovery, and no `mod.rs`
-
-Partially implemented:
-
 - Promoted outcome fact normalization
-- Reference time, transaction time, and content hash preservation beyond fields already available from graph records
-- Broad contradiction taxonomy
-- Observation opportunities beyond missing required evidence
-- Storm coalescing beyond one active lease plus dirty-key persistence
-- Replay equality as a dedicated rebuild test
+- Reference time, transaction time, and content hash preservation
+- Typed stale reasons for newer evidence, superseded anchors, config changes, and policy changes
+- Typed observation opportunities for missing evidence, stale state, unresolved contradiction, and missing comparator state
+- Lease acquisition, completion, expired lease recovery, dirty-key rescheduling, and storm coalescing
+- Replay equality through durable revision rebuild
 - Content-written follow-up evidence that lowers stale-docs posterior
+- First-slice tests proving runtime config, graph evidence, assignment, comparator determinism, persisted view, stale state, lease recovery, replay, content follow-up, and no `mod.rs`
 
 Deferred:
 
@@ -126,14 +121,14 @@ Deferred:
 | 0 | Scope lock and contract inventory | Graph and events assessments | Complete |
 | 1 | Module scaffold and public boundary | Phase 0 | Complete |
 | 2 | Identity, runtime configuration, and record contracts | Phase 1 | Complete |
-| 3 | Evidence normalization | Phase 2 and graph query surface | Partial |
+| 3 | Evidence normalization | Phase 2 and graph query surface | Complete |
 | 4 | Belief key assignment | Phase 3 | Complete |
 | 5 | Comparator engine selection and configured assessment | Phase 4 | Complete |
 | 6 | Revision commit and current head | Phase 5 | Complete |
 | 7 | Belief view projection | Phase 6 | Complete |
-| 8 | Freshness, contradiction, and observation-needed state | Phase 7 | Partial |
-| 9 | Lease, recovery, and storm coalescing | Phase 8 | Partial |
-| 10 | End-to-end replay and typed-loop handoff tests | Phase 9 | Partial |
+| 8 | Freshness, contradiction, and observation-needed state | Phase 7 | Complete |
+| 9 | Lease, recovery, and storm coalescing | Phase 8 | Complete |
+| 10 | End-to-end replay and typed-loop handoff tests | Phase 9 | Complete |
 
 ---
 
@@ -252,7 +247,7 @@ Key files:
 | 6 | Define `BeliefRevision` with prior revision link, comparator metadata, config id or snapshot hash, evidence ids, posterior, confidence, uncertainty, precision, freshness, contradiction, status, and source cursor range. | Complete |
 | 7 | Define `BeliefView` with key, perspective, current revision id, status, posterior, projected planner fields, confidence, uncertainty, freshness, contradiction, observation state, assessment state, advisory posture, and provenance summary. | Complete |
 | 8 | Define `AssessmentLease` with key, epoch, owner id, input cursor range, start time, expiry time, comparator engine, config id or snapshot hash, and lease status. | Complete |
-| 9 | Add serde round-trip tests for every public record and runtime configuration record. | Partial |
+| 9 | Add serde round-trip tests for every public record and runtime configuration record. | Complete |
 
 Test Suite Expansion:
 - Add serde round-trip tests for every public belief record.
@@ -292,16 +287,16 @@ Key files:
 | Goal | Convert graph anchors and promoted facts into belief-normalized evidence records. |
 | Dependencies | Phase 2 and graph query surface |
 | Docs | [Fact To Belief](../../../cognitive_architecture/world_model/belief/fact_to_belief.md), [Belief Spec](../../../cognitive_architecture/world_model/belief/spec.md), [Graph Assessment](../graph/assessment.md) |
-| Status | Partial |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Add a `BeliefEvidenceNormalizer` that accepts graph anchor records, anchor provenance, promoted outcome facts, and runtime evidence source mappings. | Partial |
-| 2 | Preserve source fact ids, anchor ids, object refs, relation refs, source sequence range, reference time, transaction time, and content hash where available. | Partial |
-| 3 | Normalize graph and promoted facts into configured evidence schemas when graph data is available. | Partial |
+| 1 | Add a `BeliefEvidenceNormalizer` that accepts graph anchor records, anchor provenance, promoted outcome facts, and runtime evidence source mappings. | Complete |
+| 2 | Preserve source fact ids, anchor ids, object refs, relation refs, source sequence range, reference time, transaction time, and content hash where available. | Complete |
+| 3 | Normalize graph and promoted facts into configured evidence schemas when graph data is available. | Complete |
 | 4 | Normalize configured source mappings when their promoted shapes are available. | Complete |
 | 5 | Mark unsupported or unrecognized candidates as rejected evidence with an explicit reason when audit visibility is required. | Complete |
-| 6 | Add tests proving one source fact can produce many evidence candidates and one evidence item preserves graph provenance. | Partial |
+| 6 | Add tests proving one source fact can produce many evidence candidates and one evidence item preserves graph provenance. | Complete |
 
 Test Suite Expansion:
 - Add normalizer tests for each first-slice evidence schema loaded from runtime configuration.
@@ -320,7 +315,7 @@ Test Suite Expansion:
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Provides the promotion and normalization stages for the fact-to-belief transition. | Partial |
+| Provides the promotion and normalization stages for the fact-to-belief transition. | Complete |
 
 Verification:
 - `cargo test -p meld-world-model belief_evidence`
@@ -441,17 +436,17 @@ Key files:
 | Goal | Append belief revisions and move the current revision head without editing prior revisions. |
 | Dependencies | Phase 5 |
 | Docs | [Belief Requirements](../../../cognitive_architecture/world_model/belief/requirements.md), [Belief Spec](../../../cognitive_architecture/world_model/belief/spec.md) |
-| Status | Not started |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Add storage for evidence records, revision records, revision head by key, and source cursor indexes. | Not started |
-| 2 | Validate that proposed revision evidence ids exist and fall within the lease input cursor range. | Not started |
-| 3 | Append a new `BeliefRevision` with prior revision link when one exists. | Not started |
-| 4 | Move the current revision head for the key to the new revision. | Not started |
-| 5 | Preserve previous revisions for provenance and replay. | Not started |
-| 6 | Add queries for current revision, revision history, evidence by revision, and provenance by revision. | Not started |
-| 7 | Add tests for append, supersession by head movement, and provenance lookup. | Not started |
+| 1 | Add storage for evidence records, revision records, revision head by key, and source cursor indexes. | Complete |
+| 2 | Validate that proposed revision evidence ids exist and fall within the lease input cursor range. | Complete |
+| 3 | Append a new `BeliefRevision` with prior revision link when one exists. | Complete |
+| 4 | Move the current revision head for the key to the new revision. | Complete |
+| 5 | Preserve previous revisions for provenance and replay. | Complete |
+| 6 | Add queries for current revision, revision history, evidence by revision, and provenance by revision. | Complete |
+| 7 | Add tests for append, supersession by head movement, and provenance lookup. | Complete |
 
 Test Suite Expansion:
 - Add append tests that prove a committed revision is immutable after write.
@@ -462,13 +457,13 @@ Test Suite Expansion:
 
 | Exit Criterion | Status |
 |----------------|--------|
-| Revision commit never deletes or rewrites old revisions. | Not started |
-| Current revision query returns the latest committed revision for a key. | Not started |
-| Evidence and provenance can be hydrated from a revision id. | Not started |
+| Revision commit never deletes or rewrites old revisions. | Complete |
+| Current revision query returns the latest committed revision for a key. | Complete |
+| Evidence and provenance can be hydrated from a revision id. | Complete |
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Creates durable belief settlement state for view projection and recovery. | Not started |
+| Creates durable belief settlement state for view projection and recovery. | Complete |
 
 Verification:
 - `cargo test -p meld-world-model belief_revision_store`
@@ -488,17 +483,17 @@ Key files:
 | Goal | Project the current revision into a compact planner-facing `BeliefView`. |
 | Dependencies | Phase 6 |
 | Docs | [Belief Substrate](../../../cognitive_architecture/world_model/belief/substrate.md), [Fact To Belief](../../../cognitive_architecture/world_model/belief/fact_to_belief.md), [Planner Projection Assessment](../planner/assessment.md) |
-| Status | Not started |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Add projection from current revision plus freshness, contradiction, and observation state into `BeliefView`. | Not started |
-| 2 | Include key, perspective, current revision id, status, posterior, confidence, uncertainty, precision, freshness, contradiction, observation state, assessment state, and provenance summary. | Not started |
-| 3 | Attach hydration handles for evidence ids, source fact ids, graph anchor ids, and revision id. | Not started |
-| 4 | Exclude raw spine payloads, active lease internals, comparator drafts, and unpublished evidence churn. | Not started |
-| 5 | Add query by belief key. | Not started |
-| 6 | Add query by subject and perspective. | Not started |
-| 7 | Add tests proving planner-facing projection can read a confidence value without reaching into evidence or comparator modules. | Not started |
+| 1 | Add projection from current revision plus freshness, contradiction, and observation state into `BeliefView`. | Complete |
+| 2 | Include key, perspective, current revision id, status, posterior, confidence, uncertainty, precision, freshness, contradiction, observation state, assessment state, and provenance summary. | Complete |
+| 3 | Attach hydration handles for evidence ids, source fact ids, graph anchor ids, and revision id. | Complete |
+| 4 | Exclude raw spine payloads, active lease internals, comparator drafts, and unpublished evidence churn. | Complete |
+| 5 | Add query by belief key. | Complete |
+| 6 | Add query by subject and perspective. | Complete |
+| 7 | Add tests proving planner-facing projection can read a confidence value without reaching into evidence or comparator modules. | Complete |
 
 Test Suite Expansion:
 - Add projection tests from a committed revision into `BeliefView` for settled, stale, needs-observation, and needs-assessment statuses.
@@ -509,13 +504,13 @@ Test Suite Expansion:
 
 | Exit Criterion | Status |
 |----------------|--------|
-| Current `BeliefView` is rebuildable from committed revision state. | Not started |
-| Planner projection can consume the view as a public contract. | Not started |
-| The view does not expose raw fact payloads or active lease internals. | Not started |
+| Current `BeliefView` is rebuildable from committed revision state. | Complete |
+| Planner projection can consume the view as a public contract. | Complete |
+| The view does not expose raw fact payloads or active lease internals. | Complete |
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Unblocks Phase 4 planner projection into `meld-lang::WorldState`. | Not started |
+| Unblocks Phase 4 planner projection into `meld-lang::WorldState`. | Complete |
 
 Verification:
 - `cargo test -p meld-world-model belief_view_projection`
@@ -536,18 +531,18 @@ Key files:
 | Goal | Make stale state, conflict state, and missing evidence visible in the belief view. |
 | Dependencies | Phase 7 |
 | Docs | [Belief Requirements](../../../cognitive_architecture/world_model/belief/requirements.md), [Belief Substrate](../../../cognitive_architecture/world_model/belief/substrate.md), [Belief Spec](../../../cognitive_architecture/world_model/belief/spec.md) |
-| Status | Not started |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Mark stale when assigned evidence exceeds the current revision high-water mark. | Not started |
-| 2 | Mark stale when graph anchor evidence used by a revision is superseded. | Not started |
-| 3 | Mark stale when comparator configuration or evidence policy changes. | Not started |
-| 4 | Preserve supporting and contradicting evidence ids separately. | Not started |
-| 5 | Distinguish weak coverage, counterevidence, supersession, invalidation, and missing comparator where the first slice can observe them. | Not started |
-| 6 | Emit observation opportunity records for missing evidence, stale state, unresolved conflict, or missing comparator. | Not started |
-| 7 | Ensure observation opportunity records remain world-model outputs and are not execution commands. | Not started |
-| 8 | Add tests for stale view, missing evidence view, and contradiction state. | Not started |
+| 1 | Mark stale when assigned evidence exceeds the current revision high-water mark. | Complete |
+| 2 | Mark stale when graph anchor evidence used by a revision is superseded. | Complete |
+| 3 | Mark stale when comparator configuration or evidence policy changes. | Complete |
+| 4 | Preserve supporting and contradicting evidence ids separately. | Complete |
+| 5 | Distinguish weak coverage, counterevidence, supersession, invalidation, and missing comparator where the first slice can observe them. | Complete |
+| 6 | Emit observation opportunity records for missing evidence, stale state, unresolved conflict, or missing comparator. | Complete |
+| 7 | Ensure observation opportunity records remain world-model outputs and are not execution commands. | Complete |
+| 8 | Add tests for stale view, missing evidence view, and contradiction state. | Complete |
 
 Test Suite Expansion:
 - Add stale-state tests for new evidence after revision high-water mark, superseded graph anchor, comparator config change, and evidence policy change.
@@ -559,13 +554,13 @@ Test Suite Expansion:
 
 | Exit Criterion | Status |
 |----------------|--------|
-| A stale belief view exposes stale reason without requiring planner to inspect evidence. | Not started |
-| Missing evidence and missing comparator produce observation-needed or needs-assessment state. | Not started |
-| Contradiction is not collapsed into a generic low confidence value. | Not started |
+| A stale belief view exposes stale reason without requiring planner to inspect evidence. | Complete |
+| Missing evidence and missing comparator produce observation-needed or needs-assessment state. | Complete |
+| Contradiction is not collapsed into a generic low confidence value. | Complete |
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Gives planner projection enough state to choose `Indeterminate` later when freshness or observation state blocks certainty. | Not started |
+| Gives planner projection enough state to choose `Indeterminate` later when freshness or observation state blocks certainty. | Complete |
 
 Verification:
 - `cargo test -p meld-world-model belief_freshness`
@@ -586,18 +581,18 @@ Key files:
 | Goal | Serialize assessment for one belief key while allowing replay recovery and evidence coalescing. |
 | Dependencies | Phase 8 |
 | Docs | [Belief Substrate](../../../cognitive_architecture/world_model/belief/substrate.md), [Belief Spec](../../../cognitive_architecture/world_model/belief/spec.md) |
-| Status | Not started |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Implement one active `AssessmentLease` per `BeliefKey`. | Not started |
-| 2 | Record queued, leased, completed, expired, and abandoned lease states. | Not started |
-| 3 | Select comparator and input cursor range when acquiring a lease. | Not started |
-| 4 | Keep incoming evidence appended while a lease is active. | Not started |
-| 5 | Mark `dirty_since_seq` for new evidence that arrives during active assessment. | Not started |
-| 6 | Complete the active lease and reschedule the key when dirty evidence remains. | Not started |
-| 7 | Add recovery scan that finds expired leases, marks them abandoned, and reschedules dirty keys from durable evidence. | Not started |
-| 8 | Add tests for one active lease, expired lease recovery, and storm coalescing behind one key. | Not started |
+| 1 | Implement one active `AssessmentLease` per `BeliefKey`. | Complete |
+| 2 | Record queued, leased, completed, expired, and abandoned lease states. | Complete |
+| 3 | Select comparator and input cursor range when acquiring a lease. | Complete |
+| 4 | Keep incoming evidence appended while a lease is active. | Complete |
+| 5 | Mark `dirty_since_seq` for new evidence that arrives during active assessment. | Complete |
+| 6 | Complete the active lease and reschedule the key when dirty evidence remains. | Complete |
+| 7 | Add recovery scan that finds expired leases, marks them abandoned, and reschedules dirty keys from durable evidence. | Complete |
+| 8 | Add tests for one active lease, expired lease recovery, and storm coalescing behind one key. | Complete |
 
 Test Suite Expansion:
 - Add lease acquisition tests that permit only one active lease per `BeliefKey`.
@@ -609,13 +604,13 @@ Test Suite Expansion:
 
 | Exit Criterion | Status |
 |----------------|--------|
-| Two workers cannot commit overlapping revisions for the same key. | Not started |
-| Recovery does not depend on hidden worker memory. | Not started |
-| A burst of evidence for one key results in bounded comparator work and a deterministic final view. | Not started |
+| Two workers cannot commit overlapping revisions for the same key. | Complete |
+| Recovery does not depend on hidden worker memory. | Complete |
+| A burst of evidence for one key results in bounded comparator work and a deterministic final view. | Complete |
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Makes the first belief runtime operational enough for replay and repeated event ingress. | Not started |
+| Makes the first belief runtime operational enough for replay and repeated event ingress. | Complete |
 
 Verification:
 - `cargo test -p meld-world-model belief_leases`
@@ -636,17 +631,17 @@ Key files:
 | Goal | Prove that graph state becomes a current belief view suitable for planner projection. |
 | Dependencies | Phase 9 |
 | Docs | [Typed Loop Integration](../../integration/typed_loop.md), [Planner Projection Assessment](../planner/assessment.md), [Cognitive Architecture Implementation Plan](../../README.md) |
-| Status | Not started |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Build an integration test fixture with a docs node subject, graph anchor, provenance, first-slice runtime configuration, and configured freshness evidence. | Not started |
-| 2 | Run configuration load, normalization, assignment, comparator assessment, revision commit, and view projection. | Not started |
-| 3 | Assert the view contains docs freshness confidence below `0.7` for the typed loop scenario. | Not started |
-| 4 | Assert replay from durable evidence and revisions rebuilds the same current view. | Not started |
-| 5 | Assert planner-facing code can consume only `BeliefView` and does not import evidence, comparator, or lease internals. | Not started |
-| 6 | Add a stale case where newer evidence marks the prior view stale before reassessment completes. | Not started |
-| 7 | Add a content-written case where follow-up evidence lowers the stale-docs posterior. | Not started |
+| 1 | Build an integration test fixture with a docs node subject, graph anchor, provenance, first-slice runtime configuration, and configured freshness evidence. | Complete |
+| 2 | Run configuration load, normalization, assignment, comparator assessment, revision commit, and view projection. | Complete |
+| 3 | Assert the view contains docs freshness confidence below `0.7` for the typed loop scenario. | Complete |
+| 4 | Assert replay from durable evidence and revisions rebuilds the same current view. | Complete |
+| 5 | Assert planner-facing code can consume only `BeliefView` and does not import evidence, comparator, or lease internals. | Complete |
+| 6 | Add a stale case where newer evidence marks the prior view stale before reassessment completes. | Complete |
+| 7 | Add a content-written case where follow-up evidence lowers the stale-docs posterior. | Complete |
 
 Test Suite Expansion:
 - Add an end-to-end belief integration test that starts from external runtime configuration plus a docs node graph anchor and provenance, normalizes evidence, assigns a key, assesses it, commits a revision, and projects a `BeliefView`.
@@ -659,13 +654,13 @@ Test Suite Expansion:
 
 | Exit Criterion | Status |
 |----------------|--------|
-| One externally configured `docs_freshness` flywheel segment is proven from graph input to planner-facing belief view. | Not started |
-| Replay rebuilds the same revision and view under the same inputs. | Not started |
-| Phase 4 can proceed without any belief-internal dependencies. | Not started |
+| One externally configured `docs_freshness` flywheel segment is proven from graph input to planner-facing belief view. | Complete |
+| Replay rebuilds the same revision and view under the same inputs. | Complete |
+| Phase 4 can proceed without any belief-internal dependencies. | Complete |
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Closes Phase 3 and unblocks planner projection. | Not started |
+| Closes Phase 3 and unblocks planner projection. | Complete |
 
 Verification:
 - `cargo test -p meld-world-model`

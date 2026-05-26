@@ -198,7 +198,33 @@ pub struct EvidenceItem {
     pub typed_value: EvidenceValue,
     pub reliability: f64,
     pub precision: f64,
+    #[serde(default)]
+    pub reference_time: Option<String>,
+    #[serde(default)]
+    pub transaction_seq: u64,
+    #[serde(default)]
+    pub content_hash: Option<String>,
     pub provenance: BeliefProvenanceSummary,
+}
+
+/// Generic promoted record accepted by evidence normalization.
+///
+/// The fields are runtime data rather than family-specific Rust types.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PromotedEvidenceRecord {
+    pub source_kind: String,
+    pub source_id: String,
+    pub subject: DomainObjectRef,
+    pub source_fact_ids: Vec<String>,
+    pub graph_anchor_ids: Vec<AnchorId>,
+    pub objects: Vec<DomainObjectRef>,
+    pub relations: Vec<EventRelation>,
+    pub source_cursor_start: u64,
+    pub source_cursor_end: u64,
+    pub reference_time: Option<String>,
+    pub transaction_seq: u64,
+    pub content_hash: Option<String>,
+    pub fields: BTreeMap<String, EvidenceValue>,
 }
 
 /// Role an evidence item plays in assessment.
@@ -303,17 +329,38 @@ pub enum BeliefStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FreshnessState {
     pub stale: bool,
-    pub reason: Option<String>,
+    #[serde(default)]
+    pub reasons: Vec<FreshnessReason>,
     pub high_water_seq: u64,
+}
+
+/// Typed cause for stale belief state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FreshnessReason {
+    NewerEvidence,
+    SupersededAnchor,
+    ConfigSnapshotChanged,
+    EvidencePolicyChanged,
 }
 
 /// Conflict metadata that keeps support and counterevidence separate.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContradictionState {
     pub contradicted: bool,
-    pub reason: Option<String>,
+    #[serde(default)]
+    pub reasons: Vec<ContradictionReason>,
     pub supporting_evidence_ids: Vec<String>,
     pub contradicted_evidence_ids: Vec<String>,
+}
+
+/// Typed cause for contradiction or weak settlement state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContradictionReason {
+    Counterevidence,
+    WeakCoverage,
+    Supersession,
+    Invalidation,
+    MissingComparatorState,
 }
 
 /// World-model output that names useful missing evidence.
@@ -325,9 +372,19 @@ pub struct ObservationOpportunity {
     pub opportunity_id: String,
     pub belief_key: BeliefKey,
     pub target_evidence_schema_id: String,
-    pub reason: String,
+    pub reason: ObservationReason,
+    pub detail: String,
     pub source_revision_id: Option<String>,
     pub open: bool,
+}
+
+/// Typed reason for a future observation opportunity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ObservationReason {
+    MissingRequiredEvidence,
+    StaleEvidence,
+    UnresolvedContradiction,
+    MissingComparator,
 }
 
 /// Durable worker lease for assessing one belief key.
@@ -357,6 +414,26 @@ pub enum LeaseStatus {
     Completed,
     Expired,
     Abandoned,
+}
+
+/// Durable dirty-key state used for recovery and storm coalescing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DirtyKeyState {
+    pub belief_key: BeliefKey,
+    pub dirty_since_seq: u64,
+    pub latest_seq: u64,
+    pub active_lease_id: Option<String>,
+    pub reason: DirtyReason,
+}
+
+/// Cause for a dirty belief key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DirtyReason {
+    NewEvidence,
+    LeaseExpired,
+    ActiveLeaseCoalesced,
+    ConfigChanged,
+    PolicyChanged,
 }
 
 /// Planner-safe projection of current belief state.
