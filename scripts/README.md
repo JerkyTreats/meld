@@ -62,6 +62,7 @@ cargo +nightly fuzz run fuzz_belief_config -- -max_total_time=60
 Suggested first fuzz targets:
 
 - `fuzz_belief_config` for `BeliefFamilyConfig` JSON loading and validation
+- `fuzz_world_state_graph_walk` for graph walk validation and bounded traversal
 - `fuzz_belief_record_roundtrip` for public belief records through `serde_json`
 - `fuzz_belief_comparator` for bounded comparator input shapes
 

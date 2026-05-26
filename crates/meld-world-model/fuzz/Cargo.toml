@@ -11,6 +11,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+sled = "0.34"
+tempfile = "3.8"
 
 [dependencies.meld-world-model]
 path = ".."
@@ -18,6 +20,13 @@ path = ".."
 [[bin]]
 name = "fuzz_belief_config"
 path = "fuzz_targets/fuzz_belief_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_world_state_graph_walk"
+path = "fuzz_targets/fuzz_world_state_graph_walk.rs"
 test = false
 doc = false
 bench = false
