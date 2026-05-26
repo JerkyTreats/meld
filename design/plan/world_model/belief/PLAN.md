@@ -1,7 +1,7 @@
 # World Model Belief Phased Implementation Plan
 
 Date: 2026-05-24
-Status: active
+Status: first slice implemented
 Scope: first runtime belief slice for `docs_freshness`
 
 ## Overview
@@ -43,6 +43,49 @@ Related plan docs:
 - [Typed Loop Integration](../../integration/typed_loop.md)
 - [Meld Lang Assessment](../../meld-lang/assessment.md)
 
+## Implementation Status
+
+Evidence date: 2026-05-26
+
+The first runtime belief slice is implemented in `crates/meld-world-model/src/belief.rs` and `crates/meld-world-model/src/belief/*.rs`.
+
+Implemented:
+
+- Public belief contracts and re-exports
+- Runtime configuration loading, validation, and snapshot hashing
+- Graph anchor and anchor provenance normalization into evidence
+- Runtime configured belief key assignment
+- Generic weighted Bayesian comparator selected by configuration
+- Append-only evidence, assignment, revision, current head, view, lease, rejection, config snapshot, and dirty-key storage
+- Belief runtime path from graph subject to current `BeliefView`
+- Belief query surface for current views, subject views, revision history, revision evidence, revision provenance, observation opportunities, and dirty keys
+- Stale marking for newer assigned evidence
+- Lease acquisition, completion, expired lease recovery, and dirty-key rescheduling
+- First-slice tests proving runtime config, graph evidence, assignment, comparator determinism, persisted view, stale state, lease recovery, and no `mod.rs`
+
+Partially implemented:
+
+- Promoted outcome fact normalization
+- Reference time, transaction time, and content hash preservation beyond fields already available from graph records
+- Broad contradiction taxonomy
+- Observation opportunities beyond missing required evidence
+- Storm coalescing beyond one active lease plus dirty-key persistence
+- Replay equality as a dedicated rebuild test
+- Content-written follow-up evidence that lowers stale-docs posterior
+
+Deferred:
+
+- Full prior and posterior distributions
+- Broad comparator catalog
+- Semantic settlement adapter
+- Message passing inference
+- Predictive residual inference
+- Multi-belief inference epochs
+- Hypothesis sets
+- Regime-conditioned priors
+- Outcome-driven calibration
+- Goal creation, task dispatch, and capability invocation
+
 ## Guiding Rules
 
 | Rule | Statement |
@@ -80,17 +123,17 @@ Related plan docs:
 
 | Phase | Goal | Dependencies | Status |
 |-------|------|--------------|--------|
-| 0 | Scope lock and contract inventory | Graph and events assessments | Not started |
-| 1 | Module scaffold and public boundary | Phase 0 | Not started |
-| 2 | Identity, runtime configuration, and record contracts | Phase 1 | Not started |
-| 3 | Evidence normalization | Phase 2 and graph query surface | Not started |
-| 4 | Belief key assignment | Phase 3 | Not started |
-| 5 | Comparator engine selection and configured assessment | Phase 4 | Not started |
-| 6 | Revision commit and current head | Phase 5 | Not started |
-| 7 | Belief view projection | Phase 6 | Not started |
-| 8 | Freshness, contradiction, and observation-needed state | Phase 7 | Not started |
-| 9 | Lease, recovery, and storm coalescing | Phase 8 | Not started |
-| 10 | End-to-end replay and typed-loop handoff tests | Phase 9 | Not started |
+| 0 | Scope lock and contract inventory | Graph and events assessments | Complete |
+| 1 | Module scaffold and public boundary | Phase 0 | Complete |
+| 2 | Identity, runtime configuration, and record contracts | Phase 1 | Complete |
+| 3 | Evidence normalization | Phase 2 and graph query surface | Partial |
+| 4 | Belief key assignment | Phase 3 | Complete |
+| 5 | Comparator engine selection and configured assessment | Phase 4 | Complete |
+| 6 | Revision commit and current head | Phase 5 | Complete |
+| 7 | Belief view projection | Phase 6 | Complete |
+| 8 | Freshness, contradiction, and observation-needed state | Phase 7 | Partial |
+| 9 | Lease, recovery, and storm coalescing | Phase 8 | Partial |
+| 10 | End-to-end replay and typed-loop handoff tests | Phase 9 | Partial |
 
 ---
 
@@ -101,16 +144,16 @@ Related plan docs:
 | Goal | Freeze the exact runtime surface for the `docs_freshness` belief slice. |
 | Dependencies | `events` complete, `world_model/graph` complete, `meld-lang` complete |
 | Docs | [Belief Assessment](assessment.md), [Belief Families](../../../cognitive_architecture/world_model/belief/belief_families.md), [Planner Projection Assessment](../planner/assessment.md) |
-| Status | Not started |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Confirm the graph query used as first input for a docs node subject and current documentation anchor. | Not started |
-| 2 | Confirm the source fact and anchor provenance fields carried into first evidence records. | Not started |
-| 3 | Define the exact compact `BeliefView` fields Phase 4 will consume. | Not started |
-| 4 | Define default perspective and branch scope names in one place. | Not started |
-| 5 | Define where runtime belief configuration is loaded, validated, versioned, and snapshotted for replay. | Not started |
-| 6 | Record all deferred belief requirements in this plan before code starts. | Not started |
+| 1 | Confirm the graph query used as first input for a docs node subject and current documentation anchor. | Complete |
+| 2 | Confirm the source fact and anchor provenance fields carried into first evidence records. | Complete |
+| 3 | Define the exact compact `BeliefView` fields Phase 4 will consume. | Complete |
+| 4 | Define default perspective and branch scope names in one place. | Complete |
+| 5 | Define where runtime belief configuration is loaded, validated, versioned, and snapshotted for replay. | Complete |
+| 6 | Record all deferred belief requirements in this plan before code starts. | Complete |
 
 Test Suite Expansion:
 - Add a graph contract test that names the first docs-node query shape and locks the returned subject, anchor, and provenance fields.
@@ -120,14 +163,14 @@ Test Suite Expansion:
 
 | Exit Criterion | Status |
 |----------------|--------|
-| The first graph-to-evidence input is named as a concrete query or adapter contract. | Not started |
-| The first planner-facing fields are concrete enough for Phase 4 to implement projection without reading belief internals. | Not started |
-| The first belief content is an external runtime configuration artifact, not code-owned family content. | Not started |
-| Deferred concerns are explicit and do not leak into first-slice tasks. | Not started |
+| The first graph-to-evidence input is named as a concrete query or adapter contract. | Complete |
+| The first planner-facing fields are concrete enough for Phase 4 to implement projection without reading belief internals. | Complete |
+| The first belief content is an external runtime configuration artifact, not code-owned family content. | Complete |
+| Deferred concerns are explicit and do not leak into first-slice tasks. | Complete |
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Removes the two open assessment questions for evidence fields and compact planner fields. | Not started |
+| Removes the two open assessment questions for evidence fields and compact planner fields. | Complete |
 
 Verification:
 - `cargo test -p meld-world-model world_model_queries`
@@ -148,17 +191,17 @@ Key files:
 | Goal | Add a belief domain under `meld-world-model` without disturbing graph compatibility paths. |
 | Dependencies | Phase 0 |
 | Docs | [World Model Domain](../../../cognitive_architecture/world_model/README.md), [Belief Requirements](../../../cognitive_architecture/world_model/belief/requirements.md) |
-| Status | Not started |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Add `crates/meld-world-model/src/belief.rs` as the public domain entry. | Not started |
-| 2 | Add `crates/meld-world-model/src/belief/contracts.rs` for serializable public record types. | Not started |
-| 3 | Add `crates/meld-world-model/src/belief/evidence.rs` for normalization and assignment types. | Not started |
-| 4 | Add `crates/meld-world-model/src/belief/comparator.rs` for comparator contracts and first comparator implementation. | Not started |
-| 5 | Add `crates/meld-world-model/src/belief/store.rs` for evidence, revision, and view storage. | Not started |
-| 6 | Add `crates/meld-world-model/src/belief/runtime.rs` for scheduling, leases, and replay orchestration. | Not started |
-| 7 | Re-export only the public belief contracts from `crates/meld-world-model/src/lib.rs`. | Not started |
+| 1 | Add `crates/meld-world-model/src/belief.rs` as the public domain entry. | Complete |
+| 2 | Add `crates/meld-world-model/src/belief/contracts.rs` for serializable public record types. | Complete |
+| 3 | Add `crates/meld-world-model/src/belief/evidence.rs` for normalization and assignment types. | Complete |
+| 4 | Add `crates/meld-world-model/src/belief/comparator.rs` for comparator contracts and first comparator implementation. | Complete |
+| 5 | Add `crates/meld-world-model/src/belief/store.rs` for evidence, revision, and view storage. | Complete |
+| 6 | Add `crates/meld-world-model/src/belief/runtime.rs` for scheduling, leases, and replay orchestration. | Complete |
+| 7 | Re-export only the public belief contracts from `crates/meld-world-model/src/lib.rs`. | Complete |
 
 Test Suite Expansion:
 - Add a compile-facing smoke test that imports the public belief module through `meld_world_model` and proves the intended re-export path.
@@ -167,13 +210,13 @@ Test Suite Expansion:
 
 | Exit Criterion | Status |
 |----------------|--------|
-| `cargo check -p meld-world-model` succeeds with empty or minimal belief modules. | Not started |
-| No `mod.rs` file is added. | Not started |
-| Existing graph and world-state public imports keep compiling. | Not started |
+| `cargo check -p meld-world-model` succeeds with empty or minimal belief modules. | Complete |
+| No `mod.rs` file is added. | Complete |
+| Existing graph and world-state public imports keep compiling. | Complete |
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Establishes a domain-first home for belief while preserving compatibility naming around `world_state`. | Not started |
+| Establishes a domain-first home for belief while preserving compatibility naming around `world_state`. | Complete |
 
 Verification:
 - `cargo check -p meld-world-model`
@@ -197,19 +240,19 @@ Key files:
 | Goal | Implement stable belief records plus runtime-loaded belief configuration contracts for the first slice. |
 | Dependencies | Phase 1 |
 | Docs | [Belief Requirements](../../../cognitive_architecture/world_model/belief/requirements.md), [Fact To Belief](../../../cognitive_architecture/world_model/belief/fact_to_belief.md), [Belief Substrate](../../../cognitive_architecture/world_model/belief/substrate.md) |
-| Status | Not started |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Define `BeliefKey` with subject, runtime dimension id, runtime predicate id, perspective, branch scope, and evidence policy id fields. | Not started |
-| 2 | Define `BeliefFamilyConfig` with family id, dimension id, evidence schemas, source mappings, comparator engine, comparator config, default prior, freshness policy, planner projection, and config version. | Not started |
-| 3 | Define generic `EvidenceItem` with id, key candidate fields, source fact ids, graph anchor ids, source cursor range, role, runtime evidence schema id, typed value payload, reliability, precision, and provenance summary. | Not started |
-| 4 | Define validation contracts for runtime evidence payloads. Do not add family-specific `EvidenceValue` enum variants. | Not started |
-| 5 | Define `PosteriorSummary` with scalar probability plus runtime posterior meaning from configuration. | Not started |
-| 6 | Define `BeliefRevision` with prior revision link, comparator metadata, config id or snapshot hash, evidence ids, posterior, confidence, uncertainty, precision, freshness, contradiction, status, and source cursor range. | Not started |
-| 7 | Define `BeliefView` with key, perspective, current revision id, status, posterior, projected planner fields, confidence, uncertainty, freshness, contradiction, observation state, assessment state, advisory posture, and provenance summary. | Not started |
-| 8 | Define `AssessmentLease` with key, epoch, owner id, input cursor range, start time, expiry time, comparator engine, config id or snapshot hash, and lease status. | Not started |
-| 9 | Add serde round-trip tests for every public record and runtime configuration record. | Not started |
+| 1 | Define `BeliefKey` with subject, runtime dimension id, runtime predicate id, perspective, branch scope, and evidence policy id fields. | Complete |
+| 2 | Define `BeliefFamilyConfig` with family id, dimension id, evidence schemas, source mappings, comparator engine, comparator config, default prior, freshness policy, planner projection, and config version. | Complete |
+| 3 | Define generic `EvidenceItem` with id, key candidate fields, source fact ids, graph anchor ids, source cursor range, role, runtime evidence schema id, typed value payload, reliability, precision, and provenance summary. | Complete |
+| 4 | Define validation contracts for runtime evidence payloads. Do not add family-specific `EvidenceValue` enum variants. | Complete |
+| 5 | Define `PosteriorSummary` with scalar probability plus runtime posterior meaning from configuration. | Complete |
+| 6 | Define `BeliefRevision` with prior revision link, comparator metadata, config id or snapshot hash, evidence ids, posterior, confidence, uncertainty, precision, freshness, contradiction, status, and source cursor range. | Complete |
+| 7 | Define `BeliefView` with key, perspective, current revision id, status, posterior, projected planner fields, confidence, uncertainty, freshness, contradiction, observation state, assessment state, advisory posture, and provenance summary. | Complete |
+| 8 | Define `AssessmentLease` with key, epoch, owner id, input cursor range, start time, expiry time, comparator engine, config id or snapshot hash, and lease status. | Complete |
+| 9 | Add serde round-trip tests for every public record and runtime configuration record. | Partial |
 
 Test Suite Expansion:
 - Add serde round-trip tests for every public belief record.
@@ -221,15 +264,15 @@ Test Suite Expansion:
 
 | Exit Criterion | Status |
 |----------------|--------|
-| Records are serializable, cloneable, comparable where meaningful, and stable enough for storage. | Not started |
-| `BeliefKey` carries perspective and branch scope even when defaults are used. | Not started |
-| Runtime belief configuration validates before evidence assignment or assessment can run. | Not started |
-| `BeliefView` contains all fields Phase 4 needs without exposing evidence payload internals. | Not started |
+| Records are serializable, cloneable, comparable where meaningful, and stable enough for storage. | Complete |
+| `BeliefKey` carries perspective and branch scope even when defaults are used. | Complete |
+| Runtime belief configuration validates before evidence assignment or assessment can run. | Complete |
+| `BeliefView` contains all fields Phase 4 needs without exposing evidence payload internals. | Complete |
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Provides the shared contracts consumed by normalization, assessment, revision, projection, and planner projection. | Not started |
-| Prevents belief content from entering core code as family-specific Rust vocabulary. | Not started |
+| Provides the shared contracts consumed by normalization, assessment, revision, projection, and planner projection. | Complete |
+| Prevents belief content from entering core code as family-specific Rust vocabulary. | Complete |
 
 Verification:
 - `cargo test -p meld-world-model belief_contracts`
@@ -249,16 +292,16 @@ Key files:
 | Goal | Convert graph anchors and promoted facts into belief-normalized evidence records. |
 | Dependencies | Phase 2 and graph query surface |
 | Docs | [Fact To Belief](../../../cognitive_architecture/world_model/belief/fact_to_belief.md), [Belief Spec](../../../cognitive_architecture/world_model/belief/spec.md), [Graph Assessment](../graph/assessment.md) |
-| Status | Not started |
+| Status | Partial |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Add a `BeliefEvidenceNormalizer` that accepts graph anchor records, anchor provenance, promoted outcome facts, and runtime evidence source mappings. | Not started |
-| 2 | Preserve source fact ids, anchor ids, object refs, relation refs, source sequence range, reference time, transaction time, and content hash where available. | Not started |
-| 3 | Normalize graph and promoted facts into configured evidence schemas when graph data is available. | Not started |
-| 4 | Normalize configured source mappings when their promoted shapes are available. | Not started |
-| 5 | Mark unsupported or unrecognized candidates as rejected evidence with an explicit reason when audit visibility is required. | Not started |
-| 6 | Add tests proving one source fact can produce many evidence candidates and one evidence item preserves graph provenance. | Not started |
+| 1 | Add a `BeliefEvidenceNormalizer` that accepts graph anchor records, anchor provenance, promoted outcome facts, and runtime evidence source mappings. | Partial |
+| 2 | Preserve source fact ids, anchor ids, object refs, relation refs, source sequence range, reference time, transaction time, and content hash where available. | Partial |
+| 3 | Normalize graph and promoted facts into configured evidence schemas when graph data is available. | Partial |
+| 4 | Normalize configured source mappings when their promoted shapes are available. | Complete |
+| 5 | Mark unsupported or unrecognized candidates as rejected evidence with an explicit reason when audit visibility is required. | Complete |
+| 6 | Add tests proving one source fact can produce many evidence candidates and one evidence item preserves graph provenance. | Partial |
 
 Test Suite Expansion:
 - Add normalizer tests for each first-slice evidence schema loaded from runtime configuration.
@@ -270,14 +313,14 @@ Test Suite Expansion:
 
 | Exit Criterion | Status |
 |----------------|--------|
-| A docs node graph anchor plus provenance and external configuration can produce a deterministic `EvidenceItem`. | Not started |
-| Normalized evidence includes source refs and cursor data needed for replay. | Not started |
-| Raw source-domain internals are not required by the normalizer. | Not started |
-| Family-specific source mappings are not hardcoded in the normalizer. | Not started |
+| A docs node graph anchor plus provenance and external configuration can produce a deterministic `EvidenceItem`. | Complete |
+| Normalized evidence includes source refs and cursor data needed for replay. | Complete |
+| Raw source-domain internals are not required by the normalizer. | Complete |
+| Family-specific source mappings are not hardcoded in the normalizer. | Complete |
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Provides the promotion and normalization stages for the fact-to-belief transition. | Not started |
+| Provides the promotion and normalization stages for the fact-to-belief transition. | Partial |
 
 Verification:
 - `cargo test -p meld-world-model belief_evidence`
@@ -298,16 +341,16 @@ Key files:
 | Goal | Attach normalized evidence to the configured first-slice belief key for a subject. |
 | Dependencies | Phase 3 |
 | Docs | [Belief Families](../../../cognitive_architecture/world_model/belief/belief_families.md), [Belief Spec](../../../cognitive_architecture/world_model/belief/spec.md) |
-| Status | Not started |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Implement assignment through runtime evidence-to-belief mapping rules. | Not started |
-| 2 | Build `BeliefKey` from evidence subject, runtime dimension id, runtime predicate id, perspective, branch scope, and evidence policy id. | Not started |
-| 3 | Support default perspective and branch scope through explicit values, not hidden process state. | Not started |
-| 4 | Store evidence-to-key assignments with source cursor and role. | Not started |
-| 5 | Mark a belief dirty when assigned evidence exceeds the current revision high-water mark. | Not started |
-| 6 | Add tests for deterministic key construction and dirty marking. | Not started |
+| 1 | Implement assignment through runtime evidence-to-belief mapping rules. | Complete |
+| 2 | Build `BeliefKey` from evidence subject, runtime dimension id, runtime predicate id, perspective, branch scope, and evidence policy id. | Complete |
+| 3 | Support default perspective and branch scope through explicit values, not hidden process state. | Complete |
+| 4 | Store evidence-to-key assignments with source cursor and role. | Complete |
+| 5 | Mark a belief dirty when assigned evidence exceeds the current revision high-water mark. | Complete |
+| 6 | Add tests for deterministic key construction and dirty marking. | Complete |
 
 Test Suite Expansion:
 - Add assignment tests that construct a first-slice key from normalized evidence and runtime configuration, then assert subject, dimension id, predicate id, perspective, branch scope, and evidence policy id are all present.
@@ -319,14 +362,14 @@ Test Suite Expansion:
 
 | Exit Criterion | Status |
 |----------------|--------|
-| Every first-slice evidence item either assigns through runtime configuration or records a rejection reason. | Not started |
-| The same evidence always produces the same key under the same perspective and branch scope. | Not started |
-| No assignment branch depends on a family-specific Rust type or match arm. | Not started |
-| Dirty cursor state is available for assessment scheduling. | Not started |
+| Every first-slice evidence item either assigns through runtime configuration or records a rejection reason. | Complete |
+| The same evidence always produces the same key under the same perspective and branch scope. | Complete |
+| No assignment branch depends on a family-specific Rust type or match arm. | Complete |
+| Dirty cursor state is available for assessment scheduling. | Complete |
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Provides the scheduling unit used by comparator execution and leases. | Not started |
+| Provides the scheduling unit used by comparator execution and leases. | Complete |
 
 Verification:
 - `cargo test -p meld-world-model belief_assignment`
@@ -345,19 +388,19 @@ Key files:
 | Goal | Assess one belief key with a deterministic typed Bayesian comparator engine driven entirely by runtime configuration. |
 | Dependencies | Phase 4 |
 | Docs | [Comparator Model](../../../cognitive_architecture/world_model/belief/comparator_model.md), [Belief Families](../../../cognitive_architecture/world_model/belief/belief_families.md) |
-| Status | Not started |
+| Status | Complete |
 
 | Order | Task | Status |
 |-------|------|--------|
-| 1 | Define comparator input with belief key, prior revision, evidence window, source cursor range, comparator engine id, runtime config snapshot or hash, and provenance bundle. | Not started |
-| 2 | Define comparator output with configured posterior, configured planner projection fields, uncertainty, precision, status, contributing evidence ids, contradicted evidence ids, observation need, and explanation summary. | Not started |
-| 3 | Add comparator engine selection from runtime family configuration. | Not started |
-| 4 | Implement a generic weighted Bayesian comparator engine. Do not implement a `DocsFreshnessBayesianComparator`. | Not started |
-| 5 | Load prior, factor names, evidence schema bindings, weights, normalizations, polarity rules, and projection formula from runtime configuration. | Not started |
-| 6 | Treat contradictory evidence according to configured polarity rules and projection formula. | Not started |
-| 7 | Emit `needs_observation` when required evidence is absent and uncertainty remains material. | Not started |
-| 8 | Emit `needs_assessment` through missing comparator state for unsupported dimensions. | Not started |
-| 9 | Add deterministic replay tests for same evidence, same prior, and same comparator version. | Not started |
+| 1 | Define comparator input with belief key, prior revision, evidence window, source cursor range, comparator engine id, runtime config snapshot or hash, and provenance bundle. | Complete |
+| 2 | Define comparator output with configured posterior, configured planner projection fields, uncertainty, precision, status, contributing evidence ids, contradicted evidence ids, observation need, and explanation summary. | Complete |
+| 3 | Add comparator engine selection from runtime family configuration. | Complete |
+| 4 | Implement a generic weighted Bayesian comparator engine. Do not implement a `DocsFreshnessBayesianComparator`. | Complete |
+| 5 | Load prior, factor names, evidence schema bindings, weights, normalizations, polarity rules, and projection formula from runtime configuration. | Complete |
+| 6 | Treat contradictory evidence according to configured polarity rules and projection formula. | Complete |
+| 7 | Emit `needs_observation` when required evidence is absent and uncertainty remains material. | Complete |
+| 8 | Emit `needs_assessment` through missing comparator state for unsupported dimensions. | Complete |
+| 9 | Add deterministic replay tests for same evidence, same prior, and same comparator version. | Complete |
 
 Test Suite Expansion:
 - Add factor extraction tests for configured factor names with boundary values at zero, midpoint, and cap.
@@ -370,15 +413,15 @@ Test Suite Expansion:
 
 | Exit Criterion | Status |
 |----------------|--------|
-| The comparator engine emits a configured scalar posterior and configured planner projection fields for the first runtime family. | Not started |
-| A docs freshness confidence below `0.7` can be produced for the typed loop scenario. | Not started |
-| Missing comparator state is explicit and never guessed. | Not started |
-| Same inputs produce byte-stable serialized output where ordering is deterministic. | Not started |
-| No comparator type or Rust module is named after `docs_freshness`. | Not started |
+| The comparator engine emits a configured scalar posterior and configured planner projection fields for the first runtime family. | Complete |
+| A docs freshness confidence below `0.7` can be produced for the typed loop scenario. | Complete |
+| Missing comparator state is explicit and never guessed. | Complete |
+| Same inputs produce byte-stable serialized output where ordering is deterministic. | Complete |
+| No comparator type or Rust module is named after `docs_freshness`. | Complete |
 
 | Dependency Closure Solved | Status |
 |---------------------------|--------|
-| Produces the proposed belief revision that later phases commit and project. | Not started |
+| Produces the proposed belief revision that later phases commit and project. | Complete |
 
 Verification:
 - `cargo test -p meld-world-model configured_bayesian_comparator`

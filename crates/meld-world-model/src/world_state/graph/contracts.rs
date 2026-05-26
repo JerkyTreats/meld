@@ -77,6 +77,7 @@ pub struct AnchorEndInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub enum TraversalIntent {
     SelectAnchor(AnchorSelectionInput),
     EndAnchor(AnchorEndInput),

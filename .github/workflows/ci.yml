@@ -1,6 +1,11 @@
 name: Master Pipeline
 
 on:
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - eval/**
   push:
     branches:
       - master
@@ -8,6 +13,17 @@ on:
       - eval/**
   workflow_dispatch:
     inputs:
+      test_harness:
+        description: Test harness to run in verify
+        required: false
+        type: choice
+        default: full
+        options:
+          - full
+          - world-model
+          - belief
+          - integration
+          - generation-parity
       force_release:
         description: Force a patch release even with no new commits since last tag
         required: false
@@ -50,15 +66,51 @@ jobs:
             cargo build --workspace --all-targets
           fi
 
-      - name: Test
+      - name: Clippy
         shell: bash
         run: |
           set -euo pipefail
           if [[ -f Cargo.lock ]]; then
-            cargo test --workspace --all-targets --locked
+            cargo clippy --workspace --all-targets --locked -- -D warnings
           else
-            cargo test --workspace --all-targets
+            cargo clippy --workspace --all-targets -- -D warnings
           fi
+
+      - name: Test harness
+        shell: bash
+        env:
+          TEST_HARNESS: ${{ github.event.inputs.test_harness || 'full' }}
+        run: |
+          set -euo pipefail
+          cargo_locked() {
+            if [[ -f Cargo.lock ]]; then
+              cargo "$@" --locked
+            else
+              cargo "$@"
+            fi
+          }
+
+          case "$TEST_HARNESS" in
+            full)
+              cargo_locked test --workspace --all-targets
+              ;;
+            world-model)
+              cargo_locked test -p meld-world-model
+              ;;
+            belief)
+              cargo_locked test -p meld-world-model --test belief
+              ;;
+            integration)
+              cargo_locked test --test integration_tests
+              ;;
+            generation-parity)
+              cargo_locked test --test integration_tests generation_parity
+              ;;
+            *)
+              echo "::error::Unknown test harness '$TEST_HARNESS'"
+              exit 1
+              ;;
+          esac
 
   release:
     name: Release and publish

@@ -1,0 +1,23 @@
+[package]
+name = "meld-world-model-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.meld-world-model]
+path = ".."
+
+[[bin]]
+name = "fuzz_belief_config"
+path = "fuzz_targets/fuzz_belief_config.rs"
+test = false
+doc = false
+bench = false

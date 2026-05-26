@@ -36,8 +36,8 @@ impl<'a> WorldStateQuery<'a> {
         for record in evidence {
             evidence_ids.push(record.evidence_id.clone());
             source_fact_ids.push(record.source_fact_id.clone());
-            objects.extend(record.objects.into_iter());
-            relations.extend(record.relations.into_iter());
+            objects.extend(record.objects);
+            relations.extend(record.relations);
         }
 
         Ok(ProvenanceRecord {
