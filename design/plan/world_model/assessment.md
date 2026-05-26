@@ -3,13 +3,13 @@
 Status: conditionally ready
 Depends on: `design/plan/events/assessment.md`, `design/plan/meld-lang/assessment.md`, `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`, `design/plan/world_model/planner/assessment.md`, `design/plan/world_model/agent/assessment.md`, `design/plan/world_model/causation/assessment.md`, `design/plan/world_model/regime/assessment.md`
 Design source: `design/cognitive_architecture/world_model/README.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/meld-lang/README.md`
-Evidence date: 2026-05-21
+Evidence date: 2026-05-26
 
 ## Verdict Summary
 
-World model is conditionally ready for graph to belief to planner projection to agent goal curation.
+World model design is conditionally ready for graph to belief to planner projection to agent goal curation.
 
-It is ready to project one `WorldState` and construct one `Goal`.
+Implementation is complete only for the graph substrate. Belief, planner projection, and agent curation are planned but not implemented.
 
 ## Conceptual Correctness
 
@@ -47,7 +47,9 @@ Causation and regime are deferred.
 
 ## First-Slice Feasibility
 
-World model supports the typed loop by projecting one `WorldState` and curating one `Goal`.
+World model supports the typed-loop design path by projecting one `WorldState` and curating one `Goal`.
+
+The runtime implementation does not yet perform that projection or curation.
 
 Runtime loop closure remains blocked by execution runtime planning and outcome publication.
 
@@ -70,8 +72,8 @@ Runtime loop closure remains blocked by execution runtime planning and outcome p
 
 ## Gaps
 
-- First `WorldState` projection must be specified as concrete code.
-- Belief runtime configuration loading must be specified before the first belief implementation.
+- First `WorldState` projection must be implemented as concrete code.
+- Belief runtime configuration loading must be implemented before planner projection.
 - World model runtime bootstrap and concurrency model must be implemented from the consolidated domain specs.
 - First agent curation rule must be implemented against projected belief.
 - Causation remains deferred.

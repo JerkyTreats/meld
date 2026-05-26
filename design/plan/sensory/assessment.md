@@ -3,7 +3,7 @@
 Status: conditionally ready
 Depends on: `design/plan/events/assessment.md`, `design/plan/world_model/graph/assessment.md`
 Design source: `design/cognitive_architecture/sensory/README.md`, `design/cognitive_architecture/sensory/substrate.md`
-Evidence date: 2026-05-21
+Evidence date: 2026-05-26
 
 ## Verdict Summary
 

@@ -3,13 +3,15 @@
 Status: conditionally ready
 Depends on: `design/plan/world_model/agent/assessment.md`, `design/plan/meld-lang/assessment.md`
 Design source: `design/cognitive_architecture/execution/goals/README.md`, `design/cognitive_architecture/execution/GAPS.md`, `design/cognitive_architecture/world_model/agent/goal_curation.md`, `design/cognitive_architecture/meld-lang/goals_and_methods.md`
-Evidence date: 2026-05-21
+Evidence date: 2026-05-26
 
 ## Verdict Summary
 
-Execution goals are conditionally ready for one goal set using `meld-lang::Goal`.
+Execution goals design is conditionally ready for one goal set using `meld-lang::Goal`.
 
 The ready slice covers storing one ground active goal, exposing a curation API, and supporting typed-loop satisfaction.
+
+Runtime goal set storage and curation API are not implemented in `meld-execution`.
 
 ## Conceptual Correctness
 
@@ -41,7 +43,7 @@ Goals do not own task decomposition, provider execution, belief settlement, regi
 
 `meld-lang` is ready for typed-loop goal values.
 
-Agent is conditionally ready for one ground goal.
+Agent design is ready for one ground goal.
 
 Runtime planning remains blocked beyond typed-loop evaluation.
 
@@ -51,22 +53,20 @@ Goals support the typed loop by storing one active `docs_freshness` goal and exp
 
 No task dispatch is required.
 
+This remains design ready only.
+
 ## Current Implementation Evidence
 
-- `crates/meld-execution/src/task.rs`
-- `crates/meld-execution/src/workflow.rs`
-- `crates/meld-execution/src/workflow/`
-- `tests/integration/task_executor.rs`
-- `tests/integration/workflow_task_compatibility.rs`
-- `tests/integration/workflow_contracts_conformance.rs`
+- `crates/meld-lang/src/goal.rs`
+- `crates/meld-lang/tests/evaluation_loop.rs`
 - `design/cognitive_architecture/execution/goals/README.md`
 - `design/cognitive_architecture/execution/GAPS.md`
 - `design/cognitive_architecture/meld-lang/goals_and_methods.md`
 
 ## Gaps
 
-- Concrete goal curation API operations need implementation shape.
-- Goal persistence and replay semantics need implementation shape.
+- Concrete goal curation API operations are not implemented.
+- Goal persistence and replay semantics are not implemented.
 - Multi-goal conflict and preemption strategy is deferred.
 - Multi-agent goal coordination is deferred.
 

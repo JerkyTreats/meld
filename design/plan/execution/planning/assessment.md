@@ -4,7 +4,7 @@ Status: blocked for runtime
 Typed substrate status: ready
 Depends on: `design/plan/execution/goals/assessment.md`, `design/plan/world_model/planner/assessment.md`, `design/plan/meld-lang/assessment.md`
 Design source: `design/cognitive_architecture/execution/planning/README.md`, `design/cognitive_architecture/execution/planning/planning_pipeline.md`, `design/cognitive_architecture/execution/planning/guard_expression_semantics.md`, `design/cognitive_architecture/execution/planning/observation_wait_semantics.md`, `design/cognitive_architecture/execution/task_network.md`, `design/cognitive_architecture/execution/GAPS.md`, `design/cognitive_architecture/meld-lang/README.md`
-Evidence date: 2026-05-21
+Evidence date: 2026-05-26
 
 ## Verdict Summary
 

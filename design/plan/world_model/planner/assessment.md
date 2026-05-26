@@ -3,13 +3,15 @@
 Status: conditionally ready
 Depends on: `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`, `design/plan/meld-lang/assessment.md`
 Design source: `design/cognitive_architecture/world_model/planner/README.md`, `design/cognitive_architecture/world_model/planner/spec.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/meld-lang/world_state.md`
-Evidence date: 2026-05-21
+Evidence date: 2026-05-26
 
 ## Verdict Summary
 
-Planner projection is conditionally ready for graph plus belief projection into `meld-lang::WorldState`.
+Planner projection design is conditionally ready for graph plus belief projection into `meld-lang::WorldState`.
 
 It is not ready for full causal effect summaries, regime sensitivity summaries, broad risk envelopes, or complete abstention scoring.
+
+Runtime projection from belief view into `meld-lang::WorldState` is not implemented.
 
 ## Conceptual Correctness
 
@@ -45,20 +47,23 @@ The first slice projects one `WorldState` containing the docs node and its exter
 
 Execution can evaluate the resulting `Goal` target mechanically.
 
+This is a design-ready slice. The code path does not yet exist.
+
 ## Current Implementation Evidence
 
 - `crates/meld-world-model/src/world_state/query.rs`
-- `crates/meld-world-model/src/world_state/projection.rs`
 - `crates/meld-world-model/src/world_state/query_runtime.rs`
-- `tests/integration/execution_projection.rs`
+- `crates/meld-world-model/src/world_state/graph/`
 - `tests/integration/world_state_graph.rs`
 - `design/cognitive_architecture/world_model/planner/README.md`
+- `design/cognitive_architecture/world_model/planner/spec.md`
 - `design/cognitive_architecture/world_model/public_interface.md`
 - `design/cognitive_architecture/meld-lang/world_state.md`
 
 ## Gaps
 
-- First projection fields must be specified as concrete code contracts.
+- First projection fields must be implemented as concrete code contracts.
+- Projection from `BeliefView` to `meld-lang::WorldState` does not exist yet.
 - View expiry and replay boundary semantics need implementation shape.
 - Causal and regime fields remain deferred.
 - Execution runtime consumption remains blocked beyond typed-loop evaluation.

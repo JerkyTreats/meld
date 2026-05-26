@@ -3,7 +3,7 @@
 Status: ready
 Depends on: none
 Design source: `design/cognitive_architecture/events/README.md`, `design/cognitive_architecture/events/multi_domain_spine.md`, `design/cognitive_architecture/events/CRATE.md`
-Evidence date: 2026-05-21
+Evidence date: 2026-05-26
 
 ## Verdict Summary
 

@@ -41,7 +41,7 @@ One belief family: `docs_freshness`. One evidence normalization path from graph 
 
 Owner: `meld-world-model`
 Blocked by: Phase 2
-Plan: not yet written
+Plan: [world_model/belief/PLAN.md](world_model/belief/PLAN.md)
 
 ### Phase 4: Planner Projection — `not started`
 
@@ -110,7 +110,7 @@ These components predate the vertical slice and support all phases.
 Implementation plans decompose assessed areas into phased, dependency-ordered work with tasks, exit criteria, and verification commands.
 
 - [meld-lang/PLAN.md](meld-lang/PLAN.md) — complete
-- `world_model/belief/PLAN.md` — not yet written, next required
+- [world_model/belief/PLAN.md](world_model/belief/PLAN.md) — ready to execute, next required
 
 ## Assessment Inventory
 

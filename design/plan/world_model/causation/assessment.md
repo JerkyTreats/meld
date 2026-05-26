@@ -3,7 +3,7 @@
 Status: deferred
 Depends on: `design/plan/events/assessment.md`, `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`
 Design source: `design/cognitive_architecture/world_model/causation/README.md`, `design/cognitive_architecture/world_model/causation/spec.md`, `design/cognitive_architecture/world_model/causation/requirements.md`
-Evidence date: 2026-05-21
+Evidence date: 2026-05-26
 
 ## Verdict Summary
 

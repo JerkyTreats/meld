@@ -3,7 +3,7 @@
 Status: complete
 Depends on: `design/plan/events/assessment.md`
 Design source: `design/cognitive_architecture/meld-lang/README.md`, `design/cognitive_architecture/meld-lang/CRATE.md`, `design/cognitive_architecture/meld-lang/requirements.md`, `design/cognitive_architecture/meld-lang/primitives.md`, `design/cognitive_architecture/meld-lang/world_state.md`, `design/cognitive_architecture/meld-lang/goals_and_methods.md`, `design/cognitive_architecture/meld-lang/compositions.md`, `design/cognitive_architecture/meld-lang/operators.md`, `design/cognitive_architecture/meld-lang/PLAN.md`
-Evidence date: 2026-05-21
+Evidence date: 2026-05-26
 
 ## Verdict Summary
 
@@ -84,6 +84,19 @@ The first implementation should create an initial `WorldState`, evaluate one `Go
 
 ## Current Implementation Evidence
 
+- `crates/meld-lang/src/lib.rs`
+- `crates/meld-lang/src/term.rs`
+- `crates/meld-lang/src/proposition.rs`
+- `crates/meld-lang/src/evaluate.rs`
+- `crates/meld-lang/src/world_state.rs`
+- `crates/meld-lang/src/goal.rs`
+- `crates/meld-lang/src/method.rs`
+- `crates/meld-lang/src/composition.rs`
+- `crates/meld-lang/src/operator.rs`
+- `crates/meld-lang/src/unify.rs`
+- `crates/meld-lang/src/substitute.rs`
+- `crates/meld-lang/src/validate.rs`
+- `crates/meld-lang/tests/evaluation_loop.rs`
 - `design/cognitive_architecture/meld-lang/README.md`
 - `design/cognitive_architecture/meld-lang/CRATE.md`
 - `design/cognitive_architecture/meld-lang/requirements.md`

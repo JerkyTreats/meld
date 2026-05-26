@@ -3,13 +3,13 @@
 Status: conditionally ready
 Depends on: `design/plan/meld-lang/assessment.md`, `design/plan/execution/goals/assessment.md`, `design/plan/execution/planning/assessment.md`
 Design source: `design/cognitive_architecture/execution/README.md`, `design/cognitive_architecture/execution/GAPS.md`, `design/cognitive_architecture/execution/task_network.md`, `design/cognitive_architecture/execution/planning/README.md`, `design/cognitive_architecture/execution/goals/README.md`
-Evidence date: 2026-05-21
+Evidence date: 2026-05-26
 
 ## Verdict Summary
 
 Execution is conditionally ready for goal data alignment and typed planning substrate.
 
-Execution is blocked for runtime flywheel behavior until task network execution, runtime mutation, switching cost, outcome publication, and workflow integration contracts are specified.
+Execution is blocked for runtime flywheel behavior until goal set storage, task network execution, runtime mutation, switching cost, outcome publication, and workflow integration contracts are specified.
 
 ## Conceptual Correctness
 
@@ -39,15 +39,17 @@ Execution does not own graph truth, belief confidence, causal inference, regime 
 
 `meld-lang` is ready for typed-loop implementation.
 
-Execution goals are conditionally ready for one goal set and one ground active goal.
+Execution goals are design ready for one goal set and one ground active goal.
 
 Execution planning is ready only as typed substrate. Runtime planning remains blocked.
 
 ## First-Slice Feasibility
 
-Execution can participate in the typed loop by storing one `Goal`, evaluating it against one `WorldState`, selecting one `Method`, validating one `Composition`, applying one `Effect`, and proving satisfaction.
+Execution can participate in the typed-loop design path by storing one `Goal`, evaluating it against one `WorldState`, selecting one `Method`, validating one `Composition`, applying one `Effect`, and proving satisfaction.
 
 No task dispatch is required for this slice.
+
+Runtime goal storage and planning orchestration are not implemented.
 
 ## Current Implementation Evidence
 
@@ -65,6 +67,7 @@ No task dispatch is required for this slice.
 ## Gaps
 
 - Task network graph executor is not specified enough for implementation.
+- Goal set storage and curation API are not implemented.
 - Graph mutation acceptance is not specified enough for runtime planning.
 - Plan diffing and affected-subtree selection are not specified.
 - Switching cost model is not specified.
