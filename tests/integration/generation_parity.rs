@@ -178,10 +178,8 @@ fn terminal_error_class(error: &ApiError) -> String {
 fn normalize_value(value: &mut Value, workspace_root: &Path) {
     let root = workspace_root.to_string_lossy();
     match value {
-        Value::String(s) => {
-            if s.contains(root.as_ref()) {
-                *s = s.replace(root.as_ref(), "<ROOT>");
-            }
+        Value::String(s) if s.contains(root.as_ref()) => {
+            *s = s.replace(root.as_ref(), "<ROOT>");
         }
         Value::Array(items) => {
             for item in items {

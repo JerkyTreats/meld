@@ -10,7 +10,7 @@ use crate::telemetry::ProgressRuntime;
 use crate::workflow::WorkflowRegistry;
 use crate::world_state::graph::runtime::GraphRuntime;
 use crate::world_state::WorldModelQueries;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -22,7 +22,7 @@ pub struct CliRuntimeAssembly {
 }
 
 impl CliRuntimeAssembly {
-    pub fn load(workspace_root: &PathBuf, config: &MerkleConfig) -> Result<Self, ApiError> {
+    pub fn load(workspace_root: &Path, config: &MerkleConfig) -> Result<Self, ApiError> {
         let (store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(workspace_root)?;
         let workflow_registry = Arc::new(parking_lot::RwLock::new(WorkflowRegistry::load(
@@ -98,7 +98,7 @@ impl CliRuntimeAssembly {
             Arc::new(parking_lot::RwLock::new(agent_registry)),
             Arc::new(parking_lot::RwLock::new(provider_registry)),
             Arc::new(crate::concurrency::NodeLockManager::new()),
-            workspace_root.clone(),
+            workspace_root.to_path_buf(),
         );
         api.set_world_model_queries(world_model_queries);
         api.set_workflow_registry(Arc::clone(&workflow_registry));

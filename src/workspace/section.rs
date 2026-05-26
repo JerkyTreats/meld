@@ -103,7 +103,7 @@ pub fn build_workspace_status(
         .filter(|(k, _)| *k != ".")
         .map(|(k, v)| (k.clone(), *v))
         .collect();
-    rest.sort_by(|a, b| b.1.cmp(&a.1));
+    rest.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     for (path, nodes) in rest.into_iter().take(4) {
         top_paths.push(PathCount {
             path: path + "/",
@@ -123,7 +123,7 @@ pub fn build_workspace_status(
                 (path, *v)
             })
             .collect();
-        by_count.sort_by(|a, b| b.1.cmp(&a.1));
+        by_count.sort_by_key(|entry| std::cmp::Reverse(entry.1));
         Some(
             by_count
                 .into_iter()
@@ -142,11 +142,11 @@ pub fn build_workspace_status(
         let frame_type = format!("context-{}", agent_id);
         let nodes_with_frame = head_reader.count_nodes_for_frame_type(&frame_type)? as u64;
         let nodes_without_frame = total_nodes.saturating_sub(nodes_with_frame);
-        let coverage_pct = if total_nodes > 0 {
-            Some((nodes_with_frame * 100) / total_nodes)
-        } else {
-            Some(0)
-        };
+        let coverage_pct = Some(
+            (nodes_with_frame * 100)
+                .checked_div(total_nodes)
+                .unwrap_or(0),
+        );
         context_coverage.push(ContextCoverageEntry {
             agent_id,
             nodes_with_frame,

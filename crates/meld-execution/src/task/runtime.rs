@@ -47,6 +47,7 @@ pub struct WorkflowTaskTelemetry {
 }
 
 /// Executes one task to completion using the registered capability invokers.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_task_to_completion<A, E, InvokeState, InvokeCapability, CompileExpansion>(
     api: &A,
     executor: &mut TaskExecutor,
@@ -129,7 +130,6 @@ where
                     );
                 }
             }
-            let invoke_capability = invoke_capability;
             futures.push(async move {
                 let outcome =
                     invoke_capability(api, invoke_state, &instance, &payload, event_context).await;

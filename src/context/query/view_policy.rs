@@ -67,7 +67,7 @@ pub fn get_context_view(
     let mut sorted_frames = filtered_frames;
     match policy.ordering {
         OrderingPolicy::Recency => {
-            sorted_frames.sort_by(|(_, a), (_, b)| b.timestamp.cmp(&a.timestamp));
+            sorted_frames.sort_by_key(|(_, frame)| std::cmp::Reverse(frame.timestamp));
         }
         OrderingPolicy::Type => {
             sorted_frames.sort_by(|(_, a), (_, b)| a.frame_type.cmp(&b.frame_type));

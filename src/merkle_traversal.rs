@@ -59,9 +59,13 @@ pub fn traverse(
 
     let mut ordered_depths: Vec<_> = levels.into_iter().collect();
     match strategy {
-        TraversalStrategy::BottomUp => ordered_depths.sort_by(|(a, _), (b, _)| b.cmp(a)),
-        TraversalStrategy::TopDown => ordered_depths.sort_by(|(a, _), (b, _)| a.cmp(b)),
-        TraversalStrategy::DirectoriesBottomUp => ordered_depths.sort_by(|(a, _), (b, _)| b.cmp(a)),
+        TraversalStrategy::BottomUp => {
+            ordered_depths.sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
+        }
+        TraversalStrategy::TopDown => ordered_depths.sort_by_key(|(depth, _)| *depth),
+        TraversalStrategy::DirectoriesBottomUp => {
+            ordered_depths.sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
+        }
     }
 
     let batches = ordered_depths

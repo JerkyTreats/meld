@@ -73,6 +73,7 @@ where
 }
 
 /// Prepares one workflow-backed task run from a package spec and package-specific expansion lowering.
+#[allow(clippy::too_many_arguments)]
 pub fn prepare_workflow_task_run<E, A, R, F>(
     api: &A,
     workspace_root: &Path,
