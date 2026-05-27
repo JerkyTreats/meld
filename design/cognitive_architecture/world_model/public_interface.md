@@ -92,6 +92,9 @@ Agent registration creates the identity and perspective anchor. Subscription bin
 Owned by `world_model/planner`. These operations expose the action-relevant world model projection.
 
 ```
+// First-slice current world state for one subject and belief dimension
+project_current_world_state(subject: DomainObjectRef, dimension_id: BeliefDimensionId, perspective: Option<Perspective>, branch_scope: Option<BranchScope>) -> PlannerProjectionOutput
+
 // Full world model view for a scoped planning question
 query_world_model_view(context: DecisionContext) -> WorldModelView
 
@@ -102,7 +105,9 @@ query_observation_opportunities(context: DecisionContext) -> Vec<ObservationOppo
 query_preconditions(context: DecisionContext) -> Vec<PreconditionAssessment>
 ```
 
-Planner operations are read-only deterministic projections over graph, belief, causation, and regime state.
+The implemented first-slice planner route is `PlannerQuery::project_current_world_state`. It reads current belief views and current graph anchors, then returns a ground `meld-lang::WorldState` with provenance, hydration refs, and projection warnings.
+
+Planner operations are read-only deterministic projections over graph and belief in the first slice. Later broad views may add causation and regime state.
 They do not expose raw inference internals.
 They must return view records with provenance and hydration handles, not free-form semantic summaries.
 

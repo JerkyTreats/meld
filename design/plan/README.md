@@ -43,14 +43,14 @@ Owner: `meld-world-model`
 Blocked by: Phase 2
 Plan: [world_model/belief/PLAN.md](world_model/belief/PLAN.md)
 
-### Phase 4: Planner Projection — `not started` ← next
+### Phase 4: Planner Projection — `complete`
 
-Convert public graph and belief views into ground `meld-lang::WorldState`. First projection emits `Proposition::Holds` for `docs_freshness` confidence and freshness state. Bridge that makes world model state consumable by execution.
+Convert public graph and belief views into ground `meld-lang::WorldState`. First projection emits `Proposition::Holds` for confidence, stale state, observation-needed state, and `Proposition::Accessible` for graph scope. Bridge that makes world model state consumable by execution.
 
 Owner: `meld-world-model`
 Blocked by: Phase 3
 
-### Phase 5: Agent Goal Curation — `not started`
+### Phase 5: Agent Goal Curation — `not started` ← next
 
 One agent, one perspective, one curation rule: if `docs_freshness` confidence is below 0.7, create an active `Goal` requiring confidence above 0.7. First point where the system generates operational intent from belief.
 
@@ -93,7 +93,7 @@ These components predate the vertical slice and support all phases.
 2. `meld-lang` — complete, Phase 1
 3. `world_model/graph` — complete, Phase 2
 4. `world_model/belief` — complete, Phase 3
-5. `world_model/planner` — not started, Phase 4
+5. `world_model/planner` — complete, Phase 4
 6. `world_model/agent` — not started, Phase 5
 7. `execution/goals` — type contract complete in `meld-lang`, runtime Phase 6
 8. `integration/typed_loop` — complete
@@ -111,7 +111,7 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 
 - [meld-lang/PLAN.md](meld-lang/PLAN.md) — complete
 - [world_model/belief/PLAN.md](world_model/belief/PLAN.md) — complete
-- [world_model/planner/PLAN.md](world_model/planner/PLAN.md) — ready to execute, next required
+- [world_model/planner/PLAN.md](world_model/planner/PLAN.md) — complete
 
 ## Assessment Inventory
 

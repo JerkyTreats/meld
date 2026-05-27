@@ -7,9 +7,9 @@ Evidence date: 2026-05-27
 
 ## Verdict Summary
 
-World model design is conditionally ready for belief to planner projection to agent goal curation.
+World model design is conditionally ready for agent goal curation after graph, belief, and planner projection.
 
-Implementation is complete for the graph substrate and the first belief slice. Planner projection and agent curation are planned but not implemented.
+Implementation is complete for the graph substrate, the first belief slice, and the first planner projection slice. Agent curation is planned but not implemented.
 
 ## Conceptual Correctness
 
@@ -23,10 +23,11 @@ The implemented and ready slice covers:
 
 - graph object identity and provenance
 - one externally configured `docs_freshness` belief value
+- one projection from graph plus belief into ground `WorldState`
+- one planner query route for the first projected `WorldState`
 
 The remaining ready slice covers:
 
-- one projection into `WorldState`
 - one agent curation rule
 - one ground `Goal`
 
@@ -44,15 +45,15 @@ Events are ready.
 
 `meld-lang` is ready for typed-loop values and operations.
 
-Graph is ready. Belief has landed the first externally configured `docs_freshness` slice. Planner projection and agent are conditionally ready for that slice.
+Graph is ready. Belief has landed the first externally configured `docs_freshness` slice. Planner projection has landed the first `WorldState` slice. Agent is conditionally ready for that slice.
 
 Causation and regime are deferred.
 
 ## First-Slice Feasibility
 
-World model supports the typed-loop design path through graph and belief. The next step is projecting one belief-backed `WorldState` and curating one `Goal`.
+World model supports the typed-loop design path through graph, belief, and planner projection. The next step is curating one `Goal`.
 
-The runtime implementation does not yet perform that planner projection or curation.
+The runtime implementation performs the first planner projection but does not yet perform agent curation.
 
 Runtime loop closure remains blocked by execution runtime planning and outcome publication.
 
@@ -64,8 +65,11 @@ Runtime loop closure remains blocked by execution runtime planning and outcome p
 - `crates/meld-world-model/src/world_state/graph/`
 - `crates/meld-world-model/src/belief.rs`
 - `crates/meld-world-model/src/belief/`
+- `crates/meld-world-model/src/planner.rs`
+- `crates/meld-world-model/src/planner/`
 - `src/world_state.rs`
 - `crates/meld-world-model/tests/belief.rs`
+- `crates/meld-world-model/tests/planner.rs`
 - `tests/integration/world_state_graph.rs`
 - `tests/integration/execution_projection.rs`
 - `tests/integration/branches_query.rs`
@@ -78,7 +82,6 @@ Runtime loop closure remains blocked by execution runtime planning and outcome p
 
 ## Gaps
 
-- First `WorldState` projection must be implemented as concrete code.
 - World model runtime bootstrap and concurrency model must be implemented from the consolidated domain specs.
 - First agent curation rule must be implemented against projected belief.
 - Causation remains deferred.
@@ -87,10 +90,8 @@ Runtime loop closure remains blocked by execution runtime planning and outcome p
 
 ## Open Questions
 
-- Whether the first projection includes confidence only or confidence plus freshness state.
-- Which public world model route exposes the first `WorldState`.
 - How execution outcomes become belief evidence after outcome publication is specified.
 
 ## Recommendation
 
-Proceed with graph, belief, planner projection, and agent curation for the typed loop. Defer full causal, regime, and runtime closure behavior.
+Proceed with agent curation for the typed loop. Defer full causal, regime, and runtime closure behavior.

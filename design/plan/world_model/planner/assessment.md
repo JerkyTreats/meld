@@ -1,31 +1,33 @@
 # Planner Projection Readiness Assessment
 
-Status: conditionally ready
+Status: complete for first slice
 Depends on: `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`, `design/plan/meld-lang/assessment.md`
 Design source: `design/cognitive_architecture/world_model/planner/README.md`, `design/cognitive_architecture/world_model/planner/spec.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/meld-lang/world_state.md`
 Evidence date: 2026-05-27
 
 ## Verdict Summary
 
-Planner projection design is conditionally ready for graph plus belief projection into `meld-lang::WorldState`.
+Planner projection first slice is implemented for graph plus belief projection into `meld-lang::WorldState`.
 
 It is not ready for full causal effect summaries, regime sensitivity summaries, broad risk envelopes, or complete abstention scoring.
 
-Runtime projection from belief view into `meld-lang::WorldState` is not implemented.
+Runtime projection from `BeliefView` into `meld-lang::WorldState` now exists in `meld-world-model`.
 
 ## Conceptual Correctness
 
 Planner projection solves the boundary between internal world model state and execution-readable formal state.
 
-`WorldModelView` remains the world model side of projection assembly. `WorldState` is the cross-domain contract consumed by execution.
+The implemented first slice projects directly from `BeliefView` plus graph scope into `WorldState`. Broad `WorldModelView` remains deferred for richer future projection assembly.
 
 ## Completeness
 
 The first projection emits:
 
-- `Proposition::Holds` for `docs_freshness`
+- `Proposition::Holds` for configured belief confidence
+- `Proposition::Holds` for generic stale state
+- `Proposition::Holds` for generic observation-needed state
 - `Proposition::Accessible` for the docs node scope when the scope is available
-- `Proposition::Related` only when required by the first method precondition
+- source refs and hydration refs for belief and graph provenance
 
 This is enough for the typed loop.
 
@@ -47,7 +49,7 @@ The first slice projects one `WorldState` containing the docs node and its exter
 
 Execution can evaluate the resulting `Goal` target mechanically.
 
-This is a design-ready slice. The code path does not yet exist.
+This slice is implemented and verified.
 
 ## Current Implementation Evidence
 
@@ -56,7 +58,11 @@ This is a design-ready slice. The code path does not yet exist.
 - `crates/meld-world-model/src/world_state/graph/`
 - `crates/meld-world-model/src/belief.rs`
 - `crates/meld-world-model/src/belief/`
+- `crates/meld-world-model/src/planner.rs`
+- `crates/meld-world-model/src/planner/`
 - `crates/meld-world-model/tests/belief.rs`
+- `crates/meld-world-model/tests/planner.rs`
+- `crates/meld-world-model/fuzz/fuzz_targets/fuzz_planner_projection_contract.rs`
 - `tests/integration/world_state_graph.rs`
 - `design/cognitive_architecture/world_model/planner/README.md`
 - `design/cognitive_architecture/world_model/planner/spec.md`
@@ -65,17 +71,16 @@ This is a design-ready slice. The code path does not yet exist.
 
 ## Gaps
 
-- First projection fields must be implemented as concrete code contracts.
-- Projection from `BeliefView` to `meld-lang::WorldState` does not exist yet.
-- View expiry and replay boundary semantics need implementation shape.
+- Broad `WorldModelView` runtime remains deferred.
+- View expiry and replay boundary semantics for broad planner views need implementation shape.
 - Causal and regime fields remain deferred.
 - Execution runtime consumption remains blocked beyond typed-loop evaluation.
 
 ## Open Questions
 
-- Whether first projection emits confidence plus freshness state as separate propositions or a single structured proposition.
-- Whether first projection includes observation-needed state directly or leaves it to `Indeterminate`.
+- How broad planner views should layer over the first direct `BeliefView` projection route.
+- How execution outcomes become belief evidence after outcome publication is specified.
 
 ## Recommendation
 
-Proceed with graph plus belief projection into `WorldState`.
+Proceed with agent goal curation against the projected `WorldState`. Defer broad planner view, causal, and regime expansion.

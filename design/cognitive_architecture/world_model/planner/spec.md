@@ -2,6 +2,13 @@
 
 `planner` is a projection domain. It assembles action-relevant world-model views from `belief`, `causation`, and `regime` rather than performing deep inference. It remains inside `world_model`, so it stays epistemic rather than operational.
 
+Implementation status:
+
+- The first slice is implemented in `crates/meld-world-model/src/planner.rs` and `crates/meld-world-model/src/planner/`.
+- The first slice projects `BeliefView` plus graph scope into ground `meld-lang::WorldState`.
+- The first slice exposes `project_world_state` and `PlannerQuery::project_current_world_state`.
+- Broad `DecisionContext`, `WorldModelView`, causal, regime, risk, and abstention contracts remain future architecture.
+
 ## Domain Types
 
 ### Type Categories
