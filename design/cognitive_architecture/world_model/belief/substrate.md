@@ -165,16 +165,19 @@ It must not depend on hidden belief substrate state.
 
 ## Status Vocabulary
 
-The first status set should be small:
+The implemented first status set is small:
 
 - settled
-- provisional
 - stale
-- contradicted
 - needs observation
 - needs assessment
 - assessment pending
 - invalid
+
+Deferred status vocabulary:
+
+- provisional
+- contradicted
 
 The first settlement hint set should remain world-model oriented:
 

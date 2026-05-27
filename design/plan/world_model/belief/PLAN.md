@@ -45,7 +45,7 @@ Related plan docs:
 
 ## Implementation Status
 
-Evidence date: 2026-05-26
+Evidence date: 2026-05-27
 
 The first runtime belief slice is implemented in `crates/meld-world-model/src/belief.rs` and `crates/meld-world-model/src/belief/*.rs`.
 
@@ -240,7 +240,7 @@ Key files:
 | Order | Task | Status |
 |-------|------|--------|
 | 1 | Define `BeliefKey` with subject, runtime dimension id, runtime predicate id, perspective, branch scope, and evidence policy id fields. | Complete |
-| 2 | Define `BeliefFamilyConfig` with family id, dimension id, evidence schemas, source mappings, comparator engine, comparator config, default prior, freshness policy, planner projection, and config version. | Complete |
+| 2 | Define `BeliefFamilyConfig` with family id, dimension id, predicate id, evidence policy id, evidence schemas, source mappings, comparator config, default prior, planner projection, and config version. | Complete |
 | 3 | Define generic `EvidenceItem` with id, key candidate fields, source fact ids, graph anchor ids, source cursor range, role, runtime evidence schema id, typed value payload, reliability, precision, and provenance summary. | Complete |
 | 4 | Define validation contracts for runtime evidence payloads. Do not add family-specific `EvidenceValue` enum variants. | Complete |
 | 5 | Define `PosteriorSummary` with scalar probability plus runtime posterior meaning from configuration. | Complete |

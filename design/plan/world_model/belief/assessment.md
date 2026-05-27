@@ -1,17 +1,17 @@
 # Belief Readiness Assessment
 
-Status: conditionally ready
+Status: first slice implemented
 Depends on: `design/plan/events/assessment.md`, `design/plan/world_model/graph/assessment.md`
 Design source: `design/cognitive_architecture/world_model/belief/README.md`, `design/cognitive_architecture/world_model/belief/belief_families.md`, `design/cognitive_architecture/world_model/belief/fact_to_belief.md`, `design/cognitive_architecture/world_model/belief/comparator_model.md`, `design/cognitive_architecture/world_model/belief/substrate.md`, `design/cognitive_architecture/world_model/belief/curation.md`, `design/cognitive_architecture/world_model/belief/microarchitecture.md`, `design/cognitive_architecture/world_model/belief/spec.md`
-Evidence date: 2026-05-26
+Evidence date: 2026-05-27
 
 ## Verdict Summary
 
-Belief design is conditionally ready for one externally configured belief family and one comparator engine path.
+Belief design has landed its first externally configured belief family path and one comparator engine path.
 
 The first loaded belief family configuration is `docs_freshness`.
 
-Implementation has not started.
+The implementation lives in `crates/meld-world-model/src/belief.rs` and `crates/meld-world-model/src/belief/*.rs`.
 
 ## Conceptual Correctness
 
@@ -21,7 +21,7 @@ Graph says what is current. Belief says how credible and action-relevant that cu
 
 ## Completeness
 
-The ready slice covers one externally configured `docs_freshness` belief key, one evidence normalization path, one generic comparator engine path, one revision record, and one compact planner-facing belief value.
+The landed slice covers one externally configured `docs_freshness` belief key, graph-anchor evidence normalization, promoted outcome evidence normalization, one generic comparator engine path, append-only revisions, and compact planner-facing belief views.
 
 Belief produces values that world model planner converts into `WorldState` propositions.
 
@@ -47,6 +47,15 @@ World model planner projects that value into `Proposition::Holds` inside `WorldS
 
 ## Current Implementation Evidence
 
+- `crates/meld-world-model/src/belief.rs`
+- `crates/meld-world-model/src/belief/contracts.rs`
+- `crates/meld-world-model/src/belief/config.rs`
+- `crates/meld-world-model/src/belief/evidence.rs`
+- `crates/meld-world-model/src/belief/comparator.rs`
+- `crates/meld-world-model/src/belief/store.rs`
+- `crates/meld-world-model/src/belief/runtime.rs`
+- `crates/meld-world-model/src/belief/query.rs`
+- `crates/meld-world-model/tests/belief.rs`
 - `design/plan/world_model/belief/PLAN.md`
 - `design/cognitive_architecture/world_model/belief/README.md`
 - `design/cognitive_architecture/world_model/belief/belief_families.md`
@@ -56,18 +65,19 @@ World model planner projects that value into `Proposition::Holds` inside `WorldS
 
 ## Gaps
 
-- Belief runtime modules, stores, records, comparators, and projections are not implemented.
 - Full prior and posterior record shape remains outside the first slice.
 - Broad comparator catalog remains outside the first slice.
-- Runtime family configuration loading and replay snapshotting must be specified before implementation.
+- Runtime family configuration loading and replay snapshotting are implemented for the first slice only.
 - Outcome-driven calibration requires the outcome publication bridge.
 - Multi-agent divergence requires explicit perspective handling beyond the first key.
+- Planner projection into `meld-lang::WorldState` is not implemented here.
+- Semantic settlement and rule comparator paths remain deferred.
 
 ## Open Questions
 
-- Which graph evidence fields feed the first configured comparator engine.
-- Which compact fields must be carried into planner projection.
+- Which public world-model route should expose the first belief-backed planner projection.
+- How execution outcomes become promoted belief evidence after outcome publication is specified.
 
 ## Recommendation
 
-Proceed with the externally configured `docs_freshness` scope cut.
+Proceed to planner projection and typed-loop integration on top of the landed `docs_freshness` belief slice.

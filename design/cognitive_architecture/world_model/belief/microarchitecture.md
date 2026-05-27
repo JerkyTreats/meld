@@ -1,6 +1,6 @@
 # Belief Microarchitecture
 
-Date: 2026-04-30
+Date: 2026-05-27
 Status: active
 Scope: microarchitecture boundary for belief inside spine, world model, and agent responsibilities
 
@@ -119,19 +119,24 @@ It may hydrate facts after a planner decision, but the planner decision is over 
 
 ## API Shape
 
-Belief public API:
+Landed belief public API:
 
-- query belief view by belief ref
+- query current belief view by key
 - query belief views by subject
-- query belief views by perspective
-- query current belief revision
+- query committed revision history
 - query evidence and provenance for a revision
 - query observation opportunities for unresolved beliefs
-- subscribe to belief view changes
-- publish derived belief revision facts through the spine
+- query dirty keys for recovery and diagnostics
+- rebuild current view from durable revision state
 
 Belief policy signals are advisory.
 They may summarize observation value, uncertainty pressure, or posture preference, but they do not commit the agent to one action.
+
+Deferred belief API:
+
+- query belief views by perspective across all subjects
+- subscribe to belief view changes
+- publish derived belief revision facts through the spine
 
 Agent public API:
 
@@ -163,29 +168,32 @@ Spine public API:
 - Regime changes silently reset priors without an explicit regime record
 - Belief policy hints are treated as action commands
 
-## First Slice Boundary
+## Landed First Slice Boundary
 
-The first slice should remain in one binary.
-It should still behave as if these were separate processes.
+The first slice remains in one binary.
+It still behaves as if these were separate processes.
 
-The slice should define:
+The slice defines:
 
 - `BeliefView` as the only planner input
-- stable belief refs
-- revision refs
-- evidence refs
-- perspective identity or an explicit perspective placeholder
+- stable belief keys
+- revision ids
+- evidence ids
+- explicit perspective identity
+- explicit branch scope
 - posterior, uncertainty, freshness, and observation-needed fields
-- belief view subscription or polling contract
+- belief view polling contract through `BeliefQuery`
 - task construction hydration path from belief provenance
-- outcome publication back to spine
+- promoted evidence normalization for later outcome publication
 
-The slice should explicitly defer:
+The slice explicitly defers:
 
 - full smoothing over hidden past transitions
 - global message passing across connected belief families
 - regime identity and changepoint authority
 - execution posture commitment
+- belief view subscriptions
+- belief revision publication back to the spine
 
 ## Read With
 

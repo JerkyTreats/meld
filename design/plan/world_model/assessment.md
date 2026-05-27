@@ -3,13 +3,13 @@
 Status: conditionally ready
 Depends on: `design/plan/events/assessment.md`, `design/plan/meld-lang/assessment.md`, `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`, `design/plan/world_model/planner/assessment.md`, `design/plan/world_model/agent/assessment.md`, `design/plan/world_model/causation/assessment.md`, `design/plan/world_model/regime/assessment.md`
 Design source: `design/cognitive_architecture/world_model/README.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/meld-lang/README.md`
-Evidence date: 2026-05-26
+Evidence date: 2026-05-27
 
 ## Verdict Summary
 
-World model design is conditionally ready for graph to belief to planner projection to agent goal curation.
+World model design is conditionally ready for belief to planner projection to agent goal curation.
 
-Implementation is complete only for the graph substrate. Belief, planner projection, and agent curation are planned but not implemented.
+Implementation is complete for the graph substrate and the first belief slice. Planner projection and agent curation are planned but not implemented.
 
 ## Conceptual Correctness
 
@@ -19,10 +19,13 @@ The world model owns epistemic authority. It transforms event facts into graph s
 
 ## Completeness
 
-The ready slice covers:
+The implemented and ready slice covers:
 
 - graph object identity and provenance
 - one externally configured `docs_freshness` belief value
+
+The remaining ready slice covers:
+
 - one projection into `WorldState`
 - one agent curation rule
 - one ground `Goal`
@@ -41,15 +44,15 @@ Events are ready.
 
 `meld-lang` is ready for typed-loop values and operations.
 
-Graph is ready. Belief, planner projection, and agent are conditionally ready for the first externally configured `docs_freshness` slice.
+Graph is ready. Belief has landed the first externally configured `docs_freshness` slice. Planner projection and agent are conditionally ready for that slice.
 
 Causation and regime are deferred.
 
 ## First-Slice Feasibility
 
-World model supports the typed-loop design path by projecting one `WorldState` and curating one `Goal`.
+World model supports the typed-loop design path through graph and belief. The next step is projecting one belief-backed `WorldState` and curating one `Goal`.
 
-The runtime implementation does not yet perform that projection or curation.
+The runtime implementation does not yet perform that planner projection or curation.
 
 Runtime loop closure remains blocked by execution runtime planning and outcome publication.
 
@@ -59,7 +62,10 @@ Runtime loop closure remains blocked by execution runtime planning and outcome p
 - `crates/meld-world-model/src/world_state.rs`
 - `crates/meld-world-model/src/world_state/graph.rs`
 - `crates/meld-world-model/src/world_state/graph/`
+- `crates/meld-world-model/src/belief.rs`
+- `crates/meld-world-model/src/belief/`
 - `src/world_state.rs`
+- `crates/meld-world-model/tests/belief.rs`
 - `tests/integration/world_state_graph.rs`
 - `tests/integration/execution_projection.rs`
 - `tests/integration/branches_query.rs`
@@ -73,7 +79,6 @@ Runtime loop closure remains blocked by execution runtime planning and outcome p
 ## Gaps
 
 - First `WorldState` projection must be implemented as concrete code.
-- Belief runtime configuration loading must be implemented before planner projection.
 - World model runtime bootstrap and concurrency model must be implemented from the consolidated domain specs.
 - First agent curation rule must be implemented against projected belief.
 - Causation remains deferred.
@@ -82,7 +87,7 @@ Runtime loop closure remains blocked by execution runtime planning and outcome p
 
 ## Open Questions
 
-- Whether the first projection includes confidence only or confidence plus freshness age.
+- Whether the first projection includes confidence only or confidence plus freshness state.
 - Which public world model route exposes the first `WorldState`.
 - How execution outcomes become belief evidence after outcome publication is specified.
 

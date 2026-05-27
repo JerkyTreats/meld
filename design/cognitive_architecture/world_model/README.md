@@ -1,6 +1,6 @@
 # Meld World Model
 
-Date: 2026-05-01
+Date: 2026-05-27
 Status: active
 Scope: durable world model shape across graph, belief, causation, regimes, and planner-facing reads
 
@@ -8,7 +8,7 @@ Scope: durable world model shape across graph, belief, causation, regimes, and p
 
 The world model starts from what Meld already has: a shared event spine, explicit graph attachment through `DomainObjectRef` and `EventRelation`, replayable graph materialization, current anchor selection, lineage, provenance, traversal indexes, and branch-scoped federation.
 
-The research architecture remains the direction of travel, but the foundation is not speculative. `world_model/graph` is the implemented substrate that other world model layers consume. The next design step is to make that substrate explicit enough that belief, causation, regime, and planner-facing projections can build on it without re-reading raw events or importing source-domain internals.
+The research architecture remains the direction of travel, but the foundation is not speculative. `world_model/graph` is the implemented substrate that other world model layers consume, and `world_model/belief` now has a landed first slice over that substrate. The next design step is planner-facing projection, followed by causation and regime layers that build on graph and belief without re-reading raw events or importing source-domain internals.
 
 The operating axiom remains "To Each Domain Be True." Each layer owns one kind of authority and crosses layer boundaries through explicit contracts.
 
@@ -31,12 +31,13 @@ The current foundation is:
 - `events` owns append, sequence, replay, idempotent record lookup, object refs, and relation edges.
 - source domains publish promoted semantic facts without giving the world model direct access to their internals.
 - `world_model/graph` materializes current anchors, lineage, provenance, adjacency, bounded walks, and branch-annotated traversal views.
+- `world_model/belief` loads runtime family configuration, normalizes graph and promoted evidence, assesses configured belief keys, commits revisions, and projects planner-safe belief views for the first `docs_freshness` slice.
 - graph reducers publish derived anchor facts back through the spine, so graph state remains replayable.
 - `meld-world-model` is the authority crate for graph materialization and world-state compatibility surfaces while product-facing names still preserve `world_state` where needed.
 
-Within the world model itself, graph is the first durable layer. Belief, causation, regime, and planner-facing projection should consume graph services rather than reconstructing their own view from raw event replay.
+Within the world model itself, graph is the first durable layer and belief is the first implemented inference layer. Causation, regime, and planner-facing projection should consume graph and belief services rather than reconstructing their own view from raw event replay.
 
-The active implementation work is mostly crate boundary cleanup and breakout. The graph design should therefore be read as current substrate design, not as an unbuilt research proposal.
+The graph and first belief slice should therefore be read as current substrate design, not as unbuilt research proposal.
 
 ## Multi-Agent Grounding
 
@@ -145,9 +146,16 @@ Primary concepts:
 
 - `BeliefKey`
 - `EvidenceItem`
+- `BeliefRevision`
+- `PosteriorSummary`
+- `BeliefView`
+- `AssessmentLease`
+- `ObservationOpportunity`
+
+Deferred concepts:
+
 - `BeliefPrior`
 - `BeliefPosterior`
-- `BeliefRevision`
 - `HypothesisSet`
 - `FreshnessModel`
 - `ObservationCoverage`

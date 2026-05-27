@@ -200,18 +200,22 @@ For now, the belief layer should record:
 - suggested artifact type
 - source evidence that made the gap visible
 
-## First Slice
+## Landed First Slice
 
-Implement the interface before optimizing comparator intelligence.
+The interface has landed before comparator intelligence is broadened.
 
-The first slice should support:
+The first slice supports:
 
 - one generic typed Bayesian comparator engine driven by runtime family configuration
-- one deterministic rule comparator
-- one semantic settlement adapter with provisional output
 - missing comparator state
 - posterior, uncertainty, and observation-needed fields in comparator output
 - replay tests proving that the same evidence and config snapshot yield the same revision
+
+Deferred comparator work:
+
+- deterministic rule comparator
+- semantic settlement adapter with provisional output
+- broader comparator catalog
 
 ## Read With
 

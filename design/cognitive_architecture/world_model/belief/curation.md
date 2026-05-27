@@ -115,8 +115,9 @@ That boundary keeps the world model living without leaking worker internals acro
 
 ## First Slice
 
-This slice is not implemented yet.
-It should build on the implemented graph substrate and legacy claim compatibility layer.
+The core belief slice is implemented.
+The broader curation slice is not implemented yet.
+It should build on the implemented graph substrate, the landed belief store and query surface, and the legacy claim compatibility layer.
 
 - thesis, evidence, provenance, supersession, and calibration records
 - one curation replay path from promoted spine facts into current belief

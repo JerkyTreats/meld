@@ -1,6 +1,6 @@
 # World Model Belief
 
-Date: 2026-04-30
+Date: 2026-05-27
 Status: active
 Scope: priors, posteriors, uncertainty, freshness, contradiction, hypotheses, and planner-facing belief views over the state graph
 
@@ -37,13 +37,13 @@ Belief does not dispatch tasks, decide execution policy, own causal claims, or d
 
 ## What Remains Durable
 
-These parts of the existing belief work remain active architecture:
+These parts of the landed belief work remain active architecture:
 
 - `BeliefKey` as stable identity for the question being assessed
 - `EvidenceItem` as normalized input from facts, anchors, outcomes, or measurements
 - `BeliefRevision` as append-only settlement over a bounded evidence window
 - `BeliefView` as the planner-facing projection over current belief state
-- generic comparator engine contracts for typed Bayesian, rule, semantic, and missing-comparator assessment
+- generic comparator engine contracts for configured Bayesian assessment and missing-comparator state
 - replay from spine and graph materialization into evidence and revisions
 - lease-based assessment and recovery for concurrent belief maintenance
 - provenance over evidence, revision, and view publication
@@ -197,29 +197,33 @@ The public contract should therefore make perspective explicit on belief keys, e
 - [Belief Spec](spec.md)
   consolidated domain types, data model, and pipelines for belief
 
-## First Slice
+## Landed First Slice
 
-The first belief slice should not attempt full generative inference or full curation.
+The first belief slice has landed without attempting full generative inference or full curation.
 
-It should define:
+It defines:
 
 - `BeliefKey`
 - `EvidenceItem`
 - `BeliefRevision`
 - `BeliefView`
 - runtime family configuration contracts
-- perspective identity or an explicit placeholder for it
-- generic comparator engine contracts
+- explicit perspective identity and branch scope
+- generic comparator input and output contracts
+- one configured weighted Bayesian comparator engine
 - uncertainty and freshness fields
 - observation-needed state with target evidence
 - lease-based assessment
-- replay from events and graph anchors into current belief
+- replay from graph anchors and promoted records into current belief
 - planner query over belief views only
+- durable evidence, assignment, revision, view, lease, rejection, config snapshot, runtime metadata, and dirty-key stores
+- dirty-key rescheduling and storm coalescing for one belief key
+- stale detection for newer evidence, superseded anchors, config snapshot changes, and evidence policy changes
 
-It must not define a Rust module, enum variant, comparator type, or source mapping branch for a specific belief family.
+It does not define a Rust module, enum variant, comparator type, or source mapping branch for a specific belief family.
 The first family content is loaded runtime configuration.
 
-The first slice should also state what remains deferred from the research direction:
+The first slice leaves these research-direction items deferred:
 
 - explicit prior and posterior pair records for every revision
 - prior to posterior divergence or surprise as a required field
@@ -227,6 +231,10 @@ The first slice should also state what remains deferred from the research direct
 - retrospective smoothing over hidden transition timing
 - structured multi-belief inference epochs across connected belief keys
 - regime posterior, run length, and mixture prediction, which belong to `regime`
+- broad comparator catalog
+- semantic settlement adapter
+- outcome-driven calibration
+- planner projection into `meld-lang::WorldState`
 
 ## Read With
 

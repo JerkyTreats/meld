@@ -1,12 +1,12 @@
 # World Model Crate
 
-Date: 2026-04-26
-Status: declarative
-Scope: `meld-world-model` crate for graph, anchors, provenance, and planner facing world model reads
+Date: 2026-05-27
+Status: active
+Scope: `meld-world-model` crate for graph, anchors, provenance, belief assessment, and planner facing world model reads
 
 ## Identity
 
-`meld-world-model` is the source of truth for graph materialization and legacy world state claim projections.
+`meld-world-model` is the source of truth for graph materialization, first-slice belief assessment, and legacy world state claim projections.
 Root `meld` consumes this crate through a compatibility shim in [src/world_state.rs](../../../src/world_state.rs).
 
 The live implementation is in:
@@ -14,6 +14,8 @@ The live implementation is in:
 - [crates/meld-world-model/src/lib.rs](../../../crates/meld-world-model/src/lib.rs)
 - [crates/meld-world-model/src/world_state.rs](../../../crates/meld-world-model/src/world_state.rs)
 - [crates/meld-world-model/src/world_state](../../../crates/meld-world-model/src/world_state)
+- [crates/meld-world-model/src/belief.rs](../../../crates/meld-world-model/src/belief.rs)
+- [crates/meld-world-model/src/belief](../../../crates/meld-world-model/src/belief)
 
 The product facing module name remains `world_state` for compatibility even though the authority crate name is `meld-world-model`.
 
@@ -25,6 +27,12 @@ The product facing module name remains `world_state` for compatibility even thou
 - anchor lineage
 - graph walk queries
 - planner facing query runtime
+- runtime belief family configuration loading
+- belief evidence normalization and assignment
+- belief comparator assessment
+- append-only belief revisions
+- planner-safe belief views
+- assessment leases, recovery, dirty keys, and storm coalescing
 - legacy claim projections
 - world state claim storage
 - evidence attachment and provenance queries
@@ -44,6 +52,7 @@ The product facing module name remains `world_state` for compatibility even thou
 Primary exports are:
 
 - graph contracts and query types from `world_state::graph`
+- belief contracts, store, runtime, comparator, normalizer, and query facade from `belief`
 - claim and evidence contracts from `world_state::contracts`
 - `WorldModelQueries`
 - `WorldStateQuery`

@@ -159,11 +159,9 @@ The first slice must preserve the full boundary shape even when inference starts
 
 - Implement `BeliefKey`, `EvidenceItem`, `BeliefRevision`, `BeliefView`, and `AssessmentLease`.
 - Implement runtime family configuration loading, validation, and replay snapshotting.
-- Implement evidence normalization from graph anchors and execution outcomes.
+- Implement evidence normalization from graph anchors and promoted outcome evidence.
 - Implement belief key assignment.
 - Implement one generic typed Bayesian comparator engine driven by runtime configuration.
-- Implement one deterministic rule comparator.
-- Implement semantic settlement with provisional status.
 - Implement missing comparator state.
 - Implement revision commit.
 - Implement belief view projection.
@@ -175,6 +173,8 @@ The first slice must preserve the full boundary shape even when inference starts
 
 ## Deferred Requirements
 
+- Deterministic rule comparator.
+- Semantic settlement with provisional status.
 - Full multi-belief message passing.
 - Predictive residual inference over continuous state.
 - Retrospective smoothing over hidden transition timing.
