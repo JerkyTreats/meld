@@ -3,7 +3,7 @@
 Status: deferred
 Depends on: `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`, `design/plan/world_model/causation/assessment.md`
 Design source: `design/cognitive_architecture/world_model/regime/README.md`, `design/cognitive_architecture/world_model/regime/spec.md`, `design/cognitive_architecture/world_model/regime/requirements.md`
-Evidence date: 2026-05-26
+Evidence date: 2026-05-27
 
 ## Verdict Summary
 
@@ -31,7 +31,7 @@ Regime does not own raw contradiction handling, graph truth maintenance, task or
 
 ## Dependency Readiness
 
-Graph is ready. Belief is conditionally ready. Causation is deferred.
+Graph is ready. Belief has landed its first slice. Causation is deferred.
 
 Runtime flywheel can proceed first with a default stable regime assumption.
 
@@ -44,6 +44,7 @@ Regime should not be implemented before runtime flywheel behavior works without 
 ## Current Implementation Evidence
 
 - `crates/meld-world-model/src/world_state/graph/`
+- `crates/meld-world-model/src/belief/`
 - `crates/meld-world-model/src/world_state/query.rs`
 - `crates/meld-world-model/src/world_state/projection.rs`
 - `tests/integration/world_state_graph.rs`

@@ -3,7 +3,7 @@
 Status: deferred
 Depends on: `design/plan/events/assessment.md`, `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`
 Design source: `design/cognitive_architecture/world_model/causation/README.md`, `design/cognitive_architecture/world_model/causation/spec.md`, `design/cognitive_architecture/world_model/causation/requirements.md`
-Evidence date: 2026-05-26
+Evidence date: 2026-05-27
 
 ## Verdict Summary
 
@@ -33,7 +33,7 @@ Causation does not own event append, temporal truth materialization, generic bel
 
 Events and graph are ready.
 
-Belief is conditionally ready for externally configured `docs_freshness`.
+Belief has landed the externally configured `docs_freshness` slice.
 
 Outcome publication is not specified, so causation cannot participate in loop closure yet.
 
@@ -47,6 +47,7 @@ Runtime flywheel can close first through outcome facts and belief revision witho
 
 - `crates/meld-events/src/events.rs`
 - `crates/meld-world-model/src/world_state/graph/`
+- `crates/meld-world-model/src/belief/`
 - `crates/meld-execution/src/task.rs`
 - `crates/meld-execution/src/workflow.rs`
 - `tests/integration/event_spine.rs`

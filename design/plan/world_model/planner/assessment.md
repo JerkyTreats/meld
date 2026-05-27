@@ -3,7 +3,7 @@
 Status: conditionally ready
 Depends on: `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`, `design/plan/meld-lang/assessment.md`
 Design source: `design/cognitive_architecture/world_model/planner/README.md`, `design/cognitive_architecture/world_model/planner/spec.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/meld-lang/world_state.md`
-Evidence date: 2026-05-26
+Evidence date: 2026-05-27
 
 ## Verdict Summary
 
@@ -37,7 +37,7 @@ Planner projection does not own task graphs, dispatch rules, continuation state,
 
 ## Dependency Readiness
 
-Graph is ready. Belief is conditionally ready for externally configured `docs_freshness`. `meld-lang` is ready for typed-loop values and operations.
+Graph is ready. Belief has landed the externally configured `docs_freshness` slice. `meld-lang` is ready for typed-loop values and operations.
 
 Causation and regime are deferred for this slice.
 
@@ -54,6 +54,9 @@ This is a design-ready slice. The code path does not yet exist.
 - `crates/meld-world-model/src/world_state/query.rs`
 - `crates/meld-world-model/src/world_state/query_runtime.rs`
 - `crates/meld-world-model/src/world_state/graph/`
+- `crates/meld-world-model/src/belief.rs`
+- `crates/meld-world-model/src/belief/`
+- `crates/meld-world-model/tests/belief.rs`
 - `tests/integration/world_state_graph.rs`
 - `design/cognitive_architecture/world_model/planner/README.md`
 - `design/cognitive_architecture/world_model/planner/spec.md`
@@ -70,7 +73,7 @@ This is a design-ready slice. The code path does not yet exist.
 
 ## Open Questions
 
-- Whether first projection emits only confidence or also freshness age.
+- Whether first projection emits confidence plus freshness state as separate propositions or a single structured proposition.
 - Whether first projection includes observation-needed state directly or leaves it to `Indeterminate`.
 
 ## Recommendation

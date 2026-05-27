@@ -3,7 +3,7 @@
 Status: ready
 Depends on: `design/plan/events/assessment.md`
 Design source: `design/cognitive_architecture/world_model/graph/README.md`, `design/cognitive_architecture/world_model/graph/spec.md`, `design/cognitive_architecture/world_model/graph/requirements.md`
-Evidence date: 2026-05-26
+Evidence date: 2026-05-27
 
 ## Verdict Summary
 
@@ -41,6 +41,8 @@ No upstream blocker prevents the typed-loop slice.
 
 Graph supports the typed loop by identifying the docs node subject and making it available to belief and planner projection.
 
+Belief consumes the current anchor and provenance query path for the first `docs_freshness` slice.
+
 Graph supports the runtime flywheel once sensory and execution publish graph-readable facts.
 
 ## Current Implementation Evidence
@@ -48,6 +50,7 @@ Graph supports the runtime flywheel once sensory and execution publish graph-rea
 - `crates/meld-world-model/src/world_state/graph.rs`
 - `crates/meld-world-model/src/world_state/graph/`
 - `crates/meld-world-model/tests/world_model_queries.rs`
+- `crates/meld-world-model/tests/belief.rs`
 - `src/world_state.rs`
 - `tests/integration/world_state_graph.rs`
 - `tests/integration/branches_query.rs`
@@ -62,7 +65,6 @@ Graph supports the runtime flywheel once sensory and execution publish graph-rea
 
 ## Open Questions
 
-- Which graph query becomes the first canonical input to `docs_freshness` belief projection.
 - Which compatibility names remain public during world model crate cleanup.
 
 ## Recommendation

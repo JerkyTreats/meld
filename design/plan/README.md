@@ -1,6 +1,6 @@
 # Cognitive Architecture Implementation Plan
 
-Date: 2026-05-24
+Date: 2026-05-27
 Status: active
 Scope: declarative implementation readiness and dependency order for the cognitive architecture
 
@@ -16,7 +16,7 @@ Each assessment is current truth. It names the exact slice that is ready, the ex
 
 The first vertical slice threads the thinnest possible path through every layer of the cognitive flywheel using the `docs_freshness` scenario. Each layer implements the minimum needed to pass its output to the next. The goal is one complete flywheel turn before deepening any individual layer.
 
-The typed loop has already proven the full contract chain through `meld-lang` pure types and operations. The vertical slice now makes each layer real with runtime code that materializes state, revises belief, curates goals, and dispatches work.
+The typed loop has already proven the full contract chain through `meld-lang` pure types and operations. The vertical slice now makes each layer real with runtime code that materializes state, projects belief, curates goals, and dispatches work.
 
 ## Vertical Slice: Implementation Order
 
@@ -35,17 +35,17 @@ Materialize current anchors from event spine facts. Subject identity lookup for 
 
 Owner: `meld-world-model`
 
-### Phase 3: Belief Layer — `not started` ← next
+### Phase 3: Belief Layer — `complete`
 
-One belief family: `docs_freshness`. One evidence normalization path from graph anchors. One comparator that produces a confidence value. One compact planner-facing belief value. First layer that exercises epistemic judgment.
+One belief family: `docs_freshness`. Graph anchor and promoted evidence normalization. One configured comparator that produces a confidence value. One compact planner-facing belief view. First layer that exercises epistemic judgment.
 
 Owner: `meld-world-model`
 Blocked by: Phase 2
 Plan: [world_model/belief/PLAN.md](world_model/belief/PLAN.md)
 
-### Phase 4: Planner Projection — `not started`
+### Phase 4: Planner Projection — `not started` ← next
 
-Convert graph plus belief internal state into ground `meld-lang::WorldState`. First projection emits `Proposition::Holds` for `docs_freshness` confidence. Bridge that makes world model state consumable by execution.
+Convert public graph and belief views into ground `meld-lang::WorldState`. First projection emits `Proposition::Holds` for `docs_freshness` confidence and freshness state. Bridge that makes world model state consumable by execution.
 
 Owner: `meld-world-model`
 Blocked by: Phase 3
@@ -92,7 +92,7 @@ These components predate the vertical slice and support all phases.
 1. `events` — complete
 2. `meld-lang` — complete, Phase 1
 3. `world_model/graph` — complete, Phase 2
-4. `world_model/belief` — not started, Phase 3
+4. `world_model/belief` — complete, Phase 3
 5. `world_model/planner` — not started, Phase 4
 6. `world_model/agent` — not started, Phase 5
 7. `execution/goals` — type contract complete in `meld-lang`, runtime Phase 6
@@ -110,7 +110,8 @@ These components predate the vertical slice and support all phases.
 Implementation plans decompose assessed areas into phased, dependency-ordered work with tasks, exit criteria, and verification commands.
 
 - [meld-lang/PLAN.md](meld-lang/PLAN.md) — complete
-- [world_model/belief/PLAN.md](world_model/belief/PLAN.md) — ready to execute, next required
+- [world_model/belief/PLAN.md](world_model/belief/PLAN.md) — complete
+- `world_model/planner` implementation plan — next required
 
 ## Assessment Inventory
 

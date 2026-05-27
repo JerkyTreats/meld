@@ -3,7 +3,7 @@
 Status: conditionally ready
 Depends on: `design/plan/world_model/belief/assessment.md`, `design/plan/world_model/planner/assessment.md`, `design/plan/execution/goals/assessment.md`, `design/plan/meld-lang/assessment.md`
 Design source: `design/cognitive_architecture/world_model/agent/README.md`, `design/cognitive_architecture/world_model/agent/goal_curation.md`, `design/cognitive_architecture/world_model/agent/spec.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/execution/goals/README.md`, `design/cognitive_architecture/meld-lang/goals_and_methods.md`
-Evidence date: 2026-05-26
+Evidence date: 2026-05-27
 
 ## Verdict Summary
 
@@ -37,7 +37,7 @@ Agent does not own the goal set store, goal lifecycle state machine, task graphs
 
 ## Dependency Readiness
 
-Belief is conditionally ready for externally configured `docs_freshness`.
+Belief has landed the externally configured `docs_freshness` slice.
 
 Planner projection design is ready for one `WorldState`.
 
@@ -57,6 +57,8 @@ No multi-agent coordination or learned policy is required.
 - `design/cognitive_architecture/world_model/agent/goal_curation.md`
 - `design/cognitive_architecture/world_model/agent/spec.md`
 - `design/cognitive_architecture/world_model/public_interface.md`
+- `crates/meld-world-model/src/belief.rs`
+- `crates/meld-world-model/src/belief/`
 - `design/cognitive_architecture/execution/goals/README.md`
 - `design/cognitive_architecture/meld-lang/goals_and_methods.md`
 
