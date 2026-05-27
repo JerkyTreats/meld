@@ -1,127 +1,309 @@
 # meld-world-model
 
-The `meld-world-model` crate is the durable, queryable record of what has happened during execution. It maintains two independent materialized views over the event spine — **claims** and **anchors** — each persisted to an embedded [sled](https://github.com/spacejam/sled) database and reconstructable by replaying events.
+`meld-world-model` is the durable world model crate for Meld. It materializes graph and claim views from the event spine, maintains belief state over public graph evidence, and projects planner-facing world state into `meld-lang`.
 
----
+The crate owns world model knowledge. It does not own goal curation, method selection, task planning, capability choice, dispatch, retry, repair, or outcome publication.
 
-## Concepts
+## Domains
 
 ### Claims
 
-A claim is a settled fact about a domain object. When execution completes, fails, or produces output, the world model records a `ClaimRecord` asserting that outcome for a specific subject.
+Claims are settled facts about domain objects. When execution completes, fails, or produces an artifact, the world model records a `ClaimRecord` for the affected subject.
 
-**`ClaimKind`** — the three settled states:
-- `GenerationSucceeded` — a generation task completed successfully
-- `GenerationFailed` — a generation task failed
-- `ArtifactAvailable` — a task run produced a named artifact
+Core claim records:
 
-Claims have a `SettlementStatus`: `Active` or `Superseded`. A new claim over the same subject supersedes the prior one; the full replacement chain is preserved.
+- `ClaimRecord`
+- `ClaimKind`
+- `SettlementStatus`
+- `EvidenceRecord`
+- `ProvenanceRecord`
 
-Each claim carries `EvidenceRecord`s linking it to the source events and domain objects that caused it. `ProvenanceRecord` aggregates that evidence for reconstruction.
+Claim state is append oriented. New claims supersede older claims over the same subject while preserving replacement history.
 
-### Anchors
+### Graph
 
-An anchor is a directed, perspective-scoped pointer: a subject pointing at a target, labeled by a `PerspectiveKey`. Anchors form a traversable knowledge graph over domain objects.
+Graph anchors are perspective-scoped pointers from a subject to a target. They form a traversable knowledge graph over domain objects.
 
-**`AnchorSelectionRecord`** — one resolved pointer:
+Core graph records:
 
-| Field | Meaning |
-|---|---|
-| `subject` | the domain object that holds the pointer |
-| `perspective` | a `(kind, id)` namespace classifying the relationship |
-| `target` | the domain object being pointed at |
+- `AnchorSelectionRecord`
+- `PerspectiveKey`
+- `TraversalFactRecord`
+- `AnchorProvenanceRecord`
+- `GraphWalkSpec`
+- `GraphWalkResult`
 
-Three canonical perspective kinds are used by the system:
+Canonical perspective kinds include:
 
-| `perspective_kind` | `perspective_id` | Meaning |
+| Perspective kind | Perspective id | Meaning |
 |---|---|---|
-| `frame_type` | e.g. `"analysis"` | Current frame head for a node, by type |
-| `snapshot` | `"current"` | Current snapshot for a source |
-| `artifact_type` | e.g. `"summary"` | Current artifact for a task run, by type |
+| `frame_type` | `analysis`, `summary`, or another frame type | Current frame head for a node |
+| `snapshot` | `current` | Current snapshot for a source |
+| `artifact_type` | Artifact type id | Current artifact for a task run |
 
-Anchors supersede each other per `(subject, perspective)`. History is preserved; only the latest is `Active`.
+Anchors supersede per subject and perspective. History remains queryable, while current indexes expose the latest active anchor.
 
-`TraversalFactRecord` is the raw event that drove an anchor change. `AnchorProvenanceRecord` links an anchor back to the spine facts and domain objects that created it.
+### Belief
 
----
+Belief consumes public graph state and runtime configuration, then produces planner-safe `BeliefView` records.
+
+Core belief records and APIs:
+
+- `BeliefKey`
+- `BeliefView`
+- `BeliefRevision`
+- `BeliefStore`
+- `BeliefQuery`
+- `BeliefRuntime`
+- `BeliefEvidenceNormalizer`
+- `BeliefConfigLoader`
+- `PlannerProjectionSummary`
+
+Belief family semantics stay in configuration data. Core Rust code must not introduce family-specific modules, variants, or identifiers. The first configured slice uses runtime ids such as `docs_freshness`, but that value remains data rather than a Rust subsystem.
+
+### Planner
+
+Planner projection converts public belief and graph reads into a ground `meld_lang::WorldState`.
+
+Core planner records and APIs:
+
+- `PlannerProjectionContext`
+- `PlannerFieldProjectionConfig`
+- `PlannerProjectionInput`
+- `PlannerGraphScope`
+- `PlannerProjectionOutput`
+- `PlannerSourceRef`
+- `PlannerHydrationRefs`
+- `PlannerProjectionWarning`
+- `PlannerProjectionError`
+- `PlannerQuery`
+- `project_world_state`
+- `PLANNER_PROJECTION_VERSION`
+
+The first planner slice projects:
+
+- belief confidence as `Proposition::Holds`
+- stale state as a generic derived dimension
+- observation-needed state as a generic derived dimension
+- graph scope as `Proposition::Accessible`
+
+Projection is deterministic, read only, and ground. Missing belief omits belief propositions so `meld-lang` can return `Indeterminate` for missing `Holds` dimensions.
 
 ## Storage
 
-Both models use separate sled trees with structured secondary indexes:
+The crate uses embedded [sled](https://github.com/spacejam/sled) stores.
 
-| Store | Indexes maintained |
-|---|---|
-| `WorldStateStore` (claims) | by subject (active), by subject (history), by source fact, by sequence |
-| `TraversalStore` (anchors) | by anchor ref (current/history), by subject+perspective, outgoing/incoming relations per object |
+| Store | Domain | Main indexes |
+|---|---|---|
+| `WorldStateStore` | Claims | active claims by subject, claim history by subject, source fact, sequence |
+| `TraversalStore` | Graph | current anchor by ref, anchor history, subject and perspective, relation indexes |
+| `BeliefStore` | Belief | current views, revisions, evidence, assignments, dirty keys, observation opportunities |
 
-Both stores are append-oriented: records are written once and supersession updates a status field rather than deleting.
-
----
+Stores are append oriented where possible. Supersession and current-head movement preserve enough history for replay and explanation.
 
 ## Query API
 
-### `WorldStateQuery`
+### WorldStateQuery
 
-Borrowed view over `WorldStateStore`.
-
-```rust
-query.current_claims_for_object(subject)         // active claims
-query.claim_history_for_object(subject)          // all claims, including superseded
-query.provenance_for_claim(claim_id)             // evidence trace
-query.supersession_chain_for_claim(claim_id)     // replacement chain
-```
-
-### `TraversalQuery`
-
-Borrowed view over `TraversalStore`.
+`WorldStateQuery` is a read facade over `WorldStateStore`.
 
 ```rust
-query.current_anchor(anchor_ref)                           // anchor by ref
-query.current_anchors_for_subject(subject)                 // all active anchors for a subject
-query.anchor_history(anchor_ref)                           // full history for an anchor ref
-query.current_frame_head(node, frame_type)                 // frame_type anchor
-query.current_frame_heads_for_node(node)                   // all frame_type anchors for a node
-query.current_snapshot_for_source(source)                  // snapshot anchor
-query.current_artifact_for_task_run(task_run, type_id)     // artifact anchor
-query.neighbors(object, direction, relation_types, current_only)  // adjacent objects
-query.walk(start, spec)                                    // depth-limited graph traversal
-query.provenance_for_anchor(anchor_id)                     // source facts for an anchor
+query.current_claims_for_object(subject);
+query.claim_history_for_object(subject);
+query.provenance_for_claim(claim_id);
+query.supersession_chain_for_claim(claim_id);
 ```
 
-### `WorldModelQueries`
+### TraversalQuery
 
-`Arc`-wrapped, clone-safe handle exposing both stores. Passed to long-lived runtime components and the API layer.
+`TraversalQuery` is a read facade over `TraversalStore`.
 
----
-
-## Reduction
-
-Events from the spine are processed by two reducers:
-
-**`WorldStateReducer`** — handles `execution.control.*` and `execution.task.*` events. Derives claim intents and writes `ClaimRecord`s to `WorldStateStore`. Emits `world_state.claim_added`, `world_state.claim_superseded`, and `world_state.evidence_attached` events.
-
-**`TraversalReducer`** — handles domain events that imply structural relationships. Derives `TraversalIntent`s (`SelectAnchor` / `EndAnchor`) and writes anchor records to `TraversalStore`. Emits `world_state.anchor_selected` and `world_state.anchor_superseded` events.
-
-**`GraphRuntime`** — drives the traversal side. Calls `catch_up()` to replay any unprocessed spine events through `TraversalReducer` on startup or re-initialization.
-
----
-
-## Position in the system
-
-`meld-world-model` sits downstream of the event spine and upstream of anything that needs to reason about current or historical execution state.
-
-```
-meld-events (spine)
-    └── meld-world-model
-            ├── WorldStateReducer  → claims store
-            ├── TraversalReducer   → anchor/graph store
-            └── WorldModelQueries  → consumed by:
-                    ├── context reducer
-                    ├── workspace reducer
-                    ├── task reducer
-                    ├── execution ports
-                    ├── branches / CLI
-                    └── API layer
+```rust
+query.current_anchor(anchor_ref);
+query.current_anchors_for_subject(subject);
+query.anchor_history(anchor_ref);
+query.current_frame_head(node, frame_type);
+query.current_frame_heads_for_node(node);
+query.current_snapshot_for_source(source);
+query.current_artifact_for_task_run(task_run, type_id);
+query.neighbors(object, direction, relation_types, current_only);
+query.walk(start, spec);
+query.provenance_for_anchor(anchor_id);
 ```
 
-It depends only on `meld-events` for event types, `DomainObjectRef`, and storage primitives.
+### BeliefQuery
+
+`BeliefQuery` is a planner-safe read facade over `BeliefStore`.
+
+```rust
+query.current_view(key);
+query.current_views_for_subject(subject, perspective);
+query.revision_history(key);
+query.evidence_by_revision(revision_id);
+query.provenance_by_revision(revision_id);
+query.open_observation_opportunities(subject, perspective);
+query.dirty_keys();
+query.dirty_key_states();
+query.rebuild_current_view_from_revision(key);
+```
+
+### PlannerQuery
+
+`PlannerQuery` composes `BeliefQuery` and `TraversalQuery` into one read-only projection route.
+
+```rust
+let planner = PlannerQuery::new(belief_query, traversal_query);
+let output = planner.project_current_world_state(
+    &subject,
+    "docs_freshness",
+    None,
+    None,
+)?;
+```
+
+The route defaults to the `default/default` perspective and the `main` branch scope when the caller does not provide explicit values.
+
+### WorldModelQueries
+
+`WorldModelQueries` is an `Arc` friendly handle that exposes claim and graph query surfaces to long-lived runtime components and the API layer.
+
+## Reduction And Runtime
+
+`WorldStateReducer` handles execution events and writes claim records.
+
+`TraversalReducer` handles domain events that imply structural relationships and writes anchor records.
+
+`GraphRuntime` drives traversal replay by calling `catch_up` against the event spine.
+
+`BeliefRuntime` assesses configured belief keys from graph and promoted evidence, then writes revisions, views, dirty-key state, and observation opportunities.
+
+Planner projection has no reducer. It is a read-only projection over current graph and belief views.
+
+## Position In The System
+
+```text
+meld-events
+    -> meld-world-model
+        -> claims
+        -> graph
+        -> belief
+        -> planner projection
+    -> meld-lang
+        -> execution-readable WorldState
+```
+
+Downstream consumers include context, workspace, branch queries, API routes, agent curation, and execution evaluation. Execution planning remains outside this crate.
+
+## Dependencies
+
+This crate depends on:
+
+- `meld-events` for event contracts, `DomainObjectRef`, and storage errors
+- `meld-lang` for `WorldState`, `Proposition`, `Condition`, and `Term`
+- `sled` for embedded persistence
+- `serde` and `serde_json` for durable contracts and deterministic projection ordering
+- `parking_lot` for shared runtime handles
+
+## Layout Rules
+
+Use domain-first modules.
+
+Current domain entries:
+
+- `src/world_state.rs`
+- `src/world_state/*.rs`
+- `src/world_state/graph.rs`
+- `src/world_state/graph/*.rs`
+- `src/belief.rs`
+- `src/belief/*.rs`
+- `src/planner.rs`
+- `src/planner/*.rs`
+
+Do not add `mod.rs`.
+
+Adapters should remain thin. Public query facades should hide store layout and lower-layer internals.
+
+## Harness And Quality Bar
+
+The crate is expected to keep characterization, boundary, property, fuzz, and replay coverage for every world model domain.
+
+### Required Test Families
+
+- serde round-trip tests for public contracts
+- validation tests for invalid ids, invalid probabilities, invalid field suffixes, and malformed query specs
+- source ref and hydration ref preservation tests
+- deterministic replay and reopen tests over persisted sled stores
+- read facade tests that avoid direct lower-layer internals where public APIs exist
+- source scans that reject `mod.rs` and family-specific Rust identifiers
+- boundary scans that reject execution planning imports or values inside planner code
+- grounding tests for every projected `meld_lang::WorldState`
+- missing input tests that prove absence does not fabricate support
+- property tests for probabilities, dimension ids, duplicate refs, stale state, observation state, and invalid field ids
+- fuzz targets for serialized public contracts that accept untrusted input
+
+### Planner-Specific Quality Bar
+
+Planner projection must satisfy:
+
+- consumes public graph and belief reads only
+- creates no `Goal`, `Method`, `Composition`, `Operator`, `Effect`, task, or capability value
+- emits only ground propositions
+- emits no hardcoded runtime belief family Rust identifiers
+- derives freshness and observation dimensions from runtime dimension ids and projection config
+- preserves belief revision ids, evidence ids, source fact ids, and graph anchor ids
+- returns deterministic proposition order, source ref order, hydration ref order, and warning order
+- treats missing belief as omitted `Holds` propositions plus `MissingBelief`
+- lets `meld-lang` evaluation return `Indeterminate` for missing belief dimensions
+- emits `Accessible` only from available graph scope
+- remains read only over graph and belief stores
+
+## Verification
+
+Run the focused crate checks before changing shared behavior:
+
+```sh
+cargo check -p meld-world-model
+cargo test -p meld-world-model
+cargo clippy -p meld-world-model -- -D warnings
+```
+
+Run the workspace gates before merging broad or public API changes:
+
+```sh
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+```
+
+Run planner-focused checks after planner changes:
+
+```sh
+cargo test -p meld-world-model planner_module_boundary
+cargo test -p meld-world-model planner_contracts
+cargo test -p meld-world-model planner_belief_projection
+cargo test -p meld-world-model planner_graph_projection
+cargo test -p meld-world-model planner_world_state
+cargo test -p meld-world-model planner_query
+cargo test -p meld-world-model planner_typed_loop_handoff
+```
+
+Run fuzz checks for planner contract input with nightly:
+
+```sh
+cd crates/meld-world-model
+cargo +nightly fuzz run fuzz_planner_projection_contract
+```
+
+Use a bounded smoke run when validating toolchain and target wiring:
+
+```sh
+cd crates/meld-world-model
+cargo +nightly fuzz run fuzz_planner_projection_contract -- -runs=1
+```
+
+Run normal cargo syntax checks for the fuzz crate when nightly fuzzing is not available:
+
+```sh
+cargo check --manifest-path crates/meld-world-model/fuzz/Cargo.toml --bin fuzz_planner_projection_contract
+```
+
+Targeted mutation testing for planner projection should be attempted during handoff. If active filters report zero mutants, record that result with the command used rather than treating it as behavioral evidence.

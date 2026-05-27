@@ -11,6 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+serde_json = "1.0"
 sled = "0.34"
 tempfile = "3.8"
 
@@ -27,6 +28,13 @@ bench = false
 [[bin]]
 name = "fuzz_world_state_graph_walk"
 path = "fuzz_targets/fuzz_world_state_graph_walk.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_planner_projection_contract"
+path = "fuzz_targets/fuzz_planner_projection_contract.rs"
 test = false
 doc = false
 bench = false
