@@ -25,3 +25,5 @@ mutants.out.old/
 config.toml
 
 .codex
+
+mutants.out/
