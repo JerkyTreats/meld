@@ -111,7 +111,7 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 
 - [meld-lang/PLAN.md](meld-lang/PLAN.md) — complete
 - [world_model/belief/PLAN.md](world_model/belief/PLAN.md) — complete
-- `world_model/planner` implementation plan — next required
+- [world_model/planner/PLAN.md](world_model/planner/PLAN.md) — ready to execute, next required
 
 ## Assessment Inventory
 

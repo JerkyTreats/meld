@@ -1115,7 +1115,7 @@ Pipeline stages are deterministic projection functions. They read lower-layer in
 | Port | Owner | Required for | Gap |
 |---|---|---|---|
 | graph packet read | graph | identity, anchors, lineage, provenance, branch presence, hydration | object history and branch presence are not fully exposed |
-| belief packet read | belief | posterior, uncertainty, freshness, contradiction, coverage, observation opportunities | typed belief view contract needed |
+| belief packet read | belief | posterior, uncertainty, freshness, contradiction, coverage, observation opportunities | first `BeliefView` contract available, planner packet adapter needed |
 | causal packet read | causation | intervention effects, identification, confounders, selection warnings | causal public read contract needed |
 | regime packet read | regime | regime uncertainty, changepoints, sensitivity, stress metrics | regime public read contract needed |
 | agent lens read | agent | admissibility, trust, tolerance, observation scope | typed lens contract needed |
@@ -1274,7 +1274,7 @@ Replay invariant:
 same belief state and projection version produce the same belief input packet.
 
 Implementation gap:
-belief source records and public view contracts are not yet available in code.
+planner-specific belief packet adaptation is not yet available in code.
 
 ### Graph-Input Projection
 
