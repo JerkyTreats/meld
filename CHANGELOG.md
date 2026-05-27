@@ -1,5 +1,44 @@
 # Changelog
 
+## [2.7.0](https://github.com/JerkyTreats/meld/compare/v2.6.0...v2.7.0) — 2026-05-27
+
+### Features
+
+* **world-model:** add belief runtime [ea21969](https://github.com/JerkyTreats/meld/commit/ea219698dbaf191f97d066b3e07b80d6ec29c065)
+* **world-model:** finish belief runtime [d648204](https://github.com/JerkyTreats/meld/commit/d648204414208fefadc41354fe996b5e5f8e5153)
+* **world-model:** add planner world state projection [a3d71ba](https://github.com/JerkyTreats/meld/commit/a3d71ba6df935ef02bb14b8036c6a9fbb4cab407)
+
+### Bug Fixes
+
+* **.gitignore:** add mutants to gitignore [ad62ab9](https://github.com/JerkyTreats/meld/commit/ad62ab940679dd179e83eae9d7648e7933dd590f)
+
+### Refactors
+
+* **clippy:** apply lint cleanups [150402e](https://github.com/JerkyTreats/meld/commit/150402e2f8a21429c12a8e73a8bfc3f466712771)
+
+### Documentation
+
+* **world-model:** document world state surfaces [156927f](https://github.com/JerkyTreats/meld/commit/156927fb72cdf1e121896741f85770342d9c0efa)
+* **meld-world-model:** update README [41f3ff1](https://github.com/JerkyTreats/meld/commit/41f3ff1adcf48df96576c3b0539e169c0f20197b)
+
+### Tests
+
+* **world-model:** expand world state harness [e9220a5](https://github.com/JerkyTreats/meld/commit/e9220a5eaaafc3afa8a5660de618bac1a4fe867d)
+
+### CI
+
+* install clippy in verify workflow [a9168e4](https://github.com/JerkyTreats/meld/commit/a9168e414f9b5ca94837977ffe3ccf6ff6df182b)
+
+### Design
+
+* **world-model:** consolidate domain specs [5da0a1a](https://github.com/JerkyTreats/meld/commit/5da0a1a70f00529df8c3335da08616b6867ba368)
+* **plan:** audit implementation readiness [270963c](https://github.com/JerkyTreats/meld/commit/270963c70c2f96a7269de92b1edf53e47b3dbdd0)
+* **world-model:** mark belief slice implemented [8fb8034](https://github.com/JerkyTreats/meld/commit/8fb80347e03f4dfc96c09c38d1d10483a73287f9)
+* **plan:** advance planner projection as next slice [82f0974](https://github.com/JerkyTreats/meld/commit/82f097441cb32ac3a70600bbef3212f5191de620)
+* **planner:** define world model projection plan [12bf58c](https://github.com/JerkyTreats/meld/commit/12bf58c3c843e6684054c65852ba238ab0f37f79)
+* **world-model:** mark planner projection complete [20857f3](https://github.com/JerkyTreats/meld/commit/20857f36604c6cfcd509729bf4d3d96cbec09155)
+
+
 ## [2.6.0](https://github.com/JerkyTreats/meld/compare/v2.5.0...v2.6.0) — 2026-05-23
 
 ### Features
