@@ -8,6 +8,7 @@ use crate::events::ingress::{EventBus, EventIngestor, SharedIngestor};
 use crate::events::store::EventStore;
 use crate::events::EventEnvelope;
 
+/// Synchronous event runtime that drains emitted events into the store.
 #[derive(Clone)]
 pub struct EventRuntime {
     store: Arc<EventStore>,
@@ -16,6 +17,7 @@ pub struct EventRuntime {
 }
 
 impl EventRuntime {
+    /// Creates a runtime with an in-process bus and shared store.
     pub fn new(db: sled::Db) -> Result<Self, StorageError> {
         let store = EventStore::shared(db)?;
         let (bus, rx) = EventBus::new_pair();
@@ -27,6 +29,7 @@ impl EventRuntime {
         })
     }
 
+    /// Emits a legacy telemetry event and drains it immediately.
     pub fn emit_event(
         &self,
         session_id: &str,
@@ -41,6 +44,7 @@ impl EventRuntime {
         Ok(())
     }
 
+    /// Emits a domain event and drains it immediately.
     pub fn emit_domain_event(
         &self,
         session_id: &str,
@@ -65,6 +69,7 @@ impl EventRuntime {
         Ok(())
     }
 
+    /// Emits a prepared envelope and drains it immediately.
     pub fn emit_envelope(&self, envelope: EventEnvelope) -> Result<(), ApiError> {
         self.bus.emit_envelope(envelope).map_err(to_api_error)?;
         self.ingestor.drain()?;
@@ -72,12 +77,14 @@ impl EventRuntime {
         Ok(())
     }
 
+    /// Appends a prepared envelope through the idempotent store path.
     pub fn emit_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<(), ApiError> {
         self.store.append_envelope_idempotent(envelope)?;
         self.store.flush()?;
         Ok(())
     }
 
+    /// Emits a batch of envelopes and drains once after enqueueing.
     pub fn emit_envelopes<I>(&self, envelopes: I) -> Result<(), ApiError>
     where
         I: IntoIterator<Item = EventEnvelope>,
@@ -90,6 +97,7 @@ impl EventRuntime {
         Ok(())
     }
 
+    /// Appends a batch of envelopes through the idempotent store path.
     pub fn emit_envelopes_idempotent<I>(&self, envelopes: I) -> Result<(), ApiError>
     where
         I: IntoIterator<Item = EventEnvelope>,
@@ -101,6 +109,7 @@ impl EventRuntime {
         Ok(())
     }
 
+    /// Emits a legacy telemetry event and logs any failure.
     pub fn emit_event_best_effort(&self, session_id: &str, event_type: &str, data: Value) {
         if let Err(err) = self.emit_event(session_id, event_type, data) {
             warn!(
@@ -112,6 +121,7 @@ impl EventRuntime {
         }
     }
 
+    /// Emits a domain event and logs any failure.
     pub fn emit_domain_event_best_effort(
         &self,
         session_id: &str,
@@ -140,6 +150,7 @@ impl EventRuntime {
         }
     }
 
+    /// Emits a prepared envelope and logs any failure.
     pub fn emit_envelope_best_effort(&self, envelope: EventEnvelope) {
         let session_id = envelope.session.clone();
         let event_type = envelope.event_type.clone();
@@ -153,6 +164,7 @@ impl EventRuntime {
         }
     }
 
+    /// Appends a prepared envelope idempotently and logs any failure.
     pub fn emit_envelope_idempotent_best_effort(&self, envelope: EventEnvelope) {
         let session_id = envelope.session.clone();
         let event_type = envelope.event_type.clone();
@@ -166,6 +178,7 @@ impl EventRuntime {
         }
     }
 
+    /// Returns the backing event store for queries and tests.
     pub fn store(&self) -> &EventStore {
         &self.store
     }

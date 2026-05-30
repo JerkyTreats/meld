@@ -9,21 +9,25 @@ use crate::events::EventEnvelope;
 
 const DEFAULT_EVENT_BUS_CAPACITY: usize = 1024;
 
+/// Non-blocking producer side of the in-process event bus.
 #[derive(Clone)]
 pub struct EventBus {
     sender: SyncSender<EventEnvelope>,
 }
 
 impl EventBus {
+    /// Creates a bus with the default bounded capacity.
     pub fn new_pair() -> (Self, Receiver<EventEnvelope>) {
         Self::new_pair_with_capacity(DEFAULT_EVENT_BUS_CAPACITY)
     }
 
+    /// Creates a bus with a caller-specified bounded capacity.
     pub fn new_pair_with_capacity(capacity: usize) -> (Self, Receiver<EventEnvelope>) {
         let (sender, receiver) = sync_channel(capacity);
         (Self { sender }, receiver)
     }
 
+    /// Attempts to enqueue an already-built envelope without blocking.
     #[allow(clippy::result_large_err)]
     pub fn emit_envelope(
         &self,
@@ -32,6 +36,7 @@ impl EventBus {
         self.sender.try_send(envelope)
     }
 
+    /// Builds and attempts to enqueue a legacy telemetry envelope.
     #[allow(clippy::result_large_err)]
     pub fn emit(
         &self,
@@ -44,16 +49,19 @@ impl EventBus {
     }
 }
 
+/// Consumer that drains queued envelopes into the event store.
 pub struct EventIngestor {
     store: Arc<EventStore>,
     receiver: Receiver<EventEnvelope>,
 }
 
 impl EventIngestor {
+    /// Creates an ingestor over a shared store and bus receiver.
     pub fn new(store: Arc<EventStore>, receiver: Receiver<EventEnvelope>) -> Self {
         Self { store, receiver }
     }
 
+    /// Drains all currently queued envelopes and returns the number ingested.
     pub fn ingest_pending(&mut self) -> Result<usize, StorageError> {
         let mut count = 0usize;
         while let Ok(envelope) = self.receiver.try_recv() {
@@ -69,14 +77,17 @@ impl EventIngestor {
     }
 }
 
+/// Mutex-protected ingestor used by synchronous runtime APIs.
 #[derive(Clone)]
 pub struct SharedIngestor(Arc<Mutex<EventIngestor>>);
 
 impl SharedIngestor {
+    /// Wraps an ingestor for shared synchronous access.
     pub fn new(inner: EventIngestor) -> Self {
         Self(Arc::new(Mutex::new(inner)))
     }
 
+    /// Drains all currently queued envelopes.
     pub fn drain(&self) -> Result<usize, StorageError> {
         let mut guard = self.0.lock().expect("ingestor lock poisoned");
         guard.ingest_pending()

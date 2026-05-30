@@ -15,49 +15,80 @@ pub use contracts::{DomainObjectRef, EventRelation};
 pub use ingress::{EventBus, EventIngestor, SharedIngestor};
 pub use runtime::EventRuntime;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Persisted event record in the global event spine.
+///
+/// Records are append-only after a sequence is assigned. Legacy fields keep
+/// defaults so older telemetry events can still be read through the same API.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventRecord {
+    /// Producer timestamp retained for legacy callers.
     pub ts: String,
+    /// Storage timestamp for the record.
     #[serde(default)]
     pub recorded_at: String,
+    /// Optional idempotency key supplied by the producer.
     #[serde(default)]
     pub record_id: Option<String>,
+    /// Session-level read partition.
     pub session: String,
+    /// Runtime-wide monotonically increasing sequence.
     pub seq: u64,
+    /// Domain that owns the event meaning.
     #[serde(default = "default_domain_id")]
     pub domain_id: String,
+    /// Domain-local stream that groups related records.
     #[serde(default)]
     pub stream_id: String,
+    /// Stable event type identifier.
     #[serde(rename = "type")]
     pub event_type: String,
+    /// Optional source occurrence time when it differs from record time.
     #[serde(default)]
     pub occurred_at: Option<String>,
+    /// Optional content hash for deduplication or lineage outside this store.
     #[serde(default)]
     pub content_hash: Option<String>,
+    /// Domain objects referenced by this event.
     #[serde(default)]
     pub objects: Vec<DomainObjectRef>,
+    /// Directed relations between referenced objects.
     #[serde(default)]
     pub relations: Vec<EventRelation>,
+    /// Domain payload owned by the event producer.
     pub data: Value,
 }
 
-#[derive(Debug, Clone)]
+/// Unsequenced event ready to be emitted or appended to the store.
+#[derive(Debug, Clone, PartialEq)]
 pub struct EventEnvelope {
+    /// Producer timestamp retained for legacy callers.
     pub ts: String,
+    /// Storage timestamp to persist with the record.
     pub recorded_at: String,
+    /// Optional idempotency key supplied by the producer.
     pub record_id: Option<String>,
+    /// Session-level read partition.
     pub session: String,
+    /// Domain that owns the event meaning.
     pub domain_id: String,
+    /// Domain-local stream that groups related records.
     pub stream_id: String,
+    /// Stable event type identifier.
     pub event_type: String,
+    /// Optional source occurrence time when it differs from record time.
     pub occurred_at: Option<String>,
+    /// Optional content hash for deduplication or lineage outside this store.
     pub content_hash: Option<String>,
+    /// Domain objects referenced by this event.
     pub objects: Vec<DomainObjectRef>,
+    /// Directed relations between referenced objects.
     pub relations: Vec<EventRelation>,
+    /// Domain payload owned by the event producer.
     pub data: Value,
 }
 
 impl EventEnvelope {
+    /// Creates a legacy telemetry envelope in the session stream.
     pub fn new(ts: String, session: String, event_type: impl Into<String>, data: Value) -> Self {
         Self::new_domain(
             ts,
@@ -70,6 +101,7 @@ impl EventEnvelope {
         )
     }
 
+    /// Creates a domain envelope with explicit stream ownership.
     pub fn new_domain(
         ts: String,
         session: impl Into<String>,
@@ -100,6 +132,7 @@ impl EventEnvelope {
         }
     }
 
+    /// Creates a legacy telemetry envelope with the current timestamp.
     pub fn with_now(
         session: impl Into<String>,
         event_type: impl Into<String>,
@@ -116,6 +149,7 @@ impl EventEnvelope {
         )
     }
 
+    /// Creates a domain envelope with the current timestamp.
     pub fn with_now_domain(
         session: impl Into<String>,
         domain_id: impl Into<String>,
@@ -141,6 +175,7 @@ impl EventEnvelope {
         }
     }
 
+    /// Attaches graph materialization references to the envelope.
     pub fn with_graph(
         mut self,
         objects: Vec<DomainObjectRef>,
@@ -151,11 +186,13 @@ impl EventEnvelope {
         self
     }
 
+    /// Sets the source occurrence timestamp.
     pub fn with_occurred_at(mut self, occurred_at: impl Into<String>) -> Self {
         self.occurred_at = Some(occurred_at.into());
         self
     }
 
+    /// Sets the producer idempotency key.
     pub fn with_record_id(mut self, record_id: impl Into<String>) -> Self {
         self.record_id = Some(record_id.into());
         self
@@ -163,6 +200,7 @@ impl EventEnvelope {
 }
 
 impl EventRecord {
+    /// Assigns a spine sequence to an envelope without changing producer data.
     pub fn from_envelope(envelope: EventEnvelope, seq: u64) -> Self {
         Self {
             ts: envelope.ts,
@@ -181,6 +219,7 @@ impl EventRecord {
         }
     }
 
+    /// Fills fields that did not exist on legacy telemetry records.
     pub fn normalize_legacy_defaults(mut self) -> Self {
         if self.recorded_at.is_empty() {
             self.recorded_at = if self.ts.is_empty() {
