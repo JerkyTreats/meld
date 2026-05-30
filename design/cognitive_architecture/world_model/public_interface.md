@@ -66,11 +66,17 @@ The public interface does not require Rust enum variants for belief families.
 
 ### Agent
 
-Owned by `world_model/agent`. These operations manage agent identity, perspective, and subscriptions.
+Owned by `world_model/agent`. These operations manage durable agent identity, perspective, activation status, and subscriptions.
 
 ```
 // Register a new agent with perspective and observation scope
-register_agent(perspective: Perspective, scope: ObservationScope) -> AgentId
+register_agent(request: AgentRegistrationRequest) -> AgentId
+
+// Mark an existing durable agent as active after runtime hydration
+activate_agent(agent_id: AgentId, activation: AgentActivationRecord) -> AgentStatus
+
+// Mark an existing durable agent as inactive without deleting identity
+deactivate_agent(agent_id: AgentId, reason: AgentDeactivationReason) -> AgentStatus
 
 // Subscribe an agent to belief revision events for a belief key
 subscribe(agent_id: AgentId, belief_key: BeliefKey) -> SubscriptionId
@@ -81,11 +87,25 @@ unsubscribe(agent_id: AgentId, subscription_id: SubscriptionId)
 // List an agent's current subscriptions
 list_subscriptions(agent_id: AgentId) -> Vec<Subscription>
 
+// Advance a subscription cursor after durable curation decision persistence
+advance_subscription(agent_id: AgentId, subscription_id: SubscriptionId, revision_id: BeliefRevisionId) -> Subscription
+
+// Record a deterministic curation decision for idempotency and replay
+record_curation_decision(decision: AgentCurationDecision) -> AgentCurationDecision
+
 // Query agent status (registered, bootstrapping, operational, suspended)
 query_agent_status(agent_id: AgentId) -> AgentStatus
 ```
 
-Agent registration creates the identity and perspective anchor. Subscription binding happens during the bootstrap lifecycle — either directly through subscription operations or through capabilities that invoke them.
+Agent registration creates durable identity and perspective anchor state. Registration may be sourced from trusted seed configuration or from a curated `CreateAgent` goal.
+
+Activation is process hydration for an existing durable agent record. It starts or resumes runtime watchers and subscription cursors. It does not create a new agent.
+
+Subscription binding happens during the initialization workflow through execution capabilities that invoke these operations.
+
+The implemented first slice includes seed registration, subscription binding, cursor advancement, curation decision recording, and status reads for one seed agent. Dynamic spawned agents and restart activation remain deferred.
+
+The runtime surface also needs a durable curation decision record and subscription cursor advancement. These make at least once belief revision delivery safe across restart and replay.
 
 ### Planner
 

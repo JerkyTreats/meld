@@ -38,6 +38,20 @@ The agent decides:
 
 The normative judgment — "this matters, act on it" vs "this is tolerable, ignore it" — lives in the agent. The agent's normative framework (what states it cares about, what thresholds trigger action, what priorities apply) is agent-specific. Different agents curating different goal sets is the "En Masse and At Will" pattern applied to execution.
 
+### Seed Agents And Agent Creation Goals
+
+The first agents cannot be created by goal curation because no agent exists yet.
+
+Seed agents are trusted genesis state created by init or loaded from configuration. They provide the first curation authority.
+
+After seed agents exist, new agent creation is represented as an ordinary goal. An authorized existing agent may add a `CreateAgent` goal when a separate concern needs its own perspective, policy, and subscriptions.
+
+Execution owns the initialization workflow for that goal. The workflow runs tasks and capabilities that create the durable agent record, bind the perspective, register belief keys, bind subscriptions, request first observations, and verify readiness.
+
+The newly arrived agent may then satisfy or provide satisfaction evidence for the `CreateAgent` goal that requested it.
+
+Restarting an existing agent is not a `CreateAgent` goal. Runtime startup hydrates durable agent records into runtime watchers and subscriptions. Repair goals may be created only if activation fails.
+
 ### Why this split
 
 Execution should not understand regime shifts, belief divergence semantics, or observation-needed signals. Those are world-model concerns. Execution should understand "here is a goal, achieve it" and "this goal is no longer relevant, clean up."

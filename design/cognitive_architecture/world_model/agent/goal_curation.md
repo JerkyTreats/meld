@@ -112,14 +112,18 @@ The agent monitors beliefs through subscription to belief revision events. This 
 
 ### Subscription binding
 
-The agent's subscriptions are bound during the bootstrap lifecycle (see [Agent Lifecycle](README.md#agent-lifecycle)). Agent creation is an execution goal. Capabilities invoke the world model's public interface to:
+The agent's subscriptions are bound during the bootstrap lifecycle. See [Agent Lifecycle](README.md#agent-lifecycle) and [Agent Genesis And Activation](genesis_and_activation.md).
+
+For seed agents, trusted init or configuration supplies the initial directive and scope.
+
+For spawned agents, an authorized existing agent curates a `CreateAgent` goal. Execution owns the initialization workflow. Capabilities invoke the world model's public interface to:
 
 1. Survey existing beliefs and evidence channels for the agent's subject scope
 2. Register the agent identity and perspective
 3. Register belief keys for dimensions that should exist but don't
 4. Bind subscriptions to each relevant belief key
 
-The subscription filter — which belief keys the agent watches — is derived from directive decomposition during bootstrap, not declared statically. Execution decomposes the semantic directive into concrete belief dimensions. The world model's public interface provides the traversal and registration operations. See [World Model Public Interface](../public_interface.md).
+The subscription filter — which belief keys the agent watches — is derived from directive decomposition during initialization, not declared statically. Execution decomposes the semantic directive into concrete belief dimensions. The world model's public interface provides the traversal and registration operations. See [World Model Public Interface](../public_interface.md).
 
 The subscription filter is the agent's definition of "what I care about." It does not define what to do about changes — the cost-benefit comparator handles that. It defines which changes reach the comparator at all.
 
