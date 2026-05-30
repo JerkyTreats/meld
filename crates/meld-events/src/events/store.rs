@@ -20,6 +20,10 @@ struct SpineMeta {
     next_seq: u64,
 }
 
+/// Append-only event spine backed by sled.
+///
+/// The store owns sequence allocation, idempotency lookup, session indexes,
+/// and compatibility reads from the older session event tree.
 #[derive(Clone)]
 pub struct EventStore {
     db: Db,
@@ -31,6 +35,7 @@ pub struct EventStore {
 }
 
 impl EventStore {
+    /// Opens all event trees on the supplied database handle.
     pub fn new(db: Db) -> Result<Self, StorageError> {
         let legacy_events = db.open_tree(TREE_EVENTS).map_err(to_storage_io)?;
         let spine_events = db.open_tree(TREE_SPINE_EVENTS).map_err(to_storage_io)?;
@@ -51,19 +56,23 @@ impl EventStore {
         })
     }
 
+    /// Opens the store behind an `Arc` for runtimes and ingestors.
     pub fn shared(db: Db) -> Result<Arc<Self>, StorageError> {
         Ok(Arc::new(Self::new(db)?))
     }
 
+    /// Returns the underlying sled database.
     pub fn db(&self) -> &Db {
         &self.db
     }
 
+    /// Appends a pre-sequenced record and advances future sequence allocation.
     pub fn append_event(&self, event: &EventRecord) -> Result<(), StorageError> {
         self.write_event(event)?;
         Ok(())
     }
 
+    /// Appends a pre-sequenced record unless its idempotency key already exists.
     pub fn append_event_idempotent(&self, event: &EventRecord) -> Result<u64, StorageError> {
         let Some(record_id) = event.record_id.as_deref() else {
             self.append_event(event)?;
@@ -78,6 +87,7 @@ impl EventStore {
         Ok(event.seq)
     }
 
+    /// Allocates the next spine sequence and appends an envelope.
     pub fn append_envelope(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
         let seq = self.allocate_next_seq()?;
         let event = EventRecord::from_envelope(envelope, seq);
@@ -85,6 +95,7 @@ impl EventStore {
         Ok(seq)
     }
 
+    /// Allocates and appends an envelope unless its idempotency key already exists.
     pub fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
         if let Some(record_id) = envelope.record_id.as_deref() {
             if let Some(existing_seq) = self.lookup_record_seq(record_id)? {
@@ -116,10 +127,12 @@ impl EventStore {
         Ok(())
     }
 
+    /// Reads all events for a session from both current and legacy indexes.
     pub fn read_events(&self, session_id: &str) -> Result<Vec<EventRecord>, StorageError> {
         self.read_events_after(session_id, 0)
     }
 
+    /// Reads events for a session after a spine sequence.
     pub fn read_events_after(
         &self,
         session_id: &str,
@@ -132,6 +145,7 @@ impl EventStore {
         Ok(out)
     }
 
+    /// Reads all events after a spine sequence across sessions.
     pub fn read_all_events_after(&self, after_seq: u64) -> Result<Vec<EventRecord>, StorageError> {
         let mut out = Vec::new();
         for result in self.spine_events.iter() {
@@ -145,6 +159,7 @@ impl EventStore {
         Ok(out)
     }
 
+    /// Reserves the next runtime-wide spine sequence.
     pub fn allocate_next_seq(&self) -> Result<u64, StorageError> {
         let mut meta = self.get_spine_meta()?.unwrap_or(SpineMeta { next_seq: 1 });
         let seq = meta.next_seq;
@@ -153,11 +168,13 @@ impl EventStore {
         Ok(seq)
     }
 
+    /// Flushes pending sled writes to durable storage.
     pub fn flush(&self) -> Result<(), StorageError> {
         self.db.flush().map_err(to_storage_io)?;
         Ok(())
     }
 
+    /// Encodes a legacy session event key.
     pub fn encode_event_key(session_id: &str, seq: u64) -> String {
         encode_legacy_event_key(session_id, seq)
     }

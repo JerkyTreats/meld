@@ -2,14 +2,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::StorageError;
 
+/// Stable object coordinate carried on event envelopes for downstream graph materializers.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct DomainObjectRef {
+    /// Domain that owns the object namespace.
     pub domain_id: String,
+    /// Type of object within the owning domain.
     pub object_kind: String,
+    /// Domain-local object identifier.
     pub object_id: String,
 }
 
 impl DomainObjectRef {
+    /// Builds an object reference and rejects empty coordinate components.
     pub fn new(
         domain_id: impl Into<String>,
         object_kind: impl Into<String>,
@@ -24,6 +29,7 @@ impl DomainObjectRef {
         Ok(object_ref)
     }
 
+    /// Validates that each coordinate component is present.
     pub fn validate(&self) -> Result<(), StorageError> {
         if self.domain_id.trim().is_empty() {
             return Err(StorageError::InvalidPath(
@@ -43,6 +49,7 @@ impl DomainObjectRef {
         Ok(())
     }
 
+    /// Returns the canonical index key used by downstream graph stores.
     pub fn index_key(&self) -> String {
         format!(
             "{}::{}::{}",
@@ -51,14 +58,19 @@ impl DomainObjectRef {
     }
 }
 
+/// Directed relationship between two event-carried domain objects.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventRelation {
+    /// Domain-specific relationship name.
     pub relation_type: String,
+    /// Source object for the directed edge.
     pub src: DomainObjectRef,
+    /// Destination object for the directed edge.
     pub dst: DomainObjectRef,
 }
 
 impl EventRelation {
+    /// Builds a relation and validates the relationship type and endpoints.
     pub fn new(
         relation_type: impl Into<String>,
         src: DomainObjectRef,
@@ -73,6 +85,7 @@ impl EventRelation {
         Ok(relation)
     }
 
+    /// Validates that the relationship and both endpoints are well formed.
     pub fn validate(&self) -> Result<(), StorageError> {
         if self.relation_type.trim().is_empty() {
             return Err(StorageError::InvalidPath(
