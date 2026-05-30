@@ -10,6 +10,8 @@ Execution is the system's push layer. It reads the world model and acts to chang
 
 The world model agent curates a goal set — desired belief states — through execution's public API. The planning loop reads that goal set and the world model view, then maintains a task network graph that closes the gap between current belief and desired state. The task network executes tasks in parallel, governed by dependency structure. Outcomes publish back through the event spine for belief revision.
 
+Seed agents are trusted genesis state created by init or configuration. After seed agents exist, additional agents are created through ordinary execution goals curated by authorized agents. Execution owns the agent initialization workflow and runs the required tasks and capabilities.
+
 The foundational pattern is graphs-lower-graphs:
 
 ```
@@ -27,6 +29,7 @@ At each level, the execution model is identical: compute the ready set, dispatch
 `execution` owns:
 
 - the goal set — desired belief states as data, with a public curation API consumed by world model agents
+- agent initialization workflows requested by seed config or curated `CreateAgent` goals
 - the planning loop — continuous plan construction reading goal set and world model view
 - the task network graph — shared execution substrate across all goals, parallel by dependency
 - dispatch through task and capability execution
@@ -65,6 +68,8 @@ flowchart TD
 
 - [Goals](goals/README.md)
   normative layer — desired belief states, lifecycle, curation API, satisfaction checking
+- [Agent Genesis And Activation](../world_model/agent/genesis_and_activation.md)
+  seed agent authority, runtime activation, and initialization capability work
 - [Execution Planning](planning/README.md)
   planning loop, HTN decomposition, guard and observation semantics
 - [Planning Pipeline](planning/planning_pipeline.md)

@@ -50,14 +50,18 @@ Convert public graph and belief views into ground `meld-lang::WorldState`. First
 Owner: `meld-world-model`
 Blocked by: Phase 3
 
-### Phase 5: Agent Goal Curation — `not started` ← next
+### Phase 5: Agent Goal Curation — `complete`
 
-One agent, one perspective, one curation rule: if `docs_freshness` confidence is below 0.7, create an active `Goal` requiring confidence above 0.7. First point where the system generates operational intent from belief.
+One seed agent, one perspective, one curation rule: if `docs_freshness` confidence is below 0.7, emit a proposed `AgentGoalCommand` carrying a ground `Goal` requiring confidence above 0.7. First point where the system generates operational intent from belief.
+
+This phase makes seed agent authority explicit. Dynamic spawned agents through curated `CreateAgent` goals and process restart activation remain deferred.
+
+It lands the minimal runtime surface: durable seed record, subscription cursor, curation decision record, goal command dedupe key, and read query facade.
 
 Owner: `meld-world-model`
 Blocked by: Phase 4
 
-### Phase 6: Execution Planning Runtime — `not started`
+### Phase 6: Execution Planning Runtime — `not started` ← next
 
 Method library loading. Goal evaluation against `WorldState`, method matching via `unify`, composition preparation via `substitute` and `validate`. Bridges from typed planning substrate to runtime orchestration. Task network execution is deferred. First slice stops at a validated composition ready for dispatch.
 
@@ -94,7 +98,7 @@ These components predate the vertical slice and support all phases.
 3. `world_model/graph` — complete, Phase 2
 4. `world_model/belief` — complete, Phase 3
 5. `world_model/planner` — complete, Phase 4
-6. `world_model/agent` — not started, Phase 5
+6. `world_model/agent` — complete, Phase 5
 7. `execution/goals` — type contract complete in `meld-lang`, runtime Phase 6
 8. `integration/typed_loop` — complete
 9. `execution/planning` — type substrate complete in `meld-lang`, runtime Phase 6
@@ -112,6 +116,7 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [meld-lang/PLAN.md](meld-lang/PLAN.md) — complete
 - [world_model/belief/PLAN.md](world_model/belief/PLAN.md) — complete
 - [world_model/planner/PLAN.md](world_model/planner/PLAN.md) — complete
+- [world_model/agent/PLAN.md](world_model/agent/PLAN.md) — complete
 
 ## Assessment Inventory
 

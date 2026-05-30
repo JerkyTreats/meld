@@ -41,6 +41,19 @@ The core Agent domain types are:
 
 These are lens types over shared lower-domain state, not duplicate world facts.
 
+The runtime support types are:
+
+- `AgentStore`
+  durable writer for records, subscriptions, cursors, activation records, and curation decisions
+- `AgentQuery`
+  read facade over durable agent state
+- `AgentRuntime`
+  live runner that activates durable records and delivers watched belief revisions
+- `AgentCurationDecision`
+  stored output of one deterministic curation evaluation
+- `AgentCurationDedupeKey`
+  stable key that prevents duplicate goal commands
+
 ## Data Model
 
 The Agent data model consists of:
@@ -142,9 +155,12 @@ The first Agent slice should prove:
 
 It does not need shared planning, inter-Agent negotiation, or execution-owned policy semantics.
 
+It does need the runtime state shape from [Agent Runtime Surface](runtime_surface.md), even when only one seed agent exists.
+
 ## Read With
 
 - [World Model Agent](README.md)
+- [Agent Runtime Surface](runtime_surface.md)
 - [World Model Belief](../belief/README.md)
 - [Belief Spec](../belief/spec.md)
 - [Graph Spec](../graph/spec.md)

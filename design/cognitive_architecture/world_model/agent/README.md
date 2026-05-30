@@ -85,6 +85,7 @@ See [Goals and Methods](../../meld-lang/goals_and_methods.md) for the concrete `
 The Agent should consume the heavier pipelines of the other world model domains and assemble them into one perspective-scoped handoff, rather than re-owning their internal logic.
 
 See [Agent Spec](spec.md) for domain types, data model, and pipelines.
+See [Agent Runtime Surface](runtime_surface.md) for store, query, activation, subscription, curation, idempotency, and replay contracts.
 
 ## Core Design Rule
 
@@ -115,14 +116,22 @@ many Agents can share one identity and provenance foundation while carrying spar
 
 ## Agent Lifecycle
 
-Agent creation is an execution goal. A directive ("ensure code quality for module X") is turned into an operational agent through the same goal → plan → task network → capability pipeline that handles all execution.
+Agent creation and activation are separate.
+
+Seed agents are created from trusted init or configuration state. This is genesis authority, not goal curation, because no prior agent exists to curate the first agent creation goal.
+
+Existing agents are activated when the process starts by hydrating durable agent records into runtime watchers and subscriptions. Activation does not create a new agent and does not require a `CreateAgent` goal.
+
+After seed agents exist, new agent creation is normal goal set curation. An authorized existing agent may add a `CreateAgent` goal for a separate concern. Execution turns the directive into an operational agent through the same goal to plan to task network to capability pipeline that handles all execution.
+
+See [Agent Genesis And Activation](genesis_and_activation.md) for the durable state, runtime state, and authority paths.
 
 ### Bootstrap
 
 ```
-1. Init        Goal generated: "create agent with directive D for subject S"
+1. Init        Seed config or curated CreateAgent goal supplies directive D
 2. Decompose   Execution decomposes directive into candidate belief dimensions
-                 (capability: semantic analysis of directive against subject)
+                 through a semantic analysis capability
 3. Survey      Capabilities invoke world model public interface:
                  - graph.walk to discover subject's entity neighborhood
                  - belief.query_beliefs to find existing beliefs
@@ -131,7 +140,7 @@ Agent creation is an execution goal. A directive ("ensure code quality for modul
                  - agent.register_agent to create identity and perspective
                  - belief.register_belief_key for missing dimensions
                  - agent.subscribe for each belief key
-5. Observe     Agent generates observation goals for dimensions
+5. Observe     Execution requests first observation work for dimensions
                  where belief keys exist but no belief revision yet
 6. Arrive      Agent processes first belief revision event through
                  its cost-benefit comparator — creation goal satisfied
@@ -139,7 +148,11 @@ Agent creation is an execution goal. A directive ("ensure code quality for modul
 
 Every step is a capability in the task network. Observable through the spine. Cost-tracked. Retryable.
 
-The satisfaction criterion for the creation goal: the agent has bound subscriptions and has processed at least one belief revision event through its cost-benefit evaluation. "I have arrived" — the agent can curate goals.
+The initialization workflow is run by execution. The new agent is the output of that workflow, not the actor that runs it.
+
+The satisfaction criterion for a spawned agent creation goal: the agent has bound subscriptions and has processed at least one readiness signal through its cost-benefit evaluation. The newly arrived agent may then satisfy or provide satisfaction evidence for the `CreateAgent` goal that requested it.
+
+For a seed agent, the same arrival criterion enables normal goal curation, but there is no prior `CreateAgent` goal to satisfy.
 
 ### Steady state
 
@@ -155,19 +168,26 @@ Agent shutdown is also a goal. The agent's subscriptions are unbound. Active goa
 
 ## First Slice
 
-The first slice should remain narrow.
+The implemented first slice remains narrow.
 
-It should define:
+It defines:
 
+- one seed Agent identity from trusted init or configuration
 - one Agent identity anchored to `DomainObjectRef`
 - one explicit perspective key
 - one evidence and trust policy surface
 - one branch and observation scope surface
-- one path from belief views to planner-facing projection for that Agent
-- bootstrap lifecycle through execution goal decomposition
+- one path from belief views to planner-facing projection for that Agent through `BeliefQuery` and `PlannerQuery`
+- seed registration through the world model agent command surface
+- durable runtime records for registration, subscription, cursor, and curation decision
+- one proposed `AgentGoalCommand` with a ground `meld-lang::Goal` built from runtime rule configuration
+- duplicate suppression through active goal summary input and curation decision dedupe
 
-It should defer:
+It defers:
 
+- dynamic spawned Agent creation through curated `CreateAgent` goals
+- existing Agent activation across process restart
+- full `AgentRuntime` process workers
 - full multi-Agent synchronization strategy
 - shared planning between Agents
 - multi-agent goal coordination protocol
@@ -182,6 +202,8 @@ It should defer:
 - [World Model Belief](../belief/README.md)
 - [Belief Microarchitecture](../belief/microarchitecture.md)
 - [Agent Spec](spec.md)
+- [Agent Genesis And Activation](genesis_and_activation.md)
+- [Agent Runtime Surface](runtime_surface.md)
 - [Goal Curation](goal_curation.md)
 - [World Model Public Interface](../public_interface.md)
 - [Lang Domain](../../meld-lang/README.md)

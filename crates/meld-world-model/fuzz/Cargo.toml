@@ -38,3 +38,10 @@ path = "fuzz_targets/fuzz_planner_projection_contract.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_agent_contracts"
+path = "fuzz_targets/fuzz_agent_contracts.rs"
+test = false
+doc = false
+bench = false
