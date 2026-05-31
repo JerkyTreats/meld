@@ -3,24 +3,39 @@ use meld_events::{DomainObjectRef, EventEnvelope, EventRelation};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+/// Task event contract used by execution runtimes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskEvent {
+    /// Event type owned by this execution contract.
     pub event_type: String,
+    /// Authored or compiled task identifier within the execution domain.
     pub task_id: String,
+    /// Concrete task run identifier within the execution runtime.
     pub task_run_id: String,
+    /// Deterministic capability instance identifier within a compiled task.
     pub capability_instance_id: Option<String>,
+    /// Capability invocation attempt identifier within the task run.
     pub invocation_id: Option<String>,
+    /// Target node identifier carried across the execution boundary.
     pub target_node_id: Option<String>,
+    /// Stable artifact identifier within the owning artifact repository.
     pub artifact_id: Option<String>,
+    /// Artifact type identifier used for contract validation and routing.
     pub artifact_type_id: Option<String>,
+    /// Attempt index owned by this execution contract.
     pub attempt_index: Option<u32>,
+    /// Ready count owned by this execution contract.
     pub ready_count: Option<usize>,
+    /// Running count owned by this execution contract.
     pub running_count: Option<usize>,
+    /// Blocked reason owned by this execution contract.
     pub blocked_reason: Option<String>,
+    /// Execution error text reported through telemetry when available.
     pub error: Option<String>,
 }
 
 impl TaskEvent {
+    /// Execution helper for new.
     pub fn new(
         event_type: impl Into<String>,
         task_id: impl Into<String>,
@@ -44,19 +59,32 @@ impl TaskEvent {
     }
 }
 
+/// Execution task event data contract used by execution runtimes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionTaskEventData {
+    /// Authored or compiled task identifier within the execution domain.
     pub task_id: String,
+    /// Concrete task run identifier within the execution runtime.
     pub task_run_id: String,
+    /// Deterministic capability instance identifier within a compiled task.
     pub capability_instance_id: Option<String>,
+    /// Capability invocation attempt identifier within the task run.
     pub invocation_id: Option<String>,
+    /// Target node identifier carried across the execution boundary.
     pub target_node_id: Option<String>,
+    /// Stable artifact identifier within the owning artifact repository.
     pub artifact_id: Option<String>,
+    /// Artifact type identifier used for contract validation and routing.
     pub artifact_type_id: Option<String>,
+    /// Attempt index owned by this execution contract.
     pub attempt_index: Option<u32>,
+    /// Ready count owned by this execution contract.
     pub ready_count: Option<usize>,
+    /// Running count owned by this execution contract.
     pub running_count: Option<usize>,
+    /// Blocked reason owned by this execution contract.
     pub blocked_reason: Option<String>,
+    /// Execution error text reported through telemetry when available.
     pub error: Option<String>,
 }
 
@@ -79,6 +107,7 @@ impl From<&TaskEvent> for ExecutionTaskEventData {
     }
 }
 
+/// Execution helper for canonical task event type.
 pub fn canonical_task_event_type(event_type: &str) -> Option<&'static str> {
     match event_type {
         "task_requested" => Some("execution.task.requested"),
@@ -93,6 +122,7 @@ pub fn canonical_task_event_type(event_type: &str) -> Option<&'static str> {
     }
 }
 
+/// Execution helper for target node identifier from init payload.
 pub fn target_node_id_from_init_payload(payload: &TaskInitializationPayload) -> Option<String> {
     payload
         .init_artifacts
@@ -103,6 +133,7 @@ pub fn target_node_id_from_init_payload(payload: &TaskInitializationPayload) -> 
         .map(ToString::to_string)
 }
 
+/// Execution helper for build execution task envelope.
 pub fn build_execution_task_envelope(session_id: &str, event: &TaskEvent) -> Option<EventEnvelope> {
     let event_type = canonical_task_event_type(&event.event_type)?;
     let data = ExecutionTaskEventData::from(event);

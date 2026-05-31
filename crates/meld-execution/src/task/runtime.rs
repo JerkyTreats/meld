@@ -26,23 +26,36 @@ use std::pin::Pin;
 /// Summary for one completed task runtime execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRunSummary {
+    /// Authored or compiled task identifier within the execution domain.
     pub task_id: String,
+    /// Concrete task run identifier within the execution runtime.
     pub task_run_id: String,
+    /// Completed instances owned by this execution contract.
     pub completed_instances: usize,
+    /// Invocation count owned by this execution contract.
     pub invocation_count: usize,
+    /// Artifact count owned by this execution contract.
     pub artifact_count: usize,
 }
 
 /// Workflow compatibility telemetry carried into task execution.
 #[derive(Debug, Clone)]
 pub struct WorkflowTaskTelemetry {
+    /// Workflow profile identifier that owns this execution record.
     pub workflow_id: String,
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
+    /// Agent identifier responsible for this execution request.
     pub agent_id: String,
+    /// Configured provider name reported through progress telemetry.
     pub provider_name: String,
+    /// Context frame type produced or consumed by this execution path.
     pub frame_type: String,
+    /// Planning run identifier associated with this execution record.
     pub plan_id: Option<String>,
+    /// Traversal level index associated with this execution record.
     pub level_index: Option<usize>,
+    /// Turn sequence by identifier carried across the execution boundary.
     pub turn_seq_by_id: HashMap<String, u32>,
 }
 
@@ -387,7 +400,9 @@ mod tests {
     }
 
     impl EventPublicationPort for RecordingApi {
+        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
+        /// Type alias for event envelope values in execution contracts.
         type EventEnvelope = EventEnvelope;
 
         fn publish_execution_envelope(

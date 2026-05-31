@@ -2,21 +2,36 @@ use meld_events::{DomainObjectRef, EventEnvelope, EventRelation};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+/// Execution workflow turn event data contract used by execution runtimes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionWorkflowTurnEventData {
+    /// Workflow profile identifier that owns this execution record.
     pub workflow_id: String,
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
+    /// Workflow turn identifier within the owning workflow profile or thread.
     pub turn_id: String,
+    /// Workflow turn sequence number reported through telemetry.
     pub turn_seq: u32,
+    /// Workspace node identifier carried across execution boundaries.
     pub node_id: String,
+    /// Workspace path associated with this execution record.
     pub path: String,
+    /// Agent identifier responsible for this execution request.
     pub agent_id: String,
+    /// Configured provider name reported through progress telemetry.
     pub provider_name: String,
+    /// Context frame type produced or consumed by this execution path.
     pub frame_type: String,
+    /// Workflow or task attempt number reported through telemetry.
     pub attempt: usize,
+    /// Planning run identifier associated with this execution record.
     pub plan_id: Option<String>,
+    /// Traversal level index associated with this execution record.
     pub level_index: Option<usize>,
+    /// Final frame identifier produced by the workflow thread when available.
     pub final_frame_id: Option<String>,
+    /// Execution error text reported through telemetry when available.
     pub error: Option<String>,
 }
 
@@ -36,6 +51,7 @@ fn workflow_envelope(
     .with_graph(workflow_objects(&data), workflow_relations(&data))
 }
 
+/// Execution helper for workflow turn started envelope.
 pub fn workflow_turn_started_envelope(
     session_id: &str,
     data: ExecutionWorkflowTurnEventData,
@@ -43,6 +59,7 @@ pub fn workflow_turn_started_envelope(
     workflow_envelope(session_id, "execution.workflow.turn_started", data)
 }
 
+/// Execution helper for workflow turn completed envelope.
 pub fn workflow_turn_completed_envelope(
     session_id: &str,
     data: ExecutionWorkflowTurnEventData,
@@ -50,6 +67,7 @@ pub fn workflow_turn_completed_envelope(
     workflow_envelope(session_id, "execution.workflow.turn_completed", data)
 }
 
+/// Execution helper for workflow turn failed envelope.
 pub fn workflow_turn_failed_envelope(
     session_id: &str,
     data: ExecutionWorkflowTurnEventData,

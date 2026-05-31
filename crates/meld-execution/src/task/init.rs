@@ -9,26 +9,37 @@ use std::collections::HashSet;
 /// External structured artifact supplied at task run creation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InitArtifactValue {
+    /// Task initialization slot that supplies this artifact.
     pub init_slot_id: String,
+    /// Artifact type identifier used for contract validation and routing.
     pub artifact_type_id: String,
+    /// Schema version for the serialized contract or artifact shape.
     pub schema_version: u32,
+    /// Structured artifact content owned by the producing capability.
     pub content: Value,
 }
 
 /// Ephemeral run context for one task instance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskRunContext {
+    /// Concrete task run identifier within the execution runtime.
     pub task_run_id: String,
+    /// Session identifier carried across the execution boundary.
     pub session_id: Option<String>,
+    /// Trigger owned by this execution contract.
     pub trigger: String,
 }
 
 /// Structured payload required to create one task run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TaskInitializationPayload {
+    /// Authored or compiled task identifier within the execution domain.
     pub task_id: String,
+    /// Compiled task reference owned by this execution contract.
     pub compiled_task_ref: String,
+    /// Init artifacts owned by this execution contract.
     pub init_artifacts: Vec<InitArtifactValue>,
+    /// Task run context owned by this execution contract.
     pub task_run_context: TaskRunContext,
 }
 

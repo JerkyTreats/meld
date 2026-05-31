@@ -8,7 +8,9 @@ use std::collections::HashSet;
 /// Supported schema version range for an artifact slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactSchemaVersionRange {
+    /// Lowest accepted schema version in this inclusive range.
     pub min: u32,
+    /// Highest accepted schema version in this inclusive range.
     pub max: u32,
 }
 
@@ -22,103 +24,151 @@ impl ArtifactSchemaVersionRange {
 /// Published scope information for one capability type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopeContract {
+    /// Domain scope category accepted by this capability contract.
     pub scope_kind: String,
+    /// Identifier kind used to address the capability scope.
     pub scope_ref_kind: String,
+    /// True when one capability binding may expand across multiple scoped targets.
     pub allow_fan_out: bool,
 }
 
 /// Non-artifact binding source kinds accepted by a capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BindingValueKind {
+    /// Inline literal binding value.
     Literal,
+    /// Reference to configuration owned outside this contract.
     ConfigRef,
+    /// Reference to policy owned outside this contract.
     PolicyRef,
+    /// Reference to an agent profile or identity.
     AgentRef,
+    /// Reference to a configured provider binding.
     ProviderRef,
 }
 
 /// Binding specification published by a capability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BindingSpec {
+    /// Stable binding identifier within the capability contract.
     pub binding_id: String,
+    /// Kind of value accepted for this binding.
     pub value_kind: BindingValueKind,
+    /// True when callers must provide this contract element.
     pub required: bool,
+    /// True when this binding participates in deterministic instance identity.
     pub affects_deterministic_identity: bool,
 }
 
 /// Cardinality rule for one input slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InputCardinality {
+    /// Exactly one artifact is accepted.
     One,
+    /// Multiple artifacts are accepted.
     Many,
 }
 
 /// Input slot specification published by a capability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputSlotSpec {
+    /// Stable slot identifier within the owning contract.
     pub slot_id: String,
+    /// Artifact type identifiers accepted by this input slot.
     pub accepted_artifact_type_ids: Vec<String>,
+    /// Accepted schema version range for artifacts supplied to this slot.
     pub schema_versions: ArtifactSchemaVersionRange,
+    /// True when callers must provide this contract element.
     pub required: bool,
+    /// Cardinality owned by this execution contract.
     pub cardinality: InputCardinality,
 }
 
 /// Output slot specification published by a capability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputSlotSpec {
+    /// Stable slot identifier within the owning contract.
     pub slot_id: String,
+    /// Artifact type identifier used for contract validation and routing.
     pub artifact_type_id: String,
+    /// Schema version for the serialized contract or artifact shape.
     pub schema_version: u32,
+    /// True when successful execution is expected to produce this output slot.
     pub guaranteed: bool,
 }
 
 /// Effect kinds that may require ordering without an artifact handoff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EffectKind {
+    /// Read access to the declared target.
     Read,
+    /// Write access to the declared target.
     Write,
+    /// Append access to the declared target.
     Append,
+    /// Emission of an event or external side effect.
     Emit,
+    /// Acquisition of an execution resource or lease.
     Acquire,
 }
 
 /// Effect specification published by a capability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectSpec {
+    /// Stable effect identifier within the capability contract.
     pub effect_id: String,
+    /// Contract kind used by the owning runtime.
     pub kind: EffectKind,
+    /// Domain target affected by this contract entry.
     pub target: String,
+    /// True when this effect requires exclusive execution over its target.
     pub exclusive: bool,
 }
 
 /// Execution class for the published capability contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExecutionClass {
+    /// Runs inline with the caller.
     Inline,
+    /// Runs through a queue-backed executor.
     Queued,
+    /// Runs within a session-scoped execution context.
     SessionScoped,
 }
 
 /// Execution-facing behavior published by a capability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionContract {
+    /// Runtime scheduling class for this capability.
     pub execution_class: ExecutionClass,
+    /// Named completion semantics expected from this capability.
     pub completion_semantics: String,
+    /// Retry policy class used by execution adapters.
     pub retry_class: String,
+    /// True when the capability supports runtime cancellation.
     pub cancellation_supported: bool,
 }
 
 /// Published cross-domain capability contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityTypeContract {
+    /// Stable capability type identifier published by the owning domain.
     pub capability_type_id: String,
+    /// Version of the published capability contract.
     pub capability_version: u32,
+    /// Domain responsible for publishing and maintaining this contract.
     pub owning_domain: String,
+    /// Scope contract used to validate bound capability instances.
     pub scope_contract: ScopeContract,
+    /// Binding contract entries accepted by this capability.
     pub binding_contract: Vec<BindingSpec>,
+    /// Input slot contracts accepted by this capability.
     pub input_contract: Vec<InputSlotSpec>,
+    /// Output slot contracts produced by this capability.
     pub output_contract: Vec<OutputSlotSpec>,
+    /// Side effect contracts declared by this capability.
     pub effect_contract: Vec<EffectSpec>,
+    /// Execution behavior declared by this capability.
     pub execution_contract: ExecutionContract,
 }
 
@@ -212,22 +262,33 @@ impl CapabilityTypeContract {
 /// Compile-time chosen binding value for one capability instance.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BoundBindingValue {
+    /// Stable binding identifier within the capability contract.
     pub binding_id: String,
+    /// Structured value carried by this contract boundary.
     pub value: Value,
 }
 
 /// Wiring source for one bound input slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BoundInputWiringSource {
+    /// Artifact supplied by task initialization.
     TaskInitSlot {
+        /// Task initialization slot that supplies this artifact.
         init_slot_id: String,
+        /// Artifact type required from the initialization slot.
         artifact_type_id: String,
+        /// Schema version required from the initialization slot artifact.
         schema_version: u32,
     },
+    /// Artifact supplied by an upstream capability output.
     UpstreamOutput {
+        /// Producing capability instance in the compiled task graph.
         capability_instance_id: String,
+        /// Output slot on the producing capability instance.
         output_slot_id: String,
+        /// Artifact type required from the upstream output.
         artifact_type_id: String,
+        /// Schema version required from the upstream artifact.
         schema_version: u32,
     },
 }
@@ -255,19 +316,28 @@ impl BoundInputWiringSource {
 /// Bound source list for one input slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoundInputWiring {
+    /// Stable slot identifier within the owning contract.
     pub slot_id: String,
+    /// Ordered wiring sources accepted by this input slot.
     pub sources: Vec<BoundInputWiringSource>,
 }
 
 /// Compile-time bound capability instance projection.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BoundCapabilityInstance {
+    /// Deterministic capability instance identifier within a compiled task.
     pub capability_instance_id: String,
+    /// Stable capability type identifier published by the owning domain.
     pub capability_type_id: String,
+    /// Version of the published capability contract.
     pub capability_version: u32,
+    /// Concrete scope reference bound to this capability instance.
     pub scope_ref: String,
+    /// Domain scope category accepted by this capability contract.
     pub scope_kind: String,
+    /// Resolved binding values for this capability instance.
     pub binding_values: Vec<BoundBindingValue>,
+    /// Resolved input wiring for this capability instance.
     pub input_wiring: Vec<BoundInputWiring>,
 }
 
@@ -439,7 +509,9 @@ fn ensure_unique_ids<'a>(label: &str, ids: impl Iterator<Item = &'a str>) -> Res
 mod tests {
     use super::*;
 
+    /// Type alias for contract mutation values in execution contracts.
     type ContractMutation = Box<dyn FnOnce(&mut CapabilityTypeContract)>;
+    /// Type alias for instance mutation values in execution contracts.
     type InstanceMutation = Box<dyn FnOnce(&mut BoundCapabilityInstance)>;
 
     fn contract() -> CapabilityTypeContract {

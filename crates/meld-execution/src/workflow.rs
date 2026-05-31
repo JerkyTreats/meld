@@ -1,14 +1,24 @@
 //! Workflow profile contracts.
 
+/// Workflow event envelope builders.
 pub mod events;
+/// Workflow execution facade and direct or task-path runtimes.
 pub mod executor;
+/// Workflow gate evaluation.
 pub mod gates;
+/// Output normalization before gate checks and persistence.
 pub mod normalization;
+/// Workflow profile schema and validation.
 pub mod profile;
+/// Workflow progress request and telemetry DTOs.
 pub mod progress;
+/// Durable workflow record contracts.
 pub mod record_contracts;
+/// Registered workflow profile metadata.
 pub mod registry;
+/// Workflow prompt and input resolution.
 pub mod resolver;
+/// Durable workflow thread and turn state store.
 pub mod state_store;
 
 pub use events::{

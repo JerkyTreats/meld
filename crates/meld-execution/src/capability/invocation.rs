@@ -13,13 +13,16 @@ use std::sync::Arc;
 /// Successful capability invocation output for one task-owned attempt.
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityInvocationResult {
+    /// Emitted artifacts owned by this execution contract.
     pub emitted_artifacts: Vec<ArtifactRecord>,
 }
 
 /// Domain-owned capability runtime implementation.
 #[async_trait]
 pub trait CapabilityInvoker: Send + Sync {
+    /// Type alias for error values in execution contracts.
     type Error;
+    /// Type alias for execution API values in execution contracts.
     type ExecutionApi: ?Sized;
 
     /// Published contract used by task compilation.
@@ -156,7 +159,9 @@ mod tests {
 
     #[async_trait]
     impl CapabilityInvoker for FakeInvoker {
+        /// Type alias for error values in execution contracts.
         type Error = String;
+        /// Type alias for execution API values in execution contracts.
         type ExecutionApi = ();
 
         fn contract(&self) -> CapabilityTypeContract {

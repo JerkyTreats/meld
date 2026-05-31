@@ -1,13 +1,22 @@
 //! Task package authored contracts and lowering surfaces.
 
+/// Top-level task package authoring contracts.
 pub mod contracts;
+/// Lowering from authored package specs into execution templates.
 pub mod lower;
+/// Output policy contracts for package-authored turns.
 pub mod output;
+/// Shared workflow package preparation helpers.
 pub mod prepare;
+/// Prerequisite authoring contracts for repeated regions.
 pub mod prerequisite;
+/// Repeated region and stage chain authoring contracts.
 pub mod region;
+/// Task package document registry and built-in package loader.
 pub mod registry;
+/// Initial seed artifact authoring contracts.
 pub mod seed;
+/// Task package trigger authoring contracts.
 pub mod trigger;
 
 pub use contracts::{

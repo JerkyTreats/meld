@@ -27,7 +27,9 @@ use super::{
 };
 
 pub(super) struct CompletedTurn {
+    /// Context frame identifier associated with this execution record.
     pub frame_id: NodeId,
+    /// Structured artifact content owned by the producing capability.
     pub content: String,
 }
 
@@ -35,22 +37,36 @@ pub(super) struct TurnAttemptContext<'a, A, E>
 where
     A: ContextWritePort + GeneratedMetadataPort,
 {
+    /// API owned by this execution contract.
     pub api: &'a A,
+    /// Profile owned by this execution contract.
     pub profile: &'a WorkflowProfile,
+    /// Request owned by this execution contract.
     pub request: &'a WorkflowExecutionRequest,
+    /// Runtime owned by this execution contract.
     pub runtime: &'a WorkflowExecutorRuntime<'a, A, E>,
+    /// Event context owned by this execution contract.
     pub event_context: Option<&'a ExecutionEventContext>,
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: &'a str,
+    /// Target path owned by this execution contract.
     pub target_path: &'a str,
 }
 
 pub(super) struct TurnExecutionInput<'a> {
+    /// Turn owned by this execution contract.
     pub turn: &'a WorkflowTurn,
+    /// Gate contract applied to this workflow turn template.
     pub gate: &'a WorkflowGate,
+    /// System prompt text supplied to provider execution.
     pub system_prompt: &'a str,
+    /// Prompt template owned by this execution contract.
     pub prompt_template: &'a str,
+    /// Rendered user prompt text sent to provider execution.
     pub rendered_prompt: &'a str,
+    /// Resolved inputs owned by this execution contract.
     pub resolved_inputs: &'a ResolvedTurnInputs,
+    /// Final turn sequence owned by this execution contract.
     pub final_turn_seq: u32,
 }
 

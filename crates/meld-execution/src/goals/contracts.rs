@@ -91,7 +91,16 @@ pub struct ResumeGoalCommand {
 /// Deterministic outcome for goal curation commands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GoalCommandOutcome {
+    /// Goal command was applied and returned the current record.
     Applied(Box<ExecutionGoalRecord>),
-    Duplicate { existing_goal_id: String },
-    NotFound { goal_id: String },
+    /// Goal command was ignored because an equivalent goal already exists.
+    Duplicate {
+        /// Existing goal that caused idempotent duplicate handling.
+        existing_goal_id: String,
+    },
+    /// Goal command targeted a goal that does not exist in the store.
+    NotFound {
+        /// Goal identifier that could not be found.
+        goal_id: String,
+    },
 }

@@ -7,12 +7,16 @@ use crate::workflow::profile::{PromptRefKind, WorkflowTurn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Resolved turn inputs contract used by execution runtimes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedTurnInputs {
+    /// Context payload assembled for provider execution.
     pub context_payload: String,
+    /// Values owned by this execution contract.
     pub values: HashMap<String, String>,
 }
 
+/// Execution helper for resolve turn inputs.
 pub fn resolve_turn_inputs<E>(
     api: &(impl ContextReadPort<Error = E, NodeId = NodeId> + ?Sized),
     node_id: NodeId,
@@ -56,6 +60,7 @@ where
     })
 }
 
+/// Execution helper for resolve prompt template.
 pub fn resolve_prompt_template<E>(
     api: &(impl PromptArtifactReadPort<Error = E> + ?Sized),
     profile_source_path: Option<&Path>,
@@ -84,6 +89,7 @@ where
     }
 }
 
+/// Execution helper for render turn prompt.
 pub fn render_turn_prompt(
     template: &str,
     turn: &WorkflowTurn,
@@ -302,8 +308,11 @@ mod tests {
     struct FakeApi;
 
     impl PromptArtifactReadPort for FakeApi {
+        /// Type alias for artifact kind values in execution contracts.
         type ArtifactKind = String;
+        /// Type alias for artifact reference values in execution contracts.
         type ArtifactRef = String;
+        /// Type alias for error values in execution contracts.
         type Error = ApiError;
 
         fn read_prompt_artifact_bytes(&self, artifact_id: &str) -> Result<Vec<u8>, Self::Error> {
@@ -323,13 +332,21 @@ mod tests {
     }
 
     impl ContextReadPort for FakeApi {
+        /// Type alias for agent identity values in execution contracts.
         type AgentIdentity = String;
+        /// Type alias for context view values in execution contracts.
         type ContextView = ();
+        /// Type alias for error values in execution contracts.
         type Error = ApiError;
+        /// Type alias for frame values in execution contracts.
         type Frame = Vec<u8>;
+        /// Type alias for frame identifier values in execution contracts.
         type FrameId = u64;
+        /// Type alias for node context values in execution contracts.
         type NodeContext = String;
+        /// Type alias for node identifier values in execution contracts.
         type NodeId = NodeId;
+        /// Type alias for node record values in execution contracts.
         type NodeRecord = ExecutionNodeRecord<NodeId>;
 
         fn get_agent(&self, agent_id: &str) -> Result<Self::AgentIdentity, Self::Error> {

@@ -2,6 +2,7 @@ use crate::error::ApiError;
 
 const HEX64_LEN: usize = 64;
 
+/// Execution helper for validate prefixed identifier.
 pub fn validate_prefixed_id(
     record_type: &str,
     field_name: &str,
@@ -30,6 +31,7 @@ pub fn validate_prefixed_id(
     Ok(())
 }
 
+/// Execution helper for validate hex64.
 pub fn validate_hex64(record_type: &str, field_name: &str, value: &str) -> Result<(), ApiError> {
     if !is_hex64(value) {
         return Err(contract_error(
@@ -40,6 +42,7 @@ pub fn validate_hex64(record_type: &str, field_name: &str, value: &str) -> Resul
     Ok(())
 }
 
+/// Execution helper for validate timestamp milliseconds.
 pub fn validate_timestamp_ms(
     record_type: &str,
     field_name: &str,

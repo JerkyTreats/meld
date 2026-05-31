@@ -12,25 +12,40 @@ use std::collections::HashMap;
 /// Structured runtime initialization package for one capability instance.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityRuntimeInit {
+    /// Deterministic capability instance identifier within a compiled task.
     pub capability_instance_id: String,
+    /// Stable capability type identifier published by the owning domain.
     pub capability_type_id: String,
+    /// Version of the published capability contract.
     pub capability_version: u32,
+    /// Concrete scope reference bound to this capability instance.
     pub scope_ref: String,
+    /// Domain scope category accepted by this capability contract.
     pub scope_kind: String,
+    /// Resolved binding values for this capability instance.
     pub binding_values: Vec<BoundBindingValue>,
+    /// Input slot contracts accepted by this capability.
     pub input_contract: Vec<InputSlotSpec>,
+    /// Output slot contracts produced by this capability.
     pub output_contract: Vec<OutputSlotSpec>,
+    /// Side effect contracts declared by this capability.
     pub effect_contract: Vec<EffectSpec>,
+    /// Execution behavior declared by this capability.
     pub execution_contract: ExecutionContract,
 }
 
 /// Per-call invocation payload delivered to capability runtime.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityInvocationPayload {
+    /// Capability invocation attempt identifier within the task run.
     pub invocation_id: String,
+    /// Deterministic capability instance identifier within a compiled task.
     pub capability_instance_id: String,
+    /// Supplied inputs owned by this execution contract.
     pub supplied_inputs: Vec<SuppliedInputValue>,
+    /// Upstream lineage owned by this execution contract.
     pub upstream_lineage: Option<UpstreamLineage>,
+    /// Execution context owned by this execution contract.
     pub execution_context: CapabilityExecutionContext,
 }
 
@@ -115,52 +130,74 @@ impl CapabilityInvocationPayload {
 /// Source family for one supplied input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InputValueSource {
+    /// Input value originated from task initialization.
     InitPayload,
+    /// Input value originated from an artifact handoff.
     ArtifactHandoff,
 }
 
 /// One slot-keyed supplied value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SuppliedInputValue {
+    /// Stable slot identifier within the owning contract.
     pub slot_id: String,
+    /// Source owned by this execution contract.
     pub source: InputValueSource,
+    /// Structured value carried by this contract boundary.
     pub value: SuppliedValueRef,
 }
 
 /// Structured artifact envelope supplied to a capability.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArtifactValueRef {
+    /// Stable artifact identifier within the owning artifact repository.
     pub artifact_id: String,
+    /// Artifact type identifier used for contract validation and routing.
     pub artifact_type_id: String,
+    /// Schema version for the serialized contract or artifact shape.
     pub schema_version: u32,
+    /// Structured artifact content owned by the producing capability.
     pub content: Value,
 }
 
 /// Durable structured input value reference.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SuppliedValueRef {
+    /// Structured value supplied directly to the invocation.
     StructuredValue(Value),
+    /// Artifact value supplied through task artifact handoff.
     Artifact(ArtifactValueRef),
 }
 
 /// Optional lineage context supplied by task and control.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct UpstreamLineage {
+    /// Authored or compiled task identifier within the execution domain.
     pub task_id: String,
+    /// Concrete task run identifier within the execution runtime.
     pub task_run_id: String,
+    /// Capability path owned by this execution contract.
     pub capability_path: Vec<String>,
+    /// Batch index owned by this execution contract.
     pub batch_index: Option<usize>,
+    /// Node index owned by this execution contract.
     pub node_index: Option<usize>,
+    /// Repair scope owned by this execution contract.
     pub repair_scope: Option<String>,
 }
 
 /// Ephemeral execution metadata for one invocation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CapabilityExecutionContext {
+    /// Workflow or task attempt number reported through telemetry.
     pub attempt: u32,
+    /// Trace identifier carried across the execution boundary.
     pub trace_id: Option<String>,
+    /// Deadline milliseconds in milliseconds.
     pub deadline_ms: Option<u64>,
+    /// Cancellation key owned by this execution contract.
     pub cancellation_key: Option<String>,
+    /// Dispatch priority owned by this execution contract.
     pub dispatch_priority: Option<String>,
 }
 
@@ -171,6 +208,7 @@ mod tests {
         ArtifactSchemaVersionRange, ExecutionClass, InputSlotSpec, OutputSlotSpec,
     };
 
+    /// Type alias for payload mutation values in execution contracts.
     type PayloadMutation = Box<dyn FnOnce(&mut CapabilityInvocationPayload)>;
 
     fn runtime_init() -> CapabilityRuntimeInit {

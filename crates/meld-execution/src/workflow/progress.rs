@@ -3,71 +3,124 @@ use crate::generation::NodeId;
 use crate::workflow::profile::{WorkflowProfile, WorkflowTurn};
 use serde::{Deserialize, Serialize};
 
+/// Workflow execution request contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowExecutionRequest {
+    /// Workspace node identifier carried across execution boundaries.
     pub node_id: [u8; 32],
+    /// Agent identifier responsible for this execution request.
     pub agent_id: String,
+    /// Provider binding selected for execution.
     pub provider: ProviderExecutionBinding,
+    /// Context frame type produced or consumed by this execution path.
     pub frame_type: String,
+    /// True when execution should bypass cached or existing output.
     pub force: bool,
+    /// Workspace path associated with this execution record.
     pub path: Option<String>,
+    /// Planning run identifier associated with this execution record.
     pub plan_id: Option<String>,
+    /// Traversal level index associated with this execution record.
     pub level_index: Option<usize>,
 }
 
+/// Workflow execution summary contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowExecutionSummary {
+    /// Workflow profile identifier that owns this execution record.
     pub workflow_id: String,
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
+    /// Turns completed owned by this execution contract.
     pub turns_completed: usize,
+    /// Final frame identifier produced by the workflow thread when available.
     pub final_frame_id: Option<[u8; 32]>,
 }
 
+/// Workflow target progress event data contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowTargetProgressEventData {
+    /// Workflow profile identifier that owns this execution record.
     pub workflow_id: String,
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
+    /// Workspace node identifier carried across execution boundaries.
     pub node_id: String,
+    /// Workspace path associated with this execution record.
     pub path: String,
+    /// Agent identifier responsible for this execution request.
     pub agent_id: String,
+    /// Configured provider name reported through progress telemetry.
     pub provider_name: String,
+    /// Context frame type produced or consumed by this execution path.
     pub frame_type: String,
+    /// Planning run identifier associated with this execution record.
     pub plan_id: Option<String>,
+    /// Traversal level index associated with this execution record.
     pub level_index: Option<usize>,
+    /// Final frame identifier produced by the workflow thread when available.
     pub final_frame_id: Option<String>,
+    /// Turns completed owned by this execution contract.
     pub turns_completed: Option<usize>,
+    /// Reused existing head owned by this execution contract.
     pub reused_existing_head: Option<bool>,
 }
 
+/// Workflow turn progress event data contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowTurnProgressEventData {
+    /// Workflow profile identifier that owns this execution record.
     pub workflow_id: String,
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
+    /// Workflow turn identifier within the owning workflow profile or thread.
     pub turn_id: String,
+    /// Workflow turn sequence number reported through telemetry.
     pub turn_seq: u32,
+    /// Workspace node identifier carried across execution boundaries.
     pub node_id: String,
+    /// Workspace path associated with this execution record.
     pub path: String,
+    /// Agent identifier responsible for this execution request.
     pub agent_id: String,
+    /// Configured provider name reported through progress telemetry.
     pub provider_name: String,
+    /// Context frame type produced or consumed by this execution path.
     pub frame_type: String,
+    /// Workflow or task attempt number reported through telemetry.
     pub attempt: usize,
+    /// Planning run identifier associated with this execution record.
     pub plan_id: Option<String>,
+    /// Traversal level index associated with this execution record.
     pub level_index: Option<usize>,
+    /// Final frame identifier produced by the workflow thread when available.
     pub final_frame_id: Option<String>,
+    /// Execution error text reported through telemetry when available.
     pub error: Option<String>,
 }
 
+/// Workflow force reset progress event data contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowForceResetProgressEventData {
+    /// Workflow profile identifier that owns this execution record.
     pub workflow_id: String,
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
+    /// Workspace node identifier carried across execution boundaries.
     pub node_id: String,
+    /// Workspace path associated with this execution record.
     pub path: String,
+    /// Agent identifier responsible for this execution request.
     pub agent_id: String,
+    /// Configured provider name reported through progress telemetry.
     pub provider_name: String,
+    /// Context frame type produced or consumed by this execution path.
     pub frame_type: String,
+    /// Previous frame identifier used for metadata comparison when available.
     pub previous_frame_id: Option<String>,
+    /// Planning run identifier associated with this execution record.
     pub plan_id: Option<String>,
+    /// Traversal level index associated with this execution record.
     pub level_index: Option<usize>,
 }
 

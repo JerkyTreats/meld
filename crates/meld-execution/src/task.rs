@@ -37,17 +37,29 @@
 //! assert!(artifact_matches_input_slot(&artifact, &slot));
 //! ```
 
+/// Task-local artifact repository.
 pub mod artifact_repo;
+/// Task compiler from authored definitions to compiled graphs.
 pub mod compiler;
+/// Durable task, artifact, dependency, and invocation contracts.
 pub mod contracts;
+/// Task event records and event envelope helpers.
 pub mod events;
+/// Task-local executor for ready capability invocations.
 pub mod executor;
+/// Task-owned expansion contracts and compiler registry.
 pub mod expansion;
+/// Task initialization payload contracts.
 pub mod init;
+/// Capability payload assembly from task-owned state.
 pub mod invocation;
+/// Authored task package contracts and lowering helpers.
 pub mod package;
+/// Readiness evaluation over compiled task graphs.
 pub mod readiness;
+/// Task runtime loop over registered capability invokers.
 pub mod runtime;
+/// Workflow task template materialization helpers.
 pub mod templates;
 
 pub use artifact_repo::TaskArtifactRepo;

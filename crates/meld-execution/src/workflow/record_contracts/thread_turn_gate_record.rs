@@ -9,25 +9,37 @@ use serde::{Deserialize, Serialize};
 
 const RECORD_TYPE: &str = "thread_turn_gate";
 
+/// Gate outcome contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GateOutcome {
+    /// Gate evaluation passed.
     Pass,
+    /// Gate evaluation failed.
     Fail,
 }
 
+/// Thread turn gate record v1 contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ThreadTurnGateRecordV1 {
+    /// Schema version for the serialized contract or artifact shape.
     pub schema_version: u32,
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
+    /// Workflow turn identifier within the owning workflow profile or thread.
     pub turn_id: String,
+    /// Gate identifier evaluated for this workflow turn.
     pub gate_name: String,
+    /// Gate outcome recorded by workflow execution.
     pub outcome: GateOutcome,
+    /// Human readable reasons emitted by gate evaluation.
     pub reasons: Vec<String>,
+    /// Gate evaluation time in milliseconds since the Unix epoch.
     pub evaluated_at_ms: u64,
 }
 
 impl ThreadTurnGateRecordV1 {
+    /// Execution helper for new.
     pub fn new(
         thread_id: String,
         turn_id: String,
@@ -48,6 +60,7 @@ impl ThreadTurnGateRecordV1 {
     }
 }
 
+/// Execution helper for validate thread turn gate record v1.
 pub fn validate_thread_turn_gate_record_v1(
     record: &ThreadTurnGateRecordV1,
 ) -> Result<(), ApiError> {
@@ -60,6 +73,7 @@ pub fn validate_thread_turn_gate_record_v1(
     Ok(())
 }
 
+/// Execution helper for validate thread turn gate record references.
 pub fn validate_thread_turn_gate_record_references(
     record: &ThreadTurnGateRecordV1,
 ) -> Result<(), ApiError> {
@@ -98,6 +112,7 @@ fn validate_reasons(record: &ThreadTurnGateRecordV1) -> Result<(), ApiError> {
 mod tests {
     use super::*;
 
+    /// Type alias for gate record mutation values in execution contracts.
     type GateRecordMutation = Box<dyn FnOnce(&mut ThreadTurnGateRecordV1)>;
 
     fn record() -> ThreadTurnGateRecordV1 {

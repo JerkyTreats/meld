@@ -1,6 +1,7 @@
 use crate::workflow::profile::WorkflowGate;
 use serde_json::Value;
 
+/// Execution helper for normalize output for gate.
 pub fn normalize_output_for_gate(gate: &WorkflowGate, output: &str) -> String {
     match gate.gate_type.as_str() {
         "required_sections" => normalize_json_sections(gate, output),

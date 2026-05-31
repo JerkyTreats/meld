@@ -42,9 +42,13 @@
 //! assert_eq!(query.active_goal("goal-a"), Some(goal));
 //! ```
 
+/// Goal command and record contracts.
 pub mod contracts;
+/// Durable goal set store backed by local persistence.
 pub mod persistent_store;
+/// Read-only goal set query facade.
 pub mod query;
+/// In-memory goal set command store.
 pub mod store;
 
 pub use contracts::{
