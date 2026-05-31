@@ -58,7 +58,7 @@ The planning loop is indifferent to why goals change. It reacts to the current g
 
 ## Vocabulary Alignment
 
-The pipeline uses Meld's existing vocabulary. No new intermediate types.
+The pipeline uses Meld's existing vocabulary. Execution may wrap raw language values when runtime context is required, but it does not create a second plan representation.
 
 | Meld concept | Role in pipeline |
 |---|---|
@@ -68,6 +68,7 @@ The pipeline uses Meld's existing vocabulary. No new intermediate types.
 | HTN Task Instance | abstract or concrete task in the decomposition tree |
 | HTN Method Instance | chosen decomposition for an abstract task |
 | HTN Lineage | preserved hierarchy explaining why each task exists |
+| Execution Composition | execution owned wrapper around one concrete `Composition` plus stable identity and planning context |
 
 The planning loop produces task network mutations. Not a separate "CompiledPlan" or "CompiledControlProgram." The task network graph is both the plan representation and the execution structure.
 
@@ -91,12 +92,13 @@ The planning loop uses HTN decomposition to convert goals into task graphs. The 
 
 1. For each active `Goal`, `unify(method.trigger, goal.target)` finds matching methods
 2. `substitute(method.composition, bindings)` produces a concrete `Composition`
-3. The composition is validated and runtime-compiled into task network mutations
-4. Each `Operator` in the composition is resolved against the capability catalog through its `Resolution` query
+3. Each `Operator` in the composition is resolved against the capability catalog through its `Resolution` query
+4. The concrete composition is wrapped as an execution composition with validation, projected effects, selected method provenance, bindings, world frame provenance, diagnostics, and operator resolution reports
+5. Phase 7 lowers the execution composition into task network mutations
 
 If no method matches, the planning loop may request LLM-assisted decomposition (constructing a `Composition` directly) or report the goal as unachievable with the current catalog.
 
-The output of decomposition is a task network graph: tasks as nodes, dependency edges between them. Dependencies encode:
+The output of Phase 7 lowering is a task network graph or mutation set: tasks as nodes, dependency edges between them. Dependencies encode:
 
 - **data flow**: task B needs an artifact that task A produces (maps to `EdgeKind::DataFlow` in compositions)
 - **ordering**: task B must follow task A (maps to `EdgeKind::Ordering` in compositions)
@@ -128,6 +130,36 @@ enum DependencyKind {
     Conditional { guard: GuardExpression },
 }
 ```
+
+The first dispatch slice should commit the lowered output through an explicit task network request:
+
+```rust
+pub struct TaskNetworkCommitRequest {
+    pub goal_id: String,
+    pub source_execution_composition_id: String,
+    pub mutations: Vec<TaskNetworkMutation>,
+    pub lineage: HtnLineage,
+    pub diagnostics: Vec<PlanningDiagnostic>,
+}
+
+pub enum TaskNetworkMutation {
+    Inject(TaskInjectMutation),
+    Cancel(TaskCancelMutation),
+    Relink(TaskRelinkMutation),
+    Preserve(TaskPreserveMutation),
+    Prune(TaskPruneMutation),
+}
+
+pub struct TaskInjectMutation {
+    pub task_instance_id: TaskInstanceId,
+    pub compiled_task: CompiledTaskRecord,
+    pub init_artifacts: Vec<InitArtifact>,
+    pub incoming_edges: Vec<TaskNetworkDependencyEdge>,
+    pub cost_estimate: CostEstimate,
+}
+```
+
+Dispatch consumes the ready set after mutation acceptance. The execution composition does not carry task runtime state.
 
 ### Control Flow Through Graph Structure
 

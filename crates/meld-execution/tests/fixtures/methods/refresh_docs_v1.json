@@ -1,0 +1,86 @@
+{
+  "method_id": "refresh_docs_v1",
+  "trigger": {
+    "Holds": {
+      "subject": { "Variable": "?node" },
+      "dimension": { "Dimension": "docs_freshness" },
+      "condition": { "Above": { "Literal": { "Number": 0.7 } } }
+    }
+  },
+  "preconditions": [
+    {
+      "Accessible": {
+        "scope": { "Variable": "?node" }
+      }
+    }
+  ],
+  "composition": {
+    "steps": [
+      {
+        "step_id": "write",
+        "kind": {
+          "Op": {
+            "operator_id": "write",
+            "preconditions": [
+              {
+                "Accessible": {
+                  "scope": { "Variable": "?node" }
+                }
+              }
+            ],
+            "effects": [
+              {
+                "Assert": {
+                  "Exists": {
+                    "scope": { "Variable": "?node" },
+                    "artifact_type": { "ArtifactType": "docs_patch" }
+                  }
+                }
+              },
+              {
+                "Update": {
+                  "subject": { "Variable": "?node" },
+                  "dimension": { "Dimension": "docs_freshness" },
+                  "value": { "Literal": { "Number": 0.95 } }
+                }
+              }
+            ],
+            "cost": {
+              "time_ms": 10000,
+              "money_microdollars": 25000,
+              "provider_calls": 1
+            },
+            "resolution": {
+              "requires_inputs": [],
+              "requires_outputs": [
+                {
+                  "artifact_type_id": "docs_patch",
+                  "required": true
+                }
+              ],
+              "scope_kind": "filesystem",
+              "tags": ["write", "docs"],
+              "specific": null
+            }
+          }
+        }
+      }
+    ],
+    "edges": []
+  },
+  "net_effects": [
+    {
+      "Update": {
+        "subject": { "Variable": "?node" },
+        "dimension": { "Dimension": "docs_freshness" },
+        "value": { "Literal": { "Number": 0.95 } }
+      }
+    }
+  ],
+  "cost": {
+    "time_ms": 10000,
+    "money_microdollars": 25000,
+    "provider_calls": 1
+  },
+  "preference": 1
+}

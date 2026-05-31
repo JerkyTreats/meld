@@ -1,4 +1,41 @@
 //! Task contracts and initialization payloads.
+//!
+//! # Example
+//!
+//! ```rust
+//! use meld_execution::capability::{
+//!     ArtifactSchemaVersionRange, InputCardinality, InputSlotSpec,
+//! };
+//! use meld_execution::task::{
+//!     artifact_matches_input_slot, ArtifactProducerRef, ArtifactRecord,
+//! };
+//! use serde_json::json;
+//!
+//! let slot = InputSlotSpec {
+//!     slot_id: "provider_request".to_string(),
+//!     accepted_artifact_type_ids: vec!["provider_execute_request".to_string()],
+//!     schema_versions: ArtifactSchemaVersionRange { min: 1, max: 2 },
+//!     required: true,
+//!     cardinality: InputCardinality::One,
+//! };
+//!
+//! let artifact = ArtifactRecord {
+//!     artifact_id: "artifact-a".to_string(),
+//!     artifact_type_id: "provider_execute_request".to_string(),
+//!     schema_version: 1,
+//!     content: json!({
+//!         "prompt": "Summarize the selected frame"
+//!     }),
+//!     producer: ArtifactProducerRef {
+//!         task_id: "task-a".to_string(),
+//!         capability_instance_id: "prepare-request".to_string(),
+//!         invocation_id: Some("invoke-a".to_string()),
+//!         output_slot_id: Some("request".to_string()),
+//!     },
+//! };
+//!
+//! assert!(artifact_matches_input_slot(&artifact, &slot));
+//! ```
 
 pub mod artifact_repo;
 pub mod compiler;

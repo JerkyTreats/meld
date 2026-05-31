@@ -4,6 +4,8 @@ pub mod capability;
 pub mod error;
 pub mod execution;
 pub mod generation;
+pub mod goals;
+pub mod planning;
 pub mod publish;
 pub mod task;
 pub mod traversal;

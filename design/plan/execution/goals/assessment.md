@@ -1,17 +1,17 @@
 # Goals Readiness Assessment
 
-Status: conditionally ready
+Status: first slice implemented
 Depends on: `design/plan/world_model/agent/assessment.md`, `design/plan/meld-lang/assessment.md`
 Design source: `design/cognitive_architecture/execution/goals/README.md`, `design/cognitive_architecture/execution/GAPS.md`, `design/cognitive_architecture/world_model/agent/goal_curation.md`, `design/cognitive_architecture/meld-lang/goals_and_methods.md`
-Evidence date: 2026-05-26
+Evidence date: 2026-05-31
 
 ## Verdict Summary
 
-Execution goals design is conditionally ready for one goal set using `meld-lang::Goal`.
+Execution goals are implemented for one first slice goal set using `meld-lang::Goal`.
 
-The ready slice covers storing one ground active goal, exposing a curation API, and supporting typed-loop satisfaction.
+The implemented slice covers storing one ground active goal, exposing a curation API, supporting typed-loop satisfaction, and persisting execution goal lifecycle state.
 
-Runtime goal set storage and curation API are not implemented in `meld-execution`.
+Runtime goal set storage is implemented in `meld-execution` through in memory and durable store variants.
 
 ## Conceptual Correctness
 
@@ -23,9 +23,9 @@ World model agent constructs goals through normative judgment. Execution stores 
 
 The first goal shape is imported from `meld-lang`.
 
-Execution goal storage must reject non-ground active goals.
+Execution goal storage rejects non-ground active goals.
 
-The public curation API must support add, modify, remove, and satisfy.
+The public curation API supports add, modify, remove, and satisfy.
 
 Satisfaction may be set by planning evaluation or by agent curation.
 
@@ -45,7 +45,7 @@ Goals do not own task decomposition, provider execution, belief settlement, regi
 
 Agent design is ready for one ground goal.
 
-Runtime planning remains blocked beyond typed-loop evaluation.
+Execution planning runtime is in progress for one goal to composition.
 
 ## First-Slice Feasibility
 
@@ -53,28 +53,34 @@ Goals support the typed loop by storing one active `docs_freshness` goal and exp
 
 No task dispatch is required.
 
-This remains design ready only.
+This is implemented for the first execution planning slice.
 
 ## Current Implementation Evidence
 
 - `crates/meld-lang/src/goal.rs`
 - `crates/meld-lang/tests/evaluation_loop.rs`
+- `crates/meld-execution/src/goals.rs`
+- `crates/meld-execution/src/goals/contracts.rs`
+- `crates/meld-execution/src/goals/store.rs`
+- `crates/meld-execution/src/goals/persistent_store.rs`
+- `crates/meld-execution/src/goals/query.rs`
+- `crates/meld-execution/tests/goals.rs`
 - `design/cognitive_architecture/execution/goals/README.md`
 - `design/cognitive_architecture/execution/GAPS.md`
 - `design/cognitive_architecture/meld-lang/goals_and_methods.md`
 
 ## Gaps
 
-- Concrete goal curation API operations are not implemented.
-- Goal persistence and replay semantics are not implemented.
+- Execution runtime assembly has not selected the persistent goal store path.
+- Agent goal command ingestion into execution goal storage is not wired.
 - Multi-goal conflict and preemption strategy is deferred.
 - Multi-agent goal coordination is deferred.
 
 ## Open Questions
 
-- Which execution module owns the first goal set store.
-- Whether `Proposed` goals are admitted in the first implementation or only `Active` goals.
+- Which runtime assembly path opens the execution goal database.
+- How world model `AgentGoalCommand` delivery enters the execution goal store.
 
 ## Recommendation
 
-Proceed with one ground active `Goal`.
+Proceed with execution planning runtime integration using durable goal storage for authoritative lifecycle state.
