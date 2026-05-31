@@ -177,3 +177,56 @@ fn parse_heading(line: &str) -> Option<(usize, &str)> {
 
     Some((level, text))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflow::profile::WorkflowGate;
+    use serde_json::json;
+
+    fn gate(gate_type: &str) -> WorkflowGate {
+        WorkflowGate {
+            gate_id: "gate-1".to_string(),
+            gate_type: gate_type.to_string(),
+            required_fields: vec![],
+            rules: json!({
+                "forbidden_sections": ["caveats", "debug notes"]
+            }),
+            fail_on_violation: true,
+        }
+    }
+
+    #[test]
+    fn required_sections_normalizes_json_by_removing_forbidden_and_low_signal_values() {
+        let normalized = normalize_output_for_gate(
+            &gate("required_sections"),
+            r#"{"purpose":"Useful","caveats":"Do not keep","usage":"","debug_notes":"trace"}"#,
+        );
+        let value = serde_json::from_str::<Value>(&normalized).unwrap();
+
+        assert_eq!(value["purpose"], "Useful");
+        assert!(value.get("caveats").is_none());
+        assert!(value.get("usage").is_none());
+        assert!(value.get("debug_notes").is_none());
+    }
+
+    #[test]
+    fn no_semantic_drift_normalizes_markdown_sections_deterministically() {
+        let normalized = normalize_output_for_gate(
+            &gate("no_semantic_drift"),
+            "# Title\nKeep\n\n## Purpose\nUseful\n\n## Caveats\nRemove\n\n## Usage\nInsufficient context\n\n## API\nStable",
+        );
+
+        assert_eq!(
+            normalized,
+            "# Title\nKeep\n\n## Purpose\nUseful\n\n## API\nStable"
+        );
+    }
+
+    #[test]
+    fn unknown_gate_type_preserves_output() {
+        let output = "## Purpose\nUseful";
+
+        assert_eq!(normalize_output_for_gate(&gate("custom"), output), output);
+    }
+}

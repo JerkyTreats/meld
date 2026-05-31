@@ -21,4 +21,5 @@ thiserror = "1.0"
 walkdir = "2.4"
 
 [dev-dependencies]
+proptest = "1.4"
 tempfile = "3.27.0"

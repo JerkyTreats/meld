@@ -205,3 +205,97 @@ fn workspace_node_ref(node_id: &str) -> DomainObjectRef {
 fn artifact_type_id_or_default(event: &TaskEvent) -> &str {
     event.artifact_type_id.as_deref().unwrap_or("artifact")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task::{InitArtifactValue, TaskInitializationPayload, TaskRunContext};
+    use serde_json::json;
+
+    fn init_payload() -> TaskInitializationPayload {
+        TaskInitializationPayload {
+            task_id: "task_docs_writer".to_string(),
+            compiled_task_ref: "compiled_task_docs_writer".to_string(),
+            init_artifacts: vec![
+                InitArtifactValue {
+                    init_slot_id: "other".to_string(),
+                    artifact_type_id: "selector".to_string(),
+                    schema_version: 1,
+                    content: json!({ "node_id": "wrong" }),
+                },
+                InitArtifactValue {
+                    init_slot_id: "target_selector".to_string(),
+                    artifact_type_id: "selector".to_string(),
+                    schema_version: 1,
+                    content: json!({ "node_id": "node-root" }),
+                },
+            ],
+            task_run_context: TaskRunContext {
+                task_run_id: "taskrun-1".to_string(),
+                session_id: Some("session-1".to_string()),
+                trigger: "workflow".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn canonical_task_event_type_covers_cancelled_and_rejects_unknown() {
+        assert_eq!(
+            canonical_task_event_type("task_cancelled"),
+            Some("execution.task.cancelled")
+        );
+        assert_eq!(canonical_task_event_type("other"), None);
+    }
+
+    #[test]
+    fn target_node_id_uses_target_selector_init_artifact() {
+        assert_eq!(
+            target_node_id_from_init_payload(&init_payload()),
+            Some("node-root".to_string())
+        );
+    }
+
+    #[test]
+    fn task_artifact_envelope_contains_task_target_and_artifact_graph() {
+        let mut event = TaskEvent::new("task_artifact_emitted", "task_docs", "taskrun-1");
+        event.target_node_id = Some("node-root".to_string());
+        event.artifact_id = Some("artifact-1".to_string());
+        event.artifact_type_id = Some("readme_summary".to_string());
+
+        let envelope = build_execution_task_envelope("session-1", &event).unwrap();
+        let object_keys = envelope
+            .objects
+            .iter()
+            .map(|object| object.index_key())
+            .collect::<Vec<_>>();
+        let relation_types = envelope
+            .relations
+            .iter()
+            .map(|relation| relation.relation_type.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(envelope.event_type, "execution.task.artifact_emitted");
+        assert_eq!(
+            object_keys,
+            vec![
+                "execution::task_run::taskrun-1",
+                "workspace_fs::node::node-root",
+                "execution::artifact_slot::taskrun-1::readme_summary",
+                "execution::artifact::artifact-1",
+            ]
+        );
+        assert_eq!(relation_types, vec!["targets", "attached_to", "selected"]);
+    }
+
+    #[test]
+    fn task_artifact_envelope_uses_default_artifact_slot_when_type_is_absent() {
+        let mut event = TaskEvent::new("task_artifact_emitted", "task_docs", "taskrun-1");
+        event.artifact_id = Some("artifact-1".to_string());
+
+        let envelope = build_execution_task_envelope("session-1", &event).unwrap();
+
+        assert!(envelope.objects.iter().any(|object| {
+            object.index_key() == "execution::artifact_slot::taskrun-1::artifact"
+        }));
+    }
+}

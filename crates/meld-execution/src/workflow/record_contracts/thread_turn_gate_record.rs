@@ -93,3 +93,87 @@ fn validate_reasons(record: &ThreadTurnGateRecordV1) -> Result<(), ApiError> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type GateRecordMutation = Box<dyn FnOnce(&mut ThreadTurnGateRecordV1)>;
+
+    fn record() -> ThreadTurnGateRecordV1 {
+        ThreadTurnGateRecordV1::new(
+            "thread-1".to_string(),
+            "turn-1".to_string(),
+            "schema_gate".to_string(),
+            GateOutcome::Fail,
+            vec!["missing claims".to_string()],
+            1,
+        )
+    }
+
+    #[test]
+    fn thread_turn_gate_record_round_trips_and_validates() {
+        let record = record();
+        let encoded = serde_json::to_string(&record).unwrap();
+        let decoded = serde_json::from_str::<ThreadTurnGateRecordV1>(&encoded).unwrap();
+
+        validate_thread_turn_gate_record_v1(&decoded).unwrap();
+        assert_eq!(decoded, record);
+    }
+
+    #[test]
+    fn thread_turn_gate_record_rejects_required_field_violations() {
+        let cases: Vec<(&str, GateRecordMutation, &str)> = vec![
+            (
+                "bad schema",
+                Box::new(|record| record.schema_version = 2),
+                "schema_version",
+            ),
+            (
+                "bad thread id",
+                Box::new(|record| record.thread_id = "bad".to_string()),
+                "thread_id",
+            ),
+            (
+                "bad turn id",
+                Box::new(|record| record.turn_id = "bad".to_string()),
+                "turn_id",
+            ),
+            (
+                "empty gate name",
+                Box::new(|record| record.gate_name.clear()),
+                "gate_name must not be empty",
+            ),
+            (
+                "failure without reasons",
+                Box::new(|record| record.reasons.clear()),
+                "reasons must be non empty",
+            ),
+            (
+                "empty reason",
+                Box::new(|record| record.reasons[0].clear()),
+                "reasons must not contain empty values",
+            ),
+            (
+                "zero timestamp",
+                Box::new(|record| record.evaluated_at_ms = 0),
+                "evaluated_at_ms",
+            ),
+        ];
+
+        for (case_name, mutate, expected) in cases {
+            let mut record = record();
+            mutate(&mut record);
+
+            let error = match validate_thread_turn_gate_record_v1(&record) {
+                Ok(()) => panic!("{case_name} should fail validation"),
+                Err(error) => error,
+            };
+
+            assert!(
+                error.to_string().contains(expected),
+                "{case_name} expected error containing '{expected}', got '{error}'"
+            );
+        }
+    }
+}

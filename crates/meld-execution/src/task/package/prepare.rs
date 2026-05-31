@@ -274,7 +274,7 @@ pub fn gate_map(profile: &WorkflowProfile) -> HashMap<String, WorkflowGate> {
         .collect()
 }
 
-/// Builds the initial traversal-seeding task definition from package authroing data.
+/// Builds the initial traversal-seeding task definition from package authoring data.
 pub fn build_initial_task_definition(
     profile: &WorkflowProfile,
     package_spec: &TaskPackageSpec,

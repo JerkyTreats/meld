@@ -104,3 +104,86 @@ fn map_reference_error(err: ApiError) -> ApiError {
         RECORD_TYPE, err
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type PromptLinkMutation = Box<dyn FnOnce(&mut PromptLinkRecordV1)>;
+
+    fn hex64(ch: char) -> String {
+        std::iter::repeat_n(ch, 64).collect()
+    }
+
+    fn record() -> PromptLinkRecordV1 {
+        PromptLinkRecordV1 {
+            schema_version: WORKFLOW_RECORD_SCHEMA_VERSION_V1,
+            prompt_link_id: "prompt-link-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            node_id: hex64('a'),
+            frame_id: hex64('b'),
+            system_prompt_artifact_id: hex64('c'),
+            user_prompt_template_artifact_id: hex64('d'),
+            rendered_prompt_artifact_id: hex64('e'),
+            context_artifact_id: hex64('f'),
+            created_at_ms: 1,
+        }
+    }
+
+    #[test]
+    fn prompt_link_record_round_trips_and_validates() {
+        let record = record();
+        let encoded = serde_json::to_string(&record).unwrap();
+        let decoded = serde_json::from_str::<PromptLinkRecordV1>(&encoded).unwrap();
+
+        validate_prompt_link_record_v1(&decoded).unwrap();
+        assert_eq!(decoded, record);
+    }
+
+    #[test]
+    fn prompt_link_record_rejects_required_field_violations() {
+        let cases: Vec<(&str, PromptLinkMutation, &str)> = vec![
+            (
+                "bad schema",
+                Box::new(|record| record.schema_version = 2),
+                "schema_version",
+            ),
+            (
+                "bad prompt link id",
+                Box::new(|record| record.prompt_link_id = "bad".to_string()),
+                "prompt_link_id",
+            ),
+            (
+                "bad thread id",
+                Box::new(|record| record.thread_id = "bad".to_string()),
+                "thread_id",
+            ),
+            (
+                "bad node id",
+                Box::new(|record| record.node_id = "bad".to_string()),
+                "references",
+            ),
+            (
+                "zero timestamp",
+                Box::new(|record| record.created_at_ms = 0),
+                "created_at_ms",
+            ),
+        ];
+
+        for (case_name, mutate, expected) in cases {
+            let mut record = record();
+            mutate(&mut record);
+
+            let error = match validate_prompt_link_record_v1(&record) {
+                Ok(()) => panic!("{case_name} should fail validation"),
+                Err(error) => error,
+            };
+
+            assert!(
+                error.to_string().contains(expected),
+                "{case_name} expected error containing '{expected}', got '{error}'"
+            );
+        }
+    }
+}

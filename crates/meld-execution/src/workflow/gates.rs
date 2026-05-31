@@ -223,3 +223,101 @@ fn normalize_section_token(value: &str) -> String {
         .flat_map(|ch| ch.to_lowercase())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflow::profile::WorkflowGate;
+    use serde_json::json;
+
+    fn gate(gate_type: &str, required_fields: Vec<&str>) -> WorkflowGate {
+        WorkflowGate {
+            gate_id: "gate-1".to_string(),
+            gate_type: gate_type.to_string(),
+            required_fields: required_fields
+                .into_iter()
+                .map(ToString::to_string)
+                .collect(),
+            rules: json!({}),
+            fail_on_violation: true,
+        }
+    }
+
+    #[test]
+    fn schema_required_fields_accepts_json_or_text_presence() {
+        let gate = gate("schema_required_fields", vec!["claims", "evidence"]);
+
+        assert!(evaluate_gate(&gate, r#"{"claims":[],"evidence":[]}"#, None).is_pass());
+        assert!(evaluate_gate(&gate, "Claims\nEvidence", None).is_pass());
+    }
+
+    #[test]
+    fn schema_required_fields_reports_missing_fields() {
+        let gate = gate("schema_required_fields", vec!["claims", "evidence"]);
+
+        let result = evaluate_gate(&gate, r#"{"claims":[]}"#, None);
+
+        assert_eq!(result.outcome, GateOutcome::Fail);
+        assert_eq!(result.reasons, vec!["missing required field 'evidence'"]);
+    }
+
+    #[test]
+    fn required_sections_enforces_missing_and_forbidden_sections() {
+        let mut gate = gate("required_sections", vec!["purpose", "usage"]);
+        gate.rules = json!({
+            "forbidden_sections": ["caveats"]
+        });
+
+        let result = evaluate_gate(&gate, "## Purpose\nGood\n\n## Caveats\nNo", None);
+
+        assert_eq!(result.outcome, GateOutcome::Fail);
+        assert!(result
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("missing required section 'usage'")));
+        assert!(result
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("forbidden section 'caveats' present")));
+    }
+
+    #[test]
+    fn no_semantic_drift_uses_dynamic_required_sections_from_input() {
+        let mut gate = gate("no_semantic_drift", vec![]);
+        gate.rules = json!({
+            "required_sections_from_input": "target_context"
+        });
+        let input_values = HashMap::from([(
+            "target_context".to_string(),
+            json!({
+                "purpose": "Explain the module",
+                "api_surface": [
+                    { "path": "lib.rs", "summary": "Public API" }
+                ],
+                "caveats": ""
+            })
+            .to_string(),
+        )]);
+
+        let passing = evaluate_gate(
+            &gate,
+            "## Purpose\nExplain the module\n\n## API Surface\nPublic API",
+            Some(&input_values),
+        );
+        let failing = evaluate_gate(&gate, "## Purpose\nExplain the module", Some(&input_values));
+
+        assert!(passing.is_pass());
+        assert_eq!(failing.outcome, GateOutcome::Fail);
+        assert!(failing.reasons[0].contains("api surface"));
+    }
+
+    #[test]
+    fn no_semantic_drift_rejects_empty_output() {
+        let gate = gate("no_semantic_drift", vec!["purpose"]);
+
+        let result = evaluate_gate(&gate, "  ", None);
+
+        assert_eq!(result.outcome, GateOutcome::Fail);
+        assert_eq!(result.reasons, vec!["output is empty"]);
+    }
+}
