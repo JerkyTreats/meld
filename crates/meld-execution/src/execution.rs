@@ -1,6 +1,8 @@
 //! Execution boundary contracts shared by workflow, task, and workspace adapters.
 
+/// Provider execution binding and runtime override contracts.
 pub mod contracts;
+/// Adapter port traits required by execution runtimes.
 pub mod ports;
 
 pub use contracts::{ProviderExecutionBinding, ProviderRuntimeOverrides};

@@ -19,26 +19,41 @@ pub(super) struct DirectExecutionContext<'a, A, E>
 where
     A: WorkflowExecutorContext<E>,
 {
+    /// API owned by this execution contract.
     pub api: &'a A,
+    /// Registered profile owned by this execution contract.
     pub registered_profile: &'a RegisteredWorkflowProfile,
+    /// Request owned by this execution contract.
     pub request: &'a WorkflowExecutionRequest,
+    /// Runtime owned by this execution contract.
     pub runtime: &'a WorkflowExecutorRuntime<'a, A, E>,
+    /// Event context owned by this execution contract.
     pub event_context: Option<&'a ExecutionEventContext>,
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: &'a str,
+    /// Target path owned by this execution contract.
     pub target_path: &'a str,
+    /// System prompt text supplied to provider execution.
     pub system_prompt: String,
+    /// Final turn sequence owned by this execution contract.
     pub final_turn_seq: u32,
 }
 
 pub(super) struct DirectExecutionState {
+    /// Start sequence owned by this execution contract.
     pub start_seq: u32,
+    /// Turn outputs owned by this execution contract.
     pub turn_outputs: HashMap<String, String>,
+    /// Completed turns owned by this execution contract.
     pub completed_turns: usize,
+    /// Final frame identifier produced by the workflow thread when available.
     pub final_frame_id: Option<NodeId>,
 }
 
 pub(super) struct DirectExecutionResult {
+    /// Completed turns owned by this execution contract.
     pub completed_turns: usize,
+    /// Final frame identifier produced by the workflow thread when available.
     pub final_frame_id: Option<NodeId>,
 }
 

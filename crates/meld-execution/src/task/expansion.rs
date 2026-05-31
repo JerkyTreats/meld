@@ -1,5 +1,8 @@
+/// Task-owned expansion request, record, and delta contracts.
 pub mod contracts;
+/// Expansion compiler registry keyed by expansion kind.
 pub mod registry;
+/// Runtime helpers for parsing expansion artifacts.
 pub mod runtime;
 
 pub use contracts::{

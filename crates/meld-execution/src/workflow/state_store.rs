@@ -8,59 +8,91 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Workflow thread status contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowThreadStatus {
+    /// Work is created but has not started.
     Pending,
+    /// Work is actively being executed.
     Running,
+    /// Work finished successfully.
     Completed,
+    /// Work finished with an execution failure.
     Failed,
 }
 
+/// Workflow turn status contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowTurnStatus {
+    /// Work is created but has not started.
     Pending,
+    /// Work is actively being executed.
     Running,
+    /// Work finished successfully.
     Completed,
+    /// Work finished with an execution failure.
     Failed,
+    /// Work was intentionally skipped by workflow policy.
     Skipped,
 }
 
+/// Workflow thread record contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkflowThreadRecord {
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
+    /// Workflow profile identifier that owns this execution record.
     pub workflow_id: String,
+    /// Workspace node identifier carried across execution boundaries.
     pub node_id: String,
+    /// Context frame type produced or consumed by this execution path.
     pub frame_type: String,
+    /// Lifecycle status assigned by the owning runtime.
     pub status: WorkflowThreadStatus,
+    /// Next turn sequence owned by this execution contract.
     pub next_turn_seq: u32,
+    /// Last update time in milliseconds since the Unix epoch.
     pub updated_at_ms: u64,
+    /// Final frame identifier produced by the workflow thread when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_frame_id: Option<String>,
 }
 
+/// Workflow turn record contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkflowTurnRecord {
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
+    /// Workflow turn identifier within the owning workflow profile or thread.
     pub turn_id: String,
+    /// Workflow turn sequence number used for deterministic ordering.
     pub seq: u32,
+    /// Declared output type produced by this workflow turn.
     pub output_type: String,
+    /// Lifecycle status assigned by the owning runtime.
     pub status: WorkflowTurnStatus,
+    /// Number of execution attempts recorded for this work item.
     pub attempt_count: usize,
+    /// Context frame identifier associated with this execution record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame_id: Option<String>,
+    /// Captured output text when the turn completed with persisted output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_text: Option<String>,
+    /// Last update time in milliseconds since the Unix epoch.
     pub updated_at_ms: u64,
 }
 
+/// Workflow state store contract used by execution runtimes.
 #[derive(Debug, Clone)]
 pub struct WorkflowStateStore {
     root: PathBuf,
 }
 
 impl WorkflowStateStore {
+    /// Execution helper for from root.
     pub fn from_root(root: &Path) -> Result<Self, ApiError> {
         ensure_root_directories(root)?;
         Ok(Self {
@@ -68,6 +100,7 @@ impl WorkflowStateStore {
         })
     }
 
+    /// Execution helper for load thread.
     pub fn load_thread(&self, thread_id: &str) -> Result<Option<WorkflowThreadRecord>, ApiError> {
         let path = self.thread_path(thread_id);
         if !path.exists() {
@@ -85,11 +118,13 @@ impl WorkflowStateStore {
         Ok(Some(record))
     }
 
+    /// Execution helper for upsert thread.
     pub fn upsert_thread(&self, record: &WorkflowThreadRecord) -> Result<(), ApiError> {
         let path = self.thread_path(&record.thread_id);
         write_json_file(&path, record)
     }
 
+    /// Execution helper for load turns.
     pub fn load_turns(&self, thread_id: &str) -> Result<Vec<WorkflowTurnRecord>, ApiError> {
         let dir = self.turn_dir(thread_id);
         if !dir.exists() {
@@ -131,6 +166,7 @@ impl WorkflowStateStore {
         Ok(turns)
     }
 
+    /// Execution helper for upsert turn.
     pub fn upsert_turn(&self, record: &WorkflowTurnRecord) -> Result<(), ApiError> {
         fs::create_dir_all(self.turn_dir(&record.thread_id)).map_err(|err| {
             ApiError::ConfigError(format!(
@@ -142,6 +178,7 @@ impl WorkflowStateStore {
         write_json_file(&path, record)
     }
 
+    /// Execution helper for upsert gate.
     pub fn upsert_gate(
         &self,
         thread_id: &str,
@@ -159,6 +196,7 @@ impl WorkflowStateStore {
         write_json_file(&path, record)
     }
 
+    /// Execution helper for upsert prompt link.
     pub fn upsert_prompt_link(
         &self,
         thread_id: &str,
@@ -176,6 +214,7 @@ impl WorkflowStateStore {
         write_json_file(&path, record)
     }
 
+    /// Execution helper for completed output map.
     pub fn completed_output_map(
         &self,
         thread_id: &str,

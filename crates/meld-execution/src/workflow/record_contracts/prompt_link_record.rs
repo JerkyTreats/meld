@@ -10,30 +10,49 @@ use serde::{Deserialize, Serialize};
 
 const RECORD_TYPE: &str = "prompt_link";
 
+/// Prompt link record v1 contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PromptLinkRecordV1 {
+    /// Schema version for the serialized contract or artifact shape.
     pub schema_version: u32,
+    /// Prompt lineage identifier associated with generated frame metadata.
     pub prompt_link_id: String,
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
+    /// Workflow turn identifier within the owning workflow profile or thread.
     pub turn_id: String,
+    /// Workspace node identifier carried across execution boundaries.
     pub node_id: String,
+    /// Context frame identifier associated with this execution record.
     pub frame_id: String,
+    /// Artifact identifier for the system prompt lineage record.
     pub system_prompt_artifact_id: String,
+    /// Artifact identifier for the user prompt template lineage record.
     pub user_prompt_template_artifact_id: String,
+    /// Artifact identifier for the rendered prompt lineage record.
     pub rendered_prompt_artifact_id: String,
+    /// Artifact identifier for the context payload lineage record.
     pub context_artifact_id: String,
+    /// Creation time in milliseconds since the Unix epoch.
     pub created_at_ms: u64,
 }
 
+/// Prompt link record input v1 contract used by execution runtimes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptLinkRecordInputV1 {
+    /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
+    /// Workflow turn identifier within the owning workflow profile or thread.
     pub turn_id: String,
+    /// Workspace node identifier carried across execution boundaries.
     pub node_id: String,
+    /// Context frame identifier associated with this execution record.
     pub frame_id: String,
+    /// Creation time in milliseconds since the Unix epoch.
     pub created_at_ms: u64,
 }
 
+/// Execution helper for prompt link record from contract v1.
 pub fn prompt_link_record_from_contract_v1(
     contract: &PromptLinkContractView,
     input: &PromptLinkRecordInputV1,
@@ -53,6 +72,7 @@ pub fn prompt_link_record_from_contract_v1(
     }
 }
 
+/// Execution helper for validate prompt link record v1.
 pub fn validate_prompt_link_record_v1(record: &PromptLinkRecordV1) -> Result<(), ApiError> {
     validate_schema_version(RECORD_TYPE, record.schema_version)?;
     validate_prefixed_id(
@@ -68,6 +88,7 @@ pub fn validate_prompt_link_record_v1(record: &PromptLinkRecordV1) -> Result<(),
     Ok(())
 }
 
+/// Execution helper for validate prompt link record references.
 pub fn validate_prompt_link_record_references(record: &PromptLinkRecordV1) -> Result<(), ApiError> {
     validate_hex64(RECORD_TYPE, "node_id", &record.node_id).map_err(map_reference_error)?;
     validate_hex64(RECORD_TYPE, "frame_id", &record.frame_id).map_err(map_reference_error)?;
@@ -109,6 +130,7 @@ fn map_reference_error(err: ApiError) -> ApiError {
 mod tests {
     use super::*;
 
+    /// Type alias for prompt link mutation values in execution contracts.
     type PromptLinkMutation = Box<dyn FnOnce(&mut PromptLinkRecordV1)>;
 
     fn hex64(ch: char) -> String {

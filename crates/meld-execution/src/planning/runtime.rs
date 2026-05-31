@@ -97,7 +97,9 @@ impl PlanningRuntime {
 }
 
 enum CandidateEvaluation {
+    /// Rejected variant for this execution contract.
     Rejected(MethodCandidateReport),
+    /// Applicable variant for this execution contract.
     Applicable {
         report: MethodCandidateReport,
         bindings: Bindings,

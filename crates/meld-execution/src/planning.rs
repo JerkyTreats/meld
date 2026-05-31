@@ -4,9 +4,13 @@
 //! execution composition artifact. Task lowering and dispatch stay outside this
 //! domain.
 
+/// Planning request, result, diagnostic, and composition contracts.
 pub mod contracts;
+/// Method loading, verification, and deterministic ordering.
 pub mod method_library;
+/// First-slice planning runtime facade.
 pub mod runtime;
+/// Execution-side world state projection request contracts.
 pub mod world_state;
 
 pub use contracts::{

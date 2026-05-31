@@ -3,13 +3,17 @@ use crate::workflow::record_contracts::GateOutcome;
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Gate evaluation result contract used by execution runtimes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GateEvaluationResult {
+    /// Gate outcome recorded by workflow execution.
     pub outcome: GateOutcome,
+    /// Human readable reasons emitted by gate evaluation.
     pub reasons: Vec<String>,
 }
 
 impl GateEvaluationResult {
+    /// Execution helper for pass.
     pub fn pass() -> Self {
         Self {
             outcome: GateOutcome::Pass,
@@ -17,6 +21,7 @@ impl GateEvaluationResult {
         }
     }
 
+    /// Execution helper for fail.
     pub fn fail(reasons: Vec<String>) -> Self {
         Self {
             outcome: GateOutcome::Fail,
@@ -24,11 +29,13 @@ impl GateEvaluationResult {
         }
     }
 
+    /// Execution helper for is pass.
     pub fn is_pass(&self) -> bool {
         self.outcome == GateOutcome::Pass
     }
 }
 
+/// Execution helper for evaluate gate.
 pub fn evaluate_gate(
     gate: &WorkflowGate,
     output: &str,

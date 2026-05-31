@@ -1,6 +1,10 @@
+/// Identifier validation contract used by execution runtimes.
 pub mod id_validation;
+/// Prompt link record contract used by execution runtimes.
 pub mod prompt_link_record;
+/// Schema version contract used by execution runtimes.
 pub mod schema_version;
+/// Thread turn gate record contract used by execution runtimes.
 pub mod thread_turn_gate_record;
 
 pub use prompt_link_record::{

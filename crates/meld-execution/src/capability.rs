@@ -58,9 +58,13 @@
 //! assert!(catalog.contains("provider_execute_chat", 1));
 //! ```
 
+/// Capability catalog registration and lookup.
 pub mod catalog;
+/// Published capability type and bound instance records.
 pub mod contracts;
+/// Capability invoker registry and invocation result boundary.
 pub mod invocation;
+/// Runtime payload validation for bound capability invocations.
 pub mod runtime;
 
 pub use catalog::CapabilityCatalog;
