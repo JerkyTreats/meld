@@ -68,41 +68,89 @@ mod tests {
         ArtifactProducerRef, ArtifactRecord, CompiledTaskRecord, TaskArtifactRepo,
         TaskDependencyEdge, TaskDependencyKind,
     };
+    use proptest::prelude::*;
     use serde_json::json;
 
-    #[test]
-    fn readiness_requires_dependency_and_artifact_satisfaction() {
-        let compiled_task = CompiledTaskRecord {
+    fn instance(
+        capability_instance_id: &str,
+        input_wiring: Vec<BoundInputWiring>,
+    ) -> BoundCapabilityInstance {
+        BoundCapabilityInstance {
+            capability_instance_id: capability_instance_id.to_string(),
+            capability_type_id: "context_generate_finalize".to_string(),
+            capability_version: 1,
+            scope_ref: format!("node_{capability_instance_id}"),
+            scope_kind: "node".to_string(),
+            binding_values: vec![],
+            input_wiring,
+        }
+    }
+
+    fn output_source(capability_instance_id: &str, output_slot_id: &str) -> BoundInputWiringSource {
+        BoundInputWiringSource::UpstreamOutput {
+            capability_instance_id: capability_instance_id.to_string(),
+            output_slot_id: output_slot_id.to_string(),
+            artifact_type_id: "readme_summary".to_string(),
+            schema_version: 1,
+        }
+    }
+
+    fn init_source(init_slot_id: &str) -> BoundInputWiringSource {
+        BoundInputWiringSource::TaskInitSlot {
+            init_slot_id: init_slot_id.to_string(),
+            artifact_type_id: "target_selector".to_string(),
+            schema_version: 1,
+        }
+    }
+
+    fn artifact(
+        artifact_id: &str,
+        capability_instance_id: &str,
+        output_slot_id: &str,
+    ) -> ArtifactRecord {
+        ArtifactRecord {
+            artifact_id: artifact_id.to_string(),
+            artifact_type_id: "readme_summary".to_string(),
+            schema_version: 1,
+            content: json!({ "summary": artifact_id }),
+            producer: ArtifactProducerRef {
+                task_id: "task_docs_writer".to_string(),
+                capability_instance_id: capability_instance_id.to_string(),
+                invocation_id: Some("invk_1".to_string()),
+                output_slot_id: Some(output_slot_id.to_string()),
+            },
+        }
+    }
+
+    fn init_artifact(init_slot_id: &str) -> ArtifactRecord {
+        ArtifactRecord {
+            artifact_id: format!("init::{init_slot_id}"),
+            artifact_type_id: "target_selector".to_string(),
+            schema_version: 1,
+            content: json!({ "node_id": "node_root" }),
+            producer: ArtifactProducerRef {
+                task_id: "task_docs_writer".to_string(),
+                capability_instance_id: "__task_init__".to_string(),
+                invocation_id: None,
+                output_slot_id: Some(init_slot_id.to_string()),
+            },
+        }
+    }
+
+    fn chain_task() -> CompiledTaskRecord {
+        CompiledTaskRecord {
             task_id: "task_docs_writer".to_string(),
             task_version: 1,
             init_slots: vec![],
             capability_instances: vec![
-                BoundCapabilityInstance {
-                    capability_instance_id: "capinst_parent".to_string(),
-                    capability_type_id: "context_generate_finalize".to_string(),
-                    capability_version: 1,
-                    scope_ref: "node_parent".to_string(),
-                    scope_kind: "node".to_string(),
-                    binding_values: vec![],
-                    input_wiring: vec![BoundInputWiring {
+                instance(
+                    "capinst_parent",
+                    vec![BoundInputWiring {
                         slot_id: "child_summary".to_string(),
-                        sources: vec![BoundInputWiringSource::UpstreamOutput {
-                            capability_instance_id: "capinst_child".to_string(),
-                            output_slot_id: "readme_summary".to_string(),
-                            artifact_type_id: "readme_summary".to_string(),
-                            schema_version: 1,
-                        }],
+                        sources: vec![output_source("capinst_child", "readme_summary")],
                     }],
-                },
-                BoundCapabilityInstance {
-                    capability_instance_id: "capinst_child".to_string(),
-                    capability_type_id: "context_generate_finalize".to_string(),
-                    capability_version: 1,
-                    scope_ref: "node_child".to_string(),
-                    scope_kind: "node".to_string(),
-                    binding_values: vec![],
-                    input_wiring: vec![],
-                },
+                ),
+                instance("capinst_child", vec![]),
             ],
             dependency_edges: vec![TaskDependencyEdge {
                 from_capability_instance_id: "capinst_child".to_string(),
@@ -110,7 +158,12 @@ mod tests {
                 kind: TaskDependencyKind::Artifact,
                 reason: "child before parent".to_string(),
             }],
-        };
+        }
+    }
+
+    #[test]
+    fn readiness_requires_dependency_and_artifact_satisfaction() {
+        let compiled_task = chain_task();
         let mut repo = TaskArtifactRepo::new("repo_docs_writer");
         let mut completed = HashSet::new();
         let in_flight = HashSet::new();
@@ -120,22 +173,242 @@ mod tests {
         assert_eq!(ready, vec!["capinst_child".to_string()]);
 
         completed.insert("capinst_child".to_string());
-        repo.append_artifact(ArtifactRecord {
-            artifact_id: "artifact_child".to_string(),
-            artifact_type_id: "readme_summary".to_string(),
-            schema_version: 1,
-            content: json!({ "summary": "child" }),
-            producer: ArtifactProducerRef {
-                task_id: "task_docs_writer".to_string(),
-                capability_instance_id: "capinst_child".to_string(),
-                invocation_id: Some("invk_1".to_string()),
-                output_slot_id: Some("readme_summary".to_string()),
-            },
-        })
+        repo.append_artifact(artifact(
+            "artifact_child",
+            "capinst_child",
+            "readme_summary",
+        ))
         .unwrap();
 
         let ready =
             compute_ready_capability_instances(&compiled_task, &repo, &completed, &in_flight);
         assert_eq!(ready, vec!["capinst_parent".to_string()]);
+    }
+
+    #[test]
+    fn readiness_requires_mixed_init_and_upstream_inputs() {
+        let compiled_task = CompiledTaskRecord {
+            task_id: "task_docs_writer".to_string(),
+            task_version: 1,
+            init_slots: vec![],
+            capability_instances: vec![instance(
+                "capinst_parent",
+                vec![
+                    BoundInputWiring {
+                        slot_id: "selector".to_string(),
+                        sources: vec![init_source("target_selector")],
+                    },
+                    BoundInputWiring {
+                        slot_id: "summary".to_string(),
+                        sources: vec![output_source("capinst_child", "readme_summary")],
+                    },
+                ],
+            )],
+            dependency_edges: vec![TaskDependencyEdge {
+                from_capability_instance_id: "capinst_child".to_string(),
+                to_capability_instance_id: "capinst_parent".to_string(),
+                kind: TaskDependencyKind::Artifact,
+                reason: "child before parent".to_string(),
+            }],
+        };
+        let mut repo = TaskArtifactRepo::new("repo_docs_writer");
+        let mut completed = HashSet::from(["capinst_child".to_string()]);
+        let in_flight = HashSet::new();
+
+        repo.append_artifact(artifact(
+            "artifact_child",
+            "capinst_child",
+            "readme_summary",
+        ))
+        .unwrap();
+        assert!(
+            compute_ready_capability_instances(&compiled_task, &repo, &completed, &in_flight)
+                .is_empty()
+        );
+
+        repo.append_artifact(init_artifact("target_selector"))
+            .unwrap();
+        assert_eq!(
+            compute_ready_capability_instances(&compiled_task, &repo, &completed, &in_flight),
+            vec!["capinst_parent".to_string()]
+        );
+
+        completed.insert("capinst_parent".to_string());
+        assert!(
+            compute_ready_capability_instances(&compiled_task, &repo, &completed, &in_flight)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn readiness_excludes_in_flight_and_fans_out_completed_artifacts() {
+        let compiled_task = CompiledTaskRecord {
+            task_id: "task_docs_writer".to_string(),
+            task_version: 1,
+            init_slots: vec![],
+            capability_instances: vec![
+                instance(
+                    "capinst_a",
+                    vec![BoundInputWiring {
+                        slot_id: "summary".to_string(),
+                        sources: vec![output_source("capinst_source", "readme_summary")],
+                    }],
+                ),
+                instance(
+                    "capinst_b",
+                    vec![BoundInputWiring {
+                        slot_id: "summary".to_string(),
+                        sources: vec![output_source("capinst_source", "readme_summary")],
+                    }],
+                ),
+            ],
+            dependency_edges: vec![
+                TaskDependencyEdge {
+                    from_capability_instance_id: "capinst_source".to_string(),
+                    to_capability_instance_id: "capinst_a".to_string(),
+                    kind: TaskDependencyKind::Artifact,
+                    reason: "source before a".to_string(),
+                },
+                TaskDependencyEdge {
+                    from_capability_instance_id: "capinst_source".to_string(),
+                    to_capability_instance_id: "capinst_b".to_string(),
+                    kind: TaskDependencyKind::Artifact,
+                    reason: "source before b".to_string(),
+                },
+            ],
+        };
+        let mut repo = TaskArtifactRepo::new("repo_docs_writer");
+        repo.append_artifact(artifact(
+            "artifact_source",
+            "capinst_source",
+            "readme_summary",
+        ))
+        .unwrap();
+        let completed = HashSet::from(["capinst_source".to_string()]);
+        let in_flight = HashSet::from(["capinst_b".to_string()]);
+
+        let ready =
+            compute_ready_capability_instances(&compiled_task, &repo, &completed, &in_flight);
+
+        assert_eq!(ready, vec!["capinst_a".to_string()]);
+    }
+
+    #[test]
+    fn readiness_honors_effect_only_edges_and_missing_artifacts() {
+        let compiled_task = CompiledTaskRecord {
+            task_id: "task_docs_writer".to_string(),
+            task_version: 1,
+            init_slots: vec![],
+            capability_instances: vec![
+                instance("capinst_first", vec![]),
+                instance("capinst_second", vec![]),
+                instance(
+                    "capinst_needs_artifact",
+                    vec![BoundInputWiring {
+                        slot_id: "summary".to_string(),
+                        sources: vec![output_source("capinst_first", "readme_summary")],
+                    }],
+                ),
+            ],
+            dependency_edges: vec![
+                TaskDependencyEdge {
+                    from_capability_instance_id: "capinst_first".to_string(),
+                    to_capability_instance_id: "capinst_second".to_string(),
+                    kind: TaskDependencyKind::Effect,
+                    reason: "exclusive effect".to_string(),
+                },
+                TaskDependencyEdge {
+                    from_capability_instance_id: "capinst_first".to_string(),
+                    to_capability_instance_id: "capinst_needs_artifact".to_string(),
+                    kind: TaskDependencyKind::Artifact,
+                    reason: "artifact handoff".to_string(),
+                },
+            ],
+        };
+        let repo = TaskArtifactRepo::new("repo_docs_writer");
+        let completed = HashSet::from(["capinst_first".to_string()]);
+        let in_flight = HashSet::new();
+
+        let ready =
+            compute_ready_capability_instances(&compiled_task, &repo, &completed, &in_flight);
+
+        assert_eq!(ready, vec!["capinst_second".to_string()]);
+    }
+
+    #[test]
+    fn readiness_keeps_cycles_blocked() {
+        let compiled_task = CompiledTaskRecord {
+            task_id: "task_docs_writer".to_string(),
+            task_version: 1,
+            init_slots: vec![],
+            capability_instances: vec![
+                instance("capinst_a", vec![]),
+                instance("capinst_b", vec![]),
+            ],
+            dependency_edges: vec![
+                TaskDependencyEdge {
+                    from_capability_instance_id: "capinst_a".to_string(),
+                    to_capability_instance_id: "capinst_b".to_string(),
+                    kind: TaskDependencyKind::Effect,
+                    reason: "cycle".to_string(),
+                },
+                TaskDependencyEdge {
+                    from_capability_instance_id: "capinst_b".to_string(),
+                    to_capability_instance_id: "capinst_a".to_string(),
+                    kind: TaskDependencyKind::Effect,
+                    reason: "cycle".to_string(),
+                },
+            ],
+        };
+
+        assert!(compute_ready_capability_instances(
+            &compiled_task,
+            &TaskArtifactRepo::new("repo_docs_writer"),
+            &HashSet::new(),
+            &HashSet::new(),
+        )
+        .is_empty());
+    }
+
+    proptest! {
+        #[test]
+        fn readiness_never_returns_completed_or_in_flight_instances(
+            complete_a in any::<bool>(),
+            complete_b in any::<bool>(),
+            in_flight_a in any::<bool>(),
+            in_flight_b in any::<bool>(),
+        ) {
+            let compiled_task = CompiledTaskRecord {
+                task_id: "task_docs_writer".to_string(),
+                task_version: 1,
+                init_slots: vec![],
+                capability_instances: vec![instance("capinst_a", vec![]), instance("capinst_b", vec![])],
+                dependency_edges: vec![],
+            };
+            let mut completed = HashSet::new();
+            let mut in_flight = HashSet::new();
+            if complete_a {
+                completed.insert("capinst_a".to_string());
+            }
+            if complete_b {
+                completed.insert("capinst_b".to_string());
+            }
+            if in_flight_a {
+                in_flight.insert("capinst_a".to_string());
+            }
+            if in_flight_b {
+                in_flight.insert("capinst_b".to_string());
+            }
+
+            let ready = compute_ready_capability_instances(
+                &compiled_task,
+                &TaskArtifactRepo::new("repo_docs_writer"),
+                &completed,
+                &in_flight,
+            );
+
+            prop_assert!(ready.iter().all(|id| !completed.contains(id)));
+            prop_assert!(ready.iter().all(|id| !in_flight.contains(id)));
+        }
     }
 }

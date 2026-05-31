@@ -171,6 +171,8 @@ mod tests {
         ArtifactSchemaVersionRange, ExecutionClass, InputSlotSpec, OutputSlotSpec,
     };
 
+    type PayloadMutation = Box<dyn FnOnce(&mut CapabilityInvocationPayload)>;
+
     fn runtime_init() -> CapabilityRuntimeInit {
         CapabilityRuntimeInit {
             capability_instance_id: "capinst_provider_execute_chat".to_string(),
@@ -202,28 +204,36 @@ mod tests {
         }
     }
 
-    #[test]
-    fn invocation_validation_accepts_matching_artifact_input() {
-        let runtime_init = runtime_init();
-        let payload = CapabilityInvocationPayload {
+    fn valid_artifact_value() -> SuppliedValueRef {
+        SuppliedValueRef::Artifact(ArtifactValueRef {
+            artifact_id: "artifact_request".to_string(),
+            artifact_type_id: "provider_execute_request".to_string(),
+            schema_version: 1,
+            content: Value::Object(Default::default()),
+        })
+    }
+
+    fn valid_payload(runtime_init: &CapabilityRuntimeInit) -> CapabilityInvocationPayload {
+        CapabilityInvocationPayload {
             invocation_id: "invk_1".to_string(),
             capability_instance_id: runtime_init.capability_instance_id.clone(),
             supplied_inputs: vec![SuppliedInputValue {
                 slot_id: "provider_request".to_string(),
                 source: InputValueSource::ArtifactHandoff,
-                value: SuppliedValueRef::Artifact(ArtifactValueRef {
-                    artifact_id: "artifact_request".to_string(),
-                    artifact_type_id: "provider_execute_request".to_string(),
-                    schema_version: 1,
-                    content: Value::Object(Default::default()),
-                }),
+                value: valid_artifact_value(),
             }],
             upstream_lineage: None,
             execution_context: CapabilityExecutionContext {
                 attempt: 1,
                 ..CapabilityExecutionContext::default()
             },
-        };
+        }
+    }
+
+    #[test]
+    fn invocation_validation_accepts_matching_artifact_input() {
+        let runtime_init = runtime_init();
+        let payload = valid_payload(&runtime_init);
 
         payload.validate_against(&runtime_init).unwrap();
     }
@@ -231,25 +241,8 @@ mod tests {
     #[test]
     fn invocation_validation_rejects_unknown_slot() {
         let runtime_init = runtime_init();
-        let payload = CapabilityInvocationPayload {
-            invocation_id: "invk_1".to_string(),
-            capability_instance_id: runtime_init.capability_instance_id.clone(),
-            supplied_inputs: vec![SuppliedInputValue {
-                slot_id: "unknown".to_string(),
-                source: InputValueSource::ArtifactHandoff,
-                value: SuppliedValueRef::Artifact(ArtifactValueRef {
-                    artifact_id: "artifact_request".to_string(),
-                    artifact_type_id: "provider_execute_request".to_string(),
-                    schema_version: 1,
-                    content: Value::Object(Default::default()),
-                }),
-            }],
-            upstream_lineage: None,
-            execution_context: CapabilityExecutionContext {
-                attempt: 1,
-                ..CapabilityExecutionContext::default()
-            },
-        };
+        let mut payload = valid_payload(&runtime_init);
+        payload.supplied_inputs[0].slot_id = "unknown".to_string();
 
         let error = payload.validate_against(&runtime_init).unwrap_err();
 
@@ -260,20 +253,123 @@ mod tests {
     #[test]
     fn invocation_validation_rejects_missing_required_slot() {
         let runtime_init = runtime_init();
-        let payload = CapabilityInvocationPayload {
-            invocation_id: "invk_1".to_string(),
-            capability_instance_id: runtime_init.capability_instance_id.clone(),
-            supplied_inputs: Vec::new(),
-            upstream_lineage: None,
-            execution_context: CapabilityExecutionContext {
-                attempt: 1,
-                ..CapabilityExecutionContext::default()
-            },
-        };
+        let mut payload = valid_payload(&runtime_init);
+        payload.supplied_inputs.clear();
 
         let error = payload.validate_against(&runtime_init).unwrap_err();
 
         assert!(matches!(error, ExecutionInvariantError::ConfigError(_)));
         assert!(error.to_string().contains("missing required slot"));
+    }
+
+    #[test]
+    fn invocation_validation_rejects_payload_contract_mismatches() {
+        let cases: Vec<(&str, PayloadMutation, &str)> = vec![
+            (
+                "wrong capability instance",
+                Box::new(|payload| payload.capability_instance_id = "other".to_string()),
+                "targets instance",
+            ),
+            (
+                "artifact schema below range",
+                Box::new(|payload| {
+                    let SuppliedValueRef::Artifact(artifact) =
+                        &mut payload.supplied_inputs[0].value
+                    else {
+                        unreachable!("fixture uses artifact value");
+                    };
+                    artifact.schema_version = 0;
+                }),
+                "rejects schema version",
+            ),
+            (
+                "artifact schema above range",
+                Box::new(|payload| {
+                    let SuppliedValueRef::Artifact(artifact) =
+                        &mut payload.supplied_inputs[0].value
+                    else {
+                        unreachable!("fixture uses artifact value");
+                    };
+                    artifact.schema_version = 2;
+                }),
+                "rejects schema version",
+            ),
+            (
+                "artifact type mismatch",
+                Box::new(|payload| {
+                    let SuppliedValueRef::Artifact(artifact) =
+                        &mut payload.supplied_inputs[0].value
+                    else {
+                        unreachable!("fixture uses artifact value");
+                    };
+                    artifact.artifact_type_id = "wrong_type".to_string();
+                }),
+                "rejects artifact type",
+            ),
+            (
+                "duplicate one value",
+                Box::new(|payload| {
+                    payload
+                        .supplied_inputs
+                        .push(payload.supplied_inputs[0].clone())
+                }),
+                "more than once",
+            ),
+        ];
+
+        for (case_name, mutate, expected) in cases {
+            let runtime_init = runtime_init();
+            let mut payload = valid_payload(&runtime_init);
+            mutate(&mut payload);
+
+            let error = match payload.validate_against(&runtime_init) {
+                Ok(()) => panic!("{case_name} should fail validation"),
+                Err(error) => error,
+            };
+
+            assert!(
+                error.to_string().contains(expected),
+                "{case_name} expected error containing '{expected}', got '{error}'"
+            );
+        }
+    }
+
+    #[test]
+    fn invocation_validation_accepts_optional_many_and_structured_values() {
+        let mut runtime_init = runtime_init();
+        runtime_init.input_contract.push(InputSlotSpec {
+            slot_id: "notes".to_string(),
+            accepted_artifact_type_ids: vec!["note".to_string()],
+            schema_versions: ArtifactSchemaVersionRange { min: 1, max: 2 },
+            required: false,
+            cardinality: InputCardinality::Many,
+        });
+        let mut payload = valid_payload(&runtime_init);
+        payload.supplied_inputs.push(SuppliedInputValue {
+            slot_id: "notes".to_string(),
+            source: InputValueSource::InitPayload,
+            value: SuppliedValueRef::StructuredValue(serde_json::json!({
+                "kind": "operator_note",
+                "body": "preserved",
+            })),
+        });
+        payload.supplied_inputs.push(SuppliedInputValue {
+            slot_id: "notes".to_string(),
+            source: InputValueSource::InitPayload,
+            value: SuppliedValueRef::StructuredValue(serde_json::json!({
+                "kind": "operator_note",
+                "body": "also preserved",
+            })),
+        });
+
+        payload.validate_against(&runtime_init).unwrap();
+
+        assert_eq!(
+            payload.supplied_inputs[1].value,
+            SuppliedValueRef::StructuredValue(serde_json::json!({
+                "kind": "operator_note",
+                "body": "preserved",
+            }))
+        );
     }
 }

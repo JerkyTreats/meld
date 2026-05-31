@@ -246,3 +246,97 @@ fn ensure_root_directories(root: &Path) -> Result<(), ApiError> {
     })?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflow::record_contracts::{
+        GateOutcome, PromptLinkRecordV1, ThreadTurnGateRecordV1, WORKFLOW_RECORD_SCHEMA_VERSION_V1,
+    };
+    use tempfile::tempdir;
+
+    fn hex64(ch: char) -> String {
+        std::iter::repeat_n(ch, 64).collect()
+    }
+
+    #[test]
+    fn state_store_persists_and_loads_thread_turn_and_completed_outputs() {
+        let dir = tempdir().unwrap();
+        let store = WorkflowStateStore::from_root(dir.path()).unwrap();
+        let thread = WorkflowThreadRecord {
+            thread_id: "thread-1".to_string(),
+            workflow_id: "workflow_docs".to_string(),
+            node_id: "node-root".to_string(),
+            frame_type: "summary".to_string(),
+            status: WorkflowThreadStatus::Running,
+            next_turn_seq: 2,
+            updated_at_ms: 1,
+            final_frame_id: None,
+        };
+        let turn = WorkflowTurnRecord {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            seq: 1,
+            output_type: "summary".to_string(),
+            status: WorkflowTurnStatus::Completed,
+            attempt_count: 1,
+            frame_id: Some("frame-1".to_string()),
+            output_text: Some("complete".to_string()),
+            updated_at_ms: 2,
+        };
+
+        store.upsert_thread(&thread).unwrap();
+        store.upsert_turn(&turn).unwrap();
+
+        assert_eq!(store.load_thread("thread-1").unwrap(), Some(thread));
+        assert_eq!(store.load_turns("thread-1").unwrap(), vec![turn]);
+        assert_eq!(
+            store.completed_output_map("thread-1").unwrap()["summary"],
+            "complete"
+        );
+        assert_eq!(
+            store.completed_output_map("thread-1").unwrap()["turn-1"],
+            "complete"
+        );
+    }
+
+    #[test]
+    fn state_store_validates_gate_and_prompt_link_records_before_write() {
+        let dir = tempdir().unwrap();
+        let store = WorkflowStateStore::from_root(dir.path()).unwrap();
+        let gate = ThreadTurnGateRecordV1::new(
+            "thread-1".to_string(),
+            "turn-1".to_string(),
+            "schema_gate".to_string(),
+            GateOutcome::Pass,
+            vec![],
+            1,
+        );
+        let prompt_link = PromptLinkRecordV1 {
+            schema_version: WORKFLOW_RECORD_SCHEMA_VERSION_V1,
+            prompt_link_id: "prompt-link-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            node_id: hex64('a'),
+            frame_id: hex64('b'),
+            system_prompt_artifact_id: hex64('c'),
+            user_prompt_template_artifact_id: hex64('d'),
+            rendered_prompt_artifact_id: hex64('e'),
+            context_artifact_id: hex64('f'),
+            created_at_ms: 1,
+        };
+
+        store.upsert_gate("thread-1", "turn-1", &gate).unwrap();
+        store
+            .upsert_prompt_link("thread-1", "turn-1", &prompt_link)
+            .unwrap();
+
+        let mut invalid_gate = gate.clone();
+        invalid_gate.gate_name.clear();
+        assert!(store
+            .upsert_gate("thread-1", "turn-2", &invalid_gate)
+            .unwrap_err()
+            .to_string()
+            .contains("gate_name"));
+    }
+}

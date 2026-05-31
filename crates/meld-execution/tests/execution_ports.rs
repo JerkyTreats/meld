@@ -1,12 +1,15 @@
 use async_trait::async_trait;
 use meld_execution::{
-    ContextReadPort, ContextWritePort, ExecutionContext, ExecutionEventContext, ExecutionFrame,
-    ExecutionNodeContext, ExecutionNodeKind, ExecutionNodeRecord, GeneratedFrameMetadataInput,
-    GeneratedMetadataPort, NodeResolutionPort, PreparedPromptLineage, PreviousMetadataSnapshotView,
-    PromptArtifactReadPort, PromptLineagePort, PromptLineageRequest, PromptLinkContractView,
-    ProviderExecutionBinding, ProviderExecutionPort, ProviderPreparationView,
-    ProviderRuntimeOverrides, ProviderValidationPort, SystemPromptPort,
+    ContextReadPort, ContextWritePort, EventPublicationPort, ExecutionContext,
+    ExecutionEventContext, ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind,
+    ExecutionNodeRecord, ExecutionProgressPort, ExecutionRuntimeContext,
+    GeneratedFrameMetadataInput, GeneratedMetadataPort, NodeResolutionPort, PreparedPromptLineage,
+    PreviousMetadataSnapshotView, PromptArtifactReadPort, PromptLineagePort, PromptLineageRequest,
+    PromptLinkContractView, ProviderExecutionBinding, ProviderExecutionPort,
+    ProviderPreparationView, ProviderRuntimeOverrides, ProviderValidationPort, SystemPromptPort,
+    TaskRunArtifactAnchor, WorkflowProfileLoadPort, WorldModelQueryPort,
 };
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 #[derive(Default)]
@@ -325,7 +328,73 @@ impl GeneratedMetadataPort for FakeExecutionContext {
     }
 }
 
+impl EventPublicationPort for FakeExecutionContext {
+    type Error = String;
+    type EventEnvelope = String;
+
+    fn publish_execution_envelope(
+        &self,
+        event_context: &ExecutionEventContext,
+        envelope: Self::EventEnvelope,
+    ) -> Result<(), Self::Error> {
+        if event_context.session_id.trim().is_empty() {
+            return Err("session required".to_string());
+        }
+        if envelope.trim().is_empty() {
+            return Err("envelope required".to_string());
+        }
+        Ok(())
+    }
+}
+
+impl ExecutionProgressPort for FakeExecutionContext {
+    type Error = String;
+
+    fn emit_progress_event(
+        &self,
+        event_context: &ExecutionEventContext,
+        event_type: &str,
+        _payload: Value,
+    ) -> Result<(), Self::Error> {
+        if event_context.session_id.trim().is_empty() || event_type.trim().is_empty() {
+            return Err("progress context required".to_string());
+        }
+        Ok(())
+    }
+}
+
+impl WorldModelQueryPort for FakeExecutionContext {
+    type Error = String;
+
+    fn current_artifact_for_task_run(
+        &self,
+        task_run_id: &str,
+        artifact_type_id: &str,
+    ) -> Result<Option<TaskRunArtifactAnchor>, Self::Error> {
+        Ok(Some(TaskRunArtifactAnchor {
+            target_domain_id: "execution".to_string(),
+            target_object_kind: artifact_type_id.to_string(),
+            target_object_id: task_run_id.to_string(),
+        }))
+    }
+}
+
+impl WorkflowProfileLoadPort for FakeExecutionContext {
+    type Error = String;
+    type WorkflowProfile = String;
+
+    fn load_workflow_profile(
+        &self,
+        workflow_id: &str,
+    ) -> Result<Self::WorkflowProfile, Self::Error> {
+        Ok(format!("profile:{workflow_id}"))
+    }
+}
+
 fn assert_execution_context<T: ExecutionContext>(_context: &T) {}
+fn assert_execution_runtime_context<T: ExecutionRuntimeContext>(_context: &T) {}
+fn assert_world_model_query_port<T: WorldModelQueryPort>(_context: &T) {}
+fn assert_workflow_profile_load_port<T: WorkflowProfileLoadPort>(_context: &T) {}
 
 #[test]
 fn blanket_execution_context_impl_accepts_port_bundle() {
@@ -335,4 +404,34 @@ fn blanket_execution_context_impl_accepts_port_bundle() {
     let binding =
         ProviderExecutionBinding::new("local", ProviderRuntimeOverrides::default()).unwrap();
     context.validate_provider_binding(&binding).unwrap();
+}
+
+#[test]
+fn runtime_and_query_port_contracts_compile_against_port_bundle() {
+    let context = FakeExecutionContext;
+    let event_context = ExecutionEventContext {
+        session_id: "session-1".to_string(),
+    };
+
+    assert_execution_runtime_context(&context);
+    assert_world_model_query_port(&context);
+    assert_workflow_profile_load_port(&context);
+    context
+        .publish_execution_envelope(&event_context, "envelope".to_string())
+        .unwrap();
+    context
+        .emit_progress_event(&event_context, "execution.progress", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(
+        context
+            .current_artifact_for_task_run("taskrun-1", "summary")
+            .unwrap()
+            .unwrap()
+            .target_object_kind,
+        "summary"
+    );
+    assert_eq!(
+        context.load_workflow_profile("workflow-docs").unwrap(),
+        "profile:workflow-docs"
+    );
 }

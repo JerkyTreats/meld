@@ -1,4 +1,4 @@
-//! Execution owned contracts extracted for workspace crate wiring.
+//! Execution boundary contracts shared by workflow, task, and workspace adapters.
 
 pub mod contracts;
 pub mod ports;

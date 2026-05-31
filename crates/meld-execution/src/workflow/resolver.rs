@@ -289,3 +289,247 @@ where
         )))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::execution::{ContextReadPort, ExecutionNodeContext, PromptArtifactReadPort};
+    use crate::workflow::profile::WorkflowTurn;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[derive(Default)]
+    struct FakeApi;
+
+    impl PromptArtifactReadPort for FakeApi {
+        type ArtifactKind = String;
+        type ArtifactRef = String;
+        type Error = ApiError;
+
+        fn read_prompt_artifact_bytes(&self, artifact_id: &str) -> Result<Vec<u8>, Self::Error> {
+            if artifact_id == "bad_utf8" {
+                return Ok(vec![0xff]);
+            }
+            Ok(format!("artifact prompt {artifact_id}").into_bytes())
+        }
+
+        fn write_prompt_artifact_utf8(
+            &self,
+            kind: Self::ArtifactKind,
+            value: &str,
+        ) -> Result<Self::ArtifactRef, Self::Error> {
+            Ok(format!("{kind}:{value}"))
+        }
+    }
+
+    impl ContextReadPort for FakeApi {
+        type AgentIdentity = String;
+        type ContextView = ();
+        type Error = ApiError;
+        type Frame = Vec<u8>;
+        type FrameId = u64;
+        type NodeContext = String;
+        type NodeId = NodeId;
+        type NodeRecord = ExecutionNodeRecord<NodeId>;
+
+        fn get_agent(&self, agent_id: &str) -> Result<Self::AgentIdentity, Self::Error> {
+            Ok(agent_id.to_string())
+        }
+
+        fn get_head(
+            &self,
+            _node_id: &Self::NodeId,
+            _frame_type: &str,
+        ) -> Result<Option<Self::FrameId>, Self::Error> {
+            Ok(None)
+        }
+
+        fn find_frame_head(
+            &self,
+            node_id: &Self::NodeId,
+            frame_type: &str,
+            _include_tombstoned: bool,
+        ) -> Result<Option<Self::FrameId>, Self::Error> {
+            self.get_head(node_id, frame_type)
+        }
+
+        fn get_node(
+            &self,
+            node_id: Self::NodeId,
+            _view: Self::ContextView,
+        ) -> Result<Self::NodeContext, Self::Error> {
+            Ok(format!("node-{}", hex::encode(node_id)))
+        }
+
+        fn context_by_type(
+            &self,
+            node_id: Self::NodeId,
+            frame_type: &str,
+            _max_frames: usize,
+        ) -> Result<Self::NodeContext, Self::Error> {
+            Ok(format!("node-{}:{frame_type}", hex::encode(node_id)))
+        }
+
+        fn read_frame(
+            &self,
+            _frame_id: &Self::FrameId,
+        ) -> Result<Option<Self::Frame>, Self::Error> {
+            Ok(None)
+        }
+
+        fn read_node_record(
+            &self,
+            node_id: &Self::NodeId,
+        ) -> Result<Option<Self::NodeRecord>, Self::Error> {
+            Ok(Some(ExecutionNodeRecord {
+                node_id: *node_id,
+                path: "README.md".to_string(),
+                node_kind: ExecutionNodeKind::File,
+                children: vec![],
+                tombstoned: false,
+            }))
+        }
+
+        fn read_node_record_by_path(
+            &self,
+            _path: &Path,
+            _include_tombstoned: bool,
+        ) -> Result<Option<Self::NodeRecord>, Self::Error> {
+            Ok(None)
+        }
+
+        fn list_node_records(
+            &self,
+            _include_tombstoned: bool,
+        ) -> Result<Vec<Self::NodeRecord>, Self::Error> {
+            Ok(vec![])
+        }
+
+        fn workspace_root(&self) -> Option<&Path> {
+            None
+        }
+
+        fn read_execution_frame(
+            &self,
+            frame_id: &Self::FrameId,
+        ) -> Result<Option<ExecutionFrame<Self::FrameId>>, Self::Error> {
+            Ok(Some(ExecutionFrame {
+                frame_id: *frame_id,
+                frame_type: "summary".to_string(),
+                agent_id: "agent".to_string(),
+                content: b"context".to_vec(),
+            }))
+        }
+
+        fn read_execution_node_record(
+            &self,
+            node_id: &Self::NodeId,
+        ) -> Result<Option<ExecutionNodeRecord<Self::NodeId>>, Self::Error> {
+            self.read_node_record(node_id)
+        }
+
+        fn context_frames_by_type(
+            &self,
+            node_id: Self::NodeId,
+            frame_type: &str,
+            _max_frames: usize,
+        ) -> Result<ExecutionNodeContext<Self::NodeId, Self::FrameId>, Self::Error> {
+            Ok(ExecutionNodeContext {
+                node_record: ExecutionNodeRecord {
+                    node_id,
+                    path: "README.md".to_string(),
+                    node_kind: ExecutionNodeKind::File,
+                    children: vec![],
+                    tombstoned: false,
+                },
+                frames: vec![ExecutionFrame {
+                    frame_id: 1,
+                    frame_type: frame_type.to_string(),
+                    agent_id: "agent".to_string(),
+                    content: b"frame context".to_vec(),
+                }],
+                frame_count: 1,
+            })
+        }
+    }
+
+    fn turn(input_refs: Vec<&str>) -> WorkflowTurn {
+        WorkflowTurn {
+            turn_id: "turn-1".to_string(),
+            seq: 1,
+            title: "First".to_string(),
+            prompt_ref: "prompt.md".to_string(),
+            input_refs: input_refs.into_iter().map(ToString::to_string).collect(),
+            output_type: "summary".to_string(),
+            gate_id: "gate-1".to_string(),
+            retry_limit: 1,
+            timeout_ms: 1000,
+        }
+    }
+
+    #[test]
+    fn resolves_prompt_templates_from_artifact_and_profile_relative_path() {
+        let api = FakeApi;
+        let from_artifact = resolve_prompt_template(&api, None, "artifact:prompt_1").unwrap();
+        let dir = tempdir().unwrap();
+        let profile_path = dir.path().join("workflow.yaml");
+        let prompt_path = dir.path().join("prompt.md");
+        fs::write(&prompt_path, "file prompt").unwrap();
+
+        let from_file = resolve_prompt_template(&api, Some(&profile_path), "prompt.md").unwrap();
+
+        assert_eq!(from_artifact, "artifact prompt prompt_1");
+        assert_eq!(from_file, "file prompt");
+    }
+
+    #[test]
+    fn reports_missing_prompt_template_and_invalid_artifact_prompt() {
+        let api = FakeApi;
+
+        let missing = resolve_prompt_template(&api, None, "missing.md").unwrap_err();
+        let invalid = resolve_prompt_template(&api, None, "artifact:bad_utf8").unwrap_err();
+
+        assert!(missing
+            .to_string()
+            .contains("Unable to resolve prompt path"));
+        assert!(invalid.to_string().contains("not valid utf8"));
+    }
+
+    #[test]
+    fn resolves_turn_inputs_from_target_context_and_prior_outputs_in_key_order() {
+        let api = FakeApi;
+        let prior_outputs = HashMap::from([
+            ("zeta".to_string(), "last".to_string()),
+            ("alpha".to_string(), "first".to_string()),
+        ]);
+
+        let resolved = resolve_turn_inputs(
+            &api,
+            [1; 32],
+            "summary",
+            &turn(vec!["zeta", "target_context", "alpha"]),
+            &prior_outputs,
+        )
+        .unwrap();
+
+        assert!(resolved.context_payload.starts_with("Input: alpha"));
+        assert!(resolved.context_payload.contains("Path: README.md"));
+        assert_eq!(resolved.values["zeta"], "last");
+    }
+
+    #[test]
+    fn reports_missing_prior_output_ref() {
+        let api = FakeApi;
+
+        let error = resolve_turn_inputs(
+            &api,
+            [1; 32],
+            "summary",
+            &turn(vec!["missing"]),
+            &HashMap::new(),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("missing required input_ref"));
+    }
+}

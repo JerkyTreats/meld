@@ -1,3 +1,5 @@
+//! Execution domain contracts for capability, task, workflow, and publishing paths.
+
 pub mod capability;
 pub mod error;
 pub mod execution;

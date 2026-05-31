@@ -439,6 +439,9 @@ fn ensure_unique_ids<'a>(label: &str, ids: impl Iterator<Item = &'a str>) -> Res
 mod tests {
     use super::*;
 
+    type ContractMutation = Box<dyn FnOnce(&mut CapabilityTypeContract)>;
+    type InstanceMutation = Box<dyn FnOnce(&mut BoundCapabilityInstance)>;
+
     fn contract() -> CapabilityTypeContract {
         CapabilityTypeContract {
             capability_type_id: "provider_execute_chat".to_string(),
@@ -497,38 +500,112 @@ mod tests {
     }
 
     #[test]
-    fn bound_instance_validation_rejects_unknown_binding() {
-        let contract = contract();
-        let instance = BoundCapabilityInstance {
-            capability_instance_id: "capinst_provider_execute_chat".to_string(),
-            capability_type_id: contract.capability_type_id.clone(),
-            capability_version: contract.capability_version,
-            scope_ref: "node_a".to_string(),
-            scope_kind: contract.scope_contract.scope_kind.clone(),
-            binding_values: vec![BoundBindingValue {
-                binding_id: "missing".to_string(),
-                value: Value::String("provider-a".to_string()),
-            }],
-            input_wiring: vec![BoundInputWiring {
-                slot_id: "provider_request".to_string(),
-                sources: vec![BoundInputWiringSource::TaskInitSlot {
-                    init_slot_id: "request".to_string(),
-                    artifact_type_id: "provider_execute_request".to_string(),
-                    schema_version: 1,
-                }],
-            }],
-        };
+    fn contract_validation_rejects_required_field_violations() {
+        let cases: Vec<(&str, ContractMutation, &str)> = vec![
+            (
+                "empty capability type id",
+                Box::new(|contract| contract.capability_type_id.clear()),
+                "capability_type_id must not be empty",
+            ),
+            (
+                "zero capability version",
+                Box::new(|contract| contract.capability_version = 0),
+                "version must be greater than zero",
+            ),
+            (
+                "empty scope kind",
+                Box::new(|contract| contract.scope_contract.scope_kind.clear()),
+                "scope_kind must not be empty",
+            ),
+            (
+                "empty scope ref kind",
+                Box::new(|contract| contract.scope_contract.scope_ref_kind.clear()),
+                "scope_ref_kind must not be empty",
+            ),
+            (
+                "duplicate bindings",
+                Box::new(|contract| {
+                    contract
+                        .binding_contract
+                        .push(contract.binding_contract[0].clone())
+                }),
+                "duplicate binding",
+            ),
+            (
+                "duplicate outputs",
+                Box::new(|contract| {
+                    contract
+                        .output_contract
+                        .push(contract.output_contract[0].clone())
+                }),
+                "duplicate output slot",
+            ),
+            (
+                "duplicate effects",
+                Box::new(|contract| {
+                    contract
+                        .effect_contract
+                        .push(contract.effect_contract[0].clone())
+                }),
+                "duplicate effect",
+            ),
+            (
+                "empty accepted artifact types",
+                Box::new(|contract| {
+                    contract.input_contract[0]
+                        .accepted_artifact_type_ids
+                        .clear()
+                }),
+                "must accept at least one artifact type",
+            ),
+            (
+                "zero input schema version",
+                Box::new(|contract| contract.input_contract[0].schema_versions.min = 0),
+                "schema versions must be greater than zero",
+            ),
+            (
+                "inverted input schema version range",
+                Box::new(|contract| {
+                    contract.input_contract[0].schema_versions.min = 2;
+                    contract.input_contract[0].schema_versions.max = 1;
+                }),
+                "invalid schema version range",
+            ),
+            (
+                "empty output artifact type",
+                Box::new(|contract| contract.output_contract[0].artifact_type_id.clear()),
+                "output artifact type id must not be empty",
+            ),
+            (
+                "zero output schema version",
+                Box::new(|contract| contract.output_contract[0].schema_version = 0),
+                "schema version must be greater than zero",
+            ),
+            (
+                "empty effect target",
+                Box::new(|contract| contract.effect_contract[0].target.clear()),
+                "effect target must not be empty",
+            ),
+        ];
 
-        let error = instance.validate_against(&contract).unwrap_err();
+        for (case_name, mutate, expected) in cases {
+            let mut contract = contract();
+            mutate(&mut contract);
 
-        assert!(matches!(error, ApiError::ConfigError(_)));
-        assert!(error.to_string().contains("unknown binding"));
+            let error = match contract.validate() {
+                Ok(()) => panic!("{case_name} should fail validation"),
+                Err(error) => error,
+            };
+
+            assert!(
+                error.to_string().contains(expected),
+                "{case_name} expected error containing '{expected}', got '{error}'"
+            );
+        }
     }
 
-    #[test]
-    fn bound_instance_validation_rejects_incompatible_artifact_type() {
-        let contract = contract();
-        let instance = BoundCapabilityInstance {
+    fn valid_instance(contract: &CapabilityTypeContract) -> BoundCapabilityInstance {
+        BoundCapabilityInstance {
             capability_instance_id: "capinst_provider_execute_chat".to_string(),
             capability_type_id: contract.capability_type_id.clone(),
             capability_version: contract.capability_version,
@@ -542,15 +619,116 @@ mod tests {
                 slot_id: "provider_request".to_string(),
                 sources: vec![BoundInputWiringSource::TaskInitSlot {
                     init_slot_id: "request".to_string(),
-                    artifact_type_id: "wrong_type".to_string(),
+                    artifact_type_id: "provider_execute_request".to_string(),
                     schema_version: 1,
                 }],
             }],
+        }
+    }
+
+    #[test]
+    fn bound_instance_validation_rejects_unknown_binding() {
+        let contract = contract();
+        let mut instance = valid_instance(&contract);
+        instance.binding_values[0].binding_id = "missing".to_string();
+
+        let error = instance.validate_against(&contract).unwrap_err();
+
+        assert!(matches!(error, ApiError::ConfigError(_)));
+        assert!(error.to_string().contains("unknown binding"));
+    }
+
+    #[test]
+    fn bound_instance_validation_rejects_incompatible_artifact_type() {
+        let contract = contract();
+        let mut instance = valid_instance(&contract);
+        let BoundInputWiringSource::TaskInitSlot {
+            artifact_type_id, ..
+        } = &mut instance.input_wiring[0].sources[0]
+        else {
+            unreachable!("fixture uses task init wiring");
         };
+        *artifact_type_id = "wrong_type".to_string();
 
         let error = instance.validate_against(&contract).unwrap_err();
 
         assert!(matches!(error, ApiError::ConfigError(_)));
         assert!(error.to_string().contains("rejects artifact type"));
+    }
+
+    #[test]
+    fn bound_instance_validation_rejects_binding_and_input_shape_violations() {
+        let cases: Vec<(&str, InstanceMutation, &str)> = vec![
+            (
+                "scope kind mismatch",
+                Box::new(|instance| instance.scope_kind = "workspace".to_string()),
+                "scope kind",
+            ),
+            (
+                "missing required binding",
+                Box::new(|instance| instance.binding_values.clear()),
+                "missing required binding",
+            ),
+            (
+                "duplicate bound binding",
+                Box::new(|instance| {
+                    instance
+                        .binding_values
+                        .push(instance.binding_values[0].clone())
+                }),
+                "duplicate bound binding",
+            ),
+            (
+                "missing required input",
+                Box::new(|instance| instance.input_wiring.clear()),
+                "missing required input slot",
+            ),
+            (
+                "empty source list",
+                Box::new(|instance| instance.input_wiring[0].sources.clear()),
+                "has no sources",
+            ),
+            (
+                "duplicate bound input",
+                Box::new(|instance| instance.input_wiring.push(instance.input_wiring[0].clone())),
+                "duplicate bound input slot",
+            ),
+            (
+                "schema version mismatch",
+                Box::new(|instance| {
+                    let BoundInputWiringSource::TaskInitSlot { schema_version, .. } =
+                        &mut instance.input_wiring[0].sources[0]
+                    else {
+                        unreachable!("fixture uses task init wiring");
+                    };
+                    *schema_version = 2;
+                }),
+                "rejects schema version",
+            ),
+            (
+                "one cardinality with multiple sources",
+                Box::new(|instance| {
+                    let source = instance.input_wiring[0].sources[0].clone();
+                    instance.input_wiring[0].sources.push(source);
+                }),
+                "accepts one source",
+            ),
+        ];
+
+        for (case_name, mutate, expected) in cases {
+            let contract = contract();
+            let mut instance = valid_instance(&contract);
+            mutate(&mut instance);
+
+            let error = match instance.validate_against(&contract) {
+                Ok(()) => panic!("{case_name} should fail validation"),
+                Err(error) => error,
+            };
+
+            assert!(
+                error.to_string().contains(expected),
+                "{case_name} expected error containing '{expected}', got '{error}'"
+            );
+        }
     }
 }

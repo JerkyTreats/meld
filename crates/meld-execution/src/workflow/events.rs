@@ -142,3 +142,96 @@ fn frame_ref(frame_id: &str) -> DomainObjectRef {
 fn plan_ref(plan_id: &str) -> DomainObjectRef {
     DomainObjectRef::new("execution", "plan", plan_id).expect("plan ref should be valid")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event_data() -> ExecutionWorkflowTurnEventData {
+        ExecutionWorkflowTurnEventData {
+            workflow_id: "workflow_docs".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            turn_seq: 1,
+            node_id: "node-root".to_string(),
+            path: "README.md".to_string(),
+            agent_id: "agent-docs".to_string(),
+            provider_name: "provider".to_string(),
+            frame_type: "summary".to_string(),
+            attempt: 1,
+            plan_id: Some("plan-1".to_string()),
+            level_index: Some(0),
+            final_frame_id: Some("frame-1".to_string()),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn workflow_turn_envelope_contains_expected_graph() {
+        let envelope = workflow_turn_completed_envelope("session-1", event_data());
+        let object_kinds = envelope
+            .objects
+            .iter()
+            .map(|object| object.object_kind.as_str())
+            .collect::<Vec<_>>();
+        let relation_types = envelope
+            .relations
+            .iter()
+            .map(|relation| relation.relation_type.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(envelope.event_type, "execution.workflow.turn_completed");
+        assert_eq!(
+            object_kinds,
+            vec![
+                "workflow",
+                "workflow_thread",
+                "workflow_turn",
+                "node",
+                "frame",
+                "plan"
+            ]
+        );
+        assert_eq!(
+            relation_types,
+            vec![
+                "belongs_to",
+                "belongs_to",
+                "targets",
+                "produced",
+                "belongs_to"
+            ]
+        );
+    }
+
+    #[test]
+    fn workflow_turn_envelope_omits_optional_objects_when_context_is_absent() {
+        let mut data = event_data();
+        data.node_id.clear();
+        data.plan_id = None;
+        data.final_frame_id = None;
+
+        let envelope = workflow_turn_started_envelope("session-1", data);
+        let object_kinds = envelope
+            .objects
+            .iter()
+            .map(|object| object.object_kind.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            object_kinds,
+            vec!["workflow", "workflow_thread", "workflow_turn"]
+        );
+        assert_eq!(envelope.relations.len(), 2);
+    }
+
+    #[test]
+    fn workflow_turn_failed_envelope_carries_error_payload() {
+        let mut data = event_data();
+        data.error = Some("provider failed".to_string());
+
+        let envelope = workflow_turn_failed_envelope("session-1", data);
+
+        assert_eq!(envelope.data["error"], "provider failed");
+    }
+}

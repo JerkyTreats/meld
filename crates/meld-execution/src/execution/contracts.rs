@@ -1,3 +1,5 @@
+//! Provider execution binding contracts.
+
 use crate::error::ApiError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,15 +17,22 @@ const RESERVED_PROVIDER_REQUEST_FIELD_KEYS: [&str; 9] = [
     "stop",
 ];
 
+/// Runtime request fields that may be supplied alongside a provider binding.
+///
+/// Core provider request fields stay owned by execution so call sites cannot
+/// bypass typed validation through extra JSON body fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProviderRuntimeOverrides {
+    /// Optional provider model replacement chosen at execution time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_override: Option<String>,
+    /// Provider specific JSON fields that are not part of the core request.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra_body_fields: BTreeMap<String, Value>,
 }
 
 impl ProviderRuntimeOverrides {
+    /// Builds validated runtime overrides.
     pub fn new(
         model_override: Option<String>,
         extra_body_fields: BTreeMap<String, Value>,
@@ -36,14 +45,17 @@ impl ProviderRuntimeOverrides {
         Ok(overrides)
     }
 
+    /// Returns true when the binding carries no runtime changes.
     pub fn is_empty(&self) -> bool {
         self.model_override.is_none() && self.extra_body_fields.is_empty()
     }
 
+    /// Returns the configured provider specific body keys in deterministic order.
     pub fn extra_body_field_keys(&self) -> Vec<&str> {
         self.extra_body_fields.keys().map(String::as_str).collect()
     }
 
+    /// Returns a deterministic hash of the serialized override payload.
     pub fn fingerprint(&self) -> Result<String, ApiError> {
         let encoded = serde_json::to_vec(self).map_err(|err| {
             ApiError::ConfigError(format!(
@@ -54,6 +66,7 @@ impl ProviderRuntimeOverrides {
         Ok(blake3::hash(&encoded).to_hex().to_string())
     }
 
+    /// Rejects provider fields that must remain typed execution inputs.
     pub fn validate(&self) -> Result<(), ApiError> {
         if let Some(key) = self
             .extra_body_fields
@@ -69,14 +82,18 @@ impl ProviderRuntimeOverrides {
     }
 }
 
+/// Validated provider binding selected for one execution request.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProviderExecutionBinding {
+    /// Stable provider name resolved by the workspace adapter.
     pub provider_name: String,
+    /// Optional provider specific runtime adjustments.
     #[serde(default)]
     pub runtime_overrides: ProviderRuntimeOverrides,
 }
 
 impl ProviderExecutionBinding {
+    /// Builds a provider binding after validating the provider name and overrides.
     pub fn new(
         provider_name: impl Into<String>,
         runtime_overrides: ProviderRuntimeOverrides,
@@ -94,6 +111,7 @@ impl ProviderExecutionBinding {
         })
     }
 
+    /// Returns a deterministic hash of the serialized binding.
     pub fn fingerprint(&self) -> Result<String, ApiError> {
         let encoded = serde_json::to_vec(self).map_err(|err| {
             ApiError::ConfigError(format!(

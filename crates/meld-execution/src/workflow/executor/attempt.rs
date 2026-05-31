@@ -418,6 +418,9 @@ where
                 )?;
                 return Err(gate_error);
             }
+            // The continuation policy keeps the generated frame after recording
+            // the gate failure event, so callers can inspect low quality output
+            // without marking the whole workflow failed.
         }
 
         let frame = (runtime.build_frame)(

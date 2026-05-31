@@ -138,3 +138,192 @@ impl<E, A: ?Sized> CapabilityExecutorRegistry<E, A> {
         invoker.runtime_init(instance)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capability::contracts::{
+        ArtifactSchemaVersionRange, BindingSpec, BindingValueKind, BoundBindingValue,
+        BoundInputWiring, BoundInputWiringSource, EffectKind, EffectSpec, ExecutionClass,
+        ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec, ScopeContract,
+    };
+    use serde_json::{json, Value};
+
+    #[derive(Debug, Clone)]
+    struct FakeInvoker {
+        contract: CapabilityTypeContract,
+    }
+
+    #[async_trait]
+    impl CapabilityInvoker for FakeInvoker {
+        type Error = String;
+        type ExecutionApi = ();
+
+        fn contract(&self) -> CapabilityTypeContract {
+            self.contract.clone()
+        }
+
+        async fn invoke(
+            &self,
+            _api: &Self::ExecutionApi,
+            _runtime_init: &CapabilityRuntimeInit,
+            _payload: &CapabilityInvocationPayload,
+            _event_context: Option<&ExecutionEventContext>,
+        ) -> Result<CapabilityInvocationResult, Self::Error> {
+            Ok(CapabilityInvocationResult::default())
+        }
+    }
+
+    fn contract() -> CapabilityTypeContract {
+        CapabilityTypeContract {
+            capability_type_id: "provider_execute_chat".to_string(),
+            capability_version: 1,
+            owning_domain: "provider".to_string(),
+            scope_contract: ScopeContract {
+                scope_kind: "node".to_string(),
+                scope_ref_kind: "node_id".to_string(),
+                allow_fan_out: false,
+            },
+            binding_contract: vec![BindingSpec {
+                binding_id: "provider".to_string(),
+                value_kind: BindingValueKind::ProviderRef,
+                required: true,
+                affects_deterministic_identity: true,
+            }],
+            input_contract: vec![InputSlotSpec {
+                slot_id: "provider_request".to_string(),
+                accepted_artifact_type_ids: vec!["provider_execute_request".to_string()],
+                schema_versions: ArtifactSchemaVersionRange { min: 1, max: 1 },
+                required: true,
+                cardinality: InputCardinality::One,
+            }],
+            output_contract: vec![OutputSlotSpec {
+                slot_id: "provider_result".to_string(),
+                artifact_type_id: "provider_execute_result".to_string(),
+                schema_version: 1,
+                guaranteed: true,
+            }],
+            effect_contract: vec![EffectSpec {
+                effect_id: "provider_transport".to_string(),
+                kind: EffectKind::Emit,
+                target: "provider_service".to_string(),
+                exclusive: false,
+            }],
+            execution_contract: ExecutionContract {
+                execution_class: ExecutionClass::Queued,
+                completion_semantics: "result_or_failure".to_string(),
+                retry_class: "provider_io".to_string(),
+                cancellation_supported: true,
+            },
+        }
+    }
+
+    fn instance() -> BoundCapabilityInstance {
+        BoundCapabilityInstance {
+            capability_instance_id: "capinst_provider_execute_chat".to_string(),
+            capability_type_id: "provider_execute_chat".to_string(),
+            capability_version: 1,
+            scope_ref: "node_a".to_string(),
+            scope_kind: "node".to_string(),
+            binding_values: vec![BoundBindingValue {
+                binding_id: "provider".to_string(),
+                value: json!("local"),
+            }],
+            input_wiring: vec![BoundInputWiring {
+                slot_id: "provider_request".to_string(),
+                sources: vec![BoundInputWiringSource::TaskInitSlot {
+                    init_slot_id: "request".to_string(),
+                    artifact_type_id: "provider_execute_request".to_string(),
+                    schema_version: 1,
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn registry_registers_invoker_and_publishes_catalog_contract() {
+        let mut catalog = CapabilityCatalog::new();
+        let mut registry = CapabilityExecutorRegistry::<String, ()>::new();
+
+        registry
+            .register(
+                &mut catalog,
+                FakeInvoker {
+                    contract: contract(),
+                },
+            )
+            .unwrap();
+
+        assert!(registry.get("provider_execute_chat", 1).is_some());
+        assert!(catalog.get("provider_execute_chat", 1).is_some());
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_invoker_identity() {
+        let mut catalog = CapabilityCatalog::new();
+        let mut registry = CapabilityExecutorRegistry::<String, ()>::new();
+        registry
+            .register(
+                &mut catalog,
+                FakeInvoker {
+                    contract: contract(),
+                },
+            )
+            .unwrap();
+
+        let error = registry
+            .register(
+                &mut catalog,
+                FakeInvoker {
+                    contract: contract(),
+                },
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("already contains"));
+    }
+
+    #[test]
+    fn registry_reports_missing_invoker_for_runtime_init() {
+        let registry = CapabilityExecutorRegistry::<String, ()>::new();
+
+        let error = registry.runtime_init_for(&instance()).unwrap_err();
+
+        assert!(error.to_string().contains("is missing"));
+    }
+
+    #[test]
+    fn runtime_init_for_preserves_bound_instance_fields() {
+        let mut catalog = CapabilityCatalog::new();
+        let mut registry = CapabilityExecutorRegistry::<String, ()>::new();
+        registry
+            .register(
+                &mut catalog,
+                FakeInvoker {
+                    contract: contract(),
+                },
+            )
+            .unwrap();
+
+        let runtime_init = registry.runtime_init_for(&instance()).unwrap();
+
+        assert_eq!(
+            runtime_init.capability_instance_id,
+            "capinst_provider_execute_chat"
+        );
+        assert_eq!(runtime_init.scope_ref, "node_a");
+        assert_eq!(
+            runtime_init.binding_values,
+            vec![BoundBindingValue {
+                binding_id: "provider".to_string(),
+                value: Value::String("local".to_string()),
+            }]
+        );
+        assert_eq!(runtime_init.input_contract[0].slot_id, "provider_request");
+        assert_eq!(runtime_init.output_contract[0].slot_id, "provider_result");
+        assert_eq!(
+            runtime_init.effect_contract[0].effect_id,
+            "provider_transport"
+        );
+    }
+}

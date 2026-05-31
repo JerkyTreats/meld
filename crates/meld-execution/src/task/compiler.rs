@@ -330,6 +330,52 @@ mod tests {
         catalog
     }
 
+    fn target_selector_slot() -> TaskInitSlotSpec {
+        TaskInitSlotSpec {
+            init_slot_id: "target_selector".to_string(),
+            artifact_type_id: "target_selector".to_string(),
+            schema_version: 1,
+            required: true,
+        }
+    }
+
+    fn resolve_instance() -> BoundCapabilityInstance {
+        BoundCapabilityInstance {
+            capability_instance_id: "capinst_resolve".to_string(),
+            capability_type_id: "workspace_resolve_node_id".to_string(),
+            capability_version: 1,
+            scope_ref: "workspace".to_string(),
+            scope_kind: "workspace".to_string(),
+            binding_values: vec![],
+            input_wiring: vec![BoundInputWiring {
+                slot_id: "target_selector".to_string(),
+                sources: vec![BoundInputWiringSource::TaskInitSlot {
+                    init_slot_id: "target_selector".to_string(),
+                    artifact_type_id: "target_selector".to_string(),
+                    schema_version: 1,
+                }],
+            }],
+        }
+    }
+
+    fn simple_definition() -> TaskDefinition {
+        TaskDefinition {
+            task_id: "task_docs_writer".to_string(),
+            task_version: 1,
+            init_slots: vec![target_selector_slot()],
+            capability_instances: vec![resolve_instance()],
+        }
+    }
+
+    fn assert_compile_error(definition: TaskDefinition, expected: &str) {
+        let error = compile_task_definition(&definition, &catalog()).unwrap_err();
+
+        assert!(
+            error.to_string().contains(expected),
+            "expected error containing '{expected}', got '{error}'"
+        );
+    }
+
     #[test]
     fn compiler_derives_artifact_edges_from_input_wiring() {
         let compiled = compile_task_definition(
@@ -433,6 +479,69 @@ mod tests {
     }
 
     #[test]
+    fn compiler_rejects_task_definition_identity_violations() {
+        let mut empty_task_id = simple_definition();
+        empty_task_id.task_id.clear();
+        assert_compile_error(empty_task_id, "task_id must not be empty");
+
+        let mut zero_version = simple_definition();
+        zero_version.task_version = 0;
+        assert_compile_error(zero_version, "version must be greater than zero");
+
+        let mut duplicate_init = simple_definition();
+        duplicate_init.init_slots.push(target_selector_slot());
+        assert_compile_error(duplicate_init, "duplicate init slot");
+
+        let mut duplicate_instance = simple_definition();
+        duplicate_instance
+            .capability_instances
+            .push(resolve_instance());
+        assert_compile_error(duplicate_instance, "duplicate capability instance");
+    }
+
+    #[test]
+    fn compiler_rejects_unknown_or_mismatched_wiring() {
+        let mut unknown_contract = simple_definition();
+        unknown_contract.capability_instances[0].capability_type_id = "missing".to_string();
+        assert_compile_error(unknown_contract, "references unknown capability");
+
+        let mut unknown_producer = simple_definition();
+        unknown_producer
+            .capability_instances
+            .push(BoundCapabilityInstance {
+                capability_instance_id: "capinst_traversal".to_string(),
+                capability_type_id: "merkle_traversal".to_string(),
+                capability_version: 1,
+                scope_ref: "node_a".to_string(),
+                scope_kind: "node".to_string(),
+                binding_values: vec![BoundBindingValue {
+                    binding_id: "strategy".to_string(),
+                    value: json!("bottom_up"),
+                }],
+                input_wiring: vec![BoundInputWiring {
+                    slot_id: "resolved_node_ref".to_string(),
+                    sources: vec![BoundInputWiringSource::UpstreamOutput {
+                        capability_instance_id: "missing_capability".to_string(),
+                        output_slot_id: "resolved_node_ref".to_string(),
+                        artifact_type_id: "resolved_node_ref".to_string(),
+                        schema_version: 1,
+                    }],
+                }],
+            });
+        assert_compile_error(unknown_producer, "unknown producer capability");
+
+        let mut mismatched_init = simple_definition();
+        let BoundInputWiringSource::TaskInitSlot {
+            artifact_type_id, ..
+        } = &mut mismatched_init.capability_instances[0].input_wiring[0].sources[0]
+        else {
+            unreachable!("fixture uses task init wiring");
+        };
+        *artifact_type_id = "wrong_type".to_string();
+        assert_compile_error(mismatched_init, "rejects artifact type");
+    }
+
+    #[test]
     fn compiler_derives_effect_edges_for_exclusive_effects() {
         let compiled = compile_task_definition(
             &TaskDefinition {
@@ -504,5 +613,105 @@ mod tests {
             compiled.dependency_edges[0].to_capability_instance_id,
             "capinst_finalize_b"
         );
+    }
+
+    #[test]
+    fn compiler_orders_three_exclusive_effects_within_scope() {
+        let mut definition = TaskDefinition {
+            task_id: "task_docs_writer".to_string(),
+            task_version: 1,
+            init_slots: Vec::new(),
+            capability_instances: Vec::new(),
+        };
+        for suffix in ["c", "a", "b"] {
+            definition.init_slots.push(TaskInitSlotSpec {
+                init_slot_id: format!("provider_result_{suffix}"),
+                artifact_type_id: "provider_execute_result".to_string(),
+                schema_version: 1,
+                required: true,
+            });
+            definition
+                .capability_instances
+                .push(BoundCapabilityInstance {
+                    capability_instance_id: format!("capinst_finalize_{suffix}"),
+                    capability_type_id: "context_generate_finalize".to_string(),
+                    capability_version: 1,
+                    scope_ref: "node_a".to_string(),
+                    scope_kind: "node".to_string(),
+                    binding_values: vec![],
+                    input_wiring: vec![BoundInputWiring {
+                        slot_id: "provider_result".to_string(),
+                        sources: vec![BoundInputWiringSource::TaskInitSlot {
+                            init_slot_id: format!("provider_result_{suffix}"),
+                            artifact_type_id: "provider_execute_result".to_string(),
+                            schema_version: 1,
+                        }],
+                    }],
+                });
+        }
+
+        let compiled = compile_task_definition(&definition, &catalog()).unwrap();
+        let effect_edges = compiled
+            .dependency_edges
+            .iter()
+            .filter(|edge| edge.kind == TaskDependencyKind::Effect)
+            .map(|edge| {
+                (
+                    edge.from_capability_instance_id.as_str(),
+                    edge.to_capability_instance_id.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            effect_edges,
+            vec![
+                ("capinst_finalize_a", "capinst_finalize_b"),
+                ("capinst_finalize_b", "capinst_finalize_c"),
+            ]
+        );
+    }
+
+    #[test]
+    fn compiler_keeps_exclusive_effect_ordering_per_scope() {
+        let mut definition = TaskDefinition {
+            task_id: "task_docs_writer".to_string(),
+            task_version: 1,
+            init_slots: Vec::new(),
+            capability_instances: Vec::new(),
+        };
+        for (suffix, scope_ref) in [("a", "node_a"), ("b", "node_b")] {
+            definition.init_slots.push(TaskInitSlotSpec {
+                init_slot_id: format!("provider_result_{suffix}"),
+                artifact_type_id: "provider_execute_result".to_string(),
+                schema_version: 1,
+                required: true,
+            });
+            definition
+                .capability_instances
+                .push(BoundCapabilityInstance {
+                    capability_instance_id: format!("capinst_finalize_{suffix}"),
+                    capability_type_id: "context_generate_finalize".to_string(),
+                    capability_version: 1,
+                    scope_ref: scope_ref.to_string(),
+                    scope_kind: "node".to_string(),
+                    binding_values: vec![],
+                    input_wiring: vec![BoundInputWiring {
+                        slot_id: "provider_result".to_string(),
+                        sources: vec![BoundInputWiringSource::TaskInitSlot {
+                            init_slot_id: format!("provider_result_{suffix}"),
+                            artifact_type_id: "provider_execute_result".to_string(),
+                            schema_version: 1,
+                        }],
+                    }],
+                });
+        }
+
+        let compiled = compile_task_definition(&definition, &catalog()).unwrap();
+
+        assert!(compiled
+            .dependency_edges
+            .iter()
+            .all(|edge| edge.kind != TaskDependencyKind::Effect));
     }
 }

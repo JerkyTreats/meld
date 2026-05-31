@@ -255,6 +255,8 @@ fn invalid_profile(workflow_id: &str, reason: &str) -> ApiError {
 mod tests {
     use super::*;
 
+    type ProfileMutation = Box<dyn FnOnce(&mut WorkflowProfile)>;
+
     fn valid_profile() -> WorkflowProfile {
         WorkflowProfile {
             workflow_id: "docs_writer_thread_v1".to_string(),
@@ -316,6 +318,132 @@ mod tests {
 
         let err = profile.validate().unwrap_err();
         assert!(matches!(err, ApiError::ConfigError(_)));
+    }
+
+    #[test]
+    fn validate_rejects_profile_level_required_fields() {
+        let cases: Vec<(&str, ProfileMutation, &str)> = vec![
+            (
+                "empty workflow id",
+                Box::new(|profile| profile.workflow_id.clear()),
+                "workflow_id must not be empty",
+            ),
+            (
+                "zero version",
+                Box::new(|profile| profile.version = 0),
+                "version must be greater than zero",
+            ),
+            (
+                "empty title",
+                Box::new(|profile| profile.title.clear()),
+                "title must not be empty",
+            ),
+            (
+                "empty description",
+                Box::new(|profile| profile.description.clear()),
+                "description must not be empty",
+            ),
+            (
+                "zero thread retry limit",
+                Box::new(|profile| profile.thread_policy.max_turn_retries = 0),
+                "max_turn_retries must be greater than zero",
+            ),
+            (
+                "zero max output bytes",
+                Box::new(|profile| profile.artifact_policy.max_output_bytes = 0),
+                "max_output_bytes must be greater than zero",
+            ),
+        ];
+
+        for (case_name, mutate, expected) in cases {
+            let mut profile = valid_profile();
+            mutate(&mut profile);
+
+            let error = match profile.validate() {
+                Ok(()) => panic!("{case_name} should fail validation"),
+                Err(error) => error,
+            };
+
+            assert!(
+                error.to_string().contains(expected),
+                "{case_name} expected error containing '{expected}', got '{error}'"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_gate_and_turn_contract_violations() {
+        let cases: Vec<(&str, ProfileMutation, &str)> = vec![
+            (
+                "duplicate gate id",
+                Box::new(|profile| profile.gates.push(profile.gates[0].clone())),
+                "duplicate gate_id",
+            ),
+            (
+                "empty gate id",
+                Box::new(|profile| profile.gates[0].gate_id.clear()),
+                "gate_id must not be empty",
+            ),
+            (
+                "duplicate turn id",
+                Box::new(|profile| {
+                    let mut turn = profile.turns[0].clone();
+                    turn.seq = 2;
+                    profile.turns.push(turn);
+                }),
+                "duplicate turn_id",
+            ),
+            (
+                "empty turn id",
+                Box::new(|profile| profile.turns[0].turn_id.clear()),
+                "turn_id must not be empty",
+            ),
+            (
+                "unknown gate reference",
+                Box::new(|profile| profile.turns[0].gate_id = "missing".to_string()),
+                "references unknown gate_id",
+            ),
+            (
+                "zero turn retry limit",
+                Box::new(|profile| profile.turns[0].retry_limit = 0),
+                "retry_limit must be greater than zero",
+            ),
+            (
+                "zero timeout",
+                Box::new(|profile| profile.turns[0].timeout_ms = 0),
+                "timeout_ms must be greater than zero",
+            ),
+        ];
+
+        for (case_name, mutate, expected) in cases {
+            let mut profile = valid_profile();
+            mutate(&mut profile);
+
+            let error = match profile.validate() {
+                Ok(()) => panic!("{case_name} should fail validation"),
+                Err(error) => error,
+            };
+
+            assert!(
+                error.to_string().contains(expected),
+                "{case_name} expected error containing '{expected}', got '{error}'"
+            );
+        }
+    }
+
+    #[test]
+    fn ordered_turns_sorts_by_sequence_without_mutating_profile() {
+        let mut profile = valid_profile();
+        let mut second = profile.turns[0].clone();
+        second.turn_id = "turn-2".to_string();
+        second.seq = 2;
+        profile.turns[0].seq = 3;
+        profile.turns.push(second);
+
+        let ordered = profile.ordered_turns();
+
+        assert_eq!(ordered[0].turn_id, "turn-2");
+        assert_eq!(profile.turns[0].turn_id, "turn-1");
     }
 
     #[test]
