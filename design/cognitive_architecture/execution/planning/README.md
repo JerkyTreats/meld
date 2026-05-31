@@ -11,7 +11,7 @@ It reads the goal set (curated by world model agents) and the `WorldState` (proj
 
 The foundational pattern is graphs-lower-graphs: capabilities compose into tasks, tasks compose into the task network. The planning loop continuously decomposes goals via HTN methods and issues graph mutations to the task network when the plan should change.
 
-The shared typed language [`meld-lang`](../../meld-lang/README.md) provides the substrate for all planning operations. Goals are `Proposition` targets evaluated against `WorldState`. Methods match goals through pattern unification and produce `Composition` graphs. Operators resolve to capabilities through the catalog. The planning loop is mechanical — it never interprets semantic intent.
+The shared typed language [`meld-lang`](../../meld-lang/README.md) provides the substrate for all planning operations. Goals are `Proposition` targets evaluated against `WorldState`. Methods match goals through pattern unification and produce raw `Composition` graphs. Execution wraps a concrete `Composition` as an execution composition when planning context, validation reports, projected effects, and operator resolution reports are attached. Operators resolve to capabilities through the catalog. The planning loop is mechanical — it never interprets semantic intent.
 
 ## Documents
 

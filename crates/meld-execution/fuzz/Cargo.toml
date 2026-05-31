@@ -1,0 +1,49 @@
+[package]
+name = "meld-execution-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dependencies.meld-execution]
+path = ".."
+
+[dependencies.meld-lang]
+path = "../../meld-lang"
+
+[[bin]]
+name = "fuzz_planning_contracts"
+path = "fuzz_targets/fuzz_planning_contracts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_method_library"
+path = "fuzz_targets/fuzz_method_library.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_planning_composition"
+path = "fuzz_targets/fuzz_planning_composition.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_planning_runtime"
+path = "fuzz_targets/fuzz_planning_runtime.rs"
+test = false
+doc = false
+bench = false
