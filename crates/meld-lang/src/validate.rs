@@ -1,3 +1,9 @@
+//! Structural composition validation.
+//!
+//! Owner: planning language.
+//! Inputs: composition graphs after planning and substitution.
+//! Outputs: errors that block execution and warnings that guide plan quality.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};

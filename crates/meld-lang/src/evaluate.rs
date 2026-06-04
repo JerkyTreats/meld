@@ -1,3 +1,9 @@
+//! Three-valued proposition evaluation.
+//!
+//! Owner: planning language.
+//! Inputs: ground world state and proposition queries.
+//! Outputs: satisfied, unsatisfied, or indeterminate evaluation results.
+
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};

@@ -1,3 +1,11 @@
+//! Atomic language terms and literal values.
+//!
+//! Owner: planning language.
+//! Inputs: domain object references, language identifiers, literals, pattern
+//! variables, and runtime-derived placeholders.
+//! Outputs: serializable terms shared by propositions, effects, and
+//! compositions.
+
 use std::time::Duration;
 
 use meld_events::DomainObjectRef;

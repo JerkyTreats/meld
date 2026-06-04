@@ -1,3 +1,11 @@
+//! Typed proposition language.
+//!
+//! Owner: planning language.
+//! Inputs: subjects, dimensions, conditions, scopes, artifact types, and
+//! relations expressed as terms.
+//! Outputs: proposition trees used by goals, world state, validation, and
+//! unification.
+
 use serde::{Deserialize, Serialize};
 
 use crate::{condition::Condition, term::Term};

@@ -1,3 +1,9 @@
+//! Variable substitution over compositions.
+//!
+//! Owner: planning language.
+//! Inputs: composition templates and unification bindings.
+//! Outputs: instantiated compositions or unbound-variable diagnostics.
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
