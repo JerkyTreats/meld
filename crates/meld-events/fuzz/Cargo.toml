@@ -1,0 +1,39 @@
+[package]
+name = "meld-events-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1.0"
+sled = "0.34"
+
+[dependencies.meld-events]
+path = ".."
+
+[[bin]]
+name = "fuzz_event_contracts"
+path = "fuzz_targets/fuzz_event_contracts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_event_store_replay"
+path = "fuzz_targets/fuzz_event_store_replay.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_event_ingestor"
+path = "fuzz_targets/fuzz_event_ingestor.rs"
+test = false
+doc = false
+bench = false

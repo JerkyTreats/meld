@@ -1,3 +1,12 @@
+//! Event-domain error contracts.
+//!
+//! Owner: event runtime and store.
+//! Inputs: persistence, validation, and bus emission failures.
+//! Outputs: storage errors for low-level callers and API errors for runtime
+//! facades.
+//! Does not own: this module does not classify task, workflow, provider, or
+//! world model failures.
+
 use thiserror::Error;
 
 /// Storage-layer failures raised by event persistence and validation.

@@ -1,14 +1,54 @@
 //! Canonical event domain contracts and compatibility surface.
+//!
+//! This domain owns unsequenced envelopes, persisted event records, graph
+//! materialization references, in-process ingestion, synchronous runtime
+//! emission, and append-only event storage.
+//!
+//! Inputs are producer envelopes from telemetry, execution, workflow, world
+//! model, and compatibility callers. Outputs are sequenced event records,
+//! session-scoped reads, runtime-wide cursor reads, and object references for
+//! downstream graph materializers.
+//!
+//! This domain does not own event payload semantics, external telemetry sink
+//! routing, task execution, workflow orchestration, or graph materialization.
+//! Producers own payload meaning and consumers adapt through explicit records.
+//!
+//! # Example
+//!
+//! ```rust
+//! use meld_events::{EventEnvelope, EventRecord};
+//! use serde_json::json;
+//!
+//! let envelope = EventEnvelope::new_domain(
+//!     "2026-04-26T16:00:00Z".to_string(),
+//!     "session-a",
+//!     "execution",
+//!     "workflow-a",
+//!     "execution.artifact.available",
+//!     Some("sha256:abc".to_string()),
+//!     json!({ "artifact": "artifact-a" }),
+//! );
+//! let record = EventRecord::from_envelope(envelope, 7);
+//!
+//! assert_eq!(record.stream_id, "workflow-a");
+//! assert_eq!(record.content_hash.as_deref(), Some("sha256:abc"));
+//! ```
 
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Compatibility aliases for pre-extraction event callers.
 pub mod compat;
+/// Domain object and relation records carried by event envelopes.
 pub mod contracts;
+/// Non-blocking event bus and queue drainers.
 pub mod ingress;
+/// Synchronous event emission facade.
 pub mod runtime;
+/// Append-only sled-backed event store.
 pub mod store;
+/// Subscription compatibility surface for event bus callers.
 pub mod subscription;
 
 pub use contracts::{DomainObjectRef, EventRelation};
