@@ -1,6 +1,6 @@
 # Cognitive Architecture Implementation Plan
 
-Date: 2026-05-31
+Date: 2026-06-02
 Status: active
 Scope: declarative implementation readiness and dependency order for the cognitive architecture
 
@@ -61,7 +61,7 @@ It lands the minimal runtime surface: durable seed record, subscription cursor, 
 Owner: `meld-world-model`
 Blocked by: Phase 4
 
-### Phase 6: Execution Planning Runtime — `in progress` ← current
+### Phase 6: Execution Planning Runtime — `first slice implemented`
 
 Method library loading. Goal evaluation against `WorldState`, method matching via `unify`, composition preparation via `substitute` and `validate`. Bridges from typed planning substrate to runtime orchestration. Task network execution is deferred. First slice stops at an execution composition artifact.
 
@@ -70,12 +70,13 @@ Progress landed in `meld-execution`: execution goal contracts, in memory goal st
 Owner: `meld-execution`
 Depends on: Phase 5
 
-### Phase 7: Task Dispatch and Outcome — `not started`
+### Phase 7: Task Dispatch and Outcome — `first slice implemented`
 
-Bridge execution composition to task network mutations and the existing task and capability engine. Dispatch one task. Publish outcome events to the spine. World model reducer consumes them. The flywheel turns once.
+Bridge execution composition to task network commands and the existing task and capability engine. Dispatch one task. Publish outcome events to the spine. World model reducer consumes them. The flywheel turns once.
 
 Owner: `meld-execution`
-Blocked by: Phase 6
+Depends on: Phase 6 first slice
+Plan: [execution/task_network/PLAN.md](execution/task_network/PLAN.md)
 
 ### Phase 8: Sensory — `not started`
 
@@ -101,10 +102,10 @@ These components predate the vertical slice and support all phases.
 4. `world_model/belief` — complete, Phase 3
 5. `world_model/planner` — complete, Phase 4
 6. `world_model/agent` — complete, Phase 5
-7. `execution/goals` — runtime storage in progress, Phase 6
+7. `execution/goals` — first slice implemented, Phase 6
 8. `integration/typed_loop` — complete
-9. `execution/planning` — runtime implementation in progress, Phase 6
-10. `execution/dispatch` — not started, Phase 7
+9. `execution/planning` — first slice implemented, Phase 6
+10. `execution/task_network` — first slice implemented, Phase 7
 11. `sensory` — not started, Phase 8
 12. `world_model/causation` — deferred past vertical slice
 13. `world_model/regime` — deferred past vertical slice
@@ -119,7 +120,8 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [world_model/belief/PLAN.md](world_model/belief/PLAN.md) — complete
 - [world_model/planner/PLAN.md](world_model/planner/PLAN.md) — complete
 - [world_model/agent/PLAN.md](world_model/agent/PLAN.md) — complete
-- [execution/planning/PLAN.md](execution/planning/PLAN.md) — in progress
+- [execution/planning/PLAN.md](execution/planning/PLAN.md) — first slice implemented
+- [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — ready to implement
 
 ## Assessment Inventory
 
@@ -140,14 +142,14 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 
 ## Scope Cuts
 
-The vertical slice excludes full causal effect summaries, regime sensitivity summaries, broad risk envelopes, multi-agent divergence, learned normative policy, multi-agent coordination, goal conflict resolution, broad utility estimation, task network graph execution, graph mutation acceptance, plan diffing, and switching cost model.
+The vertical slice excludes full causal effect summaries, regime sensitivity summaries, broad risk envelopes, multi-agent divergence, learned normative policy, multi-agent coordination, goal conflict resolution, broad utility estimation, multi-step task network execution, recursive sub-goal lowering, plan diffing, and switching cost model.
 
 Each phase implements the minimum needed for one `docs_freshness` flywheel turn. Deepening happens after the loop turns once end-to-end.
 
 ## Blocked Areas
 
-- task network graph executor
-- graph mutation acceptance
+- multi-step task network execution
+- recursive sub-goal lowering
 - plan diffing
 - switching cost model
 - workflow integration strategy

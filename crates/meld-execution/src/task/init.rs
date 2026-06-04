@@ -15,7 +15,7 @@ pub struct InitArtifactValue {
     pub artifact_type_id: String,
     /// Schema version for the serialized contract or artifact shape.
     pub schema_version: u32,
-    /// Structured artifact content owned by the producing capability.
+    /// Structured artifact content supplied for this init slot.
     pub content: Value,
 }
 
@@ -26,7 +26,7 @@ pub struct TaskRunContext {
     pub task_run_id: String,
     /// Session identifier carried across the execution boundary.
     pub session_id: Option<String>,
-    /// Trigger owned by this execution contract.
+    /// Trigger name or source that created this task run.
     pub trigger: String,
 }
 
@@ -35,11 +35,11 @@ pub struct TaskRunContext {
 pub struct TaskInitializationPayload {
     /// Authored or compiled task identifier within the execution domain.
     pub task_id: String,
-    /// Compiled task reference owned by this execution contract.
+    /// Reference to the compiled task artifact or registry entry.
     pub compiled_task_ref: String,
-    /// Init artifacts owned by this execution contract.
+    /// External artifacts supplied for task init slots.
     pub init_artifacts: Vec<InitArtifactValue>,
-    /// Task run context owned by this execution contract.
+    /// Runtime context assigned to this task run.
     pub task_run_context: TaskRunContext,
 }
 
@@ -156,5 +156,34 @@ mod tests {
 
         assert!(matches!(error, ApiError::ConfigError(_)));
         assert!(error.to_string().contains("missing required init slot"));
+    }
+
+    #[test]
+    fn validate_init_payload_rejects_artifact_type_or_schema_mismatch() {
+        let compiled_task = compiled_task();
+        let cases = [("other_selector", 1_u32), ("target_selector", 2_u32)];
+
+        for (artifact_type_id, schema_version) in cases {
+            let payload = TaskInitializationPayload {
+                task_id: compiled_task.task_id.clone(),
+                compiled_task_ref: "compiled_task_docs_writer_v1".to_string(),
+                init_artifacts: vec![InitArtifactValue {
+                    init_slot_id: "target_selector".to_string(),
+                    artifact_type_id: artifact_type_id.to_string(),
+                    schema_version,
+                    content: json!({ "path": "docs" }),
+                }],
+                task_run_context: TaskRunContext {
+                    task_run_id: "taskrun_1".to_string(),
+                    session_id: Some("session_1".to_string()),
+                    trigger: "workflow.execute".to_string(),
+                },
+            };
+
+            let error = validate_task_initialization(&compiled_task, &payload).unwrap_err();
+
+            assert!(matches!(error, ApiError::ConfigError(_)));
+            assert!(error.to_string().contains("compiled task contract"));
+        }
     }
 }

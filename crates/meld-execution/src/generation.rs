@@ -25,11 +25,11 @@ pub enum MessageRole {
 pub struct ChatMessage {
     /// Chat role assigned to this provider message.
     pub role: MessageRole,
-    /// Structured artifact content owned by the producing capability.
+    /// Provider message content.
     pub content: String,
 }
 
-/// Provider completion options owned by generation execution.
+/// Provider completion options configured by generation execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionOptions {
     /// Optional provider sampling temperature override.
@@ -77,11 +77,11 @@ pub struct TokenUsage {
 /// Provider completion response returned to execution orchestration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionResponse {
-    /// Structured artifact content owned by the producing capability.
+    /// Provider completion content returned to orchestration.
     pub content: String,
     /// Provider model name used for completion.
     pub model: String,
-    /// Usage owned by this execution contract.
+    /// Token usage reported by the provider.
     pub usage: TokenUsage,
     /// Provider finish reason when one was reported.
     pub finish_reason: Option<String>,
@@ -175,9 +175,9 @@ pub struct PromptLinkContractView {
 /// Prompt lineage output prepared before generated frame metadata is built.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreparedPromptLineage {
-    /// Prompt link contract owned by this execution contract.
+    /// Prompt link view persisted for generated frame metadata.
     pub prompt_link_contract: PromptLinkContractView,
-    /// Metadata input owned by this execution contract.
+    /// Generated frame metadata input derived from prompt lineage.
     pub metadata_input: GeneratedFrameMetadataInput,
 }
 

@@ -19,39 +19,39 @@ pub(super) struct DirectExecutionContext<'a, A, E>
 where
     A: WorkflowExecutorContext<E>,
 {
-    /// API owned by this execution contract.
+    /// Execution API used by direct workflow turns.
     pub api: &'a A,
-    /// Registered profile owned by this execution contract.
+    /// Registered profile being executed.
     pub registered_profile: &'a RegisteredWorkflowProfile,
-    /// Request owned by this execution contract.
+    /// Caller request for the workflow target.
     pub request: &'a WorkflowExecutionRequest,
-    /// Runtime owned by this execution contract.
+    /// Runtime services shared across workflow execution.
     pub runtime: &'a WorkflowExecutorRuntime<'a, A, E>,
-    /// Event context owned by this execution contract.
+    /// Optional event context used for publishing progress.
     pub event_context: Option<&'a ExecutionEventContext>,
     /// Workflow thread identifier within workflow runtime state.
     pub thread_id: &'a str,
-    /// Target path owned by this execution contract.
+    /// Workspace target path used in progress events.
     pub target_path: &'a str,
     /// System prompt text supplied to provider execution.
     pub system_prompt: String,
-    /// Final turn sequence owned by this execution contract.
+    /// Sequence number of the final workflow turn.
     pub final_turn_seq: u32,
 }
 
 pub(super) struct DirectExecutionState {
-    /// Start sequence owned by this execution contract.
+    /// First turn sequence to execute.
     pub start_seq: u32,
-    /// Turn outputs owned by this execution contract.
+    /// Completed turn outputs keyed by output type and turn id.
     pub turn_outputs: HashMap<String, String>,
-    /// Completed turns owned by this execution contract.
+    /// Number of turns completed before this direct execution pass.
     pub completed_turns: usize,
     /// Final frame identifier produced by the workflow thread when available.
     pub final_frame_id: Option<NodeId>,
 }
 
 pub(super) struct DirectExecutionResult {
-    /// Completed turns owned by this execution contract.
+    /// Number of turns completed after direct execution.
     pub completed_turns: usize,
     /// Final frame identifier produced by the workflow thread when available.
     pub final_frame_id: Option<NodeId>,

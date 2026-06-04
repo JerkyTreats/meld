@@ -11,6 +11,43 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 #[derive(Debug, Clone, Default)]
 pub struct TaskCompiler;
 
+/// Narrow compiler boundary used by higher-level task network lowering.
+///
+/// The trait stays task-local. It accepts an authored task definition and a
+/// capability catalog, then returns the compiled task graph record used by the
+/// existing task executor.
+///
+/// # Example
+///
+/// ```rust
+/// use meld_execution::capability::CapabilityCatalog;
+/// use meld_execution::task::{
+///     TaskCompiler, TaskDefinition, TaskDefinitionCompiler,
+/// };
+///
+/// let compiler = TaskCompiler::new();
+/// let catalog = CapabilityCatalog::new();
+/// let definition = TaskDefinition {
+///     task_id: "task-empty".to_string(),
+///     task_version: 1,
+///     init_slots: vec![],
+///     capability_instances: vec![],
+/// };
+///
+/// let compiled = compiler
+///     .compile_task_definition(&definition, &catalog)
+///     .expect("empty task definition is valid");
+/// assert_eq!(compiled.task_id, "task-empty");
+/// ```
+pub trait TaskDefinitionCompiler {
+    /// Compiles one task definition into a validated task graph record.
+    fn compile_task_definition(
+        &self,
+        definition: &TaskDefinition,
+        catalog: &CapabilityCatalog,
+    ) -> Result<CompiledTaskRecord, ApiError>;
+}
+
 impl TaskCompiler {
     /// Creates a new task compiler.
     pub fn new() -> Self {
@@ -24,6 +61,16 @@ impl TaskCompiler {
         catalog: &CapabilityCatalog,
     ) -> Result<CompiledTaskRecord, ApiError> {
         compile_task_definition(definition, catalog)
+    }
+}
+
+impl TaskDefinitionCompiler for TaskCompiler {
+    fn compile_task_definition(
+        &self,
+        definition: &TaskDefinition,
+        catalog: &CapabilityCatalog,
+    ) -> Result<CompiledTaskRecord, ApiError> {
+        self.compile(definition, catalog)
     }
 }
 
@@ -492,6 +539,22 @@ mod tests {
         duplicate_init.init_slots.push(target_selector_slot());
         assert_compile_error(duplicate_init, "duplicate init slot");
 
+        let mut empty_init_artifact_type = simple_definition();
+        empty_init_artifact_type.init_slots[0]
+            .artifact_type_id
+            .clear();
+        assert_compile_error(
+            empty_init_artifact_type,
+            "must declare artifact type and schema version",
+        );
+
+        let mut zero_init_schema_version = simple_definition();
+        zero_init_schema_version.init_slots[0].schema_version = 0;
+        assert_compile_error(
+            zero_init_schema_version,
+            "must declare artifact type and schema version",
+        );
+
         let mut duplicate_instance = simple_definition();
         duplicate_instance
             .capability_instances
@@ -539,6 +602,10 @@ mod tests {
         };
         *artifact_type_id = "wrong_type".to_string();
         assert_compile_error(mismatched_init, "rejects artifact type");
+
+        let mut mismatched_init_schema = simple_definition();
+        mismatched_init_schema.init_slots[0].schema_version = 2;
+        assert_compile_error(mismatched_init_schema, "does not match the wiring used by");
     }
 
     #[test]

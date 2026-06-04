@@ -76,6 +76,42 @@ fn reject_non_ground_goal_target() {
 }
 
 #[test]
+fn reject_empty_goal_identity_agent_and_command_ids() {
+    let mut store = GoalSetStore::new();
+    let mut empty_goal_id = goal("goal-1", GoalLifecycle::Active);
+    empty_goal_id.goal_id.clear();
+
+    let goal_id_error = store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-1", None, 1),
+            goal: empty_goal_id,
+        })
+        .unwrap_err();
+
+    assert!(goal_id_error.to_string().contains("goal id"));
+
+    let mut empty_agent_id = goal("goal-2", GoalLifecycle::Active);
+    empty_agent_id.agent_id.clear();
+    let agent_id_error = store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-2", None, 2),
+            goal: empty_agent_id,
+        })
+        .unwrap_err();
+
+    assert!(agent_id_error.to_string().contains("agent id"));
+
+    let command_id_error = store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("", None, 3),
+            goal: goal("goal-3", GoalLifecycle::Active),
+        })
+        .unwrap_err();
+
+    assert!(command_id_error.to_string().contains("goal command id"));
+}
+
+#[test]
 fn proposed_goal_is_ignored_until_modified_active() {
     let mut store = GoalSetStore::new();
     store
@@ -85,6 +121,10 @@ fn proposed_goal_is_ignored_until_modified_active() {
         })
         .unwrap();
     assert!(GoalSetQuery::new(&store).active_goals().is_empty());
+    assert!(matches!(
+        GoalSetQuery::new(&store).get_goal("goal-1"),
+        Some(record) if matches!(record.goal.lifecycle, GoalLifecycle::Proposed)
+    ));
 
     store
         .modify_goal(ModifyGoalCommand {
@@ -108,6 +148,95 @@ fn duplicate_source_identity_returns_existing_goal() {
     let outcome = store
         .add_goal(AddGoalCommand {
             metadata: metadata("cmd-2", Some("same-source"), 2),
+            goal: goal("goal-2", GoalLifecycle::Active),
+        })
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        GoalCommandOutcome::Duplicate {
+            existing_goal_id: "goal-1".to_string()
+        }
+    );
+}
+
+#[test]
+fn goal_set_store_reindexes_source_identity_on_modify() {
+    let mut store = GoalSetStore::new();
+    store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-1", Some("source-a"), 1),
+            goal: goal("goal-1", GoalLifecycle::Proposed),
+        })
+        .unwrap();
+    store
+        .modify_goal(ModifyGoalCommand {
+            metadata: metadata("cmd-2", Some("source-b"), 2),
+            goal: goal("goal-1", GoalLifecycle::Active),
+        })
+        .unwrap();
+
+    let old_source_outcome = store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-3", Some("source-a"), 3),
+            goal: goal("goal-2", GoalLifecycle::Active),
+        })
+        .unwrap();
+    let new_source_outcome = store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-4", Some("source-b"), 4),
+            goal: goal("goal-3", GoalLifecycle::Active),
+        })
+        .unwrap();
+
+    assert!(matches!(old_source_outcome, GoalCommandOutcome::Applied(_)));
+    assert_eq!(
+        new_source_outcome,
+        GoalCommandOutcome::Duplicate {
+            existing_goal_id: "goal-1".to_string()
+        }
+    );
+}
+
+#[test]
+fn goal_set_store_allows_modify_with_same_source_identity() {
+    let mut store = GoalSetStore::new();
+    store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-1", Some("source-a"), 1),
+            goal: goal("goal-1", GoalLifecycle::Proposed),
+        })
+        .unwrap();
+
+    let outcome = store
+        .modify_goal(ModifyGoalCommand {
+            metadata: metadata("cmd-2", Some("source-a"), 2),
+            goal: goal("goal-1", GoalLifecycle::Active),
+        })
+        .unwrap();
+
+    assert!(matches!(outcome, GoalCommandOutcome::Applied(_)));
+}
+
+#[test]
+fn goal_set_store_rejects_modify_to_existing_source_identity() {
+    let mut store = GoalSetStore::new();
+    store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-1", Some("source-a"), 1),
+            goal: goal("goal-1", GoalLifecycle::Active),
+        })
+        .unwrap();
+    store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-2", Some("source-b"), 2),
+            goal: goal("goal-2", GoalLifecycle::Proposed),
+        })
+        .unwrap();
+
+    let outcome = store
+        .modify_goal(ModifyGoalCommand {
+            metadata: metadata("cmd-3", Some("source-a"), 3),
             goal: goal("goal-2", GoalLifecycle::Active),
         })
         .unwrap();
@@ -336,6 +465,38 @@ fn persistent_goal_store_reindexes_source_identity_on_modify() {
 }
 
 #[test]
+fn persistent_goal_store_rejects_modify_to_existing_source_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = PersistentGoalSetStore::new(sled::open(dir.path().join("goals")).unwrap()).unwrap();
+    store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-1", Some("source-a"), 1),
+            goal: goal("goal-1", GoalLifecycle::Active),
+        })
+        .unwrap();
+    store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-2", Some("source-b"), 2),
+            goal: goal("goal-2", GoalLifecycle::Proposed),
+        })
+        .unwrap();
+
+    let outcome = store
+        .modify_goal(ModifyGoalCommand {
+            metadata: metadata("cmd-3", Some("source-a"), 3),
+            goal: goal("goal-2", GoalLifecycle::Active),
+        })
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        GoalCommandOutcome::Duplicate {
+            existing_goal_id: "goal-1".to_string()
+        }
+    );
+}
+
+#[test]
 fn persistent_goal_store_returns_records_in_goal_id_order() {
     let dir = tempfile::tempdir().unwrap();
     let store = PersistentGoalSetStore::new(sled::open(dir.path().join("goals")).unwrap()).unwrap();
@@ -393,6 +554,40 @@ fn persistent_goal_store_can_be_opened_outside_workspace() {
         })
         .unwrap();
     store.flush().unwrap();
+}
+
+#[test]
+fn persistent_goal_store_flush_writes_pending_bytes_to_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("goals");
+    let db = sled::Config::new()
+        .path(&path)
+        .flush_every_ms(None)
+        .open()
+        .unwrap();
+    let store = PersistentGoalSetStore::new(db.clone()).unwrap();
+
+    for index in 0..64 {
+        let mut goal = goal(&format!("goal-{index}"), GoalLifecycle::Active);
+        goal.source = GoalSource::UserDirected {
+            directive: "refresh docs ".repeat(256),
+        };
+        store
+            .add_goal(AddGoalCommand {
+                metadata: metadata(&format!("cmd-{index}"), None, index + 1),
+                goal,
+            })
+            .unwrap();
+    }
+
+    let before_flush = db.size_on_disk().unwrap();
+    store.flush().unwrap();
+    let after_flush = db.size_on_disk().unwrap();
+
+    assert!(
+        after_flush > before_flush,
+        "expected flush to increase on-disk bytes from {before_flush}, got {after_flush}"
+    );
 }
 
 proptest! {

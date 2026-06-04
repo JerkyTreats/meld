@@ -12,11 +12,11 @@ use std::path::{Path, PathBuf};
 pub struct ResolvedTurnInputs {
     /// Context payload assembled for provider execution.
     pub context_payload: String,
-    /// Values owned by this execution contract.
+    /// Resolved input values keyed by workflow input reference.
     pub values: HashMap<String, String>,
 }
 
-/// Execution helper for resolve turn inputs.
+/// Resolves a workflow turn input list into a prompt context payload.
 pub fn resolve_turn_inputs<E>(
     api: &(impl ContextReadPort<Error = E, NodeId = NodeId> + ?Sized),
     node_id: NodeId,
@@ -60,7 +60,7 @@ where
     })
 }
 
-/// Execution helper for resolve prompt template.
+/// Resolves a prompt reference into prompt template text.
 pub fn resolve_prompt_template<E>(
     api: &(impl PromptArtifactReadPort<Error = E> + ?Sized),
     profile_source_path: Option<&Path>,
@@ -89,7 +89,7 @@ where
     }
 }
 
-/// Execution helper for render turn prompt.
+/// Renders the final user prompt for one workflow turn.
 pub fn render_turn_prompt(
     template: &str,
     turn: &WorkflowTurn,
@@ -301,6 +301,7 @@ mod tests {
     use super::*;
     use crate::execution::{ContextReadPort, ExecutionNodeContext, PromptArtifactReadPort};
     use crate::workflow::profile::WorkflowTurn;
+    use std::collections::HashMap;
     use std::fs;
     use tempfile::tempdir;
 
@@ -308,11 +309,8 @@ mod tests {
     struct FakeApi;
 
     impl PromptArtifactReadPort for FakeApi {
-        /// Type alias for artifact kind values in execution contracts.
         type ArtifactKind = String;
-        /// Type alias for artifact reference values in execution contracts.
         type ArtifactRef = String;
-        /// Type alias for error values in execution contracts.
         type Error = ApiError;
 
         fn read_prompt_artifact_bytes(&self, artifact_id: &str) -> Result<Vec<u8>, Self::Error> {
@@ -332,21 +330,13 @@ mod tests {
     }
 
     impl ContextReadPort for FakeApi {
-        /// Type alias for agent identity values in execution contracts.
         type AgentIdentity = String;
-        /// Type alias for context view values in execution contracts.
         type ContextView = ();
-        /// Type alias for error values in execution contracts.
         type Error = ApiError;
-        /// Type alias for frame values in execution contracts.
         type Frame = Vec<u8>;
-        /// Type alias for frame identifier values in execution contracts.
         type FrameId = u64;
-        /// Type alias for node context values in execution contracts.
         type NodeContext = String;
-        /// Type alias for node identifier values in execution contracts.
         type NodeId = NodeId;
-        /// Type alias for node record values in execution contracts.
         type NodeRecord = ExecutionNodeRecord<NodeId>;
 
         fn get_agent(&self, agent_id: &str) -> Result<Self::AgentIdentity, Self::Error> {
@@ -470,6 +460,167 @@ mod tests {
         }
     }
 
+    struct DirectoryFakeApi {
+        root: ExecutionNodeRecord<NodeId>,
+        children: HashMap<NodeId, ExecutionNodeRecord<NodeId>>,
+        frame_content: HashMap<NodeId, String>,
+    }
+
+    impl DirectoryFakeApi {
+        fn new(root: ExecutionNodeRecord<NodeId>) -> Self {
+            Self {
+                root,
+                children: HashMap::new(),
+                frame_content: HashMap::new(),
+            }
+        }
+
+        fn insert_child(&mut self, child: ExecutionNodeRecord<NodeId>, content: &str) {
+            self.frame_content
+                .insert(child.node_id, content.to_string());
+            self.children.insert(child.node_id, child);
+        }
+    }
+
+    impl ContextReadPort for DirectoryFakeApi {
+        type AgentIdentity = String;
+        type ContextView = ();
+        type Error = ApiError;
+        type Frame = Vec<u8>;
+        type FrameId = u64;
+        type NodeContext = String;
+        type NodeId = NodeId;
+        type NodeRecord = ExecutionNodeRecord<NodeId>;
+
+        fn get_agent(&self, agent_id: &str) -> Result<Self::AgentIdentity, Self::Error> {
+            Ok(agent_id.to_string())
+        }
+
+        fn get_head(
+            &self,
+            _node_id: &Self::NodeId,
+            _frame_type: &str,
+        ) -> Result<Option<Self::FrameId>, Self::Error> {
+            Ok(None)
+        }
+
+        fn find_frame_head(
+            &self,
+            node_id: &Self::NodeId,
+            frame_type: &str,
+            _include_tombstoned: bool,
+        ) -> Result<Option<Self::FrameId>, Self::Error> {
+            self.get_head(node_id, frame_type)
+        }
+
+        fn get_node(
+            &self,
+            node_id: Self::NodeId,
+            _view: Self::ContextView,
+        ) -> Result<Self::NodeContext, Self::Error> {
+            Ok(format!("node-{}", hex::encode(node_id)))
+        }
+
+        fn context_by_type(
+            &self,
+            node_id: Self::NodeId,
+            frame_type: &str,
+            _max_frames: usize,
+        ) -> Result<Self::NodeContext, Self::Error> {
+            Ok(format!("node-{}:{frame_type}", hex::encode(node_id)))
+        }
+
+        fn read_frame(
+            &self,
+            _frame_id: &Self::FrameId,
+        ) -> Result<Option<Self::Frame>, Self::Error> {
+            Ok(None)
+        }
+
+        fn read_node_record(
+            &self,
+            node_id: &Self::NodeId,
+        ) -> Result<Option<Self::NodeRecord>, Self::Error> {
+            if node_id == &self.root.node_id {
+                return Ok(Some(self.root.clone()));
+            }
+            Ok(self.children.get(node_id).cloned())
+        }
+
+        fn read_node_record_by_path(
+            &self,
+            path: &Path,
+            _include_tombstoned: bool,
+        ) -> Result<Option<Self::NodeRecord>, Self::Error> {
+            let path = path.to_string_lossy();
+            if path == self.root.path {
+                return Ok(Some(self.root.clone()));
+            }
+            Ok(self
+                .children
+                .values()
+                .find(|record| record.path == path)
+                .cloned())
+        }
+
+        fn list_node_records(
+            &self,
+            _include_tombstoned: bool,
+        ) -> Result<Vec<Self::NodeRecord>, Self::Error> {
+            let mut records = vec![self.root.clone()];
+            records.extend(self.children.values().cloned());
+            Ok(records)
+        }
+
+        fn workspace_root(&self) -> Option<&Path> {
+            None
+        }
+
+        fn read_execution_frame(
+            &self,
+            _frame_id: &Self::FrameId,
+        ) -> Result<Option<ExecutionFrame<Self::FrameId>>, Self::Error> {
+            Ok(None)
+        }
+
+        fn read_execution_node_record(
+            &self,
+            node_id: &Self::NodeId,
+        ) -> Result<Option<ExecutionNodeRecord<Self::NodeId>>, Self::Error> {
+            self.read_node_record(node_id)
+        }
+
+        fn context_frames_by_type(
+            &self,
+            node_id: Self::NodeId,
+            frame_type: &str,
+            _max_frames: usize,
+        ) -> Result<ExecutionNodeContext<Self::NodeId, Self::FrameId>, Self::Error> {
+            let node_record = self.read_node_record(&node_id)?.ok_or_else(|| {
+                ApiError::ConfigError(format!("missing fake node '{}'", hex::encode(node_id)))
+            })?;
+            let frames = self
+                .frame_content
+                .get(&node_id)
+                .map(|content| {
+                    vec![ExecutionFrame {
+                        frame_id: u64::from(node_id[0]),
+                        frame_type: frame_type.to_string(),
+                        agent_id: "agent".to_string(),
+                        content: content.as_bytes().to_vec(),
+                    }]
+                })
+                .unwrap_or_default();
+            let frame_count = frames.len();
+
+            Ok(ExecutionNodeContext {
+                node_record,
+                frames,
+                frame_count,
+            })
+        }
+    }
+
     fn turn(input_refs: Vec<&str>) -> WorkflowTurn {
         WorkflowTurn {
             turn_id: "turn-1".to_string(),
@@ -532,6 +683,80 @@ mod tests {
         assert!(resolved.context_payload.starts_with("Input: alpha"));
         assert!(resolved.context_payload.contains("Path: README.md"));
         assert_eq!(resolved.values["zeta"], "last");
+    }
+
+    #[test]
+    fn render_turn_prompt_preserves_template_task_and_context() {
+        let inputs = ResolvedTurnInputs {
+            context_payload: "Input: target_context\nPath: README.md".to_string(),
+            values: HashMap::new(),
+        };
+
+        let rendered = render_turn_prompt("Use concise docs style.", &turn(vec![]), &inputs);
+
+        assert!(rendered.contains("Use concise docs style."));
+        assert!(rendered.contains("Complete workflow turn 'turn-1'"));
+        assert!(rendered.contains("return the 'summary' artifact only"));
+        assert!(rendered.contains("Input: target_context"));
+        assert_ne!(rendered, "xyzzy");
+    }
+
+    #[test]
+    fn directory_target_context_orders_priority_files_and_includes_child_blocks() {
+        let root_id = [1u8; 32];
+        let readme_id = [2u8; 32];
+        let mod_id = [3u8; 32];
+        let lib_id = [4u8; 32];
+        let feature_id = [5u8; 32];
+        let alpha_id = [6u8; 32];
+        let mut api = DirectoryFakeApi::new(ExecutionNodeRecord {
+            node_id: root_id,
+            path: "src".to_string(),
+            node_kind: ExecutionNodeKind::Directory,
+            children: vec![feature_id, readme_id, mod_id, lib_id, alpha_id],
+            tombstoned: false,
+        });
+        for (node_id, path, content) in [
+            (feature_id, "src/feature.rs", "feature context"),
+            (readme_id, "README.md", "readme context"),
+            (mod_id, "mod.rs", "mod context"),
+            (lib_id, "lib.rs", "lib context"),
+            (alpha_id, "aaa.rs", "alpha context"),
+        ] {
+            api.insert_child(
+                ExecutionNodeRecord {
+                    node_id,
+                    path: path.to_string(),
+                    node_kind: ExecutionNodeKind::File,
+                    children: vec![],
+                    tombstoned: false,
+                },
+                content,
+            );
+        }
+
+        let resolved = resolve_turn_inputs(
+            &api,
+            root_id,
+            "summary",
+            &turn(vec!["target_context"]),
+            &HashMap::new(),
+        )
+        .unwrap();
+        let context = &resolved.values["target_context"];
+
+        assert!(context.contains("Path: src"));
+        assert!(context.contains("Type: Directory"));
+        assert!(context.contains("Child count: 5"));
+        assert!(context.contains("readme context"));
+        assert!(context.contains("mod context"));
+        assert!(context.contains("lib context"));
+        assert!(context.contains("feature context"));
+        assert!(context.contains("alpha context"));
+        assert!(context.find("readme context").unwrap() < context.find("mod context").unwrap());
+        assert!(context.find("mod context").unwrap() < context.find("lib context").unwrap());
+        assert!(context.find("lib context").unwrap() < context.find("alpha context").unwrap());
+        assert!(context.find("lib context").unwrap() < context.find("feature context").unwrap());
     }
 
     #[test]

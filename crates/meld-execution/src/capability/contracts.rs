@@ -80,7 +80,7 @@ pub struct InputSlotSpec {
     pub schema_versions: ArtifactSchemaVersionRange,
     /// True when callers must provide this contract element.
     pub required: bool,
-    /// Cardinality owned by this execution contract.
+    /// Number of artifacts accepted by this input slot.
     pub cardinality: InputCardinality,
 }
 
@@ -509,9 +509,9 @@ fn ensure_unique_ids<'a>(label: &str, ids: impl Iterator<Item = &'a str>) -> Res
 mod tests {
     use super::*;
 
-    /// Type alias for contract mutation values in execution contracts.
+    /// Mutation closure used by contract validation table cases.
     type ContractMutation = Box<dyn FnOnce(&mut CapabilityTypeContract)>;
-    /// Type alias for instance mutation values in execution contracts.
+    /// Mutation closure used by instance validation table cases.
     type InstanceMutation = Box<dyn FnOnce(&mut BoundCapabilityInstance)>;
 
     fn contract() -> CapabilityTypeContract {

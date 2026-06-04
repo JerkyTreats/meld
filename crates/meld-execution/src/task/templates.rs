@@ -76,3 +76,65 @@ where
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflow::profile::{
+        WorkflowArtifactPolicy, WorkflowFailurePolicy, WorkflowProfile, WorkflowThreadPolicy,
+    };
+    use serde_json::json;
+
+    fn registered_profile(workflow_id: &str) -> RegisteredWorkflowProfile {
+        RegisteredWorkflowProfile {
+            profile: WorkflowProfile {
+                workflow_id: workflow_id.to_string(),
+                version: 1,
+                title: "Docs Writer".to_string(),
+                description: "Writes docs".to_string(),
+                thread_policy: WorkflowThreadPolicy {
+                    start_conditions: json!({}),
+                    dedupe_key_fields: Vec::new(),
+                    max_turn_retries: 1,
+                },
+                turns: Vec::new(),
+                gates: Vec::new(),
+                artifact_policy: WorkflowArtifactPolicy {
+                    store_output: true,
+                    store_prompt_render: true,
+                    store_context_payload: true,
+                    max_output_bytes: 1024,
+                },
+                failure_policy: WorkflowFailurePolicy {
+                    mode: "fail_fast".to_string(),
+                    resume_from_failed_turn: false,
+                    stop_on_gate_fail: true,
+                },
+                thread_profile: None,
+                target_agent_id: None,
+                target_frame_type: None,
+                final_artifact_type: None,
+            },
+            source_path: None,
+        }
+    }
+
+    #[test]
+    fn workflow_uses_task_package_path_detects_builtin_package_route() {
+        let profile = registered_profile("docs_writer_thread_v1");
+
+        assert!(workflow_uses_task_package_path::<ApiError>(&profile, None).unwrap());
+    }
+
+    #[test]
+    fn workflow_task_run_id_for_target_includes_workflow_and_node_prefix() {
+        let profile = registered_profile("docs_writer_thread_v1");
+
+        let task_run_id = workflow_task_run_id_for_target(&profile, [1u8; 32]);
+
+        assert_eq!(
+            task_run_id,
+            "taskrun::docs_writer_thread_v1::0101010101010101"
+        );
+    }
+}

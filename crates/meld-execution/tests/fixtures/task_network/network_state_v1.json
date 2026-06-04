@@ -1,0 +1,46 @@
+{
+  "network_id": "network-docs",
+  "revision": 1,
+  "state_hash": "4625c887a9cec1f176009bc2abc37dc29e1e6fdb4a66d6ccd35239f7dd8f349f",
+  "tasks": {
+    "task-alpha": {
+      "task_instance_id": "task-alpha",
+      "lifecycle_epoch": 1,
+      "compiled_task": {
+        "task_id": "compiled-task-alpha",
+        "task_version": 1,
+        "init_slots": [],
+        "capability_instances": [],
+        "dependency_edges": []
+      },
+      "init_payload": {
+        "task_id": "compiled-task-alpha",
+        "compiled_task_ref": "compiled-task-alpha@1",
+        "init_artifacts": [],
+        "task_run_context": {
+          "task_run_id": "run-task-alpha",
+          "session_id": "session-task-network",
+          "trigger": "task-network.test"
+        }
+      },
+      "lineage": {
+        "composition_id": "composition-fixture",
+        "goal_id": "goal-fixture",
+        "method_id": "method-fixture",
+        "step_id": "step-task-alpha",
+        "operator_id": "operator-task-alpha",
+        "world_state_frame_id": "frame-fixture",
+        "capability_type_id": "docs.write",
+        "capability_version": 1
+      }
+    }
+  },
+  "edges": [],
+  "statuses": {
+    "task-alpha": "Pending"
+  },
+  "artifact_availability": [],
+  "claims": {},
+  "outcomes": {},
+  "publications": {}
+}

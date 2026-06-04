@@ -21,6 +21,7 @@
 //! - [`planning`] evaluates goals into execution compositions.
 //! - [`publish`] carries frame head publish templates.
 //! - [`task`] compiles and runs task-local capability graphs.
+//! - [`task_network`] accepts task network commands and reduces graph state.
 //! - [`traversal`] carries traversal expansion templates for workflow-backed
 //!   task packages.
 //! - [`workflow`] defines workflow profiles, runtime state, gates, events, and
@@ -49,6 +50,8 @@ pub mod planning;
 pub mod publish;
 /// Task definition, compilation, artifact, invocation, and runtime contracts.
 pub mod task;
+/// Task network command, mutation, state, dispatch, and publication contracts.
+pub mod task_network;
 /// Traversal expansion DTOs for workflow-backed task packages.
 pub mod traversal;
 /// Workflow profiles, state, gates, events, and execution runtimes.
@@ -56,4 +59,17 @@ pub mod workflow;
 
 pub use execution::*;
 pub use generation::*;
+pub use planning::lowering::{
+    Diagnostic as CompositionLoweringDiagnostic, Lowerer as ExecutionCompositionLowerer,
+    Plan as CompositionLoweringPlan, Request as CompositionLoweringRequest,
+};
+pub use task_network::command::{
+    Command as TaskNetworkCommand, Request as TaskNetworkCommandRequest,
+    Response as TaskNetworkCommandResponse,
+};
+pub use task_network::mutation::{
+    CommitRecord as TaskNetworkCommitRecord, CommitRequest as TaskNetworkCommitRequest,
+    CommitResult as TaskNetworkCommitResult, Inject as TaskNetworkInjectMutation,
+    Mutation as TaskNetworkMutation, Set as TaskNetworkMutationSet,
+};
 pub use workflow::*;

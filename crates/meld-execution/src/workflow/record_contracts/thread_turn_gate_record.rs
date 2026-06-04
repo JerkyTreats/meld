@@ -39,7 +39,7 @@ pub struct ThreadTurnGateRecordV1 {
 }
 
 impl ThreadTurnGateRecordV1 {
-    /// Execution helper for new.
+    /// Creates a versioned gate record for one workflow thread turn.
     pub fn new(
         thread_id: String,
         turn_id: String,
@@ -60,7 +60,7 @@ impl ThreadTurnGateRecordV1 {
     }
 }
 
-/// Execution helper for validate thread turn gate record v1.
+/// Validates the persisted thread turn gate record shape.
 pub fn validate_thread_turn_gate_record_v1(
     record: &ThreadTurnGateRecordV1,
 ) -> Result<(), ApiError> {
@@ -73,7 +73,7 @@ pub fn validate_thread_turn_gate_record_v1(
     Ok(())
 }
 
-/// Execution helper for validate thread turn gate record references.
+/// Validates references carried by a thread turn gate record.
 pub fn validate_thread_turn_gate_record_references(
     record: &ThreadTurnGateRecordV1,
 ) -> Result<(), ApiError> {
@@ -112,7 +112,7 @@ fn validate_reasons(record: &ThreadTurnGateRecordV1) -> Result<(), ApiError> {
 mod tests {
     use super::*;
 
-    /// Type alias for gate record mutation values in execution contracts.
+    /// Mutation closure used by gate record validation table cases.
     type GateRecordMutation = Box<dyn FnOnce(&mut ThreadTurnGateRecordV1)>;
 
     fn record() -> ThreadTurnGateRecordV1 {
@@ -134,6 +134,17 @@ mod tests {
 
         validate_thread_turn_gate_record_v1(&decoded).unwrap();
         assert_eq!(decoded, record);
+    }
+
+    #[test]
+    fn thread_turn_gate_record_reference_validation_rejects_bad_ids() {
+        let mut record = record();
+        record.thread_id = "bad".to_string();
+
+        let error = validate_thread_turn_gate_record_references(&record).unwrap_err();
+
+        assert!(matches!(error, ApiError::ConfigError(_)));
+        assert!(error.to_string().contains("thread_id"));
     }
 
     #[test]

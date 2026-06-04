@@ -13,16 +13,16 @@ use std::sync::Arc;
 /// Successful capability invocation output for one task-owned attempt.
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityInvocationResult {
-    /// Emitted artifacts owned by this execution contract.
+    /// Artifacts emitted by this invocation attempt.
     pub emitted_artifacts: Vec<ArtifactRecord>,
 }
 
 /// Domain-owned capability runtime implementation.
 #[async_trait]
 pub trait CapabilityInvoker: Send + Sync {
-    /// Type alias for error values in execution contracts.
+    /// Error type returned by this invoker.
     type Error;
-    /// Type alias for execution API values in execution contracts.
+    /// Execution API boundary supplied to this invoker.
     type ExecutionApi: ?Sized;
 
     /// Published contract used by task compilation.
@@ -159,9 +159,7 @@ mod tests {
 
     #[async_trait]
     impl CapabilityInvoker for FakeInvoker {
-        /// Type alias for error values in execution contracts.
         type Error = String;
-        /// Type alias for execution API values in execution contracts.
         type ExecutionApi = ();
 
         fn contract(&self) -> CapabilityTypeContract {
@@ -330,5 +328,18 @@ mod tests {
             runtime_init.effect_contract[0].effect_id,
             "provider_transport"
         );
+    }
+
+    #[test]
+    fn runtime_init_rejects_instance_version_mismatch() {
+        let invoker = FakeInvoker {
+            contract: contract(),
+        };
+        let mut instance = instance();
+        instance.capability_version = 2;
+
+        let error = invoker.runtime_init(&instance).unwrap_err();
+
+        assert!(error.to_string().contains("cannot initialize"));
     }
 }

@@ -5,8 +5,8 @@ use super::profile::WorkflowProfile;
 /// Registered workflow profile contract used by execution runtimes.
 #[derive(Debug, Clone)]
 pub struct RegisteredWorkflowProfile {
-    /// Profile owned by this execution contract.
+    /// Parsed and validated workflow profile.
     pub profile: WorkflowProfile,
-    /// Source path owned by this execution contract.
+    /// Filesystem path used to resolve relative prompt references.
     pub source_path: Option<PathBuf>,
 }

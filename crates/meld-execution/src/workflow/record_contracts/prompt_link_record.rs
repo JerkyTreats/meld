@@ -52,7 +52,7 @@ pub struct PromptLinkRecordInputV1 {
     pub created_at_ms: u64,
 }
 
-/// Execution helper for prompt link record from contract v1.
+/// Builds a versioned prompt link record from lineage and workflow context.
 pub fn prompt_link_record_from_contract_v1(
     contract: &PromptLinkContractView,
     input: &PromptLinkRecordInputV1,
@@ -72,7 +72,7 @@ pub fn prompt_link_record_from_contract_v1(
     }
 }
 
-/// Execution helper for validate prompt link record v1.
+/// Validates the persisted prompt link record shape.
 pub fn validate_prompt_link_record_v1(record: &PromptLinkRecordV1) -> Result<(), ApiError> {
     validate_schema_version(RECORD_TYPE, record.schema_version)?;
     validate_prefixed_id(
@@ -88,7 +88,7 @@ pub fn validate_prompt_link_record_v1(record: &PromptLinkRecordV1) -> Result<(),
     Ok(())
 }
 
-/// Execution helper for validate prompt link record references.
+/// Validates hex references carried by a prompt link record.
 pub fn validate_prompt_link_record_references(record: &PromptLinkRecordV1) -> Result<(), ApiError> {
     validate_hex64(RECORD_TYPE, "node_id", &record.node_id).map_err(map_reference_error)?;
     validate_hex64(RECORD_TYPE, "frame_id", &record.frame_id).map_err(map_reference_error)?;
@@ -130,7 +130,7 @@ fn map_reference_error(err: ApiError) -> ApiError {
 mod tests {
     use super::*;
 
-    /// Type alias for prompt link mutation values in execution contracts.
+    /// Mutation closure used by prompt link validation table cases.
     type PromptLinkMutation = Box<dyn FnOnce(&mut PromptLinkRecordV1)>;
 
     fn hex64(ch: char) -> String {

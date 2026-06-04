@@ -1,8 +1,8 @@
 # Task Network
 
-Date: 2026-05-09
+Date: 2026-06-02
 Status: active
-Scope: shared execution graph, event-driven dispatch, and graph mutation acceptance
+Scope: shared execution graph, command acceptance, event-driven dispatch, and graph mutation reduction
 
 ## Core Position
 
@@ -11,14 +11,16 @@ The task network is the shared execution substrate for all goals. It is a single
 ```
 Capability      atomic executable contract
     ↑ composed into graph
-Task            graph of Capabilities (compiled, dependency-ordered)
+Task            graph of Capabilities, compiled and dependency ordered
     ↑ composed into graph
-Task Network    graph of Tasks (the plan, dependency-ordered)
+Task Network    graph of Tasks, the plan and dependency ordered
 ```
 
-The task network IS the plan. There is no separate plan artifact. Planning agents decompose goals into candidate subgraphs and commit them to the task network. The task network executes by computing the ready set and dispatching.
+The task network IS the plan. There is no separate plan artifact. Planning agents decompose goals into candidate subgraphs and submit commands to commit them to the task network. The task network executes by computing the ready set and dispatching.
 
 At each level, the execution model is identical: compute ready set, dispatch ready nodes, receive completion events, update state.
+
+The authoritative task network is a single writer event sourced aggregate. Agents and workers submit commands. The task network reducer is the only writer to graph structure, task lifecycle state, dispatch claims, outcome records, artifact availability, and publication state.
 
 ## Single Shared Graph
 
@@ -37,44 +39,52 @@ The task network owns:
 - **dependency state**: which edges are satisfied, which are pending
 - **ready set**: tasks whose dependencies are fully satisfied, available for dispatch
 - **graph structure**: the current set of task nodes and dependency edges
+- **command acceptance**: validation, idempotency, conflict detection, and durable journal order
+- **dispatch claims**: fenced claims that must match task outcomes
+- **publication outbox**: durable handoff between task completion and event publication
 
 The task network does NOT own:
 
 - **goal state**: owned by the goal set in execution, curated by world model agents
-- **plan decisions**: owned by planning agents that commit subgraphs to the network
+- **plan decisions**: owned by planning agents that submit commands for subgraph commits
 - **task internals**: the capability graph within a task is owned by the task executor
 - **normative judgment**: the decision of what to pursue is the world model agent's concern
 
 ## Event Model
 
-The task network is event-driven. Workers emit events. Reducers update state. No worker mutates network state directly.
+The task network is event-driven. Workers produce task events and submit outcome commands. Reducers update state. No worker mutates network state directly.
 
 ```mermaid
 flowchart LR
-    TN[task network] -->|ready set| W[task workers]
-    W -->|events| R[task reducer]
-    R --> TN
-    PL[planning loop] -->|graph mutations| TN
+    PL[planning loop] -->|commands| CB[command boundary]
+    W[task workers] -->|outcome commands| CB
+    PUB[publication workers] -->|mark commands| CB
+    CB -->|accepted records| R[task reducer]
+    R --> TN[task network state]
+    TN -->|ready set| W
+    TN -->|publication outbox| PUB
 ```
+
+The command boundary serializes writes. Read models and ready set queries may run concurrently from committed revisions, but they do not author state.
 
 ### Task events
 
 - `task_requested` — task instance created in the graph
 - `task_started` — task dispatched to a worker
 - `task_progressed` — intermediate progress within a task
-- `task_succeeded` — task completed, output artifacts available
-- `task_failed` — task failed (retries exhausted at task level)
-- `task_blocked` — task cannot proceed (dependency issue)
-- `task_artifact_emitted` — output artifact produced (may occur before task_succeeded)
-- `task_cancelled` — task removed from the graph (via cancel mutation)
+- `task_succeeded` — task completed and output artifacts are available
+- `task_failed` — task failed after task-level retries are exhausted
+- `task_blocked` — task cannot proceed because a dependency issue remains
+- `task_artifact_emitted` — output artifact produced before or during task completion
+- `task_cancelled` — task removed from the graph by a cancel mutation
 
 These events derive:
 
-- active task set (in-flight)
-- ready task set (dependencies satisfied, not yet dispatched)
-- completed task set (succeeded)
+- active task set
+- ready task set
+- completed task set
 - failed task set
-- artifact availability (for dependency satisfaction)
+- artifact availability for dependency satisfaction
 
 ### Spine alignment
 
@@ -95,9 +105,24 @@ struct SpineEvent {
 
 `domain_id` is `execution`. `stream_id` is typically the task instance ID.
 
+## Command Acceptance Model
+
+The task network accepts commands from planning agents, task workers, publication workers, and recovery code. A command carries a command id, base revision, base state hash, typed read preconditions, and a payload.
+
+The first payload families are:
+
+- graph mutation set
+- ready task claim request
+- task outcome record
+- publication mark
+
+The task network revalidates commands against the latest committed state. Accepted commands enter one monotonic revision stream. Duplicate commands return the prior response. Commands whose preconditions no longer hold return typed conflicts.
+
+Typed preconditions cover revision, state hash, node existence, node status, edge existence, artifact availability, path absence, current claim, and pending publication state.
+
 ## Graph Mutations
 
-The task network accepts mutations from planning agents. These are the operations that modify the graph while execution is in progress:
+The task network accepts graph mutation sets through commands from planning agents. These are the operations that modify the graph while execution is in progress:
 
 | Mutation | Effect |
 |---|---|
@@ -107,7 +132,7 @@ The task network accepts mutations from planning agents. These are the operation
 | **preserve** | Mark a completed task's artifacts as valid under a modified plan. Artifacts relinked into new dependency structure without re-execution. |
 | **prune** | Remove a conditional subtree whose guard was not satisfied. |
 
-Mutations are the interface between planning and execution. The planning loop decides WHAT to mutate (based on goal evaluation, belief changes, cost analysis). The task network decides HOW to apply the mutation (state transitions, cleanup, ready-set recomputation).
+Mutations are the graph delta interface between planning and execution. The planning loop decides what to propose based on goal evaluation, belief changes, and cost analysis. The task network decides how to accept or reject the command based on state transitions, cleanup rules, and ready set recomputation.
 
 ## Ready Set Computation
 
@@ -121,7 +146,7 @@ For each task that is NOT completed and NOT in-flight:
 
 Tasks whose dependencies are all satisfied enter the ready set and may be dispatched to workers.
 
-This is the upper level of the fractal. `compute_ready_capability_instances` (implemented in `task/readiness.rs`) performs the identical computation at the lower level.
+This is the upper level of the fractal. `compute_ready_capability_instances` performs the identical computation at the lower level in `task/readiness.rs`.
 
 ## Conditional Edge Evaluation
 
@@ -135,23 +160,25 @@ When an observation task completes, its output artifact is used to evaluate guar
 - Append-only event log
 - One reducer per task network instance
 - Deterministic reduction order
-- Parallel task workers — multiple execution agents pulling from the ready set
-- Task workers emit events only — no direct state mutation
+- Parallel task workers pull from the ready set
+- Task workers submit outcome commands only
+- Dispatch claims are committed before task execution
+- Task outcomes must name the current task lifecycle epoch, claim id, and claim revision
 - Task network owns all state transitions
 
-Workers do not need to understand goals, plans, or graph structure. They receive a task, execute it, and emit events.
+Workers do not need to understand goals, plans, or graph structure. They receive a task, execute it, and submit outcome commands built from task events.
 
-## Task Executor (Lower Fractal Level)
+## Task Executor Lower Fractal Level
 
 Each dispatched task is executed by a task executor that runs the internal capability graph:
 
 - The task executor receives a `CompiledTaskRecord` and initialization artifacts
-- It computes the ready set over capabilities (same algorithm, lower level)
+- It computes the ready set over capabilities with the same lower level algorithm
 - It dispatches ready capabilities, receives completion events, updates artifact state
 - When all capabilities are complete, the task is complete
-- The task executor emits `task_succeeded` (or `task_failed`) back to the task network
+- The task executor emits `task_succeeded` or `task_failed` back to the task network
 
-The task executor is implemented (`task/executor.rs`, 649 lines). It uses `compute_ready_capability_instances` (`task/readiness.rs`, 141 lines) for ready-set computation.
+The task executor is implemented in `task/executor.rs`. It uses `compute_ready_capability_instances` from `task/readiness.rs` for ready-set computation.
 
 Task-internal retry remains in the task executor. Only when retries are exhausted does the failure propagate to the task network, where the planning loop handles it.
 
@@ -159,11 +186,15 @@ Task-internal retry remains in the task executor. Only when retries are exhauste
 
 | Concern | Owner |
 |---|---|
-| Task execution state (pending/running/completed/failed) | task network |
+| Task execution state | task network |
 | Artifact availability across tasks | task network |
 | Dependency satisfaction | task network |
-| Graph structure (nodes + edges) | task network |
-| Graph mutations (inject/cancel/relink/preserve/prune) | planning loop → task network |
+| Graph structure | task network |
+| Command acceptance | task network |
+| Graph mutations | planning loop → task network command boundary |
+| Dispatch claims | task network |
+| Outcome records | task network |
+| Publication outbox | task network |
 | Capability execution within a task | task executor |
 | Task-scoped artifact repo | task executor |
 | Task-internal retry | task executor |
@@ -174,10 +205,10 @@ Task-internal retry remains in the task executor. Only when retries are exhauste
 
 - Event ordering must stay deterministic
 - Duplicate event handling must be idempotent
-- Cancellation semantics need sharper rules (graceful shutdown, cleanup task injection)
+- Cancellation semantics need sharper rules for graceful shutdown and cleanup task injection
 - Task equivalence definition needed for shared-task detection across goals
 - Resource model needed if providers have capacity limits
-- Continuation/checkpoint model for durable resume needs design (deferred from dissolved runtime/)
+- Continuation and checkpoint model for durable resume needs design
 
 ## Read With
 

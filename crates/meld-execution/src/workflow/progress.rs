@@ -31,7 +31,7 @@ pub struct WorkflowExecutionSummary {
     pub workflow_id: String,
     /// Workflow thread identifier within workflow runtime state.
     pub thread_id: String,
-    /// Turns completed owned by this execution contract.
+    /// Number of workflow turns completed by this execution.
     pub turns_completed: usize,
     /// Final frame identifier produced by the workflow thread when available.
     pub final_frame_id: Option<[u8; 32]>,
@@ -60,9 +60,9 @@ pub struct WorkflowTargetProgressEventData {
     pub level_index: Option<usize>,
     /// Final frame identifier produced by the workflow thread when available.
     pub final_frame_id: Option<String>,
-    /// Turns completed owned by this execution contract.
+    /// Number of turns completed when the event was emitted.
     pub turns_completed: Option<usize>,
-    /// Reused existing head owned by this execution contract.
+    /// True when execution reused an existing frame head.
     pub reused_existing_head: Option<bool>,
 }
 

@@ -41,11 +41,11 @@ pub struct CapabilityInvocationPayload {
     pub invocation_id: String,
     /// Deterministic capability instance identifier within a compiled task.
     pub capability_instance_id: String,
-    /// Supplied inputs owned by this execution contract.
+    /// Slot-keyed values supplied to this invocation.
     pub supplied_inputs: Vec<SuppliedInputValue>,
-    /// Upstream lineage owned by this execution contract.
+    /// Optional task and graph lineage for upstream handoffs.
     pub upstream_lineage: Option<UpstreamLineage>,
-    /// Execution context owned by this execution contract.
+    /// Telemetry and control metadata for this invocation.
     pub execution_context: CapabilityExecutionContext,
 }
 
@@ -141,7 +141,7 @@ pub enum InputValueSource {
 pub struct SuppliedInputValue {
     /// Stable slot identifier within the owning contract.
     pub slot_id: String,
-    /// Source owned by this execution contract.
+    /// Origin of this supplied value.
     pub source: InputValueSource,
     /// Structured value carried by this contract boundary.
     pub value: SuppliedValueRef,
@@ -156,7 +156,7 @@ pub struct ArtifactValueRef {
     pub artifact_type_id: String,
     /// Schema version for the serialized contract or artifact shape.
     pub schema_version: u32,
-    /// Structured artifact content owned by the producing capability.
+    /// Structured artifact payload supplied to the capability.
     pub content: Value,
 }
 
@@ -176,13 +176,13 @@ pub struct UpstreamLineage {
     pub task_id: String,
     /// Concrete task run identifier within the execution runtime.
     pub task_run_id: String,
-    /// Capability path owned by this execution contract.
+    /// Nested capability path used for lineage and diagnostics.
     pub capability_path: Vec<String>,
-    /// Batch index owned by this execution contract.
+    /// Traversal batch index when the invocation came from a batch.
     pub batch_index: Option<usize>,
-    /// Node index owned by this execution contract.
+    /// Node index within the traversal batch when available.
     pub node_index: Option<usize>,
-    /// Repair scope owned by this execution contract.
+    /// Repair scope label carried from workflow repair planning.
     pub repair_scope: Option<String>,
 }
 
@@ -193,11 +193,11 @@ pub struct CapabilityExecutionContext {
     pub attempt: u32,
     /// Trace identifier carried across the execution boundary.
     pub trace_id: Option<String>,
-    /// Deadline milliseconds in milliseconds.
+    /// Caller-defined deadline expressed in milliseconds.
     pub deadline_ms: Option<u64>,
-    /// Cancellation key owned by this execution contract.
+    /// Cancellation key used by runtimes that support cancellation.
     pub cancellation_key: Option<String>,
-    /// Dispatch priority owned by this execution contract.
+    /// Dispatch priority hint for queued capability runtimes.
     pub dispatch_priority: Option<String>,
 }
 
@@ -208,7 +208,7 @@ mod tests {
         ArtifactSchemaVersionRange, ExecutionClass, InputSlotSpec, OutputSlotSpec,
     };
 
-    /// Type alias for payload mutation values in execution contracts.
+    /// Mutation closure used by payload validation table cases.
     type PayloadMutation = Box<dyn FnOnce(&mut CapabilityInvocationPayload)>;
 
     fn runtime_init() -> CapabilityRuntimeInit {

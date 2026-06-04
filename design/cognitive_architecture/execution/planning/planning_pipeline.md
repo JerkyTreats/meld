@@ -1,6 +1,6 @@
 # Planning Pipeline
 
-Date: 2026-05-18
+Date: 2026-06-02
 Status: active
 Scope: unified planning pipeline aligned to the graphs-lower-graphs execution model
 
@@ -11,9 +11,9 @@ The execution domain has one structural pattern that repeats at two levels:
 ```
 Capability      atomic executable contract
     ↑ composed into graph
-Task            graph of Capabilities (compiled, dependency-ordered, parallel by default)
+Task            graph of Capabilities, compiled and dependency ordered
     ↑ composed into graph
-Task Network    graph of Tasks (the plan, dependency-ordered, parallel by default)
+Task Network    graph of Tasks, the plan and dependency ordered
 ```
 
 At each level, the execution model is identical:
@@ -21,10 +21,10 @@ At each level, the execution model is identical:
 1. compute the ready set — nodes whose dependencies are satisfied
 2. dispatch ready nodes in parallel
 3. receive completion events
-4. update state (artifact availability, dependency satisfaction)
+4. update state with artifact availability and dependency satisfaction
 5. repeat until the graph is fully traversed
 
-The task executor already implements this for capabilities within a task. The task network implements the same pattern for tasks within the network. The task network IS the plan — not a separate artifact compiled into a control program. HTN decomposition produces a task network graph directly.
+The task executor already implements this for capabilities within a task. The task network implements the same pattern for tasks within the network. The task network IS the plan — not a separate artifact compiled into a control program. HTN decomposition produces a task network graph as its target shape.
 
 ## The Pipeline
 
@@ -33,28 +33,27 @@ flowchart TD
     AG[world model agent] -->|curates via API| GS[goal set]
     WMV[world model view] --> PL[planning loop]
     GS --> PL
-    PL -->|task network graph| TN[task network execution]
-    TN -->|outcome events| SP[event spine]
+    PL -->|commands| TN[task network command boundary]
+    TN -->|accepted work| TE[task network execution]
+    TE -->|outcome events| SP[event spine]
     SP --> WM[world model]
     WM -.->|belief revision| WMV
     WM -.->|belief revision| AG
 
-    TN -->|task failure| PL
-    TN -->|observation artifacts| PL
+    TE -->|task failure| PL
+    TE -->|observation artifacts| PL
 
     PL -->|capability missing| SY[synthesis]
     SY -->|catalog updated| PL
-
-    PL -->|network mutations| TN
 ```
 
-Two concurrent processes connected by graph mutations, fed by a curated goal set:
+Two concurrent processes connected by task network commands, fed by a curated goal set:
 
-- **world model agent**: evaluates beliefs against its normative framework, curates the goal set through execution's public API (add, modify, remove, satisfy)
-- **planning loop**: continuous, reads goal set and world model view, maintains the task network graph, issues mutations when the goal set or belief changes
-- **task network**: parallel, executes tasks, emits events, accepts graph mutations
+- **world model agent**: evaluates beliefs against its normative framework and curates the goal set through execution's public API
+- **planning loop**: continuous, reads goal set and world model view, maintains the intended task network graph, issues commands when the goal set or belief changes
+- **task network**: parallel, executes tasks, emits events, accepts commands, and reduces accepted records into state
 
-The planning loop is indifferent to why goals change. It reacts to the current goal set and current belief. The world model agent owns the normative decisions (what to pursue, what to abandon, what to prioritize). The planning loop owns the operational decisions (how to achieve, when to switch plans, what the switching cost is).
+The planning loop is indifferent to why goals change. It reacts to the current goal set and current belief. The world model agent owns the normative decisions about what to pursue, abandon, and prioritize. The planning loop owns the operational decisions about how to achieve goals, when to switch plans, and what the switching cost is.
 
 ## Vocabulary Alignment
 
@@ -70,19 +69,19 @@ The pipeline uses Meld's existing vocabulary. Execution may wrap raw language va
 | HTN Lineage | preserved hierarchy explaining why each task exists |
 | Execution Composition | execution owned wrapper around one concrete `Composition` plus stable identity and planning context |
 
-The planning loop produces task network mutations. Not a separate "CompiledPlan" or "CompiledControlProgram." The task network graph is both the plan representation and the execution structure.
+The planning loop produces task network commands carrying graph mutation sets. It does not produce a separate "CompiledPlan" or "CompiledControlProgram." The accepted task network graph is both the plan representation and the execution structure.
 
 ## Planning Loop
 
-The planning loop is a continuous process that maintains the task network graph. It reads the goal set (curated by the world model agent) and subscribes to the world model view, then decomposes goals via HTN methods and issues mutations to the task network when the plan should change.
+The planning loop is a continuous process that maintains an intended task network graph. It reads the goal set curated by the world model agent and subscribes to the world model view, then decomposes goals via HTN methods and issues commands to the task network when the plan should change.
 
 ### Inputs
 
-All planning loop inputs are expressed in the shared language ([`meld-lang`](../../meld-lang/README.md)):
+All planning loop inputs are expressed in the shared language [`meld-lang`](../../meld-lang/README.md):
 
 - **goal set**: `Vec<Goal>` — desired belief states as `Proposition` targets, curated by the world model agent through execution's public API. See [Goals and Methods](../../meld-lang/goals_and_methods.md).
 - **world state**: `WorldState` — ground propositions published by the world model's planner-facing projection. The planning loop evaluates goals and preconditions against this. See [World State and Evaluation](../../meld-lang/world_state.md).
-- **capability catalog**: available capabilities (compiled + synthesized). Resolution queries from `Operator.resolution` match against registered `CapabilityTypeContract` values.
+- **capability catalog**: available compiled and synthesized capabilities. Resolution queries from `Operator.resolution` match against registered `CapabilityTypeContract` values.
 - **method library**: `Vec<Method>` — serialized HTN decompositions loaded at runtime. Methods match goals through pattern unification and produce `Composition` graphs. See [Goals and Methods](../../meld-lang/goals_and_methods.md).
 - **task network state**: what is currently running, completed, pending, failed
 
@@ -94,15 +93,15 @@ The planning loop uses HTN decomposition to convert goals into task graphs. The 
 2. `substitute(method.composition, bindings)` produces a concrete `Composition`
 3. Each `Operator` in the composition is resolved against the capability catalog through its `Resolution` query
 4. The concrete composition is wrapped as an execution composition with validation, projected effects, selected method provenance, bindings, world frame provenance, diagnostics, and operator resolution reports
-5. Phase 7 lowers the execution composition into task network mutations
+5. Phase 7 lowers the execution composition into task network mutation sets carried by commands
 
-If no method matches, the planning loop may request LLM-assisted decomposition (constructing a `Composition` directly) or report the goal as unachievable with the current catalog.
+If no method matches, the planning loop may request LLM-assisted decomposition that constructs a `Composition` directly or report the goal as unachievable with the current catalog.
 
-The output of Phase 7 lowering is a task network graph or mutation set: tasks as nodes, dependency edges between them. Dependencies encode:
+The output of Phase 7 lowering is a task network mutation set carried by a command. The mutation set contains tasks as nodes and dependency edges between them. Dependencies encode:
 
-- **data flow**: task B needs an artifact that task A produces (maps to `EdgeKind::DataFlow` in compositions)
-- **ordering**: task B must follow task A (maps to `EdgeKind::Ordering` in compositions)
-- **conditional**: task B should only execute if task A's output meets a condition (maps to `EdgeKind::Conditional` with guard expression)
+- **data flow**: task B needs an artifact that task A produces and maps to `EdgeKind::DataFlow` in compositions
+- **ordering**: task B must follow task A and maps to `EdgeKind::Ordering` in compositions
+- **conditional**: task B should only execute if task A's output meets a condition and maps to `EdgeKind::Conditional` with guard expression
 
 ```
 TaskNetworkGraph {
@@ -131,11 +130,26 @@ enum DependencyKind {
 }
 ```
 
-The first dispatch slice should commit the lowered output through an explicit task network request:
+The first dispatch slice should submit the lowered output through an explicit task network command:
 
 ```rust
-pub struct TaskNetworkCommitRequest {
-    pub goal_id: String,
+pub struct TaskNetworkCommandRequest {
+    pub command_id: String,
+    pub network_id: String,
+    pub base_revision: u64,
+    pub base_state_hash: String,
+    pub read_preconditions: Vec<TaskNetworkReadPrecondition>,
+    pub command: TaskNetworkCommand,
+}
+
+pub enum TaskNetworkCommand {
+    ApplyMutationSet(TaskNetworkMutationSet),
+    ClaimReadyTask(TaskNetworkDispatchRequest),
+    RecordTaskOutcome(TaskNetworkDispatchOutcome),
+    MarkPublication(TaskNetworkPublication),
+}
+
+pub struct TaskNetworkMutationSet {
     pub source_execution_composition_id: String,
     pub mutations: Vec<TaskNetworkMutation>,
     pub lineage: HtnLineage,
@@ -159,7 +173,7 @@ pub struct TaskInjectMutation {
 }
 ```
 
-Dispatch consumes the ready set after mutation acceptance. The execution composition does not carry task runtime state.
+Dispatch consumes the ready set after command acceptance. The execution composition does not carry task runtime state.
 
 ### Control Flow Through Graph Structure
 
@@ -167,14 +181,14 @@ Control flow is encoded in graph structure. No separate compiled control program
 
 | Control concept | Graph equivalent |
 |---|---|
-| sequential dispatch | dependency edge (B depends on A) |
-| parallel dispatch | independent nodes (no dependency path between them) |
+| sequential dispatch | dependency edge from B to A |
+| parallel dispatch | independent nodes with no dependency path between them |
 | observation wait | a task whose output artifact is a dependency for downstream tasks |
 | conditional branch | conditional dependency edge with guard expression |
-| join barrier | a task with multiple incoming dependency edges (ready when all are satisfied) |
+| join barrier | a task with multiple incoming dependency edges |
 | loop | planning loop re-emits tasks into the network on the next iteration |
 
-Branching deserves elaboration. When the planner cannot resolve a decision at planning time (insufficient belief), it emits:
+Branching deserves elaboration. When the planner cannot resolve a decision at planning time because belief is insufficient, it emits:
 
 1. an observation task that will produce a decision artifact
 2. conditional dependency edges from the observation task to alternative downstream subtrees
@@ -189,20 +203,20 @@ This is the same `await_observation` + `branch` pattern from the control program
 The planning loop does not run once and stop. It continuously monitors:
 
 - **goal set mutations**: the world model agent adds, removes, reprioritizes, or satisfies goals through the curation API
-- **world model view changes**: belief invalidations, new observations (received through the subscribed view, not from the world model directly)
+- **world model view changes**: belief invalidations and new observations received through the subscribed view
 - **task network events**: task completions, failures, artifact production
 
-When conditions change, the planning loop re-evaluates the current task network graph. For each active goal, it calls `evaluate(&world_state, &goal.target)` to check whether the goal is now satisfied, still unsatisfied (with a potentially different gap), or indeterminate (requiring observation). It identifies which parts of the HTN tree are affected — method preconditions are re-evaluated against the updated `WorldState` — and re-decomposes only those subtrees.
+When conditions change, the planning loop re-evaluates the current task network graph. For each active goal, it calls `evaluate(&world_state, &goal.target)` to check whether the goal is now satisfied, still unsatisfied with a potentially different gap, or indeterminate and requiring observation. It identifies which parts of the HTN tree are affected. Method preconditions are re-evaluated against the updated `WorldState`, and only affected subtrees are re-decomposed.
 
-The result is a set of task network mutations — not a new graph, but a delta against the existing graph.
+The result is a task network command carrying a mutation set. It is not a new graph, but a delta against the existing graph.
 
-## Task Network Mutations
+## Task Network Mutation Sets
 
-The planning loop issues mutations to the task network. These are the operations the task network must support:
+The planning loop issues commands that carry mutation sets to the task network. These are the graph operations the task network must support:
 
 ### inject
 
-Add a task with its dependency edges. If dependencies are already satisfied (upstream tasks completed, artifacts available), the task enters the ready set immediately.
+Add a task with its dependency edges. If dependencies are already satisfied through upstream task completion and artifact availability, the task enters the ready set immediately.
 
 ### cancel
 
@@ -210,7 +224,7 @@ Remove a task. If pending, remove from the graph. If running, issue graceful can
 
 ### relink
 
-Modify a task's dependency edges. A task's position in the graph changes (different upstream dependencies, different downstream consumers). The task itself is unchanged.
+Modify a task's dependency edges. A task's position in the graph changes through different upstream dependencies or downstream consumers. The task itself is unchanged.
 
 ### preserve
 
@@ -226,7 +240,7 @@ Changing a running plan is not free. The planning loop must weigh the cost of sw
 
 ### Switching costs
 
-- **cleanup cost**: in-progress tasks that must be cancelled may require cleanup work (itself a set of tasks with cost estimates)
+- **cleanup cost**: in-progress tasks that must be cancelled may require cleanup work with its own cost estimates
 - **sunk cost**: completed work in the old plan that cannot be reused in the new plan is wasted effort
 - **disruption cost**: the time to cancel, clean up, and inject new tasks delays progress toward the goal
 - **risk cost**: the new plan is untested; the old plan had partial progress as evidence of viability
@@ -235,13 +249,13 @@ Changing a running plan is not free. The planning loop must weigh the cost of sw
 
 When the planning loop identifies that a belief change affects the current plan, it:
 
-1. computes the new subtree (re-decomposition of the affected area)
-2. computes the delta (what to cancel, inject, preserve)
-3. estimates the switching cost (cleanup + sunk cost + disruption)
-4. estimates the benefit (expected improvement in goal achievement given updated belief)
+1. computes the new subtree for the affected area
+2. computes the delta of tasks to cancel, inject, and preserve
+3. estimates the switching cost from cleanup, sunk cost, and disruption
+4. estimates the expected improvement in goal achievement given updated belief
 5. issues mutations only if benefit > switching cost
 
-This is how the planner continuously assesses without necessarily breaking execution. Minor belief shifts that would produce marginal plan improvements are deferred. Major shifts (dependency broken, goal invalidated, regime change) override the cost threshold.
+This is how the planner continuously assesses without necessarily breaking execution. Minor belief shifts that would produce marginal plan improvements are deferred. Major shifts such as broken dependencies, invalidated goals, and regime changes override the cost threshold.
 
 ### Cleanup as planned work
 
@@ -264,7 +278,7 @@ Cleanup tasks are normal tasks. They have capabilities, dependencies, and cost e
 
 ## HTN Lineage
 
-The HTN lineage (task instances, method instances, parent links, method-child links) is preserved alongside the task network graph. It is not the execution structure — the graph is. It serves three purposes:
+The HTN lineage records task instances, method instances, parent links, and method-child links alongside the task network graph. It is not the execution structure. The graph is the execution structure. Lineage serves three purposes:
 
 ### Scoping plan changes
 
@@ -283,7 +297,7 @@ When a task fails and the planning loop re-evaluates, the lineage tells it which
 When HTN decomposition reaches a task that requires a capability not in the catalog, the planning loop:
 
 1. injects a `CapabilitySynthesisTask` into the task network
-2. marks the blocked subtree as suspended (dependencies not yet satisfiable)
+2. marks the blocked subtree as suspended because dependencies are not yet satisfiable
 3. the synthesis task executes through the task network like any other task
 4. synthesis completion updates the catalog
 5. the planning loop re-evaluates the suspended subtree with the updated catalog
@@ -295,24 +309,26 @@ Synthesis is a task in the network, not a special-case pipeline. Graphs lower gr
 
 ### Fully implemented
 
-- **task compiler** (`task/compiler.rs`, 508 lines): transforms TaskDefinition into CompiledTaskRecord
-- **task executor** (`task/executor.rs`, 649 lines): executes a single task's capability graph — the lower level of the fractal
-- **capability catalog** (`capability/catalog.rs`, 138 lines): versioned capability lookup
-- **task events** (`task/events.rs`, 207 lines): task lifecycle event builders
-- **readiness computation** (`task/readiness.rs`, 141 lines): computes ready capabilities within a task — the ready-set pattern at the lower level
+- **task compiler**: `task/compiler.rs` transforms TaskDefinition into CompiledTaskRecord
+- **task executor**: `task/executor.rs` executes a single task's capability graph at the lower level of the fractal
+- **capability catalog**: `capability/catalog.rs` provides versioned capability lookup
+- **task events**: `task/events.rs` builds task lifecycle events
+- **readiness computation**: `task/readiness.rs` computes ready capabilities within a task
+- **goal store**: `goals/` stores execution owned goals and lifecycle command outcomes
+- **method library**: `planning/method_library.rs` loads and verifies serialized methods
+- **planning runtime**: `planning/runtime.rs` turns one active goal and one projected world state into `ExecutionComposition`
 
 ### Designed but not implemented
 
-- **HTN decomposition**: records defined (task instances, method instances, lineage), algorithm and method library not defined
+- **recursive HTN decomposition**: later planning recurses through sub-goal steps and preserves broader lineage
 - **guard expressions**: fully specified in [Guard Expression Semantics](guard_expression_semantics.md), applicable as conditional dependency edges
 - **observation wait semantics**: fully specified in [Observation Wait Semantics](observation_wait_semantics.md), applicable as data-flow dependencies from observation tasks
+- **task network first slice**: specified in [Phase 7 Task Network Plan](../../../plan/execution/task_network/PLAN.md), covering one inject mutation, one ready task, one dispatch, and one publication handoff
 
-### Not yet designed
+### Deferred Beyond First Slice
 
-- **task network graph executor**: the upper level of the fractal — walks a graph of tasks the same way the task executor walks a graph of capabilities
-- **task network mutation operations**: inject, cancel, relink, preserve, prune
-- **planning loop**: continuous operation, world-model reads, cost-aware mutation decisions
-- **method library**: method definitions, preconditions, storage, query
+- **planning loop**: continuous operation, world-model reads, cost-aware mutation proposal decisions
+- **task network deepening**: multi-step graph execution, recursive sub-goal lowering, cancel, relink, preserve, and prune
 - **switching cost model**: cleanup estimation, sunk cost calculation, benefit comparison
 - **plan diffing**: identifying affected subtrees from belief changes, computing minimal mutations
 
@@ -323,8 +339,8 @@ Synthesis is a task in the network, not a special-case pipeline. Graphs lower gr
 | `goals/` | goal set curated by world model agent, consumed by planning loop |
 | `planning/htn/` | decomposition records and lineage — vocabulary for the planning loop |
 | `planning/htn/lineage_model.md` | lineage preservation — used for scoping changes and guiding reselection |
-| `planning/guard_expression_semantics.md` | conditional dependency edge evaluation (relocated from dissolved `program/`) |
-| `planning/observation_wait_semantics.md` | data-flow dependency from observation tasks (relocated from dissolved `program/`) |
+| `planning/guard_expression_semantics.md` | conditional dependency edge evaluation relocated from dissolved `program/` |
+| `planning/observation_wait_semantics.md` | data-flow dependency from observation tasks relocated from dissolved `program/` |
 | `task_network.md` | the execution substrate — event-driven graph executor |
 | `synthesis/` | tasks in the network, triggered by planning loop on missing capability |
 
@@ -334,18 +350,18 @@ Workflows currently short-circuit the planning loop entirely. The user-authored 
 
 In the graphs-lower-graphs model, workflow integration becomes clearer:
 
-- a workflow profile lowers into a task network graph (task package lowering already bridges this)
-- the graph is initially linear (tasks depend on their predecessor) because workflows are sequential
+- a workflow profile lowers into a task network graph through task package lowering
+- the graph is initially linear because tasks depend on their predecessor in sequential workflows
 - as the planning loop matures, it can produce graphs with parallelism, branching, and observation points
 - the task network executor handles both linear and complex graphs identically — the execution model doesn't change
 
-The workflow executor's current role (advance through turns, evaluate gates, persist state) maps onto the task network graph executor's role (advance through the ready set, evaluate conditional edges, persist task network state). The existing workflow executor is a specialized instance of the general pattern.
+The workflow executor's current role maps onto the task network graph executor's role. Workflow advances through turns, evaluates gates, and persists state. Task network execution advances through the ready set, evaluates conditional edges, and persists task network state. The existing workflow executor is a specialized instance of the general pattern.
 
 ## Open Gaps
 
-### Method library
+### Method Library Deepening
 
-HTN decomposition has no domain knowledge without method definitions. The `Method` type is now defined in [`meld-lang`](../../meld-lang/goals_and_methods.md) with:
+The first method library slice exists and supports serialized `meld-lang::Method` values. The `Method` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md) with:
 
 - `trigger`: a `Proposition` pattern with `Term::Variable` for unification against goals
 - `preconditions`: `Vec<Proposition>` checked against `WorldState` after trigger unification
@@ -354,20 +370,23 @@ HTN decomposition has no domain knowledge without method definitions. The `Metho
 - `cost`: `CostEstimate` for comparison and ceiling checks
 - `preference`: ordering among alternative methods for the same goal
 
-The method type and matching operations (unify, substitute) are defined. What remains:
+The method type, matching operations, method loading, verification, and the first `docs_freshness` fixture are implemented. What remains:
 
-- **method authoring**: concrete methods for existing use cases (docs freshness, test status, course generation) serialized as JSON files
-- **method library loading**: runtime loading infrastructure, indexing by trigger shape, cache invalidation on file change
-- **method learning**: whether methods can be derived from successful compositions (deferred)
+- **method authoring**: concrete methods beyond docs freshness, such as test status and course generation
+- **method library operations**: indexing by trigger shape and cache invalidation on file change
+- **method learning**: whether methods can be derived from successful compositions, deferred
 
-### Task network graph executor
+### Task Network Deepening
 
-The upper level of the fractal is not implemented. It requires:
+The Phase 7 plan specifies the first upper graph slice. It covers one accepted inject mutation, reduced state, ready set computation, dispatch claim fencing, task runtime bridge, and durable publication handoff.
 
-- graph-based ready-set computation (same pattern as task readiness but over tasks, not capabilities)
-- conditional edge evaluation (guard expressions on dependency edges)
-- mutation acceptance (inject, cancel, relink, preserve, prune)
-- event reduction over the task graph (same pattern as task network event reduction)
+Later work still requires:
+
+- conditional edge evaluation with guard expressions on dependency edges
+- recursive sub-goal lowering
+- multi-step graph execution
+- cancel, relink, preserve, and prune mutation behavior
+- task equivalence and shared-task reuse across goals
 
 ### Switching cost model
 

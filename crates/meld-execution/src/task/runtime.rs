@@ -30,11 +30,11 @@ pub struct TaskRunSummary {
     pub task_id: String,
     /// Concrete task run identifier within the execution runtime.
     pub task_run_id: String,
-    /// Completed instances owned by this execution contract.
+    /// Number of capability instances completed by the run.
     pub completed_instances: usize,
-    /// Invocation count owned by this execution contract.
+    /// Number of capability invocation attempts recorded by the run.
     pub invocation_count: usize,
-    /// Artifact count owned by this execution contract.
+    /// Number of artifacts persisted in the task artifact repo.
     pub artifact_count: usize,
 }
 
@@ -400,9 +400,7 @@ mod tests {
     }
 
     impl EventPublicationPort for RecordingApi {
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
-        /// Type alias for event envelope values in execution contracts.
         type EventEnvelope = EventEnvelope;
 
         fn publish_execution_envelope(

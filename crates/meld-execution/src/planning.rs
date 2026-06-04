@@ -6,6 +6,8 @@
 
 /// Planning request, result, diagnostic, and composition contracts.
 pub mod contracts;
+/// Lowering from execution compositions into task network mutation proposals.
+pub mod lowering;
 /// Method loading, verification, and deterministic ordering.
 pub mod method_library;
 /// First-slice planning runtime facade.
@@ -18,6 +20,11 @@ pub use contracts::{
     NoApplicableMethod, OperatorResolutionReport, OperatorResolutionStatus, PlanningDiagnostic,
     PlanningDiagnosticCode, PlanningIndeterminate, PlanningInputError, PlanningRequest,
     PlanningResult, PlanningSatisfied,
+};
+pub use lowering::{
+    Diagnostic as CompositionLoweringDiagnostic,
+    DiagnosticCode as CompositionLoweringDiagnosticCode, Lowerer as ExecutionCompositionLowerer,
+    Plan as CompositionLoweringPlan, Request as CompositionLoweringRequest,
 };
 pub use method_library::{
     MethodLibrary, MethodLibraryLoadError, MethodSourceRef, MethodVerification,

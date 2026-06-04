@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "set_id": "task-network-mutation-set-59387468f712de81eb6643d39c75728739d3e41233d40a0ab1bb1341ceb47106",
+  "network_id": "network-docs",
+  "source_composition_id": "composition-fixture",
+  "idempotency_key": "inject-task-alpha",
+  "mutations": [
+    {
+      "Inject": {
+        "mutation_id": "task-network-inject-45b94a5e3fae687229e2eb4a8ea85d52233418c1c247f8954d4a165498182926",
+        "task_node": {
+          "task_instance_id": "task-alpha",
+          "lifecycle_epoch": 1,
+          "compiled_task": {
+            "task_id": "compiled-task-alpha",
+            "task_version": 1,
+            "init_slots": [],
+            "capability_instances": [],
+            "dependency_edges": []
+          },
+          "init_payload": {
+            "task_id": "compiled-task-alpha",
+            "compiled_task_ref": "compiled-task-alpha@1",
+            "init_artifacts": [],
+            "task_run_context": {
+              "task_run_id": "run-task-alpha",
+              "session_id": "session-task-network",
+              "trigger": "task-network.test"
+            }
+          },
+          "lineage": {
+            "composition_id": "composition-fixture",
+            "goal_id": "goal-fixture",
+            "method_id": "method-fixture",
+            "step_id": "step-task-alpha",
+            "operator_id": "operator-task-alpha",
+            "world_state_frame_id": "frame-fixture",
+            "capability_type_id": "docs.write",
+            "capability_version": 1
+          }
+        },
+        "incoming_edges": [],
+        "lineage": {
+          "composition_id": "composition-fixture",
+          "goal_id": "goal-fixture",
+          "method_id": "method-fixture",
+          "step_id": "step-task-alpha",
+          "operator_id": "operator-task-alpha",
+          "world_state_frame_id": "frame-fixture",
+          "capability_type_id": "docs.write",
+          "capability_version": 1
+        }
+      }
+    }
+  ],
+  "diagnostics": []
+}

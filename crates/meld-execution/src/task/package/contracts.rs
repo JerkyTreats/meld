@@ -19,26 +19,26 @@ pub struct TaskPackageSpec {
     pub package_id: String,
     /// Workflow profile identifier that owns this execution record.
     pub workflow_id: String,
-    /// Trigger owned by this execution contract.
+    /// Trigger contract accepted by this package.
     pub trigger: TaskTriggerSpec,
-    /// Seed owned by this execution contract.
+    /// Initial seed artifacts declared by this package.
     pub seed: InitialSeedSpec,
-    /// Expansions owned by this execution contract.
+    /// Expansion entries authored by this package.
     pub expansions: Vec<PackageExpansionSpec>,
 }
 
 /// Package-authored traversal prerequisite expansion entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraversalPrerequisitePackageExpansionSpec {
-    /// Expansion kind owned by this execution contract.
+    /// Expansion kind handled by package lowering.
     pub expansion_kind: String,
-    /// Template reference owned by this execution contract.
+    /// Template reference resolved by the package registry.
     pub template_ref: String,
     /// Traversal strategy name used to produce node batches.
     pub traversal_strategy: String,
     /// Workflow region template expanded for each traversal batch.
     pub repeated_region: RepeatedRegionSpec,
-    /// Prerequisite owned by this execution contract.
+    /// Prerequisite template that wires traversal dependencies.
     pub prerequisite: PrerequisiteTemplateSpec,
     /// Optional frame head publish policy carried with the expansion.
     #[serde(default)]
@@ -58,7 +58,7 @@ pub struct TraversalPublishSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PackageExpansionSpec {
-    /// Traversal prerequisite variant for this execution contract.
+    /// Traversal prerequisite expansion authored by the package.
     TraversalPrerequisite(TraversalPrerequisitePackageExpansionSpec),
 }
 
@@ -88,9 +88,9 @@ pub struct WorkflowPackageTriggerRequest {
 /// Prepared compiled task and run payload for one package trigger.
 #[derive(Debug, Clone)]
 pub struct PreparedTaskRun {
-    /// Compiled task owned by this execution contract.
+    /// Compiled task produced by package lowering.
     pub compiled_task: CompiledTaskRecord,
-    /// Init payload owned by this execution contract.
+    /// Initialization payload paired with the compiled task.
     pub init_payload: TaskInitializationPayload,
     /// Target node identifier carried across the execution boundary.
     pub target_node_id: NodeId,
@@ -101,12 +101,12 @@ pub struct PreparedTaskRun {
 pub struct PreparedWorkflowPackageContext {
     /// Target node identifier carried across the execution boundary.
     pub target_node_id: NodeId,
-    /// Target path owned by this execution contract.
+    /// Target workspace path used while lowering the package.
     pub target_path: String,
     /// Prompts by turn identifier carried across the execution boundary.
     pub prompts_by_turn_id: HashMap<String, String>,
     /// Gates by identifier carried across the execution boundary.
     pub gates_by_id: HashMap<String, WorkflowGate>,
-    /// Traversal expansion owned by this execution contract.
+    /// Traversal expansion being lowered for this target.
     pub traversal_expansion: TraversalPrerequisitePackageExpansionSpec,
 }

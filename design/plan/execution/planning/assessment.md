@@ -10,7 +10,7 @@ Evidence date: 2026-05-31
 
 Execution planning has implemented the first runtime slice from one active ground `meld-lang::Goal` and one projected `meld-lang::WorldState` to an execution owned composition artifact.
 
-Task network mutation acceptance, dispatch, durable task runtime state, and flywheel outcome publication remain deferred.
+Task network command acceptance, mutation reduction, dispatch, durable task runtime state, and flywheel outcome publication remain deferred.
 
 ## Conceptual Correctness
 
@@ -47,7 +47,7 @@ The implemented runtime planning slice covers:
 Runtime planning is still blocked for task network execution by:
 
 - task network graph executor
-- graph mutation acceptance
+- task network command acceptance and mutation reduction
 - plan diffing
 - switching cost model
 - durable planning attempt log
@@ -58,7 +58,7 @@ Runtime planning is still blocked for task network execution by:
 
 ## Boundary Clarity
 
-Execution planning owns goal evaluation, HTN method selection, composition preparation, task network mutation decisions, conditional edge evaluation, observation waits, cost-aware plan transitions, and synthesis task insertion.
+Execution planning owns goal evaluation, HTN method selection, composition preparation, task network mutation proposal decisions, conditional edge evaluation, observation waits, cost-aware plan transitions, and synthesis task insertion.
 
 Execution planning does not own belief settlement, agent normative judgment, world model projection authority, event ledger authority, or provider implementation details.
 
@@ -108,7 +108,7 @@ No task network graph executor is required for this slice.
 ## Gaps
 
 - Task network graph executor is not specified enough for runtime implementation.
-- Mutation acceptance is not specified enough for runtime implementation.
+- Task network command acceptance and mutation reduction are not specified enough for runtime implementation.
 - Execution runtime assembly has not selected the persistent goal store path.
 - Agent goal command ingestion into execution goal storage is not wired.
 - Planning attempts do not yet have an append only audit log.

@@ -18,9 +18,9 @@ use walkdir::WalkDir;
 /// Verified method library plus invalid entries encountered during loading.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MethodLibrary {
-    /// Entries owned by this execution contract.
+    /// Verified methods available for candidate selection.
     pub entries: Vec<VerifiedMethodEntry>,
-    /// Invalid owned by this execution contract.
+    /// Invalid method reports preserved from loading and verification.
     pub invalid: Vec<InvalidMethodReport>,
 }
 
@@ -93,11 +93,11 @@ impl MethodLibrary {
 /// A method that passed reusable template verification.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VerifiedMethodEntry {
-    /// Method owned by this execution contract.
+    /// Reusable method template accepted by verification.
     pub method: Method,
-    /// Source reference owned by this execution contract.
+    /// Source reference used in diagnostics and stable ordering.
     pub source_ref: MethodSourceRef,
-    /// Verification owned by this execution contract.
+    /// Verification report attached to this method.
     pub verification: MethodVerification,
 }
 
@@ -128,29 +128,29 @@ impl MethodSourceRef {
 /// Verification report attached to a reusable method.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MethodVerification {
-    /// Diagnostics owned by this execution contract.
+    /// Diagnostics emitted while verifying the method template.
     pub diagnostics: Vec<MethodVerificationDiagnostic>,
-    /// Operator resolutions owned by this execution contract.
+    /// Operator to capability resolutions discovered during verification.
     pub operator_resolutions: Vec<OperatorResolutionReport>,
 }
 
 /// Method verification diagnostic wrapper.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MethodVerificationDiagnostic {
-    /// Diagnostic owned by this execution contract.
+    /// Planning diagnostic emitted during method verification.
     pub diagnostic: PlanningDiagnostic,
 }
 
 /// Loading failure before individual method verification can run.
 #[derive(Debug, Error)]
 pub enum MethodLibraryLoadError {
-    /// Walk variant for this execution contract.
+    /// Directory traversal failed while loading methods.
     #[error("method directory walk failed: {0}")]
     Walk(String),
-    /// Io variant for this execution contract.
+    /// Method file could not be read.
     #[error("method file read failed: {0}")]
     Io(#[from] std::io::Error),
-    /// Serde variant for this execution contract.
+    /// Method JSON could not be decoded.
     #[error("method JSON decode failed: {0}")]
     Serde(#[from] serde_json::Error),
 }
