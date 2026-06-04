@@ -78,12 +78,20 @@ Owner: `meld-execution`
 Depends on: Phase 6 first slice
 Plan: [execution/task_network/PLAN.md](execution/task_network/PLAN.md)
 
-### Phase 8: Sensory — `not started`
+### Phase 8: Expanded Execution Slice — `ready after hardening`
 
-Diff-native observation for the docs node. Publishes to the event spine. Closes the loop: the system observes changes it caused and re-enters the cycle.
+Mature task network execution before sensory work. Lower one execution composition into a multi node task graph, commit it atomically, materialize task init payloads from static seeds and upstream artifacts, dispatch real task runs, and replay the accepted graph state across reopen.
+
+Owner: `meld-execution`
+Depends on: Phase 7 first slice and hardening gates
+Plan: [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md)
+
+### Phase 9: Sensory — `deferred`
+
+Diff-native observation for the docs node. Publishes to the event spine. Closes the loop after execution can run and replay a real multi node graph.
 
 Owner: sensory domain
-Parallel with: Phases 6 and 7. Requires only the event spine contract.
+Depends on: Phase 8 expanded execution slice and event spine contract
 
 ## Foundation
 
@@ -106,11 +114,12 @@ These components predate the vertical slice and support all phases.
 8. `integration/typed_loop` — complete
 9. `execution/planning` — first slice implemented, Phase 6
 10. `execution/task_network` — first slice implemented, Phase 7
-11. `sensory` — not started, Phase 8
-12. `world_model/causation` — deferred past vertical slice
-13. `world_model/regime` — deferred past vertical slice
-14. `world_model` — full integration deferred
-15. `execution` — full integration deferred
+11. `execution/task_network/expanded` — ready after hardening, Phase 8
+12. `sensory` — deferred, Phase 9
+13. `world_model/causation` — deferred past vertical slice
+14. `world_model/regime` — deferred past vertical slice
+15. `world_model` — full integration deferred
+16. `execution` — full integration deferred
 
 ## Implementation Plans
 
@@ -121,7 +130,8 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [world_model/planner/PLAN.md](world_model/planner/PLAN.md) — complete
 - [world_model/agent/PLAN.md](world_model/agent/PLAN.md) — complete
 - [execution/planning/PLAN.md](execution/planning/PLAN.md) — first slice implemented
-- [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — ready to implement
+- [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — first slice implemented
+- [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — ready after hardening
 
 ## Assessment Inventory
 
@@ -142,15 +152,15 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 
 ## Scope Cuts
 
-The vertical slice excludes full causal effect summaries, regime sensitivity summaries, broad risk envelopes, multi-agent divergence, learned normative policy, multi-agent coordination, goal conflict resolution, broad utility estimation, multi-step task network execution, recursive sub-goal lowering, plan diffing, and switching cost model.
+The vertical slice excludes full causal effect summaries, regime sensitivity summaries, broad risk envelopes, multi-agent divergence, learned normative policy, multi-agent coordination, goal conflict resolution, broad utility estimation, recursive sub-goal lowering, plan diffing, sensory runtime, and switching cost model.
 
 Each phase implements the minimum needed for one `docs_freshness` flywheel turn. Deepening happens after the loop turns once end-to-end.
 
 ## Blocked Areas
 
-- multi-step task network execution
 - recursive sub-goal lowering
 - plan diffing
+- sensory runtime
 - switching cost model
 - workflow integration strategy
 - causal effect estimation

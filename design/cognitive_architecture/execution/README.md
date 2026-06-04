@@ -81,6 +81,8 @@ flowchart TD
   graphs-lower-graphs execution model: planning loop and task network, connected by commands
 - [Task Network](task_network.md)
   stateful orchestration over compiled tasks, command acceptance, and event-driven dispatch
+- [Task Initialization](task_initialization.md)
+  seed artifacts, data flow materialization, and validation authority before task dispatch
 
 ### Supporting
 

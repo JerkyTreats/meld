@@ -12,6 +12,8 @@ Phase 7 starts from `planning::contracts::ExecutionComposition` and ends when on
 
 The phase builds the upper graph layer while preserving the existing task compiler, task package lowering, task executor, and capability runtime as lower execution machinery.
 
+The next global execution phase is [Phase 8 Expanded Execution Slice](PHASE8.md). Internal phase numbers in this file describe the Phase 7 implementation sequence only.
+
 ## Assessment Summary
 
 The codebase already has strong lower execution machinery in `crates/meld-execution`.
@@ -1037,11 +1039,12 @@ Verification:
 cargo test -p meld-execution phase7_task_network_slice
 ```
 
-## Future Slices
+## Next And Future Slices
 
-Later slices extend the first Phase 7 slice with:
+The immediate next slice is [Phase 8 Expanded Execution Slice](PHASE8.md).
 
-- multi-step composition lowering
+Later slices extend Phase 8 with:
+
 - recursive sub-goal planning
 - conditional edge guard evaluation
 - observation wait task generation

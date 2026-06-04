@@ -134,6 +134,14 @@ The task network accepts graph mutation sets through commands from planning agen
 
 Mutations are the graph delta interface between planning and execution. The planning loop decides what to propose based on goal evaluation, belief changes, and cost analysis. The task network decides how to accept or reject the command based on state transitions, cleanup rules, and ready set recomputation.
 
+## Atomic Graph Commit
+
+Task network mutation sets are accepted atomically. A command either commits every graph mutation in the set or commits none of them.
+
+Lowering from an execution composition must not leave partial executable subgraphs in the authoritative task network. When one executable operator step cannot be lowered, the lowerer reports diagnostics and submits no executable graph changes for that composition.
+
+Atomic commit keeps graph state coherent while plan diffing, preserve, relink, prune, and cancel are still maturing.
+
 ## Ready Set Computation
 
 The ready set is computed over the task graph the same way it is computed over the capability graph within a task:
@@ -147,6 +155,23 @@ For each task that is NOT completed and NOT in-flight:
 Tasks whose dependencies are all satisfied enter the ready set and may be dispatched to workers.
 
 This is the upper level of the fractal. `compute_ready_capability_instances` performs the identical computation at the lower level in `task/readiness.rs`.
+
+## Task Init Materialization
+
+Each task node carries a compiled task graph and an initialization source plan for required init slots.
+
+`TaskInitializationPayload` is the materialized task run envelope handed to the task executor. It is not the semantic authority for artifacts. The task network owns source validation and data flow materialization before dispatch.
+
+There is no separate data flow task kind. A source task and a data flow task are both task nodes. The difference is when the final init artifacts become available.
+
+- source task: required init artifacts are static seeds available before dispatch
+- data flow task: one or more required init artifacts come from upstream task outcomes
+
+Before task execution, the task network resolves each required init slot from its source plan. Static seeds are copied into the payload. Upstream artifact sources select accepted artifacts from named upstream tasks. Selection must match task identity, artifact type, and schema version.
+
+If required init materialization fails, the task is not executable. Missing artifacts, ambiguous artifacts, schema mismatches, stale lifecycle epochs, and invalid provenance block dispatch with typed diagnostics.
+
+See [Task Initialization](task_initialization.md).
 
 ## Conditional Edge Evaluation
 
@@ -214,6 +239,7 @@ Task-internal retry remains in the task executor. Only when retries are exhauste
 
 - [Execution Domain](README.md)
 - [Planning Pipeline](planning/planning_pipeline.md)
+- [Task Initialization](task_initialization.md)
 - [Goals](goals/README.md)
 - [Guard Expression Semantics](planning/guard_expression_semantics.md)
 - [Observation Wait Semantics](planning/observation_wait_semantics.md)
