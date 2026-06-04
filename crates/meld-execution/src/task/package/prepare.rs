@@ -694,7 +694,10 @@ mod tests {
 
     #[test]
     fn validate_trigger_rejects_missing_required_runtime_fields() {
-        let cases: Vec<(&str, Box<dyn FnOnce(&mut WorkflowPackageTriggerRequest)>)> = vec![
+        type RuntimeFieldMutation = Box<dyn FnOnce(&mut WorkflowPackageTriggerRequest)>;
+        type RuntimeFieldCase = (&'static str, RuntimeFieldMutation);
+
+        let cases: Vec<RuntimeFieldCase> = vec![
             ("agent_id", Box::new(|request| request.agent_id.clear())),
             (
                 "provider_binding",

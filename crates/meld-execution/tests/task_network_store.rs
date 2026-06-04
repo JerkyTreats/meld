@@ -10,9 +10,25 @@ use meld_execution::task_network::store::{
 };
 use proptest::prelude::*;
 use serde_json::json;
+use std::io::ErrorKind;
+use std::thread;
+use std::time::Duration;
 
 fn open_store(path: &std::path::Path) -> SledTaskNetworkStore {
-    SledTaskNetworkStore::open(sled::open(path).unwrap(), "network-docs").unwrap()
+    let mut attempts = 0;
+    loop {
+        match sled::open(path) {
+            Ok(db) => return SledTaskNetworkStore::open(db, "network-docs").unwrap(),
+            Err(sled::Error::Io(error)) => {
+                if error.kind() != ErrorKind::WouldBlock || attempts >= 20 {
+                    panic!("failed to open sled test store: {error}");
+                }
+                attempts += 1;
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("failed to open sled test store: {error}"),
+        }
+    }
 }
 
 fn assert_decode_error(error: TaskNetworkStoreError) {

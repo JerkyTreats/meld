@@ -1,7 +1,7 @@
 # Execution Task Network Phase 8 Expanded Execution Slice
 
 Date: 2026-06-04
-Status: ready after hardening
+Status: ready for implementation
 Scope: multi node execution composition lowering, task init materialization, real task dispatch, and replay
 
 ## Purpose
@@ -26,6 +26,12 @@ Required hardening gates:
 - `cargo check --manifest-path crates/meld-execution/fuzz/Cargo.toml`
 - task network store property tests pass without sled reopen lock failures
 - mutation testing findings are reviewed and either fixed or recorded with rationale
+
+Hardening evidence:
+
+- 2026-06-04 command gates passed for format, check, tests, doc tests, clippy, and fuzz crate check.
+- 2026-06-04 task network store tests passed under normal parallel execution without sled reopen lock failures.
+- 2026-06-04 focused task network mutation run passed with 38 caught mutants, 13 unviable mutants, and zero survivors.
 
 ## Design Inputs
 
