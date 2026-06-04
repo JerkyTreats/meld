@@ -93,11 +93,11 @@ The planning loop uses HTN decomposition to convert goals into task graphs. The 
 2. `substitute(method.composition, bindings)` produces a concrete `Composition`
 3. Each `Operator` in the composition is resolved against the capability catalog through its `Resolution` query
 4. The concrete composition is wrapped as an execution composition with validation, projected effects, selected method provenance, bindings, world frame provenance, diagnostics, and operator resolution reports
-5. Phase 7 lowers the execution composition into task network mutation sets carried by commands
+5. Execution composition lowering turns the concrete composition into task network mutation sets carried by commands
 
 If no method matches, the planning loop may request LLM-assisted decomposition that constructs a `Composition` directly or report the goal as unachievable with the current catalog.
 
-The output of Phase 7 lowering is a task network mutation set carried by a command. The mutation set contains tasks as nodes and dependency edges between them. Dependencies encode:
+The output of execution composition lowering is a task network mutation set carried by a command. The mutation set contains tasks as nodes, dependency edges between them, lineage, and task init source plans. Dependencies encode:
 
 - **data flow**: task B needs an artifact that task A produces and maps to `EdgeKind::DataFlow` in compositions
 - **ordering**: task B must follow task A and maps to `EdgeKind::Ordering` in compositions
@@ -130,7 +130,7 @@ enum DependencyKind {
 }
 ```
 
-The first dispatch slice should submit the lowered output through an explicit task network command:
+Lowered output is submitted through an explicit task network command:
 
 ```rust
 pub struct TaskNetworkCommandRequest {
@@ -174,6 +174,28 @@ pub struct TaskInjectMutation {
 ```
 
 Dispatch consumes the ready set after command acceptance. The execution composition does not carry task runtime state.
+
+### All Or Nothing Lowering
+
+Execution composition lowering is all or nothing for executable operator steps.
+
+The lowerer inspects every concrete operator step in the composition. If any executable operator step cannot resolve to a capability contract, cannot compile into a task node, or references an invalid edge, the lowerer reports diagnostics and produces no executable graph mutation for that composition.
+
+Recursive goal steps and conditional edges may be preserved as deferred diagnostics. They do not permit partial executable graph commit in the expanded execution slice.
+
+This rule keeps the accepted task network graph coherent until plan diffing, preserve, relink, cancel, and prune mature.
+
+### Task Init Sources
+
+Lowering does not need the final runtime payload for every task.
+
+For each task node, lowering records how required init slots will be satisfied.
+
+Static source tasks can carry seed objects from goal context, target selectors, workflow triggers, or planner constants.
+
+Data flow tasks carry source records that point to upstream task artifacts. Their final `TaskInitializationPayload` is materialized after upstream outcomes exist and before task execution.
+
+The task network validates source records before dispatch. Materialization must match upstream task identity, artifact type, and schema version. The final payload must pass task initialization validation before a task executor is built.
 
 ### Control Flow Through Graph Structure
 
@@ -318,17 +340,19 @@ Synthesis is a task in the network, not a special-case pipeline. Graphs lower gr
 - **method library**: `planning/method_library.rs` loads and verifies serialized methods
 - **planning runtime**: `planning/runtime.rs` turns one active goal and one projected world state into `ExecutionComposition`
 
-### Designed but not implemented
+### Designed but not fully implemented
 
 - **recursive HTN decomposition**: later planning recurses through sub-goal steps and preserves broader lineage
 - **guard expressions**: fully specified in [Guard Expression Semantics](guard_expression_semantics.md), applicable as conditional dependency edges
 - **observation wait semantics**: fully specified in [Observation Wait Semantics](observation_wait_semantics.md), applicable as data-flow dependencies from observation tasks
 - **task network first slice**: specified in [Phase 7 Task Network Plan](../../../plan/execution/task_network/PLAN.md), covering one inject mutation, one ready task, one dispatch, and one publication handoff
+- **expanded execution slice**: specified in [Phase 8 Expanded Execution Slice](../../../plan/execution/task_network/PHASE8.md), covering multi node lowering, init materialization, real task dispatch, and replay
 
 ### Deferred Beyond First Slice
 
 - **planning loop**: continuous operation, world-model reads, cost-aware mutation proposal decisions
-- **task network deepening**: multi-step graph execution, recursive sub-goal lowering, cancel, relink, preserve, and prune
+- **task network deepening**: recursive sub-goal lowering, cancel, relink, preserve, and prune
+- **sensory runtime**: diff native observation remains deferred until expanded execution is mature
 - **switching cost model**: cleanup estimation, sunk cost calculation, benefit comparison
 - **plan diffing**: identifying affected subtrees from belief changes, computing minimal mutations
 
