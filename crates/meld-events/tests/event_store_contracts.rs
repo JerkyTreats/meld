@@ -4,6 +4,7 @@ use meld_events::{
 };
 use proptest::prelude::*;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 const SESSION_A: &str = "session-a";
@@ -73,6 +74,101 @@ fn related_domain_envelope() -> EventEnvelope {
     domain_envelope("execution.artifact.available")
         .with_occurred_at("2026-04-26T15:59:59Z")
         .with_graph(vec![task, artifact], vec![relation])
+}
+
+#[derive(Clone, Debug)]
+struct GeneratedEventSpec {
+    ts: String,
+    session: String,
+    domain_id: String,
+    stream_id: String,
+    event_type: String,
+    content_hash: Option<String>,
+    record_id: Option<String>,
+    marker: u16,
+}
+
+impl GeneratedEventSpec {
+    fn envelope(&self) -> EventEnvelope {
+        let envelope = EventEnvelope::new_domain(
+            self.ts.clone(),
+            self.session.clone(),
+            self.domain_id.clone(),
+            self.stream_id.clone(),
+            self.event_type.clone(),
+            self.content_hash.clone(),
+            json!({ "marker": self.marker }),
+        );
+        with_optional_record_id(envelope, self.record_id.clone())
+    }
+}
+
+fn with_optional_record_id(envelope: EventEnvelope, record_id: Option<String>) -> EventEnvelope {
+    match record_id {
+        Some(record_id) => envelope.with_record_id(record_id),
+        None => envelope,
+    }
+}
+
+prop_compose! {
+    fn generated_timestamp()(minute in 0u8..60, second in 0u8..60) -> String {
+        format!("2026-04-26T16:{minute:02}:{second:02}Z")
+    }
+}
+
+prop_compose! {
+    fn generated_component()(value in "[a-z][a-z0-9_-]{0,16}") -> String {
+        value
+    }
+}
+
+prop_compose! {
+    fn generated_event_type()(
+        domain in "[a-z][a-z0-9_]{0,12}",
+        action in "[a-z][a-z0-9_]{0,12}",
+    ) -> String {
+        format!("{domain}.{action}")
+    }
+}
+
+prop_compose! {
+    fn generated_content_hash()(value in "[a-f0-9]{1,24}") -> String {
+        format!("sha256:{value}")
+    }
+}
+
+prop_compose! {
+    fn generated_event_spec()(
+        ts in generated_timestamp(),
+        session in generated_component(),
+        domain_id in generated_component(),
+        stream_id in generated_component(),
+        event_type in generated_event_type(),
+        content_hash in prop::option::of(generated_content_hash()),
+        record_id in prop::option::of(generated_component()),
+        marker in any::<u16>(),
+    ) -> GeneratedEventSpec {
+        GeneratedEventSpec {
+            ts,
+            session,
+            domain_id,
+            stream_id,
+            event_type,
+            content_hash,
+            record_id,
+            marker,
+        }
+    }
+}
+
+prop_compose! {
+    fn generated_object_ref()(
+        domain_id in generated_component(),
+        object_kind in generated_component(),
+        object_id in generated_component(),
+    ) -> DomainObjectRef {
+        DomainObjectRef::new(domain_id, object_kind, object_id).unwrap()
+    }
 }
 
 #[test]
@@ -289,6 +385,37 @@ fn store_reopen_preserves_domain_events() {
 }
 
 #[test]
+fn store_flush_writes_pending_bytes_to_disk() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let path = temp_dir.path().join("events");
+    let db = sled::Config::new()
+        .path(&path)
+        .flush_every_ms(None)
+        .open()
+        .unwrap();
+    let store = EventStore::new(db.clone()).unwrap();
+
+    for index in 0..64 {
+        let mut record = runtime_event(
+            index + 1,
+            SESSION_A,
+            &format!("execution.flush.pending.{index}"),
+        );
+        record.data = json!({ "payload": "event ".repeat(256) });
+        store.append_event(&record).unwrap();
+    }
+
+    let before_flush = db.size_on_disk().unwrap();
+    store.flush().unwrap();
+    let after_flush = db.size_on_disk().unwrap();
+
+    assert!(
+        after_flush > before_flush,
+        "expected flush to increase on-disk bytes from {before_flush}, got {after_flush}"
+    );
+}
+
+#[test]
 fn legacy_events_normalize_defaults() {
     let (_temp_dir, store) = event_store();
     let legacy = EventRecord {
@@ -475,6 +602,8 @@ fn runtime_best_effort_success_paths_persist_events() {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(48))]
+
     #[test]
     fn object_ref_index_key_preserves_components(
         domain in "[a-z][a-z0-9_]{0,24}",
@@ -491,5 +620,189 @@ proptest! {
             .unwrap(),
             object_ref
         );
+    }
+
+    #[test]
+    fn envelope_conversion_preserves_generated_metadata(
+        spec in generated_event_spec(),
+        src in generated_object_ref(),
+        dst in generated_object_ref(),
+        relation_type in generated_component(),
+        occurred_at in generated_timestamp(),
+        seq in 1u64..10_000,
+    ) {
+        let relation =
+            meld_events::EventRelation::new(relation_type.clone(), src.clone(), dst.clone())
+                .unwrap();
+        let envelope = spec
+            .envelope()
+            .with_occurred_at(occurred_at.clone())
+            .with_graph(vec![src.clone(), dst.clone()], vec![relation.clone()]);
+
+        let record = EventRecord::from_envelope(envelope, seq);
+
+        prop_assert_eq!(record.ts.as_str(), spec.ts.as_str());
+        prop_assert_eq!(record.recorded_at.as_str(), spec.ts.as_str());
+        prop_assert_eq!(record.record_id.as_ref(), spec.record_id.as_ref());
+        prop_assert_eq!(record.session.as_str(), spec.session.as_str());
+        prop_assert_eq!(record.seq, seq);
+        prop_assert_eq!(record.domain_id.as_str(), spec.domain_id.as_str());
+        prop_assert_eq!(record.stream_id.as_str(), spec.stream_id.as_str());
+        prop_assert_eq!(record.event_type.as_str(), spec.event_type.as_str());
+        prop_assert_eq!(record.occurred_at.as_deref(), Some(occurred_at.as_str()));
+        prop_assert_eq!(record.content_hash.as_ref(), spec.content_hash.as_ref());
+        prop_assert_eq!(record.objects, vec![src, dst]);
+        prop_assert_eq!(record.relations, vec![relation]);
+        prop_assert_eq!(record.data, json!({ "marker": spec.marker }));
+    }
+
+    #[test]
+    fn store_assigned_sequences_match_generated_append_model(
+        specs in prop::collection::vec(generated_event_spec(), 1..16),
+        after_cursor in any::<u8>(),
+    ) {
+        let (_temp_dir, store) = event_store();
+        let mut expected_all = Vec::new();
+        let mut expected_by_session: BTreeMap<String, Vec<EventRecord>> = BTreeMap::new();
+
+        for (index, spec) in specs.iter().enumerate() {
+            let seq = store.append_envelope(spec.envelope()).unwrap();
+            let expected_seq = index as u64 + 1;
+            prop_assert_eq!(seq, expected_seq);
+
+            let expected = EventRecord::from_envelope(spec.envelope(), expected_seq);
+            expected_by_session
+                .entry(spec.session.clone())
+                .or_default()
+                .push(expected.clone());
+            expected_all.push(expected);
+        }
+
+        prop_assert_eq!(store.read_all_events_after(0).unwrap(), expected_all.clone());
+
+        let after = u64::from(after_cursor) % (specs.len() as u64 + 2);
+        let expected_after = expected_all
+            .iter()
+            .filter(|event| event.seq > after)
+            .cloned()
+            .collect::<Vec<_>>();
+        prop_assert_eq!(store.read_all_events_after(after).unwrap(), expected_after);
+
+        for (session, expected_events) in expected_by_session {
+            let expected_session_after = expected_events
+                .iter()
+                .filter(|event| event.seq > after)
+                .cloned()
+                .collect::<Vec<_>>();
+            prop_assert_eq!(store.read_events(&session).unwrap(), expected_events);
+            prop_assert_eq!(
+                store.read_events_after(&session, after).unwrap(),
+                expected_session_after
+            );
+        }
+    }
+
+    #[test]
+    fn idempotent_envelope_append_reuses_first_generated_record_id(
+        mut specs in prop::collection::vec(generated_event_spec(), 1..16),
+    ) {
+        let (_temp_dir, store) = event_store();
+        let mut expected_all = Vec::new();
+        let mut first_seq_by_record_id: BTreeMap<String, u64> = BTreeMap::new();
+        let mut next_seq = 1u64;
+
+        for (index, spec) in specs.iter_mut().enumerate() {
+            spec.record_id = if index % 3 == 0 {
+                None
+            } else {
+                Some(format!("record-{}", index % 4))
+            };
+            let seq = store.append_envelope_idempotent(spec.envelope()).unwrap();
+
+            match spec.record_id.clone() {
+                Some(record_id) => {
+                    if let Some(existing_seq) = first_seq_by_record_id.get(&record_id) {
+                        prop_assert_eq!(seq, *existing_seq);
+                    } else {
+                        prop_assert_eq!(seq, next_seq);
+                        first_seq_by_record_id.insert(record_id, seq);
+                        expected_all.push(EventRecord::from_envelope(spec.envelope(), seq));
+                        next_seq += 1;
+                    }
+                }
+                None => {
+                    prop_assert_eq!(seq, next_seq);
+                    expected_all.push(EventRecord::from_envelope(spec.envelope(), seq));
+                    next_seq += 1;
+                }
+            }
+        }
+
+        prop_assert_eq!(store.read_all_events_after(0).unwrap(), expected_all);
+        prop_assert_eq!(
+            store
+                .append_envelope(domain_envelope("execution.after.idempotent"))
+                .unwrap(),
+            next_seq
+        );
+    }
+
+    #[test]
+    fn presequenced_append_advances_allocator_past_generated_sequence(
+        seq in 1u64..10_000,
+        session in generated_component(),
+        event_type in generated_event_type(),
+    ) {
+        let (_temp_dir, store) = event_store();
+        let record = runtime_event(seq, &session, &event_type);
+
+        store.append_event(&record).unwrap();
+
+        prop_assert_eq!(store.read_events(&session).unwrap(), vec![record]);
+        prop_assert_eq!(
+            store
+                .append_envelope(domain_envelope("execution.after.manual"))
+                .unwrap(),
+            seq + 1
+        );
+    }
+
+    #[test]
+    fn legacy_records_normalize_generated_defaults(
+        ts in generated_timestamp(),
+        session in generated_component(),
+        seq in 1u64..10_000,
+        marker in any::<u16>(),
+    ) {
+        let (_temp_dir, store) = event_store();
+        let legacy = EventRecord {
+            ts: ts.clone(),
+            recorded_at: String::new(),
+            record_id: None,
+            session: session.clone(),
+            seq,
+            domain_id: String::new(),
+            stream_id: String::new(),
+            event_type: "legacy.generated".to_string(),
+            occurred_at: None,
+            content_hash: None,
+            objects: Vec::new(),
+            relations: Vec::new(),
+            data: json!({ "marker": marker }),
+        };
+        let legacy_tree = store.db().open_tree("obs_events").unwrap();
+        let key = EventStore::encode_event_key(&session, seq);
+        legacy_tree
+            .insert(key.as_bytes(), serde_json::to_vec(&legacy).unwrap())
+            .unwrap();
+
+        let events = store.read_events(&session).unwrap();
+
+        prop_assert_eq!(events.len(), 1);
+        prop_assert_eq!(events[0].recorded_at.as_str(), ts.as_str());
+        prop_assert_eq!(events[0].domain_id.as_str(), "telemetry");
+        prop_assert_eq!(events[0].stream_id.as_str(), session.as_str());
+        prop_assert_eq!(&events[0].data, &json!({ "marker": marker }));
+        prop_assert!(store.read_events_after(&session, seq).unwrap().is_empty());
     }
 }

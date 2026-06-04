@@ -1,3 +1,32 @@
+//! Synchronous event runtime facade.
+//!
+//! Owner: event runtime.
+//! Inputs: legacy telemetry events, domain events, and prepared envelopes.
+//! Outputs: flushed records in the backing [`crate::events::store::EventStore`].
+//! Does not own: this module does not interpret event payloads or materialize
+//! graph facts.
+//!
+//! # Example
+//!
+//! ```rust
+//! use meld_events::EventRuntime;
+//! use serde_json::json;
+//!
+//! let db = sled::Config::new().temporary(true).open().unwrap();
+//! let runtime = EventRuntime::new(db).unwrap();
+//! runtime.emit_domain_event(
+//!     "session-a",
+//!     "execution",
+//!     "workflow-a",
+//!     "execution.started",
+//!     None,
+//!     json!({ "started": true }),
+//! ).unwrap();
+//!
+//! let events = runtime.store().read_events("session-a").unwrap();
+//! assert_eq!(events.len(), 1);
+//! ```
+
 use std::sync::Arc;
 
 use serde_json::Value;

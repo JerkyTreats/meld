@@ -1,3 +1,26 @@
+//! Domain object and relation records carried by events.
+//!
+//! Owner: event contracts.
+//! Inputs: producer-owned object coordinates and relation names.
+//! Outputs: validated object references and directed relation records for
+//! downstream materializers.
+//! Does not own: this module does not store graph facts or interpret payload
+//! semantics.
+//!
+//! # Example
+//!
+//! ```rust
+//! use meld_events::{DomainObjectRef, EventRelation};
+//!
+//! let task = DomainObjectRef::new("execution", "task_run", "run-a").unwrap();
+//! let artifact =
+//!     DomainObjectRef::new("execution", "artifact", "artifact-a").unwrap();
+//! let relation = EventRelation::new("produced", task.clone(), artifact).unwrap();
+//!
+//! assert_eq!(task.index_key(), "execution::task_run::run-a");
+//! assert_eq!(relation.relation_type, "produced");
+//! ```
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::StorageError;

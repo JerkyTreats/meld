@@ -1,3 +1,36 @@
+//! Append-only event spine storage.
+//!
+//! Owner: event store.
+//! Inputs: sequenced records, unsequenced envelopes, and legacy session event
+//! rows.
+//! Outputs: runtime-wide sequence allocation, idempotent append results,
+//! session-scoped reads, and cursor reads across sessions.
+//! Does not own: this module does not publish to telemetry sinks or interpret
+//! producer payloads.
+//!
+//! # Example
+//!
+//! ```rust
+//! use meld_events::events::store::EventStore;
+//! use meld_events::EventEnvelope;
+//! use serde_json::json;
+//!
+//! let db = sled::Config::new().temporary(true).open().unwrap();
+//! let store = EventStore::new(db).unwrap();
+//! let seq = store.append_envelope(EventEnvelope::new_domain(
+//!     "2026-04-26T16:00:00Z".to_string(),
+//!     "session-a",
+//!     "execution",
+//!     "workflow-a",
+//!     "execution.started",
+//!     None,
+//!     json!({ "started": true }),
+//! )).unwrap();
+//!
+//! assert_eq!(seq, 1);
+//! assert_eq!(store.read_events("session-a").unwrap().len(), 1);
+//! ```
+
 use std::io;
 use std::sync::Arc;
 

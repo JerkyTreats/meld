@@ -1,3 +1,33 @@
+//! In-process event bus and queue drainers.
+//!
+//! Owner: event ingress.
+//! Inputs: producer envelopes from runtime and direct bus callers.
+//! Outputs: bounded queue handoff and drained append operations into
+//! [`crate::events::store::EventStore`].
+//! Does not own: this module does not allocate durable storage paths or expose
+//! query APIs.
+//!
+//! # Example
+//!
+//! ```rust
+//! use meld_events::{EventBus, EventEnvelope};
+//! use serde_json::json;
+//!
+//! let (bus, rx) = EventBus::new_pair_with_capacity(1);
+//! bus.emit_envelope(EventEnvelope::new_domain(
+//!     "2026-04-26T16:00:00Z".to_string(),
+//!     "session-a",
+//!     "execution",
+//!     "workflow-a",
+//!     "execution.started",
+//!     None,
+//!     json!({ "started": true }),
+//! )).unwrap();
+//!
+//! let queued = rx.try_recv().unwrap();
+//! assert_eq!(queued.session, "session-a");
+//! ```
+
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 
