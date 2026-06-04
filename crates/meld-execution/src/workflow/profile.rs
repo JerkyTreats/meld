@@ -10,32 +10,32 @@ use std::collections::HashSet;
 pub struct WorkflowProfile {
     /// Workflow profile identifier that owns this execution record.
     pub workflow_id: String,
-    /// Version owned by this execution contract.
+    /// Workflow profile schema or definition version.
     pub version: u32,
-    /// Title owned by this execution contract.
+    /// Human-readable workflow title.
     pub title: String,
-    /// Description owned by this execution contract.
+    /// Human-readable workflow description.
     pub description: String,
-    /// Thread policy owned by this execution contract.
+    /// Thread creation and resume policy.
     pub thread_policy: WorkflowThreadPolicy,
     /// Ordered workflow turn templates in this repeated region.
     pub turns: Vec<WorkflowTurn>,
-    /// Gates owned by this execution contract.
+    /// Gates available to workflow turns.
     pub gates: Vec<WorkflowGate>,
-    /// Artifact policy owned by this execution contract.
+    /// Artifact persistence policy for workflow output.
     pub artifact_policy: WorkflowArtifactPolicy,
-    /// Failure policy owned by this execution contract.
+    /// Failure handling policy for workflow execution.
     pub failure_policy: WorkflowFailurePolicy,
-    /// Thread profile owned by this execution contract.
+    /// Optional external thread profile identifier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_profile: Option<String>,
     /// Target agent identifier carried across the execution boundary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_agent_id: Option<String>,
-    /// Target frame type owned by this execution contract.
+    /// Optional default frame type for workflow targets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_frame_type: Option<String>,
-    /// Final artifact type owned by this execution contract.
+    /// Optional artifact type expected from the final workflow turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_artifact_type: Option<String>,
 }
@@ -43,13 +43,13 @@ pub struct WorkflowProfile {
 /// Workflow thread policy contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkflowThreadPolicy {
-    /// Start conditions owned by this execution contract.
+    /// Declarative conditions required before starting a thread.
     #[serde(default)]
     pub start_conditions: Value,
-    /// Dedupe key fields owned by this execution contract.
+    /// Fields used to derive thread de-duplication keys.
     #[serde(default)]
     pub dedupe_key_fields: Vec<String>,
-    /// Max turn retries owned by this execution contract.
+    /// Maximum retries allowed for each workflow turn.
     pub max_turn_retries: usize,
 }
 
@@ -60,11 +60,11 @@ pub struct WorkflowTurn {
     pub turn_id: String,
     /// Workflow turn sequence number used for deterministic ordering.
     pub seq: u32,
-    /// Title owned by this execution contract.
+    /// Human-readable turn title.
     pub title: String,
-    /// Prompt reference owned by this execution contract.
+    /// Prompt reference resolved before provider execution.
     pub prompt_ref: String,
-    /// Input references owned by this execution contract.
+    /// Input references required to render this turn.
     #[serde(default)]
     pub input_refs: Vec<String>,
     /// Declared output type produced by this workflow turn.
@@ -73,7 +73,7 @@ pub struct WorkflowTurn {
     pub gate_id: String,
     /// Maximum attempts allowed for this turn or runtime step.
     pub retry_limit: usize,
-    /// Timeout milliseconds in milliseconds.
+    /// Timeout for one turn attempt in milliseconds.
     pub timeout_ms: u64,
 }
 
@@ -82,39 +82,39 @@ pub struct WorkflowTurn {
 pub struct WorkflowGate {
     /// Gate identifier carried across the execution boundary.
     pub gate_id: String,
-    /// Gate type owned by this execution contract.
+    /// Gate evaluator type selected for this gate.
     pub gate_type: String,
-    /// Required fields owned by this execution contract.
+    /// Fields that must appear in the turn output.
     #[serde(default)]
     pub required_fields: Vec<String>,
-    /// Rules owned by this execution contract.
+    /// Gate-specific rule payload.
     #[serde(default)]
     pub rules: Value,
-    /// True when fail on violation is enabled for this contract.
+    /// True when gate failure should fail the turn.
     pub fail_on_violation: bool,
 }
 
 /// Workflow artifact policy contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkflowArtifactPolicy {
-    /// True when store output is enabled for this contract.
+    /// True when workflow turn output should be persisted.
     pub store_output: bool,
-    /// True when store prompt render is enabled for this contract.
+    /// True when rendered prompts should be persisted.
     pub store_prompt_render: bool,
-    /// True when store context payload is enabled for this contract.
+    /// True when context payloads should be persisted.
     pub store_context_payload: bool,
-    /// Max output bytes owned by this execution contract.
+    /// Maximum output bytes persisted for a turn.
     pub max_output_bytes: usize,
 }
 
 /// Workflow failure policy contract used by execution runtimes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkflowFailurePolicy {
-    /// Mode owned by this execution contract.
+    /// Named failure handling mode.
     pub mode: String,
-    /// True when resume from failed turn is enabled for this contract.
+    /// True when failed threads may resume from the failed turn.
     pub resume_from_failed_turn: bool,
-    /// True when stop on gate fail is enabled for this contract.
+    /// True when gate failure stops workflow execution.
     pub stop_on_gate_fail: bool,
 }
 
@@ -128,7 +128,7 @@ pub enum PromptRefKind {
 }
 
 impl PromptRefKind {
-    /// Execution helper for parse.
+    /// Parses an artifact, built-in, or filesystem prompt reference.
     pub fn parse(value: &str) -> Self {
         if let Some(rest) = value.strip_prefix("artifact:") {
             return Self::ArtifactId(rest.to_string());
@@ -141,7 +141,7 @@ impl PromptRefKind {
 }
 
 impl WorkflowProfile {
-    /// Execution helper for validate.
+    /// Validates workflow profile shape and cross references.
     pub fn validate(&self) -> Result<(), ApiError> {
         if self.workflow_id.trim().is_empty() {
             return Err(invalid_profile(
@@ -285,7 +285,7 @@ impl WorkflowProfile {
         Ok(())
     }
 
-    /// Execution helper for ordered turns.
+    /// Returns workflow turns in deterministic sequence order.
     pub fn ordered_turns(&self) -> Vec<WorkflowTurn> {
         let mut ordered = self.turns.clone();
         ordered.sort_by_key(|turn| turn.seq);
@@ -304,7 +304,7 @@ fn invalid_profile(workflow_id: &str, reason: &str) -> ApiError {
 mod tests {
     use super::*;
 
-    /// Type alias for profile mutation values in execution contracts.
+    /// Mutation closure used by profile validation table cases.
     type ProfileMutation = Box<dyn FnOnce(&mut WorkflowProfile)>;
 
     fn valid_profile() -> WorkflowProfile {

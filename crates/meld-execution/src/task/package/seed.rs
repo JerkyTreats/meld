@@ -18,7 +18,7 @@ pub struct SeedArtifactSpec {
     pub artifact_type_id: String,
     /// Schema version for the serialized contract or artifact shape.
     pub schema_version: u32,
-    /// Source owned by this execution contract.
+    /// Source used to materialize this init artifact.
     pub source: SeedSourceSpec,
 }
 
@@ -26,9 +26,9 @@ pub struct SeedArtifactSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SeedSourceSpec {
-    /// Force posture variant for this execution contract.
+    /// Seed value is derived from the trigger force setting.
     ForcePosture,
-    /// Target node reference variant for this execution contract.
+    /// Seed value is derived from the selected target node.
     TargetNodeRef,
     /// Seed value comes from an expansion template.
     ExpansionTemplate {

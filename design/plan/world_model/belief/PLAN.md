@@ -705,7 +705,7 @@ The first implementation must not include these items:
 - Regime sensitivity summaries
 - Broad risk envelopes
 - Plan diffing
-- Graph mutation acceptance
+- Task network command acceptance
 
 ## Phase Completion Definition
 

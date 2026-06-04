@@ -26,7 +26,7 @@ pub struct ProviderRuntimeOverrides {
     /// Optional provider model replacement chosen at execution time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_override: Option<String>,
-    /// Provider specific JSON fields that are not part of the core request.
+    /// Provider-specific JSON fields that are not part of the core request.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra_body_fields: BTreeMap<String, Value>,
 }
@@ -50,7 +50,7 @@ impl ProviderRuntimeOverrides {
         self.model_override.is_none() && self.extra_body_fields.is_empty()
     }
 
-    /// Returns the configured provider specific body keys in deterministic order.
+    /// Returns the configured provider-specific body keys in deterministic order.
     pub fn extra_body_field_keys(&self) -> Vec<&str> {
         self.extra_body_fields.keys().map(String::as_str).collect()
     }
@@ -87,7 +87,7 @@ impl ProviderRuntimeOverrides {
 pub struct ProviderExecutionBinding {
     /// Stable provider name resolved by the workspace adapter.
     pub provider_name: String,
-    /// Optional provider specific runtime adjustments.
+    /// Optional provider-specific runtime adjustments.
     #[serde(default)]
     pub runtime_overrides: ProviderRuntimeOverrides,
 }
@@ -151,5 +151,56 @@ mod tests {
             baseline.fingerprint().unwrap(),
             tuned.fingerprint().unwrap()
         );
+    }
+
+    #[test]
+    fn provider_binding_fingerprint_changes_with_provider_and_overrides() {
+        let baseline =
+            ProviderExecutionBinding::new("local-a", ProviderRuntimeOverrides::default()).unwrap();
+        let renamed =
+            ProviderExecutionBinding::new("local-b", ProviderRuntimeOverrides::default()).unwrap();
+        let tuned = ProviderExecutionBinding::new(
+            "local-a",
+            ProviderRuntimeOverrides::new(
+                Some("qwen3-coder-next".to_string()),
+                BTreeMap::from([("lmserver_max_tool_turns".to_string(), json!(24))]),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let baseline_fingerprint = baseline.fingerprint().unwrap();
+
+        assert!(!baseline_fingerprint.is_empty());
+        assert_ne!(baseline_fingerprint, "xyzzy");
+        assert_ne!(baseline_fingerprint, renamed.fingerprint().unwrap());
+        assert_ne!(baseline_fingerprint, tuned.fingerprint().unwrap());
+    }
+
+    #[test]
+    fn runtime_overrides_report_empty_state_and_sorted_extra_body_keys() {
+        let baseline = ProviderRuntimeOverrides::default();
+
+        assert!(baseline.is_empty());
+        assert!(baseline.extra_body_field_keys().is_empty());
+
+        let model_only =
+            ProviderRuntimeOverrides::new(Some("qwen3-coder-next".to_string()), BTreeMap::new())
+                .unwrap();
+
+        assert!(!model_only.is_empty());
+        assert!(model_only.extra_body_field_keys().is_empty());
+
+        let extra_fields = ProviderRuntimeOverrides::new(
+            None,
+            BTreeMap::from([
+                ("zeta".to_string(), json!(1)),
+                ("alpha".to_string(), json!(2)),
+            ]),
+        )
+        .unwrap();
+
+        assert!(!extra_fields.is_empty());
+        assert_eq!(extra_fields.extra_body_field_keys(), vec!["alpha", "zeta"]);
     }
 }

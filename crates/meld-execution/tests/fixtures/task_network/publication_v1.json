@@ -1,0 +1,27 @@
+{
+  "publication_id": "task-network-publication-9ec007895dc9863796b15c44ce3d11cae6e7c4d19abeb95b797aa53c05747e11",
+  "network_id": "network-docs",
+  "task_instance_id": "task-alpha",
+  "outcome_id": "outcome-alpha",
+  "event_type": "execution.task.succeeded",
+  "event_payload": {
+    "artifact_records": [],
+    "artifacts": [
+      {
+        "artifact_id": "artifact-outcome-alpha",
+        "artifact_type_id": "docs_patch",
+        "schema_version": 1,
+        "task_instance_id": "task-alpha"
+      }
+    ],
+    "claim_id": "claim-alpha",
+    "claim_revision": 2,
+    "error": null,
+    "lifecycle_epoch": 1,
+    "outcome_id": "outcome-alpha",
+    "status": "Succeeded",
+    "task_events": [],
+    "task_instance_id": "task-alpha"
+  },
+  "state": "Pending"
+}

@@ -1,7 +1,7 @@
 use crate::workflow::profile::WorkflowGate;
 use serde_json::Value;
 
-/// Execution helper for normalize output for gate.
+/// Normalizes low-signal sections before gate evaluation.
 pub fn normalize_output_for_gate(gate: &WorkflowGate, output: &str) -> String {
     match gate.gate_type.as_str() {
         "required_sections" => normalize_json_sections(gate, output),
@@ -201,13 +201,15 @@ mod tests {
     fn required_sections_normalizes_json_by_removing_forbidden_and_low_signal_values() {
         let normalized = normalize_output_for_gate(
             &gate("required_sections"),
-            r#"{"purpose":"Useful","caveats":"Do not keep","usage":"","debug_notes":"trace"}"#,
+            r#"{"purpose":"Useful","caveats":"Do not keep","usage":"","empty_array":[],"empty_object":{},"debug_notes":"trace"}"#,
         );
         let value = serde_json::from_str::<Value>(&normalized).unwrap();
 
         assert_eq!(value["purpose"], "Useful");
         assert!(value.get("caveats").is_none());
         assert!(value.get("usage").is_none());
+        assert!(value.get("empty_array").is_none());
+        assert!(value.get("empty_object").is_none());
         assert!(value.get("debug_notes").is_none());
     }
 
@@ -222,6 +224,19 @@ mod tests {
             normalized,
             "# Title\nKeep\n\n## Purpose\nUseful\n\n## API\nStable"
         );
+    }
+
+    #[test]
+    fn split_markdown_sections_keeps_heading_only_sections() {
+        let sections = split_markdown_sections("# Title\n\n## Purpose\nUseful");
+
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].heading_level, 1);
+        assert_eq!(sections[0].heading_text, "Title");
+        assert!(sections[0].body.is_empty());
+        assert_eq!(sections[1].heading_level, 2);
+        assert_eq!(sections[1].heading_text, "Purpose");
+        assert_eq!(sections[1].body, "Useful");
     }
 
     #[test]

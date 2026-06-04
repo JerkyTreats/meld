@@ -1,6 +1,6 @@
 # Goals
 
-Date: 2026-05-18
+Date: 2026-06-02
 Status: active
 Scope: goal model bridging world-model belief and execution planning
 
@@ -69,7 +69,7 @@ flowchart LR
     BV[belief view] --> AG[world model agent]
     AG -->|add, modify, remove, satisfy| GS[goal set in execution]
     GS --> PL[planning loop]
-    PL -->|task network mutations| TN[task network]
+    PL -->|task network commands| TN[task network]
     TN -->|outcome events| SP[spine]
     SP --> WM[world model]
     WM -->|belief revision| BV
@@ -334,11 +334,11 @@ The agent's normative framework — what states it cares about, what thresholds 
 
 The planning loop reads the active goal set and the world model view. It does not know or care who curated the goals. Its contract is:
 
-- **input**: active goals (desired belief states) + world model view (current belief states)
+- **input**: active goals as desired belief states plus world model view as current belief states
 - **process**: compute gap, HTN decompose, maintain task network
-- **output**: task network mutations
+- **output**: task network commands carrying mutation sets
 
-When the goal set changes (agent adds, removes, or reprioritizes goals), the planning loop re-evaluates. This is the same cost-aware transition logic used for any plan change — the planning loop weighs the benefit of adapting the task network against the switching cost.
+When the goal set changes because an agent adds, removes, or reprioritizes goals, the planning loop re-evaluates. This is the same cost-aware transition logic used for any plan change — the planning loop weighs the benefit of adapting the task network against the switching cost.
 
 ## Goal Decomposition
 
@@ -361,7 +361,7 @@ GAPS.md identified a tension: goals as world-state propositions vs goals as oper
 
 The resolution: goals are propositions about desired belief states, owned as data by execution. Operational triggers (task failure, belief divergence, regime shift) are events that cause the world model agent to curate the goal set. The agent is the translator between "something changed in belief" and "this goal should now exist/change/retire."
 
-Repair becomes: a task fails, the planning loop signals the failure, the agent evaluates whether the threatened goal is still worth pursuing and whether the plan should change. If yes, execution's planning loop handles it through HTN lineage and task network mutations. If the agent decides the goal is no longer worth the cost, it abandons it. The decision is the agent's. The mechanics are execution's.
+Repair becomes: a task fails, the planning loop signals the failure, the agent evaluates whether the threatened goal is still worth pursuing and whether the plan should change. If yes, execution's planning loop handles it through HTN lineage and task network commands. If the agent decides the goal is no longer worth the cost, it abandons it. The decision is the agent's. The mechanics are execution's.
 
 ## What This Design Does Not Cover
 

@@ -16,7 +16,7 @@ pub struct RepeatedRegionSpec {
     pub existing_output_slot_template: String,
     /// Artifact type used for existing workflow output inputs.
     pub existing_output_artifact_type_id: String,
-    /// Stage chain owned by this execution contract.
+    /// Shared stage chain applied to each traversal batch.
     pub stage_chain: StageChainSpec,
     /// Ordered workflow turn templates in this repeated region.
     pub turns: Vec<TurnSpec>,
@@ -25,7 +25,7 @@ pub struct RepeatedRegionSpec {
 /// Declarative shared stage chain for one repeated region.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StageChainSpec {
-    /// Stages owned by this execution contract.
+    /// Ordered stages used to materialize the repeated region.
     pub stages: Vec<StageSpec>,
 }
 
@@ -45,13 +45,13 @@ pub struct StageSpec {
 pub struct TurnSpec {
     /// Workflow turn identifier within the owning workflow profile or thread.
     pub turn_id: String,
-    /// Prompt reference owned by this execution contract.
+    /// Prompt reference resolved when the turn is materialized.
     pub prompt_ref: String,
     /// Declared output type produced by this workflow turn.
     pub output_type: String,
     /// Gate identifier carried across the execution boundary.
     pub gate_id: String,
-    /// Output policy owned by this execution contract.
+    /// Output policy applied to this turn.
     pub output_policy: TurnOutputPolicySpec,
     /// Maximum attempts allowed for this turn or runtime step.
     #[serde(default = "default_retry_limit")]
@@ -63,4 +63,26 @@ pub struct TurnSpec {
 
 fn default_retry_limit() -> usize {
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn turn_spec_defaults_retry_limit_to_one() {
+        let turn: TurnSpec = serde_json::from_value(json!({
+            "turn_id": "discover",
+            "prompt_ref": "prompts/discover.md",
+            "output_type": "summary",
+            "gate_id": "gate-summary",
+            "output_policy": {
+                "persist_frame": true
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(turn.retry_limit, 1);
+    }
 }

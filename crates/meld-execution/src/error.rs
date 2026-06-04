@@ -5,11 +5,11 @@ use thiserror::Error;
 /// Execution-domain error used for invalid contracts and failed generation paths.
 #[derive(Debug, Error, Clone)]
 pub enum ExecutionInvariantError {
-    /// Config error variant for this execution contract.
+    /// Invalid configuration, contract, or adapter input.
     #[error("Configuration error: {0}")]
     ConfigError(String),
 
-    /// Generation failed variant for this execution contract.
+    /// Provider generation or execution orchestration failed.
     #[error("Generation failed: {0}")]
     GenerationFailed(String),
 }

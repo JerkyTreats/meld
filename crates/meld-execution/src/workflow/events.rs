@@ -51,7 +51,7 @@ fn workflow_envelope(
     .with_graph(workflow_objects(&data), workflow_relations(&data))
 }
 
-/// Execution helper for workflow turn started envelope.
+/// Builds the published event envelope for a started workflow turn.
 pub fn workflow_turn_started_envelope(
     session_id: &str,
     data: ExecutionWorkflowTurnEventData,
@@ -59,7 +59,7 @@ pub fn workflow_turn_started_envelope(
     workflow_envelope(session_id, "execution.workflow.turn_started", data)
 }
 
-/// Execution helper for workflow turn completed envelope.
+/// Builds the published event envelope for a completed workflow turn.
 pub fn workflow_turn_completed_envelope(
     session_id: &str,
     data: ExecutionWorkflowTurnEventData,
@@ -67,7 +67,7 @@ pub fn workflow_turn_completed_envelope(
     workflow_envelope(session_id, "execution.workflow.turn_completed", data)
 }
 
-/// Execution helper for workflow turn failed envelope.
+/// Builds the published event envelope for a failed workflow turn.
 pub fn workflow_turn_failed_envelope(
     session_id: &str,
     data: ExecutionWorkflowTurnEventData,

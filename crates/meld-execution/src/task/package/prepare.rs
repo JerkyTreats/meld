@@ -624,6 +624,55 @@ mod tests {
         }
     }
 
+    struct TargetResolverFake {
+        resolved_node_id: NodeId,
+    }
+
+    impl NodeResolutionPort for TargetResolverFake {
+        type Error = ApiError;
+        type NodeId = NodeId;
+
+        fn resolve_workspace_node_id(
+            &self,
+            workspace_root: &Path,
+            path: Option<&Path>,
+            node: Option<&str>,
+            include_tombstoned: bool,
+        ) -> Result<Self::NodeId, Self::Error> {
+            assert_eq!(workspace_root, Path::new("/workspace"));
+            assert_eq!(path, Some(Path::new("src/lib.rs")));
+            assert_eq!(node, None);
+            assert!(!include_tombstoned);
+            Ok(self.resolved_node_id)
+        }
+    }
+
+    #[test]
+    fn resolve_package_target_node_id_prefers_explicit_node_id_and_resolves_path() {
+        let api = TargetResolverFake {
+            resolved_node_id: [8u8; 32],
+        };
+        let workspace_root = Path::new("/workspace");
+        let mut explicit_request = request();
+        explicit_request.node_id = Some([7u8; 32]);
+        explicit_request.path = None;
+
+        let explicit =
+            resolve_package_target_node_id::<ApiError, _>(&api, workspace_root, &explicit_request)
+                .unwrap();
+
+        assert_eq!(explicit, [7u8; 32]);
+
+        let mut path_request = request();
+        path_request.path = Some("src/lib.rs".into());
+
+        let resolved =
+            resolve_package_target_node_id::<ApiError, _>(&api, workspace_root, &path_request)
+                .unwrap();
+
+        assert_eq!(resolved, [8u8; 32]);
+    }
+
     #[test]
     fn validate_trigger_rejects_unsupported_target_kind() {
         let mut request = request();
@@ -641,6 +690,111 @@ mod tests {
         assert!(error
             .to_string()
             .contains("does not accept node_id triggers"));
+    }
+
+    #[test]
+    fn validate_trigger_rejects_missing_required_runtime_fields() {
+        let cases: Vec<(&str, Box<dyn FnOnce(&mut WorkflowPackageTriggerRequest)>)> = vec![
+            ("agent_id", Box::new(|request| request.agent_id.clear())),
+            (
+                "provider_binding",
+                Box::new(|request| request.provider.provider_name.clear()),
+            ),
+            ("frame_type", Box::new(|request| request.frame_type.clear())),
+        ];
+
+        for (expected, mutate) in cases {
+            let mut request = request();
+            mutate(&mut request);
+
+            let error = validate_workflow_package_trigger::<ApiError>(
+                &package_spec(),
+                &registered_profile(),
+                &request,
+            )
+            .unwrap_err();
+
+            assert!(matches!(error, ApiError::ConfigError(_)));
+            assert!(
+                error.to_string().contains(expected),
+                "expected error containing '{expected}', got '{error}'"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_trigger_accepts_valid_request_with_required_runtime_fields() {
+        validate_workflow_package_trigger::<ApiError>(
+            &package_spec(),
+            &registered_profile(),
+            &request(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn prompt_map_resolves_each_turn_prompt_by_turn_id() {
+        let turns = vec![
+            TurnSpec {
+                turn_id: "discover".to_string(),
+                prompt_ref: "prompt-a.md".to_string(),
+                output_type: "outline".to_string(),
+                gate_id: "gate-alpha".to_string(),
+                output_policy: TurnOutputPolicySpec {
+                    persist_frame: true,
+                },
+                retry_limit: 1,
+                validate_json: false,
+            },
+            TurnSpec {
+                turn_id: "summarize".to_string(),
+                prompt_ref: "prompt-b.md".to_string(),
+                output_type: "summary".to_string(),
+                gate_id: "gate-beta".to_string(),
+                output_policy: TurnOutputPolicySpec {
+                    persist_frame: true,
+                },
+                retry_limit: 1,
+                validate_json: false,
+            },
+        ];
+
+        let prompts =
+            prompt_map::<ApiError, _>(&turns, |prompt_ref| Ok(format!("resolved::{prompt_ref}")))
+                .unwrap();
+
+        assert_eq!(prompts.len(), 2);
+        assert_eq!(prompts["discover"], "resolved::prompt-a.md");
+        assert_eq!(prompts["summarize"], "resolved::prompt-b.md");
+        assert!(!prompts.contains_key("xyzzy"));
+    }
+
+    #[test]
+    fn gate_map_indexes_profile_gates_by_gate_id() {
+        let mut profile = registered_profile().profile;
+        profile.gates = vec![
+            WorkflowGate {
+                gate_id: "gate-alpha".to_string(),
+                gate_type: "schema_required_fields".to_string(),
+                required_fields: vec!["claims".to_string()],
+                rules: json!({}),
+                fail_on_violation: true,
+            },
+            WorkflowGate {
+                gate_id: "gate-beta".to_string(),
+                gate_type: "no_semantic_drift".to_string(),
+                required_fields: vec![],
+                rules: json!({}),
+                fail_on_violation: true,
+            },
+        ];
+
+        let gates = gate_map(&profile);
+
+        assert_eq!(gates.len(), 2);
+        assert!(!gates.is_empty());
+        assert_eq!(gates["gate-alpha"].gate_id, "gate-alpha");
+        assert_eq!(gates["gate-beta"].gate_id, "gate-beta");
     }
 
     #[test]

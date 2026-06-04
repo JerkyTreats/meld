@@ -5,19 +5,19 @@ use crate::task::contracts::{ArtifactRecord, TaskDependencyEdge, TaskInitSlotSpe
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Constant used by the task expansion schema version execution contract.
+/// Current schema version for task expansion artifacts.
 pub const TASK_EXPANSION_SCHEMA_VERSION: u32 = 1;
-/// Constant used by the task expansion template artifact type identifier execution contract.
+/// Artifact type identifier for task expansion templates.
 pub const TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID: &str = "task_expansion_template";
-/// Constant used by the task expansion request artifact type identifier execution contract.
+/// Artifact type identifier for task expansion requests.
 pub const TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID: &str = "task_expansion_request";
 
 /// Structured task expansion template passed into discovery capabilities.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TaskExpansionTemplate {
-    /// Expansion kind owned by this execution contract.
+    /// Expansion kind understood by a registered compiler.
     pub expansion_kind: String,
-    /// Structured artifact content owned by the producing capability.
+    /// Template payload consumed by discovery capabilities.
     pub content: Value,
 }
 
@@ -26,9 +26,9 @@ pub struct TaskExpansionTemplate {
 pub struct TaskExpansionRequest {
     /// Expansion identifier carried across the execution boundary.
     pub expansion_id: String,
-    /// Expansion kind owned by this execution contract.
+    /// Expansion kind used to select a compiler.
     pub expansion_kind: String,
-    /// Structured artifact content owned by the producing capability.
+    /// Expansion payload emitted by a capability.
     pub content: Value,
 }
 
@@ -37,7 +37,7 @@ pub struct TaskExpansionRequest {
 pub struct TaskExpansionRecord {
     /// Expansion identifier carried across the execution boundary.
     pub expansion_id: String,
-    /// Expansion kind owned by this execution contract.
+    /// Expansion kind that was compiled and applied.
     pub expansion_kind: String,
     /// Source artifact identifier for this lineage link.
     pub source_artifact_id: String,
@@ -46,12 +46,12 @@ pub struct TaskExpansionRecord {
 /// Append-only task delta produced by expansion compilation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CompiledTaskDelta {
-    /// Init slots owned by this execution contract.
+    /// Init slots appended by expansion compilation.
     pub init_slots: Vec<TaskInitSlotSpec>,
-    /// Init artifacts owned by this execution contract.
+    /// Init artifacts emitted by expansion compilation.
     pub init_artifacts: Vec<ArtifactRecord>,
-    /// Capability instances owned by this execution contract.
+    /// Capability instances appended by expansion compilation.
     pub capability_instances: Vec<BoundCapabilityInstance>,
-    /// Dependency edges owned by this execution contract.
+    /// Dependency edges appended by expansion compilation.
     pub dependency_edges: Vec<TaskDependencyEdge>,
 }

@@ -22,11 +22,11 @@ pub struct TaskInitSlotSpec {
 pub struct TaskDefinition {
     /// Authored or compiled task identifier within the execution domain.
     pub task_id: String,
-    /// Task version owned by this execution contract.
+    /// Authored task definition version.
     pub task_version: u32,
-    /// Init slots owned by this execution contract.
+    /// Init slots callers may supply at run creation.
     pub init_slots: Vec<TaskInitSlotSpec>,
-    /// Capability instances owned by this execution contract.
+    /// Bound capability instances that make up the task graph.
     pub capability_instances: Vec<BoundCapabilityInstance>,
 }
 
@@ -35,7 +35,7 @@ pub struct TaskDefinition {
 pub enum TaskDependencyKind {
     /// Artifact value supplied through task artifact handoff.
     Artifact,
-    /// Effect variant for this execution contract.
+    /// Ordering imposed by side-effect contracts.
     Effect,
 }
 
@@ -48,7 +48,7 @@ pub struct TaskDependencyEdge {
     pub to_capability_instance_id: String,
     /// Contract kind used by the owning runtime.
     pub kind: TaskDependencyKind,
-    /// Reason owned by this execution contract.
+    /// Human-readable reason this dependency was derived.
     pub reason: String,
 }
 
@@ -57,13 +57,13 @@ pub struct TaskDependencyEdge {
 pub struct CompiledTaskRecord {
     /// Authored or compiled task identifier within the execution domain.
     pub task_id: String,
-    /// Task version owned by this execution contract.
+    /// Authored task definition version compiled into this record.
     pub task_version: u32,
-    /// Init slots owned by this execution contract.
+    /// Init slot contracts accepted by this compiled task.
     pub init_slots: Vec<TaskInitSlotSpec>,
-    /// Capability instances owned by this execution contract.
+    /// Bound capability instances in the compiled task graph.
     pub capability_instances: Vec<BoundCapabilityInstance>,
-    /// Dependency edges owned by this execution contract.
+    /// Dependency edges derived by the compiler.
     pub dependency_edges: Vec<TaskDependencyEdge>,
 }
 
@@ -89,7 +89,7 @@ pub struct ArtifactRecord {
     pub artifact_type_id: String,
     /// Schema version for the serialized contract or artifact shape.
     pub schema_version: u32,
-    /// Structured artifact content owned by the producing capability.
+    /// Structured artifact payload persisted for this artifact.
     pub content: Value,
     /// Producer lineage for this artifact record.
     pub producer: ArtifactProducerRef,
@@ -98,7 +98,7 @@ pub struct ArtifactRecord {
 /// Link relation between artifact records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArtifactLinkRelation {
-    /// Consumed by slot variant for this execution contract.
+    /// Source artifact was consumed by a capability input slot.
     ConsumedBySlot,
     /// Target artifact supersedes the source artifact.
     Supersedes,
@@ -113,7 +113,7 @@ pub struct ArtifactLinkRecord {
     pub to_artifact_id: String,
     /// Lineage relation between source and target artifacts.
     pub relation: ArtifactLinkRelation,
-    /// Detail owned by this execution contract.
+    /// Optional detail describing the relation source.
     pub detail: String,
 }
 
@@ -124,7 +124,7 @@ pub struct ArtifactRepoRecord {
     pub repo_id: String,
     /// Artifact records persisted by the task artifact repository.
     pub artifacts: Vec<ArtifactRecord>,
-    /// Artifact links owned by this execution contract.
+    /// Lineage and supersession links between artifacts.
     pub artifact_links: Vec<ArtifactLinkRecord>,
 }
 
@@ -135,13 +135,13 @@ pub struct CapabilityInvocationRecord {
     pub invocation_id: String,
     /// Deterministic capability instance identifier within a compiled task.
     pub capability_instance_id: String,
-    /// Supplied inputs owned by this execution contract.
+    /// Artifact records supplied to the invocation.
     pub supplied_inputs: Vec<ArtifactRecord>,
-    /// Emitted artifacts owned by this execution contract.
+    /// Artifact identifiers emitted by the invocation.
     pub emitted_artifacts: Vec<String>,
-    /// Failure summary owned by this execution contract.
+    /// Failure artifact captured for the invocation when one exists.
     pub failure_summary: Option<ArtifactRecord>,
-    /// Attempt index owned by this execution contract.
+    /// One-based attempt index for this capability invocation.
     pub attempt_index: u32,
 }
 
@@ -152,4 +152,54 @@ pub fn artifact_matches_input_slot(artifact: &ArtifactRecord, input_slot: &Input
         .iter()
         .any(|artifact_type_id| artifact_type_id == &artifact.artifact_type_id)
         && input_slot.schema_versions.accepts(artifact.schema_version)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capability::{ArtifactSchemaVersionRange, InputCardinality};
+    use serde_json::json;
+
+    fn artifact(artifact_type_id: &str, schema_version: u32) -> ArtifactRecord {
+        ArtifactRecord {
+            artifact_id: "artifact-1".to_string(),
+            artifact_type_id: artifact_type_id.to_string(),
+            schema_version,
+            content: json!({ "patch": "content" }),
+            producer: ArtifactProducerRef {
+                task_id: "task-docs".to_string(),
+                capability_instance_id: "write".to_string(),
+                invocation_id: Some("invocation-1".to_string()),
+                output_slot_id: Some("patch".to_string()),
+            },
+        }
+    }
+
+    fn input_slot() -> InputSlotSpec {
+        InputSlotSpec {
+            slot_id: "patch".to_string(),
+            accepted_artifact_type_ids: vec!["docs_patch".to_string()],
+            schema_versions: ArtifactSchemaVersionRange { min: 1, max: 1 },
+            required: true,
+            cardinality: InputCardinality::One,
+        }
+    }
+
+    #[test]
+    fn artifact_matches_input_slot_requires_type_and_schema() {
+        let slot = input_slot();
+
+        assert!(artifact_matches_input_slot(
+            &artifact("docs_patch", 1),
+            &slot
+        ));
+        assert!(!artifact_matches_input_slot(
+            &artifact("other_patch", 1),
+            &slot
+        ));
+        assert!(!artifact_matches_input_slot(
+            &artifact("docs_patch", 2),
+            &slot
+        ));
+    }
 }

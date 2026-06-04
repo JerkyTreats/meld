@@ -177,4 +177,59 @@ mod tests {
             ArtifactLinkRelation::Supersedes
         );
     }
+
+    #[test]
+    fn append_link_rejects_missing_artifact_ids() {
+        let mut repo = TaskArtifactRepo::new("repo_docs_writer");
+        repo.append_artifact(artifact("artifact_1", "readme_summary"))
+            .unwrap();
+
+        let error = repo
+            .mark_superseded("artifact_1", "missing_artifact", "retry replacement")
+            .unwrap_err();
+
+        assert!(matches!(error, ApiError::ConfigError(_)));
+        assert!(error.to_string().contains("missing_artifact"));
+        assert!(repo.record().artifact_links.is_empty());
+    }
+
+    #[test]
+    fn artifacts_for_capability_instance_filters_by_instance() {
+        let mut repo = TaskArtifactRepo::new("repo_docs_writer");
+        repo.append_artifact(artifact("artifact_1", "readme_summary"))
+            .unwrap();
+        repo.append_artifact(artifact("artifact_2", "other_slot"))
+            .unwrap();
+        let mut other_capability = artifact("artifact_3", "readme_summary");
+        other_capability.producer.capability_instance_id = "capinst_other".to_string();
+        repo.append_artifact(other_capability).unwrap();
+
+        let artifact_ids = repo
+            .artifacts_for_capability_instance("capinst_ctx_finalize")
+            .into_iter()
+            .map(|artifact| artifact.artifact_id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(artifact_ids, vec!["artifact_1", "artifact_2"]);
+    }
+
+    #[test]
+    fn artifacts_for_output_slot_requires_capability_and_slot_match() {
+        let mut repo = TaskArtifactRepo::new("repo_docs_writer");
+        repo.append_artifact(artifact("artifact_1", "readme_summary"))
+            .unwrap();
+        repo.append_artifact(artifact("artifact_2", "other_slot"))
+            .unwrap();
+        let mut other_capability = artifact("artifact_3", "readme_summary");
+        other_capability.producer.capability_instance_id = "capinst_other".to_string();
+        repo.append_artifact(other_capability).unwrap();
+
+        let artifact_ids = repo
+            .artifacts_for_output_slot("capinst_ctx_finalize", "readme_summary")
+            .into_iter()
+            .map(|artifact| artifact.artifact_id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(artifact_ids, vec!["artifact_1"]);
+    }
 }

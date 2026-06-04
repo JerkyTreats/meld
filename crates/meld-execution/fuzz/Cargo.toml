@@ -47,3 +47,31 @@ path = "fuzz_targets/fuzz_planning_runtime.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_task_network_contracts"
+path = "fuzz_targets/fuzz_task_network_contracts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_task_network_command"
+path = "fuzz_targets/fuzz_task_network_command.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_task_network_store_replay"
+path = "fuzz_targets/fuzz_task_network_store_replay.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_task_network_readiness"
+path = "fuzz_targets/fuzz_task_network_readiness.rs"
+test = false
+doc = false
+bench = false

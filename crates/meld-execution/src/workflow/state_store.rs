@@ -51,7 +51,7 @@ pub struct WorkflowThreadRecord {
     pub frame_type: String,
     /// Lifecycle status assigned by the owning runtime.
     pub status: WorkflowThreadStatus,
-    /// Next turn sequence owned by this execution contract.
+    /// Next workflow turn sequence to execute when resuming.
     pub next_turn_seq: u32,
     /// Last update time in milliseconds since the Unix epoch.
     pub updated_at_ms: u64,
@@ -92,7 +92,7 @@ pub struct WorkflowStateStore {
 }
 
 impl WorkflowStateStore {
-    /// Execution helper for from root.
+    /// Opens a workflow state store rooted at the supplied directory.
     pub fn from_root(root: &Path) -> Result<Self, ApiError> {
         ensure_root_directories(root)?;
         Ok(Self {
@@ -100,7 +100,7 @@ impl WorkflowStateStore {
         })
     }
 
-    /// Execution helper for load thread.
+    /// Loads one workflow thread record when it exists.
     pub fn load_thread(&self, thread_id: &str) -> Result<Option<WorkflowThreadRecord>, ApiError> {
         let path = self.thread_path(thread_id);
         if !path.exists() {
@@ -118,13 +118,13 @@ impl WorkflowStateStore {
         Ok(Some(record))
     }
 
-    /// Execution helper for upsert thread.
+    /// Writes or replaces one workflow thread record.
     pub fn upsert_thread(&self, record: &WorkflowThreadRecord) -> Result<(), ApiError> {
         let path = self.thread_path(&record.thread_id);
         write_json_file(&path, record)
     }
 
-    /// Execution helper for load turns.
+    /// Loads turn records for a thread in sequence order.
     pub fn load_turns(&self, thread_id: &str) -> Result<Vec<WorkflowTurnRecord>, ApiError> {
         let dir = self.turn_dir(thread_id);
         if !dir.exists() {
@@ -166,7 +166,7 @@ impl WorkflowStateStore {
         Ok(turns)
     }
 
-    /// Execution helper for upsert turn.
+    /// Writes or replaces one workflow turn record.
     pub fn upsert_turn(&self, record: &WorkflowTurnRecord) -> Result<(), ApiError> {
         fs::create_dir_all(self.turn_dir(&record.thread_id)).map_err(|err| {
             ApiError::ConfigError(format!(
@@ -178,7 +178,7 @@ impl WorkflowStateStore {
         write_json_file(&path, record)
     }
 
-    /// Execution helper for upsert gate.
+    /// Validates and writes the gate result for one thread turn.
     pub fn upsert_gate(
         &self,
         thread_id: &str,
@@ -196,7 +196,7 @@ impl WorkflowStateStore {
         write_json_file(&path, record)
     }
 
-    /// Execution helper for upsert prompt link.
+    /// Validates and writes the prompt link record for one thread turn.
     pub fn upsert_prompt_link(
         &self,
         thread_id: &str,
@@ -214,7 +214,7 @@ impl WorkflowStateStore {
         write_json_file(&path, record)
     }
 
-    /// Execution helper for completed output map.
+    /// Returns completed turn outputs keyed by output type and turn id.
     pub fn completed_output_map(
         &self,
         thread_id: &str,
@@ -369,6 +369,18 @@ mod tests {
         store
             .upsert_prompt_link("thread-1", "turn-1", &prompt_link)
             .unwrap();
+        assert!(dir
+            .path()
+            .join("gates")
+            .join("thread-1")
+            .join("turn-1.json")
+            .exists());
+        assert!(dir
+            .path()
+            .join("prompt_links")
+            .join("thread-1")
+            .join("turn-1.json")
+            .exists());
 
         let mut invalid_gate = gate.clone();
         invalid_gate.gate_name.clear();

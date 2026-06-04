@@ -1,0 +1,9 @@
+{
+  "claim_id": "claim-alpha",
+  "network_id": "network-docs",
+  "task_instance_id": "task-alpha",
+  "lifecycle_epoch": 1,
+  "claim_revision": 2,
+  "worker_id": "worker-a",
+  "idempotency_key": "claim-alpha-once"
+}

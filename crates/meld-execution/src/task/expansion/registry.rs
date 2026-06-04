@@ -5,9 +5,9 @@ use crate::task::expansion::contracts::{CompiledTaskDelta, TaskExpansionRequest}
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Constant used by the traversal prerequisite expansion kind execution contract.
+/// Expansion kind handled by traversal prerequisite compilers.
 pub const TRAVERSAL_PREREQUISITE_EXPANSION_KIND: &str = "traversal_prerequisite_expansion";
-/// Constant used by the workspace write frame head expansion kind execution contract.
+/// Expansion kind handled by frame head write compilers.
 pub const WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND: &str = "workspace_write_frame_head_expansion";
 
 /// Boundary trait for task expansion compiler adapters used by execution runtimes.
@@ -45,12 +45,12 @@ impl<E, A: ?Sized> Default for TaskExpansionCompilerRegistry<E, A> {
 }
 
 impl<E, A: ?Sized> TaskExpansionCompilerRegistry<E, A> {
-    /// Execution helper for new.
+    /// Creates an empty task expansion compiler registry.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Execution helper for register.
+    /// Registers one expansion compiler by its expansion kind.
     pub fn register<C>(&mut self, compiler: C) -> Result<(), ExecutionInvariantError>
     where
         C: TaskExpansionCompiler<Error = E, ExecutionApi = A> + 'static,
@@ -67,7 +67,7 @@ impl<E, A: ?Sized> TaskExpansionCompilerRegistry<E, A> {
         Ok(())
     }
 
-    /// Execution helper for get.
+    /// Returns the compiler registered for an expansion kind.
     pub fn get(
         &self,
         expansion_kind: &str,
@@ -75,7 +75,7 @@ impl<E, A: ?Sized> TaskExpansionCompilerRegistry<E, A> {
         self.compilers.get(expansion_kind)
     }
 
-    /// Execution helper for compile task expansion request.
+    /// Compiles one task expansion request with the matching compiler.
     pub fn compile_task_expansion_request(
         &self,
         api: &A,
@@ -93,5 +93,100 @@ impl<E, A: ?Sized> TaskExpansionCompilerRegistry<E, A> {
             )))
         })?;
         compiler.compile(api, compiled_task, expansion, catalog)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task::contracts::TaskInitSlotSpec;
+
+    struct FakeExpansionCompiler;
+
+    impl TaskExpansionCompiler for FakeExpansionCompiler {
+        type Error = ExecutionInvariantError;
+        type ExecutionApi = ();
+
+        fn expansion_kind(&self) -> &'static str {
+            "fake_expansion"
+        }
+
+        fn compile(
+            &self,
+            _api: &Self::ExecutionApi,
+            _compiled_task: &CompiledTaskRecord,
+            _expansion: &TaskExpansionRequest,
+            _catalog: &CapabilityCatalog,
+        ) -> Result<CompiledTaskDelta, Self::Error> {
+            Ok(CompiledTaskDelta {
+                init_slots: vec![TaskInitSlotSpec {
+                    init_slot_id: "expanded_init".to_string(),
+                    artifact_type_id: "expanded_artifact".to_string(),
+                    schema_version: 1,
+                    required: true,
+                }],
+                ..CompiledTaskDelta::default()
+            })
+        }
+    }
+
+    fn compiled_task() -> CompiledTaskRecord {
+        CompiledTaskRecord {
+            task_id: "task-docs".to_string(),
+            task_version: 1,
+            init_slots: vec![],
+            capability_instances: vec![],
+            dependency_edges: vec![],
+        }
+    }
+
+    fn expansion(expansion_kind: &str) -> TaskExpansionRequest {
+        TaskExpansionRequest {
+            expansion_id: "expansion-1".to_string(),
+            expansion_kind: expansion_kind.to_string(),
+            content: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn registry_registers_compiler_and_rejects_duplicate_kind() {
+        let mut registry = TaskExpansionCompilerRegistry::<ExecutionInvariantError, ()>::new();
+
+        assert!(registry.get("fake_expansion").is_none());
+
+        registry.register(FakeExpansionCompiler).unwrap();
+
+        assert!(registry.get("fake_expansion").is_some());
+        assert!(matches!(
+            registry.register(FakeExpansionCompiler),
+            Err(ExecutionInvariantError::ConfigError(_))
+        ));
+    }
+
+    #[test]
+    fn registry_dispatches_compile_request_to_matching_compiler() {
+        let mut registry = TaskExpansionCompilerRegistry::<ExecutionInvariantError, ()>::new();
+        registry.register(FakeExpansionCompiler).unwrap();
+
+        let delta = registry
+            .compile_task_expansion_request(
+                &(),
+                &compiled_task(),
+                &expansion("fake_expansion"),
+                &CapabilityCatalog::new(),
+            )
+            .unwrap();
+
+        assert_eq!(delta.init_slots.len(), 1);
+        assert_eq!(delta.init_slots[0].init_slot_id, "expanded_init");
+        assert!(matches!(
+            registry.compile_task_expansion_request(
+                &(),
+                &compiled_task(),
+                &expansion("missing_expansion"),
+                &CapabilityCatalog::new(),
+            ),
+            Err(ExecutionInvariantError::ConfigError(_))
+        ));
     }
 }

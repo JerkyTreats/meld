@@ -1,15 +1,17 @@
 # Execution Readiness Assessment
 
-Status: conditionally ready
+Status: conditionally ready for Phase 7 first slice
 Depends on: `design/plan/meld-lang/assessment.md`, `design/plan/execution/goals/assessment.md`, `design/plan/execution/planning/assessment.md`
 Design source: `design/cognitive_architecture/execution/README.md`, `design/cognitive_architecture/execution/GAPS.md`, `design/cognitive_architecture/execution/task_network.md`, `design/cognitive_architecture/execution/planning/README.md`, `design/cognitive_architecture/execution/goals/README.md`
-Evidence date: 2026-05-31
+Evidence date: 2026-06-02
 
 ## Verdict Summary
 
-Execution is conditionally ready for goal data alignment and typed planning substrate.
+Execution is conditionally ready for the Phase 7 first slice from execution composition to one task dispatch and one outcome publication handoff.
 
-Execution is blocked for runtime flywheel behavior until goal set storage, task network execution, runtime mutation, switching cost, outcome publication, and workflow integration contracts are specified.
+The task network implementation plan now specifies command acceptance, mutation reduction, reduced graph state, ready set computation, fenced dispatch claims, and durable outcome publication handoff for the first slice.
+
+Execution remains incomplete for runtime assembly, direct agent command ingestion, broad workflow migration, plan diffing, switching cost, multi-step task networks, and later cancellation or preservation behavior.
 
 ## Conceptual Correctness
 
@@ -27,7 +29,9 @@ The ready slice covers:
 - composition preparation through `meld-lang::substitute` and `meld-lang::validate`
 - projected effect application through `meld-lang::apply_effects`
 
-The runtime slice is incomplete. Task network graph execution, mutation acceptance, plan diffing, switching cost, capability catalog bridge, outcome publication, and workflow integration need concrete contracts.
+The Phase 7 first runtime slice now has concrete contracts in `design/plan/execution/task_network/PLAN.md`.
+
+The runtime slice is still incomplete beyond that first slice. Multi-step task networks, recursive sub-goal lowering, plan diffing, switching cost, runtime capability catalog persistence, and workflow integration remain deferred.
 
 ## Persistent Storage Concerns
 
@@ -49,7 +53,7 @@ The missing persistent storage concerns are:
 - Task expansion application needs durable idempotency. Applied expansion ids and expansion records must persist with the task run so replay does not duplicate dynamic capability instances or dependency edges.
 - Task events are emitted from process memory and published opportunistically. Event publication needs an outbox or replay cursor if execution events are expected to survive publication failure.
 - Workflow state already has file backed thread, turn, gate, and prompt link records. It still needs a migration path into the shared execution storage root if the long term runtime model expects one persistence substrate rather than mixed JSON files and sled trees.
-- Task network state is still unimplemented. When Phase 7 lands, the authoritative persistent shape should be the task network mutation log and reduced network state, not a separate ad hoc plan store.
+- Task network state is still unimplemented. Phase 7 now defines the authoritative persistent shape as the task network command journal, mutation log, reduced network state, dispatch claims, outcomes, and publication outbox state.
 - Outcome publication needs durable handoff state so completed task outputs are not lost between task completion and world model ingestion.
 
 The storage policy applies to all of these concerns: runtime state must stay outside the target workspace path, including fallback paths and lock files.
@@ -66,15 +70,17 @@ Execution does not own graph truth, belief confidence, causal inference, regime 
 
 Execution goals are design ready for one goal set and one ground active goal.
 
-Execution planning is ready only as typed substrate. Runtime planning remains blocked.
+Execution planning has implemented the first runtime handoff to `ExecutionComposition`.
+
+Task network execution is ready to implement for the first slice because the Phase 7 plan now specifies command, mutation, state, storage, readiness, dispatch, and publication contracts.
 
 ## First-Slice Feasibility
 
 Execution can participate in the typed-loop design path by storing one `Goal`, evaluating it against one `WorldState`, selecting one `Method`, validating one `Composition`, applying one `Effect`, and proving satisfaction.
 
-No task dispatch is required for this slice.
+Execution is ready to start the next implementation slice that lowers one `ExecutionComposition` into one accepted task network mutation, dispatches one ready task, and publishes one world-model-compatible outcome event.
 
-Runtime goal storage and planning orchestration are not implemented.
+Runtime assembly and direct world model agent command ingestion remain outside that first task network slice.
 
 ## Current Implementation Evidence
 
@@ -85,30 +91,30 @@ Runtime goal storage and planning orchestration are not implemented.
 - `crates/meld-execution/src/workflow/`
 - `tests/integration/task_executor.rs`
 - `tests/integration/workflow_task_compatibility.rs`
+- `design/plan/execution/task_network/PLAN.md`
 - `design/cognitive_architecture/execution/README.md`
 - `design/cognitive_architecture/execution/GAPS.md`
 - `design/cognitive_architecture/execution/task_network.md`
 
 ## Gaps
 
-- Task network graph executor is not specified enough for implementation.
+- Task network graph executor is specified for one task first slice but not implemented.
 - Goal set durable storage exists, but runtime assembly has not selected the persistent store path.
 - Agent goal command ingestion into durable goal storage is not wired.
 - Task executor, task artifact repository, capability invocation attempts, task expansion records, and task events are still process local.
-- Graph mutation acceptance is not specified enough for runtime planning.
+- Task network command acceptance and mutation reduction are specified for one inject mutation but not implemented.
 - Plan diffing and affected-subtree selection are not specified.
 - Switching cost model is not specified.
-- Outcome publication bridge from task completion to world-model-legible facts is not specified.
+- Outcome publication bridge is specified as a durable outbox handoff, but the implementation is not present.
 - Workflow integration strategy remains deferred.
 
 ## Open Questions
 
-- Which execution module owns the method library loader.
 - Which runtime assembly path owns the shared execution storage root.
 - Whether workflow JSON state remains a compatibility store or migrates behind a shared execution store adapter.
-- Which task result shape becomes the first outcome publication bridge.
 - Which workflow subsystem maps first into task network runtime.
+- Whether Phase 7 should add planning attempt audit records before or after the task network command store lands.
 
 ## Recommendation
 
-Proceed with typed-loop execution participation. Defer runtime flywheel implementation until runtime planning and outcome publication contracts are specified.
+Proceed with Phase 7 implementation. Start with task network module scaffold, command and mutation contracts, and composition lowering contracts. Keep later plan diffing, switching cost, cancellation, preservation, and workflow migration deferred beyond the first flywheel slice.

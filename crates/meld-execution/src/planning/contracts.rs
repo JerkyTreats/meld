@@ -39,26 +39,26 @@ pub struct PlanningRequest {
 /// Runtime planning outcome for one goal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PlanningResult {
-    /// Satisfied variant for this execution contract.
+    /// Goal already satisfied by the projected world state.
     Satisfied(PlanningSatisfied),
-    /// Composed variant for this execution contract.
+    /// Executable composition selected for the goal.
     Composed(ExecutionComposition),
-    /// No applicable method variant for this execution contract.
+    /// No verified method could satisfy the goal.
     NoApplicableMethod(NoApplicableMethod),
-    /// Indeterminate variant for this execution contract.
+    /// World state was insufficient to evaluate the goal.
     Indeterminate(PlanningIndeterminate),
-    /// Invalid method variant for this execution contract.
+    /// Method loading or verification failed before planning could complete.
     InvalidMethod(InvalidMethodReport),
 }
 
 /// Goal satisfaction outcome that did not require method selection.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanningSatisfied {
-    /// Goal owned by this execution contract.
+    /// Goal proven satisfied by the supplied world state.
     pub goal: meld_lang::Goal,
-    /// World state frame owned by this execution contract.
+    /// World state frame used for the satisfaction check.
     pub world_state_frame: PlanningWorldStateFrameRef,
-    /// Diagnostics owned by this execution contract.
+    /// Deterministic diagnostics emitted during satisfaction checking.
     pub diagnostics: Vec<PlanningDiagnostic>,
 }
 
@@ -90,46 +90,46 @@ pub struct ExecutionComposition {
 /// No verified method passed all mechanical planning checks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoApplicableMethod {
-    /// Goal owned by this execution contract.
+    /// Goal that no verified candidate could satisfy.
     pub goal: meld_lang::Goal,
-    /// World state frame owned by this execution contract.
+    /// World state frame used while evaluating candidates.
     pub world_state_frame: PlanningWorldStateFrameRef,
-    /// Candidates owned by this execution contract.
+    /// Per-method candidate reports from trigger and verification checks.
     pub candidates: Vec<MethodCandidateReport>,
-    /// Diagnostics owned by this execution contract.
+    /// Deterministic diagnostics explaining why no method applied.
     pub diagnostics: Vec<PlanningDiagnostic>,
 }
 
 /// The projected world state lacked required facts for goal evaluation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanningIndeterminate {
-    /// Goal owned by this execution contract.
+    /// Goal that could not be decided from the projected world state.
     pub goal: meld_lang::Goal,
-    /// World state frame owned by this execution contract.
+    /// World state frame used for the indeterminate check.
     pub world_state_frame: PlanningWorldStateFrameRef,
-    /// Missing owned by this execution contract.
+    /// Terms needed before the goal can be evaluated deterministically.
     pub missing: Vec<meld_lang::Term>,
-    /// Diagnostics owned by this execution contract.
+    /// Deterministic diagnostics explaining the missing world state.
     pub diagnostics: Vec<PlanningDiagnostic>,
 }
 
 /// Method verification or composition preparation failed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InvalidMethodReport {
-    /// Source reference owned by this execution contract.
+    /// Method source reference when the invalid source is known.
     pub source_ref: Option<String>,
     /// Method identifier carried across the execution boundary.
     pub method_id: Option<String>,
-    /// Diagnostics owned by this execution contract.
+    /// Diagnostics emitted while loading or verifying the method.
     pub diagnostics: Vec<PlanningDiagnostic>,
 }
 
 /// Deterministic planning diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanningDiagnostic {
-    /// Code owned by this execution contract.
+    /// Stable machine-readable diagnostic code.
     pub code: PlanningDiagnosticCode,
-    /// Message owned by this execution contract.
+    /// Human-readable diagnostic message.
     pub message: String,
     /// Method identifier carried across the execution boundary.
     pub method_id: Option<String>,
@@ -164,51 +164,51 @@ impl PlanningDiagnostic {
 /// Stable diagnostic code for planning and method reports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlanningDiagnosticCode {
-    /// Request missing identifier variant for this execution contract.
+    /// Planning request omitted its tracing identifier.
     RequestMissingId,
-    /// Goal not active variant for this execution contract.
+    /// Target goal was not active.
     GoalNotActive,
-    /// Goal not ground variant for this execution contract.
+    /// Target goal still had unbound variables.
     GoalNotGround,
-    /// Goal satisfied variant for this execution contract.
+    /// Projected world state already satisfied the goal.
     GoalSatisfied,
-    /// Goal indeterminate variant for this execution contract.
+    /// Projected world state lacked terms needed to evaluate the goal.
     GoalIndeterminate,
-    /// Method library invalid variant for this execution contract.
+    /// Method library contained invalid entries.
     MethodLibraryInvalid,
-    /// Method identifier missing variant for this execution contract.
+    /// Method did not declare a stable identifier.
     MethodIdMissing,
-    /// Method duplicate identifier variant for this execution contract.
+    /// Method identifier was duplicated.
     MethodDuplicateId,
-    /// Method trigger derived variant for this execution contract.
+    /// Trigger bindings were derived for a candidate method.
     MethodTriggerDerived,
-    /// Method variable not bound by trigger variant for this execution contract.
+    /// Method template referenced a variable not bound by its trigger.
     MethodVariableNotBoundByTrigger,
-    /// Method template invalid variant for this execution contract.
+    /// Method template failed structural validation.
     MethodTemplateInvalid,
-    /// Method trigger miss variant for this execution contract.
+    /// Method trigger did not match the target goal.
     MethodTriggerMiss,
-    /// Method precondition unsatisfied variant for this execution contract.
+    /// Method precondition evaluated false.
     MethodPreconditionUnsatisfied,
-    /// Method precondition indeterminate variant for this execution contract.
+    /// Method precondition could not be decided.
     MethodPreconditionIndeterminate,
-    /// Method cost ceiling exceeded variant for this execution contract.
+    /// Method exceeded the configured cost ceiling.
     MethodCostCeilingExceeded,
-    /// Method effect projection failed variant for this execution contract.
+    /// Method effects could not be projected.
     MethodEffectProjectionFailed,
-    /// Method effect miss variant for this execution contract.
+    /// Projected effects did not satisfy the target goal.
     MethodEffectMiss,
-    /// Composition substitution failed variant for this execution contract.
+    /// Template substitution failed while building a composition.
     CompositionSubstitutionFailed,
-    /// Composition validation failed variant for this execution contract.
+    /// Concrete composition failed validation.
     CompositionValidationFailed,
-    /// Operator resolved variant for this execution contract.
+    /// Operator matched a published capability contract.
     OperatorResolved,
-    /// Operator unresolved variant for this execution contract.
+    /// Operator had no compatible capability contract.
     OperatorUnresolved,
-    /// Operator tags diagnostic only variant for this execution contract.
+    /// Operator tags produced an informational diagnostic.
     OperatorTagsDiagnosticOnly,
-    /// No applicable method variant for this execution contract.
+    /// No candidate survived planning checks.
     NoApplicableMethod,
 }
 
@@ -219,28 +219,28 @@ pub struct MethodCandidateReport {
     pub method_id: String,
     /// Lifecycle status assigned by the owning runtime.
     pub status: CandidateStatus,
-    /// Bindings owned by this execution contract.
+    /// Trigger bindings derived for the candidate when matching succeeded.
     pub bindings: Option<meld_lang::Bindings>,
-    /// Diagnostics owned by this execution contract.
+    /// Diagnostics emitted while evaluating this candidate.
     pub diagnostics: Vec<PlanningDiagnostic>,
 }
 
 /// Candidate state after matching and mechanical checks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CandidateStatus {
-    /// Trigger miss variant for this execution contract.
+    /// Trigger did not match the target goal.
     TriggerMiss,
-    /// Preconditions unsatisfied variant for this execution contract.
+    /// Preconditions evaluated false.
     PreconditionsUnsatisfied,
-    /// Preconditions indeterminate variant for this execution contract.
+    /// Preconditions could not be decided from world state.
     PreconditionsIndeterminate,
-    /// Cost rejected variant for this execution contract.
+    /// Candidate exceeded planning cost limits.
     CostRejected,
-    /// Effect projection failed variant for this execution contract.
+    /// Candidate effects could not be projected.
     EffectProjectionFailed,
-    /// Effect miss variant for this execution contract.
+    /// Projected effects did not satisfy the goal.
     EffectMiss,
-    /// Applicable variant for this execution contract.
+    /// Candidate passed all mechanical planning checks.
     Applicable,
 }
 
@@ -255,18 +255,18 @@ pub struct OperatorResolutionReport {
     pub capability_type_id: Option<String>,
     /// Version of the published capability contract.
     pub capability_version: Option<u32>,
-    /// Tags owned by this execution contract.
+    /// Tags considered while matching operators to capabilities.
     pub tags: Vec<String>,
-    /// Diagnostics owned by this execution contract.
+    /// Diagnostics emitted during operator resolution.
     pub diagnostics: Vec<PlanningDiagnostic>,
 }
 
 /// Catalog resolution status for a composition operator.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorResolutionStatus {
-    /// Resolved variant for this execution contract.
+    /// Operator resolved to a compatible capability.
     Resolved,
-    /// Unresolved variant for this execution contract.
+    /// Operator did not resolve to a compatible capability.
     Unresolved,
 }
 

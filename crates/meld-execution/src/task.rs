@@ -63,7 +63,7 @@ pub mod runtime;
 pub mod templates;
 
 pub use artifact_repo::TaskArtifactRepo;
-pub use compiler::{compile_task_definition, TaskCompiler};
+pub use compiler::{compile_task_definition, TaskCompiler, TaskDefinitionCompiler};
 pub use contracts::{
     artifact_matches_input_slot, ArtifactLinkRecord, ArtifactLinkRelation, ArtifactProducerRef,
     ArtifactRecord, ArtifactRepoRecord, CapabilityInvocationRecord, CompiledTaskRecord,

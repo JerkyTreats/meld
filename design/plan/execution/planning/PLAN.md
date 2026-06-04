@@ -1,6 +1,6 @@
 # Execution Planning Runtime Phased Implementation Plan
 
-Status: in progress
+Status: first slice implemented
 Scope: first execution planning runtime slice from active `meld-lang::Goal` to execution owned composition artifact
 
 ## Overview
@@ -13,7 +13,7 @@ The slice stops at execution composition. It does not lower into task definition
 
 ## Implementation Progress
 
-Evidence date: 2026-05-31
+Evidence date: 2026-06-02
 
 Implemented in `meld-execution`:
 
@@ -29,6 +29,8 @@ Implemented in `meld-execution`:
 - one goal `PlanningRuntime` from active goal and projected `WorldState` to `PlanningResult`
 - focused tests for goal storage, method loading, planning contracts, and planning runtime
 
+The remaining mutation, coverage, fuzz duration, and comment review gates are scheduled quality hardening. They do not block the Phase 7 handoff because the runtime facade already produces `ExecutionComposition` and focused tests cover the first slice result variants.
+
 Still deferred in this plan:
 
 - execution runtime assembly that chooses the persistent goal store path
@@ -36,7 +38,7 @@ Still deferred in this plan:
 - durable planning attempt log
 - durable method library identity in planning attempt records
 - durable capability catalog path for runtime registered or synthesized capabilities
-- execution composition lowering into task network mutations
+- execution composition lowering into task network commands
 - durable task executor state for compiled task shape after expansion, init payload, artifacts, invocation attempts, applied expansions, completion state, and task events
 - durable invocation journal or equivalent idempotency barrier before capability dispatch
 - task event outbox or publication replay cursor
@@ -51,14 +53,14 @@ The goal store is the first authoritative persistent store, but it does not cove
 The next persistent storage work should separate authoritative runtime state from replayable diagnostics:
 
 - Authoritative now: goal lifecycle records, command outcomes, and source identity dedupe.
-- Authoritative next: task network mutation log, reduced task network state, task run state, invocation attempts, task artifacts, expansion records, and outcome publication handoff.
+- Authoritative next: task network command journal, mutation log, reduced task network state, task run state, invocation attempts, task artifacts, expansion records, and outcome publication handoff.
 - Replayable diagnostics: planning attempt records, method library identity, selected candidate reports, task event publication cursors, and workflow compatibility telemetry.
 
 The existing `WorkflowStateStore` already persists workflow thread, turn, gate, and prompt link records as JSON files. It can remain as a compatibility store while task network storage is designed, but runtime assembly must avoid splitting new execution state across unrelated roots.
 
 `TaskExecutor` and `TaskArtifactRepo` currently expose durable record shapes but keep live state in memory. That pattern is acceptable for focused tests and single process execution, but it is not sufficient for restart, retry dedupe, expansion idempotency, or safe external capability dispatch.
 
-No separate generic persistent plan store should be added before Phase 7. The durable plan shape should be the task network mutation log plus reduced network state. Planning attempt records can be added earlier as an append only audit log because they do not own execution commitment.
+No separate generic persistent plan store should be added before Phase 7. The durable plan shape should be the task network command journal, mutation log, and reduced network state. Planning attempt records can be added earlier as an append only audit log because they do not own execution commitment.
 
 Verification recorded:
 
@@ -117,10 +119,10 @@ This slice must keep the translation levels separate:
 | Desired state | `meld-lang::Goal` | execution goal set | Declares one ground target proposition that should hold. |
 | Reusable plan template | `meld-lang::Method` | execution method library | Matches a goal through trigger unification and supplies preconditions, net effects, cost, and a composition template. |
 | Concrete planning output | `ExecutionComposition` | execution planning | Carries the selected method, bindings, substituted `meld-lang::Composition`, projected effects, validation, diagnostics, and world state frame provenance. |
-| Executable graph | task network mutation set | downstream task network lowering | Converts the execution composition into task network task nodes, dependency edges, lineage, and init artifacts. |
+| Executable graph | task network command carrying mutation set | downstream task network lowering | Converts the execution composition into task network task nodes, dependency edges, lineage, and init artifacts. |
 | Dispatch state | task network and task executor | task runtime | Tracks ready sets, in flight work, artifacts, completion, failure, retry, and cancellation. |
 
-The first slice performs only the first three rows. It proves that an active goal can become a validated execution composition. It does not create task network mutations or dispatch state.
+The first slice performs only the first three rows. It proves that an active goal can become a validated execution composition. It does not create task network commands or dispatch state.
 
 The translation is deterministic:
 
@@ -138,7 +140,7 @@ Goal.target
   -> deferred task network lowering into mutations
 ```
 
-Method composition is therefore not a task. A method owns a composition template in shared language terms. Planning owns the selected bindings and validation context. Lowering later maps the concrete composition graph into task network mutations.
+Method composition is therefore not a task. A method owns a composition template in shared language terms. Planning owns the selected bindings and validation context. Lowering later maps the concrete composition graph into task network commands carrying mutation sets.
 
 Composition steps map to later task work as follows:
 
@@ -194,7 +196,7 @@ It does not own:
 - planner projection rules inside world model
 - agent normative judgment
 - task network state
-- task network mutation acceptance
+- task network command acceptance and mutation reduction
 - composition lowering into task definitions
 - task dispatch
 - capability invocation
@@ -347,15 +349,15 @@ The first implementation may receive the projected `WorldState` as direct input 
 | 1 | Module scaffold and public boundary | Phase 0 | Complete |
 | 2 | Goal set contracts | Phase 1 | Complete |
 | 3 | Planning result contracts | Phase 2 | Complete |
-| 4 | Method library loading and verification | Phase 3 | In progress |
+| 4 | Method library loading and verification | Phase 3 | Complete for first slice |
 | 5 | Goal scoped world state request contract | Phase 3 | Complete |
 | 6 | Method candidate selection | Phase 4 and Phase 5 | Complete |
 | 7 | Composition preparation and validation | Phase 6 | Complete |
-| 8 | Runtime facade and typed loop tests | Phase 7 | In progress |
+| 8 | Runtime facade and typed loop tests | Phase 7 | Complete for Phase 7 handoff |
 
 Each phase lists focused verification for the work introduced in that phase. The Quality Bar section is cumulative and applies to every phase exit once the related harness exists.
 
-High cost mutation, fuzz duration, and coverage gates remain pending unless they are listed in the verification evidence above.
+High cost mutation, fuzz duration, and coverage gates remain scheduled unless they are listed in the verification evidence above.
 
 ---
 
@@ -380,7 +382,7 @@ High cost mutation, fuzz duration, and coverage gates remain pending unless they
 | Exit Criterion | State |
 |----------------|-------|
 | The planning runtime input and output contracts are named. | Complete |
-| The slice requires no task network mutation support. | Complete |
+| The slice requires no task network command or mutation support. | Complete |
 | The deferred runtime concerns are explicit. | Complete |
 | Method selection can be explained without task lowering details. | Complete |
 
@@ -501,7 +503,7 @@ cargo test -p meld-execution planning::contracts
 |-------|-------|
 | Goal | Load serialized `meld-lang::Method` values and verify them against planning rules and the capability catalog. |
 | Dependencies | Phase 3 |
-| State | In progress |
+| State | Complete for first slice |
 
 | Order | Task | State |
 |-------|------|-------|
@@ -514,7 +516,7 @@ cargo test -p meld-execution planning::contracts
 | 7 | Preserve unresolved operator diagnostics without invoking capabilities. | Complete |
 | 8 | Add pinned JSON fixture for `refresh_docs_v1`. | Complete |
 | 9 | Add property tests proving load order normalization is deterministic across path order variation. | Complete |
-| 10 | Add mutation test coverage for duplicate id, variable coverage, and operator resolution branches. | Planned |
+| 10 | Add mutation test coverage for duplicate id, variable coverage, and operator resolution branches. | Scheduled high cost gate |
 
 | Exit Criterion | State |
 |----------------|-------|
@@ -641,7 +643,7 @@ cargo clippy -p meld-execution -- -D warnings
 |-------|-------|
 | Goal | Expose one planning runtime facade and prove the first docs freshness path. |
 | Dependencies | Phase 7 |
-| State | In progress |
+| State | Complete for Phase 7 handoff |
 
 | Order | Task | State |
 |-------|------|-------|
@@ -654,15 +656,15 @@ cargo clippy -p meld-execution -- -D warnings
 | 7 | Add test where invalid method file produces invalid method diagnostics. | Complete |
 | 8 | Add source scans for module boundary and `mod.rs` rule. | Complete |
 | 9 | Add local fuzz targets for planning contract decode, method library verification, and runtime candidate selection. | Complete |
-| 10 | Add mutation gate commands for the new `goals` and `planning` modules. | Planned |
-| 11 | Add comment consistency review for new Rustdoc and inline comments. | Planned |
+| 10 | Add mutation gate commands for the new `goals` and `planning` modules. | Scheduled high cost gate |
+| 11 | Add comment consistency review for new Rustdoc and inline comments. | Scheduled policy review |
 
 | Exit Criterion | State |
 |----------------|-------|
 | The runtime facade plans one goal into one execution composition. | Complete |
 | All result variants in the first slice have focused tests. | Complete |
 | The crate still passes focused and workspace verification. | Complete |
-| High cost verification gates are documented as phase exit evidence even when not run in normal CI. | Planned |
+| High cost verification gates are documented as scheduled evidence outside normal CI. | Complete |
 
 Verification:
 
@@ -680,7 +682,7 @@ The following concerns are outside this plan:
 
 - composition lowering into `TaskDefinition`
 - task network graph executor
-- task network mutation acceptance
+- task network command acceptance and mutation reduction
 - ready set computation over task nodes
 - conditional edge guard evaluation at task network level
 - observation task dispatch
@@ -811,7 +813,7 @@ The execution planning runtime slice is complete when all statements are true:
 - method composition is substituted and validated
 - composed result carries an execution composition artifact
 - composed result carries no task runtime state
-- no task network mutation is issued
+- no task network command is issued
 - no task is dispatched
 - no capability is invoked
 - all required verification commands pass

@@ -28,10 +28,11 @@ flowchart TD
     TC --> CTR[Compiled Task Records]
 
     C -->|composition edges| TNE[Task Network Edges]
-    CTR --> TNM[Task Network Mutations]
+    CTR --> TNM[Task Network Mutation Set]
     TNE --> TNM
 
-    TNM -->|inject tasks and edges| TN[Task Network]
+    TNM --> TNC[Task Network Command]
+    TNC -->|accepted records| TN[Task Network]
     TN -->|ready set| TE[Task Executor]
     TE -->|dispatch capabilities| CAP[Capability Runtime]
     CAP -->|artifacts and task events| TN

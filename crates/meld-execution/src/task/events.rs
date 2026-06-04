@@ -6,7 +6,7 @@ use serde_json::json;
 /// Task event contract used by execution runtimes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskEvent {
-    /// Event type owned by this execution contract.
+    /// Task event type before canonical event mapping.
     pub event_type: String,
     /// Authored or compiled task identifier within the execution domain.
     pub task_id: String,
@@ -22,20 +22,20 @@ pub struct TaskEvent {
     pub artifact_id: Option<String>,
     /// Artifact type identifier used for contract validation and routing.
     pub artifact_type_id: Option<String>,
-    /// Attempt index owned by this execution contract.
+    /// One-based attempt index when the event belongs to an invocation.
     pub attempt_index: Option<u32>,
-    /// Ready count owned by this execution contract.
+    /// Number of capability instances ready after this event.
     pub ready_count: Option<usize>,
-    /// Running count owned by this execution contract.
+    /// Number of capability instances in flight after this event.
     pub running_count: Option<usize>,
-    /// Blocked reason owned by this execution contract.
+    /// Explanation emitted when the task is blocked.
     pub blocked_reason: Option<String>,
     /// Execution error text reported through telemetry when available.
     pub error: Option<String>,
 }
 
 impl TaskEvent {
-    /// Execution helper for new.
+    /// Creates a task event with optional fields left unset.
     pub fn new(
         event_type: impl Into<String>,
         task_id: impl Into<String>,
@@ -76,13 +76,13 @@ pub struct ExecutionTaskEventData {
     pub artifact_id: Option<String>,
     /// Artifact type identifier used for contract validation and routing.
     pub artifact_type_id: Option<String>,
-    /// Attempt index owned by this execution contract.
+    /// One-based attempt index when the event belongs to an invocation.
     pub attempt_index: Option<u32>,
-    /// Ready count owned by this execution contract.
+    /// Number of capability instances ready after this event.
     pub ready_count: Option<usize>,
-    /// Running count owned by this execution contract.
+    /// Number of capability instances in flight after this event.
     pub running_count: Option<usize>,
-    /// Blocked reason owned by this execution contract.
+    /// Explanation emitted when the task is blocked.
     pub blocked_reason: Option<String>,
     /// Execution error text reported through telemetry when available.
     pub error: Option<String>,
@@ -107,7 +107,7 @@ impl From<&TaskEvent> for ExecutionTaskEventData {
     }
 }
 
-/// Execution helper for canonical task event type.
+/// Maps a task-local event name to the published execution event type.
 pub fn canonical_task_event_type(event_type: &str) -> Option<&'static str> {
     match event_type {
         "task_requested" => Some("execution.task.requested"),
@@ -122,7 +122,7 @@ pub fn canonical_task_event_type(event_type: &str) -> Option<&'static str> {
     }
 }
 
-/// Execution helper for target node identifier from init payload.
+/// Extracts the target node identifier from the target selector init artifact.
 pub fn target_node_id_from_init_payload(payload: &TaskInitializationPayload) -> Option<String> {
     payload
         .init_artifacts
@@ -133,7 +133,7 @@ pub fn target_node_id_from_init_payload(payload: &TaskInitializationPayload) -> 
         .map(ToString::to_string)
 }
 
-/// Execution helper for build execution task envelope.
+/// Builds the published event envelope for a task event when the type is known.
 pub fn build_execution_task_envelope(session_id: &str, event: &TaskEvent) -> Option<EventEnvelope> {
     let event_type = canonical_task_event_type(&event.event_type)?;
     let data = ExecutionTaskEventData::from(event);

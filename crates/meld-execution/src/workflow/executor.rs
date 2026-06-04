@@ -488,7 +488,7 @@ mod tests {
         }
     }
 
-    /// Type alias for put frame record values in execution contracts.
+    /// Captured frame write tuple for fake API assertions.
     type PutFrameRecord = (NodeId, String, String, Vec<u8>);
 
     #[derive(Default)]
@@ -538,21 +538,13 @@ mod tests {
     }
 
     impl ContextReadPort for FakeApi {
-        /// Type alias for agent identity values in execution contracts.
         type AgentIdentity = String;
-        /// Type alias for context view values in execution contracts.
         type ContextView = ();
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
-        /// Type alias for frame values in execution contracts.
         type Frame = Vec<u8>;
-        /// Type alias for frame identifier values in execution contracts.
         type FrameId = NodeId;
-        /// Type alias for node context values in execution contracts.
         type NodeContext = String;
-        /// Type alias for node identifier values in execution contracts.
         type NodeId = NodeId;
-        /// Type alias for node record values in execution contracts.
         type NodeRecord = ExecutionNodeRecord<NodeId>;
 
         fn get_agent(&self, agent_id: &str) -> Result<Self::AgentIdentity, Self::Error> {
@@ -680,13 +672,9 @@ mod tests {
     }
 
     impl ContextWritePort for FakeApi {
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
-        /// Type alias for frame values in execution contracts.
         type Frame = Vec<u8>;
-        /// Type alias for frame identifier values in execution contracts.
         type FrameId = NodeId;
-        /// Type alias for node identifier values in execution contracts.
         type NodeId = NodeId;
 
         fn put_frame(
@@ -715,11 +703,8 @@ mod tests {
     }
 
     impl PromptArtifactReadPort for FakeApi {
-        /// Type alias for artifact kind values in execution contracts.
         type ArtifactKind = String;
-        /// Type alias for artifact reference values in execution contracts.
         type ArtifactRef = String;
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
 
         fn read_prompt_artifact_bytes(&self, artifact_id: &str) -> Result<Vec<u8>, Self::Error> {
@@ -736,7 +721,6 @@ mod tests {
     }
 
     impl SystemPromptPort for FakeApi {
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
 
         fn load_system_prompt(&self, agent_id: &str) -> Result<String, Self::Error> {
@@ -745,9 +729,7 @@ mod tests {
     }
 
     impl NodeResolutionPort for FakeApi {
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
-        /// Type alias for node identifier values in execution contracts.
         type NodeId = NodeId;
 
         fn resolve_workspace_node_id(
@@ -762,11 +744,8 @@ mod tests {
     }
 
     impl ProviderValidationPort for FakeApi {
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
-        /// Type alias for generation request values in execution contracts.
         type GenerationRequest = GenerationOrchestrationRequest;
-        /// Type alias for provider preparation values in execution contracts.
         type ProviderPreparation = FakeProviderPreparation;
 
         fn prepare_provider_for_request(
@@ -786,15 +765,10 @@ mod tests {
 
     #[async_trait]
     impl ProviderExecutionPort for FakeApi {
-        /// Type alias for chat message values in execution contracts.
         type ChatMessage = ChatMessage;
-        /// Type alias for completion response values in execution contracts.
         type CompletionResponse = CompletionResponse;
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
-        /// Type alias for generation request values in execution contracts.
         type GenerationRequest = GenerationOrchestrationRequest;
-        /// Type alias for provider preparation values in execution contracts.
         type ProviderPreparation = FakeProviderPreparation;
 
         async fn execute_completion(
@@ -823,11 +797,8 @@ mod tests {
     }
 
     impl PromptLineagePort for FakeApi {
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
-        /// Type alias for prepared prompt lineage values in execution contracts.
         type PreparedPromptLineage = PreparedPromptLineage;
-        /// Type alias for prompt lineage request values in execution contracts.
         type PromptLineageRequest = PromptLineageRequest;
 
         fn prepare_prompt_lineage(
@@ -863,18 +834,12 @@ mod tests {
     }
 
     impl GeneratedMetadataPort for FakeApi {
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
-        /// Type alias for frame metadata values in execution contracts.
         type FrameMetadata = String;
-        /// Type alias for generated metadata builder values in execution contracts.
         type GeneratedMetadataBuilder =
             dyn Fn(&GeneratedFrameMetadataInput) -> String + Send + Sync;
-        /// Type alias for generated metadata input values in execution contracts.
         type GeneratedMetadataInput = GeneratedFrameMetadataInput;
-        /// Type alias for generation request values in execution contracts.
         type GenerationRequest = GenerationOrchestrationRequest;
-        /// Type alias for previous metadata snapshot view values in execution contracts.
         type PreviousMetadataSnapshotView = PreviousMetadataSnapshotView;
 
         fn load_previous_metadata_snapshot(
@@ -903,9 +868,7 @@ mod tests {
     }
 
     impl EventPublicationPort for FakeApi {
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
-        /// Type alias for event envelope values in execution contracts.
         type EventEnvelope = EventEnvelope;
 
         fn publish_execution_envelope(
@@ -919,7 +882,6 @@ mod tests {
     }
 
     impl ExecutionProgressPort for FakeApi {
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
 
         fn emit_progress_event(
@@ -937,7 +899,6 @@ mod tests {
     }
 
     impl WorldModelQueryPort for FakeApi {
-        /// Type alias for error values in execution contracts.
         type Error = ExecutionInvariantError;
 
         fn current_artifact_for_task_run(

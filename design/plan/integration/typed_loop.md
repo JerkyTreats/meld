@@ -99,7 +99,7 @@ The scenario can be translated directly into one `meld-lang` integration test.
 ## Deferred Runtime Work
 
 - task network graph executor
-- graph mutation acceptance
+- task network command acceptance
 - plan diffing
 - switching cost model
 - capability catalog bridge

@@ -167,10 +167,58 @@ fn duplicate_method_ids_become_invalid_reports() {
 
     assert!(library.entries.is_empty());
     assert_eq!(library.invalid.len(), 2);
+    assert_eq!(
+        library
+            .invalid
+            .iter()
+            .map(|report| report.source_ref.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("memory:method-0"), Some("memory:method-1")]
+    );
     assert!(library.invalid[0]
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.code == PlanningDiagnosticCode::MethodDuplicateId));
+}
+
+#[test]
+fn derived_terms_in_method_trigger_are_reported() {
+    let mut method = docs_method("derived-trigger", 1, 10);
+    method.trigger = Proposition::Accessible {
+        scope: Term::Derived {
+            source_step: "scan".to_string(),
+            field_path: "summary".to_string(),
+        },
+    };
+
+    let library = MethodLibrary::from_methods(vec![method], &catalog());
+
+    assert!(library.entries.is_empty());
+    assert!(library.invalid[0].diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == PlanningDiagnosticCode::MethodTriggerDerived
+            && diagnostic.message.contains("scan.summary")
+    }));
+}
+
+#[test]
+fn derived_terms_in_method_trigger_condition_are_reported() {
+    let mut method = docs_method("derived-trigger-condition", 1, 10);
+    method.trigger = Proposition::Holds {
+        subject: Term::Variable("?node".to_string()),
+        dimension: Term::Dimension("docs_freshness".to_string()),
+        condition: Condition::Above(Term::Derived {
+            source_step: "score".to_string(),
+            field_path: "freshness".to_string(),
+        }),
+    };
+
+    let library = MethodLibrary::from_methods(vec![method], &catalog());
+
+    assert!(library.entries.is_empty());
+    assert!(library.invalid[0].diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == PlanningDiagnosticCode::MethodTriggerDerived
+            && diagnostic.message.contains("score.freshness")
+    }));
 }
 
 #[test]
@@ -184,6 +232,24 @@ fn unbound_precondition_variable_is_invalid() {
     assert!(library.entries.is_empty());
     assert!(library.invalid[0].diagnostics.iter().any(|diagnostic| {
         diagnostic.code == PlanningDiagnosticCode::MethodVariableNotBoundByTrigger
+    }));
+}
+
+#[test]
+fn unbound_condition_variable_reports_original_variable_name() {
+    let mut method = docs_method("condition-variable", 1, 10);
+    method.preconditions.push(Proposition::Holds {
+        subject: Term::Variable("?node".to_string()),
+        dimension: Term::Dimension("docs_freshness".to_string()),
+        condition: Condition::Above(Term::Variable("?threshold".to_string())),
+    });
+
+    let library = MethodLibrary::from_methods(vec![method], &catalog());
+
+    assert!(library.entries.is_empty());
+    assert!(library.invalid[0].diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == PlanningDiagnosticCode::MethodVariableNotBoundByTrigger
+            && diagnostic.message.contains("?threshold")
     }));
 }
 
@@ -248,6 +314,29 @@ fn exact_capability_ref_resolves_and_missing_ref_reports_unresolved() {
         capability_version: 1,
     });
     let library = MethodLibrary::from_methods(vec![missing], &catalog());
+    assert_eq!(
+        library.entries[0].verification.operator_resolutions[0].status,
+        OperatorResolutionStatus::Unresolved
+    );
+}
+
+#[test]
+fn catalog_scan_requires_input_and_output_contracts_to_match() {
+    let mut method = docs_method("missing-input", 1, 10);
+    let StepKind::Op(operator) = &mut method.composition.steps[0].kind else {
+        panic!("expected operator");
+    };
+    operator.resolution.requires_inputs = vec![SlotConstraint {
+        artifact_type_id: "missing_input".to_string(),
+        required: true,
+    }];
+    operator.resolution.requires_outputs = vec![SlotConstraint {
+        artifact_type_id: "docs_patch".to_string(),
+        required: true,
+    }];
+
+    let library = MethodLibrary::from_methods(vec![method], &catalog());
+
     assert_eq!(
         library.entries[0].verification.operator_resolutions[0].status,
         OperatorResolutionStatus::Unresolved

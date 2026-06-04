@@ -13,7 +13,7 @@ pub struct GateEvaluationResult {
 }
 
 impl GateEvaluationResult {
-    /// Execution helper for pass.
+    /// Builds a passing gate evaluation result.
     pub fn pass() -> Self {
         Self {
             outcome: GateOutcome::Pass,
@@ -21,7 +21,7 @@ impl GateEvaluationResult {
         }
     }
 
-    /// Execution helper for fail.
+    /// Builds a failing gate evaluation result with reasons.
     pub fn fail(reasons: Vec<String>) -> Self {
         Self {
             outcome: GateOutcome::Fail,
@@ -29,13 +29,13 @@ impl GateEvaluationResult {
         }
     }
 
-    /// Execution helper for is pass.
+    /// Returns true when the gate evaluation passed.
     pub fn is_pass(&self) -> bool {
         self.outcome == GateOutcome::Pass
     }
 }
 
-/// Execution helper for evaluate gate.
+/// Evaluates workflow output against the selected gate contract.
 pub fn evaluate_gate(
     gate: &WorkflowGate,
     output: &str,
@@ -265,6 +265,7 @@ mod tests {
         let result = evaluate_gate(&gate, r#"{"claims":[]}"#, None);
 
         assert_eq!(result.outcome, GateOutcome::Fail);
+        assert!(!result.is_pass());
         assert_eq!(result.reasons, vec!["missing required field 'evidence'"]);
     }
 
@@ -316,6 +317,230 @@ mod tests {
         assert!(passing.is_pass());
         assert_eq!(failing.outcome, GateOutcome::Fail);
         assert!(failing.reasons[0].contains("api surface"));
+    }
+
+    #[test]
+    fn no_semantic_drift_requires_scope_section_from_input() {
+        let mut gate = gate("no_semantic_drift", vec![]);
+        gate.rules = json!({
+            "required_sections_from_input": "target_context"
+        });
+        let input_values = HashMap::from([(
+            "target_context".to_string(),
+            json!({
+                "scope": "Document the public execution mutation behavior"
+            })
+            .to_string(),
+        )]);
+
+        let passing = evaluate_gate(
+            &gate,
+            "## Scope\nDocument the public execution mutation behavior",
+            Some(&input_values),
+        );
+        let failing = evaluate_gate(&gate, "## Purpose\nDocument behavior", Some(&input_values));
+
+        assert!(passing.is_pass());
+        assert_eq!(failing.outcome, GateOutcome::Fail);
+        assert!(failing
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("scope")));
+    }
+
+    #[test]
+    fn no_semantic_drift_requires_purpose_section_from_input() {
+        let mut gate = gate("no_semantic_drift", vec![]);
+        gate.rules = json!({
+            "required_sections_from_input": "target_context"
+        });
+        let input_values = HashMap::from([(
+            "target_context".to_string(),
+            json!({
+                "purpose": "Explain why the execution mutation exists"
+            })
+            .to_string(),
+        )]);
+
+        let passing = evaluate_gate(
+            &gate,
+            "## Purpose\nExplain why the execution mutation exists",
+            Some(&input_values),
+        );
+        let failing = evaluate_gate(&gate, "## Scope\nDocument behavior", Some(&input_values));
+
+        assert!(passing.is_pass());
+        assert_eq!(failing.outcome, GateOutcome::Fail);
+        assert!(failing
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("purpose")));
+    }
+
+    #[test]
+    fn no_semantic_drift_requires_usage_and_behavior_sections_from_input() {
+        let mut gate = gate("no_semantic_drift", vec![]);
+        gate.rules = json!({
+            "required_sections_from_input": "target_context"
+        });
+        let input_values = HashMap::from([(
+            "target_context".to_string(),
+            json!({
+                "behavior_notes": "Preserve existing task ordering",
+                "usage": "Run the workflow through the task package path"
+            })
+            .to_string(),
+        )]);
+
+        let passing = evaluate_gate(
+            &gate,
+            "## Behavior Notes\nPreserve ordering\n\n## Usage\nRun through task package",
+            Some(&input_values),
+        );
+        let failing = evaluate_gate(&gate, "## Purpose\nDocument behavior", Some(&input_values));
+
+        assert!(passing.is_pass());
+        assert_eq!(failing.outcome, GateOutcome::Fail);
+        assert!(failing
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("behavior notes")));
+        assert!(failing
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("usage")));
+    }
+
+    #[test]
+    fn no_semantic_drift_requires_caveats_section_from_input() {
+        let mut gate = gate("no_semantic_drift", vec![]);
+        gate.rules = json!({
+            "required_sections_from_input": "target_context"
+        });
+        let input_values = HashMap::from([(
+            "target_context".to_string(),
+            json!({
+                "caveats": "Callers must preserve existing serialized fields"
+            })
+            .to_string(),
+        )]);
+
+        let passing = evaluate_gate(
+            &gate,
+            "## Caveats\nCallers must preserve existing serialized fields",
+            Some(&input_values),
+        );
+        let failing = evaluate_gate(&gate, "## Purpose\nDocument behavior", Some(&input_values));
+
+        assert!(passing.is_pass());
+        assert_eq!(failing.outcome, GateOutcome::Fail);
+        assert!(failing
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("caveats")));
+    }
+
+    #[test]
+    fn no_semantic_drift_requires_related_components_section_from_input() {
+        let mut gate = gate("no_semantic_drift", vec![]);
+        gate.rules = json!({
+            "required_sections_from_input": "target_context"
+        });
+        let input_values = HashMap::from([(
+            "target_context".to_string(),
+            json!({
+                "related_components": ["task package prepare", "workflow gates"]
+            })
+            .to_string(),
+        )]);
+
+        let passing = evaluate_gate(
+            &gate,
+            "## Related Components\nTask package prepare and workflow gates",
+            Some(&input_values),
+        );
+        let failing = evaluate_gate(&gate, "## Purpose\nDocument behavior", Some(&input_values));
+
+        assert!(passing.is_pass());
+        assert_eq!(failing.outcome, GateOutcome::Fail);
+        assert!(failing
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("related components")));
+    }
+
+    #[test]
+    fn no_semantic_drift_requires_api_surface_from_object_input() {
+        let mut gate = gate("no_semantic_drift", vec![]);
+        gate.rules = json!({
+            "required_sections_from_input": "target_context"
+        });
+        let input_values = HashMap::from([(
+            "target_context".to_string(),
+            json!({
+                "api_surface": {
+                    "path": "lib.rs",
+                    "summary": "Public workflow API"
+                }
+            })
+            .to_string(),
+        )]);
+
+        let passing = evaluate_gate(
+            &gate,
+            "## API Surface\nPublic workflow API",
+            Some(&input_values),
+        );
+        let failing = evaluate_gate(&gate, "## Purpose\nDocument behavior", Some(&input_values));
+
+        assert!(passing.is_pass());
+        assert_eq!(failing.outcome, GateOutcome::Fail);
+        assert!(failing
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("api surface")));
+    }
+
+    #[test]
+    fn no_semantic_drift_ignores_api_surface_object_with_only_path() {
+        let mut gate = gate("no_semantic_drift", vec![]);
+        gate.rules = json!({
+            "required_sections_from_input": "target_context"
+        });
+        let input_values = HashMap::from([(
+            "target_context".to_string(),
+            json!({
+                "api_surface": {
+                    "path": "lib.rs"
+                }
+            })
+            .to_string(),
+        )]);
+
+        let result = evaluate_gate(&gate, "## Purpose\nDocument behavior", Some(&input_values));
+
+        assert!(result.is_pass());
+    }
+
+    #[test]
+    fn no_semantic_drift_ignores_api_surface_array_with_only_paths() {
+        let mut gate = gate("no_semantic_drift", vec![]);
+        gate.rules = json!({
+            "required_sections_from_input": "target_context"
+        });
+        let input_values = HashMap::from([(
+            "target_context".to_string(),
+            json!({
+                "api_surface": [
+                    { "path": "lib.rs" }
+                ]
+            })
+            .to_string(),
+        )]);
+
+        let result = evaluate_gate(&gate, "## Purpose\nDocument behavior", Some(&input_values));
+
+        assert!(result.is_pass());
     }
 
     #[test]

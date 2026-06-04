@@ -1,6 +1,6 @@
 # Execution Domain Gaps
 
-Date: 2026-05-23
+Date: 2026-06-02
 Status: active
 Scope: open contracts and undefined seams preventing a complete execution architecture
 
@@ -33,17 +33,17 @@ Residual gaps within the goal model:
 
 **Status: type substrate implemented in `meld-lang`. Residual runtime gaps identified.**
 
-See [Planning Pipeline](planning/planning_pipeline.md) for the unified pipeline: two concurrent processes (planning loop + task network) connected by graph mutations.
+See [Planning Pipeline](planning/planning_pipeline.md) for the unified pipeline: two concurrent processes connected by task network commands.
 
-The pipeline document resolves the structural gap. The previous six-stage sequential model and the separate adaptation domain both dissolved into the graphs-lower-graphs abstraction. Control flow is expressed as graph structure (conditional dependency edges, multi-dependency nodes), not as a separate compiled control program. Adaptation's reconciliation concern folds into the planning loop's cost-aware mutation decisions.
+The pipeline document resolves the structural gap. The previous six-stage sequential model and the separate adaptation domain both dissolved into the graphs-lower-graphs abstraction. Control flow is expressed as graph structure through conditional dependency edges and multi-dependency nodes, not as a separate compiled control program. Adaptation's reconciliation concern folds into the planning loop's cost-aware mutation proposal decisions.
 
-`meld-lang` now provides the planning type substrate: `Method` (with trigger, preconditions, composition, net effects, cost, preference), `Composition` (step/edge graph), `Operator` (preconditions, effects, cost, resolution), `unify()`, `substitute()`, and `validate()`. Method definitions are typed values that can be serialized to and deserialized from JSON. The method matching flow — unify trigger against goal, check preconditions against world state, substitute bindings into composition, validate, project effects — is proven in integration tests.
+`meld-lang` now provides the planning type substrate: `Method` with trigger, preconditions, composition, net effects, cost, and preference; `Composition` as a step and edge graph; `Operator` with preconditions, effects, cost, and resolution; plus `unify()`, `substitute()`, and `validate()`. Method definitions are typed values that can be serialized to and deserialized from JSON. The method matching flow — unify trigger against goal, check preconditions against world state, substitute bindings into composition, validate, project effects — is proven in integration tests.
 
 Residual gaps within the pipeline:
 
 - **method library loading** — the `Method` type and JSON serialization exist; the runtime infrastructure for loading, indexing, and querying method libraries belongs to `meld-execution` and is not yet implemented
 - **planning algorithm** — the search strategy for HTN decomposition is unspecified; `meld-lang` provides the matching primitives but the search orchestration is an `meld-execution` concern
-- **task network graph executor** — the upper level of the fractal (graph of tasks, same execution model as graph of capabilities within a task) is not implemented; requires graph-based ready-set computation, conditional edge evaluation, and mutation acceptance
+- **task network graph executor** — the upper level of the fractal is not implemented; requires graph-based ready-set computation, conditional edge evaluation, command acceptance, and mutation reduction
 - **switching cost model** — cost-aware plan transitions require cost estimates on tasks and a model for computing cleanup cost, sunk cost, disruption cost, and benefit estimation
 
 ## Gap 3: World Model Read Interface

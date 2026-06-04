@@ -93,13 +93,13 @@ pub trait ContextReadPort: Send + Sync {
     type NodeId;
     /// Backing frame identifier type.
     type FrameId;
-    /// Adapter specific context view selector.
+    /// Adapter-specific context view selector.
     type ContextView;
-    /// Adapter specific node context type.
+    /// Adapter-specific node context type.
     type NodeContext;
-    /// Adapter specific frame type.
+    /// Adapter-specific frame type.
     type Frame;
-    /// Adapter specific node record type.
+    /// Adapter-specific node record type.
     type NodeRecord;
 
     /// Loads the configured agent identity.
@@ -117,7 +117,7 @@ pub trait ContextReadPort: Send + Sync {
         frame_type: &str,
         include_tombstoned: bool,
     ) -> Result<Option<Self::FrameId>, Self::Error>;
-    /// Loads an adapter specific node view.
+    /// Loads an adapter-specific node view.
     fn get_node(
         &self,
         node_id: Self::NodeId,
