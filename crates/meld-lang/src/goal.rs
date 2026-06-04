@@ -1,3 +1,10 @@
+//! Goal contracts and lifecycle metadata.
+//!
+//! Owner: planning language.
+//! Inputs: desired propositions, priority hints, provenance, and lifecycle
+//! changes.
+//! Outputs: serializable goal records used by planning and orchestration.
+
 use serde::{Deserialize, Serialize};
 
 use crate::{cost::CostEstimate, proposition::Proposition};

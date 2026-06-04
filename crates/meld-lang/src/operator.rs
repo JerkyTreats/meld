@@ -1,3 +1,9 @@
+//! Runtime operator and capability resolution contracts.
+//!
+//! Owner: planning language.
+//! Inputs: preconditions, effects, cost estimates, and capability lookup hints.
+//! Outputs: serializable operator records consumed by execution.
+
 use serde::{Deserialize, Serialize};
 
 use crate::{cost::CostEstimate, effect::Effect, proposition::Proposition};

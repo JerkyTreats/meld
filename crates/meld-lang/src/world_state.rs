@@ -1,3 +1,10 @@
+//! Ground proposition sets and effect application.
+//!
+//! Owner: planning language.
+//! Inputs: ground propositions, proposition queries, and deterministic effects.
+//! Outputs: immutable world-state snapshots, query bindings, gaps, and grounding
+//! diagnostics.
+
 use serde::{Deserialize, Serialize};
 
 use crate::{

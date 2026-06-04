@@ -1,3 +1,9 @@
+//! Proposition unification and variable bindings.
+//!
+//! Owner: planning language.
+//! Inputs: pattern propositions and concrete propositions.
+//! Outputs: deterministic variable bindings when shapes are compatible.
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};

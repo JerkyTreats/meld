@@ -1,3 +1,9 @@
+//! Planning composition graph contracts.
+//!
+//! Owner: planning language.
+//! Inputs: operator instances, nested goal steps, and dependency declarations.
+//! Outputs: serializable step graphs consumed by validation and execution.
+
 use serde::{Deserialize, Serialize};
 
 use crate::{condition::Condition, operator::Operator, proposition::Proposition};

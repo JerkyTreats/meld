@@ -1,3 +1,10 @@
+//! Proposition condition operators.
+//!
+//! Owner: planning language.
+//! Inputs: query and stored belief values expressed as terms.
+//! Outputs: comparison contracts used by evaluation, matching, validation, and
+//! substitution.
+
 use serde::{Deserialize, Serialize};
 
 use crate::term::Term;

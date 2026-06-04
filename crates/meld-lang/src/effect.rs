@@ -1,3 +1,9 @@
+//! Deterministic effects over proposition state.
+//!
+//! Owner: planning language.
+//! Inputs: propositions and ground terms produced by operators or methods.
+//! Outputs: state transition commands interpreted by [`crate::WorldState`].
+
 use serde::{Deserialize, Serialize};
 
 use crate::{proposition::Proposition, term::Term};

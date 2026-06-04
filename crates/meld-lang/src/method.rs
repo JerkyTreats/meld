@@ -1,3 +1,11 @@
+//! Reusable planning method templates.
+//!
+//! Owner: planning language.
+//! Inputs: trigger propositions, applicability preconditions, composition
+//! templates, projected effects, and cost hints.
+//! Outputs: serializable method records that can be selected and instantiated by
+//! a planner.
+
 use serde::{Deserialize, Serialize};
 
 use crate::{

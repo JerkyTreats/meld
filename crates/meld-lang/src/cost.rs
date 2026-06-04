@@ -1,3 +1,9 @@
+//! Resource cost estimation contracts.
+//!
+//! Owner: planning language.
+//! Inputs: operator-level cost estimates and composition graphs.
+//! Outputs: aggregate estimates and ceiling checks for planning decisions.
+
 use serde::{Deserialize, Serialize};
 
 use crate::composition::{Composition, StepKind};
