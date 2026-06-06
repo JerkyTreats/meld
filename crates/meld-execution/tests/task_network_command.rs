@@ -316,6 +316,234 @@ fn invalid_graph_rejects_before_state_mutation() {
 }
 
 #[test]
+fn missing_required_init_source_rejects_before_state_mutation() {
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let mut node = task_network_support::task_node_with_static_seed(
+        "task-alpha",
+        "metadata",
+        "metadata_doc",
+        1,
+    );
+    node.init_sources.clear();
+    let set = Set::new(
+        "network-docs",
+        "composition-fixture",
+        "missing-init-source",
+        vec![Mutation::Inject(task_network_support::inject_for_node(
+            node,
+            vec![],
+        ))],
+        vec![],
+    );
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-missing-init-source",
+        Command::ApplyMutationSet(set),
+    );
+
+    assert!(matches!(
+        store.submit(request),
+        Response::Rejected(Rejection::InvalidGraph(message)) if message.contains("has no source")
+    ));
+    assert!(store.state().tasks.is_empty());
+}
+
+#[test]
+fn duplicate_init_source_rejects_before_state_mutation() {
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let mut node = task_network_support::task_node_with_static_seed(
+        "task-alpha",
+        "metadata",
+        "metadata_doc",
+        1,
+    );
+    node.init_sources.push(node.init_sources[0].clone());
+    let set = Set::new(
+        "network-docs",
+        "composition-fixture",
+        "duplicate-init-source",
+        vec![Mutation::Inject(task_network_support::inject_for_node(
+            node,
+            vec![],
+        ))],
+        vec![],
+    );
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-duplicate-init-source",
+        Command::ApplyMutationSet(set),
+    );
+
+    assert!(matches!(
+        store.submit(request),
+        Response::Rejected(Rejection::InvalidGraph(message))
+            if message.contains("more than one source")
+    ));
+    assert!(store.state().tasks.is_empty());
+}
+
+#[test]
+fn contract_mismatched_init_source_rejects_before_state_mutation() {
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let mut node = task_network_support::task_node_with_static_seed(
+        "task-alpha",
+        "metadata",
+        "metadata_doc",
+        1,
+    );
+    if let meld_execution::task_network::state::TaskInitSource::StaticSeed(source) =
+        &mut node.init_sources[0]
+    {
+        source.schema_version = 2;
+    }
+    let set = Set::new(
+        "network-docs",
+        "composition-fixture",
+        "mismatched-init-source",
+        vec![Mutation::Inject(task_network_support::inject_for_node(
+            node,
+            vec![],
+        ))],
+        vec![],
+    );
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-mismatched-init-source",
+        Command::ApplyMutationSet(set),
+    );
+
+    assert!(matches!(
+        store.submit(request),
+        Response::Rejected(Rejection::InvalidGraph(message))
+            if message.contains("compiled task contract")
+    ));
+    assert!(store.state().tasks.is_empty());
+}
+
+#[test]
+fn data_flow_edge_without_matching_upstream_source_rejects_before_state_mutation() {
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let set = Set::new(
+        "network-docs",
+        "composition-fixture",
+        "data-flow-with-static-source",
+        vec![
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::single_task_node("task-upstream"),
+                vec![],
+            )),
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::task_node_with_static_seed(
+                    "task-downstream",
+                    "metadata",
+                    "metadata_doc",
+                    1,
+                ),
+                vec![DependencyEdge {
+                    from: "task-upstream".to_string(),
+                    to: "task-downstream".to_string(),
+                    kind: DependencyKind::DataFlow {
+                        artifact_type_id: "metadata_doc".to_string(),
+                    },
+                }],
+            )),
+        ],
+        vec![],
+    );
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-data-flow-static-source",
+        Command::ApplyMutationSet(set),
+    );
+
+    assert!(matches!(
+        store.submit(request),
+        Response::Rejected(Rejection::InvalidGraph(message))
+            if message.contains("does not map to exactly one upstream init source")
+    ));
+    assert!(store.state().tasks.is_empty());
+}
+
+#[test]
+fn upstream_source_without_matching_data_flow_edge_rejects_before_state_mutation() {
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let set = Set::new(
+        "network-docs",
+        "composition-fixture",
+        "upstream-source-without-edge",
+        vec![
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::single_task_node("task-upstream"),
+                vec![],
+            )),
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::task_node_with_upstream_source(
+                    "task-downstream",
+                    "task-upstream",
+                    "metadata",
+                    "metadata_doc",
+                    1,
+                ),
+                vec![],
+            )),
+        ],
+        vec![],
+    );
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-upstream-source-without-edge",
+        Command::ApplyMutationSet(set),
+    );
+
+    assert!(matches!(
+        store.submit(request),
+        Response::Rejected(Rejection::InvalidGraph(message))
+            if message.contains("does not have a matching data flow edge")
+    ));
+    assert!(store.state().tasks.is_empty());
+}
+
+#[test]
+fn cycle_validation_rejects_before_state_mutation() {
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let set = Set::new(
+        "network-docs",
+        "composition-fixture",
+        "cycle",
+        vec![
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::single_task_node("task-alpha"),
+                vec![DependencyEdge {
+                    from: "task-beta".to_string(),
+                    to: "task-alpha".to_string(),
+                    kind: DependencyKind::Ordering,
+                }],
+            )),
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::single_task_node("task-beta"),
+                vec![DependencyEdge {
+                    from: "task-alpha".to_string(),
+                    to: "task-beta".to_string(),
+                    kind: DependencyKind::Ordering,
+                }],
+            )),
+        ],
+        vec![],
+    );
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-cycle",
+        Command::ApplyMutationSet(set),
+    );
+
+    assert!(matches!(
+        store.submit(request),
+        Response::Rejected(Rejection::InvalidGraph(message)) if message.contains("cycle")
+    ));
+    assert!(store.state().tasks.is_empty());
+}
+
+#[test]
 fn duplicate_edges_are_deduped_on_commit() {
     let mut store = InMemoryTaskNetworkStore::new("network-docs");
     let duplicate_edge = DependencyEdge {

@@ -22,7 +22,7 @@
 //! ```
 
 use crate::error::ApiError;
-use crate::task::{ArtifactRecord, TaskEvent, TaskExecutor};
+use crate::task::{ArtifactRecord, TaskEvent, TaskExecutor, TaskInitializationPayload};
 use crate::task_network::state::{ArtifactAvailability, TaskNode};
 use serde::{Deserialize, Serialize};
 
@@ -120,6 +120,7 @@ pub struct Outcome {
 pub fn build_executor_for_claim(
     node: &TaskNode,
     claim: &Claim,
+    init_payload: TaskInitializationPayload,
     repo_id: impl Into<String>,
 ) -> Result<TaskExecutor, ApiError> {
     if node.task_instance_id != claim.task_instance_id
@@ -131,9 +132,72 @@ pub fn build_executor_for_claim(
         )));
     }
 
-    TaskExecutor::new(
-        node.compiled_task.clone(),
-        node.init_payload.clone(),
-        repo_id.into(),
-    )
+    TaskExecutor::new(node.compiled_task.clone(), init_payload, repo_id.into())
+}
+
+/// Converts a completed task executor into a successful fenced outcome.
+pub fn succeeded_outcome_from_executor(
+    outcome_id: impl Into<String>,
+    claim: &Claim,
+    executor: &TaskExecutor,
+) -> Outcome {
+    Outcome {
+        outcome_id: outcome_id.into(),
+        task_instance_id: claim.task_instance_id.clone(),
+        lifecycle_epoch: claim.lifecycle_epoch,
+        claim_id: claim.claim_id.clone(),
+        claim_revision: claim.claim_revision,
+        status: OutcomeStatus::Succeeded,
+        error: None,
+        artifacts: artifact_availability_from_executor(claim, executor),
+        artifact_records: emitted_artifact_records(executor),
+        task_events: executor.events().to_vec(),
+    }
+}
+
+/// Converts a failed task executor into a failed fenced outcome.
+pub fn failed_outcome_from_executor(
+    outcome_id: impl Into<String>,
+    claim: &Claim,
+    executor: &TaskExecutor,
+    error: impl Into<String>,
+) -> Outcome {
+    Outcome {
+        outcome_id: outcome_id.into(),
+        task_instance_id: claim.task_instance_id.clone(),
+        lifecycle_epoch: claim.lifecycle_epoch,
+        claim_id: claim.claim_id.clone(),
+        claim_revision: claim.claim_revision,
+        status: OutcomeStatus::Failed,
+        error: Some(error.into()),
+        artifacts: Vec::new(),
+        artifact_records: emitted_artifact_records(executor),
+        task_events: executor.events().to_vec(),
+    }
+}
+
+fn artifact_availability_from_executor(
+    claim: &Claim,
+    executor: &TaskExecutor,
+) -> Vec<ArtifactAvailability> {
+    emitted_artifact_records(executor)
+        .into_iter()
+        .map(|artifact| ArtifactAvailability {
+            task_instance_id: claim.task_instance_id.clone(),
+            artifact_type_id: artifact.artifact_type_id,
+            artifact_id: artifact.artifact_id,
+            schema_version: artifact.schema_version,
+        })
+        .collect()
+}
+
+fn emitted_artifact_records(executor: &TaskExecutor) -> Vec<ArtifactRecord> {
+    executor
+        .artifact_repo()
+        .record()
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.producer.capability_instance_id != "__task_init__")
+        .cloned()
+        .collect()
 }

@@ -18,6 +18,8 @@ The first vertical slice threads the thinnest possible path through every layer 
 
 The typed loop has already proven the full contract chain through `meld-lang` pure types and operations. The vertical slice now makes each layer real with runtime code that materializes state, projects belief, curates goals, and dispatches work.
 
+The focused runtime wiring template is [Minimal Runtime Flywheel](integration/minimal_runtime_flywheel.md). Use it after Assessment By Domain work identifies the exact requirements for each participating domain.
+
 ## Vertical Slice: Implementation Order
 
 The `docs_freshness` scenario threads through every phase. Each phase produces the input the next phase consumes.
@@ -78,7 +80,7 @@ Owner: `meld-execution`
 Depends on: Phase 6 first slice
 Plan: [execution/task_network/PLAN.md](execution/task_network/PLAN.md)
 
-### Phase 8: Expanded Execution Slice — `ready after hardening`
+### Phase 8: Expanded Execution Slice — `implemented`
 
 Mature task network execution before sensory work. Lower one execution composition into a multi node task graph, commit it atomically, materialize task init payloads from static seeds and upstream artifacts, dispatch real task runs, and replay the accepted graph state across reopen.
 
@@ -91,7 +93,7 @@ Plan: [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md)
 Diff-native observation for the docs node. Publishes to the event spine. Closes the loop after execution can run and replay a real multi node graph.
 
 Owner: sensory domain
-Depends on: Phase 8 expanded execution slice and event spine contract
+Depends on: Phase 8 implemented expanded execution slice and event spine contract
 
 ## Foundation
 
@@ -114,7 +116,7 @@ These components predate the vertical slice and support all phases.
 8. `integration/typed_loop` — complete
 9. `execution/planning` — first slice implemented, Phase 6
 10. `execution/task_network` — first slice implemented, Phase 7
-11. `execution/task_network/expanded` — ready after hardening, Phase 8
+11. `execution/task_network/expanded` — implemented, Phase 8
 12. `sensory` — deferred, Phase 9
 13. `world_model/causation` — deferred past vertical slice
 14. `world_model/regime` — deferred past vertical slice
@@ -131,7 +133,8 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [world_model/agent/PLAN.md](world_model/agent/PLAN.md) — complete
 - [execution/planning/PLAN.md](execution/planning/PLAN.md) — first slice implemented
 - [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — first slice implemented
-- [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — ready after hardening
+- [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
+- [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — template
 
 ## Assessment Inventory
 

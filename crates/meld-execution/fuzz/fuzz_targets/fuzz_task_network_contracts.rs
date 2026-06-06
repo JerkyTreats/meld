@@ -6,7 +6,7 @@ use meld_execution::task_network::{
     journal::JournalRecord,
     mutation::{CommitRecord, Set},
     outcome::Publication,
-    state::NetworkState,
+    state::{NetworkState, TaskInitSource},
 };
 
 fuzz_target!(|data: &[u8]| {
@@ -18,6 +18,12 @@ fuzz_target!(|data: &[u8]| {
     }
     if let Ok(record) = serde_json::from_slice::<NetworkState>(data) {
         let _ = record.recompute_state_hash();
+        let _ = serde_json::to_vec(&record);
+    }
+    if let Ok(record) = serde_json::from_slice::<TaskInitSource>(data) {
+        let _ = record.init_slot_id();
+        let _ = record.artifact_type_id();
+        let _ = record.schema_version();
         let _ = serde_json::to_vec(&record);
     }
     if let Ok(record) = serde_json::from_slice::<Claim>(data) {

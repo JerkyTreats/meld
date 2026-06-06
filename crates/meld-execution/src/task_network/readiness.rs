@@ -18,7 +18,7 @@
 
 use crate::task_network::state::{
     DependencyKind, NetworkState, ReadinessDiagnostic, ReadinessDiagnosticCode, ReadySet,
-    TaskStatus,
+    TaskInitSource, TaskStatus,
 };
 use petgraph::algo::is_cyclic_directed;
 use petgraph::graphmap::DiGraphMap;
@@ -49,9 +49,44 @@ pub fn compute_ready_set(state: &NetworkState) -> ReadySet {
                     }
                 }
                 DependencyKind::DataFlow { artifact_type_id } => {
+                    if !matches!(
+                        state.statuses.get(&edge.from),
+                        Some(TaskStatus::Succeeded { .. })
+                    ) {
+                        blocked = true;
+                        continue;
+                    }
+                    let Some(expected_schema) =
+                        state.tasks.get(task_instance_id).and_then(|node| {
+                            node.init_sources.iter().find_map(|source| match source {
+                                TaskInitSource::UpstreamArtifact(source)
+                                    if source.upstream_task_instance_id == edge.from
+                                        && source.upstream_artifact_type_id
+                                            == *artifact_type_id =>
+                                {
+                                    Some(source.schema_version)
+                                }
+                                _ => None,
+                            })
+                        })
+                    else {
+                        diagnostics.push(
+                            ReadinessDiagnostic::new(
+                                ReadinessDiagnosticCode::ArtifactUnavailable,
+                                format!(
+                                    "data flow source for artifact '{}' is not planned from '{}'",
+                                    artifact_type_id, edge.from
+                                ),
+                            )
+                            .with_task(task_instance_id.clone()),
+                        );
+                        blocked = true;
+                        continue;
+                    };
                     let artifact_available = state.artifact_availability.iter().any(|artifact| {
                         artifact.task_instance_id == edge.from
                             && artifact.artifact_type_id == *artifact_type_id
+                            && artifact.schema_version == expected_schema
                     });
                     if !artifact_available {
                         diagnostics.push(

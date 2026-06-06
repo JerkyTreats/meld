@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use meld_execution::task::{CompiledTaskRecord, TaskInitializationPayload, TaskRunContext};
+use meld_execution::task::{CompiledTaskRecord, TaskRunContext};
 use meld_execution::task_network::{
     command::{Command, Request},
     mutation::{Inject, Mutation, ReadPrecondition, Set},
@@ -21,15 +21,11 @@ fn task_node(id: &str) -> TaskNode {
             capability_instances: vec![],
             dependency_edges: vec![],
         },
-        init_payload: TaskInitializationPayload {
-            task_id: task_id.clone(),
-            compiled_task_ref: format!("{task_id}@1"),
-            init_artifacts: vec![],
-            task_run_context: TaskRunContext {
-                task_run_id: format!("run-{id}"),
-                session_id: None,
-                trigger: "fuzz".to_string(),
-            },
+        init_sources: vec![],
+        task_run_context: TaskRunContext {
+            task_run_id: format!("run-{id}"),
+            session_id: None,
+            trigger: "fuzz".to_string(),
         },
         lineage: TaskLineage {
             composition_id: "composition-fuzz".to_string(),

@@ -339,6 +339,7 @@ Synthesis is a task in the network, not a special-case pipeline. Graphs lower gr
 - **goal store**: `goals/` stores execution owned goals and lifecycle command outcomes
 - **method library**: `planning/method_library.rs` loads and verifies serialized methods
 - **planning runtime**: `planning/runtime.rs` turns one active goal and one projected world state into `ExecutionComposition`
+- **expanded execution slice**: [Phase 8 Expanded Execution Slice](../../../plan/execution/task_network/PHASE8.md) lowers multi node compositions, materializes task init payloads, dispatches real task runs, and replays accepted graph state
 
 ### Designed but not fully implemented
 
@@ -346,13 +347,12 @@ Synthesis is a task in the network, not a special-case pipeline. Graphs lower gr
 - **guard expressions**: fully specified in [Guard Expression Semantics](guard_expression_semantics.md), applicable as conditional dependency edges
 - **observation wait semantics**: fully specified in [Observation Wait Semantics](observation_wait_semantics.md), applicable as data-flow dependencies from observation tasks
 - **task network first slice**: specified in [Phase 7 Task Network Plan](../../../plan/execution/task_network/PLAN.md), covering one inject mutation, one ready task, one dispatch, and one publication handoff
-- **expanded execution slice**: specified in [Phase 8 Expanded Execution Slice](../../../plan/execution/task_network/PHASE8.md), covering multi node lowering, init materialization, real task dispatch, and replay
 
 ### Deferred Beyond First Slice
 
 - **planning loop**: continuous operation, world-model reads, cost-aware mutation proposal decisions
 - **task network deepening**: recursive sub-goal lowering, cancel, relink, preserve, and prune
-- **sensory runtime**: diff native observation remains deferred until expanded execution is mature
+- **sensory runtime**: diff native observation remains deferred until task network deepening has the required runtime hooks
 - **switching cost model**: cleanup estimation, sunk cost calculation, benefit comparison
 - **plan diffing**: identifying affected subtrees from belief changes, computing minimal mutations
 
@@ -402,13 +402,12 @@ The method type, matching operations, method loading, verification, and the firs
 
 ### Task Network Deepening
 
-The Phase 7 plan specifies the first upper graph slice. It covers one accepted inject mutation, reduced state, ready set computation, dispatch claim fencing, task runtime bridge, and durable publication handoff.
+The Phase 7 and Phase 8 slices now cover inject mutation, reduced state, ready set computation, dispatch claim fencing, multi node graph execution, task init materialization, real task runtime bridge, durable publication handoff, and replay.
 
 Later work still requires:
 
 - conditional edge evaluation with guard expressions on dependency edges
 - recursive sub-goal lowering
-- multi-step graph execution
 - cancel, relink, preserve, and prune mutation behavior
 - task equivalence and shared-task reuse across goals
 

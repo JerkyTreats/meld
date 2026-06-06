@@ -1,7 +1,7 @@
 # Execution Task Network Phase 8 Expanded Execution Slice
 
 Date: 2026-06-04
-Status: ready for implementation
+Status: implemented
 Scope: multi node execution composition lowering, task init materialization, real task dispatch, and replay
 
 ## Purpose
@@ -153,13 +153,79 @@ ExecutionComposition
 
 | Phase | Goal | State |
 |---|---|---|
-| 0 | Hardening gate | Required before start |
-| 1 | Task init source contracts | Planned |
-| 2 | All operator lowering | Planned |
-| 3 | Edge preservation and graph commit | Planned |
-| 4 | Init payload materialization | Planned |
-| 5 | Real task runtime bridge | Planned |
-| 6 | Expanded graph replay test | Planned |
+| 0 | Hardening gate | Complete |
+| 1 | Task init source contracts | Complete |
+| 2 | All operator lowering | Complete |
+| 3 | Edge preservation and graph commit | Complete |
+| 4 | Init payload materialization | Complete |
+| 5 | Real task runtime bridge | Complete |
+| 6 | Expanded graph replay test | Complete |
+
+## Implementation Progress
+
+Completed on 2026-06-05.
+
+Implemented code paths:
+
+- Added task network owned init source records for static seeds and upstream artifacts.
+- Added source validation before task graph commit.
+- Added materialization over reduced network state into `TaskInitializationPayload`.
+- Updated dispatch to build `TaskExecutor` from a fenced claim plus materialized init payload.
+- Updated runtime bridge helpers to convert task runtime success and failure into `RecordTaskOutcome`.
+- Updated composition lowering to lower every resolved operator step in deterministic order.
+- Preserved ordering and data flow edges between lowered operator steps.
+- Kept recursive goal steps and conditional edges as deferred diagnostics.
+- Preserved all or nothing lowering when an executable operator cannot be lowered.
+- Updated task network fixture contracts and fuzz targets for source records.
+
+Implemented tests:
+
+- `composition_lowering` covers multi operator lowering, all or nothing rejection, missing capability contracts, data flow source planning, static seed planning, conditional edge deferral, endpoint rejection, and repeatable mutation identity.
+- `task_network_command` covers source validation rejection, duplicate source rejection, contract mismatch rejection, endpoint rejection, and cycle rejection before state mutation.
+- `task_network_readiness` covers parallel source tasks, downstream joins, artifact availability, and schema aware data flow readiness.
+- `task_network_initialization` covers static seed materialization, upstream artifact materialization, missing artifacts, ambiguous artifacts, stale artifacts, and final payload validation.
+- `task_network_dispatch` covers materialization blocking before claim and executor construction from materialized init payloads.
+- `task_network_execution_bridge` covers the three node expanded graph, real task runtime execution, runtime outcome conversion, downstream unblocking, publication marking, reopen, replayed state hash, and failure outcome conversion.
+- `task_network_contracts` fixtures now round trip source records and publication payloads with artifact records.
+
+Verification completed on 2026-06-05:
+
+```sh
+cargo fmt --check
+cargo check -p meld-execution --all-targets
+cargo test -p meld-execution --all-targets
+cargo test -p meld-execution --doc
+cargo clippy -p meld-execution --all-targets -- -D warnings
+cargo check --manifest-path crates/meld-execution/fuzz/Cargo.toml
+cargo mutants -p meld-execution --timeout 60 --file crates/meld-execution/src/planning/lowering.rs --file crates/meld-execution/src/task_network.rs --file crates/meld-execution/src/task_network/contracts.rs --file crates/meld-execution/src/task_network/command.rs --file crates/meld-execution/src/task_network/mutation.rs --file crates/meld-execution/src/task_network/state.rs --file crates/meld-execution/src/task_network/store.rs --file crates/meld-execution/src/task_network/readiness.rs --file crates/meld-execution/src/task_network/dispatch.rs --file crates/meld-execution/src/task_network/outcome.rs -- --all-targets
+```
+
+Verification evidence:
+
+- Format check passed.
+- All target check passed.
+- All target tests passed.
+- Doc tests passed.
+- Clippy passed with warnings denied.
+- Fuzz crate check passed.
+- Focused task network mutation run passed with 86 mutants tested, 66 caught mutants, 20 unviable mutants, and zero missed mutants.
+
+## Implementation Gate Standard
+
+Each implementation phase must add or update tests that prove its exit criteria before the phase is considered complete.
+
+Required command gate after each implementation phase:
+
+```sh
+cargo fmt --check
+cargo check -p meld-execution --all-targets
+cargo test -p meld-execution --all-targets
+cargo test -p meld-execution --doc
+cargo clippy -p meld-execution --all-targets -- -D warnings
+cargo check --manifest-path crates/meld-execution/fuzz/Cargo.toml
+```
+
+Focused mutation testing remains a high cost verification gate at the end of Phase 6, or earlier when a phase changes shared reducer or lowering behavior.
 
 ## Phase 1 -- Task Init Source Contracts
 
@@ -180,6 +246,13 @@ Exit criteria:
 - Data flow task nodes carry deferred source records.
 - Invalid or duplicate sources reject before commit.
 
+Verification:
+
+- Update `task_network_contracts` fixtures to round trip source records.
+- Add deterministic identity tests proving equivalent source records produce stable task node and mutation set identity.
+- Add `task_network_command` tests proving missing, duplicate, and contract mismatched sources reject before commit.
+- Extend `fuzz_task_network_contracts` so decoded source records preserve required envelope fields.
+
 ## Phase 2 -- All Operator Lowering
 
 Goal: Lower every executable operator step from one execution composition.
@@ -198,6 +271,13 @@ Exit criteria:
 - A three operator composition lowers into three inject mutations.
 - One unresolved operator yields diagnostics and no executable graph mutation.
 - Recursive goal steps remain deferred diagnostics.
+
+Verification:
+
+- Update `composition_lowering` so a three operator fixture emits three inject mutations in deterministic order.
+- Add a test where one unresolved operator among several operators returns diagnostics and no executable graph mutation.
+- Add a missing capability contract test that proves all operator lowering is rejected as one proposal.
+- Add a repeatability test proving the same composition produces the same mutation set identity.
 
 ## Phase 3 -- Edge Preservation And Graph Commit
 
@@ -218,6 +298,14 @@ Exit criteria:
 - Downstream join tasks wait for all incoming dependencies.
 - Invalid graph proposals leave network state unchanged.
 
+Verification:
+
+- Update `composition_lowering` to prove ordering and data flow edges lower between all known operator steps.
+- Update `task_network_command` to prove endpoint validation and cycle validation reject before state mutation.
+- Update `task_network_readiness` to prove independent source tasks are ready together.
+- Add a downstream join readiness test proving all incoming dependencies must succeed or provide required artifacts before dispatch.
+- Add a conditional edge diagnostic test proving guarded edges remain deferred and do not become executable dependencies.
+
 ## Phase 4 -- Init Payload Materialization
 
 Goal: Build final task init payloads immediately before dispatch.
@@ -237,6 +325,15 @@ Exit criteria:
 - Data flow task payloads validate only after upstream artifacts exist.
 - A downstream task cannot be claimed or executed with incomplete init materialization.
 
+Verification:
+
+- Add `task_network_initialization` tests for static seed materialization into `InitArtifactValue`.
+- Add upstream artifact materialization tests for task identity, artifact type, and schema version matching.
+- Add diagnostics tests for missing, ambiguous, mismatched, and stale upstream artifacts.
+- Add a validation test proving the materialized `TaskInitializationPayload` passes `validate_task_initialization`.
+- Add dispatch blocking coverage proving incomplete materialization prevents claim or executor creation.
+- Extend `fuzz_task_network_readiness` or add a materialization fuzz target for source resolution invariants.
+
 ## Phase 5 -- Real Task Runtime Bridge
 
 Goal: Replace synthetic outcomes in the expanded slice with task runtime output.
@@ -255,6 +352,14 @@ Exit criteria:
 - Claimed tasks execute through the task runtime.
 - Outcome artifacts can unblock downstream data flow tasks.
 - Failure status and error text reduce into task network state.
+
+Verification:
+
+- Update `task_network_dispatch` so executor construction consumes a materialized init payload, not an eager node payload.
+- Update `task_network_execution_bridge` to run claimed tasks through task runtime helpers with in memory test invokers.
+- Add success conversion coverage from task runtime output to `RecordTaskOutcome`.
+- Add failure conversion coverage that preserves status, error text, and emitted task events.
+- Add stale claim coverage proving runtime outcomes cannot advance task network state after claim fencing fails.
 
 ## Phase 6 -- Expanded Graph Replay Test
 
@@ -281,6 +386,15 @@ Expected behavior:
 - Publication mark survives reopen.
 - Replayed state hash matches the pre-reopen state hash.
 
+Implementation gate tests:
+
+- Add a three node fixture in `task_network_execution_bridge` using `prepare_metadata`, `collect_context`, and `write_summary`.
+- Prove source tasks are claimed and executed independently before the join task.
+- Prove upstream artifacts materialize the `write_summary` init payload only after both upstream outcomes are accepted.
+- Prove the final outcome creates publication state and `MarkPublication` survives reopen.
+- Prove replay reconstructs the same task statuses, artifacts, publications, journal length, and state hash.
+- Add or update store replay coverage for multi node commit, claim, outcome, and publication records.
+
 Verification:
 
 ```sh
@@ -291,6 +405,7 @@ cargo test -p meld-execution --test task_network_dispatch
 cargo test -p meld-execution --test task_network_execution_bridge
 cargo test -p meld-execution --test task_network_store
 cargo check --manifest-path crates/meld-execution/fuzz/Cargo.toml
+cargo mutants -p meld-execution --timeout 60 --file crates/meld-execution/src/planning/lowering.rs --file crates/meld-execution/src/task_network.rs --file crates/meld-execution/src/task_network/contracts.rs --file crates/meld-execution/src/task_network/command.rs --file crates/meld-execution/src/task_network/mutation.rs --file crates/meld-execution/src/task_network/state.rs --file crates/meld-execution/src/task_network/store.rs --file crates/meld-execution/src/task_network/readiness.rs --file crates/meld-execution/src/task_network/dispatch.rs --file crates/meld-execution/src/task_network/outcome.rs -- --all-targets
 ```
 
 ## Acceptance Criteria

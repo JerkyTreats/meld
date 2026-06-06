@@ -1,11 +1,13 @@
 #[path = "support/task_network.rs"]
 mod task_network_support;
 
+use meld_execution::task_network::command::Command;
 use meld_execution::task_network::readiness::compute_ready_set;
 use meld_execution::task_network::state::{
     ArtifactAvailability, DependencyEdge, DependencyKind, NetworkState, ReadinessDiagnosticCode,
     TaskStatus,
 };
+use meld_execution::task_network::store::InMemoryTaskNetworkStore;
 use proptest::prelude::*;
 
 fn state_with_task(task_instance_id: &str, status: TaskStatus) -> NetworkState {
@@ -86,7 +88,13 @@ fn ordering_edge_waits_for_upstream_success() {
     );
     state.tasks.insert(
         "task-downstream".to_string(),
-        task_network_support::single_task_node("task-downstream"),
+        task_network_support::task_node_with_upstream_source(
+            "task-downstream",
+            "task-upstream",
+            "metadata",
+            "docs_patch",
+            1,
+        ),
     );
     state
         .statuses
@@ -128,7 +136,13 @@ fn data_flow_edge_waits_for_matching_artifact_availability() {
     );
     state.tasks.insert(
         "task-downstream".to_string(),
-        task_network_support::single_task_node("task-downstream"),
+        task_network_support::task_node_with_upstream_source(
+            "task-downstream",
+            "task-upstream",
+            "metadata",
+            "docs_patch",
+            1,
+        ),
     );
     state.statuses.insert(
         "task-upstream".to_string(),
@@ -249,6 +263,202 @@ fn repeated_input_state_returns_identical_ready_set_ordering() {
         compute_ready_set(&state).task_instance_ids,
         vec!["task-a", "task-b", "task-c"]
     );
+}
+
+#[test]
+fn independent_source_tasks_are_ready_together() {
+    let plan = task_network_support::lower_phase8();
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-commit-phase8",
+        Command::ApplyMutationSet(plan.mutations),
+    );
+    store.submit(request);
+
+    let ready_steps = compute_ready_set(store.state())
+        .task_instance_ids
+        .iter()
+        .map(|task_instance_id| {
+            store
+                .state()
+                .tasks
+                .get(task_instance_id)
+                .unwrap()
+                .lineage
+                .step_id
+                .clone()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert_eq!(
+        ready_steps,
+        std::collections::BTreeSet::from([
+            "collect_context".to_string(),
+            "prepare_metadata".to_string()
+        ])
+    );
+}
+
+#[test]
+fn downstream_join_waits_for_all_incoming_artifacts() {
+    let plan = task_network_support::lower_phase8();
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-commit-phase8",
+        Command::ApplyMutationSet(plan.mutations),
+    );
+    store.submit(request);
+    let mut state = store.state().clone();
+    let ids = state
+        .tasks
+        .iter()
+        .map(|(task_instance_id, node)| (node.lineage.step_id.clone(), task_instance_id.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    state.statuses.insert(
+        ids["prepare_metadata"].clone(),
+        TaskStatus::Succeeded {
+            outcome_id: "outcome-prepare".to_string(),
+        },
+    );
+    state.artifact_availability.push(ArtifactAvailability {
+        task_instance_id: ids["prepare_metadata"].clone(),
+        artifact_type_id: "metadata_doc".to_string(),
+        artifact_id: "artifact-metadata".to_string(),
+        schema_version: 1,
+    });
+    state.set_revision_and_hash(2);
+
+    let ready_steps = compute_ready_set(&state)
+        .task_instance_ids
+        .iter()
+        .map(|task_instance_id| state.tasks[task_instance_id].lineage.step_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ready_steps, vec!["collect_context"]);
+
+    state.statuses.insert(
+        ids["collect_context"].clone(),
+        TaskStatus::Succeeded {
+            outcome_id: "outcome-context".to_string(),
+        },
+    );
+    state.artifact_availability.push(ArtifactAvailability {
+        task_instance_id: ids["collect_context"].clone(),
+        artifact_type_id: "context_bundle".to_string(),
+        artifact_id: "artifact-context".to_string(),
+        schema_version: 1,
+    });
+    state.set_revision_and_hash(3);
+
+    let ready_steps = compute_ready_set(&state)
+        .task_instance_ids
+        .iter()
+        .map(|task_instance_id| state.tasks[task_instance_id].lineage.step_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ready_steps, vec!["write_summary"]);
+}
+
+#[test]
+fn data_flow_readiness_uses_source_schema_version_when_present() {
+    let mut state = NetworkState::empty("network-docs");
+    state.tasks.insert(
+        "task-upstream".to_string(),
+        task_network_support::single_task_node("task-upstream"),
+    );
+    state.tasks.insert(
+        "task-downstream".to_string(),
+        task_network_support::task_node_with_upstream_source(
+            "task-downstream",
+            "task-upstream",
+            "metadata",
+            "metadata_doc",
+            2,
+        ),
+    );
+    state.statuses.insert(
+        "task-upstream".to_string(),
+        TaskStatus::Succeeded {
+            outcome_id: "outcome-upstream".to_string(),
+        },
+    );
+    state
+        .statuses
+        .insert("task-downstream".to_string(), TaskStatus::Pending);
+    state.edges.push(DependencyEdge {
+        from: "task-upstream".to_string(),
+        to: "task-downstream".to_string(),
+        kind: DependencyKind::DataFlow {
+            artifact_type_id: "metadata_doc".to_string(),
+        },
+    });
+    state.artifact_availability.push(ArtifactAvailability {
+        task_instance_id: "task-upstream".to_string(),
+        artifact_type_id: "metadata_doc".to_string(),
+        artifact_id: "artifact-wrong-schema".to_string(),
+        schema_version: 1,
+    });
+    state.set_revision_and_hash(1);
+
+    assert!(compute_ready_set(&state).task_instance_ids.is_empty());
+
+    state.artifact_availability.push(ArtifactAvailability {
+        task_instance_id: "task-upstream".to_string(),
+        artifact_type_id: "metadata_doc".to_string(),
+        artifact_id: "artifact-right-schema".to_string(),
+        schema_version: 2,
+    });
+    state.set_revision_and_hash(2);
+
+    assert_eq!(
+        compute_ready_set(&state).task_instance_ids,
+        vec!["task-downstream"]
+    );
+}
+
+#[test]
+fn data_flow_readiness_blocks_when_source_record_does_not_match_edge() {
+    let mut state = NetworkState::empty("network-docs");
+    state.tasks.insert(
+        "task-upstream".to_string(),
+        task_network_support::single_task_node("task-upstream"),
+    );
+    state.tasks.insert(
+        "task-downstream".to_string(),
+        task_network_support::task_node_with_upstream_source(
+            "task-downstream",
+            "other-upstream",
+            "metadata",
+            "metadata_doc",
+            2,
+        ),
+    );
+    state.statuses.insert(
+        "task-upstream".to_string(),
+        TaskStatus::Succeeded {
+            outcome_id: "outcome-upstream".to_string(),
+        },
+    );
+    state
+        .statuses
+        .insert("task-downstream".to_string(), TaskStatus::Pending);
+    state.edges.push(DependencyEdge {
+        from: "task-upstream".to_string(),
+        to: "task-downstream".to_string(),
+        kind: DependencyKind::DataFlow {
+            artifact_type_id: "metadata_doc".to_string(),
+        },
+    });
+    state.artifact_availability.push(ArtifactAvailability {
+        task_instance_id: "task-upstream".to_string(),
+        artifact_type_id: "metadata_doc".to_string(),
+        artifact_id: "artifact-schema-one".to_string(),
+        schema_version: 1,
+    });
+    state.set_revision_and_hash(1);
+
+    assert!(compute_ready_set(&state).task_instance_ids.is_empty());
 }
 
 proptest! {

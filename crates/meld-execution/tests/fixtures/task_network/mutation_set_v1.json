@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "set_id": "task-network-mutation-set-59387468f712de81eb6643d39c75728739d3e41233d40a0ab1bb1341ceb47106",
+  "set_id": "task-network-mutation-set-3ab53c4915a519e9c9a48f836bb045f3cc2f5953ecfb173c3bc8754a66fbd27d",
   "network_id": "network-docs",
   "source_composition_id": "composition-fixture",
   "idempotency_key": "inject-task-alpha",
@@ -18,15 +18,11 @@
             "capability_instances": [],
             "dependency_edges": []
           },
-          "init_payload": {
-            "task_id": "compiled-task-alpha",
-            "compiled_task_ref": "compiled-task-alpha@1",
-            "init_artifacts": [],
-            "task_run_context": {
-              "task_run_id": "run-task-alpha",
-              "session_id": "session-task-network",
-              "trigger": "task-network.test"
-            }
+          "init_sources": [],
+          "task_run_context": {
+            "task_run_id": "run-task-alpha",
+            "session_id": "session-task-network",
+            "trigger": "task-network.test"
           },
           "lineage": {
             "composition_id": "composition-fixture",
