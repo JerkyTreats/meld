@@ -1,12 +1,16 @@
 #[path = "support/task_network.rs"]
 mod task_network_support;
 
+use meld_execution::task::TaskInitializationPayload;
 use meld_execution::task_network::command::{Command, Response};
 use meld_execution::task_network::dispatch::{
     build_executor_for_claim, Claim, Outcome, OutcomeStatus, Request as DispatchRequest,
 };
 use meld_execution::task_network::mutation::Rejection;
-use meld_execution::task_network::state::{ArtifactAvailability, TaskStatus};
+use meld_execution::task_network::mutation::{Mutation, Set};
+use meld_execution::task_network::state::{
+    ArtifactAvailability, DependencyEdge, DependencyKind, TaskStatus,
+};
 use meld_execution::task_network::store::InMemoryTaskNetworkStore;
 
 #[test]
@@ -74,6 +78,93 @@ fn claim_for_non_ready_task_rejects() {
 }
 
 #[test]
+fn claim_blocks_when_init_materialization_points_to_stale_artifact() {
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let set = Set::new(
+        "network-docs",
+        "composition-fixture",
+        "upstream-source-with-stale-artifact",
+        vec![
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::single_task_node("task-upstream"),
+                vec![],
+            )),
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::task_node_with_upstream_source(
+                    "task-downstream",
+                    "task-upstream",
+                    "metadata",
+                    "metadata_doc",
+                    1,
+                ),
+                vec![DependencyEdge {
+                    from: "task-upstream".to_string(),
+                    to: "task-downstream".to_string(),
+                    kind: DependencyKind::DataFlow {
+                        artifact_type_id: "metadata_doc".to_string(),
+                    },
+                }],
+            )),
+        ],
+        vec![],
+    );
+    let commit = task_network_support::apply_memory_command(
+        &store,
+        "command-commit-materialization",
+        Command::ApplyMutationSet(set),
+    );
+    assert!(matches!(store.submit(commit), Response::Accepted { .. }));
+
+    let upstream_task_instance_id = task_network_support::claim_ready_memory(
+        &mut store,
+        "command-claim-upstream",
+        "claim-upstream",
+    );
+    let upstream_claim = store.state().claims.get("claim-upstream").unwrap().clone();
+    let upstream_outcome = Outcome {
+        outcome_id: "outcome-upstream".to_string(),
+        task_instance_id: upstream_task_instance_id,
+        lifecycle_epoch: upstream_claim.lifecycle_epoch,
+        claim_id: upstream_claim.claim_id,
+        claim_revision: upstream_claim.claim_revision,
+        status: OutcomeStatus::Succeeded,
+        error: None,
+        artifacts: vec![ArtifactAvailability {
+            task_instance_id: "task-upstream".to_string(),
+            artifact_type_id: "metadata_doc".to_string(),
+            artifact_id: "artifact-stale".to_string(),
+            schema_version: 1,
+        }],
+        artifact_records: vec![],
+        task_events: vec![],
+    };
+    let outcome = task_network_support::apply_memory_command(
+        &store,
+        "command-outcome-upstream",
+        Command::RecordTaskOutcome(upstream_outcome),
+    );
+    assert!(matches!(store.submit(outcome), Response::Accepted { .. }));
+
+    let claim = DispatchRequest {
+        claim_id: "claim-downstream".to_string(),
+        task_instance_id: "task-downstream".to_string(),
+        worker_id: "worker-a".to_string(),
+        idempotency_key: "claim-downstream-once".to_string(),
+    };
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-claim-downstream",
+        Command::ClaimReadyTask(claim),
+    );
+
+    assert!(matches!(
+        store.submit(request),
+        Response::Rejected(Rejection::InvalidLifecycleTransition(message))
+            if message.contains("not in current outcome")
+    ));
+}
+
+#[test]
 fn second_claim_for_running_task_rejects() {
     let mut store = InMemoryTaskNetworkStore::new("network-docs");
     task_network_support::commit_single_task(&mut store, "task-alpha");
@@ -107,11 +198,20 @@ fn build_executor_for_claim_requires_matching_task_identity() {
         idempotency_key: "claim-alpha-once".to_string(),
     };
     let mut claim = Claim::accepted("network-docs", &request, node.lifecycle_epoch, 1);
+    let payload = TaskInitializationPayload {
+        task_id: node.compiled_task.task_id.clone(),
+        compiled_task_ref: format!(
+            "{}@{}",
+            node.compiled_task.task_id, node.compiled_task.task_version
+        ),
+        init_artifacts: vec![],
+        task_run_context: node.task_run_context.clone(),
+    };
 
-    assert!(build_executor_for_claim(&node, &claim, "repo-alpha").is_ok());
+    assert!(build_executor_for_claim(&node, &claim, payload.clone(), "repo-alpha").is_ok());
 
     claim.task_instance_id = "task-beta".to_string();
-    let error = build_executor_for_claim(&node, &claim, "repo-alpha").unwrap_err();
+    let error = build_executor_for_claim(&node, &claim, payload, "repo-alpha").unwrap_err();
 
     assert!(error.to_string().contains("does not match task instance"));
 }

@@ -1,7 +1,7 @@
 {
   "network_id": "network-docs",
   "revision": 1,
-  "state_hash": "4625c887a9cec1f176009bc2abc37dc29e1e6fdb4a66d6ccd35239f7dd8f349f",
+  "state_hash": "01913b0e0a2771ec1cfc291a7351e78fcfafe3c5f606fe70416995d6e19930a9",
   "tasks": {
     "task-alpha": {
       "task_instance_id": "task-alpha",
@@ -13,15 +13,11 @@
         "capability_instances": [],
         "dependency_edges": []
       },
-      "init_payload": {
-        "task_id": "compiled-task-alpha",
-        "compiled_task_ref": "compiled-task-alpha@1",
-        "init_artifacts": [],
-        "task_run_context": {
-          "task_run_id": "run-task-alpha",
-          "session_id": "session-task-network",
-          "trigger": "task-network.test"
-        }
+      "init_sources": [],
+      "task_run_context": {
+        "task_run_id": "run-task-alpha",
+        "session_id": "session-task-network",
+        "trigger": "task-network.test"
       },
       "lineage": {
         "composition_id": "composition-fixture",

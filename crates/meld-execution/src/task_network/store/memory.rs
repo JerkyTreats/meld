@@ -4,6 +4,10 @@ use crate::task_network::{
     command,
     contracts::stable_hash,
     dispatch::{self, OutcomeStatus},
+    initialization::{
+        materialize_task_initialization, validate_task_init_graph_sources,
+        validate_task_init_sources,
+    },
     journal::JournalRecord,
     mutation::{self, CommitRecord, Rejection},
     outcome::{Publication, PublicationState},
@@ -152,6 +156,20 @@ impl InMemoryTaskNetworkStore {
         for mutation in &set.mutations {
             match mutation {
                 mutation::Mutation::Inject(inject) => {
+                    let init_diagnostics = validate_task_init_sources(&inject.task_node);
+                    if !init_diagnostics.is_empty() {
+                        return self.record_response(
+                            command_id,
+                            request_hash,
+                            command::Response::Rejected(Rejection::InvalidGraph(
+                                init_diagnostics
+                                    .into_iter()
+                                    .map(|diagnostic| diagnostic.message)
+                                    .collect::<Vec<_>>()
+                                    .join("; "),
+                            )),
+                        );
+                    }
                     let task_instance_id = inject.task_node.task_instance_id.clone();
                     if proposed.tasks.contains_key(&task_instance_id) {
                         return self.record_response(
@@ -181,6 +199,21 @@ impl InMemoryTaskNetworkStore {
                 request_hash,
                 command::Response::Rejected(Rejection::InvalidGraph(
                     graph_diagnostics
+                        .into_iter()
+                        .map(|diagnostic| diagnostic.message)
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                )),
+            );
+        }
+
+        let init_graph_diagnostics = validate_task_init_graph_sources(&proposed);
+        if !init_graph_diagnostics.is_empty() {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::InvalidGraph(
+                    init_graph_diagnostics
                         .into_iter()
                         .map(|diagnostic| diagnostic.message)
                         .collect::<Vec<_>>()
@@ -251,6 +284,22 @@ impl InMemoryTaskNetworkStore {
                     "task '{}' is not ready",
                     request.task_instance_id
                 ))),
+            );
+        }
+
+        if let Err(error) = materialize_task_initialization(&self.state, &request.task_instance_id)
+        {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::InvalidLifecycleTransition(
+                    error
+                        .diagnostics
+                        .into_iter()
+                        .map(|diagnostic| diagnostic.message)
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                )),
             );
         }
 

@@ -16,9 +16,10 @@
 //! assert!(!state.state_hash.is_empty());
 //! ```
 
-use crate::task::{CompiledTaskRecord, TaskInitializationPayload};
+use crate::task::{CompiledTaskRecord, TaskRunContext};
 use crate::task_network::{contracts::stable_hash, dispatch, outcome};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// Complete reduced task network state at one journal revision.
@@ -114,10 +115,75 @@ pub struct TaskNode {
     pub lifecycle_epoch: u64,
     /// Compiled task-local capability graph.
     pub compiled_task: CompiledTaskRecord,
-    /// Task initialization payload used when creating a task executor.
-    pub init_payload: TaskInitializationPayload,
+    /// Source records used to materialize the dispatch initialization payload.
+    pub init_sources: Vec<TaskInitSource>,
+    /// Runtime context assigned to this task run.
+    pub task_run_context: TaskRunContext,
     /// Planning lineage preserved across lowering and dispatch.
     pub lineage: TaskLineage,
+}
+
+/// Planned source for one task initialization artifact.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TaskInitSource {
+    /// Structured seed content owned by the task node.
+    StaticSeed(StaticSeedInitSource),
+    /// Structured content selected from an upstream task outcome.
+    UpstreamArtifact(UpstreamArtifactInitSource),
+}
+
+impl TaskInitSource {
+    /// Returns the target init slot satisfied by this source.
+    pub fn init_slot_id(&self) -> &str {
+        match self {
+            Self::StaticSeed(source) => &source.init_slot_id,
+            Self::UpstreamArtifact(source) => &source.init_slot_id,
+        }
+    }
+
+    /// Returns the artifact type materialized for the target init slot.
+    pub fn artifact_type_id(&self) -> &str {
+        match self {
+            Self::StaticSeed(source) => &source.artifact_type_id,
+            Self::UpstreamArtifact(source) => &source.artifact_type_id,
+        }
+    }
+
+    /// Returns the schema version materialized for the target init slot.
+    pub fn schema_version(&self) -> u32 {
+        match self {
+            Self::StaticSeed(source) => source.schema_version,
+            Self::UpstreamArtifact(source) => source.schema_version,
+        }
+    }
+}
+
+/// Static seed for one task initialization slot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StaticSeedInitSource {
+    /// Task initialization slot that receives this artifact.
+    pub init_slot_id: String,
+    /// Artifact type materialized for the init slot.
+    pub artifact_type_id: String,
+    /// Schema version for the materialized init artifact.
+    pub schema_version: u32,
+    /// Structured seed content copied into the dispatch payload.
+    pub content: Value,
+}
+
+/// Upstream artifact source for one task initialization slot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpstreamArtifactInitSource {
+    /// Task initialization slot that receives this artifact.
+    pub init_slot_id: String,
+    /// Artifact type materialized for the init slot.
+    pub artifact_type_id: String,
+    /// Schema version for the materialized init artifact.
+    pub schema_version: u32,
+    /// Task instance that must emit the upstream artifact.
+    pub upstream_task_instance_id: String,
+    /// Artifact type selected from the upstream task outcome.
+    pub upstream_artifact_type_id: String,
 }
 
 /// Planning lineage for a task node.

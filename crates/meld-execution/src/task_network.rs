@@ -18,6 +18,8 @@ pub mod command;
 pub mod contracts;
 /// Fenced dispatch claim and task outcome contracts.
 pub mod dispatch;
+/// Task initialization source validation and materialization.
+pub mod initialization;
 /// Append-only task network journal records.
 pub mod journal;
 /// Append-only mutation and commit records.
@@ -33,9 +35,17 @@ pub mod store;
 
 pub use command::{Command, Request as CommandRequest, Response};
 pub use dispatch::{Claim, Outcome, OutcomeStatus, Request as DispatchRequest};
+pub use initialization::{
+    materialize_task_initialization, validate_task_init_graph_sources, validate_task_init_sources,
+    MaterializedInitSource, MaterializedTaskInitialization, TaskInitializationDiagnostic,
+    TaskInitializationDiagnosticCode, TaskInitializationMaterializationError,
+};
 pub use journal::JournalRecord;
 pub use mutation::{CommitRecord, CommitRequest, CommitResult, Inject, Mutation, Set};
 pub use outcome::{Publication, PublicationState};
 pub use readiness::compute_ready_set;
-pub use state::{NetworkState, ReadySet, TaskNode, TaskStatus};
+pub use state::{
+    NetworkState, ReadySet, StaticSeedInitSource, TaskInitSource, TaskNode, TaskStatus,
+    UpstreamArtifactInitSource,
+};
 pub use store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};

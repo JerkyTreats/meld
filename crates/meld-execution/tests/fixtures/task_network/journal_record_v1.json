@@ -1,14 +1,14 @@
 {
   "Commit": {
-    "commit_id": "task-network-commit-c43438a15cce2a0d703dfc3b5563c494e780a48a4c195c2d58d00582a0ac9ee9",
+    "commit_id": "task-network-commit-ee0954328a3dc62c3e09e5b7a9449a0dcfa688b0637b02c715305a6220a3a802",
     "command_id": "command-commit-task-alpha",
     "network_id": "network-docs",
     "revision": 1,
     "previous_state_hash": "483bf6cdd16c61e7eea189c483996b3030074135e31b3ebf1e2ebcdc0ba8ba55",
-    "state_hash": "4625c887a9cec1f176009bc2abc37dc29e1e6fdb4a66d6ccd35239f7dd8f349f",
+    "state_hash": "01913b0e0a2771ec1cfc291a7351e78fcfafe3c5f606fe70416995d6e19930a9",
     "mutation_set": {
       "schema_version": 1,
-      "set_id": "task-network-mutation-set-59387468f712de81eb6643d39c75728739d3e41233d40a0ab1bb1341ceb47106",
+      "set_id": "task-network-mutation-set-3ab53c4915a519e9c9a48f836bb045f3cc2f5953ecfb173c3bc8754a66fbd27d",
       "network_id": "network-docs",
       "source_composition_id": "composition-fixture",
       "idempotency_key": "inject-task-alpha",
@@ -26,15 +26,11 @@
                 "capability_instances": [],
                 "dependency_edges": []
               },
-              "init_payload": {
-                "task_id": "compiled-task-alpha",
-                "compiled_task_ref": "compiled-task-alpha@1",
-                "init_artifacts": [],
-                "task_run_context": {
-                  "task_run_id": "run-task-alpha",
-                  "session_id": "session-task-network",
-                  "trigger": "task-network.test"
-                }
+              "init_sources": [],
+              "task_run_context": {
+                "task_run_id": "run-task-alpha",
+                "session_id": "session-task-network",
+                "trigger": "task-network.test"
               },
               "lineage": {
                 "composition_id": "composition-fixture",

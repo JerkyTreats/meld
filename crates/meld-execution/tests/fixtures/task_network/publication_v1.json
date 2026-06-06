@@ -5,7 +5,23 @@
   "outcome_id": "outcome-alpha",
   "event_type": "execution.task.succeeded",
   "event_payload": {
-    "artifact_records": [],
+    "artifact_records": [
+      {
+        "artifact_id": "artifact-outcome-alpha",
+        "artifact_type_id": "docs_patch",
+        "content": {
+          "outcome_id": "outcome-alpha",
+          "task_instance_id": "task-alpha"
+        },
+        "producer": {
+          "capability_instance_id": "write",
+          "invocation_id": "invoke-outcome-alpha",
+          "output_slot_id": "patch",
+          "task_id": "compiled-task-alpha"
+        },
+        "schema_version": 1
+      }
+    ],
     "artifacts": [
       {
         "artifact_id": "artifact-outcome-alpha",

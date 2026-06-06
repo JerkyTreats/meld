@@ -72,22 +72,25 @@
 
 use crate::capability::{
     BoundBindingValue, BoundCapabilityInstance, BoundInputWiring, BoundInputWiringSource,
-    CapabilityCatalog,
+    CapabilityCatalog, CapabilityTypeContract, InputCardinality, InputSlotSpec,
 };
 use crate::error::ApiError;
 use crate::planning::{ExecutionComposition, OperatorResolutionStatus};
 use crate::task::{
-    InitArtifactValue, TaskDefinition, TaskDefinitionCompiler, TaskInitSlotSpec,
-    TaskInitializationPayload, TaskRunContext,
+    CompiledTaskRecord, TaskDefinition, TaskDefinitionCompiler, TaskInitSlotSpec, TaskRunContext,
 };
 use crate::task_network::{
     contracts::stable_id,
     mutation,
-    state::{DependencyEdge, DependencyKind, TaskLineage, TaskNode},
+    state::{
+        DependencyEdge, DependencyKind, StaticSeedInitSource, TaskInitSource, TaskLineage,
+        TaskNode, UpstreamArtifactInitSource,
+    },
 };
-use meld_lang::{Bindings, EdgeKind, StepKind, Term};
+use meld_lang::{Bindings, Edge, EdgeKind, Operator, Step, StepKind, Term};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Lowering request for one execution composition.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -171,6 +174,12 @@ pub enum DiagnosticCode {
     OperatorUnresolved,
     /// Resolved capability was not present in the catalog supplied to lowering.
     CapabilityContractMissing,
+    /// A resolved operator could not compile into a task node.
+    TaskCompilationFailed,
+    /// An executable edge references a step that is not lowered in this slice.
+    MissingExecutableEdgeEndpoint,
+    /// A data flow edge does not map to one compiled target init slot.
+    DataFlowInitSourceInvalid,
     /// Conditional edge semantics are deferred to later slices.
     ConditionalEdgeDeferred,
 }
@@ -194,6 +203,7 @@ where
     /// Lowers one execution composition into a task network mutation proposal.
     pub fn lower(&self, request: Request) -> Result<Plan, ApiError> {
         let mut diagnostics = Vec::new();
+        let mut blocking_diagnostic = false;
         for step in &request.composition.composition.steps {
             if matches!(step.kind, StepKind::Goal(_)) {
                 diagnostics.push(
@@ -206,17 +216,18 @@ where
             }
         }
 
-        let Some((step, operator)) =
-            request
-                .composition
-                .composition
-                .steps
-                .iter()
-                .find_map(|step| match &step.kind {
-                    StepKind::Op(operator) => Some((step, operator)),
-                    StepKind::Goal(_) => None,
-                })
-        else {
+        let operator_steps = request
+            .composition
+            .composition
+            .steps
+            .iter()
+            .filter_map(|step| match &step.kind {
+                StepKind::Op(operator) => Some((step, operator)),
+                StepKind::Goal(_) => None,
+            })
+            .collect::<Vec<_>>();
+
+        if operator_steps.is_empty() {
             diagnostics.push(Diagnostic::new(
                 DiagnosticCode::NoOperatorStep,
                 "composition does not contain an operator step",
@@ -224,86 +235,170 @@ where
             return Ok(plan_with_mutations(request, Vec::new(), diagnostics));
         };
 
-        let Some(resolution) = request
+        let operator_step_ids = operator_steps
+            .iter()
+            .map(|(step, _)| step.step_id.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut resolved_steps = Vec::new();
+        for (step, operator) in &operator_steps {
+            match self.resolve_operator_step(&request, step, operator) {
+                Ok(resolved) => resolved_steps.push(resolved),
+                Err(diagnostic) => {
+                    diagnostics.push(diagnostic);
+                    blocking_diagnostic = true;
+                }
+            }
+        }
+
+        validate_executable_edges(
+            &request.composition.composition.edges,
+            &operator_step_ids,
+            &mut diagnostics,
+            &mut blocking_diagnostic,
+        );
+
+        if blocking_diagnostic {
+            return Ok(plan_with_mutations(request, Vec::new(), diagnostics));
+        }
+
+        let resolved_by_step = resolved_steps
+            .iter()
+            .map(|step| (step.step_id.as_str(), step))
+            .collect::<BTreeMap<_, _>>();
+        let mut drafts = Vec::new();
+        for resolved in &resolved_steps {
+            match self.lower_resolved_operator_step(&request, resolved, &resolved_by_step) {
+                Ok(draft) => drafts.push(draft),
+                Err(step_diagnostics) => {
+                    diagnostics.extend(step_diagnostics);
+                    blocking_diagnostic = true;
+                }
+            }
+        }
+
+        if blocking_diagnostic {
+            return Ok(plan_with_mutations(request, Vec::new(), diagnostics));
+        }
+
+        let mut mutations = Vec::new();
+        for draft in &drafts {
+            let incoming_edges =
+                incoming_edges(&request.composition, &draft.step_id, &request.network_id);
+            let init_sources = init_sources_for_task(
+                &request,
+                draft,
+                &request.composition.composition.edges,
+                &mut diagnostics,
+                &mut blocking_diagnostic,
+            );
+            if blocking_diagnostic {
+                continue;
+            }
+            let task_node = TaskNode {
+                task_instance_id: draft.task_instance_id.clone(),
+                lifecycle_epoch: 0,
+                compiled_task: draft.compiled_task.clone(),
+                init_sources,
+                task_run_context: TaskRunContext {
+                    task_run_id: task_run_id(
+                        &request.network_id,
+                        &request.composition.composition_id,
+                        &draft.step_id,
+                    ),
+                    session_id: None,
+                    trigger: "execution_composition_lowering".to_string(),
+                },
+                lineage: draft.lineage.clone(),
+            };
+            let inject = mutation::Inject::new(task_node, incoming_edges, draft.lineage.clone());
+            mutations.push(mutation::Mutation::Inject(inject));
+        }
+
+        if blocking_diagnostic {
+            return Ok(plan_with_mutations(request, Vec::new(), diagnostics));
+        }
+
+        Ok(plan_with_mutations(request, mutations, diagnostics))
+    }
+
+    fn resolve_operator_step(
+        &self,
+        request: &Request,
+        step: &Step,
+        operator: &Operator,
+    ) -> Result<ResolvedOperatorStep, Diagnostic> {
+        let resolution = request
             .composition
             .operator_resolutions
             .iter()
             .find(|resolution| resolution.operator_id == operator.operator_id)
-        else {
-            diagnostics.push(
+            .ok_or_else(|| {
                 Diagnostic::new(
                     DiagnosticCode::MissingOperatorResolution,
                     "operator has no resolution report",
                 )
                 .with_step(step.step_id.clone())
-                .with_operator(operator.operator_id.clone()),
-            );
-            return Ok(plan_with_mutations(request, Vec::new(), diagnostics));
-        };
+                .with_operator(operator.operator_id.clone())
+            })?;
 
         if resolution.status != OperatorResolutionStatus::Resolved {
-            diagnostics.push(
-                Diagnostic::new(
-                    DiagnosticCode::OperatorUnresolved,
-                    "operator resolution report is unresolved",
-                )
-                .with_step(step.step_id.clone())
-                .with_operator(operator.operator_id.clone()),
-            );
-            return Ok(plan_with_mutations(request, Vec::new(), diagnostics));
+            return Err(Diagnostic::new(
+                DiagnosticCode::OperatorUnresolved,
+                "operator resolution report is unresolved",
+            )
+            .with_step(step.step_id.clone())
+            .with_operator(operator.operator_id.clone()));
         }
 
-        let Some(capability_type_id) = resolution.capability_type_id.as_deref() else {
-            diagnostics.push(
-                Diagnostic::new(
-                    DiagnosticCode::CapabilityContractMissing,
-                    "resolved operator did not name a capability type",
-                )
-                .with_step(step.step_id.clone())
-                .with_operator(operator.operator_id.clone()),
-            );
-            return Ok(plan_with_mutations(request, Vec::new(), diagnostics));
-        };
-        let Some(capability_version) = resolution.capability_version else {
-            diagnostics.push(
-                Diagnostic::new(
-                    DiagnosticCode::CapabilityContractMissing,
-                    "resolved operator did not name a capability version",
-                )
-                .with_step(step.step_id.clone())
-                .with_operator(operator.operator_id.clone()),
-            );
-            return Ok(plan_with_mutations(request, Vec::new(), diagnostics));
-        };
-        let Some(contract) = self.catalog.get(capability_type_id, capability_version) else {
-            diagnostics.push(
+        let capability_type_id = resolution.capability_type_id.as_deref().ok_or_else(|| {
+            Diagnostic::new(
+                DiagnosticCode::CapabilityContractMissing,
+                "resolved operator did not name a capability type",
+            )
+            .with_step(step.step_id.clone())
+            .with_operator(operator.operator_id.clone())
+        })?;
+        let capability_version = resolution.capability_version.ok_or_else(|| {
+            Diagnostic::new(
+                DiagnosticCode::CapabilityContractMissing,
+                "resolved operator did not name a capability version",
+            )
+            .with_step(step.step_id.clone())
+            .with_operator(operator.operator_id.clone())
+        })?;
+        let contract = self
+            .catalog
+            .get(capability_type_id, capability_version)
+            .ok_or_else(|| {
                 Diagnostic::new(
                     DiagnosticCode::CapabilityContractMissing,
                     "resolved capability was not found in the supplied catalog",
                 )
                 .with_step(step.step_id.clone())
-                .with_operator(operator.operator_id.clone()),
-            );
-            return Ok(plan_with_mutations(request, Vec::new(), diagnostics));
-        };
+                .with_operator(operator.operator_id.clone())
+            })?;
 
+        Ok(ResolvedOperatorStep {
+            step_id: step.step_id.clone(),
+            operator_id: operator.operator_id.clone(),
+            capability_type_id: capability_type_id.to_string(),
+            capability_version,
+            contract: contract.clone(),
+        })
+    }
+
+    fn lower_resolved_operator_step(
+        &self,
+        request: &Request,
+        resolved: &ResolvedOperatorStep,
+        resolved_by_step: &BTreeMap<&str, &ResolvedOperatorStep>,
+    ) -> Result<LoweredTaskDraft, Vec<Diagnostic>> {
         let task_instance_id = task_instance_id(
             &request.network_id,
             &request.composition.composition_id,
-            &step.step_id,
+            &resolved.step_id,
         );
-        let task_id = task_instance_id.clone();
-        let init_slots = contract
-            .input_contract
-            .iter()
-            .filter(|slot| slot.required)
-            .map(|slot| TaskInitSlotSpec {
-                init_slot_id: slot.slot_id.clone(),
-                artifact_type_id: slot.accepted_artifact_type_ids[0].clone(),
-                schema_version: slot.schema_versions.min,
-                required: true,
-            })
-            .collect::<Vec<_>>();
+        let init_slots = init_slots_for_operator(request, resolved, resolved_by_step)?;
         let input_wiring = init_slots
             .iter()
             .map(|slot| BoundInputWiring {
@@ -315,7 +410,8 @@ where
                 }],
             })
             .collect::<Vec<_>>();
-        let binding_values = contract
+        let binding_values = resolved
+            .contract
             .binding_contract
             .iter()
             .filter(|binding| binding.required)
@@ -325,81 +421,264 @@ where
             })
             .collect::<Vec<_>>();
         let definition = TaskDefinition {
-            task_id: task_id.clone(),
+            task_id: task_instance_id.clone(),
             task_version: 1,
             init_slots,
             capability_instances: vec![BoundCapabilityInstance {
-                capability_instance_id: step.step_id.clone(),
-                capability_type_id: capability_type_id.to_string(),
-                capability_version,
+                capability_instance_id: resolved.step_id.clone(),
+                capability_type_id: resolved.capability_type_id.clone(),
+                capability_version: resolved.capability_version,
                 scope_ref: scope_ref(
                     &request.composition.bindings,
                     &request.composition.goal.goal_id,
                 ),
-                scope_kind: contract.scope_contract.scope_kind.clone(),
+                scope_kind: resolved.contract.scope_contract.scope_kind.clone(),
                 binding_values,
                 input_wiring,
             }],
         };
         let compiled_task = self
             .compiler
-            .compile_task_definition(&definition, &self.catalog)?;
-        let init_payload = TaskInitializationPayload {
-            task_id: task_id.clone(),
-            compiled_task_ref: compiled_task.task_id.clone(),
-            init_artifacts: compiled_task
-                .init_slots
-                .iter()
-                .map(|slot| InitArtifactValue {
-                    init_slot_id: slot.init_slot_id.clone(),
-                    artifact_type_id: slot.artifact_type_id.clone(),
-                    schema_version: slot.schema_version,
-                    content: json!({
-                        "composition_id": request.composition.composition_id,
-                        "goal_id": request.composition.goal.goal_id,
-                        "method_id": request.composition.method_id,
-                        "step_id": step.step_id,
-                        "slot_id": slot.init_slot_id,
-                    }),
-                })
-                .collect(),
-            task_run_context: TaskRunContext {
-                task_run_id: task_run_id(
-                    &request.network_id,
-                    &request.composition.composition_id,
-                    &step.step_id,
-                ),
-                session_id: None,
-                trigger: "execution_composition_lowering".to_string(),
-            },
-        };
+            .compile_task_definition(&definition, &self.catalog)
+            .map_err(|error| {
+                Diagnostic::new(
+                    DiagnosticCode::TaskCompilationFailed,
+                    format!("operator task compilation failed: {error}"),
+                )
+                .with_step(resolved.step_id.clone())
+                .with_operator(resolved.operator_id.clone())
+            })
+            .map_err(|diagnostic| vec![diagnostic])?;
         let lineage = TaskLineage {
             composition_id: request.composition.composition_id.clone(),
             goal_id: request.composition.goal.goal_id.clone(),
             method_id: request.composition.method_id.clone(),
-            step_id: step.step_id.clone(),
-            operator_id: operator.operator_id.clone(),
+            step_id: resolved.step_id.clone(),
+            operator_id: resolved.operator_id.clone(),
             world_state_frame_id: request.composition.world_state_frame.frame_id.clone(),
-            capability_type_id: capability_type_id.to_string(),
-            capability_version,
+            capability_type_id: resolved.capability_type_id.clone(),
+            capability_version: resolved.capability_version,
         };
-        let task_node = TaskNode {
-            task_instance_id,
-            lifecycle_epoch: 0,
-            compiled_task,
-            init_payload,
-            lineage: lineage.clone(),
-        };
-        let incoming_edges = incoming_edges(
-            &request.composition,
-            &step.step_id,
-            &request.network_id,
-            &mut diagnostics,
-        );
-        let inject = mutation::Inject::new(task_node, incoming_edges, lineage);
-        let mutations = vec![mutation::Mutation::Inject(inject)];
 
-        Ok(plan_with_mutations(request, mutations, diagnostics))
+        Ok(LoweredTaskDraft {
+            step_id: resolved.step_id.clone(),
+            task_instance_id,
+            compiled_task,
+            lineage,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedOperatorStep {
+    step_id: String,
+    operator_id: String,
+    capability_type_id: String,
+    capability_version: u32,
+    contract: CapabilityTypeContract,
+}
+
+#[derive(Debug, Clone)]
+struct LoweredTaskDraft {
+    step_id: String,
+    task_instance_id: String,
+    compiled_task: CompiledTaskRecord,
+    lineage: TaskLineage,
+}
+
+fn init_slots_for_operator(
+    request: &Request,
+    resolved: &ResolvedOperatorStep,
+    resolved_by_step: &BTreeMap<&str, &ResolvedOperatorStep>,
+) -> Result<Vec<TaskInitSlotSpec>, Vec<Diagnostic>> {
+    let mut diagnostics = Vec::new();
+    let mut data_flow_slots = BTreeMap::new();
+    let mut data_flow_slot_counts = BTreeMap::<String, usize>::new();
+
+    for edge in request
+        .composition
+        .composition
+        .edges
+        .iter()
+        .filter(|edge| edge.to == resolved.step_id)
+    {
+        let EdgeKind::DataFlow { artifact_type } = &edge.kind else {
+            continue;
+        };
+        let Some(slot) = unique_data_flow_input_slot(
+            &resolved.contract.input_contract,
+            artifact_type,
+            resolved,
+            edge,
+            &mut diagnostics,
+        ) else {
+            continue;
+        };
+        if slot.cardinality != InputCardinality::One {
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::DataFlowInitSourceInvalid,
+                    "data flow edge maps to an input slot with unsupported cardinality",
+                )
+                .with_step(edge.to.clone()),
+            );
+            continue;
+        }
+        let Some(schema_version) =
+            data_flow_output_schema(edge, artifact_type, resolved_by_step, &mut diagnostics)
+        else {
+            continue;
+        };
+        if !slot.schema_versions.accepts(schema_version) {
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::DataFlowInitSourceInvalid,
+                    "data flow edge schema is not accepted by the target input slot",
+                )
+                .with_step(edge.to.clone()),
+            );
+            continue;
+        }
+
+        *data_flow_slot_counts
+            .entry(slot.slot_id.clone())
+            .or_default() += 1;
+        data_flow_slots.insert(
+            slot.slot_id.clone(),
+            TaskInitSlotSpec {
+                init_slot_id: slot.slot_id.clone(),
+                artifact_type_id: artifact_type.clone(),
+                schema_version,
+                required: slot.required,
+            },
+        );
+    }
+
+    for count in data_flow_slot_counts.into_values() {
+        if count > 1 {
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::DataFlowInitSourceInvalid,
+                    "multiple data flow edges target the same input slot",
+                )
+                .with_step(resolved.step_id.clone()),
+            );
+        }
+    }
+
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
+
+    let mut init_slots = Vec::new();
+    for slot in &resolved.contract.input_contract {
+        if let Some(data_flow_slot) = data_flow_slots.remove(&slot.slot_id) {
+            init_slots.push(data_flow_slot);
+            continue;
+        }
+        if slot.required {
+            init_slots.push(TaskInitSlotSpec {
+                init_slot_id: slot.slot_id.clone(),
+                artifact_type_id: slot.accepted_artifact_type_ids[0].clone(),
+                schema_version: slot.schema_versions.min,
+                required: true,
+            });
+        }
+    }
+
+    Ok(init_slots)
+}
+
+fn unique_data_flow_input_slot<'a>(
+    input_slots: &'a [InputSlotSpec],
+    artifact_type: &str,
+    resolved: &ResolvedOperatorStep,
+    edge: &Edge,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<&'a InputSlotSpec> {
+    let matching_slots = input_slots
+        .iter()
+        .filter(|slot| {
+            slot.accepted_artifact_type_ids
+                .iter()
+                .any(|accepted| accepted == artifact_type)
+        })
+        .collect::<Vec<_>>();
+
+    match matching_slots.as_slice() {
+        [slot] => Some(slot),
+        [] => {
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::DataFlowInitSourceInvalid,
+                    "data flow edge does not map to a target input slot",
+                )
+                .with_step(edge.to.clone())
+                .with_operator(resolved.operator_id.clone()),
+            );
+            None
+        }
+        _ => {
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::DataFlowInitSourceInvalid,
+                    "data flow edge maps to multiple target input slots",
+                )
+                .with_step(edge.to.clone())
+                .with_operator(resolved.operator_id.clone()),
+            );
+            None
+        }
+    }
+}
+
+fn data_flow_output_schema(
+    edge: &Edge,
+    artifact_type: &str,
+    resolved_by_step: &BTreeMap<&str, &ResolvedOperatorStep>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<u32> {
+    let Some(source) = resolved_by_step.get(edge.from.as_str()) else {
+        diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::MissingExecutableEdgeEndpoint,
+                "data flow edge source is not lowered",
+            )
+            .with_step(edge.to.clone()),
+        );
+        return None;
+    };
+    let matching_outputs = source
+        .contract
+        .output_contract
+        .iter()
+        .filter(|slot| slot.artifact_type_id == artifact_type)
+        .collect::<Vec<_>>();
+
+    match matching_outputs.as_slice() {
+        [output] => Some(output.schema_version),
+        [] => {
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::DataFlowInitSourceInvalid,
+                    "data flow edge does not map to an upstream output contract",
+                )
+                .with_step(edge.to.clone())
+                .with_operator(source.operator_id.clone()),
+            );
+            None
+        }
+        _ => {
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::DataFlowInitSourceInvalid,
+                    "data flow edge maps to multiple upstream output contracts",
+                )
+                .with_step(edge.to.clone())
+                .with_operator(source.operator_id.clone()),
+            );
+            None
+        }
     }
 }
 
@@ -427,45 +706,149 @@ fn plan_with_mutations(
     }
 }
 
+fn validate_executable_edges(
+    edges: &[Edge],
+    operator_step_ids: &BTreeSet<&str>,
+    diagnostics: &mut Vec<Diagnostic>,
+    blocking_diagnostic: &mut bool,
+) {
+    for edge in edges {
+        match &edge.kind {
+            EdgeKind::Conditional { .. } => diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::ConditionalEdgeDeferred,
+                    "conditional edge lowering is deferred",
+                )
+                .with_step(edge.to.clone()),
+            ),
+            EdgeKind::Ordering | EdgeKind::DataFlow { .. } => {
+                if !operator_step_ids.contains(edge.from.as_str())
+                    || !operator_step_ids.contains(edge.to.as_str())
+                {
+                    diagnostics.push(
+                        Diagnostic::new(
+                            DiagnosticCode::MissingExecutableEdgeEndpoint,
+                            "executable edge references a step that is not lowered",
+                        )
+                        .with_step(edge.to.clone()),
+                    );
+                    *blocking_diagnostic = true;
+                }
+            }
+        }
+    }
+}
+
 fn incoming_edges(
     composition: &ExecutionComposition,
     step_id: &str,
     network_id: &str,
-    diagnostics: &mut Vec<Diagnostic>,
 ) -> Vec<DependencyEdge> {
     composition
         .composition
         .edges
         .iter()
         .filter(|edge| edge.to == step_id)
-        .map(|edge| {
+        .filter_map(|edge| {
             let kind = match &edge.kind {
                 EdgeKind::Ordering => DependencyKind::Ordering,
                 EdgeKind::DataFlow { artifact_type } => DependencyKind::DataFlow {
                     artifact_type_id: artifact_type.clone(),
                 },
-                EdgeKind::Conditional { field_path, guard } => {
-                    diagnostics.push(
-                        Diagnostic::new(
-                            DiagnosticCode::ConditionalEdgeDeferred,
-                            "conditional edge lowering is deferred",
-                        )
-                        .with_step(step_id.to_string()),
-                    );
-                    DependencyKind::Conditional {
-                        field_path: field_path.clone(),
-                        guard_json: serde_json::to_string(guard)
-                            .expect("conditional guard is serializable"),
-                    }
-                }
+                EdgeKind::Conditional { .. } => return None,
             };
-            DependencyEdge {
+            Some(DependencyEdge {
                 from: task_instance_id(network_id, &composition.composition_id, &edge.from),
                 to: task_instance_id(network_id, &composition.composition_id, &edge.to),
                 kind,
-            }
+            })
         })
         .collect()
+}
+
+fn init_sources_for_task(
+    request: &Request,
+    draft: &LoweredTaskDraft,
+    edges: &[Edge],
+    diagnostics: &mut Vec<Diagnostic>,
+    blocking_diagnostic: &mut bool,
+) -> Vec<TaskInitSource> {
+    let incoming_data_flow = edges
+        .iter()
+        .filter(|edge| edge.to == draft.step_id)
+        .filter_map(|edge| match &edge.kind {
+            EdgeKind::DataFlow { artifact_type } => Some((edge, artifact_type.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    for (edge, artifact_type) in &incoming_data_flow {
+        let matching_slot_count = draft
+            .compiled_task
+            .init_slots
+            .iter()
+            .filter(|slot| slot.artifact_type_id == *artifact_type)
+            .count();
+        if matching_slot_count != 1 {
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::DataFlowInitSourceInvalid,
+                    "data flow edge does not map to exactly one target init slot",
+                )
+                .with_step(edge.to.clone()),
+            );
+            *blocking_diagnostic = true;
+        }
+    }
+
+    let mut sources = Vec::new();
+    for slot in &draft.compiled_task.init_slots {
+        let matching_edges = incoming_data_flow
+            .iter()
+            .filter(|(_, artifact_type)| slot.artifact_type_id == **artifact_type)
+            .collect::<Vec<_>>();
+        match matching_edges.as_slice() {
+            [] => sources.push(TaskInitSource::StaticSeed(StaticSeedInitSource {
+                init_slot_id: slot.init_slot_id.clone(),
+                artifact_type_id: slot.artifact_type_id.clone(),
+                schema_version: slot.schema_version,
+                content: json!({
+                    "composition_id": request.composition.composition_id,
+                    "goal_id": request.composition.goal.goal_id,
+                    "method_id": request.composition.method_id,
+                    "step_id": draft.step_id,
+                    "slot_id": slot.init_slot_id,
+                }),
+            })),
+            [(edge, artifact_type)] => {
+                sources.push(TaskInitSource::UpstreamArtifact(
+                    UpstreamArtifactInitSource {
+                        init_slot_id: slot.init_slot_id.clone(),
+                        artifact_type_id: slot.artifact_type_id.clone(),
+                        schema_version: slot.schema_version,
+                        upstream_task_instance_id: task_instance_id(
+                            &request.network_id,
+                            &request.composition.composition_id,
+                            &edge.from,
+                        ),
+                        upstream_artifact_type_id: (*artifact_type).to_string(),
+                    },
+                ));
+            }
+            _ => {
+                diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::DataFlowInitSourceInvalid,
+                        "multiple data flow edges target the same init slot",
+                    )
+                    .with_step(draft.step_id.clone()),
+                );
+                *blocking_diagnostic = true;
+            }
+        }
+    }
+
+    sources
 }
 
 fn task_instance_id(network_id: &str, composition_id: &str, step_id: &str) -> String {
