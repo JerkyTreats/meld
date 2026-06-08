@@ -2,6 +2,7 @@
 
 mod agent_authorization;
 mod agent_cli;
+mod agent_goal_handoff;
 mod blake3_verification;
 mod branches_query;
 mod branches_runtime;

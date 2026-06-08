@@ -42,7 +42,7 @@ A gap does not belong here when it is only about call order, worker lifetime, de
 
 | ID | Gap | Primary Domain | Required Proof |
 | --- | --- | --- | --- |
-| NAG-1 | Curated goal handoff | execution | A proposed curated goal becomes one active execution goal and can be planned |
+| NAG-1 | Curated goal handoff | execution | Implemented at [goal handoff](../../../src/execution/goal_handoff.rs) and proven by `curated_goal_handoff_stores_active_plannable_goal` |
 | NAG-2 | Outcome publication bridge | execution | A pending task outcome publication appends exactly once and is marked published only after append |
 | NAG-3 | Outcome fact to belief evidence | world model | A docs writer success becomes configured belief evidence and reassesses the dirty belief |
 | NAG-4 | Satisfaction review | execution | An active goal is marked satisfied only after world state evaluation succeeds |
@@ -52,7 +52,9 @@ A gap does not belong here when it is only about call order, worker lifetime, de
 
 World model agent curation can emit an `AgentGoalCommand` when a belief crosses a rule threshold. Execution stores goals through `AddGoalCommand`, and planning only accepts active goals.
 
-The missing fix is an explicit handoff adapter from curated agent command to execution goal command.
+Status: `implemented`
+
+The implemented fix is an explicit handoff adapter from curated agent command to execution goal command.
 
 ### Requirements
 
@@ -77,6 +79,12 @@ Suggested focused test name:
 ```text
 curated_goal_handoff_stores_active_plannable_goal
 ```
+
+Implementation evidence:
+
+- [goal handoff](../../../src/execution/goal_handoff.rs)
+- [agent goal handoff test](../../../tests/integration/agent_goal_handoff.rs)
+- `cargo test --test integration_tests curated_goal_handoff_stores_active_plannable_goal`
 
 ## NAG-2 Outcome Publication Bridge
 
