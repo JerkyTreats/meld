@@ -155,12 +155,7 @@ impl WorldStateReducer {
             self.emitted_envelopes.push(claim_superseded_envelope(
                 &event.session,
                 ClaimSupersededEventData {
-                    fact_id: superseded_fact_id,
-                    claim_id: superseded_claim.claim_id,
-                    superseded_by: claim_id.clone(),
-                    subject: subject.clone(),
-                    source_fact_id: source_fact_id.clone(),
-                    seq: event.seq,
+                    claim: superseded_claim.clone(),
                 },
             ));
         }
@@ -218,27 +213,14 @@ impl WorldStateReducer {
         self.emitted_envelopes.push(claim_added_envelope(
             &event.session,
             ClaimAddedEventData {
-                fact_id: claim_fact_id,
-                claim_id: claim_id.clone(),
-                claim_kind: claim_kind.as_str().to_string(),
-                subject: subject.clone(),
-                source_fact_id: source_fact_id.clone(),
-                seq: event.seq,
+                claim: claim.clone(),
             },
         ));
         self.emitted_envelopes.push(evidence_attached_envelope(
             &event.session,
-            &claim_id,
             EvidenceAttachedEventData {
-                fact_id: evidence_fact_id,
-                evidence_id,
-                claim_id: claim_id.clone(),
-                source_fact_id,
-                source_event_type: event.event_type.clone(),
-                seq: event.seq,
+                evidence: evidence.clone(),
             },
-            event.objects.clone(),
-            event.relations.clone(),
         ));
 
         Ok(())

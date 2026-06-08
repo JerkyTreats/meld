@@ -15,7 +15,7 @@ pub async fn execute_target_request(
     event_context: Option<&QueueEventContext>,
     metadata_builder: &GeneratedMetadataBuilder,
 ) -> Result<FrameID, ApiError> {
-    if request.program.kind == TargetExecutionProgramKind::Workflow {
+    if request.program().kind == TargetExecutionProgramKind::Workflow {
         let workspace_root = api.workspace_root().ok_or_else(|| {
             ApiError::ConfigError(
                 "Workflow target execution requires workspace root context".to_string(),
@@ -30,10 +30,10 @@ pub async fn execute_target_request(
 
     let orchestration_request = GenerationOrchestrationRequest {
         request_id: request.request_id.as_u64(),
-        node_id: request.node_id,
-        agent_id: request.agent_id.clone(),
-        provider: request.provider.clone(),
-        frame_type: request.frame_type.clone(),
+        node_id: request.node_id(),
+        agent_id: request.agent_id().to_string(),
+        provider: request.provider().clone(),
+        frame_type: request.frame_type().to_string(),
         retry_count: request.retry_count,
         force: request.options.force,
     };
@@ -47,12 +47,12 @@ fn build_compatibility_target_request(
 ) -> Result<TargetExecutionRequest, ApiError> {
     build_target_execution_request(
         api,
-        request.node_id,
-        request.agent_id.clone(),
-        request.provider.clone(),
-        request.frame_type.clone(),
+        request.node_id(),
+        request.agent_id().to_string(),
+        request.provider().clone(),
+        request.frame_type().to_string(),
         request.options.force,
-        request.program.clone(),
+        request.program().clone(),
         request.options.plan_id.clone(),
         event_context.map(|ctx| ctx.session_id.clone()),
         None,

@@ -243,7 +243,6 @@ impl ContextApi {
         );
 
         Ok(NodeContext {
-            node_id,
             node_record,
             frames,
             frame_count: total_frame_count,
@@ -1112,7 +1111,7 @@ mod tests {
         };
 
         let context = api.get_node(node_id, view).unwrap();
-        assert_eq!(context.node_id, node_id);
+        assert_eq!(context.node_id(), node_id);
         assert_eq!(context.frames.len(), 0);
         assert_eq!(context.frame_count, 0);
     }
@@ -1260,7 +1259,7 @@ mod tests {
         };
 
         let context = api.get_node(node_id, view).unwrap();
-        assert_eq!(context.node_id, node_id);
+        assert_eq!(context.node_id(), node_id);
         assert_eq!(context.frames.len(), 1);
         assert_eq!(context.frames[0].frame_id, frame_id);
     }

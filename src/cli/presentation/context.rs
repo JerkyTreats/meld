@@ -26,7 +26,7 @@ pub fn format_context_text_output(
         }
         output.push_str(&format!(
             "Node: {}\nPath: {}\nNo frames found.",
-            hex::encode(context.node_id),
+            hex::encode(context.node_id()),
             context.node_record.path.display()
         ));
         return Ok(output);
@@ -50,7 +50,7 @@ pub fn format_context_text_output(
         }
         output.push_str(&format!(
             "Node: {}\nPath: {}\nFrames: {}/{}\n\n",
-            hex::encode(context.node_id),
+            hex::encode(context.node_id()),
             context.node_record.path.display(),
             frames.len(),
             context.frame_count
@@ -121,7 +121,7 @@ pub fn format_context_json_output(
         .collect();
 
     let result = json!({
-        "node_id": hex::encode(context.node_id),
+        "node_id": hex::encode(context.node_id()),
         "path": context.node_record.path.to_string_lossy(),
         "warnings": warnings,
         "node_type": match context.node_record.node_type {

@@ -47,9 +47,10 @@ impl SledTaskNetworkStore {
         let mut inner = InMemoryTaskNetworkStore::new(network_id.clone());
 
         for item in journal_by_revision.iter() {
-            let (_, value) = item.map_err(to_storage)?;
+            let (key, value) = item.map_err(to_storage)?;
+            let revision = decode_revision_key(&key)?;
             let stored: StoredJournalRecord = serde_json::from_slice(&value).map_err(to_decode)?;
-            inner.apply_journal_record_for_replay(&stored)?;
+            inner.apply_journal_record_for_replay(revision, &stored)?;
         }
 
         load_command_identity(&mut inner, &command_requests, &command_responses)?;
@@ -113,37 +114,24 @@ impl SledTaskNetworkStore {
         match &response {
             command::Response::Accepted {
                 revision,
-                state_hash,
+                state_hash: _,
             } => {
                 let Some(record) = self.inner.journal().last().cloned() else {
                     return Err(decode_error(
                         "accepted command did not append journal record",
                     ));
                 };
-                let stored_request = StoredCommandRequest {
-                    command_id: command_id.clone(),
-                    request_hash: request_hash.clone(),
-                    request,
-                };
-                let stored_journal = StoredJournalRecord {
-                    network_id: self.inner.state().network_id.clone(),
-                    revision: *revision,
-                    state_hash: state_hash.clone(),
-                    record,
-                };
+                let stored_request = StoredCommandRequest::new(request_hash.clone(), request);
+                let stored_journal = StoredJournalRecord::new(record);
                 let stored_response = StoredCommandResponse {
                     command_id,
                     request_hash,
                     response: response.clone(),
                 };
-                let snapshot = StoredStateSnapshot {
-                    network_id: self.inner.state().network_id.clone(),
-                    revision: self.inner.state().revision,
-                    state_hash: self.inner.state().state_hash.clone(),
-                    state: self.inner.state().clone(),
-                };
+                let snapshot = StoredStateSnapshot::new(self.inner.state().clone());
                 self.persist_accepted_command(
                     stored_request,
+                    *revision,
                     stored_journal,
                     stored_response,
                     snapshot,
@@ -155,11 +143,7 @@ impl SledTaskNetworkStore {
                 ));
             }
             command::Response::Rejected(_) => {
-                let stored_request = StoredCommandRequest {
-                    command_id: command_id.clone(),
-                    request_hash: request_hash.clone(),
-                    request,
-                };
+                let stored_request = StoredCommandRequest::new(request_hash.clone(), request);
                 let stored_response = StoredCommandResponse {
                     command_id,
                     request_hash,
@@ -189,13 +173,14 @@ impl SledTaskNetworkStore {
     fn persist_accepted_command(
         &self,
         request: StoredCommandRequest,
+        revision: u64,
         journal: StoredJournalRecord,
         response: StoredCommandResponse,
         snapshot: StoredStateSnapshot,
     ) -> Result<(), TaskNetworkStoreError> {
-        let command_key = request.command_id.as_bytes().to_vec();
+        let command_key = request.request.command_id.as_bytes().to_vec();
         let request_value = serde_json::to_vec(&request).map_err(to_decode)?;
-        let journal_key = revision_key(journal.revision).to_vec();
+        let journal_key = revision_key(revision).to_vec();
         let journal_value = serde_json::to_vec(&journal).map_err(to_decode)?;
         let response_value = serde_json::to_vec(&response).map_err(to_decode)?;
         let snapshot_value = serde_json::to_vec(&snapshot).map_err(to_decode)?;
@@ -225,7 +210,7 @@ impl SledTaskNetworkStore {
         request: StoredCommandRequest,
         response: StoredCommandResponse,
     ) -> Result<(), TaskNetworkStoreError> {
-        let command_key = request.command_id.as_bytes().to_vec();
+        let command_key = request.request.command_id.as_bytes().to_vec();
         let request_value = serde_json::to_vec(&request).map_err(to_decode)?;
         let response_value = serde_json::to_vec(&response).map_err(to_decode)?;
 
@@ -294,8 +279,15 @@ fn load_command_requests(
         let command_id = String::from_utf8(key.to_vec())
             .map_err(|error| decode_error(format!("command request key UTF-8 failed: {error}")))?;
         let stored: StoredCommandRequest = serde_json::from_slice(&value).map_err(to_decode)?;
-        if stored.command_id != command_id {
+        if stored.request.command_id != command_id {
             return Err(decode_error("stored command request key mismatch"));
+        }
+        if stored
+            .legacy_command_id
+            .as_ref()
+            .is_some_and(|legacy_command_id| legacy_command_id != &command_id)
+        {
+            return Err(decode_error("stored command request legacy key mismatch"));
         }
         requests.insert(command_id, stored);
     }
@@ -324,24 +316,43 @@ fn validate_snapshot(
     network_id: &str,
     replayed: &NetworkState,
 ) -> Result<(), TaskNetworkStoreError> {
-    if snapshot.network_id != network_id || snapshot.state.network_id != network_id {
+    if snapshot.state.network_id != network_id
+        || snapshot
+            .legacy_network_id
+            .as_ref()
+            .is_some_and(|legacy_network_id| legacy_network_id != network_id)
+    {
         return Err(decode_error("task network snapshot network mismatch"));
     }
-    if snapshot.revision != replayed.revision || snapshot.state.revision != replayed.revision {
+    if snapshot.state.revision != replayed.revision
+        || snapshot
+            .legacy_revision
+            .is_some_and(|legacy_revision| legacy_revision != replayed.revision)
+    {
         return Err(decode_error("task network snapshot revision mismatch"));
     }
-    if snapshot.state_hash != replayed.state_hash
-        || snapshot.state.state_hash != replayed.state_hash
+    if snapshot.state.state_hash != replayed.state_hash
+        || snapshot
+            .legacy_state_hash
+            .as_ref()
+            .is_some_and(|legacy_state_hash| legacy_state_hash != &replayed.state_hash)
     {
         return Err(decode_error("task network snapshot state hash mismatch"));
     }
     let recomputed = snapshot.state.recompute_state_hash();
-    if recomputed != snapshot.state_hash {
+    if recomputed != snapshot.state.state_hash {
         return Err(decode_error(
             "task network snapshot recomputed hash mismatch",
         ));
     }
     Ok(())
+}
+
+fn decode_revision_key(key: &[u8]) -> Result<u64, TaskNetworkStoreError> {
+    let bytes: [u8; 8] = key
+        .try_into()
+        .map_err(|_| decode_error("journal revision key length mismatch"))?;
+    Ok(u64::from_be_bytes(bytes))
 }
 
 fn to_transaction(error: TransactionError) -> TaskNetworkStoreError {

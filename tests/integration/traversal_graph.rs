@@ -755,7 +755,10 @@ fn graph_runtime_persists_anchor_selected_events_idempotently() {
     assert_eq!(derived.len(), 1);
 
     let data: AnchorSelectedEventData = serde_json::from_value(derived[0].data.clone()).unwrap();
-    assert_eq!(derived[0].record_id.as_deref(), Some(data.fact_id.as_str()));
+    assert_eq!(
+        derived[0].record_id.as_deref(),
+        Some(data.anchor.created_by_fact_id.as_str())
+    );
 }
 
 #[test]

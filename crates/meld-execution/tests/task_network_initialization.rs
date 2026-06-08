@@ -73,7 +73,6 @@ fn upstream_state(artifact_records: Vec<ArtifactRecord>) -> NetworkState {
             claim_revision: 1,
             status: OutcomeStatus::Succeeded,
             error: None,
-            artifacts: state.artifact_availability.clone(),
             artifact_records,
             task_events: vec![],
         },

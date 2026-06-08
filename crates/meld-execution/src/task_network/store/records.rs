@@ -11,9 +11,10 @@ pub(super) const KEY_LATEST_STATE: &[u8] = b"latest";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct StoredCommandRequest {
-    pub(super) command_id: String,
     pub(super) request_hash: String,
     pub(super) request: command::Request,
+    #[serde(default, rename = "command_id", skip_serializing)]
+    pub(super) legacy_command_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -25,18 +26,56 @@ pub(super) struct StoredCommandResponse {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct StoredJournalRecord {
-    pub(super) network_id: String,
-    pub(super) revision: u64,
-    pub(super) state_hash: String,
     pub(super) record: JournalRecord,
+    #[serde(default, rename = "network_id", skip_serializing)]
+    pub(super) legacy_network_id: Option<String>,
+    #[serde(default, rename = "revision", skip_serializing)]
+    pub(super) legacy_revision: Option<u64>,
+    #[serde(default, rename = "state_hash", skip_serializing)]
+    pub(super) legacy_state_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct StoredStateSnapshot {
-    pub(super) network_id: String,
-    pub(super) revision: u64,
-    pub(super) state_hash: String,
     pub(super) state: NetworkState,
+    #[serde(default, rename = "network_id", skip_serializing)]
+    pub(super) legacy_network_id: Option<String>,
+    #[serde(default, rename = "revision", skip_serializing)]
+    pub(super) legacy_revision: Option<u64>,
+    #[serde(default, rename = "state_hash", skip_serializing)]
+    pub(super) legacy_state_hash: Option<String>,
+}
+
+impl StoredCommandRequest {
+    pub(super) fn new(request_hash: String, request: command::Request) -> Self {
+        Self {
+            request_hash,
+            request,
+            legacy_command_id: None,
+        }
+    }
+}
+
+impl StoredJournalRecord {
+    pub(super) fn new(record: JournalRecord) -> Self {
+        Self {
+            record,
+            legacy_network_id: None,
+            legacy_revision: None,
+            legacy_state_hash: None,
+        }
+    }
+}
+
+impl StoredStateSnapshot {
+    pub(super) fn new(state: NetworkState) -> Self {
+        Self {
+            state,
+            legacy_network_id: None,
+            legacy_revision: None,
+            legacy_state_hash: None,
+        }
+    }
 }
 
 pub(super) fn revision_key(revision: u64) -> [u8; 8] {

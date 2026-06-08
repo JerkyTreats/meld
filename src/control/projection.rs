@@ -97,26 +97,22 @@ fn parse_task_event_data(event: &EventRecord) -> Result<ExecutionTaskEventData, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::EventEnvelope;
     use serde_json::json;
 
     #[test]
     fn task_events_drive_projection_state() {
         let mut projection = ExecutionProjection::default();
 
-        let requested = EventRecord {
-            ts: "2026-01-01T00:00:00.000Z".to_string(),
-            recorded_at: "2026-01-01T00:00:00.000Z".to_string(),
-            record_id: None,
-            session: "session".to_string(),
-            seq: 1,
-            domain_id: "execution".to_string(),
-            stream_id: "run_a".to_string(),
-            event_type: "execution.task.requested".to_string(),
-            occurred_at: None,
-            content_hash: None,
-            objects: Vec::new(),
-            relations: Vec::new(),
-            data: json!({
+        let requested = EventRecord::from_envelope(
+            EventEnvelope::new_domain(
+                "2026-01-01T00:00:00.000Z".to_string(),
+                "session",
+                "execution",
+                "run_a",
+                "execution.task.requested",
+                None,
+                json!({
                 "task_id": "task_a",
                 "task_run_id": "run_a",
                 "capability_instance_id": null,
@@ -128,14 +124,14 @@ mod tests {
                 "running_count": null,
                 "blocked_reason": null,
                 "error": null
-            }),
-        };
+                }),
+            ),
+            1,
+        );
 
-        let succeeded = EventRecord {
-            seq: 2,
-            event_type: "execution.task.succeeded".to_string(),
-            ..requested.clone()
-        };
+        let mut succeeded = requested.clone();
+        succeeded.seq = 2;
+        succeeded.envelope_mut().event_type = "execution.task.succeeded".to_string();
 
         projection.apply(&requested).unwrap();
         projection.apply(&succeeded).unwrap();

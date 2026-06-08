@@ -140,8 +140,6 @@ fn test_view(dimension_id: &str, confidence: f64, stale: bool, observation: bool
     BeliefView {
         view_id: "view-a".to_string(),
         key,
-        perspective,
-        branch_scope,
         current_revision_id: Some("revision-a".to_string()),
         status: BeliefStatus::Settled,
         posterior: PosteriorSummary {
@@ -153,7 +151,6 @@ fn test_view(dimension_id: &str, confidence: f64, stale: bool, observation: bool
             confidence,
             threshold: 0.7,
         },
-        confidence,
         uncertainty: 1.0 - confidence,
         precision: 1.0,
         freshness: FreshnessState {

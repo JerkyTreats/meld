@@ -21,8 +21,8 @@ use meld_execution::task_network::dispatch::{
 use meld_execution::task_network::mutation::{Inject, Mutation, ReadPrecondition, Set};
 use meld_execution::task_network::readiness::compute_ready_set;
 use meld_execution::task_network::state::{
-    ArtifactAvailability, DependencyEdge, DependencyKind, StaticSeedInitSource, TaskInitSource,
-    TaskLineage, TaskNode, UpstreamArtifactInitSource,
+    DependencyEdge, DependencyKind, StaticSeedInitSource, TaskInitSource, TaskLineage, TaskNode,
+    UpstreamArtifactInitSource,
 };
 use meld_execution::task_network::store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
 use meld_lang::{
@@ -368,7 +368,7 @@ pub fn composition() -> meld_execution::planning::ExecutionComposition {
                     resolution: Resolution {
                         requires_inputs: vec![],
                         requires_outputs: vec![SlotConstraint {
-                            artifact_type_id: "docs_patch".to_string(),
+                            artifact_type: Term::ArtifactType("docs_patch".to_string()),
                             required: true,
                         }],
                         scope_kind: Some("filesystem".to_string()),
@@ -409,14 +409,14 @@ pub fn phase8_composition() -> meld_execution::planning::ExecutionComposition {
             from: "prepare_metadata".to_string(),
             to: "write_summary".to_string(),
             kind: EdgeKind::DataFlow {
-                artifact_type: "metadata_doc".to_string(),
+                artifact_type: Term::ArtifactType("metadata_doc".to_string()),
             },
         },
         Edge {
             from: "collect_context".to_string(),
             to: "write_summary".to_string(),
             kind: EdgeKind::DataFlow {
-                artifact_type: "context_bundle".to_string(),
+                artifact_type: Term::ArtifactType("context_bundle".to_string()),
             },
         },
     ];
@@ -438,7 +438,7 @@ pub fn single_input_dataflow_composition() -> meld_execution::planning::Executio
         from: "prepare_metadata".to_string(),
         to: "write_metadata".to_string(),
         kind: EdgeKind::DataFlow {
-            artifact_type: "metadata_doc".to_string(),
+            artifact_type: Term::ArtifactType("metadata_doc".to_string()),
         },
     }];
     composition.operator_resolutions = vec![
@@ -458,7 +458,7 @@ pub fn optional_input_dataflow_composition() -> meld_execution::planning::Execut
         from: "produce_optional_note".to_string(),
         to: "consume_optional_note".to_string(),
         kind: EdgeKind::DataFlow {
-            artifact_type: "optional_note".to_string(),
+            artifact_type: Term::ArtifactType("optional_note".to_string()),
         },
     }];
     composition.operator_resolutions = vec![
@@ -495,7 +495,7 @@ fn operator_step(step_id: &str, output_artifact_type_id: &str) -> Step {
             resolution: Resolution {
                 requires_inputs: vec![],
                 requires_outputs: vec![SlotConstraint {
-                    artifact_type_id: output_artifact_type_id.to_string(),
+                    artifact_type: Term::ArtifactType(output_artifact_type_id.to_string()),
                     required: true,
                 }],
                 scope_kind: Some("filesystem".to_string()),
@@ -674,8 +674,7 @@ pub fn task_node_with_upstream_source(
 }
 
 pub fn inject_for_node(task_node: TaskNode, incoming_edges: Vec<DependencyEdge>) -> Inject {
-    let lineage = task_node.lineage.clone();
-    Inject::new(task_node, incoming_edges, lineage)
+    Inject::new(task_node, incoming_edges)
 }
 
 pub fn single_task_mutation_set(task_instance_id: &str) -> Set {
@@ -739,12 +738,6 @@ pub fn outcome_for_claim(outcome_id: &str, task_instance_id: &str, claim: &Claim
         claim_revision: claim.claim_revision,
         status: OutcomeStatus::Succeeded,
         error: None,
-        artifacts: vec![ArtifactAvailability {
-            task_instance_id: task_instance_id.to_string(),
-            artifact_type_id: "docs_patch".to_string(),
-            artifact_id: artifact_id.clone(),
-            schema_version: 1,
-        }],
         artifact_records: vec![ArtifactRecord {
             artifact_id,
             artifact_type_id: "docs_patch".to_string(),

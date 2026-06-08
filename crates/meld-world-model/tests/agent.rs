@@ -80,14 +80,10 @@ fn rule_config() -> AgentCurationRuleConfig {
 
 fn test_view(confidence: f64, revision_id: &str, seq: u64) -> BeliefView {
     let subject = subject();
-    let perspective = PerspectiveKey::new("default", "default").unwrap();
-    let branch_scope = BranchScope::main();
     let key = belief_key();
     BeliefView {
         view_id: format!("view-{revision_id}"),
         key,
-        perspective,
-        branch_scope,
         current_revision_id: Some(revision_id.to_string()),
         status: BeliefStatus::Settled,
         posterior: PosteriorSummary {
@@ -99,7 +95,6 @@ fn test_view(confidence: f64, revision_id: &str, seq: u64) -> BeliefView {
             confidence,
             threshold: THRESHOLD,
         },
-        confidence,
         uncertainty: 1.0 - confidence,
         precision: 1.0,
         freshness: FreshnessState {
@@ -290,6 +285,30 @@ fn agent_contracts_round_trip_and_validate() {
     assert!(subscription.validate().is_ok());
     assert!(activation.validate().is_ok());
     assert!(outcome.decision.validate().is_ok());
+}
+
+#[test]
+fn agent_decision_serializes_input_refs_as_single_input_source() {
+    let outcome = curate_threshold_rule(curation_input(0.2)).unwrap();
+    let decision = serde_json::to_value(&outcome.decision).unwrap();
+    let input_refs = decision.get("input_refs").expect("input refs");
+
+    assert!(decision.get("belief_revision_id").is_none());
+    assert!(decision.get("belief_key").is_none());
+    assert!(decision.get("projection_version").is_none());
+    assert_eq!(
+        input_refs
+            .get("belief_revision_id")
+            .and_then(serde_json::Value::as_str),
+        Some("revision-a")
+    );
+    assert!(input_refs.get("belief_key").is_some());
+    assert_eq!(
+        input_refs
+            .get("planner_projection_version")
+            .and_then(serde_json::Value::as_str),
+        Some(PLANNER_PROJECTION_VERSION)
+    );
 }
 
 #[test]

@@ -200,7 +200,7 @@ fn emitted_event_timestamps_are_iso_8601_with_milliseconds() {
         assert!(!events.is_empty());
 
         for event in events {
-            let ts = event.ts;
+            let ts = event.ts.clone();
             let _ = chrono::DateTime::parse_from_rfc3339(&ts)
                 .expect("event timestamp should parse as RFC3339");
             assert_eq!(ts.len(), 24);

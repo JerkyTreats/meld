@@ -16,15 +16,19 @@
 //! let envelope = anchor_selected_envelope(
 //!     "session-a",
 //!     AnchorSelectedEventData {
-//!         fact_id: "fact-a".to_string(),
-//!         anchor_id: "anchor-a".to_string(),
-//!         anchor_ref,
-//!         subject: node,
-//!         perspective_kind: "frame_type".to_string(),
-//!         perspective_id: "analysis".to_string(),
-//!         target: frame,
-//!         source_fact_id: "spine-a".to_string(),
-//!         seq: 1,
+//!         anchor: meld_world_model::AnchorSelectionRecord {
+//!             anchor_id: "anchor-a".to_string(),
+//!             anchor_ref,
+//!             subject: node,
+//!             perspective: meld_world_model::PerspectiveKey::new("frame_type", "analysis").unwrap(),
+//!             target: frame,
+//!             source_fact_ids: vec!["spine-a".to_string()],
+//!             created_by_fact_id: "fact-a".to_string(),
+//!             selected_at_seq: 1,
+//!             ended_at_seq: None,
+//!             ended_by_anchor_id: None,
+//!             ended_by_fact_id: None,
+//!         },
 //!     },
 //! );
 //! assert_eq!(envelope.event_type, "world_state.anchor_selected");
@@ -34,30 +38,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::events::{DomainObjectRef, EventEnvelope, EventRelation};
+use crate::world_state::graph::contracts::AnchorSelectionRecord;
 
 /// Payload for selecting a current anchor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnchorSelectedEventData {
-    pub fact_id: String,
-    pub anchor_id: String,
-    pub anchor_ref: DomainObjectRef,
-    pub subject: DomainObjectRef,
-    pub perspective_kind: String,
-    pub perspective_id: String,
-    pub target: DomainObjectRef,
-    pub source_fact_id: String,
-    pub seq: u64,
+    pub anchor: AnchorSelectionRecord,
 }
 
 /// Payload for superseding a selected anchor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnchorSupersededEventData {
-    pub fact_id: String,
-    pub anchor_id: String,
-    pub anchor_ref: DomainObjectRef,
-    pub superseded_by_anchor_id: String,
-    pub source_fact_id: String,
-    pub seq: u64,
+    pub anchor: AnchorSelectionRecord,
 }
 
 fn traversal_envelope(
@@ -81,15 +73,20 @@ fn traversal_envelope(
 
 /// Build a traversal event envelope for selecting an anchor.
 pub fn anchor_selected_envelope(session_id: &str, data: AnchorSelectedEventData) -> EventEnvelope {
+    let anchor = &data.anchor;
     traversal_envelope(
         session_id,
-        &data.anchor_id,
+        &anchor.anchor_id,
         "world_state.anchor_selected",
         json!(data.clone()),
-        vec![data.anchor_ref, data.subject, data.target],
+        vec![
+            anchor.anchor_ref.clone(),
+            anchor.subject.clone(),
+            anchor.target.clone(),
+        ],
         Vec::new(),
     )
-    .with_record_id(data.fact_id)
+    .with_record_id(anchor.created_by_fact_id.clone())
 }
 
 /// Build a traversal event envelope for superseding an anchor.
@@ -97,13 +94,22 @@ pub fn anchor_superseded_envelope(
     session_id: &str,
     data: AnchorSupersededEventData,
 ) -> EventEnvelope {
+    let anchor = &data.anchor;
+    let fact_id = anchor
+        .ended_by_fact_id
+        .clone()
+        .unwrap_or_else(|| format!("world_state::anchor_superseded::{}", anchor.anchor_id));
     traversal_envelope(
         session_id,
-        &data.anchor_id,
+        &anchor.anchor_id,
         "world_state.anchor_superseded",
         json!(data.clone()),
-        vec![data.anchor_ref],
+        vec![
+            anchor.anchor_ref.clone(),
+            anchor.subject.clone(),
+            anchor.target.clone(),
+        ],
         Vec::new(),
     )
-    .with_record_id(data.fact_id)
+    .with_record_id(fact_id)
 }

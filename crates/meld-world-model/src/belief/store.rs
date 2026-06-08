@@ -704,20 +704,19 @@ impl BeliefStore {
         BeliefView {
             view_id: format!("view-{}", revision.revision_id),
             key: revision.belief_key.clone(),
-            perspective: revision.belief_key.perspective.clone(),
-            branch_scope: revision.belief_key.branch_scope.clone(),
             current_revision_id: Some(revision.revision_id.clone()),
             status: revision.status.clone(),
             posterior: revision.posterior.clone(),
             planner_projection: revision.planner_projection.clone(),
-            confidence: revision.confidence,
             uncertainty: revision.uncertainty,
             precision: revision.precision,
             freshness: revision.freshness.clone(),
             contradiction: revision.contradiction.clone(),
             observation: revision.observation.clone(),
             assessment_state: "complete".to_string(),
-            advisory_posture: if revision.confidence < revision.planner_projection.threshold {
+            advisory_posture: if revision.planner_projection.confidence
+                < revision.planner_projection.threshold
+            {
                 "observe_or_repair".to_string()
             } else {
                 "ready".to_string()

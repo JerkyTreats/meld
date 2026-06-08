@@ -78,12 +78,12 @@ fn claim_for_non_ready_task_rejects() {
 }
 
 #[test]
-fn claim_blocks_when_init_materialization_points_to_stale_artifact() {
+fn claim_blocks_when_upstream_outcome_has_no_available_artifact() {
     let mut store = InMemoryTaskNetworkStore::new("network-docs");
     let set = Set::new(
         "network-docs",
         "composition-fixture",
-        "upstream-source-with-stale-artifact",
+        "upstream-source-without-artifact",
         vec![
             Mutation::Inject(task_network_support::inject_for_node(
                 task_network_support::single_task_node("task-upstream"),
@@ -129,12 +129,6 @@ fn claim_blocks_when_init_materialization_points_to_stale_artifact() {
         claim_revision: upstream_claim.claim_revision,
         status: OutcomeStatus::Succeeded,
         error: None,
-        artifacts: vec![ArtifactAvailability {
-            task_instance_id: "task-upstream".to_string(),
-            artifact_type_id: "metadata_doc".to_string(),
-            artifact_id: "artifact-stale".to_string(),
-            schema_version: 1,
-        }],
         artifact_records: vec![],
         task_events: vec![],
     };
@@ -160,7 +154,7 @@ fn claim_blocks_when_init_materialization_points_to_stale_artifact() {
     assert!(matches!(
         store.submit(request),
         Response::Rejected(Rejection::InvalidLifecycleTransition(message))
-            if message.contains("not in current outcome")
+            if message.contains("not ready")
     ));
 }
 
@@ -275,7 +269,6 @@ fn failed_outcome_moves_status_to_failed_and_preserves_error_text() {
         claim_revision: claim.claim_revision,
         status: OutcomeStatus::Failed,
         error: Some("provider failed".to_string()),
-        artifacts: vec![],
         artifact_records: vec![],
         task_events: vec![],
     };

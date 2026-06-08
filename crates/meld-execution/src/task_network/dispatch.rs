@@ -104,8 +104,6 @@ pub struct Outcome {
     pub status: OutcomeStatus,
     /// Optional failure summary.
     pub error: Option<String>,
-    /// Artifact availability emitted by the task.
-    pub artifacts: Vec<ArtifactAvailability>,
     /// Task artifact records available for publication payloads.
     pub artifact_records: Vec<ArtifactRecord>,
     /// Task events emitted by the existing task runtime.
@@ -149,7 +147,6 @@ pub fn succeeded_outcome_from_executor(
         claim_revision: claim.claim_revision,
         status: OutcomeStatus::Succeeded,
         error: None,
-        artifacts: artifact_availability_from_executor(claim, executor),
         artifact_records: emitted_artifact_records(executor),
         task_events: executor.events().to_vec(),
     }
@@ -170,20 +167,24 @@ pub fn failed_outcome_from_executor(
         claim_revision: claim.claim_revision,
         status: OutcomeStatus::Failed,
         error: Some(error.into()),
-        artifacts: Vec::new(),
         artifact_records: emitted_artifact_records(executor),
         task_events: executor.events().to_vec(),
     }
 }
 
-fn artifact_availability_from_executor(
-    claim: &Claim,
-    executor: &TaskExecutor,
-) -> Vec<ArtifactAvailability> {
-    emitted_artifact_records(executor)
+/// Derives the receiver-owned artifact availability projection for an outcome.
+pub fn artifact_availability_for_outcome(outcome: &Outcome) -> Vec<ArtifactAvailability> {
+    if outcome.status != OutcomeStatus::Succeeded {
+        return Vec::new();
+    }
+
+    outcome
+        .artifact_records
+        .iter()
+        .cloned()
         .into_iter()
         .map(|artifact| ArtifactAvailability {
-            task_instance_id: claim.task_instance_id.clone(),
+            task_instance_id: outcome.task_instance_id.clone(),
             artifact_type_id: artifact.artifact_type_id,
             artifact_id: artifact.artifact_id,
             schema_version: artifact.schema_version,

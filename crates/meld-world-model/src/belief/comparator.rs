@@ -216,7 +216,6 @@ impl BayesianComparator {
                 confidence,
                 threshold: input.config.planner_projection.threshold,
             },
-            confidence,
             uncertainty,
             precision,
             freshness: FreshnessState {
@@ -283,7 +282,6 @@ fn missing_assessment(input: ComparatorInput) -> Result<ComparatorOutput, Storag
             confidence: 0.0,
             threshold: input.config.planner_projection.threshold,
         },
-        confidence: 0.0,
         uncertainty: 1.0,
         precision: 0.0,
         freshness: FreshnessState {

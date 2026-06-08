@@ -578,24 +578,19 @@ fn format_elapsed(elapsed: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::EventEnvelope;
     use serde_json::json;
 
     fn event(seq: u64, event_type: &str, data: Value) -> EventRecord {
-        EventRecord {
-            ts: "2026-03-07T00:00:00.000Z".to_string(),
-            recorded_at: "2026-03-07T00:00:00.000Z".to_string(),
-            record_id: None,
-            session: "s1".to_string(),
+        EventRecord::from_envelope(
+            EventEnvelope::new(
+                "2026-03-07T00:00:00.000Z".to_string(),
+                "s1".to_string(),
+                event_type,
+                data,
+            ),
             seq,
-            domain_id: "telemetry".to_string(),
-            stream_id: "s1".to_string(),
-            event_type: event_type.to_string(),
-            occurred_at: None,
-            content_hash: None,
-            objects: Vec::new(),
-            relations: Vec::new(),
-            data,
-        }
+        )
     }
 
     fn strip_ansi(input: &str) -> String {

@@ -326,6 +326,18 @@ fn to_storage_data(err: serde_json::Error) -> StorageError {
 mod tests {
     use super::*;
 
+    fn test_record(seq: u64, ts: &str, session: &str, event_type: &str) -> EventRecord {
+        EventRecord::from_envelope(
+            EventEnvelope::new(
+                ts.to_string(),
+                session.to_string(),
+                event_type,
+                serde_json::json!({}),
+            ),
+            seq,
+        )
+    }
+
     #[test]
     fn key_encoding_is_lexicographic() {
         let k1 = EventStore::encode_event_key("s1", 2);
@@ -340,36 +352,8 @@ mod tests {
         let store = EventStore::new(db).unwrap();
         let session = "abc";
 
-        let e2 = EventRecord {
-            ts: "2".to_string(),
-            recorded_at: "2".to_string(),
-            record_id: None,
-            session: session.to_string(),
-            seq: 2,
-            domain_id: "telemetry".to_string(),
-            stream_id: session.to_string(),
-            event_type: "session_ended".to_string(),
-            occurred_at: None,
-            content_hash: None,
-            objects: Vec::new(),
-            relations: Vec::new(),
-            data: serde_json::json!({}),
-        };
-        let e1 = EventRecord {
-            ts: "1".to_string(),
-            recorded_at: "1".to_string(),
-            record_id: None,
-            session: session.to_string(),
-            seq: 1,
-            domain_id: "telemetry".to_string(),
-            stream_id: session.to_string(),
-            event_type: "session_started".to_string(),
-            occurred_at: None,
-            content_hash: None,
-            objects: Vec::new(),
-            relations: Vec::new(),
-            data: serde_json::json!({}),
-        };
+        let e2 = test_record(2, "2", session, "session_ended");
+        let e1 = test_record(1, "1", session, "session_started");
         store.append_event(&e2).unwrap();
         store.append_event(&e1).unwrap();
         let events = store.read_events(session).unwrap();
@@ -383,36 +367,8 @@ mod tests {
         let db = sled::open(dir.path()).unwrap();
         let store = EventStore::new(db).unwrap();
 
-        let e1 = EventRecord {
-            ts: "1".to_string(),
-            recorded_at: "1".to_string(),
-            record_id: None,
-            session: "s1".to_string(),
-            seq: 1,
-            domain_id: "telemetry".to_string(),
-            stream_id: "s1".to_string(),
-            event_type: "session_started".to_string(),
-            occurred_at: None,
-            content_hash: None,
-            objects: Vec::new(),
-            relations: Vec::new(),
-            data: serde_json::json!({}),
-        };
-        let e2 = EventRecord {
-            ts: "2".to_string(),
-            recorded_at: "2".to_string(),
-            record_id: None,
-            session: "s2".to_string(),
-            seq: 2,
-            domain_id: "telemetry".to_string(),
-            stream_id: "s2".to_string(),
-            event_type: "session_started".to_string(),
-            occurred_at: None,
-            content_hash: None,
-            objects: Vec::new(),
-            relations: Vec::new(),
-            data: serde_json::json!({}),
-        };
+        let e1 = test_record(1, "1", "s1", "session_started");
+        let e2 = test_record(2, "2", "s2", "session_started");
 
         store.append_event(&e2).unwrap();
         store.append_event(&e1).unwrap();
@@ -432,21 +388,21 @@ mod tests {
 
         let legacy_tree = db.open_tree("obs_events").unwrap();
         let key = EventStore::encode_event_key(session, 1);
-        let raw = serde_json::to_vec(&EventRecord {
-            ts: "1".to_string(),
-            recorded_at: String::new(),
-            record_id: None,
-            session: session.to_string(),
-            seq: 1,
-            domain_id: String::new(),
-            stream_id: String::new(),
-            event_type: "session_started".to_string(),
-            occurred_at: None,
-            content_hash: None,
-            objects: Vec::new(),
-            relations: Vec::new(),
-            data: serde_json::json!({}),
-        })
+        let raw = serde_json::to_vec(&serde_json::json!({
+            "ts": "1",
+            "recorded_at": "",
+            "record_id": null,
+            "session": session,
+            "seq": 1,
+            "domain_id": "",
+            "stream_id": "",
+            "type": "session_started",
+            "occurred_at": null,
+            "content_hash": null,
+            "objects": [],
+            "relations": [],
+            "data": {}
+        }))
         .unwrap();
         legacy_tree.insert(key.as_bytes(), raw).unwrap();
 

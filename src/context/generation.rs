@@ -15,7 +15,7 @@ pub mod selection;
 pub use executor::{GenerationExecutor, QueueSubmitter};
 pub use plan::{
     FailurePolicy, GenerationErrorDetail, GenerationItem, GenerationNodeType, GenerationPlan,
-    GenerationResult, LevelSummary, PlanPriority,
+    GenerationResult, GenerationTarget, LevelSummary, PlanPriority,
 };
 pub use program::{
     TargetExecutionProgram, TargetExecutionProgramKind, TargetExecutionRequest,

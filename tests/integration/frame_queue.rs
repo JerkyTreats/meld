@@ -17,6 +17,7 @@ use meld::context::queue::{
     FrameGenerationQueue, GenerationConfig, GenerationRequest, GenerationRequestOptions, Priority,
     QueueEventContext,
 };
+use meld::context::{GenerationTarget, TargetExecutionProgram};
 use meld::error::ApiError;
 use meld::heads::HeadIndex;
 use meld::metadata::frame_write_contract::{
@@ -408,17 +409,23 @@ async fn test_generation_request_ordering() {
     let now = Instant::now();
 
     use meld::context::queue::RequestId;
+    fn target(byte: u8) -> GenerationTarget {
+        GenerationTarget {
+            node_id: Hash::from([byte; 32]),
+            agent_id: "agent1".to_string(),
+            provider: meld::provider::ProviderExecutionBinding::new(
+                "test-provider",
+                meld::provider::ProviderRuntimeOverrides::default(),
+            )
+            .unwrap(),
+            frame_type: "test".to_string(),
+            program: TargetExecutionProgram::single_shot(),
+        }
+    }
+
     let req1 = GenerationRequest {
         request_id: RequestId::next(),
-        node_id: Hash::from([1u8; 32]),
-        agent_id: "agent1".to_string(),
-        provider: meld::provider::ProviderExecutionBinding::new(
-            "test-provider",
-            meld::provider::ProviderRuntimeOverrides::default(),
-        )
-        .unwrap(),
-        frame_type: "test".to_string(),
-        program: meld::context::TargetExecutionProgram::single_shot(),
+        target: target(1),
         priority: Priority::High,
         retry_count: 0,
         created_at: now,
@@ -428,15 +435,7 @@ async fn test_generation_request_ordering() {
 
     let req2 = GenerationRequest {
         request_id: RequestId::next(),
-        node_id: Hash::from([2u8; 32]),
-        agent_id: "agent1".to_string(),
-        provider: meld::provider::ProviderExecutionBinding::new(
-            "test-provider",
-            meld::provider::ProviderRuntimeOverrides::default(),
-        )
-        .unwrap(),
-        frame_type: "test".to_string(),
-        program: meld::context::TargetExecutionProgram::single_shot(),
+        target: target(2),
         priority: Priority::Low,
         retry_count: 0,
         created_at: now,
@@ -450,15 +449,7 @@ async fn test_generation_request_ordering() {
     // Same priority, older should be greater (processed first)
     let req3 = GenerationRequest {
         request_id: RequestId::next(),
-        node_id: Hash::from([3u8; 32]),
-        agent_id: "agent1".to_string(),
-        provider: meld::provider::ProviderExecutionBinding::new(
-            "test-provider",
-            meld::provider::ProviderRuntimeOverrides::default(),
-        )
-        .unwrap(),
-        frame_type: "test".to_string(),
-        program: meld::context::TargetExecutionProgram::single_shot(),
+        target: target(3),
         priority: Priority::Normal,
         retry_count: 0,
         created_at: now,
@@ -468,15 +459,7 @@ async fn test_generation_request_ordering() {
 
     let req4 = GenerationRequest {
         request_id: RequestId::next(),
-        node_id: Hash::from([4u8; 32]),
-        agent_id: "agent1".to_string(),
-        provider: meld::provider::ProviderExecutionBinding::new(
-            "test-provider",
-            meld::provider::ProviderRuntimeOverrides::default(),
-        )
-        .unwrap(),
-        frame_type: "test".to_string(),
-        program: meld::context::TargetExecutionProgram::single_shot(),
+        target: target(4),
         priority: Priority::Normal,
         retry_count: 0,
         created_at: now + Duration::from_millis(100),

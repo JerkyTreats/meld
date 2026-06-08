@@ -135,7 +135,7 @@ fn test_get_node_deterministic() {
     let context2 = api.get_node(node_id, view).unwrap();
 
     // Results should be identical (deterministic)
-    assert_eq!(context1.node_id, context2.node_id);
+    assert_eq!(context1.node_id(), context2.node_id());
     assert_eq!(context1.frames.len(), context2.frames.len());
     assert_eq!(context1.frame_count, context2.frame_count);
 

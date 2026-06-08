@@ -152,12 +152,7 @@ impl TraversalReducer {
             self.emitted_envelopes.push(anchor_superseded_envelope(
                 &event.session,
                 AnchorSupersededEventData {
-                    fact_id: superseded_fact_id,
-                    anchor_id: current.anchor_id.clone(),
-                    anchor_ref: anchor_ref.clone(),
-                    superseded_by_anchor_id: anchor_id.clone(),
-                    source_fact_id: source_fact_id.clone(),
-                    seq: event.seq,
+                    anchor: current.clone(),
                 },
             ));
         }
@@ -183,15 +178,7 @@ impl TraversalReducer {
         self.emitted_envelopes.push(anchor_selected_envelope(
             &event.session,
             AnchorSelectedEventData {
-                fact_id: record.created_by_fact_id.clone(),
-                anchor_id: record.anchor_id.clone(),
-                anchor_ref,
-                subject,
-                perspective_kind: perspective.perspective_kind,
-                perspective_id: perspective.perspective_id,
-                target,
-                source_fact_id,
-                seq: event.seq,
+                anchor: record.clone(),
             },
         ));
         Ok(())

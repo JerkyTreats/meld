@@ -8,6 +8,7 @@ use crate::metadata::frame_key_registry::{
 };
 use crate::metadata::frame_types::FrameMetadata;
 use crate::metadata::prompt_link_contract::build_prompt_link_id;
+use crate::prompt_context::contracts::PromptContextLineageContract;
 pub use meld_execution::generation::GeneratedFrameMetadataInput;
 
 pub const METADATA_PER_KEY_MAX_BYTES: usize = 16 * 1024;
@@ -68,6 +69,25 @@ pub fn generated_metadata_input_from_payload(
         prompt_link_id: build_prompt_link_id(&prompt_digest),
         prompt_digest,
         context_digest,
+    }
+}
+
+/// Build generated frame metadata input from prompt context lineage.
+pub fn generated_metadata_input_from_lineage(
+    agent_id: &str,
+    provider: &str,
+    model: &str,
+    provider_type: &str,
+    lineage: &PromptContextLineageContract,
+) -> GeneratedFrameMetadataInput {
+    GeneratedFrameMetadataInput {
+        agent_id: agent_id.to_string(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+        provider_type: provider_type.to_string(),
+        prompt_link_id: lineage.prompt_link_id.clone(),
+        prompt_digest: lineage.prompt_digest.clone(),
+        context_digest: lineage.context_digest.clone(),
     }
 }
 
@@ -201,6 +221,9 @@ fn sorted_keys(metadata: &FrameMetadata) -> Vec<&String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prompt_context::contracts::{
+        PromptContextArtifactKind, PromptContextArtifactRef, PromptContextLineageContract,
+    };
 
     fn required_metadata(agent_id: &str) -> FrameMetadata {
         let mut metadata = FrameMetadata::new();
@@ -228,6 +251,41 @@ mod tests {
         assert!(metadata.contains_key(KEY_PROMPT_DIGEST));
         assert!(metadata.contains_key(KEY_CONTEXT_DIGEST));
         assert!(metadata.contains_key(KEY_PROMPT_LINK_ID));
+    }
+
+    #[test]
+    fn metadata_input_from_lineage_projects_at_metadata_boundary() {
+        let prompt_digest = "a".repeat(64);
+        let context_digest = "b".repeat(64);
+        let lineage = PromptContextLineageContract {
+            prompt_link_id: "prompt-link-aaaaaaaaaaaaaaaa".to_string(),
+            prompt_digest: prompt_digest.clone(),
+            context_digest: context_digest.clone(),
+            system_prompt: artifact_ref(PromptContextArtifactKind::SystemPrompt, "c"),
+            user_prompt_template: artifact_ref(PromptContextArtifactKind::UserPromptTemplate, "d"),
+            rendered_prompt: artifact_ref(PromptContextArtifactKind::RenderedPrompt, "e"),
+            context_payload: artifact_ref(PromptContextArtifactKind::ContextPayload, "f"),
+        };
+
+        let input =
+            generated_metadata_input_from_lineage("writer", "provider", "model", "local", &lineage);
+
+        assert_eq!(input.agent_id, "writer");
+        assert_eq!(input.provider, "provider");
+        assert_eq!(input.model, "model");
+        assert_eq!(input.provider_type, "local");
+        assert_eq!(input.prompt_link_id, lineage.prompt_link_id);
+        assert_eq!(input.prompt_digest, prompt_digest);
+        assert_eq!(input.context_digest, context_digest);
+    }
+
+    fn artifact_ref(kind: PromptContextArtifactKind, fill: &str) -> PromptContextArtifactRef {
+        PromptContextArtifactRef {
+            artifact_id: fill.repeat(64),
+            digest: fill.repeat(64),
+            byte_len: 1,
+            kind,
+        }
     }
 
     #[test]

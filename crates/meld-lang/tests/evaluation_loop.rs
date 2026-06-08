@@ -42,7 +42,7 @@ fn docs_method() -> Method {
         resolution: Resolution {
             requires_inputs: vec![],
             requires_outputs: vec![SlotConstraint {
-                artifact_type_id: "docs_patch".into(),
+                artifact_type: Term::ArtifactType("docs_patch".into()),
                 required: true,
             }],
             scope_kind: Some("filesystem".into()),
@@ -190,7 +190,7 @@ fn multi_step_composition_with_conditional_edge_validates() {
             resolution: Resolution {
                 requires_inputs: vec![],
                 requires_outputs: vec![SlotConstraint {
-                    artifact_type_id: "change_summary".into(),
+                    artifact_type: Term::ArtifactType("change_summary".into()),
                     required: true,
                 }],
                 scope_kind: Some("filesystem".into()),

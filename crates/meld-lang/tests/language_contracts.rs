@@ -59,8 +59,8 @@ fn operator_step(step_id: &str, cost: CostEstimate, outputs: Vec<&str>) -> Step 
                 requires_inputs: Vec::new(),
                 requires_outputs: outputs
                     .into_iter()
-                    .map(|artifact_type_id| SlotConstraint {
-                        artifact_type_id: artifact_type_id.to_string(),
+                    .map(|artifact_type| SlotConstraint {
+                        artifact_type: Term::ArtifactType(artifact_type.to_string()),
                         required: true,
                     })
                     .collect(),
@@ -556,6 +556,86 @@ fn validation_reports_structural_errors_and_warnings() {
 }
 
 #[test]
+fn artifact_type_terms_are_canonical_across_resolution_data_flow_and_effects() {
+    let artifact_type = Term::ArtifactType("report".to_string());
+    let source = Step {
+        step_id: "produce".to_string(),
+        kind: StepKind::Op(Operator {
+            operator_id: "produce".to_string(),
+            preconditions: Vec::new(),
+            effects: vec![Effect::Assert(Proposition::Exists {
+                scope: object("a"),
+                artifact_type: artifact_type.clone(),
+            })],
+            cost: CostEstimate::zero(),
+            resolution: Resolution {
+                requires_inputs: Vec::new(),
+                requires_outputs: vec![SlotConstraint {
+                    artifact_type: artifact_type.clone(),
+                    required: true,
+                }],
+                scope_kind: None,
+                tags: Vec::new(),
+                specific: None,
+            },
+        }),
+    };
+    let composition = Composition {
+        steps: vec![source, zero_step("consume")],
+        edges: vec![Edge {
+            from: "produce".to_string(),
+            to: "consume".to_string(),
+            kind: EdgeKind::DataFlow {
+                artifact_type: artifact_type.clone(),
+            },
+        }],
+    };
+
+    assert!(validate(&composition).valid);
+
+    let StepKind::Op(operator) = &composition.steps[0].kind else {
+        panic!("expected operator step");
+    };
+    assert_eq!(
+        operator.resolution.requires_outputs[0].artifact_type,
+        artifact_type
+    );
+    let EdgeKind::DataFlow {
+        artifact_type: edge_artifact_type,
+    } = &composition.edges[0].kind
+    else {
+        panic!("expected data flow edge");
+    };
+    assert_eq!(edge_artifact_type, &artifact_type);
+    let Effect::Assert(Proposition::Exists {
+        artifact_type: effect_artifact_type,
+        ..
+    }) = &operator.effects[0]
+    else {
+        panic!("expected exists effect");
+    };
+    assert_eq!(effect_artifact_type, &artifact_type);
+
+    let variant_mismatch = Composition {
+        edges: vec![Edge {
+            kind: EdgeKind::DataFlow {
+                artifact_type: Term::Dimension("report".to_string()),
+            },
+            ..composition.edges[0].clone()
+        }],
+        ..composition
+    };
+    let result = validate(&variant_mismatch);
+    assert!(result
+        .errors
+        .contains(&ValidationError::ArtifactSourceMismatch {
+            edge_from: "produce".to_string(),
+            edge_to: "consume".to_string(),
+            artifact_type: Term::Dimension("report".to_string()),
+        }));
+}
+
+#[test]
 fn validation_reports_unbound_variables_and_unused_effects() {
     let unbound = Composition {
         steps: vec![Step {
@@ -843,6 +923,70 @@ fn world_state_query_condition_patterns_are_precise() {
             Condition::Below(number(0.1))
         ))
         .is_empty());
+}
+
+#[test]
+fn substitution_instantiates_artifact_type_terms_in_resolution_edges_and_effects() {
+    let pattern = Term::Variable("?artifact".to_string());
+    let expected = Term::ArtifactType("docs_patch".to_string());
+    let composition = Composition {
+        steps: vec![
+            Step {
+                step_id: "write".to_string(),
+                kind: StepKind::Op(Operator {
+                    operator_id: "write".to_string(),
+                    preconditions: Vec::new(),
+                    effects: vec![Effect::Assert(Proposition::Exists {
+                        scope: object("a"),
+                        artifact_type: pattern.clone(),
+                    })],
+                    cost: CostEstimate::zero(),
+                    resolution: Resolution {
+                        requires_inputs: Vec::new(),
+                        requires_outputs: vec![SlotConstraint {
+                            artifact_type: pattern.clone(),
+                            required: true,
+                        }],
+                        scope_kind: None,
+                        tags: Vec::new(),
+                        specific: None,
+                    },
+                }),
+            },
+            zero_step("consume"),
+        ],
+        edges: vec![Edge {
+            from: "write".to_string(),
+            to: "consume".to_string(),
+            kind: EdgeKind::DataFlow {
+                artifact_type: pattern,
+            },
+        }],
+    };
+
+    let substituted = substitute(
+        &composition,
+        &Bindings::empty()
+            .bind("?artifact".to_string(), expected.clone())
+            .unwrap(),
+    )
+    .unwrap();
+
+    let StepKind::Op(operator) = &substituted.steps[0].kind else {
+        panic!("expected operator step");
+    };
+    assert_eq!(
+        operator.resolution.requires_outputs[0].artifact_type,
+        expected
+    );
+    let Effect::Assert(Proposition::Exists { artifact_type, .. }) = &operator.effects[0] else {
+        panic!("expected exists effect");
+    };
+    assert_eq!(artifact_type, &expected);
+    let EdgeKind::DataFlow { artifact_type } = &substituted.edges[0].kind else {
+        panic!("expected data flow edge");
+    };
+    assert_eq!(artifact_type, &expected);
 }
 
 #[test]
