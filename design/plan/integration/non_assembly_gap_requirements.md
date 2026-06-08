@@ -43,7 +43,7 @@ A gap does not belong here when it is only about call order, worker lifetime, de
 | ID | Gap | Primary Domain | Required Proof |
 | --- | --- | --- | --- |
 | NAG-1 | Curated goal handoff | execution | Implemented at [goal handoff](../../../src/execution/goal_handoff.rs) and proven by `curated_goal_handoff_stores_active_plannable_goal` |
-| NAG-2 | Outcome publication bridge | execution | A pending task outcome publication appends exactly once and is marked published only after append |
+| NAG-2 | Outcome publication bridge | execution | Implemented at [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs) and proven by `publication_bridge_appends_pending_task_outcome_once` |
 | NAG-3 | Outcome fact to belief evidence | world model | A docs writer success becomes configured belief evidence and reassesses the dirty belief |
 | NAG-4 | Satisfaction review | execution | An active goal is marked satisfied only after world state evaluation succeeds |
 | NAG-5 | Failure outcome contract | execution | Failed work emits failure facts without satisfying the goal |
@@ -88,7 +88,11 @@ Implementation evidence:
 
 ## NAG-2 Outcome Publication Bridge
 
-Task network storage can create pending `Publication` records for task outcomes. The event spine is the shared source for subsequent world state reduction and belief reassessment. The missing fix is an explicit publication bridge.
+Task network storage can create pending `Publication` records for task outcomes. The event spine is the shared source for subsequent world state reduction and belief reassessment.
+
+Status: `implemented`
+
+The implemented fix is an explicit callable bridge from retryable task outcome publications to the event spine.
 
 ### Requirements
 
@@ -114,6 +118,14 @@ Suggested focused test name:
 ```text
 publication_bridge_appends_pending_task_outcome_once
 ```
+
+Implementation evidence:
+
+- [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs)
+- [publication bridge test](../../../crates/meld-execution/tests/task_network_publication_bridge.rs)
+- `cargo test -p meld-execution --test task_network_publication_bridge publication_bridge_appends_pending_task_outcome_once`
+
+NAG-3 through NAG-5 remain open.
 
 ## NAG-3 Outcome Fact To Belief Evidence
 

@@ -144,10 +144,13 @@ pub enum PublicationState {
     Published {
         /// Revision that marked the publication as complete.
         marked_revision: u64,
+        /// Event spine sequence returned by the successful append.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        event_seq: Option<u64>,
     },
     /// Last publication attempt failed and can be retried.
     Failed {
-        /// Failure summary from the publication worker.
+        /// Failure summary from the last publication attempt.
         error: String,
     },
 }

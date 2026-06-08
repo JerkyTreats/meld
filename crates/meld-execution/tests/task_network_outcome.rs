@@ -27,7 +27,10 @@ fn publication_mark_preserves_immutable_payload_fields() {
         .unwrap()
         .clone();
     let mut publication = original.clone();
-    publication.state = PublicationState::Published { marked_revision: 0 };
+    publication.state = PublicationState::Published {
+        marked_revision: 0,
+        event_seq: None,
+    };
     let request = task_network_support::apply_memory_command(
         &store,
         "command-mark-publication",
@@ -51,7 +54,10 @@ fn tampered_publication_outcome_rejects() {
         .unwrap()
         .clone();
     publication.outcome.error = Some("tampered".to_string());
-    publication.state = PublicationState::Published { marked_revision: 0 };
+    publication.state = PublicationState::Published {
+        marked_revision: 0,
+        event_seq: None,
+    };
     let request = task_network_support::apply_memory_command(
         &store,
         "command-mark-publication",
@@ -75,7 +81,10 @@ fn tampered_publication_network_rejects() {
         .unwrap()
         .clone();
     publication.network_id = "other-network".to_string();
-    publication.state = PublicationState::Published { marked_revision: 0 };
+    publication.state = PublicationState::Published {
+        marked_revision: 0,
+        event_seq: None,
+    };
     let request = task_network_support::apply_memory_command(
         &store,
         "command-mark-wrong-network-publication",
@@ -99,7 +108,10 @@ fn tampered_publication_task_identity_rejects() {
         .unwrap()
         .clone();
     publication.outcome.task_instance_id = "other-task".to_string();
-    publication.state = PublicationState::Published { marked_revision: 0 };
+    publication.state = PublicationState::Published {
+        marked_revision: 0,
+        event_seq: None,
+    };
     let request = task_network_support::apply_memory_command(
         &store,
         "command-mark-wrong-task-publication",
@@ -122,7 +134,10 @@ fn publish_mark_sets_current_revision() {
         .get(&publication_id)
         .unwrap()
         .clone();
-    publication.state = PublicationState::Published { marked_revision: 0 };
+    publication.state = PublicationState::Published {
+        marked_revision: 0,
+        event_seq: None,
+    };
     let request = task_network_support::apply_memory_command(
         &store,
         "command-mark-publication",
@@ -133,7 +148,7 @@ fn publish_mark_sets_current_revision() {
     let marked = store.state().publications.get(&publication_id).unwrap();
     assert!(matches!(
         marked.state,
-        PublicationState::Published { marked_revision } if marked_revision == store.state().revision
+        PublicationState::Published { marked_revision, .. } if marked_revision == store.state().revision
     ));
 }
 
@@ -176,7 +191,10 @@ fn second_publication_mark_rejects_with_publication_already_marked() {
         .get(&publication_id)
         .unwrap()
         .clone();
-    publication.state = PublicationState::Published { marked_revision: 0 };
+    publication.state = PublicationState::Published {
+        marked_revision: 0,
+        event_seq: None,
+    };
     let request = task_network_support::apply_memory_command(
         &store,
         "command-mark-publication",
@@ -200,7 +218,10 @@ fn marking_unknown_publication_rejects_with_failed_precondition() {
     let (mut store, _, _) = task_network_support::memory_store_with_pending_publication();
     let mut publication = store.state().publications.values().next().unwrap().clone();
     publication.publication_id = "missing-publication".to_string();
-    publication.state = PublicationState::Published { marked_revision: 0 };
+    publication.state = PublicationState::Published {
+        marked_revision: 0,
+        event_seq: None,
+    };
     let request = task_network_support::apply_memory_command(
         &store,
         "command-missing-publication",
