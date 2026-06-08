@@ -442,7 +442,7 @@ impl InMemoryTaskNetworkStore {
             );
         };
 
-        if !matches!(current.state, PublicationState::Pending) {
+        if matches!(current.state, PublicationState::Published { .. }) {
             return self.record_response(
                 command_id,
                 request_hash,
@@ -466,8 +466,9 @@ impl InMemoryTaskNetworkStore {
         let revision = self.state.revision + 1;
         let mut marked = current;
         marked.state = match publication.state {
-            PublicationState::Published { .. } => PublicationState::Published {
+            PublicationState::Published { event_seq, .. } => PublicationState::Published {
                 marked_revision: revision,
+                event_seq,
             },
             PublicationState::Failed { error } => PublicationState::Failed { error },
             PublicationState::Pending => {
@@ -545,7 +546,10 @@ impl InMemoryTaskNetworkStore {
                     .publications
                     .get(publication_id)
                     .is_some_and(|publication| {
-                        matches!(publication.state, PublicationState::Pending)
+                        matches!(
+                            publication.state,
+                            PublicationState::Pending | PublicationState::Failed { .. }
+                        )
                     }),
             };
 

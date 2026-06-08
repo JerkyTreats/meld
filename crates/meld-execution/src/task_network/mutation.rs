@@ -220,7 +220,7 @@ pub enum ReadPrecondition {
         /// Current claim revision.
         claim_revision: u64,
     },
-    /// Publication must be pending.
+    /// Publication must be retryable.
     PublicationPending(String),
 }
 

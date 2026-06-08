@@ -5,7 +5,7 @@ use meld_execution::task_network::command::Command;
 use meld_execution::task_network::dispatch::Claim;
 use meld_execution::task_network::journal::JournalRecord;
 use meld_execution::task_network::mutation::{CommitRecord, Set};
-use meld_execution::task_network::outcome::Publication;
+use meld_execution::task_network::outcome::{Publication, PublicationState};
 use meld_execution::task_network::state::NetworkState;
 use meld_execution::task_network::store::InMemoryTaskNetworkStore;
 
@@ -113,6 +113,26 @@ fn legacy_inject_lineage_decodes_and_serializes_without_duplicate_lineage() {
     assert_eq!(decoded, expected);
     let encoded = serde_json::to_value(decoded).unwrap();
     assert!(encoded["mutations"][0]["Inject"].get("lineage").is_none());
+}
+
+#[test]
+fn legacy_published_publication_decodes_without_event_seq() {
+    let (_, mut expected) = expected_claim_and_publication();
+    expected.state = PublicationState::Published {
+        marked_revision: 4,
+        event_seq: None,
+    };
+    let mut legacy = serde_json::to_value(&expected).unwrap();
+    legacy["state"]["Published"]
+        .as_object_mut()
+        .unwrap()
+        .remove("event_seq");
+
+    let decoded: Publication = serde_json::from_value(legacy.clone()).unwrap();
+
+    assert_eq!(decoded, expected);
+    let encoded = serde_json::to_value(decoded).unwrap();
+    assert_eq!(encoded, legacy);
 }
 
 #[test]

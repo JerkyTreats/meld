@@ -247,7 +247,10 @@ fn phase8_task_network_slice_runs_and_survives_reopen() {
         .find(|publication| publication.outcome.task_instance_id == ids["write_summary"])
         .unwrap()
         .clone();
-    publication.state = PublicationState::Published { marked_revision: 0 };
+    publication.state = PublicationState::Published {
+        marked_revision: 0,
+        event_seq: None,
+    };
     let publication_id = publication.publication_id.clone();
     let mark_command = task_network_support::apply_sled_command(
         &store,
@@ -274,7 +277,7 @@ fn phase8_task_network_slice_runs_and_survives_reopen() {
     );
     assert!(matches!(
         reopened.state().publications.get(&publication_id).unwrap().state,
-        PublicationState::Published { marked_revision }
+        PublicationState::Published { marked_revision, .. }
             if marked_revision == expected_state.revision
     ));
     assert_eq!(reopened.journal().len(), expected_journal_len);

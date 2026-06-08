@@ -26,6 +26,8 @@ pub mod journal;
 pub mod mutation;
 /// Outcome publication outbox contracts.
 pub mod outcome;
+/// Publication bridge into the event spine.
+pub mod publication;
 /// Ready set computation over reduced task network state.
 pub mod readiness;
 /// Reduced task graph and lifecycle state contracts.
@@ -43,6 +45,11 @@ pub use initialization::{
 pub use journal::JournalRecord;
 pub use mutation::{CommitRecord, CommitRequest, CommitResult, Inject, Mutation, Set};
 pub use outcome::{Publication, PublicationState};
+pub use publication::{
+    build_publication_envelope, publish_pending_publications, publish_publication, EventAppendSink,
+    PublicationAppend, PublicationBridgeError, PublicationBridgeReport, PublicationPublishResult,
+    PublishPendingPublicationsRequest,
+};
 pub use readiness::compute_ready_set;
 pub use state::{
     NetworkState, ReadySet, StaticSeedInitSource, TaskInitSource, TaskNode, TaskStatus,

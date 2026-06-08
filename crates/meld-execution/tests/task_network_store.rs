@@ -188,7 +188,10 @@ fn marked_publication_survives_reopen() {
         );
         store.submit(request).unwrap();
         let mut publication = store.state().publications.values().next().unwrap().clone();
-        publication.state = PublicationState::Published { marked_revision: 0 };
+        publication.state = PublicationState::Published {
+            marked_revision: 0,
+            event_seq: None,
+        };
         publication_id = publication.publication_id.clone();
         let request = task_network_support::apply_sled_command(
             &store,
@@ -202,7 +205,7 @@ fn marked_publication_survives_reopen() {
 
     assert!(matches!(
         store.state().publications.get(&publication_id).unwrap().state,
-        PublicationState::Published { marked_revision } if marked_revision == 4
+        PublicationState::Published { marked_revision, .. } if marked_revision == 4
     ));
 }
 
