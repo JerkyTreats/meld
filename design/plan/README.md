@@ -8,9 +8,11 @@ Scope: declarative implementation readiness and dependency order for the cogniti
 
 This directory defines implementation readiness, dependency order, scope cuts, and contract closure for the cognitive architecture.
 
-Durable architecture lives under `design/cognitive_architecture`. This plan states what can be built, what must be built first, and what remains blocked.
+Durable architecture intent lives under [design/cognitive_architecture](../cognitive_architecture/README.md). That directory is canonical for declarative design intent. This plan states what can be built, what must be built first, and what remains blocked.
 
 Each assessment is current truth. It names the exact slice that is ready, the exact contracts it depends on, and the exact work that is deferred.
+
+When this plan conflicts with `design/cognitive_architecture`, treat the architecture document as intent and this plan as an implementation readiness snapshot that needs reconciliation.
 
 ## Strategy
 

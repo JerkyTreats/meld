@@ -132,6 +132,8 @@ Writer agents generate context frames. Reader agents can query context but not w
 
 ## Architecture
 
+Canonical declarative design intent lives in [Cognitive Architecture](design/cognitive_architecture/README.md). That design directory defines the intended domains, cross domain contracts, event spine, world model, execution loop, and crate ownership. The overview below describes the current user-facing context flow.
+
 ```
 Filesystem
     ↓
