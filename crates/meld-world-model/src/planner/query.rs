@@ -48,8 +48,8 @@ impl<'a> PlannerQuery<'a> {
             .into_iter()
             .find(|view| {
                 view.key.dimension_id == dimension_id
-                    && view.perspective == perspective
-                    && view.branch_scope == branch_scope
+                    && view.key.perspective == perspective
+                    && view.key.branch_scope == branch_scope
             });
         let field_config = belief_view
             .as_ref()

@@ -179,7 +179,7 @@ impl BeliefRuntime {
         Ok(RuntimeAssessmentResult {
             evidence_count: evidence.len(),
             revision_id: output.revision.revision_id,
-            confidence: view.confidence,
+            confidence: view.planner_projection.confidence,
         })
     }
 
@@ -254,7 +254,7 @@ impl BeliefRuntime {
         Ok(Some(RuntimeAssessmentResult {
             evidence_count: evidence.len(),
             revision_id: output.revision.revision_id,
-            confidence: view.confidence,
+            confidence: view.planner_projection.confidence,
         }))
     }
 

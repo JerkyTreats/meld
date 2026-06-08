@@ -55,7 +55,7 @@ pub enum ValidationError {
         /// Target step.
         edge_to: String,
         /// Missing artifact type.
-        artifact_type: String,
+        artifact_type: Term,
     },
     /// A conditional edge references a goal step as its source.
     InvalidGuardOnGoalStep {
@@ -180,7 +180,7 @@ fn check_edges(
     }
 }
 
-fn source_produces_artifact(step: &Step, artifact_type: &str) -> bool {
+fn source_produces_artifact(step: &Step, artifact_type: &Term) -> bool {
     let StepKind::Op(operator) = &step.kind else {
         return false;
     };
@@ -189,12 +189,12 @@ fn source_produces_artifact(step: &Step, artifact_type: &str) -> bool {
         .resolution
         .requires_outputs
         .iter()
-        .any(|slot| slot.artifact_type_id == artifact_type)
+        .any(|slot| slot.artifact_type == *artifact_type)
         || operator.effects.iter().any(|effect| {
             matches!(
                 effect,
                 Effect::Assert(Proposition::Exists {
-                    artifact_type: crate::term::Term::ArtifactType(candidate),
+                    artifact_type: candidate,
                     ..
                 }) if candidate == artifact_type
             )
@@ -452,7 +452,7 @@ mod tests {
                 resolution: Resolution {
                     requires_inputs: vec![],
                     requires_outputs: vec![SlotConstraint {
-                        artifact_type_id: output.into(),
+                        artifact_type: Term::ArtifactType(output.into()),
                         required: true,
                     }],
                     scope_kind: None,
@@ -471,7 +471,7 @@ mod tests {
                 from: "a".into(),
                 to: "b".into(),
                 kind: EdgeKind::DataFlow {
-                    artifact_type: "summary".into(),
+                    artifact_type: Term::ArtifactType("summary".into()),
                 },
             }],
         };
@@ -487,7 +487,7 @@ mod tests {
                 from: "a".into(),
                 to: "missing".into(),
                 kind: EdgeKind::DataFlow {
-                    artifact_type: "other".into(),
+                    artifact_type: Term::ArtifactType("other".into()),
                 },
             }],
         };

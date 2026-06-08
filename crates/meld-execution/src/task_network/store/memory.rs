@@ -399,7 +399,7 @@ impl InMemoryTaskNetworkStore {
         }
         self.state
             .artifact_availability
-            .extend(outcome.artifacts.clone());
+            .extend(dispatch::artifact_availability_for_outcome(&outcome));
         self.state
             .outcomes
             .insert(outcome.outcome_id.clone(), outcome.clone());
@@ -408,10 +408,7 @@ impl InMemoryTaskNetworkStore {
             .publications
             .insert(publication.publication_id.clone(), publication.clone());
         self.state.set_revision_and_hash(revision);
-        self.journal.push(JournalRecord::Outcome {
-            outcome,
-            publication,
-        });
+        self.journal.push(JournalRecord::Outcome { publication });
         self.record_response(
             command_id,
             request_hash,
@@ -455,12 +452,7 @@ impl InMemoryTaskNetworkStore {
             );
         }
 
-        if current.network_id != publication.network_id
-            || current.task_instance_id != publication.task_instance_id
-            || current.outcome_id != publication.outcome_id
-            || current.event_type != publication.event_type
-            || current.event_payload != publication.event_payload
-        {
+        if current.network_id != publication.network_id || current.outcome != publication.outcome {
             return self.record_response(
                 command_id,
                 request_hash,
@@ -567,28 +559,40 @@ impl InMemoryTaskNetworkStore {
 
     pub(super) fn apply_journal_record_for_replay(
         &mut self,
+        revision: u64,
         stored: &StoredJournalRecord,
     ) -> Result<(), TaskNetworkStoreError> {
-        if stored.network_id != self.state.network_id {
+        if stored
+            .legacy_network_id
+            .as_ref()
+            .is_some_and(|network_id| network_id != &self.state.network_id)
+        {
             return Err(decode_error(format!(
                 "journal network '{}' does not match store '{}'",
-                stored.network_id, self.state.network_id
+                stored
+                    .legacy_network_id
+                    .as_deref()
+                    .expect("legacy network id was checked"),
+                self.state.network_id
             )));
         }
         let expected_revision = self.state.revision + 1;
-        if stored.revision != expected_revision {
+        if revision != expected_revision
+            || stored
+                .legacy_revision
+                .is_some_and(|legacy_revision| legacy_revision != revision)
+        {
             return Err(decode_error(format!(
                 "journal revision '{}' did not follow '{}'",
-                stored.revision, self.state.revision
+                revision, self.state.revision
             )));
         }
 
         match &stored.record {
             JournalRecord::Commit(record) => {
-                if record.network_id != stored.network_id
-                    || record.revision != stored.revision
+                if record.network_id != self.state.network_id
+                    || record.revision != revision
                     || record.previous_state_hash != self.state.state_hash
-                    || record.state_hash != stored.state_hash
                 {
                     return Err(decode_error("commit journal record metadata mismatch"));
                 }
@@ -609,8 +613,7 @@ impl InMemoryTaskNetworkStore {
                 dedupe_edges(&mut self.state.edges);
             }
             JournalRecord::Claim(claim) => {
-                if claim.network_id != stored.network_id || claim.claim_revision != stored.revision
-                {
+                if claim.network_id != self.state.network_id || claim.claim_revision != revision {
                     return Err(decode_error("claim journal record metadata mismatch"));
                 }
                 self.state.statuses.insert(
@@ -623,13 +626,11 @@ impl InMemoryTaskNetworkStore {
                     .claims
                     .insert(claim.claim_id.clone(), claim.clone());
             }
-            JournalRecord::Outcome {
-                outcome,
-                publication,
-            } => {
-                if publication.network_id != stored.network_id {
+            JournalRecord::Outcome { publication } => {
+                if publication.network_id != self.state.network_id {
                     return Err(decode_error("outcome journal record metadata mismatch"));
                 }
+                let outcome = &publication.outcome;
                 match outcome.status {
                     OutcomeStatus::Succeeded => {
                         self.state.statuses.insert(
@@ -654,7 +655,7 @@ impl InMemoryTaskNetworkStore {
                 }
                 self.state
                     .artifact_availability
-                    .extend(outcome.artifacts.clone());
+                    .extend(dispatch::artifact_availability_for_outcome(outcome));
                 self.state
                     .outcomes
                     .insert(outcome.outcome_id.clone(), outcome.clone());
@@ -663,7 +664,7 @@ impl InMemoryTaskNetworkStore {
                     .insert(publication.publication_id.clone(), publication.clone());
             }
             JournalRecord::Publication(publication) => {
-                if publication.network_id != stored.network_id {
+                if publication.network_id != self.state.network_id {
                     return Err(decode_error("publication journal record metadata mismatch"));
                 }
                 self.state
@@ -672,11 +673,27 @@ impl InMemoryTaskNetworkStore {
             }
         }
 
-        self.state.set_revision_and_hash(stored.revision);
-        if self.state.state_hash != stored.state_hash {
+        self.state.set_revision_and_hash(revision);
+        if let JournalRecord::Commit(record) = &stored.record {
+            if self.state.state_hash != record.state_hash {
+                return Err(decode_error(format!(
+                    "commit state hash '{}' did not match replayed '{}'",
+                    record.state_hash, self.state.state_hash
+                )));
+            }
+        }
+        if stored
+            .legacy_state_hash
+            .as_ref()
+            .is_some_and(|state_hash| state_hash != &self.state.state_hash)
+        {
             return Err(decode_error(format!(
                 "journal state hash '{}' did not match replayed '{}'",
-                stored.state_hash, self.state.state_hash
+                stored
+                    .legacy_state_hash
+                    .as_deref()
+                    .expect("legacy state hash was checked"),
+                self.state.state_hash
             )));
         }
         self.journal.push(stored.record.clone());
@@ -781,13 +798,13 @@ mod tests {
             .insert(mismatched_claim.claim_id.clone(), mismatched_claim.clone());
         mutated_state.set_revision_and_hash(1);
         let stored = StoredJournalRecord {
-            network_id: "network-docs".to_string(),
-            revision: 1,
-            state_hash: mutated_state.state_hash,
             record: JournalRecord::Claim(mismatched_claim.clone()),
+            legacy_network_id: Some("network-docs".to_string()),
+            legacy_revision: Some(1),
+            legacy_state_hash: Some(mutated_state.state_hash),
         };
         let mut store = InMemoryTaskNetworkStore::new("network-docs");
 
-        assert!(store.apply_journal_record_for_replay(&stored).is_err());
+        assert!(store.apply_journal_record_for_replay(1, &stored).is_err());
     }
 }

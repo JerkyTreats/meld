@@ -436,8 +436,8 @@ fn configured_bayesian_comparator_is_deterministic() {
 
     assert_eq!(first.revision, second.revision);
     assert_close(first.revision.posterior.probability, 0.4);
-    assert_close(first.revision.confidence, 0.6);
-    assert!(first.revision.confidence < 0.7);
+    assert_close(first.revision.planner_projection.confidence, 0.6);
+    assert!(first.revision.planner_projection.confidence < 0.7);
 }
 
 #[test]
@@ -472,7 +472,7 @@ fn configured_bayesian_comparator_uses_weights_reliability_and_precision() {
     .unwrap();
 
     assert_close(output.revision.posterior.probability, 0.525);
-    assert_close(output.revision.confidence, 0.475);
+    assert_close(output.revision.planner_projection.confidence, 0.475);
     assert_close(output.revision.uncertainty, 0.875);
     assert_close(output.revision.precision, 0.5);
     assert!(output
@@ -630,7 +630,7 @@ fn configured_bayesian_comparator_uses_prior_when_no_factor_matches() {
 
     assert!(output.revision.posterior.probability.is_finite());
     assert_close(output.revision.posterior.probability, 0.8);
-    assert_close(output.revision.confidence, 0.2);
+    assert_close(output.revision.planner_projection.confidence, 0.2);
 }
 
 #[test]
@@ -671,7 +671,7 @@ fn comparator_polarity_keeps_counterevidence_separate() {
     assert_eq!(output.revision.supporting_evidence_ids.len(), 0);
     assert_eq!(output.revision.contradicted_evidence_ids.len(), 1);
     assert_close(output.revision.posterior.probability, 0.775);
-    assert_close(output.revision.confidence, 0.225);
+    assert_close(output.revision.planner_projection.confidence, 0.225);
 }
 
 #[test]
@@ -695,7 +695,7 @@ fn belief_runtime_persists_revision_and_view() {
     assert_eq!(result.evidence_count, 1);
     assert_eq!(views.len(), 1);
     assert_eq!(views[0].status, BeliefStatus::Settled);
-    assert!(views[0].confidence < 0.7);
+    assert!(views[0].planner_projection.confidence < 0.7);
     assert_eq!(views[0].hydration.evidence_ids.len(), 1);
     assert_eq!(
         query
@@ -1147,7 +1147,7 @@ fn belief_content_written_follow_up_lowers_stale_posterior() {
 
     assert_eq!(result.evidence_count, 1);
     assert!(second.posterior.probability < first.posterior.probability);
-    assert!(second.confidence > first.confidence);
+    assert!(second.planner_projection.confidence > first.planner_projection.confidence);
     assert!(!second.freshness.stale);
     assert_eq!(history.len(), 2);
     assert_eq!(history[1].prior_revision_id, first.current_revision_id);
@@ -1183,7 +1183,7 @@ fn belief_planner_boundary_uses_view_only() {
     fn planner_read(view: &meld_world_model::BeliefView) -> (String, f64, bool, BeliefStatus) {
         (
             view.key.subject.index_key(),
-            view.confidence,
+            view.planner_projection.confidence,
             view.freshness.stale,
             view.status.clone(),
         )
@@ -1289,7 +1289,6 @@ fn belief_view_projection_uses_confidence_threshold_boundary() {
         .unwrap()
         .remove(0);
     let mut revision = test_revision(&view, 1, 1);
-    revision.confidence = 0.7;
     revision.planner_projection.confidence = 0.7;
     revision.planner_projection.threshold = 0.7;
 
@@ -1305,7 +1304,6 @@ fn belief_view_projection_uses_confidence_threshold_boundary() {
 
     assert_eq!(projected.advisory_posture, "ready");
 
-    revision.confidence = 0.69;
     revision.planner_projection.confidence = 0.69;
 
     let projected = belief_store.project_view(
@@ -1525,6 +1523,29 @@ fn belief_public_records_round_trip_through_serde() {
         reason: meld_world_model::DirtyReason::NewEvidence,
     };
     let promoted = promoted_content_record(node, 2);
+    let view_json = serde_json::to_value(&view).unwrap();
+    let revision_json = serde_json::to_value(&revision).unwrap();
+
+    assert!(view_json.get("perspective").is_none());
+    assert!(view_json.get("branch_scope").is_none());
+    assert!(view_json.get("confidence").is_none());
+    assert!(view_json
+        .get("key")
+        .and_then(|key| key.get("perspective"))
+        .is_some());
+    assert!(view_json
+        .get("key")
+        .and_then(|key| key.get("branch_scope"))
+        .is_some());
+    assert!(view_json
+        .get("planner_projection")
+        .and_then(|projection| projection.get("confidence"))
+        .is_some());
+    assert!(revision_json.get("confidence").is_none());
+    assert!(revision_json
+        .get("planner_projection")
+        .and_then(|projection| projection.get("confidence"))
+        .is_some());
 
     assert_eq!(
         serde_json::from_str::<meld_world_model::BeliefView>(
@@ -1573,7 +1594,6 @@ fn test_revision(view: &meld_world_model::BeliefView, start: u64, end: u64) -> B
             confidence: 0.5,
             threshold: 0.7,
         },
-        confidence: 0.5,
         uncertainty: 0.5,
         precision: 0.5,
         freshness: FreshnessState {

@@ -119,17 +119,11 @@ pub struct Inject {
     pub task_node: state::TaskNode,
     /// Dependency edges entering the task node.
     pub incoming_edges: Vec<state::DependencyEdge>,
-    /// Planning lineage copied from the task node.
-    pub lineage: state::TaskLineage,
 }
 
 impl Inject {
     /// Creates an inject mutation and derives its stable id.
-    pub fn new(
-        task_node: state::TaskNode,
-        incoming_edges: Vec<state::DependencyEdge>,
-        lineage: state::TaskLineage,
-    ) -> Self {
+    pub fn new(task_node: state::TaskNode, incoming_edges: Vec<state::DependencyEdge>) -> Self {
         #[derive(Serialize)]
         struct Identity<'a> {
             task_instance_id: &'a str,
@@ -144,7 +138,7 @@ impl Inject {
                 task_instance_id: &task_node.task_instance_id,
                 lifecycle_epoch: task_node.lifecycle_epoch,
                 incoming_edges: &incoming_edges,
-                lineage: &lineage,
+                lineage: &task_node.lineage,
             },
         );
 
@@ -152,7 +146,6 @@ impl Inject {
             mutation_id,
             task_node,
             incoming_edges,
-            lineage,
         }
     }
 }

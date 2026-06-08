@@ -28,8 +28,6 @@ pub enum JournalRecord {
     Claim(dispatch::Claim),
     /// Accepted task outcome and pending publication handoff.
     Outcome {
-        /// Task outcome record.
-        outcome: dispatch::Outcome,
         /// Pending publication created for the outcome.
         publication: Publication,
     },

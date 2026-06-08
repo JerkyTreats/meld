@@ -54,7 +54,9 @@
               "requires_inputs": [],
               "requires_outputs": [
                 {
-                  "artifact_type_id": "docs_patch",
+                  "artifact_type": {
+                    "ArtifactType": "docs_patch"
+                  },
                   "required": true
                 }
               ],

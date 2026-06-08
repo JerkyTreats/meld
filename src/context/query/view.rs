@@ -129,8 +129,6 @@ impl ContextViewBuilder {
 /// Contains the node record and selected frames based on the context view policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeContext {
-    /// The NodeID for this context
-    pub node_id: NodeID,
     /// The node record (metadata, path, children, etc.)
     pub node_record: NodeRecord,
     /// Selected frames based on the view policy
@@ -140,6 +138,11 @@ pub struct NodeContext {
 }
 
 impl NodeContext {
+    /// Get the NodeID from the contained node record.
+    pub fn node_id(&self) -> NodeID {
+        self.node_record.node_id
+    }
+
     /// Get all frame contents as UTF-8 strings
     ///
     /// Filters out frames with invalid UTF-8 content.
@@ -223,5 +226,36 @@ impl NodeContext {
             .iter()
             .filter(|f| f.is_type(frame_type))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::NodeType;
+    use std::path::PathBuf;
+
+    #[test]
+    fn node_context_derives_node_id_from_record() {
+        let node_id = [7u8; 32];
+        let context = NodeContext {
+            node_record: NodeRecord {
+                node_id,
+                path: PathBuf::from("src/lib.rs"),
+                node_type: NodeType::File {
+                    size: 0,
+                    content_hash: [1u8; 32],
+                },
+                children: Vec::new(),
+                parent: None,
+                frame_set_root: None,
+                metadata: Default::default(),
+                tombstoned_at: None,
+            },
+            frames: Vec::new(),
+            frame_count: 0,
+        };
+
+        assert_eq!(context.node_id(), node_id);
     }
 }

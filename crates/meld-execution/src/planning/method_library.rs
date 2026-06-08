@@ -381,10 +381,13 @@ fn contract_satisfies_operator(
         .iter()
         .filter(|constraint| constraint.required)
         .all(|constraint| {
+            let Some(required_artifact_type) = artifact_type_id(&constraint.artifact_type) else {
+                return false;
+            };
             contract.input_contract.iter().any(|slot| {
                 slot.accepted_artifact_type_ids
                     .iter()
-                    .any(|artifact_type| artifact_type == &constraint.artifact_type_id)
+                    .any(|artifact_type| artifact_type == required_artifact_type)
             })
         });
     let output_ok = operator
@@ -393,12 +396,22 @@ fn contract_satisfies_operator(
         .iter()
         .filter(|constraint| constraint.required)
         .all(|constraint| {
+            let Some(required_artifact_type) = artifact_type_id(&constraint.artifact_type) else {
+                return false;
+            };
             contract
                 .output_contract
                 .iter()
-                .any(|slot| slot.artifact_type_id == constraint.artifact_type_id)
+                .any(|slot| slot.artifact_type_id == required_artifact_type)
         });
     input_ok && output_ok
+}
+
+fn artifact_type_id(term: &Term) -> Option<&str> {
+    match term {
+        Term::ArtifactType(artifact_type_id) => Some(artifact_type_id.as_str()),
+        _ => None,
+    }
 }
 
 fn invalid_report(

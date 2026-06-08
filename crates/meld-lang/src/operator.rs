@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{cost::CostEstimate, effect::Effect, proposition::Proposition};
+use crate::{cost::CostEstimate, effect::Effect, proposition::Proposition, term::Term};
 
 /// Runtime-constructed operator contract.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -42,7 +42,7 @@ pub struct Resolution {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SlotConstraint {
     /// Artifact type identity.
-    pub artifact_type_id: String,
+    pub artifact_type: Term,
     /// Whether the slot is required.
     pub required: bool,
 }
@@ -80,7 +80,7 @@ mod tests {
             resolution: Resolution {
                 requires_inputs: vec![],
                 requires_outputs: vec![SlotConstraint {
-                    artifact_type_id: "summary".into(),
+                    artifact_type: Term::ArtifactType("summary".into()),
                     required: true,
                 }],
                 scope_kind: Some("filesystem".into()),

@@ -5,6 +5,7 @@
 
 use crate::api::ContextApi;
 use crate::context::generation::contracts::GeneratedMetadataBuilder;
+use crate::context::generation::plan::GenerationTarget;
 use crate::context::generation::{TargetExecutionProgram, TargetExecutionProgramKind};
 use crate::control::compatibility::execute_target_request;
 use crate::error::ApiError;
@@ -213,14 +214,17 @@ impl RequestIdentity {
     }
 
     fn from_request(request: &GenerationRequest) -> Self {
+        Self::from_target(&request.target).expect("request identity fingerprint must be encodable")
+    }
+
+    fn from_target(target: &GenerationTarget) -> Result<Self, ApiError> {
         Self::new(
-            request.node_id,
-            &request.agent_id,
-            &request.provider,
-            &request.frame_type,
-            &request.program,
+            target.node_id,
+            &target.agent_id,
+            &target.provider,
+            &target.frame_type,
+            &target.program,
         )
-        .expect("request identity fingerprint must be encodable")
     }
 }
 
@@ -289,16 +293,8 @@ impl QueueWaiter {
 pub struct GenerationRequest {
     /// Request ID for tracking completion
     pub request_id: RequestId,
-    /// NodeID to generate frame for
-    pub node_id: NodeID,
-    /// Agent ID that will generate the frame
-    pub agent_id: String,
-    /// Provider selection and runtime overrides to use for generation
-    pub provider: ProviderExecutionBinding,
-    /// Frame type to generate
-    pub frame_type: String,
-    /// Execution program for the target item
-    pub program: TargetExecutionProgram,
+    /// Canonical generation target for this queue handoff
+    pub target: GenerationTarget,
     /// Priority level (higher = more important)
     pub priority: Priority,
     /// Number of retry attempts made
@@ -315,11 +311,7 @@ impl Clone for GenerationRequest {
     fn clone(&self) -> Self {
         Self {
             request_id: self.request_id,
-            node_id: self.node_id,
-            agent_id: self.agent_id.clone(),
-            provider: self.provider.clone(),
-            frame_type: self.frame_type.clone(),
-            program: self.program.clone(),
+            target: self.target.clone(),
             priority: self.priority,
             retry_count: self.retry_count,
             created_at: self.created_at,
@@ -336,6 +328,28 @@ impl PartialEq for GenerationRequest {
 }
 
 impl Eq for GenerationRequest {}
+
+impl GenerationRequest {
+    pub fn node_id(&self) -> NodeID {
+        self.target.node_id
+    }
+
+    pub fn agent_id(&self) -> &str {
+        &self.target.agent_id
+    }
+
+    pub fn provider(&self) -> &ProviderExecutionBinding {
+        &self.target.provider
+    }
+
+    pub fn frame_type(&self) -> &str {
+        &self.target.frame_type
+    }
+
+    pub fn program(&self) -> &TargetExecutionProgram {
+        &self.target.program
+    }
+}
 
 impl Ord for GenerationRequest {
     /// Order by priority (higher first), then by creation time (older first for same priority)
@@ -598,13 +612,16 @@ impl FrameGenerationQueue {
         // Use provided frame_type or default to "context-{agent_id}"
         let frame_type = resolved_frame_type;
 
-        let request = GenerationRequest {
-            request_id,
+        let target = GenerationTarget {
             node_id,
             agent_id: agent_id.clone(),
             provider: provider.clone(),
             frame_type: frame_type.clone(),
             program,
+        };
+        let request = GenerationRequest {
+            request_id,
+            target,
             priority,
             retry_count: 0,
             created_at: Instant::now(),
@@ -688,19 +705,31 @@ impl FrameGenerationQueue {
         timeout: Option<Duration>,
         options: GenerationRequestOptions,
     ) -> Result<FrameID, ApiError> {
+        let resolved_frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
+        let target = GenerationTarget {
+            node_id,
+            agent_id,
+            provider,
+            frame_type: resolved_frame_type,
+            program,
+        };
+        self.enqueue_and_wait_target(target, priority, timeout, options)
+            .await
+    }
+
+    pub async fn enqueue_and_wait_target(
+        &self,
+        target: GenerationTarget,
+        priority: Priority,
+        timeout: Option<Duration>,
+        options: GenerationRequestOptions,
+    ) -> Result<FrameID, ApiError> {
         let (started_tx, started_rx) = oneshot::channel();
         let (tx, rx) = oneshot::channel();
         let mut queue = self.queue.lock().await;
         let mut dedupe = self.dedupe_index.lock().await;
 
-        let resolved_frame_type = frame_type.unwrap_or_else(|| format!("context-{}", agent_id));
-        let identity = RequestIdentity::new(
-            node_id,
-            &agent_id,
-            &provider,
-            &resolved_frame_type,
-            &program,
-        )?;
+        let identity = RequestIdentity::from_target(&target)?;
 
         if let Some(existing_entry) = dedupe.get_mut(&identity) {
             existing_entry.push_waiter(QueueWaiter::new(started_tx, tx));
@@ -710,10 +739,10 @@ impl FrameGenerationQueue {
             self.emit_queue_event(
                 "request_deduplicated",
                 QueueEventData {
-                    node_id: hex::encode(node_id),
-                    agent_id,
-                    provider_name: provider.provider_name.clone(),
-                    frame_type: resolved_frame_type,
+                    node_id: hex::encode(target.node_id),
+                    agent_id: target.agent_id,
+                    provider_name: target.provider.provider_name.clone(),
+                    frame_type: target.frame_type,
                     request_id: Some(existing_id.as_u64()),
                     retry_count: None,
                     duration_ms: None,
@@ -725,16 +754,16 @@ impl FrameGenerationQueue {
         }
 
         if !options.force {
-            if let Some(existing_head) = self.api.get_head(&node_id, &resolved_frame_type)? {
+            if let Some(existing_head) = self.api.get_head(&target.node_id, &target.frame_type)? {
                 drop(dedupe);
                 drop(queue);
                 self.emit_queue_event(
                     "request_deduplicated",
                     QueueEventData {
-                        node_id: hex::encode(node_id),
-                        agent_id,
-                        provider_name: provider.provider_name.clone(),
-                        frame_type: resolved_frame_type,
+                        node_id: hex::encode(target.node_id),
+                        agent_id: target.agent_id,
+                        provider_name: target.provider.provider_name.clone(),
+                        frame_type: target.frame_type,
                         request_id: None,
                         retry_count: None,
                         duration_ms: None,
@@ -756,15 +785,9 @@ impl FrameGenerationQueue {
         }
 
         let request_id = RequestId::next();
-        let frame_type = resolved_frame_type;
-
         let request = GenerationRequest {
             request_id,
-            node_id,
-            agent_id: agent_id.clone(),
-            provider: provider.clone(),
-            frame_type: frame_type.clone(),
-            program,
+            target: target.clone(),
             priority,
             retry_count: 0,
             created_at: Instant::now(),
@@ -789,19 +812,19 @@ impl FrameGenerationQueue {
 
         debug!(
             request_id = ?request_id,
-            node_id = %hex::encode(node_id),
-            agent_id = %agent_id,
-            provider_name = %provider.provider_name,
+            node_id = %hex::encode(target.node_id),
+            agent_id = %target.agent_id,
+            provider_name = %target.provider.provider_name,
             priority = ?priority,
             "Enqueued sync generation request"
         );
         self.emit_queue_event(
             "request_enqueued",
             QueueEventData {
-                node_id: hex::encode(node_id),
-                agent_id: agent_id.clone(),
-                provider_name: provider.provider_name.clone(),
-                frame_type: frame_type.clone(),
+                node_id: hex::encode(target.node_id),
+                agent_id: target.agent_id,
+                provider_name: target.provider.provider_name.clone(),
+                frame_type: target.frame_type,
                 request_id: Some(request_id.as_u64()),
                 retry_count: Some(0),
                 duration_ms: None,
@@ -893,13 +916,16 @@ impl FrameGenerationQueue {
             }
 
             let request_id = RequestId::next();
-            let request = GenerationRequest {
-                request_id,
+            let target = GenerationTarget {
                 node_id,
                 agent_id: agent_id.clone(),
                 provider,
                 frame_type: frame_type.clone(),
                 program: program.clone(),
+            };
+            let request = GenerationRequest {
+                request_id,
+                target,
                 priority,
                 retry_count: 0,
                 created_at: Instant::now(),
@@ -928,10 +954,10 @@ impl FrameGenerationQueue {
         for (identity, request) in new_requests {
             let request_id = request.request_id;
             enqueue_events.push(QueueEventData {
-                node_id: hex::encode(request.node_id),
-                agent_id: request.agent_id.clone(),
-                provider_name: request.provider.provider_name.clone(),
-                frame_type: request.frame_type.clone(),
+                node_id: hex::encode(request.node_id()),
+                agent_id: request.agent_id().to_string(),
+                provider_name: request.provider().provider_name.clone(),
+                frame_type: request.frame_type().to_string(),
                 request_id: Some(request_id.as_u64()),
                 retry_count: Some(request.retry_count),
                 duration_ms: None,
@@ -1158,10 +1184,10 @@ impl FrameGenerationQueue {
                 event_context.clone(),
                 "request_processing",
                 QueueEventData {
-                    node_id: hex::encode(request.node_id),
-                    agent_id: request.agent_id.clone(),
-                    provider_name: request.provider.provider_name.clone(),
-                    frame_type: request.frame_type.clone(),
+                    node_id: hex::encode(request.node_id()),
+                    agent_id: request.agent_id().to_string(),
+                    provider_name: request.provider().provider_name.clone(),
+                    frame_type: request.frame_type().to_string(),
                     request_id: Some(request.request_id.as_u64()),
                     retry_count: Some(request.retry_count),
                     duration_ms: None,
@@ -1172,9 +1198,11 @@ impl FrameGenerationQueue {
             // We need to clone the Arc references, not the limiter itself
             let (semaphore, last_request, min_delay) = {
                 let mut limiters = rate_limiters.write();
-                let limiter = limiters.entry(request.agent_id.clone()).or_insert_with(|| {
-                    AgentRateLimiter::new(config.max_concurrent_per_agent, config.rate_limit_ms)
-                });
+                let limiter = limiters
+                    .entry(request.agent_id().to_string())
+                    .or_insert_with(|| {
+                        AgentRateLimiter::new(config.max_concurrent_per_agent, config.rate_limit_ms)
+                    });
                 (
                     Arc::clone(&limiter.semaphore),
                     Arc::clone(&limiter.last_request),
@@ -1191,12 +1219,12 @@ impl FrameGenerationQueue {
             let request_identity = RequestIdentity::from_request(&request);
 
             // Acquire rate limiter permit
-            let _permit = match rate_limiter.acquire(&request.agent_id).await {
+            let _permit = match rate_limiter.acquire(request.agent_id()).await {
                 Ok(permit) => permit,
                 Err(e) => {
                     error!(
                         worker_id,
-                        agent_id = %request.agent_id,
+                        agent_id = %request.agent_id(),
                         error = %e,
                         "Failed to acquire rate limiter permit"
                     );
@@ -1241,15 +1269,15 @@ impl FrameGenerationQueue {
                     Err(err) => {
                         // Check if we should retry
                         let retry = request.retry_count < config.max_retry_attempts
-                            && Self::is_retryable_error(&request.program, err);
+                            && Self::is_retryable_error(request.program(), err);
                         if retry {
                             // Will update stats after re-queuing
                         } else {
                             stats_guard.failed += 1;
                             error!(
                                 worker_id,
-                                node_id = %hex::encode(request.node_id),
-                                agent_id = %request.agent_id,
+                                node_id = %hex::encode(request.node_id()),
+                                agent_id = %request.agent_id(),
                                 retry_count = request.retry_count,
                                 error = %err,
                                 "Generation request failed permanently"
@@ -1281,10 +1309,10 @@ impl FrameGenerationQueue {
                     event_context.clone(),
                     "provider_request_retrying",
                     ProviderLifecycleEventData {
-                        node_id: hex::encode(request.node_id),
-                        agent_id: request.agent_id.clone(),
-                        provider_name: request.provider.provider_name.clone(),
-                        frame_type: request.frame_type.clone(),
+                        node_id: hex::encode(request.node_id()),
+                        agent_id: request.agent_id().to_string(),
+                        provider_name: request.provider().provider_name.clone(),
+                        frame_type: request.frame_type().to_string(),
                         duration_ms: None,
                         error: None,
                         retry_count: Some(request.retry_count + 1),

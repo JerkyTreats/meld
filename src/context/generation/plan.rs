@@ -39,6 +39,15 @@ pub enum FailurePolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerationTarget {
+    pub node_id: NodeID,
+    pub agent_id: String,
+    pub provider: ProviderExecutionBinding,
+    pub frame_type: String,
+    pub program: TargetExecutionProgram,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationItem {
     pub node_id: NodeID,
     pub path: String,
@@ -48,6 +57,18 @@ pub struct GenerationItem {
     pub frame_type: String,
     pub force: bool,
     pub program: TargetExecutionProgram,
+}
+
+impl GenerationItem {
+    pub fn target(&self) -> GenerationTarget {
+        GenerationTarget {
+            node_id: self.node_id,
+            agent_id: self.agent_id.clone(),
+            provider: self.provider.clone(),
+            frame_type: self.frame_type.clone(),
+            program: self.program.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,5 +213,17 @@ mod tests {
         assert_eq!(decoded.plan_id, plan.plan_id);
         assert_eq!(decoded.total_nodes, plan.total_nodes);
         assert_eq!(decoded.total_levels, plan.total_levels);
+    }
+
+    #[test]
+    fn generation_item_exposes_canonical_target() {
+        let item = test_item();
+        let target = item.target();
+
+        assert_eq!(target.node_id, item.node_id);
+        assert_eq!(target.agent_id, item.agent_id);
+        assert_eq!(target.provider, item.provider);
+        assert_eq!(target.frame_type, item.frame_type);
+        assert_eq!(target.program, item.program);
     }
 }

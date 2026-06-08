@@ -94,7 +94,7 @@ fn docs_method(method_id: &str, preference: u32, time_ms: u64) -> Method {
                     resolution: Resolution {
                         requires_inputs: vec![],
                         requires_outputs: vec![SlotConstraint {
-                            artifact_type_id: "docs_patch".to_string(),
+                            artifact_type: Term::ArtifactType("docs_patch".to_string()),
                             required: true,
                         }],
                         scope_kind: Some("filesystem".to_string()),
@@ -327,11 +327,11 @@ fn catalog_scan_requires_input_and_output_contracts_to_match() {
         panic!("expected operator");
     };
     operator.resolution.requires_inputs = vec![SlotConstraint {
-        artifact_type_id: "missing_input".to_string(),
+        artifact_type: Term::ArtifactType("missing_input".to_string()),
         required: true,
     }];
     operator.resolution.requires_outputs = vec![SlotConstraint {
-        artifact_type_id: "docs_patch".to_string(),
+        artifact_type: Term::ArtifactType("docs_patch".to_string()),
         required: true,
     }];
 

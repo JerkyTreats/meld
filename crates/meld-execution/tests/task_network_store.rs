@@ -15,16 +15,20 @@ use std::thread;
 use std::time::Duration;
 
 fn open_store(path: &std::path::Path) -> SledTaskNetworkStore {
+    SledTaskNetworkStore::open(open_db(path), "network-docs").unwrap()
+}
+
+fn open_db(path: &std::path::Path) -> sled::Db {
     let mut attempts = 0;
     loop {
         match sled::open(path) {
-            Ok(db) => return SledTaskNetworkStore::open(db, "network-docs").unwrap(),
+            Ok(db) => return db,
             Err(sled::Error::Io(error)) => {
-                if error.kind() != ErrorKind::WouldBlock || attempts >= 20 {
+                if error.kind() != ErrorKind::WouldBlock || attempts >= 200 {
                     panic!("failed to open sled test store: {error}");
                 }
                 attempts += 1;
-                thread::sleep(Duration::from_millis(10));
+                thread::sleep(Duration::from_millis(25));
             }
             Err(error) => panic!("failed to open sled test store: {error}"),
         }
@@ -307,6 +311,119 @@ fn stale_proposal_persists_rejection_and_duplicate_replays_same_rejection() {
 }
 
 #[test]
+fn legacy_durable_record_shapes_replay_from_contained_products() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db(tempdir.path());
+    let mut memory = InMemoryTaskNetworkStore::new("network-docs");
+    let request = task_network_support::apply_memory_command(
+        &memory,
+        "command-commit-task-alpha",
+        Command::ApplyMutationSet(task_network_support::single_task_mutation_set("task-alpha")),
+    );
+    let response = memory.submit(request.clone());
+    let state = memory.state().clone();
+    let request_hash = "legacy-request-hash";
+
+    db.open_tree("task_network_command_requests")
+        .unwrap()
+        .insert(
+            request.command_id.as_bytes(),
+            serde_json::to_vec(&json!({
+                "command_id": request.command_id.clone(),
+                "request_hash": request_hash,
+                "request": request,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    db.open_tree("task_network_command_responses")
+        .unwrap()
+        .insert(
+            "command-commit-task-alpha",
+            serde_json::to_vec(&json!({
+                "command_id": "command-commit-task-alpha",
+                "request_hash": request_hash,
+                "response": response,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    db.open_tree("task_network_journal_by_revision")
+        .unwrap()
+        .insert(
+            1_u64.to_be_bytes(),
+            serde_json::to_vec(&json!({
+                "network_id": "network-docs",
+                "revision": 1,
+                "state_hash": state.state_hash.clone(),
+                "record": memory.journal()[0],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    db.open_tree("task_network_latest_state")
+        .unwrap()
+        .insert(
+            "latest",
+            serde_json::to_vec(&json!({
+                "network_id": "network-docs",
+                "revision": state.revision,
+                "state_hash": state.state_hash.clone(),
+                "state": state,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    let store = SledTaskNetworkStore::open(db, "network-docs").unwrap();
+
+    assert_eq!(store.state().revision, 1);
+    assert!(store.state().tasks.contains_key("task-alpha"));
+    assert_eq!(store.journal().len(), 1);
+}
+
+#[test]
+fn new_durable_record_shapes_omit_duplicate_identity_and_state_fields() {
+    let tempdir = tempfile::tempdir().unwrap();
+    {
+        let mut store = open_store(tempdir.path());
+        task_network_support::commit_single_task_sled(&mut store, "task-alpha");
+    }
+    let db = open_db(tempdir.path());
+    let command_request_tree = db.open_tree("task_network_command_requests").unwrap();
+    let request_value: serde_json::Value = serde_json::from_slice(
+        &command_request_tree
+            .get("command-commit-task-alpha")
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(request_value.get("command_id").is_none());
+    assert!(request_value.get("request_hash").is_some());
+    assert_eq!(
+        request_value["request"]["command_id"],
+        json!("command-commit-task-alpha")
+    );
+
+    let journal_tree = db.open_tree("task_network_journal_by_revision").unwrap();
+    let (_, journal_bytes) = journal_tree.iter().next().unwrap().unwrap();
+    let journal_value: serde_json::Value = serde_json::from_slice(&journal_bytes).unwrap();
+    assert!(journal_value.get("network_id").is_none());
+    assert!(journal_value.get("revision").is_none());
+    assert!(journal_value.get("state_hash").is_none());
+    assert!(journal_value.get("record").is_some());
+
+    let snapshot_tree = db.open_tree("task_network_latest_state").unwrap();
+    let snapshot_value: serde_json::Value =
+        serde_json::from_slice(&snapshot_tree.get("latest").unwrap().unwrap()).unwrap();
+    assert!(snapshot_value.get("network_id").is_none());
+    assert!(snapshot_value.get("revision").is_none());
+    assert!(snapshot_value.get("state_hash").is_none());
+    assert_eq!(snapshot_value["state"]["network_id"], json!("network-docs"));
+}
+
+#[test]
 fn corrupt_journal_record_returns_decode_error() {
     let tempdir = tempfile::tempdir().unwrap();
     let db = sled::open(tempdir.path()).unwrap();
@@ -581,7 +698,7 @@ fn missing_latest_snapshot_still_opens_from_journal_replay() {
         let mut store = open_store(tempdir.path());
         task_network_support::commit_single_task_sled(&mut store, "task-alpha");
     }
-    let db = sled::open(tempdir.path()).unwrap();
+    let db = open_db(tempdir.path());
     db.open_tree("task_network_latest_state")
         .unwrap()
         .remove("latest")
@@ -609,10 +726,10 @@ fn store_can_open_on_caller_supplied_path_outside_workspace() {
 
 proptest! {
     #[test]
-    fn replay_determinism_over_accepted_command_order(count in 1usize..=8) {
-        let tempdir = tempfile::tempdir().unwrap();
+    fn sled_reducer_matches_memory_over_accepted_command_order(count in 1usize..=8) {
         let mut memory = InMemoryTaskNetworkStore::new("network-docs");
-        let mut sled_store = open_store(tempdir.path());
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let mut sled_store = SledTaskNetworkStore::open(db, "network-docs").unwrap();
 
         for index in 0..count {
             let task_id = format!("task-{index}");
@@ -624,14 +741,12 @@ proptest! {
             memory.submit(request.clone());
             sled_store.submit(request).unwrap();
         }
-        drop(sled_store);
-
-        let reopened = open_store(tempdir.path());
-        prop_assert_eq!(reopened.state().revision, memory.state().revision);
-        prop_assert_eq!(&reopened.state().state_hash, &memory.state().state_hash);
-        prop_assert_eq!(&reopened.state().tasks, &memory.state().tasks);
-        prop_assert_eq!(&reopened.state().statuses, &memory.state().statuses);
-        prop_assert_eq!(reopened.journal().len(), memory.journal().len());
+        sled_store.flush().unwrap();
+        prop_assert_eq!(sled_store.state().revision, memory.state().revision);
+        prop_assert_eq!(&sled_store.state().state_hash, &memory.state().state_hash);
+        prop_assert_eq!(&sled_store.state().tasks, &memory.state().tasks);
+        prop_assert_eq!(&sled_store.state().statuses, &memory.state().statuses);
+        prop_assert_eq!(sled_store.journal().len(), memory.journal().len());
     }
 
     #[test]

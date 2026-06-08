@@ -1,4 +1,5 @@
 use meld::error::ApiError;
+use meld::metadata::prompt_link_contract::PromptLinkContractV1;
 use meld::prompt_context::{
     prepare_generated_lineage, PromptContextArtifactStorage, PromptContextLineageInput,
 };
@@ -37,12 +38,9 @@ fn context_lineage_maps_to_valid_prompt_link_record() {
             rendered_prompt: "rendered".to_string(),
             context_payload: "context".to_string(),
         },
-        "writer",
-        "provider",
-        "model",
-        "local",
     )
     .unwrap();
+    let prompt_link_contract = PromptLinkContractV1::from_lineage(&prepared.lineage);
 
     let input = PromptLinkRecordInputV1 {
         thread_id: "thread-a".to_string(),
@@ -52,7 +50,7 @@ fn context_lineage_maps_to_valid_prompt_link_record() {
         created_at_ms: 1,
     };
 
-    let record = prompt_link_record_from_contract_v1(&prepared.prompt_link_contract, &input);
+    let record = prompt_link_record_from_contract_v1(&prompt_link_contract, &input);
     validate_prompt_link_record_v1(&record).unwrap();
 }
 

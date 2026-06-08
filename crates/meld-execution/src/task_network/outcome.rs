@@ -15,24 +15,18 @@
 //! ```
 
 use crate::task_network::{contracts::stable_id, dispatch};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 /// Durable publication outbox entry for one task outcome.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Publication {
     /// Stable publication id.
     pub publication_id: String,
     /// Stable task network identifier.
     pub network_id: String,
-    /// Task instance that produced the outcome.
-    pub task_instance_id: String,
-    /// Outcome id represented by this publication.
-    pub outcome_id: String,
-    /// Event type to publish through the execution event surface.
-    pub event_type: String,
-    /// Serialized event payload.
-    pub event_payload: Value,
+    /// Task outcome represented by this publication.
+    pub outcome: dispatch::Outcome,
     /// Current publication state.
     pub state: PublicationState,
 }
@@ -47,12 +41,6 @@ impl Publication {
             task_instance_id: &'a str,
         }
 
-        let event_type = match outcome.status {
-            dispatch::OutcomeStatus::Succeeded => "execution.task.succeeded",
-            dispatch::OutcomeStatus::Failed => "execution.task.failed",
-        }
-        .to_string();
-
         Self {
             publication_id: stable_id(
                 "task-network-publication",
@@ -63,13 +51,87 @@ impl Publication {
                 },
             ),
             network_id: network_id.to_string(),
-            task_instance_id: outcome.task_instance_id.clone(),
-            outcome_id: outcome.outcome_id.clone(),
-            event_type,
-            event_payload: serde_json::to_value(outcome)
-                .expect("task network outcome is serializable"),
+            outcome: outcome.clone(),
             state: PublicationState::Pending,
         }
+    }
+
+    /// Returns the execution event type represented by this publication.
+    pub fn event_type(&self) -> &'static str {
+        event_type_for_status(&self.outcome.status)
+    }
+
+    /// Returns the execution event payload represented by this publication.
+    pub fn event_payload(&self) -> Value {
+        serde_json::to_value(&self.outcome).expect("task network outcome is serializable")
+    }
+}
+
+impl<'de> Deserialize<'de> for Publication {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        if value.get("outcome").is_some() {
+            #[derive(Deserialize)]
+            struct Wire {
+                publication_id: String,
+                network_id: String,
+                outcome: dispatch::Outcome,
+                state: PublicationState,
+            }
+
+            let wire: Wire = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+            return Ok(Self {
+                publication_id: wire.publication_id,
+                network_id: wire.network_id,
+                outcome: wire.outcome,
+                state: wire.state,
+            });
+        }
+
+        #[derive(Deserialize)]
+        struct LegacyWire {
+            publication_id: String,
+            network_id: String,
+            task_instance_id: String,
+            outcome_id: String,
+            event_type: String,
+            event_payload: dispatch::Outcome,
+            state: PublicationState,
+        }
+
+        let wire: LegacyWire = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        if wire.task_instance_id != wire.event_payload.task_instance_id {
+            return Err(serde::de::Error::custom(
+                "legacy publication task identity mismatch",
+            ));
+        }
+        if wire.outcome_id != wire.event_payload.outcome_id {
+            return Err(serde::de::Error::custom(
+                "legacy publication outcome identity mismatch",
+            ));
+        }
+        if wire.event_type != event_type_for_status(&wire.event_payload.status) {
+            return Err(serde::de::Error::custom(
+                "legacy publication event type mismatch",
+            ));
+        }
+
+        Ok(Self {
+            publication_id: wire.publication_id,
+            network_id: wire.network_id,
+            outcome: wire.event_payload,
+            state: wire.state,
+        })
+    }
+}
+
+fn event_type_for_status(status: &dispatch::OutcomeStatus) -> &'static str {
+    match status {
+        dispatch::OutcomeStatus::Succeeded => "execution.task.succeeded",
+        dispatch::OutcomeStatus::Failed => "execution.task.failed",
     }
 }
 

@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{condition::Condition, operator::Operator, proposition::Proposition};
+use crate::{condition::Condition, operator::Operator, proposition::Proposition, term::Term};
 
 /// Directed graph of planning steps and typed dependencies.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -54,7 +54,7 @@ pub enum EdgeKind {
     /// Artifact type data flow dependency.
     DataFlow {
         /// Artifact type carried by this edge.
-        artifact_type: String,
+        artifact_type: Term,
     },
     /// Conditional activation based on a source output field.
     Conditional {

@@ -36,21 +36,15 @@ fn event_runtime() -> (tempfile::TempDir, EventRuntime) {
 }
 
 fn runtime_event(seq: u64, session: &str, event_type: &str) -> EventRecord {
-    EventRecord {
-        ts: RECORDED_AT.to_string(),
-        recorded_at: RECORDED_AT.to_string(),
-        record_id: None,
-        session: session.to_string(),
+    EventRecord::from_envelope(
+        EventEnvelope::new(
+            RECORDED_AT.to_string(),
+            session.to_string(),
+            event_type,
+            json!({ "seq": seq }),
+        ),
         seq,
-        domain_id: "telemetry".to_string(),
-        stream_id: session.to_string(),
-        event_type: event_type.to_string(),
-        occurred_at: None,
-        content_hash: None,
-        objects: Vec::new(),
-        relations: Vec::new(),
-        data: json!({ "seq": seq }),
-    }
+    )
 }
 
 fn domain_envelope(event_type: &str) -> EventEnvelope {
@@ -108,6 +102,33 @@ fn with_optional_record_id(envelope: EventEnvelope, record_id: Option<String>) -
         Some(record_id) => envelope.with_record_id(record_id),
         None => envelope,
     }
+}
+
+fn legacy_record_json(
+    ts: &str,
+    recorded_at: &str,
+    session: &str,
+    seq: u64,
+    domain_id: &str,
+    stream_id: &str,
+    event_type: &str,
+    data: serde_json::Value,
+) -> serde_json::Value {
+    json!({
+        "ts": ts,
+        "recorded_at": recorded_at,
+        "record_id": null,
+        "session": session,
+        "seq": seq,
+        "domain_id": domain_id,
+        "stream_id": stream_id,
+        "type": event_type,
+        "occurred_at": null,
+        "content_hash": null,
+        "objects": [],
+        "relations": [],
+        "data": data
+    })
 }
 
 prop_compose! {
@@ -222,6 +243,59 @@ fn envelope_conversion_preserves_domain_metadata() {
     assert_eq!(record.occurred_at.as_deref(), Some("2026-04-26T15:59:59Z"));
     assert_eq!(record.objects, vec![task_run(), artifact()]);
     assert_eq!(record.relations[0].relation_type, "produced");
+}
+
+#[test]
+fn event_record_serializes_current_structural_shape() {
+    let record =
+        EventRecord::from_envelope(related_domain_envelope().with_record_id("record-a"), 7);
+
+    let serialized = serde_json::to_value(&record).unwrap();
+
+    assert_eq!(serialized["seq"], 7);
+    assert!(serialized.get("envelope").is_some());
+    assert!(serialized.get("type").is_none());
+    assert!(serialized.get("data").is_none());
+    assert_eq!(serialized["envelope"]["session"], SESSION_A);
+    assert_eq!(
+        serialized["envelope"]["type"],
+        "execution.artifact.available"
+    );
+    assert_eq!(serialized["envelope"]["record_id"], "record-a");
+}
+
+#[test]
+fn event_record_deserializes_legacy_flattened_shape_with_current_parity() {
+    let task = task_run();
+    let artifact = artifact();
+    let relation =
+        meld_events::EventRelation::new("produced", task.clone(), artifact.clone()).unwrap();
+    let envelope = related_domain_envelope().with_record_id("record-a");
+    let current = json!({
+        "seq": 7,
+        "envelope": envelope
+    });
+    let legacy = json!({
+        "ts": RECORDED_AT,
+        "recorded_at": RECORDED_AT,
+        "record_id": "record-a",
+        "session": SESSION_A,
+        "seq": 7,
+        "domain_id": "execution",
+        "stream_id": "workflow-a",
+        "type": "execution.artifact.available",
+        "occurred_at": "2026-04-26T15:59:59Z",
+        "content_hash": "sha256:abc",
+        "objects": [task, artifact],
+        "relations": [relation],
+        "data": { "artifact": "artifact-a" }
+    });
+
+    let current: EventRecord = serde_json::from_value(current).unwrap();
+    let legacy: EventRecord = serde_json::from_value(legacy).unwrap();
+
+    assert_eq!(legacy, current);
+    assert_eq!(legacy.envelope(), current.envelope());
 }
 
 #[test]
@@ -418,21 +492,16 @@ fn store_flush_writes_pending_bytes_to_disk() {
 #[test]
 fn legacy_events_normalize_defaults() {
     let (_temp_dir, store) = event_store();
-    let legacy = EventRecord {
-        ts: RECORDED_AT.to_string(),
-        recorded_at: String::new(),
-        record_id: None,
-        session: SESSION_A.to_string(),
-        seq: 1,
-        domain_id: String::new(),
-        stream_id: String::new(),
-        event_type: "session.started".to_string(),
-        occurred_at: None,
-        content_hash: None,
-        objects: Vec::new(),
-        relations: Vec::new(),
-        data: json!({ "legacy": true }),
-    };
+    let legacy = legacy_record_json(
+        RECORDED_AT,
+        "",
+        SESSION_A,
+        1,
+        "",
+        "",
+        "session.started",
+        json!({ "legacy": true }),
+    );
     let legacy_tree = store.db().open_tree("obs_events").unwrap();
     let key = EventStore::encode_event_key(SESSION_A, 1);
     legacy_tree
@@ -651,9 +720,9 @@ proptest! {
         prop_assert_eq!(record.event_type.as_str(), spec.event_type.as_str());
         prop_assert_eq!(record.occurred_at.as_deref(), Some(occurred_at.as_str()));
         prop_assert_eq!(record.content_hash.as_ref(), spec.content_hash.as_ref());
-        prop_assert_eq!(record.objects, vec![src, dst]);
-        prop_assert_eq!(record.relations, vec![relation]);
-        prop_assert_eq!(record.data, json!({ "marker": spec.marker }));
+        prop_assert_eq!(record.objects.clone(), vec![src, dst]);
+        prop_assert_eq!(record.relations.clone(), vec![relation]);
+        prop_assert_eq!(record.data.clone(), json!({ "marker": spec.marker }));
     }
 
     #[test]
@@ -775,21 +844,16 @@ proptest! {
         marker in any::<u16>(),
     ) {
         let (_temp_dir, store) = event_store();
-        let legacy = EventRecord {
-            ts: ts.clone(),
-            recorded_at: String::new(),
-            record_id: None,
-            session: session.clone(),
+        let legacy = legacy_record_json(
+            &ts,
+            "",
+            &session,
             seq,
-            domain_id: String::new(),
-            stream_id: String::new(),
-            event_type: "legacy.generated".to_string(),
-            occurred_at: None,
-            content_hash: None,
-            objects: Vec::new(),
-            relations: Vec::new(),
-            data: json!({ "marker": marker }),
-        };
+            "",
+            "",
+            "legacy.generated",
+            json!({ "marker": marker }),
+        );
         let legacy_tree = store.db().open_tree("obs_events").unwrap();
         let key = EventStore::encode_event_key(&session, seq);
         legacy_tree

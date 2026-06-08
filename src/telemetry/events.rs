@@ -80,25 +80,20 @@ pub struct SummaryEventData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::{EventEnvelope, EventRecord};
     use serde_json::json;
 
     #[test]
     fn event_round_trip() {
-        let event = ProgressEvent {
-            ts: "2026-02-14T12:34:56.789Z".to_string(),
-            recorded_at: "2026-02-14T12:34:56.789Z".to_string(),
-            record_id: None,
-            session: "s1".to_string(),
-            seq: 1,
-            domain_id: "telemetry".to_string(),
-            stream_id: "s1".to_string(),
-            event_type: "session_started".to_string(),
-            occurred_at: None,
-            content_hash: None,
-            objects: Vec::new(),
-            relations: Vec::new(),
-            data: json!({ "command": "scan" }),
-        };
+        let event: ProgressEvent = EventRecord::from_envelope(
+            EventEnvelope::new(
+                "2026-02-14T12:34:56.789Z".to_string(),
+                "s1".to_string(),
+                "session_started",
+                json!({ "command": "scan" }),
+            ),
+            1,
+        );
         let serialized = serde_json::to_string(&event).unwrap();
         let parsed: ProgressEvent = serde_json::from_str(&serialized).unwrap();
         assert_eq!(parsed.session, "s1");

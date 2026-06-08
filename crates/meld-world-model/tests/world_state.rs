@@ -39,21 +39,7 @@ fn event_record(
     event_type: &str,
     objects: Vec<DomainObjectRef>,
 ) -> EventRecord {
-    EventRecord {
-        ts: "2026-01-01T00:00:00Z".to_string(),
-        recorded_at: "2026-01-01T00:00:00Z".to_string(),
-        record_id: None,
-        session: "session-a".to_string(),
-        seq,
-        domain_id: domain_id.to_string(),
-        stream_id: "stream-a".to_string(),
-        event_type: event_type.to_string(),
-        occurred_at: None,
-        content_hash: None,
-        objects,
-        relations: Vec::new(),
-        data: json!({ "ok": true }),
-    }
+    EventRecord::from_envelope(event(domain_id, event_type, objects, Vec::new()), seq)
 }
 
 fn traversal_store() -> (tempfile::TempDir, TraversalStore) {
@@ -524,6 +510,61 @@ fn traversal_reducer_reports_applied_events_and_ignores_other_domains() {
 }
 
 #[test]
+fn traversal_reducer_anchor_events_carry_anchor_records() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = sled::open(temp_dir.path().join("runtime")).unwrap();
+    let spine = EventStore::new(db.clone()).unwrap();
+    let store = TraversalStore::new(db).unwrap();
+    let node = object("workspace_fs", "node", "node-a");
+    let head = object("context", "head", "node-a::analysis");
+    let first_frame = object("context", "frame", "frame-a");
+    let second_frame = object("context", "frame", "frame-b");
+    spine
+        .append_envelope(event(
+            "context",
+            "context.head_selected",
+            vec![head.clone(), node.clone(), first_frame],
+            Vec::new(),
+        ))
+        .unwrap();
+    spine
+        .append_envelope(event(
+            "context",
+            "context.head_selected",
+            vec![head, node, second_frame],
+            Vec::new(),
+        ))
+        .unwrap();
+
+    let reducer =
+        meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_spine(
+            &spine, &store, 0,
+        )
+        .unwrap();
+    let selected = reducer
+        .emitted_envelopes
+        .iter()
+        .find(|envelope| envelope.event_type == "world_state.anchor_selected")
+        .expect("selected anchor event");
+    let superseded = reducer
+        .emitted_envelopes
+        .iter()
+        .find(|envelope| envelope.event_type == "world_state.anchor_superseded")
+        .expect("superseded anchor event");
+
+    assert!(selected.data.get("anchor").is_some());
+    assert!(selected.data.get("anchor_id").is_none());
+    assert!(selected.data.get("perspective_kind").is_none());
+    assert!(superseded.data.get("anchor").is_some());
+    assert!(superseded.data.get("superseded_by_anchor_id").is_none());
+    assert!(superseded
+        .data
+        .get("anchor")
+        .and_then(|anchor| anchor.get("ended_by_anchor_id"))
+        .is_some());
+}
+
+#[test]
 fn traversal_reducer_replays_existing_anchor_over_equal_seq_current() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("runtime")).unwrap();
@@ -760,6 +801,31 @@ fn world_state_reducer_materializes_claim_and_evidence() {
         .unwrap();
 
     assert_eq!(reducer.emitted_envelopes.len(), 2);
+    let claim_event = &reducer.emitted_envelopes[0];
+    let evidence_event = &reducer.emitted_envelopes[1];
+
+    assert!(claim_event.data.get("claim").is_some());
+    assert!(claim_event.data.get("claim_id").is_none());
+    assert!(claim_event.data.get("subject").is_none());
+    assert_eq!(
+        claim_event
+            .data
+            .get("claim")
+            .and_then(|claim| claim.get("claim_id"))
+            .and_then(serde_json::Value::as_str),
+        Some(current[0].claim_id.as_str())
+    );
+    assert!(evidence_event.data.get("evidence").is_some());
+    assert!(evidence_event.data.get("evidence_id").is_none());
+    assert!(evidence_event.data.get("claim_id").is_none());
+    assert_eq!(
+        evidence_event
+            .data
+            .get("evidence")
+            .and_then(|evidence| evidence.get("claim_id"))
+            .and_then(serde_json::Value::as_str),
+        Some(current[0].claim_id.as_str())
+    );
     assert_eq!(current.len(), 1);
     assert_eq!(current[0].claim_kind, ClaimKind::GenerationSucceeded);
     assert_eq!(current[0].subject, node);
@@ -850,12 +916,28 @@ fn world_state_reducer_supersedes_conflicting_generation_claims() {
     let reducer = WorldStateReducer::replay_from_spine(&spine, &store, 0).unwrap();
     let current = store.current_claims_for_object(&node).unwrap();
     let history = store.claim_history_for_object(&node).unwrap();
+    let superseded_event = reducer
+        .emitted_envelopes
+        .iter()
+        .find(|envelope| envelope.event_type == "world_state.claim_superseded")
+        .expect("claim superseded event");
 
     assert_eq!(reducer.emitted_envelopes.len(), 5);
+    assert!(superseded_event.data.get("claim").is_some());
+    assert!(superseded_event.data.get("claim_id").is_none());
+    assert!(superseded_event.data.get("superseded_by").is_none());
     assert_eq!(current.len(), 1);
     assert_eq!(current[0].claim_kind, ClaimKind::GenerationFailed);
     assert_eq!(history.len(), 2);
     assert_eq!(history[0].status, SettlementStatus::Superseded);
+    assert_eq!(
+        superseded_event
+            .data
+            .get("claim")
+            .and_then(|claim| claim.get("superseded_by"))
+            .and_then(serde_json::Value::as_str),
+        Some(current[0].claim_id.as_str())
+    );
     assert_eq!(
         store
             .supersession_chain_for_claim(&history[0].claim_id)

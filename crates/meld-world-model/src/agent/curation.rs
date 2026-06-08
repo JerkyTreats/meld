@@ -182,12 +182,12 @@ pub fn curate_threshold_rule(
             "belief view subject mismatch".to_string(),
         ));
     }
-    if view.perspective != input.agent.perspective_key {
+    if view.key.perspective != input.agent.perspective_key {
         return Err(StorageError::InvalidPath(
             "belief view perspective mismatch".to_string(),
         ));
     }
-    if view.branch_scope != input.agent.branch_scope {
+    if view.key.branch_scope != input.agent.branch_scope {
         return Err(StorageError::InvalidPath(
             "belief view branch scope mismatch".to_string(),
         ));
@@ -212,7 +212,8 @@ pub fn curate_threshold_rule(
             None,
         ));
     }
-    if view.confidence >= input.rule_config.threshold {
+    let confidence = view.planner_projection.confidence;
+    if confidence >= input.rule_config.threshold {
         return Ok(absorbed_or_indeterminate(
             input,
             dedupe_key,
@@ -242,7 +243,7 @@ pub fn curate_threshold_rule(
             dimension: input.rule_config.dimension_id.clone(),
             observed: format!(
                 "{}={}",
-                view.planner_projection.confidence_field, view.confidence
+                view.planner_projection.confidence_field, confidence
             ),
             desired: input.rule_config.desired_summary.clone(),
         },
@@ -301,9 +302,6 @@ fn decision(
         decision_id,
         agent_id: input.agent.agent_id,
         subscription_id: input.subscription.subscription_id,
-        belief_revision_id: input.input_refs.belief_revision_id.clone(),
-        belief_key: input.subscription.belief_key,
-        projection_version: input.planner_projection.projection_version,
         decision: kind,
         goal_command_id,
         dedupe_key,

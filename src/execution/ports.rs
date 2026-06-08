@@ -9,7 +9,10 @@ use crate::error::ApiError;
 use crate::events::{DomainObjectRef, EventEnvelope};
 use crate::execution::contracts::ProviderExecutionBinding;
 use crate::metadata::frame_types::FrameMetadata;
-use crate::metadata::frame_write_contract::GeneratedFrameMetadataInput;
+use crate::metadata::frame_write_contract::{
+    generated_metadata_input_from_lineage, GeneratedFrameMetadataInput,
+};
+use crate::metadata::prompt_link_contract::PromptLinkContractV1;
 use crate::prompt_context::PromptContextArtifactStorage;
 use crate::prompt_context::{
     PromptContextArtifactKind, PromptContextArtifactRef, PromptContextLineageInput,
@@ -546,31 +549,31 @@ impl meld_execution::PromptLineagePort for ContextApi {
                 rendered_prompt: input.rendered_prompt.clone(),
                 context_payload: input.context_payload.clone(),
             },
+        )?;
+        let prompt_link_contract = PromptLinkContractV1::from_lineage(&prepared.lineage);
+        prompt_link_contract.validate()?;
+        let metadata_input = generated_metadata_input_from_lineage(
             agent_id,
             provider,
             model,
             provider_type,
-        )?;
+            &prepared.lineage,
+        );
         Ok(PreparedPromptLineage {
             prompt_link_contract: PromptLinkContractView {
-                prompt_link_id: prepared.prompt_link_contract.prompt_link_id.clone(),
-                prompt_digest: prepared.prompt_link_contract.prompt_digest.clone(),
-                context_digest: prepared.prompt_link_contract.context_digest.clone(),
-                system_prompt_artifact_id: prepared
-                    .prompt_link_contract
-                    .system_prompt_artifact_id
-                    .clone(),
-                user_prompt_template_artifact_id: prepared
-                    .prompt_link_contract
+                prompt_link_id: prompt_link_contract.prompt_link_id.clone(),
+                prompt_digest: prompt_link_contract.prompt_digest.clone(),
+                context_digest: prompt_link_contract.context_digest.clone(),
+                system_prompt_artifact_id: prompt_link_contract.system_prompt_artifact_id.clone(),
+                user_prompt_template_artifact_id: prompt_link_contract
                     .user_prompt_template_artifact_id
                     .clone(),
-                rendered_prompt_artifact_id: prepared
-                    .prompt_link_contract
+                rendered_prompt_artifact_id: prompt_link_contract
                     .rendered_prompt_artifact_id
                     .clone(),
-                context_artifact_id: prepared.prompt_link_contract.context_artifact_id.clone(),
+                context_artifact_id: prompt_link_contract.context_artifact_id.clone(),
             },
-            metadata_input: prepared.metadata_input,
+            metadata_input,
         })
     }
 }

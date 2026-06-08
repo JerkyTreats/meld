@@ -92,16 +92,16 @@ fn validate_view_context(
             actual: Box::new(view.key.subject.clone()),
         });
     }
-    if view.perspective != input.context.perspective {
+    if view.key.perspective != input.context.perspective {
         return Err(PlannerProjectionError::PerspectiveMismatch {
             expected: Box::new(input.context.perspective.clone()),
-            actual: Box::new(view.perspective.clone()),
+            actual: Box::new(view.key.perspective.clone()),
         });
     }
-    if view.branch_scope != input.context.branch_scope {
+    if view.key.branch_scope != input.context.branch_scope {
         return Err(PlannerProjectionError::BranchScopeMismatch {
             expected: Box::new(input.context.branch_scope.clone()),
-            actual: Box::new(view.branch_scope.clone()),
+            actual: Box::new(view.key.branch_scope.clone()),
         });
     }
     Ok(())
@@ -115,10 +115,11 @@ fn project_belief_view(
     source_refs: &mut Vec<PlannerSourceRef>,
     hydration_refs: &mut PlannerHydrationRefs,
 ) -> Result<(), PlannerProjectionError> {
-    if !view.confidence.is_finite() {
+    let confidence = view.planner_projection.confidence;
+    if !confidence.is_finite() {
         return Err(PlannerProjectionError::InvalidConfidence {
             dimension_id: view.key.dimension_id.clone(),
-            confidence: view.confidence,
+            confidence,
         });
     }
 
@@ -135,7 +136,7 @@ fn project_belief_view(
     propositions.push(Proposition::Holds {
         subject: subject.clone(),
         dimension: Term::Dimension(confidence_dimension),
-        condition: Condition::Equals(Term::Literal(Literal::Number(view.confidence))),
+        condition: Condition::Equals(Term::Literal(Literal::Number(confidence))),
     });
     propositions.push(Proposition::Holds {
         subject: subject.clone(),

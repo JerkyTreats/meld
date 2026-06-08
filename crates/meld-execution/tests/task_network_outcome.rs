@@ -11,9 +11,9 @@ fn task_outcome_creates_pending_publication_before_external_publication() {
         task_network_support::memory_store_with_pending_publication();
     let publication = store.state().publications.get(&publication_id).unwrap();
 
-    assert_eq!(publication.task_instance_id, task_instance_id);
+    assert_eq!(publication.outcome.task_instance_id, task_instance_id);
     assert!(matches!(publication.state, PublicationState::Pending));
-    assert_eq!(publication.event_type, "execution.task.succeeded");
+    assert_eq!(publication.event_type(), "execution.task.succeeded");
 }
 
 #[test]
@@ -36,12 +36,12 @@ fn publication_mark_preserves_immutable_payload_fields() {
 
     assert!(matches!(store.submit(request), Response::Accepted { .. }));
     let marked = store.state().publications.get(&publication_id).unwrap();
-    assert_eq!(marked.event_type, original.event_type);
-    assert_eq!(marked.event_payload, original.event_payload);
+    assert_eq!(marked.event_type(), original.event_type());
+    assert_eq!(marked.event_payload(), original.event_payload());
 }
 
 #[test]
-fn tampered_publication_payload_rejects() {
+fn tampered_publication_outcome_rejects() {
     let (mut store, _, publication_id) =
         task_network_support::memory_store_with_pending_publication();
     let mut publication = store
@@ -50,7 +50,7 @@ fn tampered_publication_payload_rejects() {
         .get(&publication_id)
         .unwrap()
         .clone();
-    publication.event_payload = serde_json::json!({ "tampered": true });
+    publication.outcome.error = Some("tampered".to_string());
     publication.state = PublicationState::Published { marked_revision: 0 };
     let request = task_network_support::apply_memory_command(
         &store,
@@ -98,7 +98,7 @@ fn tampered_publication_task_identity_rejects() {
         .get(&publication_id)
         .unwrap()
         .clone();
-    publication.task_instance_id = "other-task".to_string();
+    publication.outcome.task_instance_id = "other-task".to_string();
     publication.state = PublicationState::Published { marked_revision: 0 };
     let request = task_network_support::apply_memory_command(
         &store,
@@ -159,7 +159,7 @@ fn failure_mark_preserves_payload_and_stores_error() {
 
     assert!(matches!(store.submit(request), Response::Accepted { .. }));
     let marked = store.state().publications.get(&publication_id).unwrap();
-    assert_eq!(marked.event_payload, original.event_payload);
+    assert_eq!(marked.event_payload(), original.event_payload());
     assert!(matches!(
         &marked.state,
         PublicationState::Failed { error } if error == "append failed"

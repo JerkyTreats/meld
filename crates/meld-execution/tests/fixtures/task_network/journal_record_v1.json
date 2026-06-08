@@ -1,6 +1,6 @@
 {
   "Commit": {
-    "commit_id": "task-network-commit-ee0954328a3dc62c3e09e5b7a9449a0dcfa688b0637b02c715305a6220a3a802",
+    "commit_id": "task-network-commit-91aa5094357f11b7e7738a5a146f2751cb726f8c6146196cdb8f20361b07ea22",
     "command_id": "command-commit-task-alpha",
     "network_id": "network-docs",
     "revision": 1,
@@ -8,7 +8,7 @@
     "state_hash": "01913b0e0a2771ec1cfc291a7351e78fcfafe3c5f606fe70416995d6e19930a9",
     "mutation_set": {
       "schema_version": 1,
-      "set_id": "task-network-mutation-set-3ab53c4915a519e9c9a48f836bb045f3cc2f5953ecfb173c3bc8754a66fbd27d",
+      "set_id": "task-network-mutation-set-54146b876597100e2a005a0718134e8ef23f9039cd401f1d5c2e707bc98e9bd2",
       "network_id": "network-docs",
       "source_composition_id": "composition-fixture",
       "idempotency_key": "inject-task-alpha",
@@ -43,17 +43,7 @@
                 "capability_version": 1
               }
             },
-            "incoming_edges": [],
-            "lineage": {
-              "composition_id": "composition-fixture",
-              "goal_id": "goal-fixture",
-              "method_id": "method-fixture",
-              "step_id": "step-task-alpha",
-              "operator_id": "operator-task-alpha",
-              "world_state_frame_id": "frame-fixture",
-              "capability_type_id": "docs.write",
-              "capability_version": 1
-            }
+            "incoming_edges": []
           }
         }
       ],

@@ -149,7 +149,7 @@ pub fn handle_cli_command(
                 session_id,
                 "context_read_summary",
                 json!({
-                    "node_id": hex::encode(context.context.node_id),
+                    "node_id": hex::encode(context.context.node_id()),
                     "frame_count": context.context.frames.len(),
                     "max_frames": max_frames,
                     "ordering": ordering,

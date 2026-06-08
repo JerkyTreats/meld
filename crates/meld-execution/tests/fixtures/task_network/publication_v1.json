@@ -1,10 +1,7 @@
 {
   "publication_id": "task-network-publication-9ec007895dc9863796b15c44ce3d11cae6e7c4d19abeb95b797aa53c05747e11",
   "network_id": "network-docs",
-  "task_instance_id": "task-alpha",
-  "outcome_id": "outcome-alpha",
-  "event_type": "execution.task.succeeded",
-  "event_payload": {
+  "outcome": {
     "artifact_records": [
       {
         "artifact_id": "artifact-outcome-alpha",
@@ -20,14 +17,6 @@
           "task_id": "compiled-task-alpha"
         },
         "schema_version": 1
-      }
-    ],
-    "artifacts": [
-      {
-        "artifact_id": "artifact-outcome-alpha",
-        "artifact_type_id": "docs_patch",
-        "schema_version": 1,
-        "task_instance_id": "task-alpha"
       }
     ],
     "claim_id": "claim-alpha",

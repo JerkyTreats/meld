@@ -34,8 +34,10 @@
 //! assert_eq!(record.content_hash.as_deref(), Some("sha256:abc"));
 //! ```
 
+use std::ops::{Deref, DerefMut};
+
 use chrono::{SecondsFormat, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 /// Compatibility aliases for pre-extraction event callers.
@@ -57,49 +59,18 @@ pub use runtime::EventRuntime;
 
 /// Persisted event record in the global event spine.
 ///
-/// Records are append-only after a sequence is assigned. Legacy fields keep
-/// defaults so older telemetry events can still be read through the same API.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Records are append-only after a sequence is assigned. The record owns store
+/// sequence metadata and contains the prepared producer envelope unchanged.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EventRecord {
-    /// Producer timestamp retained for legacy callers.
-    pub ts: String,
-    /// Storage timestamp for the record.
-    #[serde(default)]
-    pub recorded_at: String,
-    /// Optional idempotency key supplied by the producer.
-    #[serde(default)]
-    pub record_id: Option<String>,
-    /// Session-level read partition.
-    pub session: String,
     /// Runtime-wide monotonically increasing sequence.
     pub seq: u64,
-    /// Domain that owns the event meaning.
-    #[serde(default = "default_domain_id")]
-    pub domain_id: String,
-    /// Domain-local stream that groups related records.
-    #[serde(default)]
-    pub stream_id: String,
-    /// Stable event type identifier.
-    #[serde(rename = "type")]
-    pub event_type: String,
-    /// Optional source occurrence time when it differs from record time.
-    #[serde(default)]
-    pub occurred_at: Option<String>,
-    /// Optional content hash for deduplication or lineage outside this store.
-    #[serde(default)]
-    pub content_hash: Option<String>,
-    /// Domain objects referenced by this event.
-    #[serde(default)]
-    pub objects: Vec<DomainObjectRef>,
-    /// Directed relations between referenced objects.
-    #[serde(default)]
-    pub relations: Vec<EventRelation>,
-    /// Domain payload owned by the event producer.
-    pub data: Value,
+    /// Prepared event envelope supplied by the producer.
+    pub envelope: EventEnvelope,
 }
 
 /// Unsequenced event ready to be emitted or appended to the store.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventEnvelope {
     /// Producer timestamp retained for legacy callers.
     pub ts: String,
@@ -114,6 +85,7 @@ pub struct EventEnvelope {
     /// Domain-local stream that groups related records.
     pub stream_id: String,
     /// Stable event type identifier.
+    #[serde(rename = "type", alias = "event_type")]
     pub event_type: String,
     /// Optional source occurrence time when it differs from record time.
     pub occurred_at: Option<String>,
@@ -242,39 +214,121 @@ impl EventEnvelope {
 impl EventRecord {
     /// Assigns a spine sequence to an envelope without changing producer data.
     pub fn from_envelope(envelope: EventEnvelope, seq: u64) -> Self {
-        Self {
-            ts: envelope.ts,
-            recorded_at: envelope.recorded_at,
-            record_id: envelope.record_id,
-            session: envelope.session,
-            seq,
-            domain_id: envelope.domain_id,
-            stream_id: envelope.stream_id,
-            event_type: envelope.event_type,
-            occurred_at: envelope.occurred_at,
-            content_hash: envelope.content_hash,
-            objects: envelope.objects,
-            relations: envelope.relations,
-            data: envelope.data,
-        }
+        Self { seq, envelope }
     }
 
     /// Fills fields that did not exist on legacy telemetry records.
     pub fn normalize_legacy_defaults(mut self) -> Self {
-        if self.recorded_at.is_empty() {
-            self.recorded_at = if self.ts.is_empty() {
+        if self.envelope.recorded_at.is_empty() {
+            self.envelope.recorded_at = if self.envelope.ts.is_empty() {
                 default_timestamp()
             } else {
-                self.ts.clone()
+                self.envelope.ts.clone()
             };
         }
-        if self.domain_id.is_empty() {
-            self.domain_id = default_domain_id();
+        if self.envelope.domain_id.is_empty() {
+            self.envelope.domain_id = default_domain_id();
         }
-        if self.stream_id.is_empty() {
-            self.stream_id = self.session.clone();
+        if self.envelope.stream_id.is_empty() {
+            self.envelope.stream_id = self.envelope.session.clone();
         }
         self
+    }
+
+    /// Returns the contained producer envelope.
+    pub fn envelope(&self) -> &EventEnvelope {
+        &self.envelope
+    }
+
+    /// Returns the contained producer envelope for mutation.
+    pub fn envelope_mut(&mut self) -> &mut EventEnvelope {
+        &mut self.envelope
+    }
+
+    /// Splits the record into its store sequence and producer envelope.
+    pub fn into_parts(self) -> (u64, EventEnvelope) {
+        (self.seq, self.envelope)
+    }
+}
+
+impl Deref for EventRecord {
+    type Target = EventEnvelope;
+
+    fn deref(&self) -> &Self::Target {
+        &self.envelope
+    }
+}
+
+impl DerefMut for EventRecord {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.envelope
+    }
+}
+
+impl<'de> Deserialize<'de> for EventRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum EventRecordWire {
+            Current { seq: u64, envelope: EventEnvelope },
+            Legacy(LegacyEventRecord),
+        }
+
+        match EventRecordWire::deserialize(deserializer)? {
+            EventRecordWire::Current { seq, envelope } => Ok(EventRecord { seq, envelope }),
+            EventRecordWire::Legacy(legacy) => Ok(legacy.into_record()),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct LegacyEventRecord {
+    ts: String,
+    #[serde(default)]
+    recorded_at: String,
+    #[serde(default)]
+    record_id: Option<String>,
+    session: String,
+    seq: u64,
+    #[serde(default = "default_domain_id")]
+    domain_id: String,
+    #[serde(default)]
+    stream_id: String,
+    #[serde(rename = "type", alias = "event_type")]
+    event_type: String,
+    #[serde(default)]
+    occurred_at: Option<String>,
+    #[serde(default)]
+    content_hash: Option<String>,
+    #[serde(default)]
+    objects: Vec<DomainObjectRef>,
+    #[serde(default)]
+    relations: Vec<EventRelation>,
+    data: Value,
+}
+
+impl LegacyEventRecord {
+    fn into_record(self) -> EventRecord {
+        EventRecord {
+            seq: self.seq,
+            envelope: EventEnvelope {
+                ts: self.ts,
+                recorded_at: self.recorded_at,
+                record_id: self.record_id,
+                session: self.session,
+                domain_id: self.domain_id,
+                stream_id: self.stream_id,
+                event_type: self.event_type,
+                occurred_at: self.occurred_at,
+                content_hash: self.content_hash,
+                objects: self.objects,
+                relations: self.relations,
+                data: self.data,
+            },
+        }
     }
 }
 

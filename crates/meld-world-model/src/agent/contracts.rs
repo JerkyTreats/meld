@@ -320,12 +320,6 @@ pub struct AgentCurationDecision {
     pub agent_id: AgentId,
     /// Subscription that delivered the input.
     pub subscription_id: AgentSubscriptionId,
-    /// Belief revision associated with the input, when available.
-    pub belief_revision_id: Option<String>,
-    /// Belief stream evaluated by the decision.
-    pub belief_key: BeliefKey,
-    /// Planner projection version evaluated by the decision.
-    pub projection_version: String,
     /// Decision classification.
     pub decision: AgentDecisionKind,
     /// Goal command emitted by the decision, when present.
@@ -346,8 +340,6 @@ impl AgentCurationDecision {
         require_non_empty("decision id", &self.decision_id)?;
         require_non_empty("agent id", &self.agent_id)?;
         require_non_empty("subscription id", &self.subscription_id)?;
-        self.belief_key.validate()?;
-        require_non_empty("projection version", &self.projection_version)?;
         self.dedupe_key.validate()?;
         self.input_refs.validate()?;
         require_non_empty("decision reason", &self.reason)?;

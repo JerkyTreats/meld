@@ -289,7 +289,7 @@ impl AgentStore {
         decision.validate()?;
         if let Some(existing) = self.decision_by_dedupe_and_revision(
             &decision.dedupe_key,
-            decision.belief_revision_id.as_deref(),
+            decision.input_refs.belief_revision_id.as_deref(),
         )? {
             return Ok(existing);
         }
@@ -314,13 +314,13 @@ impl AgentStore {
             .insert(
                 decision_dedupe_revision_key(
                     &decision.dedupe_key,
-                    decision.belief_revision_id.as_deref(),
+                    decision.input_refs.belief_revision_id.as_deref(),
                 )
                 .as_bytes(),
                 decision.decision_id.as_bytes(),
             )
             .map_err(to_storage_io)?;
-        if let Some(revision_id) = &decision.belief_revision_id {
+        if let Some(revision_id) = &decision.input_refs.belief_revision_id {
             self.decisions_by_revision
                 .insert(
                     decision_revision_key(revision_id, &decision.decision_id).as_bytes(),

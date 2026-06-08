@@ -139,7 +139,7 @@ fn docs_method(method_id: &str) -> Method {
                     resolution: Resolution {
                         requires_inputs: vec![],
                         requires_outputs: vec![SlotConstraint {
-                            artifact_type_id: "docs_patch".to_string(),
+                            artifact_type: Term::ArtifactType("docs_patch".to_string()),
                             required: true,
                         }],
                         scope_kind: Some("filesystem".to_string()),

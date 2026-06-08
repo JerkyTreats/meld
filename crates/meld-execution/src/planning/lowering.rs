@@ -310,7 +310,7 @@ where
                 },
                 lineage: draft.lineage.clone(),
             };
-            let inject = mutation::Inject::new(task_node, incoming_edges, draft.lineage.clone());
+            let inject = mutation::Inject::new(task_node, incoming_edges);
             mutations.push(mutation::Mutation::Inject(inject));
         }
 
@@ -505,9 +505,14 @@ fn init_slots_for_operator(
         let EdgeKind::DataFlow { artifact_type } = &edge.kind else {
             continue;
         };
+        let Some(artifact_type_id) =
+            data_flow_artifact_type_id(edge, artifact_type, &mut diagnostics)
+        else {
+            continue;
+        };
         let Some(slot) = unique_data_flow_input_slot(
             &resolved.contract.input_contract,
-            artifact_type,
+            &artifact_type_id,
             resolved,
             edge,
             &mut diagnostics,
@@ -525,7 +530,7 @@ fn init_slots_for_operator(
             continue;
         }
         let Some(schema_version) =
-            data_flow_output_schema(edge, artifact_type, resolved_by_step, &mut diagnostics)
+            data_flow_output_schema(edge, &artifact_type_id, resolved_by_step, &mut diagnostics)
         else {
             continue;
         };
@@ -547,7 +552,7 @@ fn init_slots_for_operator(
             slot.slot_id.clone(),
             TaskInitSlotSpec {
                 init_slot_id: slot.slot_id.clone(),
-                artifact_type_id: artifact_type.clone(),
+                artifact_type_id,
                 schema_version,
                 required: slot.required,
             },
@@ -626,6 +631,26 @@ fn unique_data_flow_input_slot<'a>(
                 )
                 .with_step(edge.to.clone())
                 .with_operator(resolved.operator_id.clone()),
+            );
+            None
+        }
+    }
+}
+
+fn data_flow_artifact_type_id(
+    edge: &Edge,
+    artifact_type: &Term,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<String> {
+    match artifact_type {
+        Term::ArtifactType(artifact_type_id) => Some(artifact_type_id.clone()),
+        _ => {
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::DataFlowInitSourceInvalid,
+                    "data flow edge artifact type is not grounded",
+                )
+                .with_step(edge.to.clone()),
             );
             None
         }
@@ -752,9 +777,12 @@ fn incoming_edges(
         .filter_map(|edge| {
             let kind = match &edge.kind {
                 EdgeKind::Ordering => DependencyKind::Ordering,
-                EdgeKind::DataFlow { artifact_type } => DependencyKind::DataFlow {
+                EdgeKind::DataFlow {
+                    artifact_type: Term::ArtifactType(artifact_type),
+                } => DependencyKind::DataFlow {
                     artifact_type_id: artifact_type.clone(),
                 },
+                EdgeKind::DataFlow { .. } => return None,
                 EdgeKind::Conditional { .. } => return None,
             };
             Some(DependencyEdge {
@@ -777,7 +805,9 @@ fn init_sources_for_task(
         .iter()
         .filter(|edge| edge.to == draft.step_id)
         .filter_map(|edge| match &edge.kind {
-            EdgeKind::DataFlow { artifact_type } => Some((edge, artifact_type.as_str())),
+            EdgeKind::DataFlow {
+                artifact_type: Term::ArtifactType(artifact_type),
+            } => Some((edge, artifact_type.as_str())),
             _ => None,
         })
         .collect::<Vec<_>>();

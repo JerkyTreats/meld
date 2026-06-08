@@ -102,6 +102,52 @@ fn publication_fixture_round_trips() {
 }
 
 #[test]
+fn legacy_inject_lineage_decodes_and_serializes_without_duplicate_lineage() {
+    let expected = task_network_support::single_task_mutation_set("task-alpha");
+    let mut legacy = serde_json::to_value(&expected).unwrap();
+    let inject = &mut legacy["mutations"][0]["Inject"];
+    inject["lineage"] = inject["task_node"]["lineage"].clone();
+
+    let decoded: Set = serde_json::from_value(legacy).unwrap();
+
+    assert_eq!(decoded, expected);
+    let encoded = serde_json::to_value(decoded).unwrap();
+    assert!(encoded["mutations"][0]["Inject"].get("lineage").is_none());
+}
+
+#[test]
+fn legacy_flattened_publication_decodes_and_serializes_structural_outcome() {
+    let (_, expected) = expected_claim_and_publication();
+    let mut event_payload = expected.event_payload();
+    event_payload["artifacts"] = serde_json::json!([
+        {
+            "artifact_id": "artifact-outcome-alpha",
+            "artifact_type_id": "docs_patch",
+            "schema_version": 1,
+            "task_instance_id": "task-alpha"
+        }
+    ]);
+    let legacy = serde_json::json!({
+        "publication_id": expected.publication_id.clone(),
+        "network_id": expected.network_id.clone(),
+        "task_instance_id": expected.outcome.task_instance_id.clone(),
+        "outcome_id": expected.outcome.outcome_id.clone(),
+        "event_type": expected.event_type(),
+        "event_payload": event_payload,
+        "state": expected.state.clone(),
+    });
+
+    let decoded: Publication = serde_json::from_value(legacy).unwrap();
+
+    assert_eq!(decoded, expected);
+    let encoded = serde_json::to_value(decoded).unwrap();
+    assert!(encoded.get("outcome").is_some());
+    assert!(encoded.get("event_payload").is_none());
+    assert!(encoded.get("task_instance_id").is_none());
+    assert!(encoded.get("outcome_id").is_none());
+}
+
+#[test]
 fn journal_record_fixture_round_trips() {
     let (_, _, expected) = expected_commit_state_and_journal();
     assert_fixture::<JournalRecord>(

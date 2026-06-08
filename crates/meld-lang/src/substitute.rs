@@ -10,7 +10,7 @@ use crate::{
     composition::{Composition, Edge, EdgeKind, Step, StepKind},
     condition::Condition,
     effect::Effect,
-    operator::Operator,
+    operator::{Operator, Resolution, SlotConstraint},
     proposition::Proposition,
     term::Term,
     unify::Bindings,
@@ -99,7 +99,42 @@ fn substitute_operator(
             .map(|effect| substitute_effect(effect, step_id, bindings, errors))
             .collect(),
         cost: operator.cost.clone(),
-        resolution: operator.resolution.clone(),
+        resolution: substitute_resolution(&operator.resolution, step_id, bindings, errors),
+    }
+}
+
+fn substitute_resolution(
+    resolution: &Resolution,
+    step_id: &str,
+    bindings: &Bindings,
+    errors: &mut Vec<UnboundVariable>,
+) -> Resolution {
+    Resolution {
+        requires_inputs: resolution
+            .requires_inputs
+            .iter()
+            .map(|slot| substitute_slot_constraint(slot, step_id, bindings, errors))
+            .collect(),
+        requires_outputs: resolution
+            .requires_outputs
+            .iter()
+            .map(|slot| substitute_slot_constraint(slot, step_id, bindings, errors))
+            .collect(),
+        scope_kind: resolution.scope_kind.clone(),
+        tags: resolution.tags.clone(),
+        specific: resolution.specific.clone(),
+    }
+}
+
+fn substitute_slot_constraint(
+    slot: &SlotConstraint,
+    step_id: &str,
+    bindings: &Bindings,
+    errors: &mut Vec<UnboundVariable>,
+) -> SlotConstraint {
+    SlotConstraint {
+        artifact_type: substitute_term(&slot.artifact_type, step_id, bindings, errors),
+        required: slot.required,
     }
 }
 
@@ -220,7 +255,7 @@ fn substitute_edge(edge: &Edge, bindings: &Bindings, errors: &mut Vec<UnboundVar
     let kind = match &edge.kind {
         EdgeKind::Ordering => EdgeKind::Ordering,
         EdgeKind::DataFlow { artifact_type } => EdgeKind::DataFlow {
-            artifact_type: artifact_type.clone(),
+            artifact_type: substitute_term(artifact_type, &edge.from, bindings, errors),
         },
         EdgeKind::Conditional { field_path, guard } => EdgeKind::Conditional {
             field_path: field_path.clone(),

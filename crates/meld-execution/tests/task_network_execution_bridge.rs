@@ -244,7 +244,7 @@ fn phase8_task_network_slice_runs_and_survives_reopen() {
         .state()
         .publications
         .values()
-        .find(|publication| publication.task_instance_id == ids["write_summary"])
+        .find(|publication| publication.outcome.task_instance_id == ids["write_summary"])
         .unwrap()
         .clone();
     publication.state = PublicationState::Published { marked_revision: 0 };

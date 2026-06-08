@@ -1105,7 +1105,8 @@ failure_policy:
             .into_iter()
             .filter(|event| event.event_type == "workspace_fs.node_observed")
             .map(|event| {
-                serde_json::from_value::<WorkspaceNodeObservedEventData>(event.data).unwrap()
+                serde_json::from_value::<WorkspaceNodeObservedEventData>(event.data.clone())
+                    .unwrap()
             })
             .map(|data| data.path)
             .collect();
