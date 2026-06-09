@@ -35,7 +35,10 @@ use std::io;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use sled::{Db, Tree};
+use sled::{
+    transaction::{ConflictableTransactionError, TransactionError, Transactional},
+    Db, Tree,
+};
 
 use crate::error::StorageError;
 use crate::events::EventEnvelope;
@@ -116,8 +119,7 @@ impl EventStore {
             return Ok(existing_seq);
         }
 
-        self.write_event(event)?;
-        Ok(event.seq)
+        self.write_event_idempotent(event)
     }
 
     /// Allocates the next spine sequence and appends an envelope.
@@ -142,22 +144,61 @@ impl EventStore {
     }
 
     fn write_event(&self, event: &EventRecord) -> Result<(), StorageError> {
-        self.advance_next_seq_past(event.seq)?;
-        let key = encode_spine_key(event.seq);
-        let index_key = encode_session_event_index_key(&event.session, event.seq);
-        let value = serde_json::to_vec(event).map_err(to_storage_data)?;
-        self.spine_events
-            .insert(key.as_bytes(), value.clone())
-            .map_err(to_storage_io)?;
-        self.session_event_index
-            .insert(index_key.as_bytes(), value)
-            .map_err(to_storage_io)?;
-        if let Some(record_id) = event.record_id.as_deref() {
-            self.spine_record_index
-                .insert(record_id.as_bytes(), &encode_seq(event.seq))
-                .map_err(to_storage_io)?;
-        }
-        Ok(())
+        let write = PreparedEventWrite::new(event)?;
+        self.persist_event_write(write, None).map(|_| ())
+    }
+
+    fn write_event_idempotent(&self, event: &EventRecord) -> Result<u64, StorageError> {
+        let record_id = event
+            .record_id
+            .as_deref()
+            .map(|record_id| record_id.as_bytes().to_vec());
+        let write = PreparedEventWrite::new(event)?;
+        self.persist_event_write(write, record_id)
+    }
+
+    fn persist_event_write(
+        &self,
+        write: PreparedEventWrite,
+        idempotency_key: Option<Vec<u8>>,
+    ) -> Result<u64, StorageError> {
+        (
+            &self.spine_meta,
+            &self.spine_events,
+            &self.session_event_index,
+            &self.spine_record_index,
+        )
+            .transaction(
+                |(spine_meta, spine_events, session_event_index, spine_record_index)| {
+                    if let Some(idempotency_key) = idempotency_key.clone() {
+                        if let Some(raw) = spine_record_index.get(idempotency_key)? {
+                            return decode_seq(&raw).map_err(to_transaction_storage);
+                        }
+                    }
+
+                    let mut meta = match spine_meta.get(b"global")? {
+                        Some(raw) => serde_json::from_slice(&raw).map_err(to_transaction_data)?,
+                        None => SpineMeta { next_seq: 1 },
+                    };
+                    if meta.next_seq <= write.seq {
+                        meta.next_seq = write.seq + 1;
+                        spine_meta.insert(
+                            b"global",
+                            serde_json::to_vec(&meta).map_err(to_transaction_data)?,
+                        )?;
+                    }
+
+                    spine_events.insert(write.event_key.clone(), write.value.clone())?;
+                    session_event_index
+                        .insert(write.session_index_key.clone(), write.value.clone())?;
+                    if let Some((record_key, record_value)) = write.record_index.clone() {
+                        spine_record_index.insert(record_key, record_value)?;
+                    }
+
+                    Ok(write.seq)
+                },
+            )
+            .map_err(to_transaction)
     }
 
     /// Reads all events for a session from both current and legacy indexes.
@@ -267,18 +308,50 @@ impl EventStore {
             .get(record_id.as_bytes())
             .map_err(to_storage_io)?
         else {
-            return Ok(None);
+            return self.lookup_record_seq_by_event_scan(record_id);
         };
         Ok(Some(decode_seq(&raw)?))
     }
 
-    fn advance_next_seq_past(&self, seq: u64) -> Result<(), StorageError> {
-        let mut meta = self.get_spine_meta()?.unwrap_or(SpineMeta { next_seq: 1 });
-        if meta.next_seq <= seq {
-            meta.next_seq = seq + 1;
-            self.put_spine_meta(&meta)?;
+    fn lookup_record_seq_by_event_scan(
+        &self,
+        record_id: &str,
+    ) -> Result<Option<u64>, StorageError> {
+        for result in self.spine_events.iter() {
+            let (_, value) = result.map_err(to_storage_io)?;
+            let event = decode_event(&value)?;
+            if event.record_id.as_deref() == Some(record_id) {
+                self.write_event(&event)?;
+                return Ok(Some(event.seq));
+            }
         }
-        Ok(())
+        Ok(None)
+    }
+}
+
+struct PreparedEventWrite {
+    seq: u64,
+    event_key: Vec<u8>,
+    session_index_key: Vec<u8>,
+    value: Vec<u8>,
+    record_index: Option<(Vec<u8>, Vec<u8>)>,
+}
+
+impl PreparedEventWrite {
+    fn new(event: &EventRecord) -> Result<Self, StorageError> {
+        Ok(Self {
+            seq: event.seq,
+            event_key: encode_spine_key(event.seq).into_bytes(),
+            session_index_key: encode_session_event_index_key(&event.session, event.seq)
+                .into_bytes(),
+            value: serde_json::to_vec(event).map_err(to_storage_data)?,
+            record_index: event.record_id.as_deref().map(|record_id| {
+                (
+                    record_id.as_bytes().to_vec(),
+                    encode_seq(event.seq).to_vec(),
+                )
+            }),
+        })
     }
 }
 
@@ -320,6 +393,21 @@ fn to_storage_io(err: sled::Error) -> StorageError {
 
 fn to_storage_data(err: serde_json::Error) -> StorageError {
     StorageError::IoError(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
+}
+
+fn to_transaction_data(err: serde_json::Error) -> ConflictableTransactionError<StorageError> {
+    ConflictableTransactionError::Abort(to_storage_data(err))
+}
+
+fn to_transaction_storage(err: StorageError) -> ConflictableTransactionError<StorageError> {
+    ConflictableTransactionError::Abort(err)
+}
+
+fn to_transaction(err: TransactionError<StorageError>) -> StorageError {
+    match err {
+        TransactionError::Abort(err) => err,
+        TransactionError::Storage(err) => to_storage_io(err),
+    }
 }
 
 #[cfg(test)]
