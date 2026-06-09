@@ -411,6 +411,18 @@ fn curated_goal_handoff_rejects_invalid_commands() {
         invalid_case(&valid, |command| {
             command.goal.lifecycle = GoalLifecycle::Satisfied { at_seq: 9 };
         }),
+        invalid_case(&valid, |command| {
+            command.dedupe_key.agent_id = "other-agent".to_string();
+        }),
+        invalid_case(&valid, |command| {
+            command.dedupe_key.subject_key = "workspace_fs::node::other-node".to_string();
+        }),
+        invalid_case(&valid, |command| {
+            command.dedupe_key.dimension_id = "other_dimension".to_string();
+        }),
+        invalid_case(&valid, |command| {
+            command.dedupe_key.target_condition_key = "other-condition".to_string();
+        }),
     ];
 
     let temp = tempfile::tempdir().unwrap();
