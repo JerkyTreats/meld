@@ -96,6 +96,27 @@ impl BeliefStore {
         Ok(())
     }
 
+    /// Store an evidence record only when its deterministic id is new.
+    pub fn put_evidence_once(&self, item: &EvidenceItem) -> Result<bool, StorageError> {
+        if let Some(existing) = self.get_evidence(&item.evidence_id)? {
+            if existing == *item {
+                return Ok(false);
+            }
+            return Err(StorageError::InvalidPath(format!(
+                "evidence conflict for '{}'",
+                item.evidence_id
+            )));
+        }
+
+        self.evidence
+            .insert(
+                item.evidence_id.as_bytes(),
+                serde_json::to_vec(item).map_err(to_storage_data)?,
+            )
+            .map_err(to_storage_io)?;
+        Ok(true)
+    }
+
     /// Read one evidence item by id.
     pub fn get_evidence(&self, evidence_id: &str) -> Result<Option<EvidenceItem>, StorageError> {
         decode_optional(
@@ -115,6 +136,43 @@ impl BeliefStore {
             .map_err(to_storage_io)?;
         self.mark_dirty_for_assignment(assignment)?;
         Ok(())
+    }
+
+    /// Read one evidence assignment by id.
+    pub fn get_assignment(
+        &self,
+        assignment_id: &str,
+    ) -> Result<Option<EvidenceAssignment>, StorageError> {
+        decode_optional(
+            self.assignments
+                .get(assignment_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
+    /// Store an evidence assignment only when its deterministic id is new.
+    pub fn put_assignment_once(
+        &self,
+        assignment: &EvidenceAssignment,
+    ) -> Result<bool, StorageError> {
+        if let Some(existing) = self.get_assignment(&assignment.assignment_id)? {
+            if existing == *assignment {
+                return Ok(false);
+            }
+            return Err(StorageError::InvalidPath(format!(
+                "evidence assignment conflict for '{}'",
+                assignment.assignment_id
+            )));
+        }
+
+        self.assignments
+            .insert(
+                assignment.assignment_id.as_bytes(),
+                serde_json::to_vec(assignment).map_err(to_storage_data)?,
+            )
+            .map_err(to_storage_io)?;
+        self.mark_dirty_for_assignment(assignment)?;
+        Ok(true)
     }
 
     /// Read assignments for one belief key in source order.

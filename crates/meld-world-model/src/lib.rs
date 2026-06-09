@@ -19,11 +19,12 @@ pub use agent::{
     SubscribeAgentCommand,
 };
 pub use belief::{
-    AssessmentLease, BayesianComparator, BeliefConfigLoader, BeliefEvidenceNormalizer, BeliefKey,
-    BeliefQuery, BeliefRuntime, BeliefStatus, BeliefStore, BeliefView, BranchScope,
-    ComparatorInput, ComparatorOutput, ConfigSnapshot, ContradictionReason, DirtyKeyState,
-    DirtyReason, EvidenceItem, EvidenceRole, EvidenceValue, FreshnessReason, LeaseStatus,
-    ObservationReason, PromotedEvidenceRecord, RuntimeAssessmentResult,
+    ingest_promoted_evidence, AssessmentLease, BayesianComparator, BeliefConfigLoader,
+    BeliefEvidenceNormalizer, BeliefKey, BeliefQuery, BeliefRuntime, BeliefStatus, BeliefStore,
+    BeliefView, BranchScope, ComparatorInput, ComparatorOutput, ConfigSnapshot,
+    ContradictionReason, DirtyKeyState, DirtyReason, EvidenceItem, EvidenceRole, EvidenceValue,
+    FreshnessReason, LeaseStatus, ObservationReason, PromotedEvidenceIngestionRequest,
+    PromotedEvidenceIngestionResult, PromotedEvidenceRecord, RuntimeAssessmentResult,
 };
 pub use planner::{
     project_world_state, PlannerFieldProjectionConfig, PlannerGraphScope, PlannerHydrationRefs,

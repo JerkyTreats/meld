@@ -22,6 +22,7 @@ mod init_command;
 mod logging_default;
 mod model_providers;
 mod node_deletion;
+mod outcome_evidence;
 mod progress_observability;
 mod provider_cli;
 mod store_integration;

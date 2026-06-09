@@ -63,6 +63,7 @@ pub mod comparator;
 pub mod config;
 pub mod contracts;
 pub mod evidence;
+pub mod ingestion;
 pub mod query;
 pub mod runtime;
 pub mod store;
@@ -71,6 +72,9 @@ pub use comparator::{BayesianComparator, ComparatorInput, ComparatorOutput};
 pub use config::{BeliefConfigLoader, ConfigSnapshot};
 pub use contracts::*;
 pub use evidence::BeliefEvidenceNormalizer;
+pub use ingestion::{
+    ingest_promoted_evidence, PromotedEvidenceIngestionRequest, PromotedEvidenceIngestionResult,
+};
 pub use query::BeliefQuery;
 pub use runtime::{BeliefRuntime, RuntimeAssessmentResult};
 pub use store::BeliefStore;
