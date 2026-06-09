@@ -10,29 +10,13 @@ use meld_execution::task_network::store::{
 };
 use proptest::prelude::*;
 use serde_json::json;
-use std::io::ErrorKind;
-use std::thread;
-use std::time::Duration;
 
-fn open_store(path: &std::path::Path) -> SledTaskNetworkStore {
-    SledTaskNetworkStore::open(open_db(path), "network-docs").unwrap()
+fn open_store(db: &sled::Db) -> SledTaskNetworkStore {
+    SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap()
 }
 
-fn open_db(path: &std::path::Path) -> sled::Db {
-    let mut attempts = 0;
-    loop {
-        match sled::open(path) {
-            Ok(db) => return db,
-            Err(sled::Error::Io(error)) => {
-                if error.kind() != ErrorKind::WouldBlock || attempts >= 200 {
-                    panic!("failed to open sled test store: {error}");
-                }
-                attempts += 1;
-                thread::sleep(Duration::from_millis(25));
-            }
-            Err(error) => panic!("failed to open sled test store: {error}"),
-        }
-    }
+fn open_db() -> sled::Db {
+    sled::Config::new().temporary(true).open().unwrap()
 }
 
 fn assert_decode_error(error: TaskNetworkStoreError) {
@@ -76,13 +60,13 @@ fn committed_journal_json(revision: u64, state_hash: String) -> serde_json::Valu
 
 #[test]
 fn accepted_inject_mutation_survives_reopen() {
-    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db();
     {
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         task_network_support::commit_single_task_sled(&mut store, "task-alpha");
     }
 
-    let store = open_store(tempdir.path());
+    let store = open_store(&db);
 
     assert_eq!(store.state().revision, 1);
     assert!(store.state().tasks.contains_key("task-alpha"));
@@ -91,14 +75,14 @@ fn accepted_inject_mutation_survives_reopen() {
 
 #[test]
 fn claim_survives_reopen() {
-    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db();
     {
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         task_network_support::commit_single_task_sled(&mut store, "task-alpha");
         task_network_support::claim_ready_sled(&mut store, "command-claim", "claim-alpha");
     }
 
-    let store = open_store(tempdir.path());
+    let store = open_store(&db);
 
     assert!(matches!(
         store.state().statuses.get("task-alpha"),
@@ -109,9 +93,9 @@ fn claim_survives_reopen() {
 
 #[test]
 fn outcome_survives_reopen() {
-    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db();
     {
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         task_network_support::commit_single_task_sled(&mut store, "task-alpha");
         let task_instance_id =
             task_network_support::claim_ready_sled(&mut store, "command-claim", "claim-alpha");
@@ -126,7 +110,7 @@ fn outcome_survives_reopen() {
         store.submit(request).unwrap();
     }
 
-    let store = open_store(tempdir.path());
+    let store = open_store(&db);
 
     assert!(matches!(
         store.state().statuses.get("task-alpha"),
@@ -137,10 +121,10 @@ fn outcome_survives_reopen() {
 
 #[test]
 fn pending_publication_survives_reopen() {
-    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db();
     let publication_id;
     {
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         task_network_support::commit_single_task_sled(&mut store, "task-alpha");
         let task_instance_id =
             task_network_support::claim_ready_sled(&mut store, "command-claim", "claim-alpha");
@@ -156,7 +140,7 @@ fn pending_publication_survives_reopen() {
         publication_id = store.state().publications.keys().next().unwrap().clone();
     }
 
-    let store = open_store(tempdir.path());
+    let store = open_store(&db);
 
     assert!(matches!(
         store
@@ -171,10 +155,10 @@ fn pending_publication_survives_reopen() {
 
 #[test]
 fn marked_publication_survives_reopen() {
-    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db();
     let publication_id;
     {
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         task_network_support::commit_single_task_sled(&mut store, "task-alpha");
         let task_instance_id =
             task_network_support::claim_ready_sled(&mut store, "command-claim", "claim-alpha");
@@ -201,7 +185,7 @@ fn marked_publication_survives_reopen() {
         store.submit(request).unwrap();
     }
 
-    let store = open_store(tempdir.path());
+    let store = open_store(&db);
 
     assert!(matches!(
         store.state().publications.get(&publication_id).unwrap().state,
@@ -211,10 +195,10 @@ fn marked_publication_survives_reopen() {
 
 #[test]
 fn duplicate_accepted_command_replays_after_reopen() {
-    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db();
     let request;
     {
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         request = task_network_support::apply_sled_command(
             &store,
             "command-commit",
@@ -223,7 +207,7 @@ fn duplicate_accepted_command_replays_after_reopen() {
         store.submit(request.clone()).unwrap();
     }
 
-    let mut store = open_store(tempdir.path());
+    let mut store = open_store(&db);
     let duplicate = store.submit(request).unwrap();
 
     assert!(matches!(duplicate, Response::Duplicate { revision: 1, .. }));
@@ -231,11 +215,11 @@ fn duplicate_accepted_command_replays_after_reopen() {
 
 #[test]
 fn duplicate_rejected_command_replays_after_reopen() {
-    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db();
     let request;
     let failed_precondition = ReadPrecondition::NodeExists("task-alpha".to_string());
     {
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         let mut rejected_request = task_network_support::apply_sled_command(
             &store,
             "command-rejected",
@@ -248,7 +232,7 @@ fn duplicate_rejected_command_replays_after_reopen() {
         request = rejected_request;
     }
 
-    let mut store = open_store(tempdir.path());
+    let mut store = open_store(&db);
     task_network_support::commit_single_task_sled(&mut store, "task-alpha");
     let duplicate = store.submit(request).unwrap();
 
@@ -261,13 +245,13 @@ fn duplicate_rejected_command_replays_after_reopen() {
 
 #[test]
 fn same_command_id_with_different_payload_rejects_after_reopen() {
-    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db();
     {
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         task_network_support::commit_single_task_sled(&mut store, "task-alpha");
     }
 
-    let mut store = open_store(tempdir.path());
+    let mut store = open_store(&db);
     let duplicate = task_network_support::apply_sled_command(
         &store,
         "command-commit-task-alpha",
@@ -283,10 +267,10 @@ fn same_command_id_with_different_payload_rejects_after_reopen() {
 
 #[test]
 fn stale_proposal_persists_rejection_and_duplicate_replays_same_rejection() {
-    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db();
     let request;
     {
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         request = task_network_support::command_for_state(
             "network-docs",
             7,
@@ -300,7 +284,7 @@ fn stale_proposal_persists_rejection_and_duplicate_replays_same_rejection() {
         ));
     }
 
-    let mut store = open_store(tempdir.path());
+    let mut store = open_store(&db);
     let duplicate = store.submit(request).unwrap();
 
     assert!(matches!(
@@ -315,8 +299,7 @@ fn stale_proposal_persists_rejection_and_duplicate_replays_same_rejection() {
 
 #[test]
 fn legacy_durable_record_shapes_replay_from_contained_products() {
-    let tempdir = tempfile::tempdir().unwrap();
-    let db = open_db(tempdir.path());
+    let db = open_db();
     let mut memory = InMemoryTaskNetworkStore::new("network-docs");
     let request = task_network_support::apply_memory_command(
         &memory,
@@ -388,12 +371,11 @@ fn legacy_durable_record_shapes_replay_from_contained_products() {
 
 #[test]
 fn new_durable_record_shapes_omit_duplicate_identity_and_state_fields() {
-    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db();
     {
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         task_network_support::commit_single_task_sled(&mut store, "task-alpha");
     }
-    let db = open_db(tempdir.path());
     let command_request_tree = db.open_tree("task_network_command_requests").unwrap();
     let request_value: serde_json::Value = serde_json::from_slice(
         &command_request_tree
@@ -696,20 +678,18 @@ fn journal_replay_commit_previous_state_hash_mismatch_returns_decode_error() {
 
 #[test]
 fn missing_latest_snapshot_still_opens_from_journal_replay() {
-    let tempdir = tempfile::tempdir().unwrap();
+    let db = open_db();
     {
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         task_network_support::commit_single_task_sled(&mut store, "task-alpha");
     }
-    let db = open_db(tempdir.path());
     db.open_tree("task_network_latest_state")
         .unwrap()
         .remove("latest")
         .unwrap();
     db.flush().unwrap();
-    drop(db);
 
-    let store = open_store(tempdir.path());
+    let store = open_store(&db);
 
     assert_eq!(store.state().revision, 1);
     assert!(store.state().tasks.contains_key("task-alpha"));
@@ -791,10 +771,10 @@ proptest! {
 
     #[test]
     fn rejected_command_replays_after_reopen(base_revision in 1u64..100) {
-        let tempdir = tempfile::tempdir().unwrap();
+        let db = open_db();
         let request;
         {
-            let mut store = open_store(tempdir.path());
+            let mut store = open_store(&db);
             request = task_network_support::command_for_state(
                 "network-docs",
                 base_revision,
@@ -812,7 +792,7 @@ proptest! {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
 
-        let mut store = open_store(tempdir.path());
+        let mut store = open_store(&db);
         let duplicate = store.submit(request).unwrap();
         let duplicate_rejected = matches!(
             duplicate,
