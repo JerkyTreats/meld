@@ -3,8 +3,9 @@ use std::sync::Arc;
 
 use meld_world_model::belief::EvidenceRejection;
 use meld_world_model::belief::{
-    BayesianComparator, BeliefConfigLoader, BeliefEvidenceNormalizer, BeliefQuery, BeliefRuntime,
-    BeliefStore, BranchScope, ComparatorInput, LeaseStatus,
+    ingest_promoted_evidence, BayesianComparator, BeliefConfigLoader, BeliefEvidenceNormalizer,
+    BeliefQuery, BeliefRuntime, BeliefStore, BranchScope, ComparatorInput, LeaseStatus,
+    PromotedEvidenceIngestionRequest,
 };
 use meld_world_model::belief::{
     BeliefProvenanceSummary, BeliefRevision, ContradictionState, EvidencePolarity, FreshnessState,
@@ -396,6 +397,38 @@ fn belief_assignment_uses_explicit_key_fields() {
     assert_eq!(assignment.belief_key.predicate_id, "confidence");
     assert_eq!(assignment.belief_key.perspective.perspective_id, "default");
     assert_eq!(assignment.belief_key.branch_scope.branch_id, "main");
+}
+
+#[test]
+fn belief_store_put_assignment_once_marks_dirty_only_for_new_assignment() {
+    let node = object("workspace_fs", "node", "node-a");
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_store =
+        BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap();
+    let snapshot = BeliefConfigLoader::load_json(content_config_json()).unwrap();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        snapshot.config,
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    );
+    let item = normalizer
+        .normalize_promoted(&promoted_content_record(node, 2))
+        .unwrap()
+        .into_iter()
+        .find(|item| item.evidence_schema_id == "content_written_signal")
+        .unwrap();
+    let assignment = normalizer.assign(&item).unwrap();
+    belief_store.put_evidence(&item).unwrap();
+
+    assert!(belief_store.put_assignment_once(&assignment).unwrap());
+    let dirty = belief_store.dirty_key_states().unwrap();
+    assert_eq!(dirty.len(), 1);
+    assert_eq!(dirty[0].belief_key, assignment.belief_key);
+
+    belief_store.clear_dirty(&assignment.belief_key).unwrap();
+    assert!(!belief_store.put_assignment_once(&assignment).unwrap());
+
+    assert!(belief_store.dirty_keys().unwrap().is_empty());
 }
 
 #[test]
@@ -1151,6 +1184,144 @@ fn belief_content_written_follow_up_lowers_stale_posterior() {
     assert!(!second.freshness.stale);
     assert_eq!(history.len(), 2);
     assert_eq!(history[1].prior_revision_id, first.current_revision_id);
+}
+
+#[test]
+fn belief_ingests_promoted_evidence_and_reassesses_dirty_key() {
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_store =
+        Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
+    let runtime =
+        BeliefRuntime::from_json_config(belief_store.clone(), graph, content_config_json())
+            .unwrap();
+    runtime
+        .assess_subject(&node, "frame_type", "analysis", "worker-a")
+        .unwrap();
+    let first = BeliefQuery::new(belief_store.as_ref())
+        .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+        .unwrap()
+        .remove(0);
+    let snapshot = BeliefConfigLoader::load_json(content_config_json()).unwrap();
+
+    let result = ingest_promoted_evidence(
+        belief_store.as_ref(),
+        &runtime,
+        PromotedEvidenceIngestionRequest {
+            record: promoted_content_record(node.clone(), 2),
+            config: snapshot,
+            perspective: PerspectiveKey::new("default", "default").unwrap(),
+            branch_scope: BranchScope::main(),
+            owner_id: "worker-ingest",
+        },
+    )
+    .unwrap();
+    let second = BeliefQuery::new(belief_store.as_ref())
+        .current_view(&first.key)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(result.normalized_evidence_count, 2);
+    assert_eq!(result.new_assignment_count, 2);
+    assert_eq!(result.committed.len(), 1);
+    assert!(!result.rejected);
+    assert!(second.planner_projection.confidence > first.planner_projection.confidence);
+    assert!(!second.freshness.stale);
+}
+
+#[test]
+fn belief_ingests_promoted_evidence_idempotently() {
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_store =
+        Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
+    let runtime =
+        BeliefRuntime::from_json_config(belief_store.clone(), graph, content_config_json())
+            .unwrap();
+    runtime
+        .assess_subject(&node, "frame_type", "analysis", "worker-a")
+        .unwrap();
+    let first = BeliefQuery::new(belief_store.as_ref())
+        .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+        .unwrap()
+        .remove(0);
+    let request = || PromotedEvidenceIngestionRequest {
+        record: promoted_content_record(node.clone(), 2),
+        config: BeliefConfigLoader::load_json(content_config_json()).unwrap(),
+        perspective: PerspectiveKey::new("default", "default").unwrap(),
+        branch_scope: BranchScope::main(),
+        owner_id: "worker-ingest",
+    };
+
+    let first_result =
+        ingest_promoted_evidence(belief_store.as_ref(), &runtime, request()).unwrap();
+    let history_len = BeliefQuery::new(belief_store.as_ref())
+        .revision_history(&first.key)
+        .unwrap()
+        .len();
+    let second_result =
+        ingest_promoted_evidence(belief_store.as_ref(), &runtime, request()).unwrap();
+    let replay_history_len = BeliefQuery::new(belief_store.as_ref())
+        .revision_history(&first.key)
+        .unwrap()
+        .len();
+
+    assert_eq!(first_result.new_assignment_count, 2);
+    assert_eq!(first_result.committed.len(), 1);
+    assert_eq!(second_result.normalized_evidence_count, 2);
+    assert_eq!(second_result.new_assignment_count, 0);
+    assert!(second_result.committed.is_empty());
+    assert_eq!(replay_history_len, history_len);
+}
+
+#[test]
+fn belief_ingestion_rejects_conflicting_promoted_replay_without_reassessment() {
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_store =
+        Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
+    let runtime =
+        BeliefRuntime::from_json_config(belief_store.clone(), graph, content_config_json())
+            .unwrap();
+    runtime
+        .assess_subject(&node, "frame_type", "analysis", "worker-a")
+        .unwrap();
+    let first = BeliefQuery::new(belief_store.as_ref())
+        .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+        .unwrap()
+        .remove(0);
+    let request = |record| PromotedEvidenceIngestionRequest {
+        record,
+        config: BeliefConfigLoader::load_json(content_config_json()).unwrap(),
+        perspective: PerspectiveKey::new("default", "default").unwrap(),
+        branch_scope: BranchScope::main(),
+        owner_id: "worker-ingest",
+    };
+
+    ingest_promoted_evidence(
+        belief_store.as_ref(),
+        &runtime,
+        request(promoted_content_record(node.clone(), 2)),
+    )
+    .unwrap();
+    let history_len = BeliefQuery::new(belief_store.as_ref())
+        .revision_history(&first.key)
+        .unwrap()
+        .len();
+    let mut conflicting = promoted_content_record(node, 2);
+    conflicting
+        .fields
+        .insert("stale_probability".to_string(), EvidenceValue::Scalar(0.9));
+
+    let error = ingest_promoted_evidence(belief_store.as_ref(), &runtime, request(conflicting))
+        .unwrap_err();
+    let replay_history_len = BeliefQuery::new(belief_store.as_ref())
+        .revision_history(&first.key)
+        .unwrap()
+        .len();
+
+    assert!(error.to_string().contains("evidence conflict"));
+    assert_eq!(replay_history_len, history_len);
 }
 
 #[test]

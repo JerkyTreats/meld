@@ -44,7 +44,7 @@ A gap does not belong here when it is only about call order, worker lifetime, de
 | --- | --- | --- | --- |
 | NAG-1 | Curated goal handoff | execution | Implemented at [goal handoff](../../../src/execution/goal_handoff.rs) and proven by `curated_goal_handoff_stores_active_plannable_goal` |
 | NAG-2 | Outcome publication bridge | execution | Implemented at [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs) and proven by `publication_bridge_appends_pending_task_outcome_once` |
-| NAG-3 | Outcome fact to belief evidence | world model | A docs writer success becomes configured belief evidence and reassesses the dirty belief |
+| NAG-3 | Outcome fact to belief evidence | world model | Implemented at [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), and proven by `docs_writer_success_promotes_configured_freshness_evidence` |
 | NAG-4 | Satisfaction review | execution | An active goal is marked satisfied only after world state evaluation succeeds |
 | NAG-5 | Failure outcome contract | execution | Failed work emits failure facts without satisfying the goal |
 
@@ -125,11 +125,17 @@ Implementation evidence:
 - [publication bridge test](../../../crates/meld-execution/tests/task_network_publication_bridge.rs)
 - `cargo test -p meld-execution --test task_network_publication_bridge publication_bridge_appends_pending_task_outcome_once`
 
-NAG-3 through NAG-5 remain open.
+NAG-4 and NAG-5 remain open.
 
 ## NAG-3 Outcome Fact To Belief Evidence
 
-Docs writer success must become evidence that can refresh the docs freshness belief. The belief runtime already supports configured evidence mappings and promoted evidence records. The missing fix is a contract that maps the chosen execution outcome fact into that generic evidence path.
+Docs writer success must become evidence that can refresh the docs freshness belief. The belief runtime already supports configured evidence mappings and promoted evidence records. The implemented fix maps the chosen execution outcome fact into that generic evidence path.
+
+Status: `implemented`
+
+The implemented fix keeps world model ingestion generic and maps docs task success to promoted evidence at the root integration boundary.
+
+This is a callable contract, not runtime assembly. A later runtime coordinator still needs to invoke the mapper and ingestion after the publication bridge delivers an applicable docs writer success event.
 
 ### Requirements
 
@@ -147,12 +153,20 @@ Docs writer success must become evidence that can refresh the docs freshness bel
 - Reassessment updates the docs freshness belief from that evidence.
 - The same event cursor cannot create duplicate effective evidence.
 - A failure event follows the explicit failure evidence rule and does not count as fresh content.
+- A non docs task success does not count as docs freshness evidence.
 
 Suggested focused test name:
 
 ```text
 docs_writer_success_promotes_configured_freshness_evidence
 ```
+
+Implementation evidence:
+
+- [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs)
+- [outcome evidence mapper](../../../src/execution/outcome_evidence.rs)
+- [outcome evidence test](../../../tests/integration/outcome_evidence.rs)
+- `cargo test --test integration_tests docs_writer_success_promotes_configured_freshness_evidence`
 
 ## NAG-4 Satisfaction Review
 

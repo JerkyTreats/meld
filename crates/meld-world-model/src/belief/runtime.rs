@@ -33,7 +33,7 @@ use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::{PerspectiveKey, TraversalQuery};
 
 /// Summary returned after one subject assessment.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeAssessmentResult {
     /// Count of normalized evidence items accepted for the run.
     pub evidence_count: usize,
