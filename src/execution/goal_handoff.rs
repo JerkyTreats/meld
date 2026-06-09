@@ -3,7 +3,7 @@
 use meld_execution::goals::{
     AddGoalCommand, GoalCommandMetadata, GoalCommandOutcome, PersistentGoalSetStore,
 };
-use meld_lang::GoalLifecycle;
+use meld_lang::{GoalLifecycle, Proposition, Term};
 use meld_world_model::AgentGoalCommand;
 use thiserror::Error;
 
@@ -49,6 +49,7 @@ pub fn build_add_goal_command(
             "curated goal lifecycle must be proposed".to_string(),
         ));
     }
+    require_dedupe_matches_goal(&request.goal_command)?;
 
     let mut active_goal = goal.clone();
     active_goal.lifecycle = GoalLifecycle::Active;
@@ -81,4 +82,53 @@ fn require_non_empty(label: &str, value: &str) -> Result<(), AgentGoalHandoffErr
         )));
     }
     Ok(())
+}
+
+fn require_dedupe_matches_goal(command: &AgentGoalCommand) -> Result<(), AgentGoalHandoffError> {
+    let goal = &command.goal;
+    let dedupe_key = &command.dedupe_key;
+
+    if goal.agent_id != dedupe_key.agent_id {
+        return dedupe_mismatch("agent id");
+    }
+
+    let Proposition::Holds {
+        subject,
+        dimension,
+        condition,
+    } = &goal.target
+    else {
+        return dedupe_mismatch("goal target kind");
+    };
+
+    let Term::Object(subject) = subject else {
+        return dedupe_mismatch("goal target subject");
+    };
+    if subject.index_key() != dedupe_key.subject_key {
+        return dedupe_mismatch("goal target subject");
+    }
+
+    let Term::Dimension(dimension) = dimension else {
+        return dedupe_mismatch("goal target dimension");
+    };
+    if dimension != &dedupe_key.dimension_id {
+        return dedupe_mismatch("goal target dimension");
+    }
+
+    let condition_key = serde_json::to_string(condition).map_err(|error| {
+        AgentGoalHandoffError::InvalidCommand(format!(
+            "goal target condition serialization failed: {error}"
+        ))
+    })?;
+    if condition_key != dedupe_key.target_condition_key {
+        return dedupe_mismatch("goal target condition");
+    }
+
+    Ok(())
+}
+
+fn dedupe_mismatch(field: &str) -> Result<(), AgentGoalHandoffError> {
+    Err(AgentGoalHandoffError::InvalidCommand(format!(
+        "curated goal dedupe key does not match {field}"
+    )))
 }

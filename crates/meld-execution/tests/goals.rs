@@ -1,7 +1,7 @@
 use meld_events::DomainObjectRef;
 use meld_execution::goals::{
-    AddGoalCommand, GoalCommandMetadata, GoalCommandOutcome, GoalSetQuery, GoalSetStore,
-    ModifyGoalCommand, PersistentGoalSetStore, RemoveGoalCommand, ResumeGoalCommand,
+    AddGoalCommand, ExecutionGoalRecord, GoalCommandMetadata, GoalCommandOutcome, GoalSetQuery,
+    GoalSetStore, ModifyGoalCommand, PersistentGoalSetStore, RemoveGoalCommand, ResumeGoalCommand,
     SatisfyGoalCommand, SuspendGoalCommand,
 };
 use meld_lang::{
@@ -353,6 +353,52 @@ fn persistent_goal_store_reopens_records_and_command_outcomes() {
         "goal-1"
     );
     assert_eq!(store.add_goal(command).unwrap(), first);
+}
+
+#[test]
+fn persistent_goal_store_recovers_applied_outcome_from_split_record_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = sled::open(dir.path().join("goals")).unwrap();
+    let command = AddGoalCommand {
+        metadata: metadata("cmd-1", Some("source"), 1),
+        goal: goal("goal-1", GoalLifecycle::Active),
+    };
+    let record = ExecutionGoalRecord {
+        goal: command.goal.clone(),
+        source_command_id: Some(command.metadata.command_id.clone()),
+        source_identity: command.metadata.source_identity.clone(),
+        created_at_seq: command.metadata.seq,
+        updated_at_seq: command.metadata.seq,
+    };
+
+    db.open_tree("execution_goal_records")
+        .unwrap()
+        .insert(
+            command.goal.goal_id.as_bytes(),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    let store = PersistentGoalSetStore::new(db).unwrap();
+    let expected = GoalCommandOutcome::Applied(Box::new(record));
+    let recovered = store.add_goal(command.clone()).unwrap();
+    assert_eq!(recovered, expected);
+    assert_eq!(store.add_goal(command).unwrap(), expected);
+
+    let duplicate = store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-2", Some("source"), 2),
+            goal: goal("goal-2", GoalLifecycle::Active),
+        })
+        .unwrap();
+
+    assert_eq!(
+        duplicate,
+        GoalCommandOutcome::Duplicate {
+            existing_goal_id: "goal-1".to_string()
+        }
+    );
 }
 
 #[test]

@@ -8,7 +8,10 @@ use crate::goals::contracts::{
 };
 use crate::goals::store::{validate_goal, validate_metadata, validate_non_empty};
 use meld_lang::{Goal, GoalLifecycle};
-use sled::{Db, Tree};
+use sled::{
+    transaction::{ConflictableTransactionError, TransactionError, Transactional},
+    Db, Tree,
+};
 use std::io;
 use std::sync::Arc;
 
@@ -56,12 +59,6 @@ impl PersistentGoalSetStore {
         validate_metadata(&command.metadata)?;
         validate_goal(&command.goal)?;
 
-        if let Some(existing_goal_id) = self.duplicate_goal_id(&command.metadata, &command.goal)? {
-            let outcome = GoalCommandOutcome::Duplicate { existing_goal_id };
-            self.record_outcome(&command.metadata, &outcome)?;
-            return Ok(outcome);
-        }
-
         let record = ExecutionGoalRecord {
             goal: command.goal.clone(),
             source_command_id: Some(command.metadata.command_id.clone()),
@@ -69,11 +66,91 @@ impl PersistentGoalSetStore {
             created_at_seq: command.metadata.seq,
             updated_at_seq: command.metadata.seq,
         };
-        self.put_record(&record)?;
-        self.index_source_identity(&command.metadata, &command.goal.goal_id)?;
         let outcome = GoalCommandOutcome::Applied(Box::new(record));
-        self.record_outcome(&command.metadata, &outcome)?;
-        Ok(outcome)
+        self.persist_add_goal(&command.metadata, &command.goal, &outcome)
+    }
+
+    fn persist_add_goal(
+        &self,
+        metadata: &GoalCommandMetadata,
+        goal: &Goal,
+        applied_outcome: &GoalCommandOutcome,
+    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
+        let command_key = metadata.command_id.as_bytes().to_vec();
+        let goal_key = goal.goal_id.as_bytes().to_vec();
+        let goal_id = goal.goal_id.clone();
+        let command_id = metadata.command_id.clone();
+        let source_identity_key = metadata
+            .source_identity
+            .as_ref()
+            .map(|source_identity| source_identity.as_bytes().to_vec());
+        let source_identity_value = goal.goal_id.as_bytes().to_vec();
+        let record = match applied_outcome {
+            GoalCommandOutcome::Applied(record) => record,
+            _ => {
+                return Err(ExecutionInvariantError::ConfigError(
+                    "add goal transaction requires applied outcome".to_string(),
+                ));
+            }
+        };
+        let record_value = serde_json::to_vec(record).map_err(to_store_data)?;
+        let applied_value = serde_json::to_vec(applied_outcome).map_err(to_store_data)?;
+        let applied_outcome = applied_outcome.clone();
+
+        (
+            &self.records,
+            &self.source_identity_index,
+            &self.command_outcomes,
+        )
+            .transaction(|(records, source_identity_index, command_outcomes)| {
+                if let Some(raw) = command_outcomes.get(command_key.clone())? {
+                    return serde_json::from_slice(&raw).map_err(to_transaction_data);
+                }
+
+                if let Some(raw) = records.get(goal_key.clone())? {
+                    let existing: ExecutionGoalRecord =
+                        serde_json::from_slice(&raw).map_err(to_transaction_data)?;
+                    let outcome =
+                        if existing.source_command_id.as_deref() == Some(command_id.as_str()) {
+                            if let Some(source_identity_key) = source_identity_key.clone() {
+                                source_identity_index
+                                    .insert(source_identity_key, source_identity_value.clone())?;
+                            }
+                            GoalCommandOutcome::Applied(Box::new(existing))
+                        } else {
+                            GoalCommandOutcome::Duplicate {
+                                existing_goal_id: goal_id.clone(),
+                            }
+                        };
+                    command_outcomes.insert(
+                        command_key.clone(),
+                        serde_json::to_vec(&outcome).map_err(to_transaction_data)?,
+                    )?;
+                    return Ok(outcome);
+                }
+
+                if let Some(source_identity_key) = source_identity_key.clone() {
+                    if let Some(raw) = source_identity_index.get(source_identity_key)? {
+                        let existing_goal_id =
+                            String::from_utf8(raw.to_vec()).map_err(to_transaction_utf8)?;
+                        let outcome = GoalCommandOutcome::Duplicate { existing_goal_id };
+                        command_outcomes.insert(
+                            command_key.clone(),
+                            serde_json::to_vec(&outcome).map_err(to_transaction_data)?,
+                        )?;
+                        return Ok(outcome);
+                    }
+                }
+
+                records.insert(goal_key.clone(), record_value.clone())?;
+                if let Some(source_identity_key) = source_identity_key.clone() {
+                    source_identity_index
+                        .insert(source_identity_key, source_identity_value.clone())?;
+                }
+                command_outcomes.insert(command_key.clone(), applied_value.clone())?;
+                Ok(applied_outcome.clone())
+            })
+            .map_err(to_goal_transaction)
     }
 
     /// Replace an existing goal record while preserving its creation sequence.
@@ -309,22 +386,6 @@ impl PersistentGoalSetStore {
         Ok(())
     }
 
-    fn duplicate_goal_id(
-        &self,
-        metadata: &GoalCommandMetadata,
-        goal: &Goal,
-    ) -> Result<Option<String>, ExecutionInvariantError> {
-        if self.record(&goal.goal_id)?.is_some() {
-            return Ok(Some(goal.goal_id.clone()));
-        }
-        metadata
-            .source_identity
-            .as_ref()
-            .map(|source_identity| self.source_identity_goal_id(source_identity))
-            .transpose()
-            .map(Option::flatten)
-    }
-
     fn duplicate_source_identity_for_other_goal(
         &self,
         metadata: &GoalCommandMetadata,
@@ -353,19 +414,6 @@ impl PersistentGoalSetStore {
         Ok(Some(
             String::from_utf8(raw.to_vec()).map_err(to_store_utf8)?,
         ))
-    }
-
-    fn index_source_identity(
-        &self,
-        metadata: &GoalCommandMetadata,
-        goal_id: &str,
-    ) -> Result<(), ExecutionInvariantError> {
-        if let Some(source_identity) = &metadata.source_identity {
-            self.source_identity_index
-                .insert(source_identity.as_bytes(), goal_id.as_bytes())
-                .map_err(to_store_io)?;
-        }
-        Ok(())
     }
 
     fn reindex_source_identity(
@@ -412,4 +460,23 @@ fn to_store_utf8(err: std::string::FromUtf8Error) -> ExecutionInvariantError {
         "goal store UTF-8 decode failed: {}",
         io::Error::new(io::ErrorKind::InvalidData, err)
     ))
+}
+
+fn to_transaction_data(
+    err: serde_json::Error,
+) -> ConflictableTransactionError<ExecutionInvariantError> {
+    ConflictableTransactionError::Abort(to_store_data(err))
+}
+
+fn to_transaction_utf8(
+    err: std::string::FromUtf8Error,
+) -> ConflictableTransactionError<ExecutionInvariantError> {
+    ConflictableTransactionError::Abort(to_store_utf8(err))
+}
+
+fn to_goal_transaction(err: TransactionError<ExecutionInvariantError>) -> ExecutionInvariantError {
+    match err {
+        TransactionError::Abort(error) => error,
+        TransactionError::Storage(error) => to_store_io(error),
+    }
 }
