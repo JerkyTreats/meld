@@ -21,9 +21,12 @@ impl EventAppendSink for FailingSink {
     }
 }
 
-fn open_store(tempdir: &tempfile::TempDir) -> SledTaskNetworkStore {
-    let db = sled::open(tempdir.path()).unwrap();
-    SledTaskNetworkStore::open(db, "network-docs").unwrap()
+fn open_store(db: &sled::Db) -> SledTaskNetworkStore {
+    SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap()
+}
+
+fn open_task_db() -> sled::Db {
+    sled::Config::new().temporary(true).open().unwrap()
 }
 
 fn open_events(tempdir: &tempfile::TempDir) -> EventStore {
@@ -109,9 +112,9 @@ fn publication_id_for_outcome(store: &SledTaskNetworkStore, outcome_id: &str) ->
 
 #[test]
 fn publication_bridge_appends_pending_task_outcome_once() {
-    let task_tempdir = tempfile::tempdir().unwrap();
+    let task_db = open_task_db();
     let event_tempdir = tempfile::tempdir().unwrap();
-    let mut store = open_store(&task_tempdir);
+    let mut store = open_store(&task_db);
     let publication_id =
         record_success_publication(&mut store, "task-alpha", "outcome-alpha", "claim-alpha");
     let publication = store
@@ -214,7 +217,7 @@ fn publication_bridge_appends_pending_task_outcome_once() {
     store.flush().unwrap();
     drop(store);
 
-    let reopened = open_store(&task_tempdir);
+    let reopened = open_store(&task_db);
     assert!(matches!(
         reopened.state().publications.get(&publication_id).unwrap().state,
         PublicationState::Published {
@@ -226,9 +229,9 @@ fn publication_bridge_appends_pending_task_outcome_once() {
 
 #[test]
 fn publication_bridge_retry_does_not_append_duplicate_event() {
-    let task_tempdir = tempfile::tempdir().unwrap();
+    let task_db = open_task_db();
     let event_tempdir = tempfile::tempdir().unwrap();
-    let mut store = open_store(&task_tempdir);
+    let mut store = open_store(&task_db);
     let publication_id =
         record_success_publication(&mut store, "task-alpha", "outcome-alpha", "claim-alpha");
     let events = open_events(&event_tempdir);
@@ -249,9 +252,9 @@ fn publication_bridge_retry_does_not_append_duplicate_event() {
 
 #[test]
 fn publication_bridge_records_failure_without_published_mark() {
-    let task_tempdir = tempfile::tempdir().unwrap();
+    let task_db = open_task_db();
     let event_tempdir = tempfile::tempdir().unwrap();
-    let mut store = open_store(&task_tempdir);
+    let mut store = open_store(&task_db);
     let publication_id =
         record_success_publication(&mut store, "task-alpha", "outcome-alpha", "claim-alpha");
     let events = open_events(&event_tempdir);
@@ -276,9 +279,9 @@ fn publication_bridge_records_failure_without_published_mark() {
 
 #[test]
 fn publication_bridge_retries_failed_publication() {
-    let task_tempdir = tempfile::tempdir().unwrap();
+    let task_db = open_task_db();
     let event_tempdir = tempfile::tempdir().unwrap();
-    let mut store = open_store(&task_tempdir);
+    let mut store = open_store(&task_db);
     let publication_id =
         record_success_publication(&mut store, "task-alpha", "outcome-alpha", "claim-alpha");
     let events = open_events(&event_tempdir);
@@ -313,9 +316,9 @@ fn publication_bridge_retries_failed_publication() {
 
 #[test]
 fn publication_bridge_preserves_failure_outcome_event_type() {
-    let task_tempdir = tempfile::tempdir().unwrap();
+    let task_db = open_task_db();
     let event_tempdir = tempfile::tempdir().unwrap();
-    let mut store = open_store(&task_tempdir);
+    let mut store = open_store(&task_db);
     let publication_id =
         record_failed_publication(&mut store, "task-alpha", "outcome-alpha", "claim-alpha");
     let publication = store
@@ -345,9 +348,9 @@ fn publication_bridge_preserves_failure_outcome_event_type() {
 
 #[test]
 fn publication_bridge_honors_limit() {
-    let task_tempdir = tempfile::tempdir().unwrap();
+    let task_db = open_task_db();
     let event_tempdir = tempfile::tempdir().unwrap();
-    let mut store = open_store(&task_tempdir);
+    let mut store = open_store(&task_db);
     record_success_publication(&mut store, "task-alpha", "outcome-alpha", "claim-alpha");
     record_success_publication(&mut store, "task-beta", "outcome-beta", "claim-beta");
     let events = open_events(&event_tempdir);
