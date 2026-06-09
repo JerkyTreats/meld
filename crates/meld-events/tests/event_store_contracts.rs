@@ -419,6 +419,44 @@ fn idempotent_append_reuses_record_sequence_and_survives_reopen() {
 }
 
 #[test]
+fn idempotent_append_repairs_torn_record_index_without_duplicate() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = sled::open(temp_dir.path().join("events")).unwrap();
+    let store = EventStore::new(db.clone()).unwrap();
+    let record = EventRecord::from_envelope(
+        domain_envelope("execution.task.completed").with_record_id("record-torn"),
+        1,
+    );
+    db.open_tree("obs_spine_events")
+        .unwrap()
+        .insert(
+            format!("{:020}", record.seq).as_bytes(),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    let seq = store
+        .append_envelope_idempotent(
+            domain_envelope("execution.task.completed").with_record_id("record-torn"),
+        )
+        .unwrap();
+
+    assert_eq!(seq, 1);
+    assert_eq!(
+        store.read_all_events_after(0).unwrap(),
+        vec![record.clone()]
+    );
+    assert_eq!(store.read_events(SESSION_A).unwrap(), vec![record]);
+    assert_eq!(
+        store
+            .append_envelope(domain_envelope("execution.after.repair"))
+            .unwrap(),
+        2
+    );
+}
+
+#[test]
 fn idempotent_presequenced_record_reuses_indexed_sequence() {
     let (_temp_dir, store) = event_store();
     let mut record = runtime_event(5, SESSION_A, "session.started");
