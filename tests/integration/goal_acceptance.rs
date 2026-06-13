@@ -1,13 +1,12 @@
-use meld::execution::{
-    accept_agent_goal_command, build_add_goal_command, AgentGoalHandoffError,
-    AgentGoalHandoffRequest,
-};
 use meld_events::DomainObjectRef;
 use meld_execution::capability::{
     ArtifactSchemaVersionRange, CapabilityCatalog, CapabilityTypeContract, ExecutionClass,
     ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec, ScopeContract,
 };
-use meld_execution::goals::{GoalCommandOutcome, PersistentGoalSetStore};
+use meld_execution::goals::{
+    GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
+    GoalSetApi, PersistentGoalSetStore,
+};
 use meld_execution::planning::{
     MethodLibrary, PlanningRequest, PlanningResult, PlanningRuntime, PlanningWorldStateFrameRef,
     PlanningWorldStateRequest,
@@ -199,6 +198,23 @@ fn low_confidence_goal_command() -> AgentGoalCommand {
     outcome.goal_command.unwrap()
 }
 
+fn acceptance_request_from_agent_command(
+    command: AgentGoalCommand,
+    accepted_at_seq: u64,
+) -> GoalAcceptanceRequest {
+    command.validate().unwrap();
+
+    GoalAcceptanceRequest {
+        metadata: GoalCommandMetadata {
+            command_id: command.command_id,
+            source_identity: Some(command.dedupe_key.index_key()),
+            seq: accepted_at_seq,
+        },
+        goal: command.goal,
+        lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
+    }
+}
+
 fn planning_request(goal: meld_lang::Goal, world_state: WorldState) -> PlanningRequest {
     PlanningRequest {
         request_id: "request-1".to_string(),
@@ -340,20 +356,19 @@ fn docs_method() -> Method {
 }
 
 #[test]
-fn curated_goal_handoff_stores_active_plannable_goal() {
+fn producer_neutral_goal_acceptance_stores_active_plannable_goal() {
     let goal_command = low_confidence_goal_command();
     assert_eq!(goal_command.goal.lifecycle, GoalLifecycle::Proposed);
 
     let temp = tempfile::tempdir().unwrap();
-    let store = PersistentGoalSetStore::new(sled::open(temp.path()).unwrap()).unwrap();
-    let handoff_request = AgentGoalHandoffRequest {
-        goal_command: goal_command.clone(),
-        accepted_at_seq: 7,
-    };
+    let mut store = PersistentGoalSetStore::new(sled::open(temp.path()).unwrap()).unwrap();
+    let acceptance_request = acceptance_request_from_agent_command(goal_command.clone(), 7);
 
-    let outcome = accept_agent_goal_command(&store, handoff_request.clone()).unwrap();
+    let outcome = GoalSetApi::new(&mut store)
+        .accept_goal(acceptance_request.clone())
+        .unwrap();
     let GoalCommandOutcome::Applied(record) = &outcome else {
-        panic!("expected applied goal handoff");
+        panic!("expected applied goal acceptance");
     };
     assert_eq!(record.goal.lifecycle, GoalLifecycle::Active);
     assert_eq!(
@@ -365,19 +380,16 @@ fn curated_goal_handoff_stores_active_plannable_goal() {
         Some(goal_command.dedupe_key.index_key().as_str())
     );
 
-    let replay = accept_agent_goal_command(&store, handoff_request).unwrap();
+    let replay = GoalSetApi::new(&mut store)
+        .accept_goal(acceptance_request)
+        .unwrap();
     assert_eq!(replay, outcome);
 
     let mut duplicate_command = goal_command.clone();
     duplicate_command.command_id = "goal-command-duplicate".to_string();
-    let duplicate = accept_agent_goal_command(
-        &store,
-        AgentGoalHandoffRequest {
-            goal_command: duplicate_command,
-            accepted_at_seq: 8,
-        },
-    )
-    .unwrap();
+    let duplicate = GoalSetApi::new(&mut store)
+        .accept_goal(acceptance_request_from_agent_command(duplicate_command, 8))
+        .unwrap();
     assert!(matches!(
         duplicate,
         GoalCommandOutcome::Duplicate { existing_goal_id }
@@ -395,7 +407,7 @@ fn curated_goal_handoff_stores_active_plannable_goal() {
 }
 
 #[test]
-fn curated_goal_handoff_rejects_invalid_commands() {
+fn producer_neutral_goal_acceptance_rejects_invalid_agent_command_before_execution() {
     let valid = low_confidence_goal_command();
     let cases = [
         invalid_case(&valid, |command| command.command_id.clear()),
@@ -429,42 +441,34 @@ fn curated_goal_handoff_rejects_invalid_commands() {
     let store = PersistentGoalSetStore::new(sled::open(temp.path()).unwrap()).unwrap();
 
     for goal_command in cases {
-        let error = accept_agent_goal_command(
-            &store,
-            AgentGoalHandoffRequest {
-                goal_command,
-                accepted_at_seq: 10,
-            },
-        )
-        .unwrap_err();
-        assert!(matches!(error, AgentGoalHandoffError::InvalidCommand(_)));
+        assert!(goal_command.validate().is_err());
     }
     assert!(store.goal_records().unwrap().is_empty());
 }
 
 #[test]
-fn curated_goal_handoff_builds_stable_add_goal_command() {
+fn producer_neutral_goal_acceptance_builds_stable_request_from_agent_command() {
     let goal_command = low_confidence_goal_command();
-    let command = build_add_goal_command(&AgentGoalHandoffRequest {
-        goal_command: goal_command.clone(),
-        accepted_at_seq: 11,
-    })
-    .unwrap();
+    let request = acceptance_request_from_agent_command(goal_command.clone(), 11);
 
     assert_eq!(
-        command.metadata.command_id.as_str(),
+        request.metadata.command_id.as_str(),
         goal_command.command_id.as_str()
     );
     assert_eq!(
-        command.metadata.source_identity.as_deref(),
+        request.metadata.source_identity.as_deref(),
         Some(goal_command.dedupe_key.index_key().as_str())
     );
-    assert_eq!(command.metadata.seq, 11);
+    assert_eq!(request.metadata.seq, 11);
     assert_eq!(
-        command.goal.goal_id.as_str(),
+        request.goal.goal_id.as_str(),
         goal_command.goal.goal_id.as_str()
     );
-    assert_eq!(command.goal.lifecycle, GoalLifecycle::Active);
+    assert_eq!(request.goal.lifecycle, GoalLifecycle::Proposed);
+    assert_eq!(
+        request.lifecycle_policy,
+        GoalAcceptanceLifecycle::RequireProposedThenActivate
+    );
 }
 
 fn invalid_case(

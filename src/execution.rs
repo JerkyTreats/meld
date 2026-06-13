@@ -1,15 +1,10 @@
 //! Execution owned contracts and runtime ports.
 
 pub mod contracts;
-pub mod goal_handoff;
 pub mod outcome_evidence;
 pub mod ports;
 
 pub use contracts::{ProviderExecutionBinding, ProviderRuntimeOverrides};
-pub use goal_handoff::{
-    accept_agent_goal_command, build_add_goal_command, AgentGoalHandoffError,
-    AgentGoalHandoffRequest,
-};
 pub use outcome_evidence::{
     build_docs_task_success_evidence, DocsTaskSuccessEvidenceError, DocsTaskSuccessEvidenceRequest,
 };

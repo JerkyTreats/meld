@@ -1,6 +1,7 @@
 use meld_events::DomainObjectRef;
 use meld_execution::goals::{
-    AddGoalCommand, ExecutionGoalRecord, GoalCommandMetadata, GoalCommandOutcome, GoalSetQuery,
+    AddGoalCommand, ExecutionGoalRecord, GoalAcceptanceLifecycle, GoalAcceptanceRequest,
+    GoalCommandMetadata, GoalCommandOutcome, GoalSetApi, GoalSetApiError, GoalSetQuery,
     GoalSetStore, ModifyGoalCommand, PersistentGoalSetStore, RemoveGoalCommand, ResumeGoalCommand,
     SatisfyGoalCommand, SuspendGoalCommand,
 };
@@ -38,6 +39,20 @@ fn metadata(command_id: &str, source_identity: Option<&str>, seq: u64) -> GoalCo
         command_id: command_id.to_string(),
         source_identity: source_identity.map(str::to_string),
         seq,
+    }
+}
+
+fn acceptance_request(
+    command_id: &str,
+    source_identity: Option<&str>,
+    seq: u64,
+    goal: Goal,
+    lifecycle_policy: GoalAcceptanceLifecycle,
+) -> GoalAcceptanceRequest {
+    GoalAcceptanceRequest {
+        metadata: metadata(command_id, source_identity, seq),
+        goal,
+        lifecycle_policy,
     }
 }
 
@@ -109,6 +124,17 @@ fn reject_empty_goal_identity_agent_and_command_ids() {
         .unwrap_err();
 
     assert!(command_id_error.to_string().contains("goal command id"));
+
+    let source_identity_error = store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-4", Some("   "), 4),
+            goal: goal("goal-4", GoalLifecycle::Active),
+        })
+        .unwrap_err();
+
+    assert!(source_identity_error
+        .to_string()
+        .contains("goal source identity"));
 }
 
 #[test]
@@ -158,6 +184,234 @@ fn duplicate_source_identity_returns_existing_goal() {
             existing_goal_id: "goal-1".to_string()
         }
     );
+}
+
+#[test]
+fn producer_neutral_goal_acceptance_activates_proposed_goal() {
+    let mut store = GoalSetStore::new();
+    let request = acceptance_request(
+        "cmd-1",
+        Some("source-a"),
+        1,
+        goal("goal-1", GoalLifecycle::Proposed),
+        GoalAcceptanceLifecycle::RequireProposedThenActivate,
+    );
+
+    let outcome = GoalSetApi::new(&mut store).accept_goal(request).unwrap();
+
+    assert!(matches!(
+        outcome,
+        GoalCommandOutcome::Applied(record)
+            if matches!(record.goal.lifecycle, GoalLifecycle::Active)
+    ));
+    assert!(GoalSetQuery::new(&store).active_goal("goal-1").is_some());
+}
+
+#[test]
+fn producer_neutral_goal_acceptance_accepts_active_goal() {
+    let mut store = GoalSetStore::new();
+    let request = acceptance_request(
+        "cmd-1",
+        None,
+        1,
+        goal("goal-1", GoalLifecycle::Active),
+        GoalAcceptanceLifecycle::RequireActive,
+    );
+
+    let outcome = GoalSetApi::new(&mut store).accept_goal(request).unwrap();
+
+    assert!(matches!(
+        outcome,
+        GoalCommandOutcome::Applied(record)
+            if matches!(record.goal.lifecycle, GoalLifecycle::Active)
+    ));
+}
+
+#[test]
+fn producer_neutral_goal_acceptance_rejects_non_ground_goal() {
+    let mut store = GoalSetStore::new();
+    let mut invalid = goal("goal-1", GoalLifecycle::Proposed);
+    invalid.target = Proposition::Accessible {
+        scope: Term::Variable("?node".to_string()),
+    };
+
+    let error = GoalSetApi::new(&mut store)
+        .accept_goal(acceptance_request(
+            "cmd-1",
+            None,
+            1,
+            invalid,
+            GoalAcceptanceLifecycle::RequireProposedThenActivate,
+        ))
+        .unwrap_err();
+
+    assert!(matches!(error, GoalSetApiError::InvalidCommand(_)));
+    assert!(error.to_string().contains("goal target must be ground"));
+}
+
+#[test]
+fn producer_neutral_goal_acceptance_rejects_blank_source_identity() {
+    let mut store = GoalSetStore::new();
+
+    let error = GoalSetApi::new(&mut store)
+        .accept_goal(acceptance_request(
+            "cmd-1",
+            Some(""),
+            1,
+            goal("goal-1", GoalLifecycle::Proposed),
+            GoalAcceptanceLifecycle::RequireProposedThenActivate,
+        ))
+        .unwrap_err();
+
+    assert!(matches!(error, GoalSetApiError::InvalidCommand(_)));
+    assert!(error.to_string().contains("goal source identity"));
+}
+
+#[test]
+fn producer_neutral_goal_acceptance_rejects_satisfied_lifecycle() {
+    let mut store = GoalSetStore::new();
+
+    let error = GoalSetApi::new(&mut store)
+        .accept_goal(acceptance_request(
+            "cmd-1",
+            None,
+            1,
+            goal("goal-1", GoalLifecycle::Satisfied { at_seq: 9 }),
+            GoalAcceptanceLifecycle::RequireProposedThenActivate,
+        ))
+        .unwrap_err();
+
+    assert!(matches!(error, GoalSetApiError::InvalidCommand(_)));
+    assert!(error
+        .to_string()
+        .contains("goal lifecycle must be proposed"));
+}
+
+#[test]
+fn producer_neutral_goal_acceptance_replays_same_command_id() {
+    let mut store = GoalSetStore::new();
+    let request = acceptance_request(
+        "cmd-1",
+        Some("source-a"),
+        1,
+        goal("goal-1", GoalLifecycle::Proposed),
+        GoalAcceptanceLifecycle::RequireProposedThenActivate,
+    );
+    let mut api = GoalSetApi::new(&mut store);
+
+    let first = api.accept_goal(request.clone()).unwrap();
+    let second = api.accept_goal(request).unwrap();
+
+    assert_eq!(first, second);
+}
+
+#[test]
+fn producer_neutral_goal_acceptance_dedupes_source_identity() {
+    let mut store = GoalSetStore::new();
+    let mut api = GoalSetApi::new(&mut store);
+    api.accept_goal(acceptance_request(
+        "cmd-1",
+        Some("same-source"),
+        1,
+        goal("goal-1", GoalLifecycle::Proposed),
+        GoalAcceptanceLifecycle::RequireProposedThenActivate,
+    ))
+    .unwrap();
+
+    let duplicate = api
+        .accept_goal(acceptance_request(
+            "cmd-2",
+            Some("same-source"),
+            2,
+            goal("goal-2", GoalLifecycle::Proposed),
+            GoalAcceptanceLifecycle::RequireProposedThenActivate,
+        ))
+        .unwrap();
+
+    assert_eq!(
+        duplicate,
+        GoalCommandOutcome::Duplicate {
+            existing_goal_id: "goal-1".to_string()
+        }
+    );
+}
+
+#[test]
+fn goal_set_api_facade_applies_lifecycle_commands() {
+    let mut store = GoalSetStore::new();
+    let mut api = GoalSetApi::new(&mut store);
+    api.add_goal(AddGoalCommand {
+        metadata: metadata("cmd-1", None, 1),
+        goal: goal("goal-1", GoalLifecycle::Active),
+    })
+    .unwrap();
+
+    let suspended = api
+        .suspend_goal(SuspendGoalCommand {
+            metadata: metadata("cmd-2", None, 2),
+            goal_id: "goal-1".to_string(),
+            reason: "pause".to_string(),
+        })
+        .unwrap();
+    assert!(matches!(
+        suspended,
+        GoalCommandOutcome::Applied(record)
+            if matches!(record.goal.lifecycle, GoalLifecycle::Suspended { .. })
+    ));
+
+    let resumed = api
+        .resume_goal(ResumeGoalCommand {
+            metadata: metadata("cmd-3", None, 3),
+            goal_id: "goal-1".to_string(),
+        })
+        .unwrap();
+    assert!(matches!(
+        resumed,
+        GoalCommandOutcome::Applied(record)
+            if matches!(record.goal.lifecycle, GoalLifecycle::Active)
+    ));
+
+    let satisfied = api
+        .satisfy_goal(SatisfyGoalCommand {
+            metadata: metadata("cmd-4", None, 4),
+            goal_id: "goal-1".to_string(),
+            at_seq: 44,
+        })
+        .unwrap();
+    assert!(matches!(
+        satisfied,
+        GoalCommandOutcome::Applied(record)
+            if matches!(record.goal.lifecycle, GoalLifecycle::Satisfied { at_seq: 44 })
+    ));
+
+    let removed = api
+        .remove_goal(RemoveGoalCommand {
+            metadata: metadata("cmd-5", None, 5),
+            goal_id: "goal-1".to_string(),
+            reason: "superseded".to_string(),
+        })
+        .unwrap();
+    assert!(matches!(
+        removed,
+        GoalCommandOutcome::Applied(record)
+            if matches!(record.goal.lifecycle, GoalLifecycle::Abandoned { .. })
+    ));
+}
+
+#[test]
+fn goal_acceptance_contracts_round_trip() {
+    let request = acceptance_request(
+        "cmd-1",
+        Some("source-a"),
+        1,
+        goal("goal-1", GoalLifecycle::Proposed),
+        GoalAcceptanceLifecycle::RequireProposedThenActivate,
+    );
+
+    let decoded: GoalAcceptanceRequest =
+        serde_json::from_str(&serde_json::to_string(&request).unwrap()).unwrap();
+
+    assert_eq!(decoded, request);
 }
 
 #[test]
@@ -399,6 +653,22 @@ fn persistent_goal_store_recovers_applied_outcome_from_split_record_write() {
             existing_goal_id: "goal-1".to_string()
         }
     );
+}
+
+#[test]
+fn persistent_goal_store_rejects_blank_source_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = PersistentGoalSetStore::new(sled::open(dir.path().join("goals")).unwrap()).unwrap();
+
+    let error = store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-1", Some("   "), 1),
+            goal: goal("goal-1", GoalLifecycle::Active),
+        })
+        .unwrap_err();
+
+    assert!(error.to_string().contains("goal source identity"));
+    assert!(store.goal_records().unwrap().is_empty());
 }
 
 #[test]

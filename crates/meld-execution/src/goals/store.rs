@@ -23,7 +23,7 @@ impl GoalSetStore {
         Self::default()
     }
 
-    /// Add a new goal or return an idempotent duplicate outcome.
+    /// Validate and store a new goal, replaying or deduping by command metadata.
     pub fn add_goal(
         &mut self,
         command: AddGoalCommand,
@@ -55,7 +55,7 @@ impl GoalSetStore {
         Ok(outcome)
     }
 
-    /// Replace an existing goal record while preserving its creation sequence.
+    /// Replace an existing goal while preserving creation sequence and dedupe state.
     pub fn modify_goal(
         &mut self,
         command: ModifyGoalCommand,
@@ -110,7 +110,7 @@ impl GoalSetStore {
         Ok(outcome)
     }
 
-    /// Mark a goal abandoned.
+    /// Apply an idempotent transition to abandoned.
     pub fn remove_goal(
         &mut self,
         command: RemoveGoalCommand,
@@ -129,7 +129,7 @@ impl GoalSetStore {
         )
     }
 
-    /// Mark a goal satisfied.
+    /// Apply an idempotent transition to satisfied.
     pub fn satisfy_goal(
         &mut self,
         command: SatisfyGoalCommand,
@@ -147,7 +147,7 @@ impl GoalSetStore {
         )
     }
 
-    /// Suspend a goal.
+    /// Apply an idempotent transition to suspended.
     pub fn suspend_goal(
         &mut self,
         command: SuspendGoalCommand,
@@ -166,7 +166,7 @@ impl GoalSetStore {
         )
     }
 
-    /// Resume a goal into active state.
+    /// Apply an idempotent transition back to active.
     pub fn resume_goal(
         &mut self,
         command: ResumeGoalCommand,
@@ -271,7 +271,11 @@ impl GoalSetStore {
 pub(crate) fn validate_metadata(
     metadata: &GoalCommandMetadata,
 ) -> Result<(), ExecutionInvariantError> {
-    validate_non_empty("goal command id", &metadata.command_id)
+    validate_non_empty("goal command id", &metadata.command_id)?;
+    if let Some(source_identity) = &metadata.source_identity {
+        validate_non_empty("goal source identity", source_identity)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_goal(goal: &Goal) -> Result<(), ExecutionInvariantError> {

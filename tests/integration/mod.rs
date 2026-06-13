@@ -2,7 +2,6 @@
 
 mod agent_authorization;
 mod agent_cli;
-mod agent_goal_handoff;
 mod blake3_verification;
 mod branches_query;
 mod branches_runtime;
@@ -17,6 +16,7 @@ mod event_spine;
 mod execution_projection;
 mod frame_queue;
 mod generation_parity;
+mod goal_acceptance;
 mod hasher_verification;
 mod init_command;
 mod logging_default;

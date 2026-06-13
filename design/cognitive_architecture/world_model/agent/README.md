@@ -60,12 +60,12 @@ The Agent is not the execution runtime.
 Within `world_model`, the Agent owns epistemic perspective and normative judgment.
 Within `execution`, the Agent's goals are data — the planning loop reads them and the task network works toward them.
 
-The Agent bridges the two domains through the shared typed language [`meld-lang`](../../meld-lang/README.md) and execution's public Goal Set API:
+The Agent bridges the two domains through the shared typed language [`meld-lang`](../../meld-lang/README.md) and integration mapping into execution's neutral Goal Set API:
 
 - the Agent reads its perspective-scoped belief views (world model authority)
 - the Agent evaluates beliefs through cost-benefit comparators — combining state beliefs, cost beliefs (learned from execution outcomes), and value beliefs (learned from downstream outcome correlation) into act/tolerate decisions
 - the Agent constructs `Goal` values using `meld-lang` types: the desired state is a `Proposition`, the priority is a `GoalPriority` with cost ceiling, the source records provenance as `GoalSource`
-- the Agent curates execution's goal set through the API: add, modify, remove, satisfy, suspend, resume
+- the Agent emits producer curation output that integration maps into execution's Goal Set API: add, modify, remove, satisfy, suspend, resume
 - execution evaluates goals mechanically against `WorldState` — it never interprets semantic intent
 
 The normative framework reduces to: which belief keys the agent watches (subscription filter), and what regime-scoped priors it carries for the cost-benefit comparison on each concern class. See [Goal Curation](goal_curation.md) for the full mechanism.
@@ -82,7 +82,7 @@ The Agent also has read access to the active goal set. This is epistemically val
 See [Goals](../../execution/goals/README.md) for the full ownership split and curation API contract.
 See [Goals and Methods](../../meld-lang/goals_and_methods.md) for the concrete `Goal` type definition and construction examples.
 
-The Agent should consume the heavier pipelines of the other world model domains and assemble them into one perspective-scoped handoff, rather than re-owning their internal logic.
+The Agent should consume the heavier pipelines of the other world model domains and assemble them into one perspective-scoped curation output, rather than re-owning their internal logic.
 
 See [Agent Spec](spec.md) for domain types, data model, and pipelines.
 See [Agent Runtime Surface](runtime_surface.md) for store, query, activation, subscription, curation, idempotency, and replay contracts.
@@ -180,7 +180,7 @@ It defines:
 - one path from belief views to planner-facing projection for that Agent through `BeliefQuery` and `PlannerQuery`
 - seed registration through the world model agent command surface
 - durable runtime records for registration, subscription, cursor, and curation decision
-- one proposed `AgentGoalCommand` with a ground `meld-lang::Goal` built from runtime rule configuration
+- one proposed `AgentGoalCommand` with a ground `meld-lang::Goal` built from runtime rule configuration and mapped into execution's neutral Goal Set API
 - duplicate suppression through active goal summary input and curation decision dedupe
 
 It defers:

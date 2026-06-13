@@ -182,7 +182,6 @@ pub fn artifact_availability_for_outcome(outcome: &Outcome) -> Vec<ArtifactAvail
         .artifact_records
         .iter()
         .cloned()
-        .into_iter()
         .map(|artifact| ArtifactAvailability {
             task_instance_id: outcome.task_instance_id.clone(),
             artifact_type_id: artifact.artifact_type_id,

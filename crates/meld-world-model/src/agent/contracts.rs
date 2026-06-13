@@ -432,27 +432,36 @@ pub struct RecordCurationDecisionCommand {
     pub decision: AgentCurationDecision,
 }
 
-/// Boundary object returned when curation proposes a goal.
+/// World-model curation output that proposes one execution goal.
+///
+/// Execution does not interpret this producer-specific object directly.
+/// Integration maps it into a neutral execution goal acceptance request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentGoalCommand {
-    /// Stable command identifier.
+    /// Stable command identifier reused for execution idempotency.
     pub command_id: AgentGoalCommandId,
-    /// Ground goal proposed by the agent.
+    /// Ground proposed goal owned by the emitting agent.
     pub goal: Goal,
-    /// Dedupe key that guards this command family.
+    /// Dedupe key that must match the goal target and agent.
     pub dedupe_key: AgentCurationDedupeKey,
 }
 
 impl AgentGoalCommand {
-    /// Validate the command and require a ground goal target.
+    /// Validate producer invariants before crossing into execution.
     pub fn validate(&self) -> Result<(), StorageError> {
         require_non_empty("goal command id", &self.command_id)?;
         self.dedupe_key.validate()?;
-        if !self.goal.target.is_ground() {
+        if let Some(variable) = self.goal.target.grounding_issue() {
+            return Err(StorageError::InvalidPath(format!(
+                "agent goal command target must be ground: {variable}"
+            )));
+        }
+        if !matches!(self.goal.lifecycle, GoalLifecycle::Proposed) {
             return Err(StorageError::InvalidPath(
-                "agent goal command target must be ground".to_string(),
+                "agent goal command lifecycle must be proposed".to_string(),
             ));
         }
+        require_goal_matches_dedupe(&self.goal, &self.dedupe_key)?;
         Ok(())
     }
 }
@@ -587,4 +596,48 @@ fn goal_matches_dedupe(goal: &Goal, dedupe_key: &AgentCurationDedupeKey) -> bool
         }
         _ => false,
     }
+}
+
+fn require_goal_matches_dedupe(
+    goal: &Goal,
+    dedupe_key: &AgentCurationDedupeKey,
+) -> Result<(), StorageError> {
+    if goal.agent_id != dedupe_key.agent_id {
+        return dedupe_mismatch("agent id");
+    }
+
+    let Proposition::Holds {
+        subject,
+        dimension,
+        condition,
+    } = &goal.target
+    else {
+        return dedupe_mismatch("goal target kind");
+    };
+
+    let Term::Object(subject) = subject else {
+        return dedupe_mismatch("goal target subject");
+    };
+    if subject.index_key() != dedupe_key.subject_key {
+        return dedupe_mismatch("goal target subject");
+    }
+
+    let Term::Dimension(dimension) = dimension else {
+        return dedupe_mismatch("goal target dimension");
+    };
+    if dimension != &dedupe_key.dimension_id {
+        return dedupe_mismatch("goal target dimension");
+    }
+
+    if condition_key(condition) != dedupe_key.target_condition_key {
+        return dedupe_mismatch("goal target condition");
+    }
+
+    Ok(())
+}
+
+fn dedupe_mismatch(field: &str) -> Result<(), StorageError> {
+    Err(StorageError::InvalidPath(format!(
+        "agent goal command dedupe key does not match {field}"
+    )))
 }

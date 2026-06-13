@@ -9,7 +9,7 @@ pub struct ExecutionGoalRecord {
     pub goal: meld_lang::Goal,
     /// Last command that created or changed this record.
     pub source_command_id: Option<String>,
-    /// Optional producer identity used to dedupe retries across command ids.
+    /// Non-empty producer identity used to dedupe retries across command ids.
     pub source_identity: Option<String>,
     /// Monotonic sequence observed when the record was created.
     pub created_at_seq: u64,
@@ -22,7 +22,7 @@ pub struct ExecutionGoalRecord {
 pub struct GoalCommandMetadata {
     /// Stable command id used for exact outcome replay.
     pub command_id: String,
-    /// Optional producer scoped identity used to dedupe semantically identical goals.
+    /// Optional non-empty producer identity for deduping semantically identical goals.
     pub source_identity: Option<String>,
     /// Caller supplied ordering sequence used in lifecycle records.
     pub seq: u64,
