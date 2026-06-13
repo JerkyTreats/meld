@@ -48,7 +48,7 @@ impl PersistentGoalSetStore {
         Ok(Arc::new(Self::new(db)?))
     }
 
-    /// Add a new goal or return an idempotent duplicate outcome.
+    /// Validate and durably store a new goal, replaying or deduping by command metadata.
     pub fn add_goal(
         &self,
         command: AddGoalCommand,
@@ -153,7 +153,7 @@ impl PersistentGoalSetStore {
             .map_err(to_goal_transaction)
     }
 
-    /// Replace an existing goal record while preserving its creation sequence.
+    /// Replace an existing goal while preserving creation sequence and dedupe state.
     pub fn modify_goal(
         &self,
         command: ModifyGoalCommand,
@@ -203,7 +203,7 @@ impl PersistentGoalSetStore {
         Ok(outcome)
     }
 
-    /// Mark a goal abandoned.
+    /// Apply an idempotent transition to abandoned.
     pub fn remove_goal(
         &self,
         command: RemoveGoalCommand,
@@ -222,7 +222,7 @@ impl PersistentGoalSetStore {
         )
     }
 
-    /// Mark a goal satisfied.
+    /// Apply an idempotent transition to satisfied.
     pub fn satisfy_goal(
         &self,
         command: SatisfyGoalCommand,
@@ -240,7 +240,7 @@ impl PersistentGoalSetStore {
         )
     }
 
-    /// Suspend a goal.
+    /// Apply an idempotent transition to suspended.
     pub fn suspend_goal(
         &self,
         command: SuspendGoalCommand,
@@ -259,7 +259,7 @@ impl PersistentGoalSetStore {
         )
     }
 
-    /// Resume a goal into active state.
+    /// Apply an idempotent transition back to active.
     pub fn resume_goal(
         &self,
         command: ResumeGoalCommand,

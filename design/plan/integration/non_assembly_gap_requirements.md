@@ -42,49 +42,51 @@ A gap does not belong here when it is only about call order, worker lifetime, de
 
 | ID | Gap | Primary Domain | Required Proof |
 | --- | --- | --- | --- |
-| NAG-1 | Curated goal handoff | execution | Implemented at [goal handoff](../../../src/execution/goal_handoff.rs) and proven by `curated_goal_handoff_stores_active_plannable_goal` |
+| NAG-1 | Producer-neutral goal acceptance | execution | Implemented at [goal API](../../../crates/meld-execution/src/goals/api.rs) and proven by `producer_neutral_goal_acceptance_stores_active_plannable_goal` |
 | NAG-2 | Outcome publication bridge | execution | Implemented at [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs) and proven by `publication_bridge_appends_pending_task_outcome_once` |
 | NAG-3 | Outcome fact to belief evidence | world model | Implemented at [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), and proven by `docs_writer_success_promotes_configured_freshness_evidence` |
-| NAG-4 | Satisfaction review | execution | An active goal is marked satisfied only after world state evaluation succeeds |
+| NAG-4 | Satisfaction review | world model agent plus execution boundary | Ownership audited at [goal ownership boundary audit](goal_ownership_boundary_audit.md); implementation proof pending |
 | NAG-5 | Failure outcome contract | execution | Failed work emits failure facts without satisfying the goal |
 
-## NAG-1 Curated Goal Handoff
+## NAG-1 Producer-Neutral Goal Acceptance
 
-World model agent curation can emit an `AgentGoalCommand` when a belief crosses a rule threshold. Execution stores goals through `AddGoalCommand`, and planning only accepts active goals.
+World model agent curation can emit an `AgentGoalCommand` when a belief crosses a rule threshold. Integration maps that producer-specific output to `GoalAcceptanceRequest`. Execution accepts the neutral request through `GoalSetApi.accept_goal`, stores goals through `AddGoalCommand`, and planning only accepts active goals.
 
 Status: `implemented`
 
-The implemented fix is an explicit handoff adapter from curated agent command to execution goal command.
+The implemented fix is an explicit producer-neutral execution acceptance API. Producer-specific validation stays in world model, and the integration boundary maps curation output into execution's request shape.
 
 ### Requirements
 
-- Add a callable adapter owned by execution or integration boundary code, not by world model internals.
-- Accept `AgentGoalCommand` as input and produce `AddGoalCommand`.
-- Reject commands with empty command id, empty agent id, or non ground target.
+- Add a callable execution facade that accepts `GoalAcceptanceRequest`.
+- Keep `AgentGoalCommand` validation in world model producer contracts.
+- Map `AgentGoalCommand` to `GoalAcceptanceRequest` in integration boundary code, not execution core.
+- Reject neutral requests with empty command id, empty agent id, or non ground target.
 - Convert `GoalLifecycle::Proposed` to `GoalLifecycle::Active` at the execution acceptance boundary.
 - Preserve idempotency by deriving a stable execution command id from the curation command id or by reusing the curation command id directly.
 - Set `GoalCommandMetadata.source_identity` from the curation dedupe identity when available.
-- Duplicate delivery of the same curated command must return the existing execution goal outcome.
-- The adapter must not reach into private world model modules.
+- Duplicate delivery of the same neutral request must return the existing execution goal outcome.
+- Execution must not import world model producer types.
 
 ### Acceptance Proof
 
 - A low confidence curation rule emits a proposed docs freshness goal.
-- The handoff stores one active execution goal.
-- Replaying the same handoff does not create a second execution goal.
+- Integration maps the curation output into a neutral acceptance request.
+- Goal acceptance stores one active execution goal.
+- Replaying the same acceptance request does not create a second execution goal.
 - Planning accepts the stored goal.
 
 Suggested focused test name:
 
 ```text
-curated_goal_handoff_stores_active_plannable_goal
+producer_neutral_goal_acceptance_stores_active_plannable_goal
 ```
 
 Implementation evidence:
 
-- [goal handoff](../../../src/execution/goal_handoff.rs)
-- [agent goal handoff test](../../../tests/integration/agent_goal_handoff.rs)
-- `cargo test --test integration_tests curated_goal_handoff_stores_active_plannable_goal`
+- [goal API](../../../crates/meld-execution/src/goals/api.rs)
+- [goal acceptance test](../../../tests/integration/goal_acceptance.rs)
+- `cargo test --test integration_tests producer_neutral_goal_acceptance_stores_active_plannable_goal`
 
 ## NAG-2 Outcome Publication Bridge
 
@@ -125,7 +127,7 @@ Implementation evidence:
 - [publication bridge test](../../../crates/meld-execution/tests/task_network_publication_bridge.rs)
 - `cargo test -p meld-execution --test task_network_publication_bridge publication_bridge_appends_pending_task_outcome_once`
 
-NAG-4 and NAG-5 remain open.
+NAG-4 ownership is audited with implementation pending. NAG-5 remains open.
 
 ## NAG-3 Outcome Fact To Belief Evidence
 
@@ -170,13 +172,20 @@ Implementation evidence:
 
 ## NAG-4 Satisfaction Review
 
-Execution can mark goals satisfied through `SatisfyGoalCommand`, and the language domain can evaluate grounded goals against world state. The missing fix is a satisfaction reviewer contract that runs after world state updates.
+Execution can mark goals satisfied through `SatisfyGoalCommand`, and the language domain can evaluate grounded goals against world state. The missing fix is an agent satisfaction curation boundary that runs after world model updates and calls execution's public satisfy API.
+
+Status: `assessed`
+
+Assessment evidence:
+
+- [goal ownership boundary audit](goal_ownership_boundary_audit.md)
+- [satisfaction review assessment](nag_4_satisfaction_review_assessment.md)
 
 ### Requirements
 
-- Add a callable reviewer that reads active execution goals and a current world state projection.
-- Evaluate each goal target with `meld_lang::evaluate`.
-- Only issue `SatisfyGoalCommand` when evaluation returns satisfied.
+- Add a world model agent satisfaction path that reads active execution goals and a current world state projection.
+- Evaluate each goal target with `meld_lang::evaluate` or an equivalent projection-backed belief check.
+- Only call execution's satisfy API when evaluation returns satisfied.
 - Use the event cursor or world state sequence as `at_seq`.
 - Use a stable idempotency command id derived from the goal id and reviewed cursor.
 - Leave goals active when evaluation is unsatisfied or indeterminate.
@@ -185,14 +194,14 @@ Execution can mark goals satisfied through `SatisfyGoalCommand`, and the languag
 ### Acceptance Proof
 
 - An active docs freshness goal remains active before supporting world state evidence exists.
-- After evidence updates world state enough to satisfy the target, the reviewer marks the goal satisfied.
-- Re-running the reviewer at the same cursor is idempotent.
+- After evidence updates world state enough to satisfy the target, the agent satisfaction path marks the goal satisfied through execution's API.
+- Re-running the agent satisfaction path at the same cursor is idempotent.
 - Indeterminate evaluation never satisfies the goal.
 
 Suggested focused test name:
 
 ```text
-satisfaction_reviewer_marks_goal_satisfied_only_after_world_state_match
+agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match
 ```
 
 ## NAG-5 Failure Outcome Contract

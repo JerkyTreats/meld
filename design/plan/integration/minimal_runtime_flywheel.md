@@ -12,7 +12,7 @@ It is not a full architecture plan. It is a focused integration artifact for the
 
 ## Related Requirements
 
-The non assembly blockers from this assessment are broken out in [Non Assembly Gap Fix Requirements](non_assembly_gap_requirements.md). That document owns the pre assembly requirements for goal handoff, publication, evidence mapping, satisfaction review, and failure behavior.
+The non assembly blockers from this assessment are broken out in [Non Assembly Gap Fix Requirements](non_assembly_gap_requirements.md). That document owns the pre assembly requirements for goal acceptance, publication, evidence mapping, satisfaction review, and failure behavior.
 
 ## Concern Definition
 
@@ -25,7 +25,7 @@ The concern is one minimal runtime flywheel for the `docs_freshness` scenario ov
 - current event spine append and replay contracts
 - graph and belief projection into `meld_lang::WorldState`
 - one threshold based agent curation rule that emits `AgentGoalCommand`
-- one execution goal store handoff from curated goal command to active goal
+- one execution goal acceptance from producer curation output to active goal
 - one planning runtime pass from active goal to execution composition
 - one execution composition lowering pass into task network commands
 - one task network worker path through claim, task execution, outcome, and publication state
@@ -59,6 +59,7 @@ seeded evidence or observed fact
 -> world model graph and belief update
 -> planner-facing WorldState projection
 -> agent goal command
+-> neutral goal acceptance
 -> execution goal store
 -> planning runtime
 -> task network mutation command
@@ -132,7 +133,7 @@ world_state
 | `control` | `none` | Legacy control events can produce world state generation claims, but task network outcome is the selected path for this flywheel. | No control projection is needed if task outcome publication is canonical. | `not needed` | [world state reducer](../../../crates/meld-world-model/src/world_state/reducer.rs), [event spine test](../../../tests/integration/event_spine.rs) | Routing the new loop through legacy node control would make control authoritative for task network outcome. | none |
 | `error` | `observe` | Store, API, execution, and world model errors already have stable mappings through domain error types. | The orchestrator needs to propagate or summarize failures without changing domain truth. | `partial` | [execution ports](../../../crates/meld-execution/src/execution/ports.rs), [task network store error tests](../../../crates/meld-execution/tests/task_network_store.rs) | none | Define the failure outcome contract for the end to end flywheel test. |
 | `events` | `own` | `meld-events` owns envelopes, object refs, event relations, sequence allocation, idempotent append, and replay reads. | All durable cross domain facts must enter through the event spine. | `complete` | [events lib](../../../crates/meld-events/src/lib.rs), [event store](../../../crates/meld-events/src/events/store.rs), [event spine tests](../../../tests/integration/event_spine.rs) | none | none |
-| `execution` | `own` | Goals, planning, lowering, task network contracts, task network store, task runtime bridge, outcome records, goal handoff, and publication bridge exist. | Glue is still needed from durable goal query to planning, from planning to task network submission, and from updated world state to satisfaction. | `partial` | [goals](../../../crates/meld-execution/src/goals.rs), [planning](../../../crates/meld-execution/src/planning.rs), [lowering](../../../crates/meld-execution/src/planning/lowering.rs), [task network](../../../crates/meld-execution/src/task_network.rs), [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs), [task bridge test](../../../crates/meld-execution/tests/task_network_execution_bridge.rs) | none | Implement the minimal flywheel runtime and satisfaction reviewer. |
+| `execution` | `own` | Goals, planning, lowering, task network contracts, task network store, task runtime bridge, outcome records, goal acceptance, and publication bridge exist. | Glue is still needed from durable goal query to planning, from planning to task network submission, and from updated world state to satisfaction. | `partial` | [goals](../../../crates/meld-execution/src/goals.rs), [planning](../../../crates/meld-execution/src/planning.rs), [lowering](../../../crates/meld-execution/src/planning/lowering.rs), [task network](../../../crates/meld-execution/src/task_network.rs), [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs), [task bridge test](../../../crates/meld-execution/tests/task_network_execution_bridge.rs) | none | Implement the minimal flywheel runtime and satisfaction reviewer. |
 | `heads` | `none` | Legacy head index remains as compatibility fallback behind graph backed head reads. | The flywheel should read current heads through world model graph when configured. | `not needed` | [head read adapter](../../../src/api.rs), [context head backfill](../../../src/context/head.rs) | The context domain already owns the compatibility fallback. | none |
 | `ignore` | `none` | Ignore policy affects workspace scans. | The flywheel does not change ignored path selection. | `not needed` | [ignore root](../../../src/ignore.rs), [workspace scan usage](../../../src/workspace.rs) | Workspace scan can keep its existing ignore behavior. | none |
 | `init` | `adapter` | Workflow initialization installs built in workflow assets used by docs writer tests. | The proof needs docs writer workflow and task package assets available before runtime. | `partial` | [init root](../../../src/init.rs), [docs writer task test](../../../tests/integration/docs_writer_task.rs) | none | Add seed data initialization for flywheel stores only if the runtime command needs it. |
@@ -160,7 +161,7 @@ world_state
 | 2 | `events` | `world_state` | sequenced event records | `GraphRuntime::catch_up` replays spine into traversal indexes | Same path | [traversal graph tests](../../../tests/integration/traversal_graph.rs), [workflow task compatibility test](../../../tests/integration/workflow_task_compatibility.rs) | `complete` |
 | 3 | `world_state` graph and belief | `world_state` planner | `PlannerProjectionInput` to `PlannerProjectionOutput` with `WorldState` | `project_world_state` and `PlannerQuery` exist | Same path | [planner tests](../../../crates/meld-world-model/tests/planner.rs) | `complete` |
 | 4 | `world_state` planner and belief | `world_state` agent | `AgentDelivery` to `AgentGoalCommand` | `AgentCuration` emits ground proposed goals | Same path | [agent tests](../../../crates/meld-world-model/tests/agent.rs) | `complete` |
-| 5 | `world_state` agent | `execution` goals | `AgentGoalCommand` to `AddGoalCommand` | [goal handoff](../../../src/execution/goal_handoff.rs) validates, activates, stores, and dedupes curated goal commands | Same path | [agent goal handoff test](../../../tests/integration/agent_goal_handoff.rs) | `complete` |
+| 5 | `world_state` agent | `execution` goals | `AgentGoalCommand` to `GoalAcceptanceRequest` to `AddGoalCommand` | [goal API](../../../crates/meld-execution/src/goals/api.rs) validates neutral requests, activates, stores, and dedupes by source identity | Same path | [goal acceptance test](../../../tests/integration/goal_acceptance.rs) | `complete` |
 | 6 | `execution` goals | `execution` planning | active `Goal` plus `WorldState` | `PlanningRuntime::plan_goal` returns composed result | Assemble from durable goal query and current projection | [planning runtime tests](../../../crates/meld-execution/tests/planning_runtime.rs) | `partial` |
 | 7 | `execution` planning | `execution` task network | `ExecutionComposition` to mutation `Set` | `ExecutionCompositionLowerer` emits task network mutations | Submit through command store | [composition lowering tests](../../../crates/meld-execution/tests/composition_lowering.rs) | `partial` |
 | 8 | `execution` task network | `task` runtime | dispatch `Claim`, materialized init payload, `TaskExecutor` | Bridge test claims, executes, records outcome | Same path inside runtime orchestrator | [task network bridge test](../../../crates/meld-execution/tests/task_network_execution_bridge.rs) | `complete` |
@@ -248,7 +249,7 @@ The flywheel is `partial`, not complete.
 
 The major gap is assembly: code exists for events, graph replay, planner projection, curation, goals, planning, lowering, task network execution, and docs writer task execution, but no single runtime currently drives them in sequence.
 
-The curation to execution goal handoff is implemented. `AgentCuration` emits `AgentGoalCommand`, and [goal handoff](../../../src/execution/goal_handoff.rs) converts it into an active execution `AddGoalCommand`.
+Producer-neutral goal acceptance is implemented. `AgentCuration` emits `AgentGoalCommand`, integration maps it to `GoalAcceptanceRequest`, and [goal API](../../../crates/meld-execution/src/goals/api.rs) stores an active execution goal through `AddGoalCommand`.
 
 Task outcome publication is implemented as a callable bridge. [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs) appends task network outcome facts into the event spine and marks publication state after append success.
 
@@ -261,7 +262,7 @@ The final gap is satisfaction. Goal stores support `SatisfyGoalCommand`, and the
 | Work Item | Owning Domain | Blocking Domain | Evidence Link | Verification Command | Priority |
 | --- | --- | --- | --- | --- | --- |
 | Select the first evidence source and fixture for `docs_freshness` | `world_state` | `workspace` | [plan phase list](../README.md) | `cargo test -p meld-world-model --test belief` | `P0` |
-| Implement `AgentGoalCommand` to execution `AddGoalCommand` adapter | `execution` | `world_state` | [goal handoff](../../../src/execution/goal_handoff.rs), [agent goal handoff test](../../../tests/integration/agent_goal_handoff.rs) | `cargo test --test integration_tests curated_goal_handoff_stores_active_plannable_goal` | `done` |
+| Implement producer-neutral goal acceptance | `execution` | `world_state` | [goal API](../../../crates/meld-execution/src/goals/api.rs), [goal acceptance test](../../../tests/integration/goal_acceptance.rs) | `cargo test --test integration_tests producer_neutral_goal_acceptance_stores_active_plannable_goal` | `done` |
 | Add minimal flywheel runtime assembly | `execution` | `api`, `store`, `world_state` | [runtime assembly](../../../src/cli/runtime_assembly.rs), [execution ports](../../../crates/meld-execution/src/execution/ports.rs) | `cargo test minimal_runtime_flywheel_turn_persists_and_satisfies_goal` | `P0` |
 | Add task outcome publication bridge | `execution` | `events` | [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs), [publication bridge test](../../../crates/meld-execution/tests/task_network_publication_bridge.rs) | `cargo test -p meld-execution --test task_network_publication_bridge` | `done` |
 | Connect docs writer outcome to docs freshness belief update | `world_state` | `events`, `execution` | [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), [outcome evidence test](../../../tests/integration/outcome_evidence.rs) | `cargo test --test integration_tests docs_writer_success_promotes_configured_freshness_evidence` | `done` |
@@ -293,6 +294,6 @@ cargo test minimal_runtime_flywheel_turn_persists_and_satisfies_goal
 | `2026-06-06` | [planner tests](../../../crates/meld-world-model/tests/planner.rs) and [agent tests](../../../crates/meld-world-model/tests/agent.rs) | Projection and curation are complete for first slice contracts | Runtime assembly remains missing. |
 | `2026-06-06` | [planning runtime tests](../../../crates/meld-execution/tests/planning_runtime.rs), [composition lowering tests](../../../crates/meld-execution/tests/composition_lowering.rs), and [task bridge test](../../../crates/meld-execution/tests/task_network_execution_bridge.rs) | Execution contracts exist through task network bridge | Publication into spine and satisfaction review are still missing. |
 | `2026-06-06` | [docs writer task test](../../../tests/integration/docs_writer_task.rs) and [workflow task compatibility test](../../../tests/integration/workflow_task_compatibility.rs) | Existing docs writer task path works | Existing workflow path is not yet the cognitive flywheel. |
-| `2026-06-08` | [goal handoff](../../../src/execution/goal_handoff.rs) and [agent goal handoff test](../../../tests/integration/agent_goal_handoff.rs) | Curated goal handoff is complete | NAG-2 through NAG-5 were open at that point. |
+| `2026-06-08` | [goal API](../../../crates/meld-execution/src/goals/api.rs) and [goal acceptance test](../../../tests/integration/goal_acceptance.rs) | Producer-neutral goal acceptance is complete | NAG-2 through NAG-5 were open at that point. |
 | `2026-06-08` | [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs) and [publication bridge test](../../../crates/meld-execution/tests/task_network_publication_bridge.rs) | Task outcome publication bridge is complete | NAG-3 through NAG-5 were open at that point. |
 | `2026-06-09` | [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), and [outcome evidence test](../../../tests/integration/outcome_evidence.rs) | Outcome fact to belief evidence is complete | NAG-4 and NAG-5 remain open. |

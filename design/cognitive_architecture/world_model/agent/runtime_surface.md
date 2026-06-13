@@ -199,7 +199,7 @@ Output:
 - optional goal command for execution
 - advanced subscription cursor
 
-The curation rule must not write execution goal state directly. The first slice emits `AgentGoalCommand` as the boundary object for execution.
+The curation rule must not write execution goal state directly. The first slice emits producer curation output, currently `AgentGoalCommand`, that maps into execution's neutral Goal Set API outside execution core.
 
 ## Goal Command Dedupe
 

@@ -7,7 +7,8 @@ use meld_lang::{
 use meld_world_model::agent::{
     curate_threshold_rule, ActiveGoalSummary, AgentActivationRecord, AgentActivationStatus,
     AgentCurationDedupeKey, AgentCurationInput, AgentCurationInputRefs, AgentCurationRuleConfig,
-    AgentDecisionKind, AgentDelivery, AgentQuery, AgentRegistration, AgentStore, AgentSubscription,
+    AgentDecisionKind, AgentDelivery, AgentGoalCommand, AgentQuery, AgentRegistration, AgentStatus,
+    AgentStore, AgentSubscription, AgentSubscriptionRecord, AgentSubscriptionStatus,
     SeedAgentRegistration, SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
@@ -218,6 +219,54 @@ fn curation_input(confidence: f64) -> AgentCurationInput {
     }
 }
 
+fn low_confidence_goal_command() -> AgentGoalCommand {
+    curate_threshold_rule(curation_input(0.2))
+        .unwrap()
+        .goal_command
+        .unwrap()
+}
+
+fn invalid_goal_command(mutate: impl FnOnce(&mut AgentGoalCommand)) -> AgentGoalCommand {
+    let mut command = low_confidence_goal_command();
+    mutate(&mut command);
+    command
+}
+
+fn expected_hash_hex(bytes: &[u8]) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn expected_deterministic_id(prefix: &str, key: &str) -> String {
+    format!("{prefix}-{}", expected_hash_hex(key.as_bytes()))
+}
+
+fn matching_active_goal_for(dedupe: &AgentCurationDedupeKey) -> Goal {
+    Goal {
+        goal_id: "goal-existing".to_string(),
+        agent_id: dedupe.agent_id.clone(),
+        target: Proposition::Holds {
+            subject: Term::Object(subject()),
+            dimension: Term::Dimension(dedupe.dimension_id.clone()),
+            condition: Condition::Above(Term::Literal(Literal::Number(THRESHOLD))),
+        },
+        priority: GoalPriority {
+            urgency: PRIORITY_URGENCY,
+            cost_ceiling: None,
+        },
+        source: GoalSource::BeliefDivergence {
+            dimension: dedupe.dimension_id.clone(),
+            observed: "confidence=0.2".to_string(),
+            desired: "confidence>0.7".to_string(),
+        },
+        lifecycle: GoalLifecycle::Active,
+    }
+}
+
 #[test]
 fn agent_public_imports_compile() {
     let (_temp_dir, store) = agent_store();
@@ -285,6 +334,179 @@ fn agent_contracts_round_trip_and_validate() {
     assert!(subscription.validate().is_ok());
     assert!(activation.validate().is_ok());
     assert!(outcome.decision.validate().is_ok());
+}
+
+#[test]
+fn agent_contract_index_keys_are_stable() {
+    assert_eq!(AgentStatus::Registered.index_key(), "registered");
+    assert_eq!(AgentStatus::Operational.index_key(), "operational");
+    assert_eq!(AgentStatus::Suspended.index_key(), "suspended");
+    assert_eq!(AgentSubscriptionStatus::Active.index_key(), "active");
+    assert_eq!(AgentSubscriptionStatus::Suspended.index_key(), "suspended");
+
+    let key = belief_key();
+    assert_eq!(
+        AgentSubscriptionRecord::natural_key(AGENT_ID, &key),
+        format!("{AGENT_ID}::{}", key.index_key())
+    );
+}
+
+#[test]
+fn agent_contract_validation_rejects_invalid_public_shapes() {
+    let (_temp_dir, store) = agent_store();
+    let (mut agent, mut subscription) = setup_agent(&store);
+    agent.directive.clear();
+    assert!(agent.validate().is_err());
+    subscription.subscription_id.clear();
+    assert!(subscription.validate().is_err());
+
+    let mut activation = AgentActivationRecord {
+        activation_id: "activation-a".to_string(),
+        agent_id: AGENT_ID.to_string(),
+        started_at_seq: 1,
+        status: AgentActivationStatus::Started,
+        last_error: None,
+        lease_id: None,
+    };
+    activation.activation_id.clear();
+    assert!(activation.validate().is_err());
+
+    let mut dedupe = AgentCurationDedupeKey::threshold_rule(
+        AGENT_ID,
+        &subject(),
+        &BranchScope::main(),
+        &rule_config(),
+    );
+    dedupe.subject_key.clear();
+    assert!(dedupe.validate().is_err());
+
+    let mut rule = rule_config();
+    rule.threshold = 1.2;
+    assert!(rule.validate().is_err());
+
+    let mut input_refs = curation_input(0.2).input_refs;
+    input_refs.planner_projection_version.clear();
+    assert!(input_refs.validate().is_err());
+
+    let mut decision = curate_threshold_rule(curation_input(0.2)).unwrap().decision;
+    decision.reason.clear();
+    assert!(decision.validate().is_err());
+
+    let mut subscribe = SubscribeAgentCommand {
+        agent_id: AGENT_ID.to_string(),
+        belief_key: belief_key(),
+        created_at_seq: 1,
+    };
+    subscribe.agent_id.clear();
+    assert!(subscribe.validate().is_err());
+
+    let mut advance = meld_world_model::AdvanceSubscriptionCommand {
+        agent_id: AGENT_ID.to_string(),
+        subscription_id: "subscription-a".to_string(),
+        delivered_revision_id: "revision-a".to_string(),
+        delivered_seq: 7,
+    };
+    advance.delivered_revision_id.clear();
+    assert!(advance.validate().is_err());
+
+    let mut delivery = AgentDelivery {
+        agent_id: AGENT_ID.to_string(),
+        subscription_id: "subscription-a".to_string(),
+        belief_revision_id: "revision-a".to_string(),
+        revision_seq: 7,
+    };
+    delivery.belief_revision_id.clear();
+    assert!(delivery.validate().is_err());
+}
+
+#[test]
+fn agent_goal_command_ids_are_stable_from_dedupe_identity() {
+    let outcome = curate_threshold_rule(curation_input(0.2)).unwrap();
+    let command = outcome.goal_command.as_ref().expect("goal command");
+    let condition_key =
+        serde_json::to_string(&Condition::Above(Term::Literal(Literal::Number(THRESHOLD))))
+            .unwrap();
+    let dedupe_key = format!(
+        "{AGENT_ID}::{}::main::{DIMENSION_ID}::{condition_key}::belief_divergence",
+        subject().index_key()
+    );
+    let decision_key = format!("{}::{:?}", dedupe_key, Some("revision-a".to_string()));
+
+    assert_eq!(command.dedupe_key.index_key(), dedupe_key);
+    assert_eq!(
+        outcome.decision.decision_id,
+        expected_deterministic_id("decision", &decision_key)
+    );
+    assert_eq!(
+        command.command_id,
+        expected_deterministic_id("goal-command", &decision_key)
+    );
+    assert_eq!(
+        command.goal.goal_id,
+        expected_deterministic_id("goal", &dedupe_key)
+    );
+}
+
+#[test]
+fn active_goal_summary_requires_active_matching_goal_from_same_agent() {
+    let dedupe = AgentCurationDedupeKey::threshold_rule(
+        AGENT_ID,
+        &subject(),
+        &BranchScope::main(),
+        &rule_config(),
+    );
+    let matching = matching_active_goal_for(&dedupe);
+    assert!(ActiveGoalSummary {
+        goals: vec![matching.clone()]
+    }
+    .has_matching_goal(&dedupe));
+
+    let mut satisfied = matching.clone();
+    satisfied.lifecycle = GoalLifecycle::Satisfied { at_seq: 9 };
+    assert!(!ActiveGoalSummary {
+        goals: vec![satisfied]
+    }
+    .has_matching_goal(&dedupe));
+
+    let mut other_agent = matching.clone();
+    other_agent.agent_id = "other-agent".to_string();
+    assert!(!ActiveGoalSummary {
+        goals: vec![other_agent]
+    }
+    .has_matching_goal(&dedupe));
+
+    let mut other_subject = matching.clone();
+    other_subject.target = Proposition::Holds {
+        subject: Term::Object(object("workspace_fs", "node", "node-b")),
+        dimension: Term::Dimension(DIMENSION_ID.to_string()),
+        condition: Condition::Above(Term::Literal(Literal::Number(THRESHOLD))),
+    };
+    assert!(!ActiveGoalSummary {
+        goals: vec![other_subject]
+    }
+    .has_matching_goal(&dedupe));
+
+    let mut other_dimension = matching.clone();
+    other_dimension.target = Proposition::Holds {
+        subject: Term::Object(subject()),
+        dimension: Term::Dimension("other_dimension".to_string()),
+        condition: Condition::Above(Term::Literal(Literal::Number(THRESHOLD))),
+    };
+    assert!(!ActiveGoalSummary {
+        goals: vec![other_dimension]
+    }
+    .has_matching_goal(&dedupe));
+
+    let mut other_condition = matching;
+    other_condition.target = Proposition::Holds {
+        subject: Term::Object(subject()),
+        dimension: Term::Dimension(DIMENSION_ID.to_string()),
+        condition: Condition::Above(Term::Literal(Literal::Number(0.9))),
+    };
+    assert!(!ActiveGoalSummary {
+        goals: vec![other_condition]
+    }
+    .has_matching_goal(&dedupe));
 }
 
 #[test]
@@ -420,6 +642,61 @@ fn agent_low_confidence_emits_ground_goal_command() {
         evaluate(&satisfied, &command.goal.target),
         EvalResult::Satisfied
     );
+}
+
+#[test]
+fn agent_goal_command_validate_requires_proposed_lifecycle() {
+    let command = invalid_goal_command(|command| {
+        command.goal.lifecycle = GoalLifecycle::Active;
+    });
+
+    let error = command.validate().unwrap_err();
+
+    assert!(error.to_string().contains("lifecycle must be proposed"));
+}
+
+#[test]
+fn agent_goal_command_validate_rejects_dedupe_agent_mismatch() {
+    let command = invalid_goal_command(|command| {
+        command.dedupe_key.agent_id = "other-agent".to_string();
+    });
+
+    let error = command.validate().unwrap_err();
+
+    assert!(error.to_string().contains("agent id"));
+}
+
+#[test]
+fn agent_goal_command_validate_rejects_dedupe_subject_mismatch() {
+    let command = invalid_goal_command(|command| {
+        command.dedupe_key.subject_key = "workspace_fs::node::other-node".to_string();
+    });
+
+    let error = command.validate().unwrap_err();
+
+    assert!(error.to_string().contains("goal target subject"));
+}
+
+#[test]
+fn agent_goal_command_validate_rejects_dedupe_dimension_mismatch() {
+    let command = invalid_goal_command(|command| {
+        command.dedupe_key.dimension_id = "other_dimension".to_string();
+    });
+
+    let error = command.validate().unwrap_err();
+
+    assert!(error.to_string().contains("goal target dimension"));
+}
+
+#[test]
+fn agent_goal_command_validate_rejects_dedupe_condition_mismatch() {
+    let command = invalid_goal_command(|command| {
+        command.dedupe_key.target_condition_key = "other-condition".to_string();
+    });
+
+    let error = command.validate().unwrap_err();
+
+    assert!(error.to_string().contains("goal target condition"));
 }
 
 #[test]

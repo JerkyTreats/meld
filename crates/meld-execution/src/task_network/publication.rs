@@ -214,13 +214,13 @@ pub fn publish_pending_publications<E: EventAppendSink>(
         .state()
         .publications
         .iter()
-        .filter_map(|(publication_id, publication)| {
+        .filter(|(_, publication)| {
             matches!(
                 publication.state,
                 PublicationState::Pending | PublicationState::Failed { .. }
             )
-            .then(|| publication_id.clone())
         })
+        .map(|(publication_id, _)| publication_id.clone())
         .take(limit)
         .collect::<Vec<_>>();
 
