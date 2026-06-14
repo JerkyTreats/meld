@@ -1,7 +1,8 @@
 use meld::execution::{
-    satisfy_request_from_agent_mutation, GoalMutationError, GoalMutationRequest,
+    build_docs_task_success_evidence, satisfy_request_from_agent_mutation,
+    DocsTaskSuccessEvidenceRequest, GoalMutationError, GoalMutationRequest,
 };
-use meld_events::DomainObjectRef;
+use meld_events::{events::store::EventStore, DomainObjectRef, EventRecord};
 use meld_execution::capability::{
     ArtifactSchemaVersionRange, CapabilityCatalog, CapabilityTypeContract, ExecutionClass,
     ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec, ScopeContract,
@@ -14,6 +15,9 @@ use meld_execution::planning::{
     MethodLibrary, PlanningRequest, PlanningResult, PlanningRuntime, PlanningWorldStateFrameRef,
     PlanningWorldStateRequest,
 };
+use meld_execution::task_network::dispatch::{Outcome, OutcomeStatus};
+use meld_execution::task_network::outcome::Publication;
+use meld_execution::task_network::publication::build_publication_envelope;
 use meld_lang::{
     Composition, Condition, CostEstimate, Effect, GoalLifecycle, Literal, Method, Operator,
     Proposition, Resolution, SlotConstraint, Step, StepKind, Term, WorldState,
@@ -310,6 +314,12 @@ fn planning_runtime() -> PlanningRuntime {
     PlanningRuntime::new(library, catalog)
 }
 
+fn no_method_planning_runtime() -> PlanningRuntime {
+    let catalog = capability_catalog();
+    let library = MethodLibrary::from_methods(Vec::<Method>::new(), &catalog);
+    PlanningRuntime::new(library, catalog)
+}
+
 fn capability_catalog() -> CapabilityCatalog {
     let mut catalog = CapabilityCatalog::new();
     catalog
@@ -403,6 +413,36 @@ fn docs_method() -> Method {
         },
         preference: 1,
     }
+}
+
+fn failed_task_event_record() -> EventRecord {
+    let outcome = Outcome {
+        outcome_id: "outcome-failure".to_string(),
+        task_instance_id: "task-failure".to_string(),
+        lifecycle_epoch: 1,
+        claim_id: "claim-failure".to_string(),
+        claim_revision: 1,
+        status: OutcomeStatus::Failed,
+        error: Some("runtime failed".to_string()),
+        artifact_records: Vec::new(),
+        task_events: Vec::new(),
+    };
+    let publication = Publication::pending_for_outcome("network-docs", &outcome);
+    assert_eq!(publication.event_type(), "execution.task.failed");
+    let envelope = build_publication_envelope("session-nag-5", &publication).unwrap();
+    let event_dir = tempfile::tempdir().unwrap();
+    let events = EventStore::new(sled::open(event_dir.path()).unwrap()).unwrap();
+    let seq = events.append_envelope_idempotent(envelope).unwrap();
+    let records = events.read_events("session-nag-5").unwrap();
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].seq, seq);
+    assert_eq!(records[0].envelope.event_type, "execution.task.failed");
+    assert_eq!(
+        records[0].envelope.data["error"],
+        serde_json::json!("runtime failed")
+    );
+    records[0].clone()
 }
 
 #[test]
@@ -507,6 +547,66 @@ fn agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match
         .satisfy_goal(replay_satisfy)
         .unwrap();
     assert_eq!(replay_outcome, first_outcome);
+}
+
+#[test]
+fn failure_outcome_does_not_satisfy_goal() {
+    let goal_command = low_confidence_goal_command();
+    let goal_id = goal_command.goal.goal_id.clone();
+
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = PersistentGoalSetStore::new(sled::open(temp.path()).unwrap()).unwrap();
+    GoalSetApi::new(&mut store)
+        .accept_goal(acceptance_request_from_agent_command(
+            goal_command.clone(),
+            7,
+        ))
+        .unwrap();
+
+    let active_goal = store.active_goal(&goal_id).unwrap().expect("active goal");
+    let planned = planning_runtime()
+        .plan_goal(planning_request(
+            active_goal.clone(),
+            world_state_below_threshold(),
+        ))
+        .unwrap();
+    assert!(matches!(planned, PlanningResult::Composed(_)));
+
+    let failed_event = failed_task_event_record();
+    let failure_evidence = build_docs_task_success_evidence(
+        DocsTaskSuccessEvidenceRequest::fresh_content(failed_event.clone(), subject()),
+    )
+    .unwrap();
+    assert!(failure_evidence.is_none());
+
+    let failure_review = curate_goal_satisfaction(satisfaction_input_for_goal(
+        active_goal.clone(),
+        world_state_below_threshold(),
+        failed_event.seq,
+    ))
+    .unwrap();
+    assert!(failure_review.goal_mutation_command.is_none());
+    assert_eq!(
+        failure_review.decision.decision,
+        AgentDecisionKind::Absorbed
+    );
+    assert!(failure_review.decision.reason.contains("unsatisfied"));
+
+    let stored_goal = store.active_goal(&goal_id).unwrap().expect("active goal");
+    assert_eq!(stored_goal.lifecycle, GoalLifecycle::Active);
+
+    let no_method = no_method_planning_runtime()
+        .plan_goal(planning_request(
+            stored_goal.clone(),
+            world_state_below_threshold(),
+        ))
+        .unwrap();
+    assert!(matches!(no_method, PlanningResult::NoApplicableMethod(_)));
+
+    let indeterminate = planning_runtime()
+        .plan_goal(planning_request(stored_goal, WorldState::empty()))
+        .unwrap();
+    assert!(matches!(indeterminate, PlanningResult::Indeterminate(_)));
 }
 
 #[test]
