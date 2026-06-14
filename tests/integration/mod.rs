@@ -11,6 +11,8 @@ mod config_integration;
 mod context_api;
 mod context_cli;
 mod context_traversal;
+pub(crate) mod docs_freshness_fixture;
+mod docs_freshness_fixture_contract;
 mod docs_writer_task;
 mod event_spine;
 mod execution_projection;
