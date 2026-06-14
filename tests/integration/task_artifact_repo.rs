@@ -72,3 +72,28 @@ fn artifact_repo_tracks_supersession_explicitly() {
         ArtifactLinkRelation::Supersedes
     );
 }
+
+#[test]
+fn artifact_repo_root_reexport_opens_durable_store() {
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    {
+        let mut repo = TaskArtifactRepo::open_sled(db.clone(), "repo_docs_writer").unwrap();
+        repo.append_artifact(artifact(
+            "artifact_durable",
+            "capinst_finalize_a",
+            "readme_summary",
+        ))
+        .unwrap();
+        repo.flush().unwrap();
+    }
+
+    let repo = TaskArtifactRepo::open_sled(db, "repo_docs_writer").unwrap();
+
+    assert_eq!(
+        repo.get_artifact("artifact_durable")
+            .unwrap()
+            .producer
+            .capability_instance_id,
+        "capinst_finalize_a"
+    );
+}
