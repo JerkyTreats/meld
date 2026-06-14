@@ -4,26 +4,19 @@ use meld::execution::{
     build_docs_task_success_evidence, satisfy_request_from_agent_mutation,
     DocsTaskSuccessEvidenceRequest, GoalMutationError, GoalMutationRequest,
 };
-use meld_events::{events::store::EventStore, DomainObjectRef, EventRecord, EventRelation};
-use meld_execution::capability::{
-    ArtifactSchemaVersionRange, CapabilityCatalog, CapabilityTypeContract, ExecutionClass,
-    ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec, ScopeContract,
-};
+use meld_events::{events::store::EventStore, DomainObjectRef, EventRecord};
 use meld_execution::goals::{
     GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
     GoalSetApi, PersistentGoalSetStore,
 };
 use meld_execution::planning::{
-    MethodLibrary, PlanningRequest, PlanningResult, PlanningRuntime, PlanningWorldStateFrameRef,
+    PlanningRequest, PlanningResult, PlanningRuntime, PlanningWorldStateFrameRef,
     PlanningWorldStateRequest,
 };
 use meld_execution::task_network::dispatch::{Outcome, OutcomeStatus};
 use meld_execution::task_network::outcome::Publication;
 use meld_execution::task_network::publication::build_publication_envelope;
-use meld_lang::{
-    Composition, Condition, CostEstimate, Effect, GoalLifecycle, Literal, Method, Operator,
-    Proposition, Resolution, SlotConstraint, Step, StepKind, Term, WorldState,
-};
+use meld_lang::{Condition, GoalLifecycle, Literal, Proposition, Term, WorldState};
 use meld_world_model::agent::{
     curate_goal_satisfaction, curate_threshold_rule, ActiveGoalSummary, AgentCuration,
     AgentCurationInput, AgentCurationInputRefs, AgentCurationRuleConfig, AgentDecisionKind,
@@ -32,36 +25,27 @@ use meld_world_model::agent::{
     SeedAgentRegistration, SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
-    BeliefProvenanceSummary, BeliefQuery, BeliefStore, BranchScope, ContradictionState,
-    FreshnessState, HydrationRefs, PlannerProjectionSummary, PosteriorSummary,
+    BeliefProvenanceSummary, BeliefQuery, BeliefStore, ContradictionState, FreshnessState,
+    HydrationRefs, PlannerProjectionSummary, PosteriorSummary,
 };
 use meld_world_model::planner::{
     project_world_state, PlannerFieldProjectionConfig, PlannerProjectionContext,
     PlannerProjectionInput, PlannerQuery, PLANNER_PROJECTION_VERSION,
 };
 use meld_world_model::world_state::graph::store::TraversalStore;
-use meld_world_model::{
-    AgentGoalCommand, AnchorSelectionRecord, BeliefKey, BeliefStatus, BeliefView, PerspectiveKey,
-    TraversalFactRecord, TraversalQuery,
+use meld_world_model::{AgentGoalCommand, BeliefKey, BeliefStatus, BeliefView, TraversalQuery};
+
+use super::docs_freshness_fixture::{
+    DocsFreshnessFirstProofFixture, CONTENT_SOURCE_KIND, DIMENSION_ID, REQUIRED_ARTIFACT_TYPE_ID,
+    TASK_NETWORK_ID, THRESHOLD,
 };
 
-const AGENT_ID: &str = "seed.docs_freshness";
-const DIMENSION_ID: &str = "docs_freshness";
-const PREDICATE_ID: &str = "confidence";
-const EVIDENCE_POLICY_ID: &str = "default_policy";
-const THRESHOLD: f64 = 0.7;
-const PRIORITY_URGENCY: u32 = 50;
-
-fn object(domain_id: &str, object_kind: &str, object_id: &str) -> DomainObjectRef {
-    DomainObjectRef::new(domain_id, object_kind, object_id).unwrap()
-}
-
 fn subject() -> DomainObjectRef {
-    object("workspace_fs", "node", "node-a")
+    DocsFreshnessFirstProofFixture::new().subject()
 }
 
 fn subject_term() -> Term {
-    Term::Object(subject())
+    DocsFreshnessFirstProofFixture::new().subject_term()
 }
 
 fn agent_store() -> (tempfile::TempDir, AgentStore) {
@@ -71,37 +55,15 @@ fn agent_store() -> (tempfile::TempDir, AgentStore) {
 }
 
 fn seed_agent_registration() -> SeedAgentRegistration {
-    SeedAgentRegistration {
-        agent_id: AGENT_ID.to_string(),
-        perspective_key: PerspectiveKey::new("default", "default").unwrap(),
-        subject: subject(),
-        branch_scope: BranchScope::main(),
-        observation_scope: DIMENSION_ID.to_string(),
-        directive: "curate docs freshness goals".to_string(),
-        seed_provenance: "trusted init".to_string(),
-        created_at_seq: 0,
-    }
+    DocsFreshnessFirstProofFixture::new().seed_agent_registration()
 }
 
 fn belief_key() -> BeliefKey {
-    BeliefKey {
-        subject: subject(),
-        dimension_id: DIMENSION_ID.to_string(),
-        predicate_id: PREDICATE_ID.to_string(),
-        perspective: PerspectiveKey::new("default", "default").unwrap(),
-        branch_scope: BranchScope::main(),
-        evidence_policy_id: EVIDENCE_POLICY_ID.to_string(),
-    }
+    DocsFreshnessFirstProofFixture::new().belief_key()
 }
 
 fn rule_config() -> AgentCurationRuleConfig {
-    AgentCurationRuleConfig {
-        dimension_id: DIMENSION_ID.to_string(),
-        threshold: THRESHOLD,
-        priority_urgency: PRIORITY_URGENCY,
-        desired_summary: "confidence>0.7".to_string(),
-        source_kind: "belief_divergence".to_string(),
-    }
+    DocsFreshnessFirstProofFixture::new().curation_rule_config()
 }
 
 fn test_view(confidence: f64, revision_id: &str, seq: u64) -> BeliefView {
@@ -174,36 +136,7 @@ fn setup_agent(
 }
 
 fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>) {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store =
-        Arc::new(TraversalStore::new(sled::open(temp_dir.path().join("graph")).unwrap()).unwrap());
-    let node = subject();
-    let frame = object("context", "frame", "frame-a");
-    let relation = EventRelation::new("selected", node.clone(), frame.clone()).unwrap();
-    let fact = TraversalFactRecord {
-        fact_id: "fact-a".to_string(),
-        source_spine_fact_id: "spine-a".to_string(),
-        seq: 1,
-        event_type: "context.head.selected".to_string(),
-        objects: vec![node.clone(), frame.clone()],
-        relations: vec![relation],
-    };
-    let anchor = AnchorSelectionRecord {
-        anchor_id: "anchor-a".to_string(),
-        anchor_ref: object("context", "head", "node-a::analysis"),
-        subject: node,
-        perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
-        target: frame,
-        source_fact_ids: vec!["spine-a".to_string()],
-        created_by_fact_id: "fact-a".to_string(),
-        selected_at_seq: 1,
-        ended_at_seq: None,
-        ended_by_anchor_id: None,
-        ended_by_fact_id: None,
-    };
-    store.put_fact(&fact).unwrap();
-    store.put_anchor(&anchor).unwrap();
-    store.set_current_anchor(&anchor).unwrap();
+    let (temp_dir, store, _subject) = DocsFreshnessFirstProofFixture::new().seeded_graph();
     (temp_dir, store)
 }
 
@@ -361,110 +294,11 @@ fn satisfaction_review(
 }
 
 fn planning_runtime() -> PlanningRuntime {
-    let catalog = capability_catalog();
-    let library = MethodLibrary::from_methods(vec![docs_method()], &catalog);
-    PlanningRuntime::new(library, catalog)
+    DocsFreshnessFirstProofFixture::new().planning_runtime()
 }
 
 fn no_method_planning_runtime() -> PlanningRuntime {
-    let catalog = capability_catalog();
-    let library = MethodLibrary::from_methods(Vec::<Method>::new(), &catalog);
-    PlanningRuntime::new(library, catalog)
-}
-
-fn capability_catalog() -> CapabilityCatalog {
-    let mut catalog = CapabilityCatalog::new();
-    catalog
-        .register(CapabilityTypeContract {
-            capability_type_id: "docs.write".to_string(),
-            capability_version: 1,
-            owning_domain: "docs".to_string(),
-            scope_contract: ScopeContract {
-                scope_kind: "filesystem".to_string(),
-                scope_ref_kind: "node_id".to_string(),
-                allow_fan_out: false,
-            },
-            binding_contract: vec![],
-            input_contract: vec![InputSlotSpec {
-                slot_id: "source".to_string(),
-                accepted_artifact_type_ids: vec!["source_doc".to_string()],
-                schema_versions: ArtifactSchemaVersionRange { min: 1, max: 1 },
-                required: false,
-                cardinality: InputCardinality::One,
-            }],
-            output_contract: vec![OutputSlotSpec {
-                slot_id: "patch".to_string(),
-                artifact_type_id: "docs_patch".to_string(),
-                schema_version: 1,
-                guaranteed: true,
-            }],
-            effect_contract: vec![],
-            execution_contract: ExecutionContract {
-                execution_class: ExecutionClass::Queued,
-                completion_semantics: "result_or_failure".to_string(),
-                retry_class: "provider_io".to_string(),
-                cancellation_supported: true,
-            },
-        })
-        .unwrap();
-    catalog
-}
-
-fn docs_method() -> Method {
-    Method {
-        method_id: "refresh".to_string(),
-        trigger: Proposition::Holds {
-            subject: Term::Variable("?node".to_string()),
-            dimension: Term::Dimension(DIMENSION_ID.to_string()),
-            condition: Condition::Above(Term::Literal(Literal::Number(THRESHOLD))),
-        },
-        preconditions: vec![Proposition::Accessible {
-            scope: Term::Variable("?node".to_string()),
-        }],
-        composition: Composition {
-            steps: vec![Step {
-                step_id: "write".to_string(),
-                kind: StepKind::Op(Operator {
-                    operator_id: "write".to_string(),
-                    preconditions: vec![Proposition::Accessible {
-                        scope: Term::Variable("?node".to_string()),
-                    }],
-                    effects: vec![Effect::Update {
-                        subject: Term::Variable("?node".to_string()),
-                        dimension: Term::Dimension(DIMENSION_ID.to_string()),
-                        value: Term::Literal(Literal::Number(0.95)),
-                    }],
-                    cost: CostEstimate {
-                        time_ms: 10_000,
-                        money_microdollars: 25_000,
-                        provider_calls: 1,
-                    },
-                    resolution: Resolution {
-                        requires_inputs: vec![],
-                        requires_outputs: vec![SlotConstraint {
-                            artifact_type: Term::ArtifactType("docs_patch".to_string()),
-                            required: true,
-                        }],
-                        scope_kind: Some("filesystem".to_string()),
-                        tags: vec!["docs".to_string()],
-                        specific: None,
-                    },
-                }),
-            }],
-            edges: vec![],
-        },
-        net_effects: vec![Effect::Update {
-            subject: Term::Variable("?node".to_string()),
-            dimension: Term::Dimension(DIMENSION_ID.to_string()),
-            value: Term::Literal(Literal::Number(0.95)),
-        }],
-        cost: CostEstimate {
-            time_ms: 10_000,
-            money_microdollars: 25_000,
-            provider_calls: 1,
-        },
-        preference: 1,
-    }
+    DocsFreshnessFirstProofFixture::new().empty_planning_runtime()
 }
 
 fn failed_task_event_record() -> EventRecord {
@@ -479,7 +313,7 @@ fn failed_task_event_record() -> EventRecord {
         artifact_records: Vec::new(),
         task_events: Vec::new(),
     };
-    let publication = Publication::pending_for_outcome("network-docs", &outcome);
+    let publication = Publication::pending_for_outcome(TASK_NETWORK_ID, &outcome);
     assert_eq!(publication.event_type(), "execution.task.failed");
     let envelope = build_publication_envelope("session-nag-5", &publication).unwrap();
     let event_dir = tempfile::tempdir().unwrap();
@@ -677,9 +511,14 @@ fn failure_outcome_does_not_satisfy_goal() {
     assert!(matches!(planned, PlanningResult::Composed(_)));
 
     let failed_event = failed_task_event_record();
-    let failure_evidence = build_docs_task_success_evidence(
-        DocsTaskSuccessEvidenceRequest::fresh_content(failed_event.clone(), subject()),
-    )
+    let failure_evidence = build_docs_task_success_evidence(DocsTaskSuccessEvidenceRequest {
+        event: failed_event.clone(),
+        subject: subject(),
+        stale_probability: 0.0,
+        review_probability: 0.2,
+        source_kind: CONTENT_SOURCE_KIND.to_string(),
+        required_artifact_type_id: Some(REQUIRED_ARTIFACT_TYPE_ID.to_string()),
+    })
     .unwrap();
     assert!(failure_evidence.is_none());
 
