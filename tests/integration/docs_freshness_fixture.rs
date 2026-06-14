@@ -10,7 +10,9 @@ use meld_lang::{
     Composition, Condition, CostEstimate, Effect, GoalLifecycle, Literal, Method, Operator,
     Proposition, Resolution, SlotConstraint, Step, StepKind, Term,
 };
-use meld_world_model::agent::{AgentCurationRuleConfig, SeedAgentRegistration};
+use meld_world_model::agent::{
+    AgentCurationDedupeKey, AgentCurationRuleConfig, AgentSubscriptionRecord, SeedAgentRegistration,
+};
 use meld_world_model::belief::{BeliefKey, BranchScope};
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::{AnchorSelectionRecord, PerspectiveKey, TraversalFactRecord};
@@ -38,10 +40,18 @@ pub const REQUIRED_ARTIFACT_TYPE_ID: &str = "docs_patch";
 pub const CONTENT_SOURCE_KIND: &str = "content_written";
 pub const PUBLICATION_EVENT_TYPE: &str = "execution.task.succeeded";
 pub const FAILURE_EVENT_TYPE: &str = "execution.task.failed";
-pub const PUBLICATION_ID: &str = "pub-a";
+pub const PUBLICATION_ID: &str =
+    "task-network-publication-9ec007895dc9863796b15c44ce3d11cae6e7c4d19abeb95b797aa53c05747e11";
 pub const OUTCOME_ID: &str = "outcome-alpha";
 pub const TASK_INSTANCE_ID: &str = "task-alpha";
 pub const ARTIFACT_ID: &str = "artifact-alpha";
+pub const TASK_ARTIFACT_REPO_ID: &str = "repo-docs";
+pub const SEED_GRAPH_SEQ: u64 = 1;
+pub const GOAL_ACCEPTED_SEQ: u64 = 7;
+pub const PUBLICATION_EVENT_SEQ: u64 = 21;
+pub const SATISFACTION_REVIEW_SEQ: u64 = 22;
+pub const GOAL_COMMAND_REVISION_ID: &str = "revision-a";
+pub const SATISFIED_REVISION_ID: &str = "revision-satisfied";
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DocsFreshnessFirstProofFixture;
@@ -103,6 +113,52 @@ impl DocsFreshnessFirstProofFixture {
             desired_summary: "confidence>0.7".to_string(),
             source_kind: "belief_divergence".to_string(),
         }
+    }
+
+    pub fn goal_acceptance_seq(&self) -> u64 {
+        GOAL_ACCEPTED_SEQ
+    }
+
+    pub fn publication_event_seq(&self) -> u64 {
+        PUBLICATION_EVENT_SEQ
+    }
+
+    pub fn satisfaction_review_seq(&self) -> u64 {
+        SATISFACTION_REVIEW_SEQ
+    }
+
+    pub fn expected_goal_source_identity(&self) -> String {
+        self.threshold_dedupe_key().index_key()
+    }
+
+    pub fn expected_goal_command_id(&self) -> String {
+        deterministic_id(
+            "goal-command",
+            &format!(
+                "{}::{:?}",
+                self.expected_goal_source_identity(),
+                Some(GOAL_COMMAND_REVISION_ID.to_string())
+            ),
+        )
+    }
+
+    pub fn expected_goal_id(&self) -> String {
+        deterministic_id("goal", &self.expected_goal_source_identity())
+    }
+
+    pub fn expected_satisfaction_mutation_command_id(&self) -> String {
+        let decision_key = format!(
+            "{}::satisfy::{}::{}",
+            self.expected_goal_source_identity(),
+            self.expected_goal_id(),
+            self.satisfaction_review_seq()
+        );
+        deterministic_id("goal-mutation-command", &decision_key)
+    }
+
+    pub fn expected_subscription_id(&self) -> String {
+        let natural_key = AgentSubscriptionRecord::natural_key(AGENT_ID, &self.belief_key());
+        deterministic_id("subscription", &natural_key)
     }
 
     pub fn belief_config_json(&self) -> &'static str {
@@ -309,6 +365,11 @@ impl DocsFreshnessFirstProofFixture {
         let store = Arc::new(
             TraversalStore::new(sled::open(temp_dir.path().join("graph")).unwrap()).unwrap(),
         );
+        self.seed_graph_into(store.as_ref());
+        (temp_dir, store, self.subject())
+    }
+
+    pub fn seed_graph_into(&self, store: &TraversalStore) {
         let node = self.subject();
         let frame = domain_object("context", "frame", "frame-a");
         let anchor_ref = domain_object("context", "head", "node-a::analysis");
@@ -316,7 +377,7 @@ impl DocsFreshnessFirstProofFixture {
         let fact = TraversalFactRecord {
             fact_id: "fact-a".to_string(),
             source_spine_fact_id: "spine-a".to_string(),
-            seq: 1,
+            seq: SEED_GRAPH_SEQ,
             event_type: "context.head.selected".to_string(),
             objects: vec![node.clone(), frame.clone()],
             relations: vec![relation],
@@ -329,7 +390,7 @@ impl DocsFreshnessFirstProofFixture {
             target: frame,
             source_fact_ids: vec!["spine-a".to_string()],
             created_by_fact_id: "fact-a".to_string(),
-            selected_at_seq: 1,
+            selected_at_seq: SEED_GRAPH_SEQ,
             ended_at_seq: None,
             ended_by_anchor_id: None,
             ended_by_fact_id: None,
@@ -337,7 +398,6 @@ impl DocsFreshnessFirstProofFixture {
         store.put_fact(&fact).unwrap();
         store.put_anchor(&anchor).unwrap();
         store.set_current_anchor(&anchor).unwrap();
-        (temp_dir, store, node)
     }
 
     pub fn task_success_event(&self, seq: u64) -> EventRecord {
@@ -421,8 +481,30 @@ impl DocsFreshnessFirstProofFixture {
             provider_calls: 1,
         }
     }
+
+    fn threshold_dedupe_key(&self) -> AgentCurationDedupeKey {
+        AgentCurationDedupeKey::threshold_rule(
+            AGENT_ID.to_string(),
+            &self.subject(),
+            &self.branch_scope(),
+            &self.curation_rule_config(),
+        )
+    }
 }
 
 pub fn domain_object(domain_id: &str, object_kind: &str, object_id: &str) -> DomainObjectRef {
     DomainObjectRef::new(domain_id, object_kind, object_id).unwrap()
+}
+
+fn deterministic_id(prefix: &str, key: &str) -> String {
+    format!("{prefix}-{}", stable_hash_hex(key.as_bytes()))
+}
+
+fn stable_hash_hex(bytes: &[u8]) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }

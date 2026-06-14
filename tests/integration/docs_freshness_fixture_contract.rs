@@ -5,9 +5,11 @@ use meld_world_model::belief::BeliefConfigLoader;
 
 use super::docs_freshness_fixture::{
     DocsFreshnessFirstProofFixture, CONTENT_SOURCE_KIND, DIMENSION_ID, EVIDENCE_POLICY_ID,
-    FAILURE_EVENT_TYPE, METHOD_ID, PREDICATE_ID, PUBLICATION_EVENT_TYPE, PUBLICATION_ID,
-    REQUIRED_ARTIFACT_TYPE_ID, SESSION_ID, SUBJECT_DOMAIN_ID, SUBJECT_OBJECT_ID,
-    SUBJECT_OBJECT_KIND, TASK_NETWORK_ID, THRESHOLD, WORKER_ID,
+    FAILURE_EVENT_TYPE, GOAL_ACCEPTED_SEQ, GOAL_COMMAND_REVISION_ID, METHOD_ID, PREDICATE_ID,
+    PUBLICATION_EVENT_SEQ, PUBLICATION_EVENT_TYPE, PUBLICATION_ID, REQUIRED_ARTIFACT_TYPE_ID,
+    SATISFACTION_REVIEW_SEQ, SATISFIED_REVISION_ID, SEED_GRAPH_SEQ, SESSION_ID, SUBJECT_DOMAIN_ID,
+    SUBJECT_OBJECT_ID, SUBJECT_OBJECT_KIND, TASK_ARTIFACT_REPO_ID, TASK_NETWORK_ID, THRESHOLD,
+    WORKER_ID,
 };
 
 #[test]
@@ -118,7 +120,13 @@ fn docs_freshness_fixture_pins_runtime_safe_record_derivations() {
         fixture.task_stream_id(),
         "task_network::network-docs::task::task-alpha"
     );
-    assert_eq!(record_id, "execution::task_network_publication::pub-a");
+    assert_eq!(
+        record_id,
+        concat!(
+            "execution::task_network_publication::",
+            "task-network-publication-9ec007895dc9863796b15c44ce3d11cae6e7c4d19abeb95b797aa53c05747e11"
+        )
+    );
     assert_eq!(
         DocsFreshnessFirstProofFixture::publication_record_id(PUBLICATION_ID),
         record_id
@@ -131,8 +139,44 @@ fn docs_freshness_fixture_pins_runtime_safe_record_derivations() {
     );
     assert_eq!(failure.envelope.event_type, FAILURE_EVENT_TYPE);
     assert_eq!(
-        fixture.expected_final_lifecycle(22),
-        GoalLifecycle::Satisfied { at_seq: 22 }
+        fixture.expected_final_lifecycle(fixture.satisfaction_review_seq()),
+        GoalLifecycle::Satisfied {
+            at_seq: SATISFACTION_REVIEW_SEQ
+        }
     );
     assert_eq!(WORKER_ID, "worker-docs");
+    assert_eq!(fixture.goal_acceptance_seq(), GOAL_ACCEPTED_SEQ);
+    assert_eq!(fixture.publication_event_seq(), PUBLICATION_EVENT_SEQ);
+    assert_eq!(fixture.satisfaction_review_seq(), SATISFACTION_REVIEW_SEQ);
+    assert_eq!(SEED_GRAPH_SEQ, 1);
+    assert_eq!(GOAL_COMMAND_REVISION_ID, "revision-a");
+    assert_eq!(SATISFIED_REVISION_ID, "revision-satisfied");
+    assert_eq!(TASK_ARTIFACT_REPO_ID, "repo-docs");
+}
+
+#[test]
+fn docs_freshness_fixture_pins_goal_and_subscription_derivations() {
+    let fixture = DocsFreshnessFirstProofFixture::new();
+
+    assert_eq!(
+        fixture.expected_goal_source_identity(),
+        concat!(
+            "seed.docs_freshness::workspace_fs::node::node-a::main::",
+            "docs_freshness::{\"Above\":{\"Literal\":{\"Number\":0.7}}}::",
+            "belief_divergence"
+        )
+    );
+    assert_eq!(
+        fixture.expected_goal_command_id(),
+        "goal-command-d229a6514f8dd7ea"
+    );
+    assert_eq!(fixture.expected_goal_id(), "goal-b3aa98202b995b4e");
+    assert_eq!(
+        fixture.expected_satisfaction_mutation_command_id(),
+        "goal-mutation-command-bd5892fc7aa2fecb"
+    );
+    assert_eq!(
+        fixture.expected_subscription_id(),
+        "subscription-538131bbf2536cfa"
+    );
 }
