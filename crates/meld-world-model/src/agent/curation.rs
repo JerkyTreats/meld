@@ -1,12 +1,13 @@
 //! Pure agent curation and delivery handling.
 
-use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource};
+use meld_lang::{evaluate, Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
 
 use crate::agent::contracts::{
-    deterministic_id, threshold_target, ActiveGoalSummary, AdvanceSubscriptionCommand,
-    AgentCurationDecision, AgentCurationDedupeKey, AgentCurationInput, AgentCurationInputRefs,
-    AgentCurationOutcome, AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery,
-    AgentGoalCommand,
+    condition_key, deterministic_id, threshold_target, ActiveGoalSummary,
+    AdvanceSubscriptionCommand, AgentCurationDecision, AgentCurationDedupeKey, AgentCurationInput,
+    AgentCurationInputRefs, AgentCurationOutcome, AgentCurationRuleConfig, AgentDecisionKind,
+    AgentDelivery, AgentGoalCommand, AgentGoalMutationCommand, AgentGoalMutationKind,
+    AgentGoalSatisfactionInput,
 };
 use crate::agent::store::AgentStore;
 use crate::agent::subscription::AgentSubscription;
@@ -57,6 +58,7 @@ impl<'a> AgentCuration<'a> {
             outcome = AgentCurationOutcome {
                 decision: persisted,
                 goal_command: None,
+                goal_mutation_command: None,
             };
         }
         subscription_commands.advance_subscription(AdvanceSubscriptionCommand {
@@ -266,7 +268,151 @@ pub fn curate_threshold_rule(
     Ok(AgentCurationOutcome {
         decision,
         goal_command: Some(command),
+        goal_mutation_command: None,
     })
+}
+
+/// Run deterministic agent-owned satisfaction curation without writing durable state.
+pub fn curate_goal_satisfaction(
+    input: AgentGoalSatisfactionInput,
+) -> Result<AgentCurationOutcome, StorageError> {
+    validate_satisfaction_input(&input)?;
+    let mut candidates: Vec<&Goal> = input
+        .active_goals
+        .goals
+        .iter()
+        .filter(|goal| matches!(goal.lifecycle, GoalLifecycle::Active))
+        .filter(|goal| goal.agent_id == input.agent.agent_id)
+        .collect();
+    candidates.sort_by(|left, right| left.goal_id.cmp(&right.goal_id));
+
+    if candidates.is_empty() {
+        let dedupe_key = no_candidate_dedupe_key(&input);
+        let decision_key = format!(
+            "{}::satisfy::none::{}",
+            dedupe_key.index_key(),
+            input.review_seq
+        );
+        let decision_id = deterministic_id("decision", &decision_key);
+        return Ok(satisfaction_without_command(
+            input,
+            dedupe_key,
+            decision_id,
+            AgentDecisionKind::Absorbed,
+            "no active goals for agent",
+        ));
+    }
+
+    let mut first_satisfied: Option<&Goal> = None;
+    let mut satisfied_count = 0usize;
+    let mut first_unsatisfied: Option<&Goal> = None;
+    let mut first_indeterminate: Option<&Goal> = None;
+
+    for goal in &candidates {
+        if let Some(variable) = goal.target.grounding_issue() {
+            return Err(StorageError::InvalidPath(format!(
+                "candidate goal target must be ground: {variable}"
+            )));
+        }
+
+        match evaluate(&input.planner_projection.world_state, &goal.target) {
+            meld_lang::EvalResult::Satisfied => {
+                if first_satisfied.is_none() {
+                    first_satisfied = Some(goal);
+                }
+                satisfied_count += 1;
+            }
+            meld_lang::EvalResult::Unsatisfied { .. } => {
+                if first_unsatisfied.is_none() {
+                    first_unsatisfied = Some(goal);
+                }
+            }
+            meld_lang::EvalResult::Indeterminate { .. } => {
+                if first_indeterminate.is_none() {
+                    first_indeterminate = Some(goal);
+                }
+            }
+        }
+    }
+
+    if let Some(goal) = first_satisfied {
+        let dedupe_key = dedupe_key_for_goal(&input.agent, goal)?;
+        let decision_key = format!(
+            "{}::satisfy::{}::{}",
+            dedupe_key.index_key(),
+            goal.goal_id,
+            input.review_seq
+        );
+        let decision_id = deterministic_id("decision", &decision_key);
+        let command_id = deterministic_id("goal-mutation-command", &decision_key);
+        let command = AgentGoalMutationCommand {
+            command_id: command_id.clone(),
+            agent_id: input.agent.agent_id.clone(),
+            goal_id: goal.goal_id.clone(),
+            kind: AgentGoalMutationKind::Satisfy {
+                at_seq: input.review_seq,
+            },
+            dedupe_key: dedupe_key.clone(),
+            review_seq: input.review_seq,
+            projection_version: input.planner_projection.projection_version.clone(),
+            planner_source_refs: input.input_refs.planner_source_refs.clone(),
+            planner_warnings: input.input_refs.planner_warnings.clone(),
+        };
+        command.validate()?;
+        let reason = if satisfied_count > 1 {
+            "first satisfied goal was selected"
+        } else {
+            "goal target satisfied"
+        };
+        let decision = satisfaction_decision(
+            input,
+            dedupe_key,
+            decision_id,
+            AgentDecisionKind::GoalMutationCommand,
+            reason,
+            Some(command_id),
+        );
+        return Ok(AgentCurationOutcome {
+            decision,
+            goal_command: None,
+            goal_mutation_command: Some(command),
+        });
+    }
+
+    if let Some(goal) = first_indeterminate {
+        let dedupe_key = dedupe_key_for_goal(&input.agent, goal)?;
+        let decision_key = format!(
+            "{}::satisfy::{}::{}",
+            dedupe_key.index_key(),
+            goal.goal_id,
+            input.review_seq
+        );
+        let decision_id = deterministic_id("decision", &decision_key);
+        return Ok(satisfaction_without_command(
+            input,
+            dedupe_key,
+            decision_id,
+            AgentDecisionKind::Indeterminate,
+            "goal target indeterminate",
+        ));
+    }
+
+    let goal = first_unsatisfied.expect("candidate list is non-empty");
+    let dedupe_key = dedupe_key_for_goal(&input.agent, goal)?;
+    let decision_key = format!(
+        "{}::satisfy::{}::{}",
+        dedupe_key.index_key(),
+        goal.goal_id,
+        input.review_seq
+    );
+    let decision_id = deterministic_id("decision", &decision_key);
+    Ok(satisfaction_without_command(
+        input,
+        dedupe_key,
+        decision_id,
+        AgentDecisionKind::Absorbed,
+        "goal target unsatisfied",
+    ))
 }
 
 fn absorbed_or_indeterminate(
@@ -287,6 +433,7 @@ fn absorbed_or_indeterminate(
             goal_command_id,
         ),
         goal_command: None,
+        goal_mutation_command: None,
     }
 }
 
@@ -304,10 +451,136 @@ fn decision(
         subscription_id: input.subscription.subscription_id,
         decision: kind,
         goal_command_id,
+        goal_mutation_command_id: None,
         dedupe_key,
         input_refs: input.input_refs,
         reason: reason.to_string(),
         created_at_seq: input.delivered_seq,
+    }
+}
+
+fn satisfaction_without_command(
+    input: AgentGoalSatisfactionInput,
+    dedupe_key: AgentCurationDedupeKey,
+    decision_id: String,
+    kind: AgentDecisionKind,
+    reason: &str,
+) -> AgentCurationOutcome {
+    AgentCurationOutcome {
+        decision: satisfaction_decision(input, dedupe_key, decision_id, kind, reason, None),
+        goal_command: None,
+        goal_mutation_command: None,
+    }
+}
+
+fn satisfaction_decision(
+    input: AgentGoalSatisfactionInput,
+    dedupe_key: AgentCurationDedupeKey,
+    decision_id: String,
+    kind: AgentDecisionKind,
+    reason: &str,
+    goal_mutation_command_id: Option<String>,
+) -> AgentCurationDecision {
+    AgentCurationDecision {
+        decision_id,
+        agent_id: input.agent.agent_id,
+        subscription_id: input.subscription.subscription_id,
+        decision: kind,
+        goal_command_id: None,
+        goal_mutation_command_id,
+        dedupe_key,
+        input_refs: input.input_refs,
+        reason: reason.to_string(),
+        created_at_seq: input.review_seq,
+    }
+}
+
+fn validate_satisfaction_input(input: &AgentGoalSatisfactionInput) -> Result<(), StorageError> {
+    if input.review_seq == 0 {
+        return Err(StorageError::InvalidPath(
+            "review seq must be greater than zero".to_string(),
+        ));
+    }
+    input.agent.validate()?;
+    input.subscription.validate()?;
+    if input.subscription.agent_id != input.agent.agent_id {
+        return Err(StorageError::InvalidPath(
+            "subscription agent mismatch".to_string(),
+        ));
+    }
+    input.input_refs.validate()?;
+    if input.planner_projection.projection_version != input.input_refs.planner_projection_version {
+        return Err(StorageError::InvalidPath(
+            "planner projection version mismatch".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn no_candidate_dedupe_key(input: &AgentGoalSatisfactionInput) -> AgentCurationDedupeKey {
+    AgentCurationDedupeKey {
+        agent_id: input.agent.agent_id.clone(),
+        subject_key: input.agent.subject.index_key(),
+        branch_id: input.agent.branch_scope.branch_id.clone(),
+        dimension_id: input.subscription.belief_key.dimension_id.clone(),
+        target_condition_key: "no-active-goal".to_string(),
+        source_kind: "goal_satisfaction_review".to_string(),
+    }
+}
+
+fn dedupe_key_for_goal(
+    agent: &crate::agent::contracts::AgentRecord,
+    goal: &Goal,
+) -> Result<AgentCurationDedupeKey, StorageError> {
+    let target_key = serde_json::to_string(&goal.target)
+        .map_err(|err| StorageError::InvalidPath(err.to_string()))?;
+    let (subject_key, dimension_id, target_condition_key) = match &goal.target {
+        Proposition::Holds {
+            subject,
+            dimension,
+            condition,
+        } => (
+            target_subject_key(subject),
+            target_dimension_key(dimension),
+            condition_key(condition),
+        ),
+        _ => (
+            target_key.clone(),
+            "proposition".to_string(),
+            target_key.clone(),
+        ),
+    };
+
+    Ok(AgentCurationDedupeKey {
+        agent_id: agent.agent_id.clone(),
+        subject_key,
+        branch_id: agent.branch_scope.branch_id.clone(),
+        dimension_id,
+        target_condition_key,
+        source_kind: goal_source_kind(&goal.source).to_string(),
+    })
+}
+
+fn target_subject_key(subject: &Term) -> String {
+    match subject {
+        Term::Object(object) => object.index_key(),
+        _ => serde_json::to_string(subject).expect("term serialization is infallible"),
+    }
+}
+
+fn target_dimension_key(dimension: &Term) -> String {
+    match dimension {
+        Term::Dimension(dimension) => dimension.clone(),
+        _ => serde_json::to_string(dimension).expect("term serialization is infallible"),
+    }
+}
+
+fn goal_source_kind(source: &GoalSource) -> &'static str {
+    match source {
+        GoalSource::BeliefDivergence { .. } => "belief_divergence",
+        GoalSource::UserDirected { .. } => "user_directed",
+        GoalSource::Maintenance { .. } => "maintenance",
+        GoalSource::Decomposed { .. } => "decomposed",
     }
 }
 

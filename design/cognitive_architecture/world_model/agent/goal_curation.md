@@ -180,17 +180,18 @@ belief revision event arrives (or freshness decay fires)
 
 The agent constructs goals at runtime using `meld-lang` types. No predefined goal variants — the agent composes `Proposition::Holds`, `Proposition::Exists`, or compound `All`/`Any`/`Not` propositions from its belief assessment. The urgency level is derived from the cost-benefit posterior. The cost ceiling is derived from the cost belief. See [Goals and Methods](../../meld-lang/goals_and_methods.md) for the concrete types and construction examples.
 
-Satisfaction checking follows the same watching pattern. With `meld-lang`, the planning loop handles mechanical satisfaction (evaluating `goal.target` against `WorldState`), but the agent can also proactively satisfy goals when it detects through belief revision that the desired state holds:
+Satisfaction curation follows the same watching pattern. With `meld-lang`, planning may mechanically observe whether `goal.target` holds against `WorldState`, but the agent owns the decision to emit a satisfaction mutation:
 
 ```
 belief revision event arrives
   → does this belief now satisfy an active goal's desired state?
   → the world model projects updated WorldState
-  → the planning loop evaluates: evaluate(world_state, goal.target) == Satisfied?
-  → if satisfied: planning loop transitions lifecycle to Satisfied
+  → the agent evaluates: evaluate(world_state, goal.target) == Satisfied?
+  → if satisfied: agent emits a satisfaction mutation
+  → execution persists lifecycle through the public satisfy API
 ```
 
-Satisfaction can occur from any source — the system's own execution, external action, or unrelated changes. The world model projects belief into `WorldState`. The planning loop's `evaluate()` call detects satisfaction regardless of source.
+Satisfaction can occur from any source, including the system's own execution, external action, or unrelated changes. The world model projects belief into `WorldState`. The agent curation path detects satisfaction from that projection. `meld_lang::evaluate` remains pure and does not own lifecycle transitions.
 
 ## Relationship to Comparator Model
 

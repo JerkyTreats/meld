@@ -7,6 +7,8 @@ Status: needs revision
 
 The later [goal ownership boundary audit](goal_ownership_boundary_audit.md) found that this assessment over-assigned satisfaction review ownership to execution. Treat this artifact as earlier gap evidence only until NAG-4 is reframed around world model agent satisfaction curation plus execution lifecycle command enforcement.
 
+Final implementation note: the implemented NAG-4 path follows the later ownership audit, not the older execution-owned reviewer proposal below. World model agent curation emits an agent goal mutation command only after `meld_lang::evaluate` returns `EvalResult::Satisfied`, and the root execution adapter maps that command into `GoalSetApi.satisfy_goal`.
+
 ## Concern Definition
 
 NAG-4 defines the domain contract that moves an execution goal from `Active` to `Satisfied` only after a current projected world state evaluates the goal target as satisfied through `meld_lang::evaluate`. The reviewer is a callable execution boundary after world model updates. It reads active execution goals, consumes caller supplied projected world state, evaluates each target mechanically, issues `SatisfyGoalCommand` only for `EvalResult::Satisfied`, and returns diagnostics for unsatisfied or indeterminate goals.

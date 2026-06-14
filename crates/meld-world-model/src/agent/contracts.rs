@@ -19,6 +19,8 @@ pub type AgentActivationId = String;
 pub type AgentDecisionId = String;
 /// Stable durable identifier for a goal command emitted by an agent.
 pub type AgentGoalCommandId = String;
+/// Stable durable identifier for a goal mutation command emitted by an agent.
+pub type AgentGoalMutationCommandId = String;
 
 /// Lifecycle status for an agent record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +79,8 @@ pub enum AgentActivationStatus {
 pub enum AgentDecisionKind {
     /// The decision produced a goal command boundary object.
     GoalCommand,
+    /// The decision produced a goal mutation boundary object.
+    GoalMutationCommand,
     /// The input was understood but no new command was needed.
     Absorbed,
     /// The input could not produce a determinate command.
@@ -324,6 +328,9 @@ pub struct AgentCurationDecision {
     pub decision: AgentDecisionKind,
     /// Goal command emitted by the decision, when present.
     pub goal_command_id: Option<AgentGoalCommandId>,
+    /// Goal mutation command emitted by the decision, when present.
+    #[serde(default)]
+    pub goal_mutation_command_id: Option<AgentGoalMutationCommandId>,
     /// Dedupe key that defines the command family.
     pub dedupe_key: AgentCurationDedupeKey,
     /// References to belief and planner inputs used by the decision.
@@ -466,6 +473,69 @@ impl AgentGoalCommand {
     }
 }
 
+/// Agent-authored mutation against an existing execution goal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentGoalMutationKind {
+    /// Mark an active goal satisfied at the supplied review sequence.
+    Satisfy {
+        /// Sequence where the agent established satisfaction.
+        at_seq: u64,
+    },
+}
+
+/// World-model curation output that requests a goal lifecycle mutation.
+///
+/// Execution owns durable lifecycle state. Integration validates and maps this
+/// command into execution's public goal set API.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentGoalMutationCommand {
+    /// Stable command identifier reused for execution idempotency.
+    pub command_id: AgentGoalMutationCommandId,
+    /// Agent that authored the mutation.
+    pub agent_id: AgentId,
+    /// Existing execution goal to mutate.
+    pub goal_id: String,
+    /// Mutation kind and mutation-specific data.
+    pub kind: AgentGoalMutationKind,
+    /// Dedupe key for the target goal family.
+    pub dedupe_key: AgentCurationDedupeKey,
+    /// Caller supplied review sequence used for idempotency and timestamps.
+    pub review_seq: u64,
+    /// Planner projection version used for the satisfaction review.
+    pub projection_version: String,
+    /// Planner source references copied from the review input.
+    pub planner_source_refs: Vec<String>,
+    /// Planner warnings copied from the review input.
+    pub planner_warnings: Vec<String>,
+}
+
+impl AgentGoalMutationCommand {
+    /// Validate invariants before crossing into the execution boundary.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        require_non_empty("agent goal mutation command id", &self.command_id)?;
+        require_non_empty("agent id", &self.agent_id)?;
+        require_non_empty("goal id", &self.goal_id)?;
+        if self.review_seq == 0 {
+            return Err(StorageError::InvalidPath(
+                "review seq must be greater than zero".to_string(),
+            ));
+        }
+        require_non_empty("projection version", &self.projection_version)?;
+        self.dedupe_key.validate()?;
+        if self.dedupe_key.agent_id != self.agent_id {
+            return Err(StorageError::InvalidPath(
+                "agent goal mutation dedupe key agent id mismatch".to_string(),
+            ));
+        }
+        match &self.kind {
+            AgentGoalMutationKind::Satisfy { at_seq } if *at_seq == self.review_seq => Ok(()),
+            AgentGoalMutationKind::Satisfy { .. } => Err(StorageError::InvalidPath(
+                "satisfy at seq must equal review seq".to_string(),
+            )),
+        }
+    }
+}
+
 /// Snapshot of execution goals visible to curation.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ActiveGoalSummary {
@@ -507,6 +577,23 @@ pub struct AgentCurationInput {
     pub input_refs: AgentCurationInputRefs,
 }
 
+/// Complete input to pure agent-owned satisfaction curation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentGoalSatisfactionInput {
+    /// Agent record used for scope and ownership checks.
+    pub agent: AgentRecord,
+    /// Subscription that anchors the review to one belief stream.
+    pub subscription: AgentSubscriptionRecord,
+    /// Caller supplied review sequence used for decision identity.
+    pub review_seq: u64,
+    /// Planner projection evaluated against active goal targets.
+    pub planner_projection: PlannerProjectionOutput,
+    /// Execution goal snapshot used to select active owned goals.
+    pub active_goals: ActiveGoalSummary,
+    /// Durable references to the curation inputs.
+    pub input_refs: AgentCurationInputRefs,
+}
+
 /// Delivery envelope supplied by a runtime subscription driver.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentDelivery {
@@ -537,6 +624,9 @@ pub struct AgentCurationOutcome {
     pub decision: AgentCurationDecision,
     /// Optional goal command returned to the execution boundary.
     pub goal_command: Option<AgentGoalCommand>,
+    /// Optional goal mutation command returned to the execution boundary.
+    #[serde(default)]
+    pub goal_mutation_command: Option<AgentGoalMutationCommand>,
 }
 
 pub(crate) fn require_non_empty(label: &str, value: &str) -> Result<(), StorageError> {

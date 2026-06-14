@@ -112,7 +112,7 @@ Execution never needs to determine *how* satisfaction occurred. The world model 
 
 A goal is a proposition about desired world-model state, scoped to an agent's perspective.
 
-The concrete `Goal` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md), the shared proposition language between world model and execution. The world model agent constructs goals using `meld-lang` types. Execution evaluates them mechanically. The shared language eliminates the need for execution to interpret semantic intent.
+The concrete `Goal` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md), the shared proposition language between world model and execution. The world model agent constructs goals using `meld-lang` types. Planning may evaluate them mechanically, and the agent owns satisfaction curation. The shared language eliminates the need for execution to interpret semantic intent.
 
 ```
 Goal {
@@ -202,13 +202,13 @@ enum GoalLifecycle {
 
 **Suspended**: the goal is valid but cannot be pursued right now. The agent suspends goals when: insufficient belief to plan (observation needed first), resource contention with higher-priority goals, or dependency on another goal's completion.
 
-**Satisfied**: the goal's target proposition holds in the world state. The planning loop sets `Satisfied` when `evaluate(world_state, goal.target)` returns `EvalResult::Satisfied` (see [World State and Evaluation](../../meld-lang/world_state.md)). The `at_seq` field records the event sequence number at which satisfaction was confirmed. Maintenance goals may cycle back to `Active` if the agent later detects invariant violation.
+**Satisfied**: the goal's target proposition holds in the world state. The world model agent curates satisfaction when `evaluate(world_state, goal.target)` returns `EvalResult::Satisfied`, and execution persists the transition only through its public satisfy API. The `at_seq` field records the event sequence number at which satisfaction was confirmed. Maintenance goals may cycle back to `Active` if the agent later detects invariant violation.
 
 **Abandoned**: the goal is no longer relevant. The agent removes goals when: user cancels, regime shift invalidates premises, or cost exceeds remaining value.
 
 The prior `Superseded { by: GoalId }` variant is absorbed into `Abandoned` — supersession is an abandonment reason, not a distinct lifecycle state.
 
-Lifecycle transitions are initiated by the world model agent (Proposed → Active, Active → Suspended, Active → Abandoned) or by the planning loop's satisfaction check (Active → Satisfied). The planning loop may also propose suspension when it determines that a goal cannot be planned against with the current capability catalog (triggering synthesis). Even then, the suspension is communicated back to the agent for confirmation.
+Lifecycle transitions are initiated by the world model agent and persisted by execution through public goal APIs. Planning may observe that a target is satisfied, but it does not own the `Active` to `Satisfied` lifecycle mutation. The planning loop may also propose suspension when it determines that a goal cannot be planned against with the current capability catalog. Even then, the suspension is communicated back to the agent for confirmation.
 
 ### Goal priority
 
@@ -229,12 +229,12 @@ The prior `preemption_policy` field is deferred. Preemption behavior will be der
 
 ## Satisfaction Checking
 
-With `meld-lang`, satisfaction checking becomes mechanical. The planning loop evaluates `goal.target` against the current `WorldState` using the three-valued `evaluate()` function (see [World State and Evaluation](../../meld-lang/world_state.md)):
+With `meld-lang`, satisfaction observation becomes mechanical. Planning may evaluate `goal.target` against the current `WorldState` using the three-valued `evaluate()` function. The world model agent owns satisfaction curation, and execution persists lifecycle state only through its public satisfy API.
 
 ```rust
 match evaluate(&world_state, &goal.target) {
     EvalResult::Satisfied => {
-        // Goal achieved. Transition lifecycle to Satisfied.
+        // Goal target holds. Report this through agent satisfaction curation.
     }
     EvalResult::Unsatisfied { gap } => {
         // World model asserted values, but they don't meet the condition.
@@ -249,14 +249,14 @@ match evaluate(&world_state, &goal.target) {
 
 The prior `SatisfactionCriteria` type (predicate, confidence_threshold, freshness_requirement, stability_requirement) is subsumed by the `Proposition` target itself. Confidence thresholds become `Condition::Above`. Freshness requirements become `Condition::Within` on a freshness dimension. Stability requirements become a separate dimension the world model projects when it has sufficient history.
 
-The satisfaction check is now owned jointly:
+The satisfaction boundary is split by ownership:
 
-- **The planning loop** performs mechanical evaluation: `evaluate(world_state, goal.target) == Satisfied`. When this returns `Satisfied`, the planning loop transitions the goal's lifecycle and cleans up task network state.
-- **The world model agent** performs normative evaluation: is the goal still worth pursuing? Should the ceiling be adjusted? Should the goal be abandoned? The agent reads the goal set and evaluates belief through its cost-benefit comparators (see [Goal Curation](../../world_model/agent/goal_curation.md)).
+- **Planning** may mechanically observe `EvalResult::Satisfied` while planning or validating task effects.
+- **The world model agent** reviews active agent-owned goals against the current projected `WorldState` and emits a satisfaction mutation only for `EvalResult::Satisfied`.
+- **Execution** persists the lifecycle transition only through its public satisfy API.
+- **`meld_lang::evaluate`** remains pure and does not own lifecycle transitions.
 
-The agent can also satisfy goals proactively — if belief revision shows the desired state holds (from external action, not system execution), the agent calls the satisfy API. The planning loop detects this on its next evaluation cycle and cleans up.
-
-Satisfaction from any source remains: the system's own execution, external action, or unrelated changes all produce belief revisions that the world model projects into `WorldState`. The planning loop's `evaluate()` call picks up satisfaction regardless of source.
+Satisfaction from any source remains: the system's own execution, external action, or unrelated changes all produce belief revisions that the world model projects into `WorldState`. The agent curation path detects satisfaction from that projection and execution records the lifecycle change.
 
 ## Belief Interaction Patterns
 

@@ -1,3 +1,6 @@
+use meld::execution::{
+    satisfy_request_from_agent_mutation, GoalMutationError, GoalMutationRequest,
+};
 use meld_events::DomainObjectRef;
 use meld_execution::capability::{
     ArtifactSchemaVersionRange, CapabilityCatalog, CapabilityTypeContract, ExecutionClass,
@@ -16,8 +19,9 @@ use meld_lang::{
     Proposition, Resolution, SlotConstraint, Step, StepKind, Term, WorldState,
 };
 use meld_world_model::agent::{
-    curate_threshold_rule, ActiveGoalSummary, AgentCurationInput, AgentCurationInputRefs,
-    AgentCurationRuleConfig, AgentDecisionKind, AgentRegistration, AgentStore, AgentSubscription,
+    curate_goal_satisfaction, curate_threshold_rule, ActiveGoalSummary, AgentCurationInput,
+    AgentCurationInputRefs, AgentCurationRuleConfig, AgentDecisionKind, AgentGoalMutationCommand,
+    AgentGoalSatisfactionInput, AgentRegistration, AgentStore, AgentSubscription,
     SeedAgentRegistration, SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
@@ -254,6 +258,52 @@ fn world_state_below_threshold() -> WorldState {
     .unwrap()
 }
 
+fn world_state_with_confidence(confidence: f64) -> WorldState {
+    WorldState::new(vec![
+        Proposition::Accessible {
+            scope: subject_term(),
+        },
+        Proposition::Holds {
+            subject: subject_term(),
+            dimension: Term::Dimension(DIMENSION_ID.to_string()),
+            condition: Condition::Equals(Term::Literal(Literal::Number(confidence))),
+        },
+    ])
+    .unwrap()
+}
+
+fn satisfaction_input_for_goal(
+    goal: meld_lang::Goal,
+    world_state: WorldState,
+    review_seq: u64,
+) -> AgentGoalSatisfactionInput {
+    let mut input = curation_input(0.95);
+    input.planner_projection.world_state = world_state;
+    input.input_refs.planner_source_refs = vec!["integration-source".to_string()];
+    input.input_refs.planner_warnings = vec!["integration-warning".to_string()];
+    AgentGoalSatisfactionInput {
+        agent: input.agent,
+        subscription: input.subscription,
+        review_seq,
+        planner_projection: input.planner_projection,
+        active_goals: ActiveGoalSummary { goals: vec![goal] },
+        input_refs: input.input_refs,
+    }
+}
+
+fn valid_goal_mutation_command() -> AgentGoalMutationCommand {
+    let mut goal = low_confidence_goal_command().goal;
+    goal.lifecycle = GoalLifecycle::Active;
+    curate_goal_satisfaction(satisfaction_input_for_goal(
+        goal,
+        world_state_with_confidence(0.95),
+        22,
+    ))
+    .unwrap()
+    .goal_mutation_command
+    .unwrap()
+}
+
 fn planning_runtime() -> PlanningRuntime {
     let catalog = capability_catalog();
     let library = MethodLibrary::from_methods(vec![docs_method()], &catalog);
@@ -407,6 +457,92 @@ fn producer_neutral_goal_acceptance_stores_active_plannable_goal() {
 }
 
 #[test]
+fn agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match() {
+    let goal_command = low_confidence_goal_command();
+    let goal_id = goal_command.goal.goal_id.clone();
+
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = PersistentGoalSetStore::new(sled::open(temp.path()).unwrap()).unwrap();
+    GoalSetApi::new(&mut store)
+        .accept_goal(acceptance_request_from_agent_command(
+            goal_command.clone(),
+            7,
+        ))
+        .unwrap();
+
+    let active_goal = store.active_goal(&goal_id).unwrap().expect("active goal");
+    assert_eq!(active_goal.lifecycle, GoalLifecycle::Active);
+
+    let below = curate_goal_satisfaction(satisfaction_input_for_goal(
+        active_goal.clone(),
+        world_state_below_threshold(),
+        21,
+    ))
+    .unwrap();
+    assert!(below.goal_mutation_command.is_none());
+    assert!(store.active_goal(&goal_id).unwrap().is_some());
+
+    let satisfied_input =
+        satisfaction_input_for_goal(active_goal.clone(), world_state_with_confidence(0.95), 22);
+    let satisfied = curate_goal_satisfaction(satisfied_input.clone()).unwrap();
+    let command = satisfied.goal_mutation_command.expect("mutation command");
+    let satisfy = satisfy_request_from_agent_mutation(GoalMutationRequest { command }).unwrap();
+    let first_outcome = GoalSetApi::new(&mut store)
+        .satisfy_goal(satisfy.clone())
+        .unwrap();
+
+    let record = store.get_goal(&goal_id).unwrap().expect("goal record");
+    assert_eq!(
+        record.goal.lifecycle,
+        GoalLifecycle::Satisfied { at_seq: 22 }
+    );
+
+    let replayed = curate_goal_satisfaction(satisfied_input).unwrap();
+    let replay_command = replayed.goal_mutation_command.expect("mutation command");
+    let replay_satisfy = satisfy_request_from_agent_mutation(GoalMutationRequest {
+        command: replay_command,
+    })
+    .unwrap();
+    let replay_outcome = GoalSetApi::new(&mut store)
+        .satisfy_goal(replay_satisfy)
+        .unwrap();
+    assert_eq!(replay_outcome, first_outcome);
+}
+
+#[test]
+fn agent_satisfaction_curation_requires_agent_owned_goal() {
+    let mut goal = low_confidence_goal_command().goal;
+    goal.lifecycle = GoalLifecycle::Active;
+    goal.agent_id = "other-agent".to_string();
+
+    let outcome = curate_goal_satisfaction(satisfaction_input_for_goal(
+        goal,
+        world_state_with_confidence(0.95),
+        22,
+    ))
+    .unwrap();
+
+    assert!(outcome.goal_mutation_command.is_none());
+    assert_eq!(outcome.decision.decision, AgentDecisionKind::Absorbed);
+}
+
+#[test]
+fn agent_satisfaction_adapter_rejects_invalid_mutation() {
+    let invalid_dedupe = invalid_mutation_case(|command| {
+        command.dedupe_key.agent_id = "other-agent".to_string();
+    });
+    let invalid_projection = invalid_mutation_case(|command| {
+        command.projection_version.clear();
+    });
+
+    for command in [invalid_dedupe, invalid_projection] {
+        let error = satisfy_request_from_agent_mutation(GoalMutationRequest { command })
+            .expect_err("invalid mutation");
+        assert!(matches!(error, GoalMutationError::InvalidCommand(_)));
+    }
+}
+
+#[test]
 fn producer_neutral_goal_acceptance_rejects_invalid_agent_command_before_execution() {
     let valid = low_confidence_goal_command();
     let cases = [
@@ -476,6 +612,14 @@ fn invalid_case(
     mutate: impl FnOnce(&mut AgentGoalCommand),
 ) -> AgentGoalCommand {
     let mut command = valid.clone();
+    mutate(&mut command);
+    command
+}
+
+fn invalid_mutation_case(
+    mutate: impl FnOnce(&mut AgentGoalMutationCommand),
+) -> AgentGoalMutationCommand {
+    let mut command = valid_goal_mutation_command();
     mutate(&mut command);
     command
 }
