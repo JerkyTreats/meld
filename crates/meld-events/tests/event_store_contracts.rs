@@ -364,6 +364,38 @@ fn store_orders_session_reads_and_filters_after_cursor() {
 }
 
 #[test]
+fn store_reads_all_events_after_with_limit() {
+    let (_temp_dir, store) = event_store();
+
+    store
+        .append_event(&runtime_event(3, SESSION_A, "session.third"))
+        .unwrap();
+    store
+        .append_event(&runtime_event(1, SESSION_A, "session.first"))
+        .unwrap();
+    store
+        .append_event(&runtime_event(2, SESSION_B, "session.second"))
+        .unwrap();
+
+    let first_two = store.read_all_events_after_limit(0, 2).unwrap();
+    let after_first = store.read_all_events_after_limit(1, 8).unwrap();
+    let none = store.read_all_events_after_limit(0, 0).unwrap();
+
+    assert_eq!(
+        first_two.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(
+        after_first
+            .iter()
+            .map(|event| event.seq)
+            .collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+    assert!(none.is_empty());
+}
+
+#[test]
 fn manual_sequence_append_advances_allocator() {
     let (_temp_dir, store) = event_store();
     store

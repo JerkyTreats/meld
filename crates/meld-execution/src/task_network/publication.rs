@@ -18,6 +18,8 @@ use crate::task_network::{
     store::SledTaskNetworkStore,
 };
 
+const PUBLICATION_ACTOR_ID: &str = "execution.task_network.publication";
+
 /// Request to publish retryable task network publication records.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishPendingPublicationsRequest {
@@ -27,6 +29,28 @@ pub struct PublishPendingPublicationsRequest {
     pub worker_id: String,
     /// Optional maximum number of retryable publications to process.
     pub limit: Option<usize>,
+}
+
+/// Scope for one publication bridge report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicationBridgeScope {
+    /// Task network whose publication outbox was scanned.
+    pub network_id: String,
+    /// Event session used for appended publication facts.
+    pub session_id: String,
+    /// Worker identity supplied by the caller.
+    pub worker_id: String,
+}
+
+/// Diagnostic issue produced by a publication bridge tick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicationBridgeIssue {
+    /// Publication id associated with the issue when known.
+    pub publication_id: Option<String>,
+    /// Stable diagnostic code.
+    pub code: String,
+    /// Human-readable diagnostic message.
+    pub message: String,
 }
 
 /// Successful event append metadata for one publication.
@@ -78,6 +102,24 @@ pub enum PublicationPublishResult {
 /// Report from a bounded publication bridge pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicationBridgeReport {
+    /// Stable runtime actor identifier.
+    pub actor_id: String,
+    /// Domain-specific report scope.
+    pub scope: PublicationBridgeScope,
+    /// Task network revision before selecting publications.
+    pub input_revision: u64,
+    /// Task network revision after processing selected publications.
+    pub output_revision: u64,
+    /// Publication records attempted by this pass.
+    pub items_attempted: usize,
+    /// Publication records successfully appended and marked published.
+    pub items_committed: usize,
+    /// Retryable diagnostics observed during the pass.
+    pub retryable_errors: Vec<PublicationBridgeIssue>,
+    /// Fatal diagnostics observed during the pass.
+    pub fatal_errors: Vec<PublicationBridgeIssue>,
+    /// True when more retryable publication records remain after the limit.
+    pub budget_exhausted: bool,
     /// Per publication results in deterministic publication id order.
     pub results: Vec<PublicationPublishResult>,
 }
@@ -205,11 +247,14 @@ pub fn publish_pending_publications<E: EventAppendSink>(
 ) -> Result<PublicationBridgeReport, PublicationBridgeError> {
     validate_request(&request)?;
 
-    let limit = request.limit.unwrap_or(usize::MAX);
-    if limit == 0 {
-        return Ok(PublicationBridgeReport { results: vec![] });
-    }
+    let input_revision = store.state().revision;
+    let scope = PublicationBridgeScope {
+        network_id: store.state().network_id.clone(),
+        session_id: request.session_id.clone(),
+        worker_id: request.worker_id.clone(),
+    };
 
+    let candidate_limit = request.limit.map(|limit| limit.saturating_add(1));
     let publication_ids = store
         .state()
         .publications
@@ -220,9 +265,18 @@ pub fn publish_pending_publications<E: EventAppendSink>(
                 PublicationState::Pending | PublicationState::Failed { .. }
             )
         })
-        .map(|(publication_id, _)| publication_id.clone())
-        .take(limit)
-        .collect::<Vec<_>>();
+        .map(|(publication_id, _)| publication_id.clone());
+    let mut publication_ids = match candidate_limit {
+        Some(limit) => publication_ids.take(limit).collect::<Vec<_>>(),
+        None => publication_ids.collect::<Vec<_>>(),
+    };
+    let budget_exhausted = request
+        .limit
+        .map(|limit| publication_ids.len() > limit)
+        .unwrap_or(false);
+    if let Some(limit) = request.limit {
+        publication_ids.truncate(limit);
+    }
 
     let mut results = Vec::with_capacity(publication_ids.len());
     for publication_id in publication_ids {
@@ -234,7 +288,64 @@ pub fn publish_pending_publications<E: EventAppendSink>(
         )?);
     }
 
-    Ok(PublicationBridgeReport { results })
+    let output_revision = store.state().revision;
+    Ok(report_from_results(
+        scope,
+        input_revision,
+        output_revision,
+        budget_exhausted,
+        results,
+    ))
+}
+
+fn report_from_results(
+    scope: PublicationBridgeScope,
+    input_revision: u64,
+    output_revision: u64,
+    budget_exhausted: bool,
+    results: Vec<PublicationPublishResult>,
+) -> PublicationBridgeReport {
+    let mut retryable_errors = Vec::new();
+    let mut fatal_errors = Vec::new();
+    let mut items_committed = 0;
+
+    for result in &results {
+        match result {
+            PublicationPublishResult::Published { .. } => {
+                items_committed += 1;
+            }
+            PublicationPublishResult::AlreadyPublished { .. } => {}
+            PublicationPublishResult::MarkRejected {
+                publication_id,
+                reason,
+            } => fatal_errors.push(PublicationBridgeIssue {
+                publication_id: Some(publication_id.clone()),
+                code: "publication_mark_rejected".to_string(),
+                message: reason.clone(),
+            }),
+            PublicationPublishResult::AppendFailed {
+                publication_id,
+                error,
+            } => retryable_errors.push(PublicationBridgeIssue {
+                publication_id: Some(publication_id.clone()),
+                code: "publication_append_failed".to_string(),
+                message: error.clone(),
+            }),
+        }
+    }
+
+    PublicationBridgeReport {
+        actor_id: PUBLICATION_ACTOR_ID.to_string(),
+        scope,
+        input_revision,
+        output_revision,
+        items_attempted: results.len(),
+        items_committed,
+        retryable_errors,
+        fatal_errors,
+        budget_exhausted,
+        results,
+    }
 }
 
 fn publish_marked_publication(
@@ -399,4 +510,41 @@ fn stable_error_hash(error: &str) -> String {
 
 fn rejection_summary(rejection: &Rejection) -> String {
     format!("{rejection:?}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scope() -> PublicationBridgeScope {
+        PublicationBridgeScope {
+            network_id: "network-docs".to_string(),
+            session_id: "session-publication".to_string(),
+            worker_id: "worker-publication".to_string(),
+        }
+    }
+
+    #[test]
+    fn report_classifies_mark_rejection_as_fatal() {
+        let report = report_from_results(
+            scope(),
+            4,
+            4,
+            false,
+            vec![PublicationPublishResult::MarkRejected {
+                publication_id: "publication-a".to_string(),
+                reason: "FailedPrecondition".to_string(),
+            }],
+        );
+
+        assert_eq!(report.items_attempted, 1);
+        assert_eq!(report.items_committed, 0);
+        assert!(report.retryable_errors.is_empty());
+        assert_eq!(report.fatal_errors.len(), 1);
+        assert_eq!(
+            report.fatal_errors[0].publication_id.as_deref(),
+            Some("publication-a")
+        );
+        assert_eq!(report.fatal_errors[0].code, "publication_mark_rejected");
+    }
 }

@@ -22,6 +22,7 @@ use meld::world_state::graph::compat::LegacyClaimAdapter;
 use meld::world_state::graph::events::AnchorSelectedEventData;
 use meld::world_state::graph::query::TraversalQuery;
 use meld::world_state::graph::reducer::TraversalReducer;
+use meld::world_state::graph::runtime::GraphCatchUpBudget;
 use meld::world_state::{GraphWalkSpec, TraversalDirection, WorldModelQueries};
 
 use crate::integration::with_xdg_env;
@@ -697,7 +698,17 @@ fn graph_runtime_repeated_catch_up_is_idempotent() {
         1,
     );
 
-    assert_eq!(runtime.catch_up().unwrap(), 1);
+    let first_report = runtime
+        .catch_up_bounded(GraphCatchUpBudget { max_items: 8 })
+        .unwrap();
+    assert_eq!(first_report.actor_id, "world_state.graph.reducer");
+    assert_eq!(first_report.input_event_seq, 0);
+    assert_eq!(first_report.events_attempted, 1);
+    assert_eq!(first_report.traversal_events_applied, 1);
+    assert_eq!(first_report.derived_events_appended, 1);
+    assert_eq!(first_report.retryable_errors.len(), 0);
+    assert_eq!(first_report.fatal_errors.len(), 0);
+    assert!(!first_report.budget_exhausted);
     assert_eq!(runtime.catch_up().unwrap(), 0);
 
     let derived_events: Vec<_> = progress
@@ -725,6 +736,80 @@ fn graph_runtime_repeated_catch_up_is_idempotent() {
         1
     );
     assert_eq!(traversal.last_reduced_seq().unwrap(), 2);
+}
+
+#[test]
+fn graph_runtime_bounded_report_resumes_without_skipping_source_events() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("spine");
+    let db = sled::open(&db_path).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
+    let runtime = GraphRuntime::new(db.clone()).unwrap();
+    let first_node_id = [30u8; 32];
+    let first_frame_id = [31u8; 32];
+    let second_node_id = [32u8; 32];
+    let second_frame_id = [33u8; 32];
+
+    append(
+        &progress,
+        head_selected_envelope("session_a", first_node_id, "analysis", first_frame_id, None),
+        1,
+    );
+    append(
+        &progress,
+        head_selected_envelope(
+            "session_a",
+            second_node_id,
+            "analysis",
+            second_frame_id,
+            None,
+        ),
+        2,
+    );
+
+    let first = runtime
+        .catch_up_bounded(GraphCatchUpBudget { max_items: 1 })
+        .unwrap();
+    assert_eq!(first.input_event_seq, 0);
+    assert_eq!(first.output_event_seq, 1);
+    assert_eq!(first.events_attempted, 1);
+    assert_eq!(first.traversal_events_applied, 1);
+    assert_eq!(first.derived_events_appended, 1);
+    assert!(first.budget_exhausted);
+    assert_eq!(runtime.traversal_store().last_reduced_seq().unwrap(), 1);
+
+    drop(runtime);
+    drop(progress);
+    drop(db);
+
+    let reopened_db = sled::open(&db_path).unwrap();
+    let reopened_runtime = GraphRuntime::new(reopened_db).unwrap();
+    let second = reopened_runtime
+        .catch_up_bounded(GraphCatchUpBudget { max_items: 8 })
+        .unwrap();
+
+    assert_eq!(second.input_event_seq, 1);
+    assert_eq!(second.events_attempted, 2);
+    assert_eq!(second.traversal_events_applied, 1);
+    assert_eq!(second.derived_events_appended, 1);
+    assert!(!second.budget_exhausted);
+
+    let traversal = reopened_runtime.traversal_store();
+    let query = TraversalQuery::new(traversal.as_ref());
+    let first_current = query
+        .current_frame_head(&node_ref(first_node_id), "analysis")
+        .unwrap()
+        .unwrap();
+    let second_current = query
+        .current_frame_head(&node_ref(second_node_id), "analysis")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(first_current.target.object_id, hex::encode(first_frame_id));
+    assert_eq!(
+        second_current.target.object_id,
+        hex::encode(second_frame_id)
+    );
 }
 
 #[test]

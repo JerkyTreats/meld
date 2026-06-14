@@ -54,6 +54,16 @@ impl TraversalReducer {
         store: &TraversalStore,
         after_seq: u64,
     ) -> Result<Self, StorageError> {
+        let events = spine.read_all_events_after(after_seq)?;
+        Self::replay_events(store, after_seq, events)
+    }
+
+    /// Replay a caller-selected bounded event set into traversal storage.
+    pub fn replay_events(
+        store: &TraversalStore,
+        after_seq: u64,
+        events: impl IntoIterator<Item = EventRecord>,
+    ) -> Result<Self, StorageError> {
         let mut reducer = Self {
             current_anchors: CurrentAnchorProjection::default(),
             lineage: AnchorLineageProjection::default(),
@@ -61,7 +71,7 @@ impl TraversalReducer {
             applied_events: 0,
             last_seen_seq: after_seq,
         };
-        for event in spine.read_all_events_after(after_seq)? {
+        for event in events {
             reducer.last_seen_seq = event.seq;
             if reducer.apply_event(store, &event)? {
                 reducer.applied_events += 1;
