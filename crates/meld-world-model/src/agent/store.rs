@@ -6,8 +6,8 @@ use std::sync::Arc;
 use sled::{Db, Tree};
 
 use crate::agent::contracts::{
-    AgentActivationRecord, AgentCurationDecision, AgentCurationDedupeKey, AgentRecord, AgentStatus,
-    AgentSubscriptionRecord, AgentSubscriptionStatus,
+    AgentActivationRecord, AgentCurationDecision, AgentCurationDedupeKey, AgentRecord,
+    AgentSatisfactionReview, AgentStatus, AgentSubscriptionRecord, AgentSubscriptionStatus,
 };
 use crate::error::StorageError;
 
@@ -22,6 +22,7 @@ const TREE_DECISIONS: &str = "agent_curation_decisions";
 const TREE_DECISIONS_BY_AGENT: &str = "agent_decisions_by_agent";
 const TREE_DECISIONS_BY_DEDUPE: &str = "agent_decisions_by_dedupe";
 const TREE_DECISIONS_BY_REVISION: &str = "agent_decisions_by_revision";
+const TREE_SATISFACTION_DECISIONS_BY_REVIEW: &str = "agent_satisfaction_decisions_by_review";
 const KEY_PAD: usize = 20;
 
 /// Sled backed storage for durable agent records and indexes.
@@ -39,6 +40,7 @@ pub struct AgentStore {
     decisions_by_agent: Tree,
     decisions_by_dedupe: Tree,
     decisions_by_revision: Tree,
+    satisfaction_decisions_by_review: Tree,
 }
 
 impl AgentStore {
@@ -67,6 +69,9 @@ impl AgentStore {
                 .map_err(to_storage_io)?,
             decisions_by_revision: db
                 .open_tree(TREE_DECISIONS_BY_REVISION)
+                .map_err(to_storage_io)?,
+            satisfaction_decisions_by_review: db
+                .open_tree(TREE_SATISFACTION_DECISIONS_BY_REVIEW)
                 .map_err(to_storage_io)?,
             db,
         })
@@ -293,42 +298,58 @@ impl AgentStore {
         )? {
             return Ok(existing);
         }
-        self.decisions
-            .insert(
-                decision.decision_id.as_bytes(),
-                serde_json::to_vec(decision).map_err(to_storage_data)?,
-            )
-            .map_err(to_storage_io)?;
-        self.decisions_by_agent
-            .insert(
-                decision_agent_key(
-                    &decision.agent_id,
-                    decision.created_at_seq,
-                    &decision.decision_id,
-                )
-                .as_bytes(),
-                decision.decision_id.as_bytes(),
-            )
-            .map_err(to_storage_io)?;
-        self.decisions_by_dedupe
-            .insert(
-                decision_dedupe_revision_key(
-                    &decision.dedupe_key,
-                    decision.input_refs.belief_revision_id.as_deref(),
-                )
-                .as_bytes(),
-                decision.decision_id.as_bytes(),
-            )
-            .map_err(to_storage_io)?;
-        if let Some(revision_id) = &decision.input_refs.belief_revision_id {
-            self.decisions_by_revision
-                .insert(
-                    decision_revision_key(revision_id, &decision.decision_id).as_bytes(),
-                    decision.decision_id.as_bytes(),
-                )
-                .map_err(to_storage_io)?;
+        let dedupe_index_key = decision_dedupe_revision_key(
+            &decision.dedupe_key,
+            decision.input_refs.belief_revision_id.as_deref(),
+        );
+        self.insert_decision_record(decision, &dedupe_index_key)
+    }
+
+    /// Persist a satisfaction decision unless its review was already recorded.
+    ///
+    /// Satisfaction reviews use review identity for idempotency because the
+    /// same belief revision may be reviewed more than once across retries and
+    /// reopen checkpoints.
+    pub fn put_satisfaction_decision(
+        &self,
+        review: &AgentSatisfactionReview,
+        decision: &AgentCurationDecision,
+    ) -> Result<AgentCurationDecision, StorageError> {
+        review.validate()?;
+        decision.validate()?;
+        if decision.agent_id != review.agent_id {
+            return Err(StorageError::InvalidPath(
+                "satisfaction review agent mismatch".to_string(),
+            ));
         }
-        Ok(decision.clone())
+        if decision.subscription_id != review.subscription_id {
+            return Err(StorageError::InvalidPath(
+                "satisfaction review subscription mismatch".to_string(),
+            ));
+        }
+        if decision.created_at_seq != review.review_seq {
+            return Err(StorageError::InvalidPath(
+                "satisfaction review seq mismatch".to_string(),
+            ));
+        }
+        if let Some(existing) = self.decision_by_satisfaction_review(review)? {
+            return Ok(existing);
+        }
+        if let Some(existing) = self.get_decision(&decision.decision_id)? {
+            if existing != *decision {
+                return Err(StorageError::InvalidPath(
+                    "satisfaction decision id conflict".to_string(),
+                ));
+            }
+            self.index_satisfaction_dedupe(review, decision)?;
+            self.index_satisfaction_review(review, &existing.decision_id)?;
+            return Ok(existing);
+        }
+        let dedupe_index_key =
+            decision_dedupe_satisfaction_review_key(&decision.dedupe_key, review);
+        let persisted = self.insert_decision_record(decision, &dedupe_index_key)?;
+        self.index_satisfaction_review(review, &persisted.decision_id)?;
+        Ok(persisted)
     }
 
     /// Read one curation decision by id.
@@ -409,9 +430,87 @@ impl AgentStore {
         self.get_decision(&decision_id)
     }
 
+    /// Read the decision recorded for one satisfaction review.
+    pub fn decision_by_satisfaction_review(
+        &self,
+        review: &AgentSatisfactionReview,
+    ) -> Result<Option<AgentCurationDecision>, StorageError> {
+        review.validate()?;
+        let Some(raw) = self
+            .satisfaction_decisions_by_review
+            .get(review.index_key().as_bytes())
+            .map_err(to_storage_io)?
+        else {
+            return Ok(None);
+        };
+        let decision_id = String::from_utf8(raw.to_vec()).map_err(to_storage_utf8)?;
+        self.get_decision(&decision_id)
+    }
+
     /// Flush all sled writes for this store.
     pub fn flush(&self) -> Result<(), StorageError> {
         self.db.flush().map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    fn insert_decision_record(
+        &self,
+        decision: &AgentCurationDecision,
+        dedupe_index_key: &str,
+    ) -> Result<AgentCurationDecision, StorageError> {
+        self.decisions
+            .insert(
+                decision.decision_id.as_bytes(),
+                serde_json::to_vec(decision).map_err(to_storage_data)?,
+            )
+            .map_err(to_storage_io)?;
+        self.decisions_by_agent
+            .insert(
+                decision_agent_key(
+                    &decision.agent_id,
+                    decision.created_at_seq,
+                    &decision.decision_id,
+                )
+                .as_bytes(),
+                decision.decision_id.as_bytes(),
+            )
+            .map_err(to_storage_io)?;
+        self.decisions_by_dedupe
+            .insert(dedupe_index_key.as_bytes(), decision.decision_id.as_bytes())
+            .map_err(to_storage_io)?;
+        if let Some(revision_id) = &decision.input_refs.belief_revision_id {
+            self.decisions_by_revision
+                .insert(
+                    decision_revision_key(revision_id, &decision.decision_id).as_bytes(),
+                    decision.decision_id.as_bytes(),
+                )
+                .map_err(to_storage_io)?;
+        }
+        Ok(decision.clone())
+    }
+
+    fn index_satisfaction_review(
+        &self,
+        review: &AgentSatisfactionReview,
+        decision_id: &str,
+    ) -> Result<(), StorageError> {
+        self.satisfaction_decisions_by_review
+            .insert(review.index_key().as_bytes(), decision_id.as_bytes())
+            .map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    fn index_satisfaction_dedupe(
+        &self,
+        review: &AgentSatisfactionReview,
+        decision: &AgentCurationDecision,
+    ) -> Result<(), StorageError> {
+        self.decisions_by_dedupe
+            .insert(
+                decision_dedupe_satisfaction_review_key(&decision.dedupe_key, review).as_bytes(),
+                decision.decision_id.as_bytes(),
+            )
+            .map_err(to_storage_io)?;
         Ok(())
     }
 }
@@ -440,6 +539,17 @@ fn decision_dedupe_revision_key(
         "{}::{}",
         dedupe_key.index_key(),
         revision_id.unwrap_or("missing")
+    )
+}
+
+fn decision_dedupe_satisfaction_review_key(
+    dedupe_key: &AgentCurationDedupeKey,
+    review: &AgentSatisfactionReview,
+) -> String {
+    format!(
+        "{}::satisfaction-review::{}",
+        dedupe_key.index_key(),
+        review.index_key()
     )
 }
 
