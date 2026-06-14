@@ -137,6 +137,8 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — first slice implemented
 - [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
 - [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — template
+- [integration/durable_runtime_first_slice.md](integration/durable_runtime_first_slice.md) - proposed durable runtime host design
+- [integration/durable_runtime_pre_implementation_gaps.md](integration/durable_runtime_pre_implementation_gaps.md) - proposed pre host gap requirements
 
 ## Assessment Inventory
 

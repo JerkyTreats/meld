@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use meld::execution::{
     build_docs_task_success_evidence, satisfy_request_from_agent_mutation,
     DocsTaskSuccessEvidenceRequest, GoalMutationError, GoalMutationRequest,
 };
-use meld_events::{events::store::EventStore, DomainObjectRef, EventRecord};
+use meld_events::{events::store::EventStore, DomainObjectRef, EventRecord, EventRelation};
 use meld_execution::capability::{
     ArtifactSchemaVersionRange, CapabilityCatalog, CapabilityTypeContract, ExecutionClass,
     ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec, ScopeContract,
@@ -23,20 +25,25 @@ use meld_lang::{
     Proposition, Resolution, SlotConstraint, Step, StepKind, Term, WorldState,
 };
 use meld_world_model::agent::{
-    curate_goal_satisfaction, curate_threshold_rule, ActiveGoalSummary, AgentCurationInput,
-    AgentCurationInputRefs, AgentCurationRuleConfig, AgentDecisionKind, AgentGoalMutationCommand,
-    AgentGoalSatisfactionInput, AgentRegistration, AgentStore, AgentSubscription,
+    curate_goal_satisfaction, curate_threshold_rule, ActiveGoalSummary, AgentCuration,
+    AgentCurationInput, AgentCurationInputRefs, AgentCurationRuleConfig, AgentDecisionKind,
+    AgentGoalMutationCommand, AgentGoalSatisfactionInput, AgentQuery, AgentRegistration,
+    AgentSatisfactionReview, AgentStore, AgentSubscription, AgentSubscriptionRecord,
     SeedAgentRegistration, SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
-    BeliefProvenanceSummary, BranchScope, ContradictionState, FreshnessState, HydrationRefs,
-    PlannerProjectionSummary, PosteriorSummary,
+    BeliefProvenanceSummary, BeliefQuery, BeliefStore, BranchScope, ContradictionState,
+    FreshnessState, HydrationRefs, PlannerProjectionSummary, PosteriorSummary,
 };
 use meld_world_model::planner::{
     project_world_state, PlannerFieldProjectionConfig, PlannerProjectionContext,
-    PlannerProjectionInput, PLANNER_PROJECTION_VERSION,
+    PlannerProjectionInput, PlannerQuery, PLANNER_PROJECTION_VERSION,
 };
-use meld_world_model::{AgentGoalCommand, BeliefKey, BeliefStatus, BeliefView, PerspectiveKey};
+use meld_world_model::world_state::graph::store::TraversalStore;
+use meld_world_model::{
+    AgentGoalCommand, AnchorSelectionRecord, BeliefKey, BeliefStatus, BeliefView, PerspectiveKey,
+    TraversalFactRecord, TraversalQuery,
+};
 
 const AGENT_ID: &str = "seed.docs_freshness";
 const DIMENSION_ID: &str = "docs_freshness";
@@ -164,6 +171,40 @@ fn setup_agent(
         })
         .unwrap();
     (agent, subscription)
+}
+
+fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let store =
+        Arc::new(TraversalStore::new(sled::open(temp_dir.path().join("graph")).unwrap()).unwrap());
+    let node = subject();
+    let frame = object("context", "frame", "frame-a");
+    let relation = EventRelation::new("selected", node.clone(), frame.clone()).unwrap();
+    let fact = TraversalFactRecord {
+        fact_id: "fact-a".to_string(),
+        source_spine_fact_id: "spine-a".to_string(),
+        seq: 1,
+        event_type: "context.head.selected".to_string(),
+        objects: vec![node.clone(), frame.clone()],
+        relations: vec![relation],
+    };
+    let anchor = AnchorSelectionRecord {
+        anchor_id: "anchor-a".to_string(),
+        anchor_ref: object("context", "head", "node-a::analysis"),
+        subject: node,
+        perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
+        target: frame,
+        source_fact_ids: vec!["spine-a".to_string()],
+        created_by_fact_id: "fact-a".to_string(),
+        selected_at_seq: 1,
+        ended_at_seq: None,
+        ended_by_anchor_id: None,
+        ended_by_fact_id: None,
+    };
+    store.put_fact(&fact).unwrap();
+    store.put_anchor(&anchor).unwrap();
+    store.set_current_anchor(&anchor).unwrap();
+    (temp_dir, store)
 }
 
 fn curation_input(confidence: f64) -> AgentCurationInput {
@@ -306,6 +347,17 @@ fn valid_goal_mutation_command() -> AgentGoalMutationCommand {
     .unwrap()
     .goal_mutation_command
     .unwrap()
+}
+
+fn satisfaction_review(
+    subscription: &AgentSubscriptionRecord,
+    review_seq: u64,
+) -> AgentSatisfactionReview {
+    AgentSatisfactionReview {
+        agent_id: subscription.agent_id.clone(),
+        subscription_id: subscription.subscription_id.clone(),
+        review_seq,
+    }
 }
 
 fn planning_runtime() -> PlanningRuntime {
@@ -509,22 +561,65 @@ fn agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match
             7,
         ))
         .unwrap();
+    let (_decision_temp, decision_store) = agent_store();
+    let (_agent, subscription) = setup_agent(&decision_store);
+    let belief_temp = tempfile::tempdir().unwrap();
+    let belief_store =
+        BeliefStore::new(sled::open(belief_temp.path().join("belief")).unwrap()).unwrap();
+    let (_graph_temp, graph_store) = seeded_graph();
+    let curation = AgentCuration::new(&decision_store);
+    let belief_query = BeliefQuery::new(&belief_store);
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&graph_store),
+    );
 
     let active_goal = store.active_goal(&goal_id).unwrap().expect("active goal");
     assert_eq!(active_goal.lifecycle, GoalLifecycle::Active);
 
-    let below = curate_goal_satisfaction(satisfaction_input_for_goal(
-        active_goal.clone(),
-        world_state_below_threshold(),
-        21,
-    ))
-    .unwrap();
+    belief_store
+        .put_view(&test_view(0.2, "revision-below", 21))
+        .unwrap();
+    let below_review = satisfaction_review(&subscription, 21);
+    let below = curation
+        .handle_satisfaction_review(
+            below_review.clone(),
+            &belief_query,
+            &planner_query,
+            ActiveGoalSummary {
+                goals: vec![active_goal.clone()],
+            },
+        )
+        .unwrap();
     assert!(below.goal_mutation_command.is_none());
+    assert_eq!(
+        AgentQuery::new(&decision_store)
+            .decision_by_satisfaction_review(&below_review)
+            .unwrap(),
+        Some(below.decision)
+    );
     assert!(store.active_goal(&goal_id).unwrap().is_some());
 
-    let satisfied_input =
-        satisfaction_input_for_goal(active_goal.clone(), world_state_with_confidence(0.95), 22);
-    let satisfied = curate_goal_satisfaction(satisfied_input.clone()).unwrap();
+    belief_store
+        .put_view(&test_view(0.95, "revision-satisfied", 22))
+        .unwrap();
+    let satisfied_review = satisfaction_review(&subscription, 22);
+    let satisfied = curation
+        .handle_satisfaction_review(
+            satisfied_review.clone(),
+            &belief_query,
+            &planner_query,
+            ActiveGoalSummary {
+                goals: vec![active_goal.clone()],
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        AgentQuery::new(&decision_store)
+            .decision_by_satisfaction_review(&satisfied_review)
+            .unwrap(),
+        Some(satisfied.decision.clone())
+    );
     let command = satisfied.goal_mutation_command.expect("mutation command");
     let satisfy = satisfy_request_from_agent_mutation(GoalMutationRequest { command }).unwrap();
     let first_outcome = GoalSetApi::new(&mut store)
@@ -537,7 +632,16 @@ fn agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match
         GoalLifecycle::Satisfied { at_seq: 22 }
     );
 
-    let replayed = curate_goal_satisfaction(satisfied_input).unwrap();
+    let replayed = curation
+        .handle_satisfaction_review(
+            satisfied_review,
+            &belief_query,
+            &planner_query,
+            ActiveGoalSummary {
+                goals: vec![active_goal],
+            },
+        )
+        .unwrap();
     let replay_command = replayed.goal_mutation_command.expect("mutation command");
     let replay_satisfy = satisfy_request_from_agent_mutation(GoalMutationRequest {
         command: replay_command,

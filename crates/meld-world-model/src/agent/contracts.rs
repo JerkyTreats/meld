@@ -594,6 +594,43 @@ pub struct AgentGoalSatisfactionInput {
     pub input_refs: AgentCurationInputRefs,
 }
 
+/// Durable review envelope for agent-owned goal satisfaction checks.
+///
+/// The review identity is assigned by the runtime caller and is distinct from
+/// belief revision identity, since several reviews may inspect the same belief
+/// state while execution retries or checkpoint recovery are in progress.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSatisfactionReview {
+    /// Agent that owns the satisfaction judgment.
+    pub agent_id: AgentId,
+    /// Subscription anchoring the review to one belief stream.
+    pub subscription_id: AgentSubscriptionId,
+    /// Caller supplied review sequence used for decision identity.
+    pub review_seq: u64,
+}
+
+impl AgentSatisfactionReview {
+    /// Validate identifiers and the monotonic review sequence.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        require_non_empty("agent id", &self.agent_id)?;
+        require_non_empty("subscription id", &self.subscription_id)?;
+        if self.review_seq == 0 {
+            return Err(StorageError::InvalidPath(
+                "review seq must be greater than zero".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Return the stable storage key for one satisfaction review attempt.
+    pub fn index_key(&self) -> String {
+        format!(
+            "{}::{}::{}",
+            self.agent_id, self.subscription_id, self.review_seq
+        )
+    }
+}
+
 /// Delivery envelope supplied by a runtime subscription driver.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentDelivery {

@@ -6,11 +6,12 @@ use meld_lang::{
 };
 use meld_world_model::agent::{
     curate_goal_satisfaction, curate_threshold_rule, ActiveGoalSummary, AgentActivationRecord,
-    AgentActivationStatus, AgentCurationDedupeKey, AgentCurationInput, AgentCurationInputRefs,
-    AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery, AgentGoalCommand,
-    AgentGoalMutationCommand, AgentGoalMutationKind, AgentGoalSatisfactionInput, AgentQuery,
-    AgentRegistration, AgentStatus, AgentStore, AgentSubscription, AgentSubscriptionRecord,
-    AgentSubscriptionStatus, SeedAgentRegistration, SubscribeAgentCommand,
+    AgentActivationStatus, AgentCuration, AgentCurationDedupeKey, AgentCurationInput,
+    AgentCurationInputRefs, AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery,
+    AgentGoalCommand, AgentGoalMutationCommand, AgentGoalMutationKind, AgentGoalSatisfactionInput,
+    AgentQuery, AgentRegistration, AgentSatisfactionReview, AgentStatus, AgentStore,
+    AgentSubscription, AgentSubscriptionRecord, AgentSubscriptionStatus, SeedAgentRegistration,
+    SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
     BeliefProvenanceSummary, BeliefQuery, BeliefStore, BranchScope, ContradictionState,
@@ -268,6 +269,17 @@ fn valid_goal_mutation_command() -> AgentGoalMutationCommand {
         .unwrap()
         .goal_mutation_command
         .unwrap()
+}
+
+fn satisfaction_review(
+    subscription: &AgentSubscriptionRecord,
+    review_seq: u64,
+) -> AgentSatisfactionReview {
+    AgentSatisfactionReview {
+        agent_id: subscription.agent_id.clone(),
+        subscription_id: subscription.subscription_id.clone(),
+        review_seq,
+    }
 }
 
 fn invalid_goal_mutation_command(
@@ -959,6 +971,209 @@ fn agent_delivery_is_idempotent_and_advances_cursor_after_decision() {
             .unwrap()
             .len(),
         1
+    );
+}
+
+#[test]
+fn agent_satisfaction_review_persists_decision_before_returning_mutation() {
+    let (agent_temp, agent_store) = agent_store();
+    let (_agent, subscription) = setup_agent(&agent_store);
+    let belief_temp = tempfile::tempdir().unwrap();
+    let belief_store =
+        BeliefStore::new(sled::open(belief_temp.path().join("belief")).unwrap()).unwrap();
+    belief_store
+        .put_view(&test_view(0.95, "revision-b", 22))
+        .unwrap();
+    let belief_query = BeliefQuery::new(&belief_store);
+    let (_graph_temp, graph_store) = seeded_graph();
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&graph_store),
+    );
+    let mut goal = low_confidence_goal_command().goal;
+    goal.lifecycle = GoalLifecycle::Active;
+    let review = satisfaction_review(&subscription, 22);
+    let curation = AgentCuration::new(&agent_store);
+
+    let outcome = curation
+        .handle_satisfaction_review(
+            review.clone(),
+            &belief_query,
+            &planner_query,
+            ActiveGoalSummary { goals: vec![goal] },
+        )
+        .unwrap();
+
+    assert_eq!(
+        outcome.decision.decision,
+        AgentDecisionKind::GoalMutationCommand
+    );
+    let command = outcome.goal_mutation_command.expect("mutation command");
+    assert_eq!(
+        outcome.decision.goal_mutation_command_id.as_deref(),
+        Some(command.command_id.as_str())
+    );
+    let stored = AgentQuery::new(&agent_store)
+        .decision_by_satisfaction_review(&review)
+        .unwrap()
+        .expect("stored satisfaction decision");
+    assert_eq!(stored, outcome.decision);
+    drop(curation);
+    agent_store.flush().unwrap();
+    drop(agent_store);
+
+    let reopened = AgentStore::new(sled::open(agent_temp.path().join("agent")).unwrap()).unwrap();
+    assert_eq!(
+        AgentQuery::new(&reopened)
+            .decision_by_satisfaction_review(&review)
+            .unwrap(),
+        Some(stored)
+    );
+}
+
+#[test]
+fn agent_satisfaction_review_replays_by_review_identity() {
+    let (_agent_temp, agent_store) = agent_store();
+    let (_agent, subscription) = setup_agent(&agent_store);
+    let belief_temp = tempfile::tempdir().unwrap();
+    let belief_store =
+        BeliefStore::new(sled::open(belief_temp.path().join("belief")).unwrap()).unwrap();
+    belief_store
+        .put_view(&test_view(0.95, "revision-b", 22))
+        .unwrap();
+    let belief_query = BeliefQuery::new(&belief_store);
+    let (_graph_temp, graph_store) = seeded_graph();
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&graph_store),
+    );
+    let mut goal = low_confidence_goal_command().goal;
+    goal.lifecycle = GoalLifecycle::Active;
+    let active_goals = ActiveGoalSummary {
+        goals: vec![goal.clone()],
+    };
+    let review = satisfaction_review(&subscription, 22);
+    let curation = AgentCuration::new(&agent_store);
+
+    let first = curation
+        .handle_satisfaction_review(
+            review.clone(),
+            &belief_query,
+            &planner_query,
+            active_goals.clone(),
+        )
+        .unwrap();
+    let retry_before_execution = curation
+        .handle_satisfaction_review(review.clone(), &belief_query, &planner_query, active_goals)
+        .unwrap();
+    let retry_after_execution = curation
+        .handle_satisfaction_review(
+            review.clone(),
+            &belief_query,
+            &planner_query,
+            ActiveGoalSummary::default(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        retry_before_execution.goal_mutation_command,
+        first.goal_mutation_command
+    );
+    assert_eq!(retry_after_execution.decision, first.decision);
+    assert!(retry_after_execution.goal_mutation_command.is_none());
+    assert_eq!(
+        AgentQuery::new(&agent_store)
+            .recent_decisions(AGENT_ID, 10)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn agent_satisfaction_review_uses_review_seq_not_belief_revision_for_dedupe() {
+    let (_agent_temp, agent_store) = agent_store();
+    let (_agent, subscription) = setup_agent(&agent_store);
+    let belief_temp = tempfile::tempdir().unwrap();
+    let belief_store =
+        BeliefStore::new(sled::open(belief_temp.path().join("belief")).unwrap()).unwrap();
+    belief_store
+        .put_view(&test_view(0.95, "revision-b", 22))
+        .unwrap();
+    let belief_query = BeliefQuery::new(&belief_store);
+    let (_graph_temp, graph_store) = seeded_graph();
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&graph_store),
+    );
+    let mut goal = low_confidence_goal_command().goal;
+    goal.lifecycle = GoalLifecycle::Active;
+    let active_goals = ActiveGoalSummary { goals: vec![goal] };
+    let curation = AgentCuration::new(&agent_store);
+
+    let first = curation
+        .handle_satisfaction_review(
+            satisfaction_review(&subscription, 22),
+            &belief_query,
+            &planner_query,
+            active_goals.clone(),
+        )
+        .unwrap();
+    let second = curation
+        .handle_satisfaction_review(
+            satisfaction_review(&subscription, 23),
+            &belief_query,
+            &planner_query,
+            active_goals,
+        )
+        .unwrap();
+
+    assert_ne!(first.decision.decision_id, second.decision.decision_id);
+    assert_eq!(
+        AgentQuery::new(&agent_store)
+            .recent_decisions(AGENT_ID, 10)
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn agent_satisfaction_review_persists_absorbed_without_mutation() {
+    let (_agent_temp, agent_store) = agent_store();
+    let (_agent, subscription) = setup_agent(&agent_store);
+    let belief_temp = tempfile::tempdir().unwrap();
+    let belief_store =
+        BeliefStore::new(sled::open(belief_temp.path().join("belief")).unwrap()).unwrap();
+    belief_store
+        .put_view(&test_view(0.2, "revision-c", 21))
+        .unwrap();
+    let belief_query = BeliefQuery::new(&belief_store);
+    let (_graph_temp, graph_store) = seeded_graph();
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&graph_store),
+    );
+    let mut goal = low_confidence_goal_command().goal;
+    goal.lifecycle = GoalLifecycle::Active;
+    let review = satisfaction_review(&subscription, 21);
+
+    let outcome = AgentCuration::new(&agent_store)
+        .handle_satisfaction_review(
+            review.clone(),
+            &belief_query,
+            &planner_query,
+            ActiveGoalSummary { goals: vec![goal] },
+        )
+        .unwrap();
+
+    assert_eq!(outcome.decision.decision, AgentDecisionKind::Absorbed);
+    assert!(outcome.goal_mutation_command.is_none());
+    assert_eq!(
+        AgentQuery::new(&agent_store)
+            .decision_by_satisfaction_review(&review)
+            .unwrap(),
+        Some(outcome.decision)
     );
 }
 

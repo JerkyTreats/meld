@@ -1,8 +1,8 @@
 //! Read-only agent query facade.
 
 use crate::agent::contracts::{
-    AgentCurationDecision, AgentCurationDedupeKey, AgentRecord, AgentStatus,
-    AgentSubscriptionRecord,
+    AgentCurationDecision, AgentCurationDedupeKey, AgentRecord, AgentSatisfactionReview,
+    AgentStatus, AgentSubscriptionRecord,
 };
 use crate::agent::store::AgentStore;
 use crate::error::StorageError;
@@ -67,5 +67,13 @@ impl<'a> AgentQuery<'a> {
         dedupe_key: &AgentCurationDedupeKey,
     ) -> Result<Option<AgentCurationDecision>, StorageError> {
         self.store.decision_by_dedupe_key(dedupe_key)
+    }
+
+    /// Return the decision recorded for one satisfaction review.
+    pub fn decision_by_satisfaction_review(
+        &self,
+        review: &AgentSatisfactionReview,
+    ) -> Result<Option<AgentCurationDecision>, StorageError> {
+        self.store.decision_by_satisfaction_review(review)
     }
 }

@@ -7,7 +7,7 @@ use crate::agent::contracts::{
     AdvanceSubscriptionCommand, AgentCurationDecision, AgentCurationDedupeKey, AgentCurationInput,
     AgentCurationInputRefs, AgentCurationOutcome, AgentCurationRuleConfig, AgentDecisionKind,
     AgentDelivery, AgentGoalCommand, AgentGoalMutationCommand, AgentGoalMutationKind,
-    AgentGoalSatisfactionInput,
+    AgentGoalSatisfactionInput, AgentSatisfactionReview,
 };
 use crate::agent::store::AgentStore;
 use crate::agent::subscription::AgentSubscription;
@@ -68,6 +68,34 @@ impl<'a> AgentCuration<'a> {
             delivered_seq: delivery.revision_seq,
         })?;
         Ok(Some(outcome))
+    }
+
+    /// Handle one satisfaction review and return output only after decision storage.
+    ///
+    /// This is the host-facing durability barrier for satisfaction curation.
+    /// Duplicate reviews return the stored decision. A mutation command is
+    /// returned only when the recomputed review matches the persisted decision.
+    pub fn handle_satisfaction_review(
+        &self,
+        review: AgentSatisfactionReview,
+        belief_query: &BeliefQuery<'_>,
+        planner_query: &PlannerQuery<'_>,
+        active_goals: ActiveGoalSummary,
+    ) -> Result<AgentCurationOutcome, StorageError> {
+        let input =
+            self.assemble_satisfaction_input(&review, belief_query, planner_query, active_goals)?;
+        let mut outcome = curate_goal_satisfaction(input)?;
+        let persisted = self
+            .store
+            .put_satisfaction_decision(&review, &outcome.decision)?;
+        if persisted != outcome.decision {
+            outcome = AgentCurationOutcome {
+                decision: persisted,
+                goal_command: None,
+                goal_mutation_command: None,
+            };
+        }
+        Ok(outcome)
     }
 
     /// Assemble curation input from public belief and planner facades.
@@ -136,6 +164,77 @@ impl<'a> AgentCuration<'a> {
             delivered_seq: delivery.revision_seq,
             rule_config,
             belief_view,
+            planner_projection,
+            active_goals,
+            input_refs,
+        })
+    }
+
+    /// Assemble satisfaction input from public belief and planner facades.
+    ///
+    /// The agent domain owns the scope checks here so root runtime assembly can
+    /// supply stores and active goals without becoming satisfaction authority.
+    pub fn assemble_satisfaction_input(
+        &self,
+        review: &AgentSatisfactionReview,
+        belief_query: &BeliefQuery<'_>,
+        planner_query: &PlannerQuery<'_>,
+        active_goals: ActiveGoalSummary,
+    ) -> Result<AgentGoalSatisfactionInput, StorageError> {
+        review.validate()?;
+        let agent = self.store.get_agent(&review.agent_id)?.ok_or_else(|| {
+            StorageError::InvalidPath(format!("unknown agent '{}'", review.agent_id))
+        })?;
+        let subscription = self
+            .store
+            .get_subscription(&review.subscription_id)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(format!(
+                    "unknown subscription '{}'",
+                    review.subscription_id
+                ))
+            })?;
+        if subscription.agent_id != agent.agent_id {
+            return Err(StorageError::InvalidPath(
+                "subscription agent mismatch".to_string(),
+            ));
+        }
+        if subscription.belief_key.subject != agent.subject {
+            return Err(StorageError::InvalidPath(
+                "subscription subject mismatch".to_string(),
+            ));
+        }
+        if subscription.belief_key.perspective != agent.perspective_key {
+            return Err(StorageError::InvalidPath(
+                "subscription perspective mismatch".to_string(),
+            ));
+        }
+        if subscription.belief_key.branch_scope != agent.branch_scope {
+            return Err(StorageError::InvalidPath(
+                "subscription branch scope mismatch".to_string(),
+            ));
+        }
+
+        let belief_view = belief_query.current_view(&subscription.belief_key)?;
+        let planner_projection = planner_query
+            .project_current_world_state(
+                &agent.subject,
+                &subscription.belief_key.dimension_id,
+                Some(agent.perspective_key.clone()),
+                Some(agent.branch_scope.clone()),
+            )
+            .map_err(|err| StorageError::InvalidPath(err.to_string()))?;
+        let input_refs = input_refs(
+            belief_view
+                .as_ref()
+                .and_then(|view| view.current_revision_id.clone()),
+            subscription.belief_key.clone(),
+            &planner_projection,
+        );
+        Ok(AgentGoalSatisfactionInput {
+            agent,
+            subscription,
+            review_seq: review.review_seq,
             planner_projection,
             active_goals,
             input_refs,
