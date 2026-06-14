@@ -62,7 +62,7 @@ pub mod runtime;
 /// Workflow task template materialization helpers.
 pub mod templates;
 
-pub use artifact_repo::{TaskArtifactRepo, TaskArtifactRepoError};
+pub use artifact_repo::{TaskArtifactRepo, TaskArtifactRepoError, TaskArtifactRepoFactory};
 pub use compiler::{compile_task_definition, TaskCompiler, TaskDefinitionCompiler};
 pub use contracts::{
     artifact_matches_input_slot, ArtifactLinkRecord, ArtifactLinkRelation, ArtifactProducerRef,

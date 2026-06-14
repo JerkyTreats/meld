@@ -115,6 +115,49 @@ Required entries:
 - context frame store
 - prompt artifact store
 
+Implementation surface:
+
+- root `meld` owns `ProductStorageLayout`, `OpenProductStores`, path selection, database opening, and checkpoint flush ordering
+- owning crates keep record meaning, schema validation, replay rules, idempotency, and durable cursor semantics
+- execution-owned factories open task-scoped artifact repositories and task network stores without exposing raw `sled::Db` handles to the host
+
+Concrete product layout:
+
+```text
+<product_root>/
+  ledger.sled/
+  workspace.sled/
+  world_model.sled/
+  execution/
+    goals.sled/
+    task_artifacts.sled/
+    task_networks/
+      <network_storage_key>.sled/
+  context/
+    frames/
+    prompt_artifacts/
+```
+
+| Concern | Backing location | Owner |
+| --- | --- | --- |
+| event spine and session compatibility | `ledger.sled` | `meld-events` |
+| workspace node records | `workspace.sled` | root `meld` workspace store |
+| graph reducer state | `world_model.sled` | `meld-world-model` |
+| belief store | `world_model.sled` | `meld-world-model` |
+| agent store | `world_model.sled` | `meld-world-model` |
+| legacy world state claim store | `world_model.sled` | `meld-world-model` |
+| execution goals | `execution/goals.sled` | `meld-execution` |
+| task network stores | `execution/task_networks/<network_storage_key>.sled` | `meld-execution` |
+| task artifacts | `execution/task_artifacts.sled` | `meld-execution` |
+| context frame blobs | `context/frames` | root `meld` context |
+| prompt artifact blobs | `context/prompt_artifacts` | root `meld` prompt context |
+
+Task network stores use one sled database per network id because the current task network trees are scoped to one reduced network state. `TaskNetworkStoreFactory` validates network ids before deriving storage keys and does not silently rewrite ids.
+
+A host checkpoint is durable only after all stores touched by the bounded turn have flushed. `OpenProductStores::flush_boundary` flushes always-open product stores, including the event ledger, workspace store, world model stores, execution goal store, and task artifact factory. Task network stores are opened per network and must be flushed by the caller before the boundary is treated as a checkpoint.
+
+Legacy workflow JSON migration is out of scope for `RTG-4`. A later migration may move workflow thread and turn records into the execution storage root after characterization and compatibility tests exist.
+
 ### `RTG-5` First Proof Fixture And Identity Rules
 
 The end to end proof should be deterministic enough that the host cannot accidentally own semantic decisions. Fixture values should be small production examples, not ad hoc test only meanings.

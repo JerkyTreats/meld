@@ -6,6 +6,7 @@
 
 mod codec;
 pub mod error;
+mod factory;
 mod keys;
 mod records;
 mod sled;
@@ -15,6 +16,7 @@ use crate::task::contracts::{
     ArtifactLinkRecord, ArtifactLinkRelation, ArtifactRecord, ArtifactRepoRecord,
 };
 pub use error::TaskArtifactRepoError;
+pub use factory::TaskArtifactRepoFactory;
 use sled::SledArtifactRepo;
 
 /// Task-scoped artifact repository with optional durable backing.

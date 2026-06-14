@@ -202,6 +202,8 @@ world_state
 | task network | `execution` | `SledTaskNetworkStore` | same, assembled in runtime | replay journal into identical reduced state | runtime assembly missing |
 | context frames | `context` | `FrameStorage` and node store | same | graph backed head reads match replay | none |
 
+The runtime assembly gap is resolved by the product storage root contract. Root `meld` opens `OpenProductStores` from `ProductStorageLayout`, while execution opens task artifact repositories and task network stores through execution-owned factories.
+
 ## Test Plan
 
 | Test | Purpose | Fixture | Expected Proof | Status |

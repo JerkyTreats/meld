@@ -12,8 +12,8 @@ use meld_execution::execution::{EventPublicationPort, ExecutionEventContext};
 use meld_execution::task::{
     execute_task_to_completion, ArtifactLinkRelation, ArtifactProducerRef, ArtifactRecord,
     CompiledTaskDelta, CompiledTaskRecord, InitArtifactValue, TaskArtifactRepo,
-    TaskArtifactRepoError, TaskExecutor, TaskExpansionRequest, TaskInitializationPayload,
-    TaskRunContext,
+    TaskArtifactRepoError, TaskArtifactRepoFactory, TaskExecutor, TaskExpansionRequest,
+    TaskInitializationPayload, TaskRunContext,
 };
 use meld_execution::task_network::command::{Command, Response};
 use meld_execution::task_network::dispatch::{
@@ -530,4 +530,73 @@ fn task_artifact_repo_task_network_bridge_accepts_executor_with_durable_repo() {
     )
     .unwrap();
     assert!(repo.get_artifact(&artifact_id).is_some());
+}
+
+#[test]
+fn task_artifact_factory_opens_flushes_and_reopens_repo() {
+    let db = open_db();
+    let factory = TaskArtifactRepoFactory::new(db.clone());
+    {
+        let mut repo = factory.open_repo("repo-docs").unwrap();
+        repo.append_artifact(artifact("artifact-1", "capability-a", "out"))
+            .unwrap();
+        factory.flush().unwrap();
+    }
+
+    let reopened = TaskArtifactRepoFactory::new(db)
+        .open_repo("repo-docs")
+        .unwrap();
+
+    assert!(reopened.get_artifact("artifact-1").is_some());
+}
+
+#[test]
+fn task_artifact_factory_isolates_repo_ids_in_one_database() {
+    let db = open_db();
+    let factory = TaskArtifactRepoFactory::new(db.clone());
+    {
+        let mut left = factory.open_repo("repo-left").unwrap();
+        left.append_artifact(artifact("artifact-left", "capability-a", "out"))
+            .unwrap();
+        let mut right = factory.open_repo("repo-right").unwrap();
+        right
+            .append_artifact(artifact("artifact-right", "capability-a", "out"))
+            .unwrap();
+        factory.flush().unwrap();
+    }
+
+    let factory = TaskArtifactRepoFactory::new(db);
+    let left = factory.open_repo("repo-left").unwrap();
+    let right = factory.open_repo("repo-right").unwrap();
+
+    assert!(left.get_artifact("artifact-left").is_some());
+    assert!(left.get_artifact("artifact-right").is_none());
+    assert!(right.get_artifact("artifact-right").is_some());
+    assert!(right.get_artifact("artifact-left").is_none());
+}
+
+#[test]
+fn task_artifact_factory_flush_writes_pending_bytes_to_disk() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = sled::Config::new()
+        .path(temp.path())
+        .flush_every_ms(None)
+        .open()
+        .unwrap();
+    let factory = TaskArtifactRepoFactory::new(db.clone());
+    {
+        let mut repo = factory.open_repo("repo-docs").unwrap();
+        repo.append_artifact(artifact("artifact-flush", "capability-a", "out"))
+            .unwrap();
+        factory.flush().unwrap();
+    }
+    drop(factory);
+    drop(db);
+
+    let db = sled::open(temp.path()).unwrap();
+    let reopened = TaskArtifactRepoFactory::new(db)
+        .open_repo("repo-docs")
+        .unwrap();
+
+    assert!(reopened.get_artifact("artifact-flush").is_some());
 }

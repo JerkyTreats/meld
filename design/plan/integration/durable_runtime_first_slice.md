@@ -129,6 +129,10 @@ Required state:
 
 Store layout is root `meld` product assembly. Record meaning remains owned by each crate or domain.
 
+The concrete implementation surface is `ProductStorageLayout` plus `OpenProductStores` under root runtime storage assembly. The first durable proof should resolve one product root, open stores through that layout, and avoid direct `sled::Db` exposure in host-facing runtime fields.
+
+The product layout uses separate sled database groups for the event ledger, workspace records, world model state, execution goals, task artifacts, and one task network database per network id. Context frames and prompt artifacts remain filesystem content-addressed stores below the same product root.
+
 ## Cursor And Idempotency Rules
 
 The first slice must make restart safety visible.
