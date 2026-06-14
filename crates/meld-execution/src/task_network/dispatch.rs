@@ -22,7 +22,9 @@
 //! ```
 
 use crate::error::ApiError;
-use crate::task::{ArtifactRecord, TaskEvent, TaskExecutor, TaskInitializationPayload};
+use crate::task::{
+    ArtifactRecord, TaskArtifactRepo, TaskEvent, TaskExecutor, TaskInitializationPayload,
+};
 use crate::task_network::state::{ArtifactAvailability, TaskNode};
 use serde::{Deserialize, Serialize};
 
@@ -121,6 +123,27 @@ pub fn build_executor_for_claim(
     init_payload: TaskInitializationPayload,
     repo_id: impl Into<String>,
 ) -> Result<TaskExecutor, ApiError> {
+    validate_claim_matches_node(node, claim)?;
+
+    TaskExecutor::new(node.compiled_task.clone(), init_payload, repo_id.into())
+}
+
+/// Creates a task executor for a fenced claim with a caller supplied artifact repo.
+///
+/// Runtime hosts use this boundary after opening the task-owned durable repo.
+/// Claim validation still happens before task-local execution starts.
+pub fn build_executor_for_claim_with_artifact_repo(
+    node: &TaskNode,
+    claim: &Claim,
+    init_payload: TaskInitializationPayload,
+    artifact_repo: TaskArtifactRepo,
+) -> Result<TaskExecutor, ApiError> {
+    validate_claim_matches_node(node, claim)?;
+
+    TaskExecutor::new_with_artifact_repo(node.compiled_task.clone(), init_payload, artifact_repo)
+}
+
+fn validate_claim_matches_node(node: &TaskNode, claim: &Claim) -> Result<(), ApiError> {
     if node.task_instance_id != claim.task_instance_id
         || node.lifecycle_epoch != claim.lifecycle_epoch
     {
@@ -129,8 +152,7 @@ pub fn build_executor_for_claim(
             claim.claim_id, node.task_instance_id
         )));
     }
-
-    TaskExecutor::new(node.compiled_task.clone(), init_payload, repo_id.into())
+    Ok(())
 }
 
 /// Converts a completed task executor into a successful fenced outcome.

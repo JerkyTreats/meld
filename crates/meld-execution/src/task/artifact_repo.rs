@@ -1,14 +1,31 @@
 //! Task-scoped artifact repository behavior.
+//!
+//! The task domain owns artifact meaning. Root runtime code may choose the
+//! concrete sled database, but records stay scoped by repo id and are exposed
+//! through the same snapshot shape used by in-memory task execution.
+
+mod codec;
+pub mod error;
+mod keys;
+mod records;
+mod sled;
 
 use crate::error::ApiError;
 use crate::task::contracts::{
     ArtifactLinkRecord, ArtifactLinkRelation, ArtifactRecord, ArtifactRepoRecord,
 };
+pub use error::TaskArtifactRepoError;
+use sled::SledArtifactRepo;
 
-/// In-memory artifact repository with append and lookup semantics.
+/// Task-scoped artifact repository with optional durable backing.
+///
+/// The in-memory form remains useful for focused task tests. `open_sled` uses
+/// the same public API while persisting records for host reopen and task network
+/// handoff.
 #[derive(Debug, Clone)]
 pub struct TaskArtifactRepo {
     record: ArtifactRepoRecord,
+    durable: Option<SledArtifactRepo>,
 }
 
 impl TaskArtifactRepo {
@@ -20,12 +37,36 @@ impl TaskArtifactRepo {
                 artifacts: Vec::new(),
                 artifact_links: Vec::new(),
             },
+            durable: None,
         }
     }
 
-    /// Returns the current durable artifact repo record snapshot.
+    /// Opens a sled-backed task artifact repository within a caller owned database.
+    ///
+    /// `repo_id` scopes records in shared sled trees so product assembly can
+    /// place many task repos under one task artifact store.
+    pub fn open_sled(
+        db: ::sled::Db,
+        repo_id: impl Into<String>,
+    ) -> Result<Self, TaskArtifactRepoError> {
+        let durable = SledArtifactRepo::open(db, repo_id.into())?;
+        Ok(Self {
+            record: durable.record().clone(),
+            durable: Some(durable),
+        })
+    }
+
+    /// Returns the current artifact repo record snapshot.
     pub fn record(&self) -> &ArtifactRepoRecord {
         &self.record
+    }
+
+    /// Flushes durable writes when this repository has a persistent backing store.
+    pub fn flush(&self) -> Result<(), TaskArtifactRepoError> {
+        if let Some(durable) = &self.durable {
+            durable.flush()?;
+        }
+        Ok(())
     }
 
     /// Appends one artifact to the repository.
@@ -41,6 +82,13 @@ impl TaskArtifactRepo {
                 self.record.repo_id, artifact.artifact_id
             )));
         }
+        if let Some(durable) = &mut self.durable {
+            // Persist before changing the public snapshot so callers never see
+            // artifact state that failed to reach the durable store.
+            durable
+                .append_artifact(&artifact)
+                .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+        }
         self.record.artifacts.push(artifact);
         Ok(())
     }
@@ -49,6 +97,13 @@ impl TaskArtifactRepo {
     pub fn append_link(&mut self, link: ArtifactLinkRecord) -> Result<(), ApiError> {
         self.ensure_artifact_exists(&link.from_artifact_id)?;
         self.ensure_artifact_exists(&link.to_artifact_id)?;
+        if let Some(durable) = &mut self.durable {
+            // The durable backend rechecks endpoints in the same transaction as
+            // the link write. The in-memory checks keep both modes aligned.
+            durable
+                .append_link(&link)
+                .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+        }
         self.record.artifact_links.push(link);
         Ok(())
     }

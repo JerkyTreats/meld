@@ -55,11 +55,22 @@ impl TaskExecutor {
         init_payload: TaskInitializationPayload,
         repo_id: impl Into<String>,
     ) -> Result<Self, ApiError> {
+        Self::new_with_artifact_repo(compiled_task, init_payload, TaskArtifactRepo::new(repo_id))
+    }
+
+    /// Creates one live task executor with a caller supplied artifact repository.
+    ///
+    /// A reopened durable repo may already contain identical init artifacts. The
+    /// constructor treats those as replay and rejects drift under the same id.
+    pub fn new_with_artifact_repo(
+        compiled_task: CompiledTaskRecord,
+        init_payload: TaskInitializationPayload,
+        mut artifact_repo: TaskArtifactRepo,
+    ) -> Result<Self, ApiError> {
         validate_task_initialization(&compiled_task, &init_payload)?;
 
-        let mut artifact_repo = TaskArtifactRepo::new(repo_id);
         for init_artifact in &init_payload.init_artifacts {
-            artifact_repo.append_artifact(ArtifactRecord {
+            let artifact = ArtifactRecord {
                 artifact_id: format!(
                     "init::{}::{}",
                     init_payload.task_run_context.task_run_id, init_artifact.init_slot_id
@@ -73,7 +84,19 @@ impl TaskExecutor {
                     invocation_id: None,
                     output_slot_id: Some(init_artifact.init_slot_id.clone()),
                 },
-            })?;
+            };
+            if let Some(existing) = artifact_repo.get_artifact(&artifact.artifact_id) {
+                // Durable replay is allowed only when the seed record remains
+                // contract equivalent across process restarts.
+                if existing == &artifact {
+                    continue;
+                }
+                return Err(ApiError::ConfigError(format!(
+                    "Task executor init artifact '{}' already exists with different content",
+                    artifact.artifact_id
+                )));
+            }
+            artifact_repo.append_artifact(artifact)?;
         }
 
         let mut requested = TaskEvent::new(

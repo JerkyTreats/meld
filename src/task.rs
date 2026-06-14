@@ -17,7 +17,7 @@ pub mod readiness;
 pub(crate) mod reducer;
 pub mod runtime;
 
-pub use artifact_repo::TaskArtifactRepo;
+pub use artifact_repo::{TaskArtifactRepo, TaskArtifactRepoError};
 pub use compiler::{compile_task_definition, TaskCompiler};
 pub use contracts::{
     ArtifactLinkRecord, ArtifactLinkRelation, ArtifactProducerRef, ArtifactRecord,
