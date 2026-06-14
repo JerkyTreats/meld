@@ -31,6 +31,10 @@ pub struct StorageConfig {
     /// Path to prompt context artifact storage (relative to workspace root)
     #[serde(default = "default_artifacts_path")]
     pub artifacts_path: PathBuf,
+
+    /// Product runtime storage root. Relative paths resolve under the workspace root.
+    #[serde(default)]
+    pub product_root: Option<PathBuf>,
 }
 
 impl StorageConfig {
@@ -66,6 +70,18 @@ impl StorageConfig {
 
         Ok((store_path, frames_path, artifacts_path))
     }
+
+    /// Resolve the product runtime storage root.
+    pub fn resolve_product_root(&self, workspace_root: &Path) -> Result<PathBuf, ApiError> {
+        if let Some(product_root) = &self.product_root {
+            if product_root.is_absolute() {
+                return Ok(product_root.clone());
+            }
+            return Ok(workspace_root.join(product_root));
+        }
+
+        Ok(xdg::workspace_data_dir(workspace_root)?.join("runtime"))
+    }
 }
 
 impl Default for StorageConfig {
@@ -74,6 +90,65 @@ impl Default for StorageConfig {
             store_path: default_store_path(),
             frames_path: default_frames_path(),
             artifacts_path: default_artifacts_path(),
+            product_root: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absent_product_root_resolves_to_xdg_runtime_root() {
+        let workspace = tempfile::tempdir().unwrap();
+        let config = StorageConfig::default();
+
+        let root = config.resolve_product_root(workspace.path()).unwrap();
+        let expected = xdg::workspace_data_dir(workspace.path())
+            .unwrap()
+            .join("runtime");
+
+        assert_eq!(root, expected);
+    }
+
+    #[test]
+    fn relative_product_root_resolves_under_workspace() {
+        let workspace = tempfile::tempdir().unwrap();
+        let config = StorageConfig {
+            product_root: Some(PathBuf::from(".custom/runtime")),
+            ..StorageConfig::default()
+        };
+
+        let root = config.resolve_product_root(workspace.path()).unwrap();
+
+        assert_eq!(root, workspace.path().join(".custom/runtime"));
+    }
+
+    #[test]
+    fn absolute_product_root_remains_absolute() {
+        let workspace = tempfile::tempdir().unwrap();
+        let absolute = workspace.path().join("absolute-runtime");
+        let config = StorageConfig {
+            product_root: Some(absolute.clone()),
+            ..StorageConfig::default()
+        };
+
+        let root = config.resolve_product_root(workspace.path()).unwrap();
+
+        assert_eq!(root, absolute);
+    }
+
+    #[test]
+    fn existing_resolve_paths_behavior_is_unchanged() {
+        let workspace = tempfile::tempdir().unwrap();
+        let config = StorageConfig::default();
+
+        let (store, frames, artifacts) = config.resolve_paths(workspace.path()).unwrap();
+        let data_dir = xdg::workspace_data_dir(workspace.path()).unwrap();
+
+        assert_eq!(store, data_dir.join("store"));
+        assert_eq!(frames, data_dir.join("frames"));
+        assert_eq!(artifacts, data_dir.join("artifacts"));
     }
 }

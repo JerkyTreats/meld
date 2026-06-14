@@ -2,11 +2,12 @@
 mod task_network_support;
 
 use meld_execution::task_network::command::{Command, Response};
-use meld_execution::task_network::mutation::{ReadPrecondition, Rejection, Set};
+use meld_execution::task_network::mutation::{Mutation, ReadPrecondition, Rejection, Set};
 use meld_execution::task_network::outcome::PublicationState;
 use meld_execution::task_network::state::TaskStatus;
 use meld_execution::task_network::store::{
-    InMemoryTaskNetworkStore, SledTaskNetworkStore, TaskNetworkStoreError,
+    network_storage_key, InMemoryTaskNetworkStore, SledTaskNetworkStore, TaskNetworkStoreError,
+    TaskNetworkStoreFactory,
 };
 use proptest::prelude::*;
 use serde_json::json;
@@ -21,6 +22,87 @@ fn open_db() -> sled::Db {
 
 fn assert_decode_error(error: TaskNetworkStoreError) {
     assert!(matches!(error, TaskNetworkStoreError::Decode(_)));
+}
+
+fn commit_single_task_for_store(store: &mut SledTaskNetworkStore, task_instance_id: &str) {
+    let set = Set::new(
+        store.state().network_id.clone(),
+        "composition-fixture",
+        format!("inject-{task_instance_id}"),
+        vec![Mutation::Inject(task_network_support::inject_for_node(
+            task_network_support::single_task_node(task_instance_id),
+            vec![],
+        ))],
+        vec![],
+    );
+    let request = task_network_support::apply_sled_command(
+        store,
+        &format!("command-commit-{task_instance_id}"),
+        Command::ApplyMutationSet(set),
+    );
+    store.submit(request).unwrap();
+}
+
+#[test]
+fn task_network_factory_opens_flushes_and_reopens_network() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory = TaskNetworkStoreFactory::new(temp.path());
+    {
+        let mut store = factory.open_network("network-a").unwrap();
+        commit_single_task_for_store(&mut store, "task-alpha");
+        store.flush().unwrap();
+    }
+
+    let reopened = factory.open_network("network-a").unwrap();
+
+    assert_eq!(reopened.state().revision, 1);
+    assert!(reopened.state().tasks.contains_key("task-alpha"));
+}
+
+#[test]
+fn task_network_factory_isolates_network_databases() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory = TaskNetworkStoreFactory::new(temp.path());
+    {
+        let mut left = factory.open_network("network-a").unwrap();
+        commit_single_task_for_store(&mut left, "task-alpha");
+        left.flush().unwrap();
+        let mut right = factory.open_network("network-b").unwrap();
+        commit_single_task_for_store(&mut right, "task-beta");
+        right.flush().unwrap();
+    }
+
+    let left = factory.open_network("network-a").unwrap();
+    let right = factory.open_network("network-b").unwrap();
+
+    assert!(temp.path().join("network-a.sled").exists());
+    assert!(temp.path().join("network-b.sled").exists());
+    assert!(left.state().tasks.contains_key("task-alpha"));
+    assert!(!left.state().tasks.contains_key("task-beta"));
+    assert!(right.state().tasks.contains_key("task-beta"));
+    assert!(!right.state().tasks.contains_key("task-alpha"));
+}
+
+#[test]
+fn network_storage_key_rejects_empty_id() {
+    let error = network_storage_key("").unwrap_err();
+
+    assert!(matches!(error, TaskNetworkStoreError::Storage(_)));
+}
+
+#[test]
+fn network_storage_key_rejects_invalid_id() {
+    let error = network_storage_key("network/a").unwrap_err();
+
+    assert!(matches!(error, TaskNetworkStoreError::Storage(_)));
+}
+
+#[test]
+fn network_storage_key_keeps_valid_id_unchanged() {
+    assert_eq!(
+        network_storage_key("network-a_1.docs").unwrap(),
+        "network-a_1.docs"
+    );
 }
 
 fn stored_request_json(command_id: &str, request_hash: &str) -> serde_json::Value {
