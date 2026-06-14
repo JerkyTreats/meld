@@ -45,7 +45,7 @@ A gap does not belong here when it is only about call order, worker lifetime, de
 | NAG-1 | Producer-neutral goal acceptance | execution | Implemented at [goal API](../../../crates/meld-execution/src/goals/api.rs) and proven by `producer_neutral_goal_acceptance_stores_active_plannable_goal` |
 | NAG-2 | Outcome publication bridge | execution | Implemented at [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs) and proven by `publication_bridge_appends_pending_task_outcome_once` |
 | NAG-3 | Outcome fact to belief evidence | world model | Implemented at [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), and proven by `docs_writer_success_promotes_configured_freshness_evidence` |
-| NAG-4 | Satisfaction review | world model agent plus execution boundary | Ownership audited at [goal ownership boundary audit](goal_ownership_boundary_audit.md); implementation proof pending |
+| NAG-4 | Satisfaction review | world model agent plus execution boundary | Implemented at [agent curation](../../../crates/meld-world-model/src/agent/curation.rs), [goal mutation adapter](../../../src/execution/goal_mutation.rs), and proven by `agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match` |
 | NAG-5 | Failure outcome contract | execution | Failed work emits failure facts without satisfying the goal |
 
 ## NAG-1 Producer-Neutral Goal Acceptance
@@ -127,7 +127,7 @@ Implementation evidence:
 - [publication bridge test](../../../crates/meld-execution/tests/task_network_publication_bridge.rs)
 - `cargo test -p meld-execution --test task_network_publication_bridge publication_bridge_appends_pending_task_outcome_once`
 
-NAG-4 ownership is audited with implementation pending. NAG-5 remains open.
+NAG-5 remains open.
 
 ## NAG-3 Outcome Fact To Belief Evidence
 
@@ -172,14 +172,18 @@ Implementation evidence:
 
 ## NAG-4 Satisfaction Review
 
-Execution can mark goals satisfied through `SatisfyGoalCommand`, and the language domain can evaluate grounded goals against world state. The missing fix is an agent satisfaction curation boundary that runs after world model updates and calls execution's public satisfy API.
+Execution can mark goals satisfied through `SatisfyGoalCommand`, and the language domain can evaluate grounded goals against world state. The implemented fix is an agent satisfaction curation boundary that runs after world model updates and maps agent-authored mutation commands into execution's public satisfy API.
 
-Status: `assessed`
+Status: `implemented`
 
-Assessment evidence:
+Assessment and implementation evidence:
 
 - [goal ownership boundary audit](goal_ownership_boundary_audit.md)
 - [satisfaction review assessment](nag_4_satisfaction_review_assessment.md)
+- [agent contracts](../../../crates/meld-world-model/src/agent/contracts.rs)
+- [agent satisfaction curation](../../../crates/meld-world-model/src/agent/curation.rs)
+- [goal mutation adapter](../../../src/execution/goal_mutation.rs)
+- [goal acceptance integration test](../../../tests/integration/goal_acceptance.rs)
 
 ### Requirements
 
@@ -202,6 +206,12 @@ Suggested focused test name:
 
 ```text
 agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match
+```
+
+Implemented proof command:
+
+```sh
+cargo test --test integration_tests agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match
 ```
 
 ## NAG-5 Failure Outcome Contract

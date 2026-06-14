@@ -2,14 +2,15 @@ use std::sync::Arc;
 
 use meld_lang::{
     evaluate, Condition, Effect, EvalResult, Goal, GoalLifecycle, GoalPriority, GoalSource,
-    Literal, Proposition, Term,
+    Literal, Proposition, Term, WorldState,
 };
 use meld_world_model::agent::{
-    curate_threshold_rule, ActiveGoalSummary, AgentActivationRecord, AgentActivationStatus,
-    AgentCurationDedupeKey, AgentCurationInput, AgentCurationInputRefs, AgentCurationRuleConfig,
-    AgentDecisionKind, AgentDelivery, AgentGoalCommand, AgentQuery, AgentRegistration, AgentStatus,
-    AgentStore, AgentSubscription, AgentSubscriptionRecord, AgentSubscriptionStatus,
-    SeedAgentRegistration, SubscribeAgentCommand,
+    curate_goal_satisfaction, curate_threshold_rule, ActiveGoalSummary, AgentActivationRecord,
+    AgentActivationStatus, AgentCurationDedupeKey, AgentCurationInput, AgentCurationInputRefs,
+    AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery, AgentGoalCommand,
+    AgentGoalMutationCommand, AgentGoalMutationKind, AgentGoalSatisfactionInput, AgentQuery,
+    AgentRegistration, AgentStatus, AgentStore, AgentSubscription, AgentSubscriptionRecord,
+    AgentSubscriptionStatus, SeedAgentRegistration, SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
     BeliefProvenanceSummary, BeliefQuery, BeliefStore, BranchScope, ContradictionState,
@@ -226,6 +227,57 @@ fn low_confidence_goal_command() -> AgentGoalCommand {
         .unwrap()
 }
 
+fn active_goal_from_command(command: AgentGoalCommand) -> Goal {
+    let mut goal = command.goal;
+    goal.lifecycle = GoalLifecycle::Active;
+    goal
+}
+
+fn world_state_with_confidence(confidence: f64) -> WorldState {
+    WorldState::new(vec![
+        Proposition::Accessible {
+            scope: Term::Object(subject()),
+        },
+        Proposition::Holds {
+            subject: Term::Object(subject()),
+            dimension: Term::Dimension(DIMENSION_ID.to_string()),
+            condition: Condition::Equals(Term::Literal(Literal::Number(confidence))),
+        },
+    ])
+    .unwrap()
+}
+
+fn satisfaction_input(confidence: f64, review_seq: u64) -> AgentGoalSatisfactionInput {
+    let goal = active_goal_from_command(low_confidence_goal_command());
+    let mut input = curation_input(confidence);
+    input.planner_projection.world_state = world_state_with_confidence(confidence);
+    input.input_refs.planner_source_refs = vec!["source-a".to_string()];
+    input.input_refs.planner_warnings = vec!["warning-a".to_string()];
+    AgentGoalSatisfactionInput {
+        agent: input.agent,
+        subscription: input.subscription,
+        review_seq,
+        planner_projection: input.planner_projection,
+        active_goals: ActiveGoalSummary { goals: vec![goal] },
+        input_refs: input.input_refs,
+    }
+}
+
+fn valid_goal_mutation_command() -> AgentGoalMutationCommand {
+    curate_goal_satisfaction(satisfaction_input(0.95, 22))
+        .unwrap()
+        .goal_mutation_command
+        .unwrap()
+}
+
+fn invalid_goal_mutation_command(
+    mutate: impl FnOnce(&mut AgentGoalMutationCommand),
+) -> AgentGoalMutationCommand {
+    let mut command = valid_goal_mutation_command();
+    mutate(&mut command);
+    command
+}
+
 fn invalid_goal_command(mutate: impl FnOnce(&mut AgentGoalCommand)) -> AgentGoalCommand {
     let mut command = low_confidence_goal_command();
     mutate(&mut command);
@@ -420,6 +472,27 @@ fn agent_contract_validation_rejects_invalid_public_shapes() {
 }
 
 #[test]
+fn agent_goal_mutation_command_validate_rejects_invalid_fields() {
+    let cases = [
+        invalid_goal_mutation_command(|command| command.command_id.clear()),
+        invalid_goal_mutation_command(|command| command.agent_id.clear()),
+        invalid_goal_mutation_command(|command| command.goal_id.clear()),
+        invalid_goal_mutation_command(|command| command.review_seq = 0),
+        invalid_goal_mutation_command(|command| command.projection_version.clear()),
+        invalid_goal_mutation_command(|command| {
+            command.dedupe_key.agent_id = "other-agent".to_string();
+        }),
+        invalid_goal_mutation_command(|command| {
+            command.kind = AgentGoalMutationKind::Satisfy { at_seq: 21 };
+        }),
+    ];
+
+    for command in cases {
+        assert!(command.validate().is_err());
+    }
+}
+
+#[test]
 fn agent_goal_command_ids_are_stable_from_dedupe_identity() {
     let outcome = curate_threshold_rule(curation_input(0.2)).unwrap();
     let command = outcome.goal_command.as_ref().expect("goal command");
@@ -445,6 +518,75 @@ fn agent_goal_command_ids_are_stable_from_dedupe_identity() {
         command.goal.goal_id,
         expected_deterministic_id("goal", &dedupe_key)
     );
+}
+
+#[test]
+fn agent_satisfaction_curation_emits_mutation_for_satisfied_goal() {
+    let input = satisfaction_input(0.95, 22);
+    let goal = input.active_goals.goals[0].clone();
+    let dedupe_key = AgentCurationDedupeKey::threshold_rule(
+        AGENT_ID,
+        &subject(),
+        &BranchScope::main(),
+        &rule_config(),
+    );
+    let decision_key = format!(
+        "{}::satisfy::{}::{}",
+        dedupe_key.index_key(),
+        goal.goal_id,
+        22
+    );
+
+    let outcome = curate_goal_satisfaction(input).unwrap();
+
+    assert_eq!(
+        outcome.decision.decision,
+        AgentDecisionKind::GoalMutationCommand
+    );
+    let command = outcome.goal_mutation_command.unwrap();
+    assert_eq!(command.kind, AgentGoalMutationKind::Satisfy { at_seq: 22 });
+    assert_eq!(
+        command.command_id,
+        expected_deterministic_id("goal-mutation-command", &decision_key)
+    );
+    assert_eq!(
+        outcome.decision.goal_mutation_command_id.as_deref(),
+        Some(command.command_id.as_str())
+    );
+    assert_eq!(command.planner_source_refs, vec!["source-a".to_string()]);
+    assert_eq!(command.planner_warnings, vec!["warning-a".to_string()]);
+}
+
+#[test]
+fn agent_satisfaction_curation_leaves_unsatisfied_goal_active() {
+    let outcome = curate_goal_satisfaction(satisfaction_input(0.2, 22)).unwrap();
+
+    assert!(outcome.goal_mutation_command.is_none());
+    assert_eq!(outcome.decision.decision, AgentDecisionKind::Absorbed);
+    assert!(outcome.decision.reason.contains("unsatisfied"));
+}
+
+#[test]
+fn agent_satisfaction_curation_does_not_satisfy_indeterminate_goal() {
+    let mut input = satisfaction_input(0.95, 22);
+    input.planner_projection.world_state = WorldState::empty();
+
+    let outcome = curate_goal_satisfaction(input).unwrap();
+
+    assert!(outcome.goal_mutation_command.is_none());
+    assert_eq!(outcome.decision.decision, AgentDecisionKind::Indeterminate);
+    assert!(outcome.decision.reason.contains("indeterminate"));
+}
+
+#[test]
+fn agent_satisfaction_curation_is_deterministic_for_same_review_seq() {
+    let input = satisfaction_input(0.95, 22);
+
+    let first = curate_goal_satisfaction(input.clone()).unwrap();
+    let replayed = curate_goal_satisfaction(input).unwrap();
+
+    assert_eq!(first.decision, replayed.decision);
+    assert_eq!(first.goal_mutation_command, replayed.goal_mutation_command);
 }
 
 #[test]
@@ -531,6 +673,28 @@ fn agent_decision_serializes_input_refs_as_single_input_source() {
             .and_then(serde_json::Value::as_str),
         Some(PLANNER_PROJECTION_VERSION)
     );
+}
+
+#[test]
+fn agent_curation_deserializes_without_goal_mutation_fields() {
+    let outcome = curate_threshold_rule(curation_input(0.2)).unwrap();
+    let mut decision_value = serde_json::to_value(&outcome.decision).unwrap();
+    decision_value
+        .as_object_mut()
+        .unwrap()
+        .remove("goal_mutation_command_id");
+    let decision: meld_world_model::AgentCurationDecision =
+        serde_json::from_value(decision_value).unwrap();
+    assert!(decision.goal_mutation_command_id.is_none());
+
+    let mut outcome_value = serde_json::to_value(&outcome).unwrap();
+    outcome_value
+        .as_object_mut()
+        .unwrap()
+        .remove("goal_mutation_command");
+    let decoded: meld_world_model::AgentCurationOutcome =
+        serde_json::from_value(outcome_value).unwrap();
+    assert!(decoded.goal_mutation_command.is_none());
 }
 
 #[test]

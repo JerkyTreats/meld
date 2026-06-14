@@ -109,7 +109,7 @@ pub enum GoalLifecycle {
 - `Goal.target` is a `Proposition`. It uses the same type as world state assertions, operator preconditions, and method triggers. This is the single-type property that makes the language a shared substrate.
 - Goals may contain `Term::Variable` only when used as method trigger patterns. A goal submitted to the planning loop for execution must have a ground target (all terms concrete). The planning loop rejects goals with unbound variables.
 - `GoalSource` is carried for provenance and audit. Execution reads the `source` only for lineage tracking and explanation. It does not interpret the source to decide how to plan.
-- `GoalLifecycle` transitions are initiated by the world model agent (Proposed → Active, Active → Suspended, Active → Abandoned) or by the planning loop's satisfaction check (Active → Satisfied). The planning loop sets `Satisfied` when `evaluate(world_state, goal.target)` returns `Satisfied`.
+- `GoalLifecycle` transitions are persisted by execution through public goal APIs. The world model agent owns satisfaction curation for `Active` to `Satisfied` by evaluating projected world state and emitting a satisfy mutation only after `meld_lang::evaluate` returns `EvalResult::Satisfied`. Planning may mechanically observe `EvalResult::Satisfied`, but it does not own lifecycle mutation. `meld_lang::evaluate` remains pure.
 - `GoalPriority.cost_ceiling` is optional. When present, the planning loop rejects any composition whose aggregated cost exceeds the ceiling on any dimension. When absent, the planning loop uses cost for method preference ordering but does not enforce a ceiling.
 
 ### Goal Construction by the World Model
