@@ -128,6 +128,16 @@ fn publication_bridge_appends_pending_task_outcome_once() {
 
     let report = publish_pending_publications(&mut store, &events, request(None)).unwrap();
 
+    assert_eq!(report.actor_id, "execution.task_network.publication");
+    assert_eq!(report.scope.network_id, "network-docs");
+    assert_eq!(report.scope.session_id, "session-publication");
+    assert_eq!(report.scope.worker_id, "worker-publication");
+    assert!(report.input_revision < report.output_revision);
+    assert_eq!(report.items_attempted, 1);
+    assert_eq!(report.items_committed, 1);
+    assert!(report.retryable_errors.is_empty());
+    assert!(report.fatal_errors.is_empty());
+    assert!(!report.budget_exhausted);
     assert_eq!(report.results.len(), 1);
     let PublicationPublishResult::Published {
         publication_id: reported_id,
@@ -240,6 +250,10 @@ fn publication_bridge_retry_does_not_append_duplicate_event() {
     assert_eq!(first.results.len(), 1);
     let second = publish_pending_publications(&mut store, &events, request(None)).unwrap();
     assert!(second.results.is_empty());
+    assert_eq!(second.items_attempted, 0);
+    assert_eq!(second.items_committed, 0);
+    assert_eq!(second.input_revision, second.output_revision);
+    assert!(!second.budget_exhausted);
     assert_eq!(events.read_events("session-publication").unwrap().len(), 1);
 
     let direct = publish_publication(&mut store, &events, &request(None), &publication_id).unwrap();
@@ -295,6 +309,10 @@ fn publication_bridge_retries_failed_publication() {
     let retried = publish_pending_publications(&mut store, &events, request(None)).unwrap();
 
     assert_eq!(retried.results.len(), 1);
+    assert_eq!(retried.items_attempted, 1);
+    assert_eq!(retried.items_committed, 1);
+    assert!(retried.retryable_errors.is_empty());
+    assert!(retried.fatal_errors.is_empty());
     assert!(matches!(
         retried.results[0],
         PublicationPublishResult::Published { .. }
@@ -333,6 +351,8 @@ fn publication_bridge_preserves_failure_outcome_event_type() {
     let report = publish_pending_publications(&mut store, &events, request(None)).unwrap();
 
     assert_eq!(report.results.len(), 1);
+    assert_eq!(report.items_attempted, 1);
+    assert_eq!(report.items_committed, 1);
     let event_records = events.read_events("session-publication").unwrap();
     assert_eq!(event_records.len(), 1);
     assert_eq!(
@@ -358,6 +378,9 @@ fn publication_bridge_honors_limit() {
     let report = publish_pending_publications(&mut store, &events, request(Some(1))).unwrap();
 
     assert_eq!(report.results.len(), 1);
+    assert_eq!(report.items_attempted, 1);
+    assert_eq!(report.items_committed, 1);
+    assert!(report.budget_exhausted);
     assert_eq!(events.read_events("session-publication").unwrap().len(), 1);
     let published_count = store
         .state()
@@ -373,4 +396,24 @@ fn publication_bridge_honors_limit() {
         .count();
     assert_eq!(published_count, 1);
     assert_eq!(pending_count, 1);
+}
+
+#[test]
+fn publication_bridge_report_classifies_retryable_append_failure() {
+    let task_db = open_task_db();
+    let mut store = open_store(&task_db);
+    let publication_id =
+        record_success_publication(&mut store, "task-alpha", "outcome-alpha", "claim-alpha");
+
+    let report = publish_pending_publications(&mut store, &FailingSink, request(None)).unwrap();
+
+    assert_eq!(report.items_attempted, 1);
+    assert_eq!(report.items_committed, 0);
+    assert_eq!(report.retryable_errors.len(), 1);
+    assert!(report.fatal_errors.is_empty());
+    assert_eq!(
+        report.retryable_errors[0].publication_id.as_deref(),
+        Some(publication_id.as_str())
+    );
+    assert_eq!(report.retryable_errors[0].code, "publication_append_failed");
 }

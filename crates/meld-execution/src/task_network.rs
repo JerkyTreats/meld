@@ -47,8 +47,8 @@ pub use mutation::{CommitRecord, CommitRequest, CommitResult, Inject, Mutation, 
 pub use outcome::{Publication, PublicationState};
 pub use publication::{
     build_publication_envelope, publish_pending_publications, publish_publication, EventAppendSink,
-    PublicationAppend, PublicationBridgeError, PublicationBridgeReport, PublicationPublishResult,
-    PublishPendingPublicationsRequest,
+    PublicationAppend, PublicationBridgeError, PublicationBridgeIssue, PublicationBridgeReport,
+    PublicationBridgeScope, PublicationPublishResult, PublishPendingPublicationsRequest,
 };
 pub use readiness::compute_ready_set;
 pub use state::{

@@ -233,6 +233,30 @@ impl EventStore {
         Ok(out)
     }
 
+    /// Reads at most `limit` events after a spine sequence across sessions.
+    pub fn read_all_events_after_limit(
+        &self,
+        after_seq: u64,
+        limit: usize,
+    ) -> Result<Vec<EventRecord>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut out = Vec::with_capacity(limit);
+        for result in self.spine_events.iter() {
+            let (_, value) = result.map_err(to_storage_io)?;
+            let parsed = decode_event(&value)?;
+            if parsed.seq > after_seq {
+                out.push(parsed);
+                if out.len() == limit {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Reserves the next runtime-wide spine sequence.
     pub fn allocate_next_seq(&self) -> Result<u64, StorageError> {
         let mut meta = self.get_spine_meta()?.unwrap_or(SpineMeta { next_seq: 1 });

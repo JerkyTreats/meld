@@ -78,6 +78,8 @@ The host should never call pure satisfaction curation and then mutate execution 
 
 ### `RTG-3` Bounded Worker Report Contract
 
+Detailed implementation plan: [RTG-3 Bounded Worker Report Contract Implementation Plan](rtg_3_bounded_worker_report_contract.md).
+
 The host needs a uniform way to stop when the loop converges, detect retryable work, and report failure. It does not need a shared semantic state machine.
 
 This should be a stable runtime diagnostics contract rather than a test helper.

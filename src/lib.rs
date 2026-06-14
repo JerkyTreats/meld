@@ -25,6 +25,7 @@ pub mod merkle_traversal;
 pub mod metadata;
 pub mod prompt_context;
 pub mod provider;
+pub mod runtime;
 pub mod session;
 pub mod store;
 pub mod task;
