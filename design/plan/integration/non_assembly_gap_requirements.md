@@ -46,7 +46,7 @@ A gap does not belong here when it is only about call order, worker lifetime, de
 | NAG-2 | Outcome publication bridge | execution | Implemented at [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs) and proven by `publication_bridge_appends_pending_task_outcome_once` |
 | NAG-3 | Outcome fact to belief evidence | world model | Implemented at [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), and proven by `docs_writer_success_promotes_configured_freshness_evidence` |
 | NAG-4 | Satisfaction review | world model agent plus execution boundary | Implemented at [agent curation](../../../crates/meld-world-model/src/agent/curation.rs), [goal mutation adapter](../../../src/execution/goal_mutation.rs), and proven by `agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match` |
-| NAG-5 | Failure outcome contract | execution | Failed work emits failure facts without satisfying the goal |
+| NAG-5 | Failure outcome contract | execution | Implemented across [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), [agent satisfaction curation](../../../crates/meld-world-model/src/agent/curation.rs), and proven by `failure_outcome_does_not_satisfy_goal` |
 
 ## NAG-1 Producer-Neutral Goal Acceptance
 
@@ -127,7 +127,7 @@ Implementation evidence:
 - [publication bridge test](../../../crates/meld-execution/tests/task_network_publication_bridge.rs)
 - `cargo test -p meld-execution --test task_network_publication_bridge publication_bridge_appends_pending_task_outcome_once`
 
-NAG-5 remains open.
+NAG-5 is covered by the failure outcome contract below.
 
 ## NAG-3 Outcome Fact To Belief Evidence
 
@@ -216,7 +216,11 @@ cargo test --test integration_tests agent_satisfaction_curation_marks_goal_satis
 
 ## NAG-5 Failure Outcome Contract
 
-The flywheel must be able to fail without producing false satisfaction. Task outcomes already distinguish success and failure. The missing fix is a cross boundary contract for what failure means to goals, evidence, and publication.
+The flywheel must be able to fail without producing false satisfaction. Task outcomes already distinguish success and failure. The contract now defines what failure means to goals, evidence, and publication.
+
+Status: `implemented`
+
+The implemented proof keeps failure semantics at existing boundaries. Execution task outcome publication emits `execution.task.failed`, the docs freshness mapper treats that event as no support evidence, agent satisfaction curation emits no mutation while the projected goal target remains unsatisfied, and planning `NoApplicableMethod` or `Indeterminate` results provide no dispatchable composition.
 
 ### Requirements
 
@@ -238,6 +242,12 @@ Suggested focused test name:
 
 ```text
 failure_outcome_does_not_satisfy_goal
+```
+
+Implemented proof command:
+
+```sh
+cargo test --test integration_tests failure_outcome_does_not_satisfy_goal
 ```
 
 ## Dependency Order
