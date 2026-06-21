@@ -15,6 +15,14 @@ Status: active
 - Parentheses are allowed only when required by Markdown formatting syntax such as `[label](/path)`.
 - Parentheses are allowed inside inline code and fenced code blocks.
 
+## Cognitive Architecture Canonicality Rule
+
+- Files under `design/cognitive_architecture` describe authoritative design intent.
+- Do not include implementation status, evidence dates, gap verdicts, readiness verdicts, migration state, first slice acceptance criteria, or open implementation questions in cognitive architecture files.
+- State target ownership, boundaries, contracts, and invariants directly.
+- Put gap analysis, implementation sequencing, readiness assessment, migration notes, and evidence under `design/plan` or `design/completed`.
+- When compatibility matters, describe the canonical contract and compatibility rule without anchoring it to present implementation state.
+
 ## Code Comment Policy Reference
 
 - Rust code commenting is governed by [Commenting Policy](commenting_policy.md).

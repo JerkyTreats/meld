@@ -3,7 +3,7 @@
 use meld_execution::task_network::PublicationBridgeReport;
 use meld_world_model::world_state::graph::runtime::GraphCatchUpReport;
 
-/// Bounded work request shared by runtime host adapters.
+/// Bounded work request shared by runtime supervisor adapters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkBudget {
     /// Maximum durable input items to attempt during one tick.
@@ -49,7 +49,7 @@ pub struct WorkerTickIssue {
     pub message: String,
 }
 
-/// Host-facing report from one bounded worker tick.
+/// Supervisor-facing report from one bounded worker tick.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerTickReport {
     /// Stable runtime actor identifier.

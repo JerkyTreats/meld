@@ -1,16 +1,16 @@
-# Durable Runtime First Slice
+# Durable Flywheel Runtime First Slice
 
 Date: 2026-06-14
 Status: proposed
-Scope: durable single process runtime host for the first `docs_freshness` flywheel turn
+Scope: durable single process runtime assembly for the first `docs_freshness` flywheel turn
 
 ## Purpose
 
 This document defines the first runtime assembly shape after the non assembly gaps are closed.
 
-Pre implementation gaps found during review are tracked in [Durable Runtime Pre Implementation Gaps](durable_runtime_pre_implementation_gaps.md). Resolve those before adding the runtime host.
+Pre implementation gaps found during review are tracked in [Durable Runtime Pre Implementation Gaps](durable_runtime_pre_implementation_gaps.md). Resolve those before adding the runtime assembly.
 
-The goal is not to build a central owner for the flywheel. The goal is to run the existing domain runtimes inside one product host while preserving the future shape where each domain runtime can become an independent worker.
+The goal is not to build a central owner for the flywheel. The goal is to wire existing domain runtimes so the output of one runtime becomes durable input to the next runtime.
 
 The first slice must prove one minimal `docs_freshness` turn and also leave behind a durable runtime foundation.
 
@@ -20,22 +20,21 @@ Root `meld` owns runtime assembly, storage opening, config loading, adapter cons
 
 Root `meld` does not own event truth, world model truth, execution policy, belief settlement, goal judgment, planning policy, task network state, or publication semantics.
 
-The first runtime assembly should therefore be a host, not a brain.
+The first runtime assembly should therefore be an initiator and supervisor, not the center of the flywheel.
 
-## Host Model
+## Assembly Model
 
-Add a root runtime host under `src/runtime` or another root owned entrypoint module chosen by implementation.
+Add root runtime assembly under `src/runtime` or another root owned entrypoint module chosen by implementation.
 
-The host owns:
+Root assembly owns:
 
 - store path resolution
 - concrete store opening
 - adapter construction for context, provider, workspace, and prompt artifacts
-- bounded worker ticks
 - process level cancellation and shutdown
 - diagnostic reports for operators and tests
 
-The host must not:
+Root assembly must not:
 
 - decide whether a goal should exist
 - decide whether a goal is satisfied
@@ -44,9 +43,23 @@ The host must not:
 - mutate execution goal state outside the goal set API
 - mutate graph or belief state outside world model runtimes
 
+## Flywheel Model
+
+The product flywheel is direct handoff through durable boundaries:
+
+```text
+world model runtime
+-> execution goal API
+-> execution runtime
+-> event append API
+-> world model replay runtime
+```
+
+Root wires the APIs and starts the runtimes. Root does not mediate each handoff after the runtimes are connected.
+
 ## Domain Runtime Actors
 
-The first slice should treat each row below as a durable actor even if all actors run in one process.
+The first slice should treat each row below as a durable runtime actor even if all actors run in one process.
 
 | Actor | Owning Crate Or Domain | Durable Input | Durable Output | First Slice Status |
 | --- | --- | --- | --- | --- |
@@ -62,7 +75,7 @@ The first slice should treat each row below as a durable actor even if all actor
 | evidence ingestion | `meld-world-model` plus root adapter | published execution outcome facts | promoted evidence and belief reassessment | existing first slice |
 | satisfaction curation | `meld-world-model` plus `meld-execution` adapter | active goals and updated projection | goal mutation commands and satisfied goals | existing first slice |
 
-The host may tick these actors in a fixed order for the first proof. That order is an implementation convenience. Correctness must come from each actor reading and writing durable state through its owner boundary.
+The first proof may drive these actors in deterministic order. That driver is a proof harness, not the product architecture. Correctness must come from each actor reading and writing durable state through its owner boundary.
 
 ## Worker Contract
 
@@ -79,7 +92,7 @@ pub enum WorkStatus {
 }
 ```
 
-The concrete API can differ by domain, but every worker tick must follow the same durability rules.
+The concrete API can differ by domain, but every bounded worker operation must follow the same durability rules.
 
 - read from durable input state
 - claim work durably when duplicate work would be harmful
@@ -88,9 +101,9 @@ The concrete API can differ by domain, but every worker tick must follow the sam
 - tolerate duplicate delivery
 - return diagnostics that are not semantic authority
 
-## First Slice Loop
+## First Slice Proof Driver
 
-The first runtime host can run a bounded convergence loop.
+The first proof can run a bounded deterministic driver.
 
 ```text
 event graph catchup
@@ -108,9 +121,9 @@ agent satisfaction curation
 goal satisfaction mutation
 ```
 
-The loop stops when no actor makes progress or when the configured budget is exhausted.
+The driver stops at named proof checkpoints, when no actor makes progress, or when the configured budget is exhausted.
 
-The loop must not store correctness state in local variables. Local reports are allowed only for diagnostics. Restart must resume from domain stores.
+The driver must not store correctness state in local variables. Local reports are allowed only for diagnostics. Restart must resume from domain stores.
 
 ## Storage Shape
 
@@ -129,7 +142,7 @@ Required state:
 
 Store layout is root `meld` product assembly. Record meaning remains owned by each crate or domain.
 
-The concrete implementation surface is `ProductStorageLayout` plus `OpenProductStores` under root runtime storage assembly. The first durable proof should resolve one product root, open stores through that layout, and avoid direct `sled::Db` exposure in host-facing runtime fields.
+The concrete implementation surface is `ProductStorageLayout` plus `OpenProductStores` under root runtime storage assembly. The first durable proof should resolve one product root, open stores through that layout, and avoid direct `sled::Db` exposure in supervisor-facing runtime fields.
 
 The product layout uses separate sled database groups for the event ledger, workspace records, world model state, execution goals, task artifacts, and one task network database per network id. Context frames and prompt artifacts remain filesystem content-addressed stores below the same product root.
 
@@ -145,24 +158,24 @@ The first slice must make restart safety visible.
 - satisfaction mutation dedupes by goal id and review sequence
 - task network claims and outcomes use fenced claim records
 
-No host level cursor may replace these domain cursors.
+No root level cursor may replace these domain cursors.
 
 ## Entrypoints
 
-The first implementation should prefer a library runtime entrypoint before adding a user facing CLI command.
+The first implementation should prefer a library assembly entrypoint before adding a user facing CLI command.
 
 Suggested shape:
 
 ```rust
-pub struct MeldRuntimeHost { ... }
+pub struct ProductRuntimeAssembly { ... }
 
-impl MeldRuntimeHost {
-    pub fn load_for_workspace(...) -> Result<Self, RuntimeHostError>;
-    pub fn run_once(&mut self, request: RuntimeTurnRequest) -> Result<RuntimeTurnReport, RuntimeHostError>;
+impl ProductRuntimeAssembly {
+    pub fn load_for_workspace(...) -> Result<Self, RuntimeAssemblyError>;
+    pub fn start_supervisor(&self, request: RuntimeStartRequest) -> Result<RuntimeSupervisor, RuntimeAssemblyError>;
 }
 ```
 
-The CLI can later call this host. Tests should call it directly.
+The CLI can later call this assembly. Tests may use a deterministic proof driver built from the same assembly.
 
 ## First Proof
 
@@ -187,7 +200,7 @@ The proof must show:
 - agent satisfaction curation emits one mutation command
 - execution records the goal as satisfied
 
-The proof must reopen the runtime host after at least one intermediate boundary and continue from stores. Preferred reopen points are after goal acceptance and after pending publication creation.
+The proof must reopen runtime assembly after at least one intermediate boundary and continue from stores. Preferred reopen points are after goal acceptance and after pending publication creation.
 
 ## Non Goals
 
@@ -202,11 +215,11 @@ The proof must reopen the runtime host after at least one intermediate boundary 
 
 ## Design Risks
 
-The main risk is centralization by convenience. A single process host can quietly become semantic authority if it keeps progress in memory or directly calls helper functions that bypass command boundaries.
+The main risk is centralization by convenience. A single process proof driver can quietly become semantic authority if it keeps progress in memory or directly calls helper functions that bypass command boundaries.
 
 The opposite risk is overbuilding. Full leases, push subscriptions, worker pools, and supervisor recovery are not required for the first proof.
 
-The selected compromise is a durable single process supervisor. One process is acceptable. One semantic owner is not.
+The selected compromise is a durable single process assembly with domain embedded runtimes. One process is acceptable. One semantic owner is not.
 
 ## Exit Criteria
 

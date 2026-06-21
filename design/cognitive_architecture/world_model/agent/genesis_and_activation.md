@@ -28,7 +28,8 @@ Seed creation must record provenance:
 - seed agent id
 - perspective key
 - subject scope
-- configured directive
+- directive_id
+- responsibility summary
 - trust policy reference
 - source config or init source
 - creation sequence when available
@@ -79,7 +80,8 @@ It should include:
 - trust policy reference
 - evidence policy reference
 - subscription refs
-- directive provenance
+- directive_id
+- responsibility summary
 - curator provenance for spawned agents
 - lifecycle status
 - activation policy
@@ -107,11 +109,11 @@ The concrete store, query, cursor, curation decision, and replay contracts are d
 
 Agent initialization is an execution workflow driven by tasks and capabilities.
 
-The workflow starts from either trusted seed configuration or a curated `CreateAgent` goal.
+The workflow starts from either trusted seed configuration or a curated `CreateAgent` goal. The workflow receives the directive and agent responsibility summary as seed input.
 
 Required capability work:
 
-- decompose directive into candidate belief dimensions
+- consume seed-supplied candidate belief dimensions
 - walk the world model graph for the subject scope
 - query existing belief views for the perspective
 - query available evidence channels

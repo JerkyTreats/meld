@@ -137,8 +137,20 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — first slice implemented
 - [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
 - [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — template
-- [integration/durable_runtime_first_slice.md](integration/durable_runtime_first_slice.md) - proposed durable runtime host design
-- [integration/durable_runtime_pre_implementation_gaps.md](integration/durable_runtime_pre_implementation_gaps.md) - proposed pre host gap requirements
+- [integration/durable_runtime_first_slice.md](integration/durable_runtime_first_slice.md) - proposed durable flywheel runtime design
+- [integration/durable_runtime_pre_implementation_gaps.md](integration/durable_runtime_pre_implementation_gaps.md) - proposed pre assembly gap requirements
+- [integration/durable_flywheel_runtime_phase_design.md](integration/durable_flywheel_runtime_phase_design.md) - proposed flywheel runtime phase design
+- [integration/flywheel_runtime_code_assessment.md](integration/flywheel_runtime_code_assessment.md) - proposed flywheel runtime code assessment
+- [integration/runtime_supervisor_domain_plan.md](integration/runtime_supervisor_domain_plan.md) - proposed runtime supervisor domain plan
+- [integration/runtime_requirements.md](integration/runtime_requirements.md) - proposed detailed runtime requirements index
+- [integration/runtime_phase_design_detail_audit.md](integration/runtime_phase_design_detail_audit.md) - implemented runtime phase detail audit
+- [integration/product_runtime_assembly_requirements.md](integration/product_runtime_assembly_requirements.md) - proposed product runtime assembly requirements
+- [integration/docs_freshness_physical_configuration_requirements.md](integration/docs_freshness_physical_configuration_requirements.md) - proposed docs freshness physical configuration requirements
+- [integration/world_model_runtime_requirements.md](integration/world_model_runtime_requirements.md) - proposed world model runtime requirements
+- [integration/execution_runtime_requirements.md](integration/execution_runtime_requirements.md) - proposed execution runtime requirements
+- [integration/event_runtime_requirements.md](integration/event_runtime_requirements.md) - proposed event runtime requirements
+- [integration/supervisor_runtime_requirements.md](integration/supervisor_runtime_requirements.md) - proposed supervisor runtime requirements
+- [integration/durable_flywheel_vertical_proof_requirements.md](integration/durable_flywheel_vertical_proof_requirements.md) - proposed vertical proof requirements
 
 ## Assessment Inventory
 

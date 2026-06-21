@@ -66,6 +66,10 @@ pub enum GoalSource {
     },
 
     /// User directly requested this goal.
+    /// The directive that seeded the requesting agent is durable as an
+    /// independent record in the agent meta-layer. This field carries the
+    /// directive text as lineage; a future refinement carries the directive
+    /// id for a stable reference.
     UserDirected {
         directive: String,
     },
