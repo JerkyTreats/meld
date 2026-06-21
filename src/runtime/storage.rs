@@ -190,6 +190,9 @@ impl OpenProductStores {
     ///
     /// Task network stores are opened per network and must be flushed by the
     /// caller before this boundary is used as a checkpoint.
+    /// A successful flush means storage accepted pending writes. It does not
+    /// prove semantic convergence, release supervisor leases, or repair domain
+    /// records after a failed checkpoint.
     pub fn flush_boundary(&self) -> Result<(), ProductStorageError> {
         self.event_store.flush().map_err(to_events)?;
         self.node_store.flush().map_err(to_sled)?;
@@ -232,4 +235,50 @@ fn to_execution(error: impl ToString) -> ProductStorageError {
 
 fn to_context(error: impl ToString) -> ProductStorageError {
     ProductStorageError::Context(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn product_storage_layout_derives_expected_paths() {
+        let root = PathBuf::from("/tmp/meld-runtime");
+
+        let layout = ProductStorageLayout::from_root(root.clone());
+
+        assert_eq!(layout.root, root);
+        assert_eq!(
+            layout.ledger_db,
+            PathBuf::from("/tmp/meld-runtime/ledger.sled")
+        );
+        assert_eq!(
+            layout.workspace_db,
+            PathBuf::from("/tmp/meld-runtime/workspace.sled")
+        );
+        assert_eq!(
+            layout.world_model_db,
+            PathBuf::from("/tmp/meld-runtime/world_model.sled")
+        );
+        assert_eq!(
+            layout.execution_goals_db,
+            PathBuf::from("/tmp/meld-runtime/execution/goals.sled")
+        );
+        assert_eq!(
+            layout.task_artifacts_db,
+            PathBuf::from("/tmp/meld-runtime/execution/task_artifacts.sled")
+        );
+        assert_eq!(
+            layout.task_networks_root,
+            PathBuf::from("/tmp/meld-runtime/execution/task_networks")
+        );
+        assert_eq!(
+            layout.frame_blob_root,
+            PathBuf::from("/tmp/meld-runtime/context/frames")
+        );
+        assert_eq!(
+            layout.prompt_artifact_root,
+            PathBuf::from("/tmp/meld-runtime/context/prompt_artifacts")
+        );
+    }
 }

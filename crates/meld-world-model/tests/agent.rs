@@ -993,32 +993,33 @@ fn agent_satisfaction_review_persists_decision_before_returning_mutation() {
     let mut goal = low_confidence_goal_command().goal;
     goal.lifecycle = GoalLifecycle::Active;
     let review = satisfaction_review(&subscription, 22);
-    let curation = AgentCuration::new(&agent_store);
+    let stored = {
+        let curation = AgentCuration::new(&agent_store);
+        let outcome = curation
+            .handle_satisfaction_review(
+                review.clone(),
+                &belief_query,
+                &planner_query,
+                ActiveGoalSummary { goals: vec![goal] },
+            )
+            .unwrap();
 
-    let outcome = curation
-        .handle_satisfaction_review(
-            review.clone(),
-            &belief_query,
-            &planner_query,
-            ActiveGoalSummary { goals: vec![goal] },
-        )
-        .unwrap();
-
-    assert_eq!(
-        outcome.decision.decision,
-        AgentDecisionKind::GoalMutationCommand
-    );
-    let command = outcome.goal_mutation_command.expect("mutation command");
-    assert_eq!(
-        outcome.decision.goal_mutation_command_id.as_deref(),
-        Some(command.command_id.as_str())
-    );
-    let stored = AgentQuery::new(&agent_store)
-        .decision_by_satisfaction_review(&review)
-        .unwrap()
-        .expect("stored satisfaction decision");
-    assert_eq!(stored, outcome.decision);
-    drop(curation);
+        assert_eq!(
+            outcome.decision.decision,
+            AgentDecisionKind::GoalMutationCommand
+        );
+        let command = outcome.goal_mutation_command.expect("mutation command");
+        assert_eq!(
+            outcome.decision.goal_mutation_command_id.as_deref(),
+            Some(command.command_id.as_str())
+        );
+        let stored = AgentQuery::new(&agent_store)
+            .decision_by_satisfaction_review(&review)
+            .unwrap()
+            .expect("stored satisfaction decision");
+        assert_eq!(stored, outcome.decision);
+        stored
+    };
     agent_store.flush().unwrap();
     drop(agent_store);
 
