@@ -8,11 +8,11 @@ Scope: contract and domain fixes that unblock end to end assembly for the minima
 
 This document breaks out the gaps that prevent the runtime flywheel from being assembled end to end, while avoiding the assembly work itself.
 
-The target outcome is a set of narrow requirements that can be implemented and tested inside existing domains before introducing the durable runtime host. These requirements focus on handoff contracts, publication, belief evidence, satisfaction review, and failure behavior.
+The target outcome is a set of narrow requirements that can be implemented and tested inside existing domains before introducing durable runtime assembly. These requirements focus on handoff contracts, publication, belief evidence, satisfaction review, and failure behavior.
 
 ## Relationship To Assembly
 
-These fixes are prerequisites for assembly. They should not create the runtime host, long running worker graph, CLI entrypoint, or integrated service loop.
+These fixes are prerequisites for assembly. They should not create runtime assembly, long running worker graph, CLI entrypoint, or integrated service loop.
 
 Each fix should leave behind a clear callable contract and a focused test so assembly can later wire the pieces together without inventing semantics at the boundary.
 
@@ -26,7 +26,7 @@ Each fix should leave behind a clear callable contract and a focused test so ass
 
 ## Out Of Scope
 
-- A complete durable runtime host.
+- Complete durable runtime assembly.
 - A background worker scheduler.
 - A CLI command for the flywheel.
 - Storage migrations outside the contracts needed for these gaps.
@@ -105,7 +105,7 @@ The implemented fix is an explicit callable bridge from retryable task outcome p
 - Preserve enough task identity to connect the event back to the task run and artifacts.
 - Mark a publication as `Published` only after append succeeds and returns an event cursor.
 - On append failure, retain a retryable state and record the error through the publication contract.
-- Do not require the future durable runtime host to know how task outcome payloads become events.
+- Do not require future durable runtime assembly to know how task outcome payloads become events.
 
 ### Acceptance Proof
 
@@ -137,7 +137,7 @@ Status: `implemented`
 
 The implemented fix keeps world model ingestion generic and maps docs task success to promoted evidence at the root integration boundary.
 
-This is a callable contract, not runtime assembly. A later durable runtime host still needs to invoke the mapper and ingestion after the publication bridge delivers an applicable docs writer success event.
+This is a callable contract, not runtime assembly. Later durable runtime assembly still needs to wire the mapper and ingestion after the publication bridge delivers an applicable docs writer success event.
 
 ### Requirements
 

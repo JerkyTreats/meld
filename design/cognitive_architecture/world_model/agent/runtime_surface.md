@@ -44,14 +44,15 @@ Deferred runtime part:
 
 `AgentRecord` is the durable identity and policy record.
 
-Required fields for the first slice:
+Required fields:
 
 - `agent_id`
 - `perspective_key`
 - `subject`
 - `branch_scope`
 - `observation_scope`
-- `directive`
+- `directive_id`
+- `responsibility_summary`
 - `seed_provenance`
 - `status`
 - `created_at_seq`
@@ -125,8 +126,9 @@ Agent commands mutate durable agent state.
 
 Commands should be idempotent by stable command id or natural key.
 
+The durable public shape is general registration. Seed status is an authority source, not a separate kind of agent operation. Registration carries explicit authority provenance and the directive that seeded the agent responsibility.
+
 ```rust
-register_seed_agent(request: SeedAgentRegistration) -> AgentRecord
 register_agent(request: AgentRegistrationRequest) -> AgentRecord
 activate_agent(command: ActivateAgentCommand) -> AgentStatus
 deactivate_agent(command: DeactivateAgentCommand) -> AgentStatus
@@ -138,6 +140,14 @@ record_curation_decision(command: RecordCurationDecisionCommand) -> AgentCuratio
 
 Seed registration is allowed without a parent curator.
 Non seed registration requires curator provenance in the full design.
+
+Compatibility aliases:
+
+```rust
+register_seed_agent(request: SeedAgentRegistration) -> AgentRecord
+```
+
+Compatibility aliases must resolve into the same stored record shape as `register_agent`.
 
 ## Query Surface
 

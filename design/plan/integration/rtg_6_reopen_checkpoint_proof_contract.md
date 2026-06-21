@@ -2,15 +2,15 @@
 
 Date: 2026-06-14
 Status: proposed
-Scope: durable reopen checkpoints for the first `docs_freshness` runtime proof
+Scope: durable reopen checkpoints for the first `docs_freshness` flywheel proof
 
 ## Purpose
 
-This plan defines the `RTG-6` contract required before the durable runtime host is implemented.
+This plan defines the `RTG-6` contract required before durable flywheel assembly is implemented.
 
-The first proof must show that progress survives planned host loss. The host may coordinate bounded turns, but correctness state must live in domain stores.
+The first proof must show that progress survives planned process loss. A deterministic proof driver may coordinate bounded operations, but correctness state must live in domain stores.
 
-`RTG-6` is complete when the first proof can drop all opened host values at required boundaries, reopen stores from the product root, and continue by querying domain-owned durable state.
+`RTG-6` is complete when the first proof can drop all opened runtime values at required boundaries, reopen stores from the product root, and continue by querying domain-owned durable state.
 
 ## Relationship To `RTG-5`
 
@@ -26,10 +26,10 @@ Each checkpoint has four phases.
 
 1. A bounded domain operation writes durable state through the owning command or append boundary.
 2. Every touched store is flushed. Per-network task stores are flushed before the product boundary flush.
-3. All opened stores and host-like values are dropped.
+3. All opened stores and runtime values are dropped.
 4. Stores are reopened from `ProductStorageLayout`, and assertions read through domain query APIs.
 
-Worker reports are diagnostic evidence. They may show that a resumed tick made progress, but they are not correctness state.
+Worker reports are diagnostic evidence. They may show that a resumed operation made progress, but they are not correctness state.
 
 ## Required Checkpoints
 
@@ -58,10 +58,10 @@ Durable assertions after reopen:
 - agent decision exists by dedupe key
 - active goal query returns only the expected `docs_freshness` goal
 
-Later host report assertions:
+Later supervisor report assertions:
 
-- goal curation tick reports one committed decision
-- goal acceptance tick reports one committed goal lifecycle output
+- goal curation operation reports one committed decision
+- goal acceptance operation reports one committed goal lifecycle output
 - no fatal errors are present
 
 Forbidden local state:
@@ -98,11 +98,11 @@ Durable assertions after reopen:
 - publication event type is `execution.task.succeeded`
 - publication payload includes the required `docs_patch` artifact type
 
-Later host report assertions:
+Later supervisor report assertions:
 
-- planning tick reports a committed task network proposal
-- task network tick reports one accepted mutation
-- task worker tick reports one committed outcome
+- planning operation reports a committed task network proposal
+- task network operation reports one accepted mutation
+- task worker operation reports one committed outcome
 - no fatal errors are present
 
 Forbidden local state:
@@ -139,7 +139,7 @@ Durable assertions after reopen:
 - satisfaction curation decision is persisted before execution mutation
 - final execution goal lifecycle is satisfied at the fixture satisfaction review sequence
 
-Later host report assertions:
+Later supervisor report assertions:
 
 - publication bridge report attempts one item
 - publication bridge report commits one item
@@ -169,9 +169,9 @@ All assertions after a checkpoint must read through owning stores.
 
 The product root and fixture constants are the only correctness inputs allowed to cross checkpoint boundaries.
 
-## Forbidden Host Local State
+## Forbidden Root Local State
 
-Future host code must not store semantic progress in local fields that replace domain cursors.
+Future root assembly or supervisor code must not store semantic progress in local fields that replace domain cursors.
 
 Forbidden examples:
 
@@ -182,7 +182,7 @@ Forbidden examples:
 - promoted evidence record
 - current belief view
 - satisfaction mutation command
-- host-owned source cursor
+- root-owned source cursor
 
 Allowed examples:
 
@@ -191,9 +191,9 @@ Allowed examples:
 - diagnostic report list
 - checkpoint label
 
-## Pre Host Contract Tests
+## Pre Assembly Contract Tests
 
-The pre-host tests simulate the required boundaries with existing domain APIs.
+The pre assembly tests simulate the required boundaries with existing domain APIs.
 
 Required tests:
 
@@ -201,22 +201,22 @@ Required tests:
 - `docs_freshness_reopens_after_pending_publication_from_product_stores`
 - `docs_freshness_reopens_after_publication_append_before_satisfaction`
 
-These tests prove the durable state shape before `MeldRuntimeHost` exists.
+These tests prove the durable state shape before product runtime assembly exists.
 
-## Future Runtime Host Wiring
+## Future Runtime Assembly
 
-When `MeldRuntimeHost` lands, the host test must reuse the same fixture and checkpoint expectations.
+When product runtime assembly lands, the flywheel proof must reuse the same fixture and checkpoint expectations.
 
-The host flow must:
+The proof flow must:
 
 1. load from a product root
-2. run bounded turns to `after_goal_acceptance`
+2. run domain runtimes to `after_goal_acceptance`
 3. flush touched stores
-4. drop the host
+4. drop runtime values
 5. reload from the same product root
-6. run bounded turns to `after_pending_publication`
+6. run domain runtimes to `after_pending_publication`
 7. flush and reload again
-8. run bounded turns to `after_publication_append_before_satisfaction`
+8. run domain runtimes to `after_publication_append_before_satisfaction`
 9. flush and reload again
 10. converge to satisfied goal lifecycle
 

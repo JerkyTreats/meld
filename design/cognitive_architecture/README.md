@@ -37,6 +37,7 @@ flowchart LR
 The durable positions are:
 
 - the full world model is never fully known
+- durable user intent seeds the world model agent that carries it, rather than forming a separate layer above agents
 - observation is continuous and diff-native
 - the world model integrates observations into temporal graph and belief views
 - execution acts against the current world model and republishes outcomes

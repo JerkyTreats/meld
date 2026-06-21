@@ -72,7 +72,7 @@ impl<'a> AgentCuration<'a> {
 
     /// Handle one satisfaction review and return output only after decision storage.
     ///
-    /// This is the host-facing durability barrier for satisfaction curation.
+    /// This is the supervisor-facing durability barrier for satisfaction curation.
     /// Duplicate reviews return the stored decision. A mutation command is
     /// returned only when the recomputed review matches the persisted decision.
     pub fn handle_satisfaction_review(
@@ -172,7 +172,7 @@ impl<'a> AgentCuration<'a> {
 
     /// Assemble satisfaction input from public belief and planner facades.
     ///
-    /// The agent domain owns the scope checks here so root runtime assembly can
+    /// The agent domain owns the scope checks here so runtime assembly can
     /// supply stores and active goals without becoming satisfaction authority.
     pub fn assemble_satisfaction_input(
         &self,

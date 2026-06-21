@@ -1,18 +1,18 @@
 # RTG-3 Bounded Worker Report Contract Implementation Plan
 
 Date: 2026-06-14
-Status: implemented for first durable host
+Status: implemented for first durable assembly
 Scope: bounded worker diagnostics contract for the durable runtime first slice
 
 ## Purpose
 
-This plan defines how to implement `RTG-3`, the bounded worker report contract required before the durable runtime host can be built.
+This plan defines how to implement `RTG-3`, the bounded worker report contract required before durable flywheel assembly can be built.
 
-The durable host needs a uniform way to observe bounded worker ticks, decide whether another turn is useful, surface retryable and fatal failures, and prove restart safe convergence. The host must not become semantic authority for worker progress. Durable meaning remains in the owning domain stores.
+The durable supervisor needs a uniform way to observe bounded worker operations, surface retryable and fatal failures, and prove restart safe progress. The supervisor must not become semantic authority for worker progress. Durable meaning remains in the owning domain stores.
 
 ## Required Outcome
 
-Each actor that the first runtime host ticks returns a bounded report with:
+Each actor that joins the first flywheel proof returns a bounded report with:
 
 - actor id
 - input cursor or input revision
@@ -64,14 +64,14 @@ Alignment rules:
 - reports must support execution's graphs-lower-graphs model across planning, task network, task, capability, and synthesis workers
 - reports must remain diagnostics and must never replace typed event facts, belief revisions, agent decisions, goal records, task network revisions, or capability catalog records
 
-This keeps `RTG-3` small enough to unblock the first durable host while ensuring the report vocabulary will not need replacement when Meld grows into continuous sensing, multi-agent belief ownership, causation, regimes, and online capability acquisition.
+This keeps `RTG-3` small enough to unblock the first durable assembly while ensuring the report vocabulary will not need replacement when Meld grows into continuous sensing, multi-agent belief ownership, causation, regimes, and online capability acquisition.
 
 ## Non Goals
 
-- no durable host implementation
+- no durable supervisor implementation
 - no CLI command
 - no central worker state machine
-- no new host owned cursor table
+- no new root owned cursor table
 - no change to domain semantic ownership
 - no multi process supervision
 - no broad telemetry redesign
@@ -80,15 +80,15 @@ This keeps `RTG-3` small enough to unblock the first durable host while ensuring
 
 Reports describe what a worker observed during one bounded tick. They do not define whether a goal exists, whether a goal is satisfied, whether a task outcome is valid, whether evidence should update a belief, or whether a task network command should be accepted.
 
-Each owning domain keeps its own native report type when that avoids crate dependency cycles. Root runtime assembly may normalize those domain reports into one host facing `WorkerTickReport`.
+Each owning domain keeps its own native report type when that avoids crate dependency cycles. Root runtime assembly may normalize those domain reports into one supervisor facing `WorkerTickReport`.
 
-The root `meld` crate may define host facing report contracts because the host owns assembly and loop diagnostics. Domain crates must not depend on root `meld`.
+The root `meld` crate may define supervisor facing report contracts because root owns assembly and process diagnostics. Domain crates must not depend on root `meld`.
 
 The first implementation should preserve existing public APIs with compatibility wrappers when practical. Existing callers of `GraphRuntime::catch_up` and `publish_pending_publications` should keep working while new report rich APIs are introduced.
 
 ## Contract Shape
 
-Add the host facing diagnostic contract under root runtime assembly, proposed path `src/runtime/contracts.rs`. If the runtime module does not exist yet, add only the contract module and export it from `src/runtime.rs` when the host work begins.
+Add the supervisor facing diagnostic contract under root runtime assembly, proposed path `src/runtime/contracts.rs`. If the runtime module does not exist yet, add only the contract module and export it from `src/runtime.rs` when assembly work begins.
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,7 +134,7 @@ pub struct WorkerTickReport {
 }
 ```
 
-`WorkBudget::max_items` must be greater than zero for normal host ticks. Domain APIs may reject zero budgets or return a no work report, but host assembly should treat zero as a configuration error.
+`WorkBudget::max_items` must be greater than zero for normal bounded operations. Domain APIs may reject zero budgets or return a no work report, but runtime assembly should treat zero as a configuration error.
 
 `WorkerScope` keeps the report usable across the full cognitive architecture. It should reuse event ledger vocabulary where possible. Use `domain_id` and `stream_id` for event-aligned work. Use `work_key` for the owning domain's stable unit of work, such as a belief key, causal variable, regime segment, task instance, publication, or catalog record. Use `agent_id`, `perspective_key`, `branch_id`, and `subject_key` for perspective-scoped world model and agent work.
 
@@ -150,7 +150,7 @@ pub struct WorkerTickReport {
 
 ## Progress Interpretation
 
-The host derives progress from the report instead of reading a shared `WorkStatus`.
+The supervisor derives progress diagnostics from the report instead of reading a shared `WorkStatus`.
 
 Progress is present when any of these are true:
 
@@ -158,7 +158,7 @@ Progress is present when any of these are true:
 - items committed is greater than zero
 - the owning domain report explicitly maps to a durable command or append that changed a store revision
 
-The host must also treat fatal errors, retryable errors, and budget exhaustion as separate turn outcomes. A turn with no progress and retryable errors is not the same as convergence.
+The supervisor must also treat fatal errors, retryable errors, and budget exhaustion as separate diagnostic outcomes. A pass with no progress and retryable errors is not the same as convergence.
 
 ## Error Classification
 
@@ -315,7 +315,7 @@ Verification:
 
 Owner: root `meld` assembly
 
-Add conversion helpers near the eventual runtime host:
+Add conversion helpers near runtime assembly:
 
 - `GraphCatchUpReport` to `WorkerTickReport`
 - `PublicationBridgeReport` to `WorkerTickReport`
@@ -336,7 +336,7 @@ Verification:
 
 Owner: owning actor domains with root assembly
 
-Before the durable host is implemented, list every actor the host will tick and require either a native report or an adapter report.
+Before durable assembly is implemented, list every actor in the proof and require either a native report or an adapter report.
 
 Initial required coverage:
 
@@ -409,7 +409,7 @@ Verification:
 
 - add unit tests for convergence summary
 - add integration assertions to the later `minimal_runtime_flywheel_turn_persists_and_satisfies_goal` proof
-- assert reports after reopen show durable checkpoints, not host local counters
+- assert reports after reopen show durable checkpoints, not root local counters
 
 ## Implementation Order
 
@@ -420,8 +420,8 @@ Verification:
 5. Add report field assertions to graph and publication tests.
 6. Add root report contract and conversion helpers when runtime assembly begins.
 7. Add coverage stubs or adapters for the remaining first slice actors.
-8. Use normalized worker reports in the durable host convergence loop.
-9. Require future sensory, causal, regime, planner, agent, and synthesis workers to map into the same report contract before they join host turns.
+8. Use normalized worker reports in the durable proof harness and supervisor diagnostics.
+9. Require future sensory, causal, regime, planner, agent, and synthesis workers to map into the same report contract before they join the supervised flywheel.
 
 ## Test Commands
 
@@ -441,7 +441,7 @@ cargo test -p meld-execution
 cargo test --test integration_tests minimal_runtime_flywheel_turn_persists_and_satisfies_goal
 ```
 
-The final flywheel command will remain unavailable until the durable runtime host and the remaining RTG blockers are implemented.
+The final flywheel command will remain unavailable until durable flywheel assembly and the remaining RTG blockers are implemented.
 
 ## Acceptance Criteria
 
@@ -450,8 +450,8 @@ The final flywheel command will remain unavailable until the durable runtime hos
 - a stable worker report shape exists for root runtime assembly
 - graph replay has a bounded report with input and output event sequence
 - publication bridge has a bounded report with task network revisions and error buckets
-- every first slice host tick has a native report or a root adapter report
-- budget exhaustion is observable without host owned cursors
+- every first slice bounded operation has a native report or a root adapter report
+- budget exhaustion is observable without root owned cursors
 - retryable and fatal errors are distinguishable in reports
 - compatibility wrappers keep existing focused tests meaningful
 - restart tests prove output checkpoints come from durable stores
@@ -484,7 +484,7 @@ git diff --check
 
 ## Risks
 
-The main design risk is accidentally making the host own semantic progress by adding host side cursors. The mitigation is to use checkpoints copied from domain stores after writes are durable.
+The main design risk is accidentally making root own semantic progress by adding root side cursors. The mitigation is to use checkpoints copied from domain stores after writes are durable.
 
 The main implementation risk is graph replay budget behavior. If replay selects all events and only reports a cap afterward, the worker is not actually bounded. Add a bounded event read path first.
 

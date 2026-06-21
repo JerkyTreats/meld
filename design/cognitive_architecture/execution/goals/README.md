@@ -163,7 +163,7 @@ enum GoalSource {
         desired: String,             // what the agent wants
     },
     UserDirected {
-        directive: String,           // the user's request
+        directive: String,           // lineage summary, not durable directive state
     },
     Maintenance {
         invariant_description: String,  // standing invariant
@@ -176,7 +176,7 @@ enum GoalSource {
 
 **Belief divergence**: the agent detected that current belief diverges from a desired state. The dimension and observed/desired fields are descriptive strings for audit — the actual desired state is the goal's `target` proposition.
 
-**User directed**: a user or external system asserted a desired state directly. The world model agent translates the user directive into a goal with a `Proposition` target and adds it to the goal set. User input enters the same cost-benefit evaluation pathway — it is high-weight value evidence, not a bypass (see [Goal Curation](../../world_model/agent/goal_curation.md)).
+**User directed**: user or external system intent enters as a directive on the responsible agent. The agent translates that intent into a goal with a `Proposition` target and adds it to the goal set. User input enters the same cost-benefit evaluation pathway as high-weight value evidence, not as a bypass. See [Goal Curation](../../world_model/agent/goal_curation.md).
 
 **Maintenance**: the agent holds a standing invariant and monitors belief continuously. When the invariant is violated, the agent reactivates the goal. Maintenance goals may cycle between `Active` and `Satisfied` as belief moves relative to the invariant.
 

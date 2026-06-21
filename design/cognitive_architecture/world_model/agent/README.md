@@ -87,6 +87,45 @@ The Agent should consume the heavier pipelines of the other world model domains 
 See [Agent Spec](spec.md) for domain types, data model, and pipelines.
 See [Agent Runtime Surface](runtime_surface.md) for store, query, activation, subscription, curation, idempotency, and replay contracts.
 
+## The Agent Meta-Layer
+
+A directive is durable, user-originated intent: the persisted answer to why an agent exists. It belongs to the agent meta-layer, the layer that turns user intent into one or more agents handling related but executionally-distinct concerns.
+
+The meta-layer extends the watching and reducing pattern one level above the agent:
+
+| Layer | Watches | Produces | Decomposes | Question |
+|---|---|---|---|---|
+| meta-layer | user intent | agents | intent into an agent set | why |
+| agent | belief revisions | goals | belief into a goal set | what |
+| execution | goal set | tasks | goal into a task network | how |
+
+Where execution decomposes a goal into tasks, the meta-layer decomposes intent into agents. The agent is the unit it produces.
+
+### Durable Contract
+
+Only the durable nouns that outlive the deferral window need to be settled now. The meta-layer's logic is runtime that persists nothing, so it can land later without migration. The settled shell is:
+
+- a directive has independent identity, separate from any agent: `Directive { id, text }`, with an optional lifecycle status
+- an agent may be attributed to a directive by reference, and not one-to-one: `AgentRecord.directive_id`, so one directive may be served by many agents
+- goal lineage cites the directive through `GoalSource::UserDirected` in [`meld-lang`](../../meld-lang/README.md)
+
+This shape stays neutral on the choices the meta-layer will make, so picking either later is additive:
+
+- cardinality of intent to agent is reserved as many and never asserted as one
+- coordination across agents that serve one directive is the deferred multi-agent goal coordination concern, anchored at the shared graph, goal set, and task network, not at a directive subsystem
+- agent-creation authority is unaffected, because attribution through `directive_id` is orthogonal to authority through `seed_provenance` and curator provenance
+
+### Deferred
+
+The meta-layer's verbs are deferred and have a reserved home in the contract above:
+
+- the translation runtime that turns intent into a chosen agent set
+- decomposition records of that agent set and re-decomposition when intent changes
+- a serialized goalset-template vocabulary that expands one directive into a goal DAG using existing `meld-lang` propositions and compositions, sibling to the method library
+- natural-language interpretation of arbitrary user intent, realized as a planning capability that emits `CreateAgent` goals
+
+In the first slice exactly one seed agent serves one directive, supplied as trusted seed configuration. See [Agent Genesis And Activation](genesis_and_activation.md).
+
 ## Core Design Rule
 
 The Agent should be the owner of perspective, not the owner of truth.
@@ -111,7 +150,7 @@ The architecture should support:
 - independent planner-facing projections
 - stable replay and audit across all Agents
 
-The main payoff of the current spec shape is here:
+The main payoff of the agent shape is here:
 many Agents can share one identity and provenance foundation while carrying sparse, divergent, mutable world-model state without forcing one rigid record for every perspective.
 
 ## Agent Lifecycle
@@ -122,16 +161,17 @@ Seed agents are created from trusted init or configuration state. This is genesi
 
 Existing agents are activated when the process starts by hydrating durable agent records into runtime watchers and subscriptions. Activation does not create a new agent and does not require a `CreateAgent` goal.
 
-After seed agents exist, new agent creation is normal goal set curation. An authorized existing agent may add a `CreateAgent` goal for a separate concern. Execution turns the directive into an operational agent through the same goal to plan to task network to capability pipeline that handles all execution.
+After seed agents exist, new agent creation is normal goal set curation. An authorized existing agent may add a `CreateAgent` goal for a separate concern. Execution turns the curated agent responsibility into an operational agent through the same goal to plan to task network to capability pipeline that handles all execution.
 
 See [Agent Genesis And Activation](genesis_and_activation.md) for the durable state, runtime state, and authority paths.
 
 ### Bootstrap
 
 ```
-1. Init        Seed config or curated CreateAgent goal supplies directive D
-2. Decompose   Execution decomposes directive into candidate belief dimensions
-                 through a semantic analysis capability
+1. Init        Seed config or curated CreateAgent goal supplies
+                 the directive and agent responsibility
+2. Resolve     Seed config supplies candidate belief dimensions
+                 and subject scope
 3. Survey      Capabilities invoke world model public interface:
                  - graph.walk to discover subject's entity neighborhood
                  - belief.query_beliefs to find existing beliefs

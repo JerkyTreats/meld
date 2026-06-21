@@ -8,11 +8,11 @@ Scope: world-model-aware action through goal-directed planning, task network exe
 
 Execution is the system's push layer. It reads the world model and acts to change the world.
 
-The world model agent curates a goal set — desired belief states — through execution's public API. The planning loop reads that goal set and the world model view, then submits commands that maintain a task network graph that closes the gap between current belief and desired state. The task network executes tasks in parallel, governed by dependency structure. Outcomes publish back through the event spine for belief revision.
+World model agents translate user intent and belief divergence into narrow goals through execution's public API. The planning loop reads that goal set and the world model view, then submits commands that maintain a task network graph that closes the gap between current belief and desired state. The task network executes tasks in parallel, governed by dependency structure. Outcomes publish back through the event spine for belief revision.
 
 The task network is a single writer event sourced aggregate. Its command boundary serializes graph mutation sets, dispatch claims, task outcomes, artifact availability, and publication marks into one accepted revision stream.
 
-Seed agents are trusted genesis state created by init or configuration. After seed agents exist, additional agents are created through ordinary execution goals curated by authorized agents. Execution owns the agent initialization workflow and runs the required tasks and capabilities.
+Seed agents are trusted genesis state created by init or configuration. After seed agents exist, additional agents are created through ordinary execution goals curated by authorized agents. Execution owns the agent initialization workflow and runs the required tasks and capabilities. The agent's seed configuration carries the user intent that justifies its responsibility while execution performs the operational work.
 
 The foundational pattern is graphs-lower-graphs:
 
