@@ -104,30 +104,32 @@ fn with_optional_record_id(envelope: EventEnvelope, record_id: Option<String>) -
     }
 }
 
-fn legacy_record_json(
-    ts: &str,
-    recorded_at: &str,
-    session: &str,
+struct LegacyRecordJson {
+    ts: String,
+    recorded_at: String,
+    session: String,
     seq: u64,
-    domain_id: &str,
-    stream_id: &str,
-    event_type: &str,
+    domain_id: String,
+    stream_id: String,
+    event_type: String,
     data: serde_json::Value,
-) -> serde_json::Value {
+}
+
+fn legacy_record_json(record: LegacyRecordJson) -> serde_json::Value {
     json!({
-        "ts": ts,
-        "recorded_at": recorded_at,
+        "ts": record.ts,
+        "recorded_at": record.recorded_at,
         "record_id": null,
-        "session": session,
-        "seq": seq,
-        "domain_id": domain_id,
-        "stream_id": stream_id,
-        "type": event_type,
+        "session": record.session,
+        "seq": record.seq,
+        "domain_id": record.domain_id,
+        "stream_id": record.stream_id,
+        "type": record.event_type,
         "occurred_at": null,
         "content_hash": null,
         "objects": [],
         "relations": [],
-        "data": data
+        "data": record.data
     })
 }
 
@@ -562,16 +564,16 @@ fn store_flush_writes_pending_bytes_to_disk() {
 #[test]
 fn legacy_events_normalize_defaults() {
     let (_temp_dir, store) = event_store();
-    let legacy = legacy_record_json(
-        RECORDED_AT,
-        "",
-        SESSION_A,
-        1,
-        "",
-        "",
-        "session.started",
-        json!({ "legacy": true }),
-    );
+    let legacy = legacy_record_json(LegacyRecordJson {
+        ts: RECORDED_AT.to_string(),
+        recorded_at: String::new(),
+        session: SESSION_A.to_string(),
+        seq: 1,
+        domain_id: String::new(),
+        stream_id: String::new(),
+        event_type: "session.started".to_string(),
+        data: json!({ "legacy": true }),
+    });
     let legacy_tree = store.db().open_tree("obs_events").unwrap();
     let key = EventStore::encode_event_key(SESSION_A, 1);
     legacy_tree
@@ -914,16 +916,16 @@ proptest! {
         marker in any::<u16>(),
     ) {
         let (_temp_dir, store) = event_store();
-        let legacy = legacy_record_json(
-            &ts,
-            "",
-            &session,
+        let legacy = legacy_record_json(LegacyRecordJson {
+            ts: ts.clone(),
+            recorded_at: String::new(),
+            session: session.clone(),
             seq,
-            "",
-            "",
-            "legacy.generated",
-            json!({ "marker": marker }),
-        );
+            domain_id: String::new(),
+            stream_id: String::new(),
+            event_type: "legacy.generated".to_string(),
+            data: json!({ "marker": marker }),
+        });
         let legacy_tree = store.db().open_tree("obs_events").unwrap();
         let key = EventStore::encode_event_key(&session, seq);
         legacy_tree

@@ -45,12 +45,11 @@ fuzz_target!(|data: &[u8]| {
     for (index, byte) in data.iter().take(8).enumerate() {
         let id = format!("task-{index}-{byte}");
         let node = task_node(&id);
-        let lineage = node.lineage.clone();
         let set = Set::new(
             "network-fuzz",
             "composition-fuzz",
             format!("once-{index}-{byte}"),
-            vec![Mutation::Inject(Inject::new(node, vec![], lineage))],
+            vec![Mutation::Inject(Inject::new(node, vec![]))],
             vec![],
         );
         let request = meld_execution::task_network::command::Request {

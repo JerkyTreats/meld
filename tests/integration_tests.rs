@@ -4,4 +4,6 @@
 //! Rust automatically compiles files in tests/ as separate test binaries, so this
 //! approach allows organizing tests in subdirectories while maintaining discoverability.
 
+#![allow(clippy::duplicate_mod)]
+
 mod integration;
