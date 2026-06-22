@@ -2,7 +2,7 @@
 
 use crate::cli::parse::{
     AgentCommands, AgentPromptCommands, BranchesCommands, Commands, ContextCommands,
-    DangerCommands, ProviderCommands, WorkflowCommands, WorkspaceCommands,
+    DangerCommands, ProviderCommands, RuntimeCommands, WorkflowCommands, WorkspaceCommands,
 };
 use crate::telemetry::summary::TypedSummaryEvent;
 
@@ -19,8 +19,16 @@ pub fn command_name(command: &Commands) -> String {
         Commands::Init { .. } => "init".to_string(),
         Commands::Context { command } => format!("context.{}", context_command_name(command)),
         Commands::Workflow { command } => format!("workflow.{}", workflow_command_name(command)),
+        Commands::Runtime { command } => format!("runtime.{}", runtime_command_name(command)),
         Commands::Branches { command } => format!("branches.{}", branches_command_name(command)),
         Commands::Danger { command } => format!("danger.{}", danger_command_name(command)),
+    }
+}
+
+pub fn runtime_command_name(command: &RuntimeCommands) -> &'static str {
+    match command {
+        RuntimeCommands::Status { .. } => "status",
+        RuntimeCommands::Run { .. } => "run",
     }
 }
 
@@ -280,8 +288,8 @@ pub fn typed_summary_event(
 
 #[cfg(test)]
 mod tests {
-    use super::{branches_command_name, command_name};
-    use crate::cli::parse::{BranchesCommands, Commands};
+    use super::{branches_command_name, command_name, runtime_command_name};
+    use crate::cli::parse::{BranchesCommands, Commands, RuntimeCommands};
 
     #[test]
     fn branch_command_names_are_stable() {
@@ -292,6 +300,34 @@ mod tests {
         assert_eq!(
             command_name(&Commands::Branches { command }),
             "branches.status".to_string()
+        );
+    }
+
+    #[test]
+    fn runtime_command_names_are_stable() {
+        let status = RuntimeCommands::Status {
+            format: "text".to_string(),
+            runtime_ids: Vec::new(),
+        };
+        assert_eq!(runtime_command_name(&status), "status");
+        assert_eq!(
+            command_name(&Commands::Runtime { command: status }),
+            "runtime.status".to_string()
+        );
+
+        let run = RuntimeCommands::Run {
+            instance_id: None,
+            tick_ms: 1000,
+            duration_ms: None,
+            format: "text".to_string(),
+            restart_policy: "on-heartbeat-expiry".to_string(),
+            restart_attempt_limit: 3,
+            restart_backoff_ms: 0,
+        };
+        assert_eq!(runtime_command_name(&run), "run");
+        assert_eq!(
+            command_name(&Commands::Runtime { command: run }),
+            "runtime.run".to_string()
         );
     }
 }

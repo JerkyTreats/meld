@@ -8,7 +8,11 @@ pub mod contracts;
 pub mod error;
 /// Thin direct handoff ports built by product assembly.
 pub mod ports;
+/// Runtime CLI presentation helpers.
+pub mod presentation;
 /// Product storage assembly for durable runtime stores.
 pub mod storage;
 /// Root supervisor lifecycle storage.
 pub mod supervisor;
+/// Runtime CLI adapter.
+pub mod tooling;

@@ -1,8 +1,8 @@
 # Runtime Assembly Program Ledger
 
-Date: 2026-06-21
+Date: 2026-06-22
 Program branch: runtime-assembly-implementation
-Status: in progress
+Status: complete
 
 ## Objective
 
@@ -36,7 +36,7 @@ Finish the durable runtime assembly phased plan from root assembly through proof
 | phase-6 | Durable flywheel Phase 6 | Deterministic proof harness | complete | phase-1 through phase-5 | `tests/integration` | orchestrator | `minimal_runtime_flywheel_turn_persists_and_satisfies_goal` exercises durable receipts, replay evidence port, and satisfaction mutation sink | success proof and checkpoint tests pass | review findings addressed | pinned task helper remains until fixture ids move to actor-lowered ids |
 | phase-7 | Durable flywheel Phase 7 | Failure path proof | complete | phase-5 phase-6 | `tests/integration` | prior work | `failure_outcome_does_not_satisfy_goal` | focused test passes | review findings addressed | none |
 | phase-8 | Durable flywheel Phase 8 | Runtime supervisor entrypoint | complete | phase-1 phase-2 | `src/runtime/supervisor*` | Feynman | supervisor contracts, store trees, leases, heartbeats, health snapshots, restart and shutdown records, explicit lifecycle entrypoint, status surface, shutdown, recovery, and restart evaluation | `cargo test runtime::supervisor --lib` passed | entrypoint reviewed by focused tests | none |
-| phase-9 | Durable flywheel Phase 9 | CLI adapter | ready | phase-6 phase-8 | `src/cli/runtime_assembly.rs` | unassigned | thin assembly CLI exists | pending CLI adapter tests | pending | CLI must delegate to supervisor entrypoint |
+| phase-9 | Durable flywheel Phase 9 | CLI adapter | complete | phase-6 phase-8 | `src/cli`, `src/runtime`, `tests/integration/runtime_cli.rs` | orchestrator | `RuntimeCommands`, normal `RunContext` routing, runtime tooling adapter, status presentation, foreground run command, read-only product description, supervisor store queries, and supervisor tick | parser, help, supervisor, store, assembly, runtime CLI integration, focused gates, and full local gates pass | fresh review findings fixed and follow-up review passed | detached daemon management remains out of scope |
 
 ## Dependency graph
 
@@ -184,6 +184,71 @@ Next ready set:
 
 - phase-9 after CLI adapter ownership is assigned
 
+Wave 3 started on 2026-06-22.
+
+Ready items:
+
+- phase-9
+
+Parallelization decision:
+
+- CLI parser and route changes, runtime tooling, runtime presentation, supervisor tick, store queries, and integration tests are tightly coupled and were integrated centrally.
+- Read-only explorer agents mapped the CLI and supervisor seams.
+- Fresh review agents checked the final diff and the targeted fixes.
+
+Workers launched:
+
+- orchestrator for implementation
+- Carver for CLI seam exploration
+- Hegel for supervisor seam exploration
+- Gauss for fresh implementation review
+- Linnaeus for targeted fix review
+
+Commands run:
+
+- `cargo fmt --check`
+- `cargo check --workspace`
+- `cargo test -q cli::parse --lib`
+- `cargo test -q cli::help --lib`
+- `cargo test -q runtime::supervisor --lib`
+- `cargo test -q runtime::assembly --lib`
+- `cargo test -q --test integration_tests runtime_cli`
+- `cargo test -q`
+- `git diff --check`
+- `find crates/meld-world-model/src crates/meld-execution/src crates/meld-events/src src/runtime src/cli -name mod.rs -print`
+- `rg -n "supervisor-held semantic cursor|shared cursor table|supervisor-held source cursor|centralized semantic loop|convergence loop" src/runtime crates/meld-world-model/src crates/meld-execution/src crates/meld-events/src`
+
+Commits accepted:
+
+- pending
+
+Commits rejected:
+
+- none
+
+Conflicts:
+
+- none
+
+Gate results:
+
+- parser, help, supervisor, assembly, and runtime CLI integration gates passed
+- first full local test attempt hit a transient unrelated branch isolation integration failure
+- exact branch isolation retry passed
+- second full local test run passed
+- layout scan printed no `mod.rs`
+- prohibited wording scan printed no matches
+
+Review results:
+
+- fresh review found shutdown guarantee, Ctrl C sleep responsiveness, and expired local lease tick recovery gaps
+- all findings were fixed
+- targeted follow-up review found no remaining issues
+
+Next ready set:
+
+- none
+
 ## Gate evidence
 
 | Gate | Command | Result | Evidence date | Notes |
@@ -206,6 +271,17 @@ Next ready set:
 | runtime file layout scan | `find crates/meld-world-model/src crates/meld-execution/src crates/meld-events/src src/runtime src/cli -name mod.rs -print` | passed | 2026-06-21 | no output |
 | supervisor cursor scan | `rg -n "supervisor-held semantic cursor|shared cursor table|supervisor-held source cursor" src/runtime crates/meld-world-model/src crates/meld-execution/src crates/meld-events/src` | passed | 2026-06-21 | no matches |
 | semantic loop scan | `rg -n "centralized semantic loop|convergence loop" src/runtime crates/meld-world-model/src crates/meld-execution/src crates/meld-events/src` | passed | 2026-06-21 | no matches |
+| phase 9 parser | `cargo test -q cli::parse --lib` | passed | 2026-06-22 | 6 passed |
+| phase 9 command names | `cargo test -q cli::help --lib` | passed | 2026-06-22 | 2 passed |
+| phase 9 supervisor | `cargo test -q runtime::supervisor --lib` | passed | 2026-06-22 | 24 passed |
+| phase 9 assembly | `cargo test -q runtime::assembly --lib` | passed | 2026-06-22 | 21 passed |
+| phase 9 runtime CLI | `cargo test -q --test integration_tests runtime_cli` | passed | 2026-06-22 | 7 passed |
+| phase 9 workspace check | `cargo check --workspace` | passed | 2026-06-22 | dev profile |
+| phase 9 full local test | `cargo test -q` | passed | 2026-06-22 | second full run passed after transient unrelated branch isolation failure was retried successfully |
+| phase 9 format | `cargo fmt --check` | passed | 2026-06-22 | no output |
+| phase 9 diff whitespace | `git diff --check` | passed | 2026-06-22 | no output |
+| phase 9 runtime file layout scan | `find crates/meld-world-model/src crates/meld-execution/src crates/meld-events/src src/runtime src/cli -name mod.rs -print` | passed | 2026-06-22 | no output |
+| phase 9 prohibited wording scan | `rg -n "supervisor-held semantic cursor|shared cursor table|supervisor-held source cursor|centralized semantic loop|convergence loop" src/runtime crates/meld-world-model/src crates/meld-execution/src crates/meld-events/src` | passed | 2026-06-22 | no matches |
 
 ## Review findings
 
@@ -224,7 +300,10 @@ Residual:
 
 - The deterministic proof still applies the pinned task network mutation helper for the docs task because the actor lowerer derives different task ids than the first proof fixture constants.
 - Phase 8 uses an explicit lifecycle entrypoint rather than a background scheduler loop.
-- The CLI adapter remains unimplemented and should delegate to the supervisor entrypoint.
+- Phase 9 fresh review found and fixed shutdown guarantee, Ctrl C sleep responsiveness, and expired local lease tick recovery gaps.
+- Detached runtime daemon management remains out of scope.
+- `runtime run` is foreground only.
+- Runtime handles remain the current supervisor lifecycle handles and do not add a new semantic scheduler.
 
 ## Phase completion matrix
 
@@ -239,13 +318,14 @@ Residual:
 | phase-6 | complete | success proof and checkpoint tests pass |
 | phase-7 | complete | failure proof passes |
 | phase-8 | complete | supervisor entrypoint, status, shutdown, recovery, restart evaluation, and store tests pass |
-| phase-9 | ready | pending CLI adapter over supervisor command surface |
+| phase-9 | complete | parser, route, runtime tooling adapter, status command, foreground bounded run command, supervisor tick, store queries, runtime CLI integration tests, and full local gates pass |
 
 ## Risks and exceptions
 
 - The deterministic proof has one explicit fixture shortcut for task network planning. Actor coverage exists in `meld-execution`, but the end to end proof still uses pinned task ids.
-- CLI adapter work remains as the next staged implementation over the supervisor entrypoint.
+- `runtime run` is foreground only and does not provide daemon start, stop, PID file, service manager, or persistent process registry semantics.
+- Runtime handles remain supervisor lifecycle handles and do not add a new semantic scheduler.
 
 ## Final reconciliation
 
-Library proof and actor facade hardening are complete for phases 3 through 7, with the pinned planning fixture shortcut recorded as residual. Phase 8 is complete through an explicit lifecycle entrypoint that starts, observes, stops, recovers expired leases, evaluates conservative restart policy, and exposes status without a background daemon. Phase 9 is ready for a thin CLI adapter over that supervisor surface.
+Library proof and actor facade hardening are complete for phases 3 through 7, with the pinned planning fixture shortcut recorded as residual. Phase 8 is complete through an explicit lifecycle entrypoint that starts, observes, stops, recovers expired leases, evaluates conservative restart policy, and exposes status without a background daemon. Phase 9 is complete as a thin CLI adapter over that supervisor surface. The CLI now exposes `runtime status` and foreground `runtime run` through normal `RunContext` dispatch, with read-only status, bounded run integration tests, supervisor tick maintenance, clean shutdown behavior, focused gates, full local gates, and fresh review closure recorded above.

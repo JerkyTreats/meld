@@ -122,6 +122,15 @@ impl SupervisorStore {
         })
     }
 
+    /// Open supervisor lifecycle storage only when the store path already exists.
+    pub fn open_existing(path: impl Into<PathBuf>) -> Result<Option<Self>, SupervisorStoreError> {
+        let path = path.into();
+        if !path.exists() {
+            return Ok(None);
+        }
+        Self::open(path).map(Some)
+    }
+
     /// Return the filesystem path used by this supervisor store.
     pub fn path(&self) -> &Path {
         &self.path
@@ -153,6 +162,22 @@ impl SupervisorStore {
         read_optional(&self.instances, instance_id.as_bytes())
     }
 
+    /// List supervisor instances ordered by start time and instance id.
+    pub fn list_runtime_instances(&self) -> Result<Vec<RuntimeInstance>, SupervisorStoreError> {
+        let mut records: Vec<RuntimeInstance> = read_all(&self.instances)?;
+        records.sort_by(|left, right| {
+            left.started_at_ms
+                .cmp(&right.started_at_ms)
+                .then_with(|| left.instance_id.cmp(&right.instance_id))
+        });
+        Ok(records)
+    }
+
+    /// Return the latest supervisor instance by start time and instance id.
+    pub fn latest_runtime_instance(&self) -> Result<Option<RuntimeInstance>, SupervisorStoreError> {
+        Ok(self.list_runtime_instances()?.into_iter().last())
+    }
+
     /// Persist desired state for one runtime id.
     pub fn put_desired_runtime_state(
         &self,
@@ -170,6 +195,15 @@ impl SupervisorStore {
         runtime_id: &RuntimeId,
     ) -> Result<Option<RuntimeDesiredState>, SupervisorStoreError> {
         read_optional(&self.desired, runtime_id.as_str().as_bytes())
+    }
+
+    /// List desired runtime state ordered by runtime id.
+    pub fn list_desired_runtime_state(
+        &self,
+    ) -> Result<Vec<RuntimeDesiredState>, SupervisorStoreError> {
+        let mut records: Vec<RuntimeDesiredState> = read_all(&self.desired)?;
+        records.sort_by(|left, right| left.runtime_id.cmp(&right.runtime_id));
+        Ok(records)
     }
 
     /// Persist a historical lease record without changing active ownership.
@@ -634,6 +668,15 @@ fn read_optional<T: DeserializeOwned>(
         .transpose()
 }
 
+fn read_all<T: DeserializeOwned>(tree: &sled::Tree) -> Result<Vec<T>, SupervisorStoreError> {
+    tree.iter()
+        .map(|entry| {
+            let (_key, raw) = entry.map_err(to_sled)?;
+            decode(&raw)
+        })
+        .collect()
+}
+
 fn read_lease_in_transaction(
     leases: &sled::transaction::TransactionalTree,
     key: &[u8],
@@ -838,6 +881,91 @@ mod tests {
             Some(shutdown)
         );
         assert_eq!(store.get_lifecycle_event("event-a").unwrap(), Some(event));
+    }
+
+    #[test]
+    fn open_existing_returns_none_for_missing_store() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing-supervisor.sled");
+
+        let store = SupervisorStore::open_existing(&missing).unwrap();
+
+        assert!(store.is_none());
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn latest_runtime_instance_uses_started_time_and_instance_id_order() {
+        let (temp, store) = open_store();
+        for instance in [
+            RuntimeInstance {
+                instance_id: "instance-b".to_string(),
+                product_root: temp.path().to_path_buf(),
+                started_at_ms: 20,
+                stopped_at_ms: None,
+                status: RuntimeInstanceStatus::Running,
+            },
+            RuntimeInstance {
+                instance_id: "instance-a".to_string(),
+                product_root: temp.path().to_path_buf(),
+                started_at_ms: 30,
+                stopped_at_ms: None,
+                status: RuntimeInstanceStatus::Running,
+            },
+            RuntimeInstance {
+                instance_id: "instance-c".to_string(),
+                product_root: temp.path().to_path_buf(),
+                started_at_ms: 30,
+                stopped_at_ms: None,
+                status: RuntimeInstanceStatus::Stopped,
+            },
+        ] {
+            store.put_runtime_instance(&instance).unwrap();
+        }
+
+        let listed = store.list_runtime_instances().unwrap();
+        let latest = store.latest_runtime_instance().unwrap().unwrap();
+
+        assert_eq!(
+            listed
+                .iter()
+                .map(|instance| instance.instance_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["instance-b", "instance-a", "instance-c"]
+        );
+        assert_eq!(latest.instance_id, "instance-c");
+    }
+
+    #[test]
+    fn list_desired_runtime_state_sorts_by_runtime_id() {
+        let (_temp, store) = open_store();
+        for runtime_id in [
+            "world_model.graph_replay",
+            "event.append",
+            "execution.planning",
+        ] {
+            store
+                .put_desired_runtime_state(&RuntimeDesiredState {
+                    runtime_id: self::runtime_id(runtime_id),
+                    enabled: true,
+                    restart_policy: RestartPolicy::OnHeartbeatExpiry,
+                })
+                .unwrap();
+        }
+
+        let listed = store.list_desired_runtime_state().unwrap();
+
+        assert_eq!(
+            listed
+                .iter()
+                .map(|state| state.runtime_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "event.append",
+                "execution.planning",
+                "world_model.graph_replay"
+            ]
+        );
     }
 
     #[test]

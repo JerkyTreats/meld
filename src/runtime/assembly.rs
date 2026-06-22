@@ -31,6 +31,29 @@ pub struct ProductRuntimeAssembly {
     diagnostics: Vec<AssemblyDiagnostic>,
 }
 
+/// Read-only product runtime description for operator CLI commands.
+///
+/// This description resolves product paths and desired runtime state without
+/// opening product stores, creating directories, constructing ports, or
+/// building process-local handles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductRuntimeDescription {
+    /// Resolved product storage root.
+    pub product_root: PathBuf,
+    /// Derived product storage layout.
+    pub layout: ProductStorageLayout,
+    /// Derived supervisor store path.
+    pub supervisor_store_path: PathBuf,
+    /// Desired runtime state calculated from runtime configuration.
+    pub desired_runtime_state: Vec<DesiredRuntimeState>,
+    /// Supervisor lifecycle timing defaults.
+    pub lifecycle_config: RuntimeLifecycleConfig,
+    /// Default bounded work budget.
+    pub default_work_budget: WorkBudget,
+    /// Passive process service identities.
+    pub process_services: RuntimeProcessServices,
+}
+
 /// Inputs needed to build product runtime infrastructure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductRuntimeConfig {
@@ -277,6 +300,54 @@ impl Default for RuntimeProcessServices {
 }
 
 impl ProductRuntimeAssembly {
+    /// Describe runtime infrastructure from a workspace without opening stores.
+    pub fn describe_for_workspace(
+        workspace_root: &Path,
+        config: &MerkleConfig,
+    ) -> Result<ProductRuntimeDescription, RuntimeAssemblyError> {
+        let product_root = config
+            .system
+            .storage
+            .resolve_product_root(workspace_root)
+            .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
+        Self::describe(ProductRuntimeConfig::for_product_root(product_root))
+    }
+
+    /// Describe runtime infrastructure from explicit config without side effects.
+    pub fn describe(
+        config: ProductRuntimeConfig,
+    ) -> Result<ProductRuntimeDescription, RuntimeAssemblyError> {
+        if config.product_root.as_os_str().is_empty() {
+            return Err(RuntimeAssemblyError::Config(
+                "product root must not be empty".to_string(),
+            ));
+        }
+
+        let product_root = ProductStorageRoot::new(config.product_root);
+        let layout = product_root.layout();
+        let supervisor_store_path = config
+            .supervisor_store_path
+            .unwrap_or_else(|| layout.root.join("supervisor.sled"));
+        let registry = RuntimeFactoryRegistry::first_proof_registry()?;
+        validate_runtime_selection(&config.enabled_runtime_ids)?;
+        validate_runtime_selection(&config.disabled_runtime_ids)?;
+        let desired_runtime_state = desired_runtime_state(
+            &registry,
+            config.enabled_runtime_ids,
+            config.disabled_runtime_ids,
+        )?;
+
+        Ok(ProductRuntimeDescription {
+            product_root: product_root.root,
+            layout,
+            supervisor_store_path,
+            desired_runtime_state,
+            lifecycle_config: config.lifecycle_config,
+            default_work_budget: config.default_work_budget,
+            process_services: config.process_services,
+        })
+    }
+
     /// Build assembly from a workspace and repository configuration.
     pub fn load_for_workspace(
         workspace_root: &Path,
@@ -780,6 +851,27 @@ mod tests {
         assert!(task_dispatch.factory_available);
         assembly.flush_product_boundary().unwrap();
         assembly.flush_supervisor_store().unwrap();
+    }
+
+    #[test]
+    fn describe_for_workspace_does_not_create_or_open_runtime_stores() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let mut config = MerkleConfig::default();
+        config.system.storage.product_root = Some(PathBuf::from(".meld-runtime"));
+
+        let description =
+            ProductRuntimeAssembly::describe_for_workspace(&workspace, &config).unwrap();
+
+        assert_eq!(description.product_root, workspace.join(".meld-runtime"));
+        assert_eq!(
+            description.supervisor_store_path,
+            workspace.join(".meld-runtime").join("supervisor.sled")
+        );
+        assert_eq!(description.desired_runtime_state.len(), 12);
+        assert!(!description.product_root.exists());
+        assert!(!description.supervisor_store_path.exists());
     }
 
     #[test]
