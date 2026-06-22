@@ -67,6 +67,7 @@ clap = { version = "4.0", features = ["derive"] }
 dialoguer = "0.11"
 comfy-table = "7.2"
 owo-colors = "4.2"
+ctrlc = "3.4"
 
 # File watching for editor integration
 notify = "6.0"

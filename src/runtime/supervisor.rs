@@ -17,6 +17,6 @@ pub use contracts::{
 pub use entrypoint::{
     RuntimeSupervisor, SupervisorRestartEvaluation, SupervisorRuntimeError,
     SupervisorRuntimeStatus, SupervisorShutdownReport, SupervisorStartCommand,
-    SupervisorStatusSnapshot,
+    SupervisorStatusSnapshot, SupervisorTickReport,
 };
 pub use store::{SupervisorStore, SupervisorStoreError};

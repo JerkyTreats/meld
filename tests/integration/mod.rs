@@ -29,6 +29,7 @@ mod outcome_evidence;
 mod product_storage_assembly;
 mod progress_observability;
 mod provider_cli;
+mod runtime_cli;
 mod store_integration;
 mod task_artifact_repo;
 mod task_bottom_up_compile_shape;

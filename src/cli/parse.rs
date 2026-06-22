@@ -124,6 +124,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: WorkflowCommands,
     },
+    /// Runtime supervisor operations
+    Runtime {
+        #[command(subcommand)]
+        command: RuntimeCommands,
+    },
     /// Branch discovery and migration status
     Branches {
         #[command(subcommand)]
@@ -263,6 +268,50 @@ pub enum DangerCommands {
         /// Confirm destructive deletion of runtime state
         #[arg(long)]
         yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RuntimeCommands {
+    /// Show runtime supervisor status
+    Status {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Runtime id filter
+        #[arg(long = "runtime-id")]
+        runtime_ids: Vec<String>,
+    },
+    /// Run the foreground runtime supervisor
+    Run {
+        /// Supervisor instance id
+        #[arg(long)]
+        instance_id: Option<String>,
+
+        /// Supervisor tick interval in milliseconds
+        #[arg(long, default_value_t = 1000)]
+        tick_ms: u64,
+
+        /// Optional run duration in milliseconds
+        #[arg(long)]
+        duration_ms: Option<u64>,
+
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Restart policy
+        #[arg(long, default_value = "on-heartbeat-expiry")]
+        restart_policy: String,
+
+        /// Restart attempt limit per runtime
+        #[arg(long, default_value_t = 3)]
+        restart_attempt_limit: u64,
+
+        /// Restart backoff in milliseconds
+        #[arg(long, default_value_t = 0)]
+        restart_backoff_ms: u64,
     },
 }
 
@@ -778,7 +827,7 @@ pub enum WorkflowCommands {
 
 #[cfg(test)]
 mod tests {
-    use super::{BranchesCommands, Cli, Commands};
+    use super::{BranchesCommands, Cli, Commands, RuntimeCommands};
     use clap::Parser;
     use std::path::PathBuf;
 
@@ -790,6 +839,103 @@ mod tests {
                 command: BranchesCommands::Status { format },
             } => assert_eq!(format, "json"),
             _ => panic!("expected branches status command"),
+        }
+    }
+
+    #[test]
+    fn parses_runtime_status_command() {
+        let cli = Cli::try_parse_from(["meld", "runtime", "status"]).unwrap();
+        match cli.command {
+            Commands::Runtime {
+                command:
+                    RuntimeCommands::Status {
+                        format,
+                        runtime_ids,
+                    },
+            } => {
+                assert_eq!(format, "text");
+                assert!(runtime_ids.is_empty());
+            }
+            _ => panic!("expected runtime status command"),
+        }
+    }
+
+    #[test]
+    fn parses_runtime_status_with_runtime_filter() {
+        let cli = Cli::try_parse_from([
+            "meld",
+            "runtime",
+            "status",
+            "--runtime-id",
+            "event.append",
+            "--runtime-id",
+            "execution.planning",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Runtime {
+                command:
+                    RuntimeCommands::Status {
+                        format,
+                        runtime_ids,
+                    },
+            } => {
+                assert_eq!(format, "json");
+                assert_eq!(
+                    runtime_ids,
+                    vec!["event.append".to_string(), "execution.planning".to_string()]
+                );
+            }
+            _ => panic!("expected runtime status command"),
+        }
+    }
+
+    #[test]
+    fn parses_runtime_run_command() {
+        let cli = Cli::try_parse_from([
+            "meld",
+            "runtime",
+            "run",
+            "--instance-id",
+            "instance-a",
+            "--tick-ms",
+            "10",
+            "--duration-ms",
+            "20",
+            "--format",
+            "json",
+            "--restart-policy",
+            "never",
+            "--restart-attempt-limit",
+            "5",
+            "--restart-backoff-ms",
+            "7",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Runtime {
+                command:
+                    RuntimeCommands::Run {
+                        instance_id,
+                        tick_ms,
+                        duration_ms,
+                        format,
+                        restart_policy,
+                        restart_attempt_limit,
+                        restart_backoff_ms,
+                    },
+            } => {
+                assert_eq!(instance_id.as_deref(), Some("instance-a"));
+                assert_eq!(tick_ms, 10);
+                assert_eq!(duration_ms, Some(20));
+                assert_eq!(format, "json");
+                assert_eq!(restart_policy, "never");
+                assert_eq!(restart_attempt_limit, 5);
+                assert_eq!(restart_backoff_ms, 7);
+            }
+            _ => panic!("expected runtime run command"),
         }
     }
 

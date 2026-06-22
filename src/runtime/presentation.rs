@@ -1,0 +1,120 @@
+//! Runtime CLI presentation.
+
+use crate::error::ApiError;
+use crate::runtime::supervisor::{RuntimeHealthStatus, RuntimeInstanceStatus};
+use crate::runtime::tooling::{RuntimeCliRunResult, RuntimeCliStatus};
+
+/// Format runtime status for CLI output.
+pub fn format_runtime_status(status: &RuntimeCliStatus, format: &str) -> Result<String, ApiError> {
+    match format {
+        "json" => serde_json::to_string_pretty(status).map_err(|err| {
+            ApiError::ConfigError(format!(
+                "Runtime command failed: failed to encode JSON: {err}"
+            ))
+        }),
+        "text" => Ok(format_runtime_status_text(status)),
+        other => Err(ApiError::ConfigError(format!(
+            "Runtime command failed: invalid format '{other}', expected 'text' or 'json'"
+        ))),
+    }
+}
+
+/// Format a completed foreground runtime run for CLI output.
+pub fn format_runtime_run_result(
+    result: &RuntimeCliRunResult,
+    format: &str,
+) -> Result<String, ApiError> {
+    match format {
+        "json" => serde_json::to_string_pretty(result).map_err(|err| {
+            ApiError::ConfigError(format!(
+                "Runtime command failed: failed to encode JSON: {err}"
+            ))
+        }),
+        "text" => Ok(format_runtime_run_result_text(result)),
+        other => Err(ApiError::ConfigError(format!(
+            "Runtime command failed: invalid format '{other}', expected 'text' or 'json'"
+        ))),
+    }
+}
+
+fn format_runtime_status_text(status: &RuntimeCliStatus) -> String {
+    let mut lines = vec![
+        "Runtime supervisor".to_string(),
+        format!("Product root: {}", status.product_root.display()),
+        format!(
+            "Supervisor store: {}",
+            status.supervisor_store_path.display()
+        ),
+        match &status.instance {
+            Some(instance) => format!(
+                "Instance: {} status={} started={} stopped={}",
+                instance.instance_id,
+                instance_status(instance.status),
+                instance.started_at_ms,
+                instance
+                    .stopped_at_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "<none>".to_string())
+            ),
+            None => "Instance: <none>".to_string(),
+        },
+        String::new(),
+        "Runtimes:".to_string(),
+    ];
+
+    for runtime in &status.runtimes {
+        lines.push(format!(
+            "- {} {} {} health={} lease={}",
+            runtime.runtime_id,
+            if runtime.desired_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            if runtime.factory_available {
+                "available"
+            } else {
+                "unavailable"
+            },
+            health_status(runtime.health_status),
+            runtime.active_lease_id.as_deref().unwrap_or("<none>")
+        ));
+    }
+
+    lines.join("\n")
+}
+
+fn format_runtime_run_result_text(result: &RuntimeCliRunResult) -> String {
+    [
+        "Runtime supervisor stopped".to_string(),
+        format!("Instance: {}", result.instance_id),
+        format!("Product root: {}", result.product_root.display()),
+        format!("Started runtimes: {}", result.started_runtime_count),
+        format!("Stopped runtimes: {}", result.stopped_runtime_count),
+        format!("Ticks: {}", result.tick_count),
+        format!("Shutdown: {}", result.shutdown_id),
+    ]
+    .join("\n")
+}
+
+fn instance_status(status: RuntimeInstanceStatus) -> &'static str {
+    match status {
+        RuntimeInstanceStatus::Starting => "starting",
+        RuntimeInstanceStatus::Running => "running",
+        RuntimeInstanceStatus::Stopping => "stopping",
+        RuntimeInstanceStatus::Stopped => "stopped",
+        RuntimeInstanceStatus::Stale => "stale",
+        RuntimeInstanceStatus::Failed => "failed",
+    }
+}
+
+fn health_status(status: RuntimeHealthStatus) -> &'static str {
+    match status {
+        RuntimeHealthStatus::Unknown => "unknown",
+        RuntimeHealthStatus::Starting => "starting",
+        RuntimeHealthStatus::Healthy => "healthy",
+        RuntimeHealthStatus::Degraded => "degraded",
+        RuntimeHealthStatus::Unhealthy => "unhealthy",
+        RuntimeHealthStatus::Stopped => "stopped",
+    }
+}
