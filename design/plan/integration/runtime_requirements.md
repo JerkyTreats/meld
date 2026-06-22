@@ -35,6 +35,7 @@ Root `meld` assembles stores and ports, starts runtime handles, supervises lifec
 | product runtime assembly | [Product Runtime Assembly Requirements](product_runtime_assembly_requirements.md) | root `meld` |
 | vertical proof path | [Durable Flywheel Vertical Proof Requirements](durable_flywheel_vertical_proof_requirements.md) | integration |
 | docs freshness physical config | [Docs Freshness Physical Configuration Requirements](docs_freshness_physical_configuration_requirements.md) | integration |
+| docs freshness next iteration | [Docs Freshness Flywheel Next Iteration Report](docs_freshness_flywheel_next_iteration_report.md) | integration |
 | phase detail audit | [Runtime Phase Design Detail Audit](runtime_phase_design_detail_audit.md) | integration |
 
 ## Shared Commitments

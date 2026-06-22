@@ -199,7 +199,7 @@ world_state
 | belief views | `world_state` | `BeliefStore` | same, assembled in runtime | reassess subject after new evidence | not assembled in host |
 | agent decisions | `world_state` | `AgentStore` | same, assembled in runtime | dedupe curation by decision key and subscription cursor | not assembled in host |
 | execution goals | `execution` | `PersistentGoalSetStore` | same, assembled in runtime | reopen active and satisfied lifecycle state | not assembled in host |
-| task network | `execution` | `SledTaskNetworkStore` | same, assembled in runtime | replay journal into identical reduced state | runtime assembly missing |
+| task network | `execution` | `SledTaskNetworkStore` | same, assembled in runtime | replay journal into identical reduced state | product visible activation pending |
 | context frames | `context` | `FrameStorage` and node store | same | graph backed head reads match replay | none |
 
 The runtime assembly gap is resolved by the product storage root contract. Root `meld` opens `OpenProductStores` from `ProductStorageLayout`, while execution opens task artifact repositories and task network stores through execution-owned factories.
@@ -216,7 +216,7 @@ The runtime assembly gap is resolved by the product storage root contract. Root 
 | `composition_lowering_emits_all_operator_steps_in_order` | prove execution composition lowers to task graph | phase 8 docs composition | task network mutations for prepare, collect, and write steps | `existing` |
 | `phase8_task_network_slice_runs_and_survives_reopen` | prove task network plus task runtime bridge | phase 8 task network fixture | claims execute, outcome records, publication mark, and reopen replay match | `existing` |
 | `docs_writer_task_runs_to_completion` | prove existing docs writer task path | local provider fixture | final docs writer context frame exists | `existing` |
-| `minimal_runtime_flywheel_turn_persists_and_satisfies_goal` | prove the actual flywheel | one seeded low confidence docs node | curation, goal store, planning, task network, event publication, world model update, and satisfaction happen in one test | `missing` |
+| `minimal_runtime_flywheel_turn_persists_and_satisfies_goal` | prove the actual flywheel | one seeded low confidence docs node | curation, goal store, planning, task network, event publication, world model update, and satisfaction happen in one test | `existing` |
 
 ## Acceptance Criteria
 
@@ -249,9 +249,9 @@ These items must not be pulled into the minimal runtime flywheel unless a future
 
 ## Gaps And Follow Ups
 
-The flywheel is `partial`, not complete.
+The diagnostic flywheel proof exists. Product visible runtime activation remains partial.
 
-The major gap is durable flywheel assembly. Code exists for events, graph replay, planner projection, curation, goals, planning, lowering, task network execution, publication, evidence ingestion, and satisfaction curation, but the domain runtimes are not yet wired so each handoff directly feeds the next runtime.
+The remaining gap is product visible semantic runtime activation. Code exists for events, graph replay, planner projection, curation, goals, planning, lowering, task network execution, publication, evidence ingestion, and satisfaction curation. The integration proof sequences those handoffs, but `meld runtime run` does not yet activate the concrete semantic actors for a user folder.
 
 Producer-neutral goal acceptance is implemented. `AgentCuration` emits `AgentGoalCommand`, integration maps it to `GoalAcceptanceRequest`, and [goal API](../../../crates/meld-execution/src/goals/api.rs) stores an active execution goal through `AddGoalCommand`.
 
@@ -267,14 +267,15 @@ The durable assembly must follow [Durable Runtime First Slice](durable_runtime_f
 
 | Work Item | Owning Domain | Blocking Domain | Evidence Link | Verification Command | Priority |
 | --- | --- | --- | --- | --- | --- |
-| Select the first evidence source and fixture for `docs_freshness` | `world_state` | `workspace` | [plan phase list](../README.md) | `cargo test -p meld-world-model --test belief` | `P0` |
+| Select the first evidence source and fixture for `docs_freshness` | `world_state` | `workspace` | [plan phase list](../README.md) | `cargo test -p meld-world-model --test belief` | `done` |
 | Implement producer-neutral goal acceptance | `execution` | `world_state` | [goal API](../../../crates/meld-execution/src/goals/api.rs), [goal acceptance test](../../../tests/integration/goal_acceptance.rs) | `cargo test --test integration_tests producer_neutral_goal_acceptance_stores_active_plannable_goal` | `done` |
 | Define durable flywheel assembly shape | `integration` | `events`, `world_state`, `execution` | [durable runtime first slice](durable_runtime_first_slice.md) | doc review | `done` |
-| Add durable flywheel runtime assembly | `meld` | `events`, `world_state`, `execution`, `api`, `store` | [runtime assembly](../../../src/cli/runtime_assembly.rs), [execution ports](../../../crates/meld-execution/src/execution/ports.rs) | `cargo test minimal_runtime_flywheel_turn_persists_and_satisfies_goal` | `P0` |
+| Add durable flywheel runtime assembly proof | `meld` | `events`, `world_state`, `execution`, `api`, `store` | [runtime assembly](../../../src/runtime/assembly.rs), [execution ports](../../../crates/meld-execution/src/execution/ports.rs) | `cargo test --test integration_tests minimal_runtime_flywheel_turn_persists_and_satisfies_goal` | `done` |
 | Add task outcome publication bridge | `execution` | `events` | [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs), [publication bridge test](../../../crates/meld-execution/tests/task_network_publication_bridge.rs) | `cargo test -p meld-execution --test task_network_publication_bridge` | `done` |
 | Connect docs writer outcome to docs freshness belief update | `world_state` | `events`, `execution` | [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), [outcome evidence test](../../../tests/integration/outcome_evidence.rs) | `cargo test --test integration_tests docs_writer_success_promotes_configured_freshness_evidence` | `done` |
-| Add satisfaction curation handoff | `world_state` | `execution` | [goal mutation adapter](../../../src/execution/goal_mutation.rs), [goal acceptance test](../../../tests/integration/goal_acceptance.rs) | `cargo test --test integration_tests agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match` | `P0` |
-| Add end to end minimal flywheel test | `execution` | all participating domains | [task bridge test](../../../crates/meld-execution/tests/task_network_execution_bridge.rs) | `cargo test minimal_runtime_flywheel_turn_persists_and_satisfies_goal` | `P0` |
+| Add satisfaction curation handoff | `world_state` | `execution` | [goal mutation adapter](../../../src/execution/goal_mutation.rs), [goal acceptance test](../../../tests/integration/goal_acceptance.rs) | `cargo test --test integration_tests agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match` | `done` |
+| Add end to end minimal flywheel test | `execution` | all participating domains | [task bridge test](../../../crates/meld-execution/tests/task_network_execution_bridge.rs) | `cargo test --test integration_tests minimal_runtime_flywheel_turn_persists_and_satisfies_goal` | `done` |
+| Add product visible docs freshness activation | `meld` | `workspace`, `world_state`, `execution`, `events` | [next iteration report](docs_freshness_flywheel_next_iteration_report.md) | focused product runtime test | `next` |
 
 ## Verification Commands
 
@@ -289,7 +290,7 @@ cargo test -p meld-execution --test planning_runtime low_confidence_docs_goal_re
 cargo test -p meld-execution --test composition_lowering composition_lowering_emits_all_operator_steps_in_order
 cargo test -p meld-execution --test task_network_execution_bridge phase8_task_network_slice_runs_and_survives_reopen
 cargo test --test integration_tests docs_writer_task_runs_to_completion
-cargo test minimal_runtime_flywheel_turn_persists_and_satisfies_goal
+cargo test --test integration_tests minimal_runtime_flywheel_turn_persists_and_satisfies_goal
 ```
 
 ## Evidence Log
@@ -298,9 +299,10 @@ cargo test minimal_runtime_flywheel_turn_persists_and_satisfies_goal
 | --- | --- | --- | --- |
 | `2026-06-06` | Domain snapshot command | `31` current top level source domains | Includes `compat`, which is not listed in the advisory policy snapshot. |
 | `2026-06-06` | [event store](../../../crates/meld-events/src/events/store.rs) and [event spine tests](../../../tests/integration/event_spine.rs) | Event append and replay are complete | Event spine is not the missing flywheel piece. |
-| `2026-06-06` | [planner tests](../../../crates/meld-world-model/tests/planner.rs) and [agent tests](../../../crates/meld-world-model/tests/agent.rs) | Projection and curation are complete for first slice contracts | Runtime assembly remains missing. |
+| `2026-06-06` | [planner tests](../../../crates/meld-world-model/tests/planner.rs) and [agent tests](../../../crates/meld-world-model/tests/agent.rs) | Projection and curation are complete for first slice contracts | Runtime assembly proof now exists, and product visible activation remains pending. |
 | `2026-06-06` | [planning runtime tests](../../../crates/meld-execution/tests/planning_runtime.rs), [composition lowering tests](../../../crates/meld-execution/tests/composition_lowering.rs), and [task bridge test](../../../crates/meld-execution/tests/task_network_execution_bridge.rs) | Execution contracts exist through task network bridge | Later NAG work added publication and satisfaction boundaries. |
 | `2026-06-06` | [docs writer task test](../../../tests/integration/docs_writer_task.rs) and [workflow task compatibility test](../../../tests/integration/workflow_task_compatibility.rs) | Existing docs writer task path works | Existing workflow path is not yet the cognitive flywheel. |
 | `2026-06-08` | [goal API](../../../crates/meld-execution/src/goals/api.rs) and [goal acceptance test](../../../tests/integration/goal_acceptance.rs) | Producer-neutral goal acceptance is complete | NAG-2 through NAG-5 were open at that point. |
 | `2026-06-08` | [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs) and [publication bridge test](../../../crates/meld-execution/tests/task_network_publication_bridge.rs) | Task outcome publication bridge is complete | NAG-3 through NAG-5 were open at that point. |
-| `2026-06-09` | [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), and [outcome evidence test](../../../tests/integration/outcome_evidence.rs) | Outcome fact to belief evidence is complete | NAG-4 and NAG-5 remain open. |
+| `2026-06-09` | [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), and [outcome evidence test](../../../tests/integration/outcome_evidence.rs) | Outcome fact to belief evidence is complete | Satisfaction and failure boundaries are now covered by integration tests. |
+| `2026-06-22` | `cargo test --test integration_tests docs_freshness` and `cargo test -p meld-lang --test evaluation_loop full_docs_freshness_loop` | Diagnostic docs freshness flywheel tests pass | Product visible docs freshness activation remains next. |

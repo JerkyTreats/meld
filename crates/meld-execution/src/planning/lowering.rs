@@ -950,6 +950,10 @@ fn scope_ref(bindings: &Bindings, fallback_goal_id: &str) -> String {
 
 fn term_to_scope_ref(term: &Term) -> String {
     match term {
+        // TODO: Preserve full DomainObjectRef scope identity here. Collapsing
+        // Term::Object to object_id drops domain_id and object_kind, which
+        // violates the cross-domain object-carrying invariant once
+        // capabilities need more than node-local scope strings.
         Term::Object(object) => object.object_id.clone(),
         Term::ArtifactType(artifact_type) => artifact_type.clone(),
         Term::Dimension(dimension) => dimension.clone(),
