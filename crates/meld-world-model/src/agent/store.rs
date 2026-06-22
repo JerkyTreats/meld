@@ -7,7 +7,8 @@ use sled::{Db, Tree};
 
 use crate::agent::contracts::{
     AgentActivationRecord, AgentCurationDecision, AgentCurationDedupeKey, AgentRecord,
-    AgentSatisfactionReview, AgentStatus, AgentSubscriptionRecord, AgentSubscriptionStatus,
+    AgentSatisfactionReview, AgentSinkReceipt, AgentStatus, AgentSubscriptionRecord,
+    AgentSubscriptionStatus,
 };
 use crate::error::StorageError;
 
@@ -23,6 +24,8 @@ const TREE_DECISIONS_BY_AGENT: &str = "agent_decisions_by_agent";
 const TREE_DECISIONS_BY_DEDUPE: &str = "agent_decisions_by_dedupe";
 const TREE_DECISIONS_BY_REVISION: &str = "agent_decisions_by_revision";
 const TREE_SATISFACTION_DECISIONS_BY_REVIEW: &str = "agent_satisfaction_decisions_by_review";
+const TREE_SINK_RECEIPTS: &str = "agent_sink_receipts";
+const TREE_SINK_RECEIPTS_BY_COMMAND: &str = "agent_sink_receipts_by_command";
 const KEY_PAD: usize = 20;
 
 /// Sled backed storage for durable agent records and indexes.
@@ -41,6 +44,8 @@ pub struct AgentStore {
     decisions_by_dedupe: Tree,
     decisions_by_revision: Tree,
     satisfaction_decisions_by_review: Tree,
+    sink_receipts: Tree,
+    sink_receipts_by_command: Tree,
 }
 
 impl AgentStore {
@@ -72,6 +77,10 @@ impl AgentStore {
                 .map_err(to_storage_io)?,
             satisfaction_decisions_by_review: db
                 .open_tree(TREE_SATISFACTION_DECISIONS_BY_REVIEW)
+                .map_err(to_storage_io)?,
+            sink_receipts: db.open_tree(TREE_SINK_RECEIPTS).map_err(to_storage_io)?,
+            sink_receipts_by_command: db
+                .open_tree(TREE_SINK_RECEIPTS_BY_COMMAND)
                 .map_err(to_storage_io)?,
             db,
         })
@@ -447,6 +456,68 @@ impl AgentStore {
         self.get_decision(&decision_id)
     }
 
+    /// Persist a sink receipt unless the decision already has one.
+    pub fn put_sink_receipt(
+        &self,
+        receipt: &AgentSinkReceipt,
+    ) -> Result<AgentSinkReceipt, StorageError> {
+        receipt.validate()?;
+        if let Some(existing) = self.sink_receipt_by_decision(&receipt.decision_id)? {
+            if existing.submission.command_id != receipt.submission.command_id
+                || existing.submission.goal_id != receipt.submission.goal_id
+            {
+                return Err(StorageError::InvalidPath(
+                    "sink receipt decision conflict".to_string(),
+                ));
+            }
+            return Ok(existing);
+        }
+        self.sink_receipts
+            .insert(
+                receipt.decision_id.as_bytes(),
+                serde_json::to_vec(receipt).map_err(to_storage_data)?,
+            )
+            .map_err(to_storage_io)?;
+        self.sink_receipts_by_command
+            .insert(
+                sink_receipt_command_key(&receipt.submission.command_id, &receipt.decision_id)
+                    .as_bytes(),
+                receipt.decision_id.as_bytes(),
+            )
+            .map_err(to_storage_io)?;
+        Ok(receipt.clone())
+    }
+
+    /// Read the sink receipt recorded for one curation decision.
+    pub fn sink_receipt_by_decision(
+        &self,
+        decision_id: &str,
+    ) -> Result<Option<AgentSinkReceipt>, StorageError> {
+        decode_optional(
+            self.sink_receipts
+                .get(decision_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
+    /// List receipts for a command id in deterministic decision order.
+    pub fn sink_receipts_by_command(
+        &self,
+        command_id: &str,
+    ) -> Result<Vec<AgentSinkReceipt>, StorageError> {
+        let prefix = format!("{command_id}::");
+        let mut out = Vec::new();
+        for item in self.sink_receipts_by_command.scan_prefix(prefix.as_bytes()) {
+            let (_, value) = item.map_err(to_storage_io)?;
+            let decision_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
+            if let Some(receipt) = self.sink_receipt_by_decision(&decision_id)? {
+                out.push(receipt);
+            }
+        }
+        out.sort_by(|left, right| left.decision_id.cmp(&right.decision_id));
+        Ok(out)
+    }
+
     /// Flush all sled writes for this store.
     pub fn flush(&self) -> Result<(), StorageError> {
         self.db.flush().map_err(to_storage_io)?;
@@ -555,6 +626,10 @@ fn decision_dedupe_satisfaction_review_key(
 
 fn decision_revision_key(revision_id: &str, decision_id: &str) -> String {
     format!("{revision_id}::{decision_id}")
+}
+
+fn sink_receipt_command_key(command_id: &str, decision_id: &str) -> String {
+    format!("{command_id}::{decision_id}")
 }
 
 fn decode_optional<T: serde::de::DeserializeOwned>(

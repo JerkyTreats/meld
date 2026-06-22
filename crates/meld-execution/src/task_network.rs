@@ -30,6 +30,8 @@ pub mod outcome;
 pub mod publication;
 /// Ready set computation over reduced task network state.
 pub mod readiness;
+/// Bounded runtime actor facades for task network work.
+pub mod runtime;
 /// Reduced task graph and lifecycle state contracts.
 pub mod state;
 /// In memory and sled-backed command stores.
@@ -51,6 +53,7 @@ pub use publication::{
     PublicationBridgeScope, PublicationPublishResult, PublishPendingPublicationsRequest,
 };
 pub use readiness::compute_ready_set;
+pub use runtime::{PublicationRuntime, PublicationRuntimeReport};
 pub use state::{
     NetworkState, ReadySet, StaticSeedInitSource, TaskInitSource, TaskNode, TaskStatus,
     UpstreamArtifactInitSource,

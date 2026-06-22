@@ -1,6 +1,22 @@
 //! Root runtime supervisor domain.
 
+/// Supervisor lifecycle contracts.
+pub mod contracts;
+/// Explicit supervisor lifecycle entrypoint.
+pub mod entrypoint;
 /// Durable supervisor lifecycle store.
 pub mod store;
 
+pub use contracts::{
+    RestartCause, RestartPolicy, RuntimeDesiredState, RuntimeDiagnosticSummary, RuntimeHealth,
+    RuntimeHealthSnapshot, RuntimeHealthStatus, RuntimeHeartbeat, RuntimeId, RuntimeInstance,
+    RuntimeInstanceStatus, RuntimeLease, RuntimeLeaseOwner, RuntimeLeaseStatus,
+    RuntimeRestartRecord, RuntimeShutdownState, RuntimeShutdownStatus, SupervisorContractError,
+    SupervisorLifecycleEvent, SupervisorLifecycleEventType,
+};
+pub use entrypoint::{
+    RuntimeSupervisor, SupervisorRestartEvaluation, SupervisorRuntimeError,
+    SupervisorRuntimeStatus, SupervisorShutdownReport, SupervisorStartCommand,
+    SupervisorStatusSnapshot,
+};
 pub use store::{SupervisorStore, SupervisorStoreError};

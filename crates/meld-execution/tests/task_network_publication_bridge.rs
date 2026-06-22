@@ -10,7 +10,8 @@ use meld_execution::task_network::publication::{
     publish_pending_publications, publish_publication, EventAppendSink, PublicationPublishResult,
     PublishPendingPublicationsRequest,
 };
-use meld_execution::task_network::store::SledTaskNetworkStore;
+use meld_execution::task_network::{PublicationRuntime, SledTaskNetworkStore};
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 
 struct FailingSink;
@@ -18,6 +19,19 @@ struct FailingSink;
 impl EventAppendSink for FailingSink {
     fn append_envelope_idempotent(&self, _envelope: EventEnvelope) -> Result<u64, String> {
         Err("append unavailable".to_string())
+    }
+}
+
+#[derive(Default)]
+struct RecordingSink {
+    envelopes: RefCell<Vec<EventEnvelope>>,
+}
+
+impl EventAppendSink for RecordingSink {
+    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, String> {
+        let mut envelopes = self.envelopes.borrow_mut();
+        envelopes.push(envelope);
+        Ok(envelopes.len() as u64)
     }
 }
 
@@ -238,6 +252,51 @@ fn publication_bridge_appends_pending_task_outcome_once() {
 }
 
 #[test]
+fn publication_runtime_actor_publishes_through_event_append_sink() {
+    let task_db = open_task_db();
+    let mut store = open_store(&task_db);
+    let publication_id =
+        record_success_publication(&mut store, "task-alpha", "outcome-alpha", "claim-alpha");
+    let events = RecordingSink::default();
+    let runtime = PublicationRuntime::new();
+
+    let report = runtime
+        .publish_pending(&mut store, &events, request(None))
+        .unwrap();
+
+    assert_eq!(
+        report.actor_id,
+        "execution.task_network.publication.runtime"
+    );
+    assert_eq!(report.scope.network_id, "network-docs");
+    assert_eq!(report.attempted, 1);
+    assert_eq!(report.committed, 1);
+    assert!(report.retryable_errors.is_empty());
+    assert!(report.fatal_errors.is_empty());
+    assert!(!report.budget_exhausted);
+    let envelopes = events.envelopes.borrow();
+    assert_eq!(envelopes.len(), 1);
+    assert_eq!(envelopes[0].event_type, "execution.task.succeeded");
+    let expected_record_id = format!("execution::task_network_publication::{publication_id}");
+    assert_eq!(
+        envelopes[0].record_id.as_deref(),
+        Some(expected_record_id.as_str())
+    );
+    assert!(matches!(
+        store
+            .state()
+            .publications
+            .get(&publication_id)
+            .unwrap()
+            .state,
+        PublicationState::Published {
+            event_seq: Some(1),
+            ..
+        }
+    ));
+}
+
+#[test]
 fn publication_bridge_retry_does_not_append_duplicate_event() {
     let task_db = open_task_db();
     let event_tempdir = tempfile::tempdir().unwrap();
@@ -288,6 +347,41 @@ fn publication_bridge_records_failure_without_published_mark() {
     assert!(matches!(
         &publication.state,
         PublicationState::Failed { error } if error == "append unavailable"
+    ));
+}
+
+#[test]
+fn publication_bridge_repeated_append_failure_stays_retryable() {
+    let task_db = open_task_db();
+    let mut store = open_store(&task_db);
+    let publication_id =
+        record_success_publication(&mut store, "task-alpha", "outcome-alpha", "claim-alpha");
+
+    let first =
+        publish_publication(&mut store, &FailingSink, &request(None), &publication_id).unwrap();
+    let second = publish_pending_publications(&mut store, &FailingSink, request(None)).unwrap();
+
+    assert!(matches!(
+        first,
+        PublicationPublishResult::AppendFailed { .. }
+    ));
+    assert_eq!(second.results.len(), 1);
+    assert_eq!(second.items_attempted, 1);
+    assert_eq!(second.items_committed, 0);
+    assert_eq!(second.retryable_errors.len(), 1);
+    assert!(second.fatal_errors.is_empty());
+    assert!(matches!(
+        second.results[0],
+        PublicationPublishResult::AppendFailed { .. }
+    ));
+    assert!(matches!(
+        store
+            .state()
+            .publications
+            .get(&publication_id)
+            .unwrap()
+            .state,
+        PublicationState::Failed { .. }
     ));
 }
 

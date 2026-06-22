@@ -204,6 +204,8 @@ impl OpenProductStores {
             .map_err(to_world_model)?;
         self.goal_store.flush().map_err(to_execution)?;
         self.task_artifacts.flush().map_err(to_execution)?;
+        self.frame_storage.flush().map_err(to_context)?;
+        self.prompt_artifacts.flush().map_err(to_context)?;
         Ok(())
     }
 }

@@ -21,6 +21,8 @@ pub type AgentDecisionId = String;
 pub type AgentGoalCommandId = String;
 /// Stable durable identifier for a goal mutation command emitted by an agent.
 pub type AgentGoalMutationCommandId = String;
+/// Stable durable identifier for an accepted agent sink receipt.
+pub type AgentSinkReceiptId = String;
 
 /// Lifecycle status for an agent record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +87,15 @@ pub enum AgentDecisionKind {
     Absorbed,
     /// The input could not produce a determinate command.
     Indeterminate,
+}
+
+/// Execution boundary that accepted or replayed an agent-authored command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentSinkReceiptKind {
+    /// Receipt for a proposed goal command.
+    GoalCommand,
+    /// Receipt for a goal lifecycle mutation command.
+    GoalMutationCommand,
 }
 
 /// Durable description of an agent and the world scope it observes.
@@ -354,6 +365,89 @@ impl AgentCurationDecision {
     }
 }
 
+/// Stable identity returned by an execution-owned sink after command submit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSinkSubmission {
+    /// Command id accepted or absorbed by the execution boundary.
+    pub command_id: String,
+    /// Goal id that execution associated with the submitted command.
+    pub goal_id: String,
+    /// Sink-specific outcome label such as applied, duplicate, or recovered.
+    pub outcome: String,
+}
+
+impl AgentSinkSubmission {
+    /// Build a sink submission identity.
+    pub fn new(
+        command_id: impl Into<String>,
+        goal_id: impl Into<String>,
+        outcome: impl Into<String>,
+    ) -> Self {
+        Self {
+            command_id: command_id.into(),
+            goal_id: goal_id.into(),
+            outcome: outcome.into(),
+        }
+    }
+
+    /// Validate identifiers returned by the sink.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        require_non_empty("sink command id", &self.command_id)?;
+        require_non_empty("sink goal id", &self.goal_id)?;
+        require_non_empty("sink outcome", &self.outcome)?;
+        if !matches!(self.outcome.as_str(), "applied" | "duplicate" | "recovered") {
+            return Err(StorageError::InvalidPath(format!(
+                "sink outcome '{}' is not an accepted command outcome",
+                self.outcome
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Durable receipt that lets an agent retry advance without resubmitting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSinkReceipt {
+    /// Stable receipt identifier.
+    pub receipt_id: AgentSinkReceiptId,
+    /// Decision whose command crossed the execution boundary.
+    pub decision_id: AgentDecisionId,
+    /// Type of command accepted by execution.
+    pub kind: AgentSinkReceiptKind,
+    /// Accepted sink identity.
+    pub submission: AgentSinkSubmission,
+    /// Sequence assigned when the receipt was recorded.
+    pub recorded_at_seq: u64,
+}
+
+impl AgentSinkReceipt {
+    /// Build a receipt from a persisted decision and accepted submission.
+    pub fn new(
+        decision: &AgentCurationDecision,
+        kind: AgentSinkReceiptKind,
+        submission: AgentSinkSubmission,
+    ) -> Self {
+        Self {
+            receipt_id: deterministic_id(
+                "agent-sink-receipt",
+                &format!("{}::{}", decision.decision_id, submission.command_id),
+            ),
+            decision_id: decision.decision_id.clone(),
+            kind,
+            submission,
+            recorded_at_seq: decision.created_at_seq,
+        }
+    }
+
+    /// Validate receipt identity and sink submission.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        require_non_empty("sink receipt id", &self.receipt_id)?;
+        require_non_empty("sink receipt decision id", &self.decision_id)?;
+        self.submission.validate()?;
+        Ok(())
+    }
+}
+
 /// Command to create an idempotent seed agent record.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SeedAgentRegistration {
@@ -544,15 +638,27 @@ pub struct ActiveGoalSummary {
 }
 
 impl ActiveGoalSummary {
-    /// Return whether an active or proposed goal already matches the dedupe key.
-    pub fn has_matching_goal(&self, dedupe_key: &AgentCurationDedupeKey) -> bool {
-        self.goals.iter().any(|goal| {
+    /// Return the first active or proposed goal that matches the dedupe key.
+    pub fn first_open_matching_goal(&self, dedupe_key: &AgentCurationDedupeKey) -> Option<&Goal> {
+        self.goals.iter().find(|goal| {
             matches!(
                 goal.lifecycle,
                 GoalLifecycle::Active | GoalLifecycle::Proposed
             ) && goal.agent_id == dedupe_key.agent_id
                 && goal_matches_dedupe(goal, dedupe_key)
         })
+    }
+
+    /// Return the first visible goal that matches the dedupe key.
+    pub fn first_matching_goal(&self, dedupe_key: &AgentCurationDedupeKey) -> Option<&Goal> {
+        self.goals.iter().find(|goal| {
+            goal.agent_id == dedupe_key.agent_id && goal_matches_dedupe(goal, dedupe_key)
+        })
+    }
+
+    /// Return whether an active or proposed goal already matches the dedupe key.
+    pub fn has_matching_goal(&self, dedupe_key: &AgentCurationDedupeKey) -> bool {
+        self.first_open_matching_goal(dedupe_key).is_some()
     }
 }
 

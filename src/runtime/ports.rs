@@ -11,14 +11,21 @@ use meld_execution::goals::{
 use meld_execution::task::TaskArtifactRepoFactory;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use meld_execution::task_network::EventAppendSink;
+use meld_world_model::belief::{
+    ingest_promoted_evidence, ConfigSnapshot, PromotedEvidenceIngestionRequest,
+};
 use meld_world_model::planner::{PlannerProjectionError, PlannerProjectionOutput, PlannerQuery};
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::graph::PerspectiveKey;
-use meld_world_model::{AgentGoalCommand, AgentGoalMutationCommand, BeliefQuery, BeliefStore};
+use meld_world_model::{
+    AgentGoalCommand, AgentGoalMutationCommand, BeliefQuery, BeliefRuntime, BeliefStore,
+    PromotedEvidenceIngestionResult,
+};
 use meld_world_model::{BranchScope, TraversalQuery};
 
 use crate::context::frame::FrameStorage;
 use crate::execution::goal_mutation::{satisfy_request_from_agent_mutation, GoalMutationRequest};
+use crate::execution::{build_docs_task_success_evidence, DocsTaskSuccessEvidenceRequest};
 use crate::prompt_context::PromptContextArtifactStorage;
 use crate::runtime::error::{RuntimeAssemblyError, RuntimePortError};
 use crate::runtime::storage::OpenProductStores;
@@ -32,6 +39,7 @@ pub const MAX_EVENT_REPLAY_LIMIT: usize = 1024;
 pub struct ProductRuntimePorts {
     event_append: ProductEventAppendPort,
     event_replay: ProductEventReplayPort,
+    docs_task_evidence: DocsTaskEvidenceReplayPort,
     goal_command: ExecutionGoalCommandPort,
     goal_mutation: ExecutionGoalMutationPort,
     planner_projection: PlannerProjectionPort,
@@ -60,6 +68,48 @@ pub struct ProviderPortConfig {
     pub required_env_vars: Vec<String>,
 }
 
+/// Request to replay docs task success events into belief evidence.
+#[derive(Debug, Clone)]
+pub struct DocsTaskEvidenceReplayRequest {
+    /// Last event sequence already processed by the caller.
+    pub after_seq: u64,
+    /// Maximum event records to inspect.
+    pub limit: usize,
+    /// Workspace subject whose belief should receive support evidence.
+    pub subject: DomainObjectRef,
+    /// Runtime family configuration used for evidence normalization.
+    pub config: ConfigSnapshot,
+    /// Perspective for candidate belief keys.
+    pub perspective: PerspectiveKey,
+    /// Branch scope for candidate belief keys.
+    pub branch_scope: BranchScope,
+    /// Worker identity recorded on assessment leases.
+    pub owner_id: String,
+    /// Artifact type that marks a success event as applicable docs content.
+    pub required_artifact_type_id: Option<String>,
+}
+
+/// Report from one bounded docs task evidence replay pass.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocsTaskEvidenceReplayReport {
+    /// Replay cursor supplied by the caller.
+    pub input_event_seq: u64,
+    /// Highest event sequence inspected by this pass.
+    pub output_event_seq: u64,
+    /// Event records inspected.
+    pub events_attempted: usize,
+    /// Promoted evidence records produced by the mapping.
+    pub promoted_evidence_count: usize,
+    /// Promoted evidence records rejected by belief config.
+    pub rejected_evidence_count: usize,
+    /// Evidence items produced by normalization.
+    pub normalized_evidence_count: usize,
+    /// New belief assignment edges inserted.
+    pub new_assignment_count: usize,
+    /// Per ingestion results returned by the belief runtime.
+    pub ingestions: Vec<PromotedEvidenceIngestionResult>,
+}
+
 /// Execution callable event append port backed by the event store.
 ///
 /// The port appends envelopes idempotently and returns the event sequence. It
@@ -77,6 +127,14 @@ pub struct ProductEventAppendPort {
 #[derive(Clone)]
 pub struct ProductEventReplayPort {
     store: Arc<EventStore>,
+}
+
+/// Bounded docs task event to belief evidence replay port.
+#[derive(Clone)]
+pub struct DocsTaskEvidenceReplayPort {
+    event_replay: ProductEventReplayPort,
+    belief_store: Arc<BeliefStore>,
+    traversal_store: Arc<TraversalStore>,
 }
 
 /// Execution goal command sink backed by the execution goal API.
@@ -148,9 +206,15 @@ impl ProductRuntimePorts {
         provider: ProviderPortConfig,
     ) -> Result<Self, RuntimeAssemblyError> {
         let provider_port = ProviderRuntimePort::new(provider)?;
+        let event_replay = ProductEventReplayPort::new(Arc::clone(&stores.event_store));
         Ok(Self {
             event_append: ProductEventAppendPort::new(Arc::clone(&stores.event_store)),
-            event_replay: ProductEventReplayPort::new(Arc::clone(&stores.event_store)),
+            event_replay: event_replay.clone(),
+            docs_task_evidence: DocsTaskEvidenceReplayPort::new(
+                event_replay,
+                Arc::clone(&stores.belief_store),
+                Arc::clone(&stores.traversal_store),
+            ),
             goal_command: ExecutionGoalCommandPort::new(Arc::clone(&stores.goal_store)),
             goal_mutation: ExecutionGoalMutationPort::new(Arc::clone(&stores.goal_store)),
             planner_projection: PlannerProjectionPort::new(
@@ -176,6 +240,11 @@ impl ProductRuntimePorts {
     /// Return the bounded event replay port.
     pub fn event_replay(&self) -> &ProductEventReplayPort {
         &self.event_replay
+    }
+
+    /// Return the docs task event to belief evidence replay port.
+    pub fn docs_task_evidence(&self) -> &DocsTaskEvidenceReplayPort {
+        &self.docs_task_evidence
     }
 
     /// Return the goal command sink port.
@@ -266,6 +335,94 @@ impl ProductEventReplayPort {
         self.store
             .read_all_events_after_limit(after_seq, limit)
             .map_err(|error| RuntimePortError::EventReplay(error.to_string()))
+    }
+}
+
+impl DocsTaskEvidenceReplayPort {
+    /// Bind the port to event replay and world model stores.
+    pub fn new(
+        event_replay: ProductEventReplayPort,
+        belief_store: Arc<BeliefStore>,
+        traversal_store: Arc<TraversalStore>,
+    ) -> Self {
+        Self {
+            event_replay,
+            belief_store,
+            traversal_store,
+        }
+    }
+
+    /// Replay bounded execution success events into belief evidence.
+    pub fn ingest_after_limit(
+        &self,
+        request: DocsTaskEvidenceReplayRequest,
+    ) -> Result<DocsTaskEvidenceReplayReport, RuntimePortError> {
+        if request.owner_id.trim().is_empty() {
+            return Err(RuntimePortError::InvalidRequest(
+                "owner id must be non-empty".to_string(),
+            ));
+        }
+        request
+            .subject
+            .validate()
+            .map_err(|error| RuntimePortError::InvalidRequest(error.to_string()))?;
+        let events = self
+            .event_replay
+            .read_after_limit(request.after_seq, request.limit)?;
+        let runtime = BeliefRuntime::new(
+            Arc::clone(&self.belief_store),
+            Arc::clone(&self.traversal_store),
+            request.config.clone(),
+            request.perspective.clone(),
+            request.branch_scope.clone(),
+        );
+        let mut report = DocsTaskEvidenceReplayReport {
+            input_event_seq: request.after_seq,
+            output_event_seq: request.after_seq,
+            events_attempted: events.len(),
+            promoted_evidence_count: 0,
+            rejected_evidence_count: 0,
+            normalized_evidence_count: 0,
+            new_assignment_count: 0,
+            ingestions: Vec::new(),
+        };
+
+        for event in events {
+            report.output_event_seq = report.output_event_seq.max(event.seq);
+            let promoted = build_docs_task_success_evidence(DocsTaskSuccessEvidenceRequest {
+                event,
+                subject: request.subject.clone(),
+                stale_probability: 0.0,
+                review_probability: 0.2,
+                source_kind: "content_written".to_string(),
+                required_artifact_type_id: request.required_artifact_type_id.clone(),
+            })
+            .map_err(|error| RuntimePortError::InvalidRequest(error.to_string()))?;
+            let Some(record) = promoted else {
+                continue;
+            };
+            report.promoted_evidence_count += 1;
+            let ingestion = ingest_promoted_evidence(
+                self.belief_store.as_ref(),
+                &runtime,
+                PromotedEvidenceIngestionRequest {
+                    record,
+                    config: request.config.clone(),
+                    perspective: request.perspective.clone(),
+                    branch_scope: request.branch_scope.clone(),
+                    owner_id: &request.owner_id,
+                },
+            )
+            .map_err(|error| RuntimePortError::Storage(error.to_string()))?;
+            if ingestion.rejected {
+                report.rejected_evidence_count += 1;
+            }
+            report.normalized_evidence_count += ingestion.normalized_evidence_count;
+            report.new_assignment_count += ingestion.new_assignment_count;
+            report.ingestions.push(ingestion);
+        }
+
+        Ok(report)
     }
 }
 
