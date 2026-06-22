@@ -11,11 +11,14 @@ pub mod world_state;
 
 pub use agent::{
     ActiveGoalSummary, AdvanceSubscriptionCommand, AgentActivationId, AgentActivationRecord,
-    AgentActivationStatus, AgentCurationDecision, AgentCurationDedupeKey, AgentCurationOutcome,
-    AgentCurationRuleConfig, AgentDecisionId, AgentDecisionKind, AgentDelivery, AgentGoalCommand,
-    AgentGoalCommandId, AgentGoalMutationCommand, AgentGoalMutationCommandId,
-    AgentGoalMutationKind, AgentGoalSatisfactionInput, AgentId, AgentQuery, AgentRecord,
-    AgentRegistration, AgentSatisfactionReview, AgentStatus, AgentStore, AgentSubscription,
+    AgentActivationStatus, AgentActiveGoalQuery, AgentActiveGoalQueryError, AgentCurationDecision,
+    AgentCurationDedupeKey, AgentCurationOutcome, AgentCurationRuleConfig, AgentDecisionId,
+    AgentDecisionKind, AgentDelivery, AgentGoalCommand, AgentGoalCommandId, AgentGoalCommandSink,
+    AgentGoalCurationRuntime, AgentGoalMutationCommand, AgentGoalMutationCommandId,
+    AgentGoalMutationKind, AgentGoalMutationSink, AgentGoalSatisfactionInput, AgentId, AgentQuery,
+    AgentRecord, AgentRegistration, AgentRuntimeReport, AgentSatisfactionCurationRuntime,
+    AgentSatisfactionReview, AgentSinkError, AgentSinkReceipt, AgentSinkReceiptId,
+    AgentSinkReceiptKind, AgentSinkSubmission, AgentStatus, AgentStore, AgentSubscription,
     AgentSubscriptionId, AgentSubscriptionRecord, AgentSubscriptionStatus,
     RecordCurationDecisionCommand, SeedAgentRegistration, SubscribeAgentCommand,
 };

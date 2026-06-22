@@ -1,23 +1,594 @@
 //! First-slice execution planning runtime.
 
 use crate::capability::CapabilityCatalog;
+use crate::goals::PersistentGoalSetStore;
 use crate::planning::contracts::{
     CandidateStatus, ExecutionComposition, InvalidMethodReport, MethodCandidateReport,
     NoApplicableMethod, PlanningDiagnostic, PlanningDiagnosticCode, PlanningIndeterminate,
     PlanningInputError, PlanningRequest, PlanningResult, PlanningSatisfied,
 };
+use crate::planning::lowering::{
+    Lowerer as ExecutionCompositionLowerer, Plan as CompositionLoweringPlan,
+    Request as CompositionLoweringRequest,
+};
 use crate::planning::method_library::{operator_resolutions, MethodLibrary, VerifiedMethodEntry};
+use crate::planning::world_state::{PlanningWorldStateFrameRef, PlanningWorldStateRequest};
+use crate::task::TaskDefinitionCompiler;
+use crate::task_network::{
+    command, mutation::ReadPrecondition, store::SledTaskNetworkStore, Command as TaskNetworkCommand,
+};
 use meld_lang::{
     evaluate, substitute, validate, Bindings, Composition, CostEstimate, Effect, EvalResult,
     Operator, Proposition, Resolution, Step, StepKind, WorldState,
 };
 use serde::Serialize;
 
+const PLANNING_ACTOR_ID: &str = "execution.planning.runtime";
+
+/// Request for one bounded execution planning actor pass.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanningRuntimeActorRequest {
+    /// Target task network for any lowered mutation command.
+    pub network_id: String,
+    /// Projection perspective to include in each world state request.
+    pub perspective_id: String,
+    /// Projection branch to include in each world state request.
+    pub branch_id: String,
+    /// Dimensions the projection port should prioritize for each goal.
+    pub requested_dimensions: Vec<String>,
+    /// Extra preconditions the projection port may include in its frame.
+    pub required_preconditions: Vec<Proposition>,
+    /// Optional maximum number of active goals to process in this pass.
+    pub limit: Option<usize>,
+}
+
+/// Goal-scoped world state returned by the injected planner projection port.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanningWorldStateProjection {
+    /// Projected world state consumed by `PlanningRuntime`.
+    pub world_state: WorldState,
+    /// Durable projection provenance that travels with the planning result.
+    pub frame: PlanningWorldStateFrameRef,
+}
+
+/// Projection failure returned by a planning projection port.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanningProjectionError {
+    /// Stable summary suitable for actor reporting.
+    pub message: String,
+    /// True when a later actor pass may succeed without operator action.
+    pub retryable: bool,
+}
+
+impl PlanningProjectionError {
+    /// Build a retryable projection error.
+    pub fn retryable(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: true,
+        }
+    }
+
+    /// Build a fatal projection error.
+    pub fn fatal(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: false,
+        }
+    }
+}
+
+/// Injected boundary for planner world state projection.
+pub trait PlanningProjectionPort {
+    /// Project world state for one active execution goal.
+    fn project(
+        &mut self,
+        request: PlanningWorldStateRequest,
+    ) -> Result<PlanningWorldStateProjection, PlanningProjectionError>;
+}
+
+impl<F> PlanningProjectionPort for F
+where
+    F: FnMut(
+        PlanningWorldStateRequest,
+    ) -> Result<PlanningWorldStateProjection, PlanningProjectionError>,
+{
+    fn project(
+        &mut self,
+        request: PlanningWorldStateRequest,
+    ) -> Result<PlanningWorldStateProjection, PlanningProjectionError> {
+        self(request)
+    }
+}
+
+/// Diagnostic issue emitted by one planning actor pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanningRuntimeActorIssue {
+    /// Goal id associated with the issue when known.
+    pub goal_id: Option<String>,
+    /// Stable diagnostic code.
+    pub code: String,
+    /// Human-readable diagnostic message.
+    pub message: String,
+}
+
+/// Result for one active goal processed by the planning actor.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlanningRuntimeActorGoalResult {
+    /// Projection failed before planning or task network mutation.
+    ProjectionFailed {
+        /// Goal selected from execution goal storage.
+        goal_id: String,
+        /// Projection failure summary.
+        error: String,
+        /// True when a later actor pass may retry the projection.
+        retryable: bool,
+    },
+    /// Planning request validation failed before a semantic result.
+    PlanningFailed {
+        /// Goal selected from execution goal storage.
+        goal_id: String,
+        /// Deterministic planning input error.
+        error: PlanningInputError,
+    },
+    /// Planning completed without producing task network work.
+    Planned {
+        /// Goal selected from execution goal storage.
+        goal_id: String,
+        /// Non-composed planning result.
+        result: PlanningResult,
+    },
+    /// Lowering failed before command submission.
+    LoweringFailed {
+        /// Goal selected from execution goal storage.
+        goal_id: String,
+        /// Composition that could not be lowered.
+        composition_id: String,
+        /// Lowering failure summary.
+        error: String,
+    },
+    /// Lowering produced diagnostics but no task network mutations to submit.
+    Lowered {
+        /// Goal selected from execution goal storage.
+        goal_id: String,
+        /// Lowering plan retained for caller inspection.
+        plan: CompositionLoweringPlan,
+    },
+    /// Lowered composition was submitted through the task network command store.
+    Submitted {
+        /// Goal selected from execution goal storage.
+        goal_id: String,
+        /// Lowering plan submitted through the command boundary.
+        plan: CompositionLoweringPlan,
+        /// Deterministic task network command id.
+        command_id: String,
+        /// Persisted command response.
+        response: command::Response,
+    },
+}
+
+/// Report returned by one bounded planning actor pass.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanningRuntimeActorReport {
+    /// Stable runtime actor identifier.
+    pub actor_id: String,
+    /// Number of active goals read from execution goal storage.
+    pub active_goal_count: usize,
+    /// Task network revision before actor work began.
+    pub input_revision: u64,
+    /// Task network revision after actor work completed.
+    pub output_revision: u64,
+    /// Active goals attempted by this pass.
+    pub attempted: usize,
+    /// Task network commands accepted or replayed as committed.
+    pub committed: usize,
+    /// Retryable diagnostics observed during the pass.
+    pub retryable_errors: Vec<PlanningRuntimeActorIssue>,
+    /// Fatal diagnostics observed during the pass.
+    pub fatal_errors: Vec<PlanningRuntimeActorIssue>,
+    /// True when more active goals remain after the configured limit.
+    pub budget_exhausted: bool,
+    /// Per-goal results in deterministic goal id order.
+    pub results: Vec<PlanningRuntimeActorGoalResult>,
+}
+
+/// Error that prevents a planning actor pass from producing a report.
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum PlanningRuntimeActorError {
+    /// The actor request violated execution runtime invariants.
+    #[error("planning runtime actor request is invalid: {0}")]
+    InvalidRequest(String),
+    /// Active goal storage failed before actor work could continue.
+    #[error("planning runtime actor goal store failed: {0}")]
+    GoalStore(String),
+}
+
+/// Bounded execution actor facade from active goals to task network commands.
+pub struct PlanningRuntimeActor<C> {
+    actor_id: String,
+    runtime: PlanningRuntime,
+    lowerer: ExecutionCompositionLowerer<C>,
+}
+
+impl<C> PlanningRuntimeActor<C>
+where
+    C: TaskDefinitionCompiler,
+{
+    /// Create an actor facade over an existing planner and composition lowerer.
+    pub fn new(runtime: PlanningRuntime, lowerer: ExecutionCompositionLowerer<C>) -> Self {
+        Self {
+            actor_id: PLANNING_ACTOR_ID.to_string(),
+            runtime,
+            lowerer,
+        }
+    }
+
+    /// Return the stable actor id used in reports.
+    pub fn actor_id(&self) -> &str {
+        &self.actor_id
+    }
+
+    /// Process a bounded set of active goals through projection, planning, and command submission.
+    pub fn run_once<P>(
+        &self,
+        goals: &PersistentGoalSetStore,
+        task_network: &mut SledTaskNetworkStore,
+        projection: &mut P,
+        request: PlanningRuntimeActorRequest,
+    ) -> Result<PlanningRuntimeActorReport, PlanningRuntimeActorError>
+    where
+        P: PlanningProjectionPort,
+    {
+        validate_actor_request(&request)?;
+
+        let active_goals = goals
+            .active_goals()
+            .map_err(|error| PlanningRuntimeActorError::GoalStore(error.to_string()))?;
+        let active_goal_count = active_goals.len();
+        let budget_exhausted = request
+            .limit
+            .map(|limit| active_goal_count > limit)
+            .unwrap_or(false);
+        let goal_limit = request.limit.unwrap_or(active_goal_count);
+        let input_revision = task_network.state().revision;
+        let mut report = PlanningRuntimeActorReport {
+            actor_id: self.actor_id.clone(),
+            active_goal_count,
+            input_revision,
+            output_revision: input_revision,
+            attempted: 0,
+            committed: 0,
+            retryable_errors: Vec::new(),
+            fatal_errors: Vec::new(),
+            budget_exhausted,
+            results: Vec::new(),
+        };
+
+        for goal in active_goals.into_iter().take(goal_limit) {
+            report.attempted += 1;
+            self.process_goal(task_network, projection, &request, goal, &mut report);
+        }
+
+        report.output_revision = task_network.state().revision;
+        Ok(report)
+    }
+
+    fn process_goal<P>(
+        &self,
+        task_network: &mut SledTaskNetworkStore,
+        projection: &mut P,
+        request: &PlanningRuntimeActorRequest,
+        goal: meld_lang::Goal,
+        report: &mut PlanningRuntimeActorReport,
+    ) where
+        P: PlanningProjectionPort,
+    {
+        let projection_request = projection_request_for_goal(request, &goal);
+        let projected = match projection.project(projection_request.clone()) {
+            Ok(projected) => projected,
+            Err(error) => {
+                let issue = PlanningRuntimeActorIssue {
+                    goal_id: Some(goal.goal_id.clone()),
+                    code: "planning_projection_failed".to_string(),
+                    message: error.message.clone(),
+                };
+                if error.retryable {
+                    report.retryable_errors.push(issue);
+                } else {
+                    report.fatal_errors.push(issue);
+                }
+                report
+                    .results
+                    .push(PlanningRuntimeActorGoalResult::ProjectionFailed {
+                        goal_id: goal.goal_id,
+                        error: error.message,
+                        retryable: error.retryable,
+                    });
+                return;
+            }
+        };
+
+        let planning_request = PlanningRequest {
+            request_id: planning_request_id(&goal, &projected.frame),
+            goal: goal.clone(),
+            world_state: projected.world_state,
+            world_state_frame: projected.frame,
+            world_state_request: projection_request,
+        };
+        let planning_result = match self.runtime.plan_goal(planning_request) {
+            Ok(result) => result,
+            Err(error) => {
+                report.fatal_errors.push(PlanningRuntimeActorIssue {
+                    goal_id: Some(goal.goal_id.clone()),
+                    code: "planning_input_failed".to_string(),
+                    message: format!("{error:?}"),
+                });
+                report
+                    .results
+                    .push(PlanningRuntimeActorGoalResult::PlanningFailed {
+                        goal_id: goal.goal_id,
+                        error,
+                    });
+                return;
+            }
+        };
+
+        let PlanningResult::Composed(composition) = planning_result else {
+            report
+                .results
+                .push(PlanningRuntimeActorGoalResult::Planned {
+                    goal_id: goal.goal_id,
+                    result: planning_result,
+                });
+            return;
+        };
+
+        let lower_request = CompositionLoweringRequest {
+            request_id: lowering_request_id(&composition),
+            network_id: request.network_id.clone(),
+            idempotency_key: lowering_idempotency_key(&composition),
+            composition,
+        };
+        let composition_id = lower_request.composition.composition_id.clone();
+        let plan = match self.lowerer.lower(lower_request) {
+            Ok(plan) => plan,
+            Err(error) => {
+                report.fatal_errors.push(PlanningRuntimeActorIssue {
+                    goal_id: Some(goal.goal_id.clone()),
+                    code: "composition_lowering_failed".to_string(),
+                    message: error.to_string(),
+                });
+                report
+                    .results
+                    .push(PlanningRuntimeActorGoalResult::LoweringFailed {
+                        goal_id: goal.goal_id,
+                        composition_id,
+                        error: error.to_string(),
+                    });
+                return;
+            }
+        };
+
+        if plan.mutations.mutations.is_empty() {
+            report
+                .results
+                .push(PlanningRuntimeActorGoalResult::Lowered {
+                    goal_id: goal.goal_id,
+                    plan,
+                });
+            return;
+        }
+
+        if plan_already_materialized(task_network.state(), &plan) {
+            report
+                .results
+                .push(PlanningRuntimeActorGoalResult::Lowered {
+                    goal_id: goal.goal_id,
+                    plan,
+                });
+            return;
+        }
+
+        let base_revision = task_network.state().revision;
+        let base_state_hash = task_network.state().state_hash.clone();
+        let command_id = planning_command_id(&goal.goal_id, &plan, base_revision, &base_state_hash);
+        let command_request = command::Request {
+            command_id: command_id.clone(),
+            network_id: plan.network_id.clone(),
+            base_revision,
+            base_state_hash: base_state_hash.clone(),
+            read_preconditions: vec![
+                ReadPrecondition::RevisionIs(base_revision),
+                ReadPrecondition::StateHashIs(base_state_hash),
+            ],
+            command: TaskNetworkCommand::ApplyMutationSet(plan.mutations.clone()),
+        };
+        let response = match task_network.submit(command_request) {
+            Ok(response) => response,
+            Err(error) => {
+                report.fatal_errors.push(PlanningRuntimeActorIssue {
+                    goal_id: Some(goal.goal_id.clone()),
+                    code: "task_network_store_failed".to_string(),
+                    message: error.to_string(),
+                });
+                report
+                    .results
+                    .push(PlanningRuntimeActorGoalResult::LoweringFailed {
+                        goal_id: goal.goal_id,
+                        composition_id: plan.composition_id,
+                        error: error.to_string(),
+                    });
+                return;
+            }
+        };
+        if matches!(
+            response,
+            command::Response::Accepted { .. } | command::Response::Duplicate { .. }
+        ) {
+            report.committed += 1;
+        } else if let command::Response::Rejected(rejection) = &response {
+            report.fatal_errors.push(PlanningRuntimeActorIssue {
+                goal_id: Some(goal.goal_id.clone()),
+                code: "task_network_command_rejected".to_string(),
+                message: format!("{rejection:?}"),
+            });
+        }
+        report
+            .results
+            .push(PlanningRuntimeActorGoalResult::Submitted {
+                goal_id: goal.goal_id,
+                plan,
+                command_id,
+                response,
+            });
+    }
+}
+
 /// Runtime facade for one-goal execution planning.
 #[derive(Debug, Clone)]
 pub struct PlanningRuntime {
     method_library: MethodLibrary,
     capability_catalog: CapabilityCatalog,
+}
+
+fn validate_actor_request(
+    request: &PlanningRuntimeActorRequest,
+) -> Result<(), PlanningRuntimeActorError> {
+    if request.network_id.trim().is_empty() {
+        return Err(PlanningRuntimeActorError::InvalidRequest(
+            "network_id must be non-empty".to_string(),
+        ));
+    }
+    if request.perspective_id.trim().is_empty() {
+        return Err(PlanningRuntimeActorError::InvalidRequest(
+            "perspective_id must be non-empty".to_string(),
+        ));
+    }
+    if request.branch_id.trim().is_empty() {
+        return Err(PlanningRuntimeActorError::InvalidRequest(
+            "branch_id must be non-empty".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn projection_request_for_goal(
+    request: &PlanningRuntimeActorRequest,
+    goal: &meld_lang::Goal,
+) -> PlanningWorldStateRequest {
+    PlanningWorldStateRequest {
+        goal_id: goal.goal_id.clone(),
+        agent_id: goal.agent_id.clone(),
+        target: goal.target.clone(),
+        perspective_id: request.perspective_id.clone(),
+        branch_id: request.branch_id.clone(),
+        requested_dimensions: request.requested_dimensions.clone(),
+        required_preconditions: request.required_preconditions.clone(),
+    }
+}
+
+fn planning_request_id(goal: &meld_lang::Goal, frame: &PlanningWorldStateFrameRef) -> String {
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        goal_id: &'a str,
+        updated_frame_id: &'a str,
+        projection_version: &'a str,
+    }
+
+    stable_runtime_id(
+        "execution-planning-request",
+        &Identity {
+            goal_id: &goal.goal_id,
+            updated_frame_id: &frame.frame_id,
+            projection_version: &frame.projection_version,
+        },
+    )
+}
+
+fn lowering_request_id(composition: &ExecutionComposition) -> String {
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        goal_id: &'a str,
+        composition_id: &'a str,
+        frame_id: &'a str,
+    }
+
+    stable_runtime_id(
+        "execution-planning-lowering-request",
+        &Identity {
+            goal_id: &composition.goal.goal_id,
+            composition_id: &composition.composition_id,
+            frame_id: &composition.world_state_frame.frame_id,
+        },
+    )
+}
+
+fn lowering_idempotency_key(composition: &ExecutionComposition) -> String {
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        goal_id: &'a str,
+        composition_id: &'a str,
+        method_id: &'a str,
+        frame_id: &'a str,
+    }
+
+    stable_runtime_id(
+        "execution-planning-lowering",
+        &Identity {
+            goal_id: &composition.goal.goal_id,
+            composition_id: &composition.composition_id,
+            method_id: &composition.method_id,
+            frame_id: &composition.world_state_frame.frame_id,
+        },
+    )
+}
+
+fn plan_already_materialized(
+    state: &crate::task_network::state::NetworkState,
+    plan: &CompositionLoweringPlan,
+) -> bool {
+    plan.mutations
+        .mutations
+        .iter()
+        .all(|mutation| match mutation {
+            crate::task_network::mutation::Mutation::Inject(inject) => {
+                state.tasks.contains_key(&inject.task_node.task_instance_id)
+            }
+        })
+}
+
+fn planning_command_id(
+    goal_id: &str,
+    plan: &CompositionLoweringPlan,
+    base_revision: u64,
+    base_state_hash: &str,
+) -> String {
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        goal_id: &'a str,
+        network_id: &'a str,
+        composition_id: &'a str,
+        mutation_set_id: &'a str,
+        base_revision: u64,
+        base_state_hash: &'a str,
+    }
+
+    stable_runtime_id(
+        "execution-planning-task-network-command",
+        &Identity {
+            goal_id,
+            network_id: &plan.network_id,
+            composition_id: &plan.composition_id,
+            mutation_set_id: &plan.mutations.set_id,
+            base_revision,
+            base_state_hash,
+        },
+    )
+}
+
+fn stable_runtime_id(prefix: &str, value: &impl Serialize) -> String {
+    let bytes = serde_json::to_vec(value).expect("planning runtime identity is serializable");
+    format!("{}-{}", prefix, blake3::hash(&bytes).to_hex())
 }
 
 impl PlanningRuntime {

@@ -3,11 +3,16 @@ use meld_execution::capability::{
     ArtifactSchemaVersionRange, CapabilityCatalog, CapabilityTypeContract, ExecutionClass,
     ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec, ScopeContract,
 };
+use meld_execution::goals::{AddGoalCommand, GoalCommandMetadata, PersistentGoalSetStore};
 use meld_execution::planning::{
-    CandidateStatus, MethodLibrary, MethodSourceRef, MethodVerification, PlanningDiagnosticCode,
-    PlanningInputError, PlanningRequest, PlanningResult, PlanningRuntime,
-    PlanningWorldStateFrameRef, PlanningWorldStateRequest, VerifiedMethodEntry,
+    CandidateStatus, ExecutionCompositionLowerer, MethodLibrary, MethodSourceRef,
+    MethodVerification, PlanningDiagnosticCode, PlanningInputError, PlanningProjectionError,
+    PlanningRequest, PlanningResult, PlanningRuntime, PlanningRuntimeActor,
+    PlanningRuntimeActorGoalResult, PlanningRuntimeActorRequest, PlanningWorldStateFrameRef,
+    PlanningWorldStateProjection, PlanningWorldStateRequest, VerifiedMethodEntry,
 };
+use meld_execution::task::TaskCompiler;
+use meld_execution::task_network::{Response, SledTaskNetworkStore};
 use meld_lang::{
     Composition, Condition, CostEstimate, Effect, Goal, GoalLifecycle, GoalPriority, GoalSource,
     Literal, Method, Operator, Proposition, Resolution, SlotConstraint, Step, StepKind, Term,
@@ -168,6 +173,45 @@ fn runtime(methods: Vec<Method>) -> PlanningRuntime {
     let catalog = catalog();
     let library = MethodLibrary::from_methods(methods, &catalog);
     PlanningRuntime::new(library, catalog)
+}
+
+fn planning_actor() -> PlanningRuntimeActor<TaskCompiler> {
+    PlanningRuntimeActor::new(
+        runtime(vec![docs_method("refresh")]),
+        ExecutionCompositionLowerer::new(TaskCompiler::new(), catalog()),
+    )
+}
+
+fn actor_request(limit: Option<usize>) -> PlanningRuntimeActorRequest {
+    PlanningRuntimeActorRequest {
+        network_id: "network-docs".to_string(),
+        perspective_id: "default".to_string(),
+        branch_id: "main".to_string(),
+        requested_dimensions: vec!["docs_freshness".to_string()],
+        required_preconditions: vec![],
+        limit,
+    }
+}
+
+fn open_goal_store_with_active_goal(goal: Goal) -> PersistentGoalSetStore {
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let store = PersistentGoalSetStore::new(db).unwrap();
+    store
+        .add_goal(AddGoalCommand {
+            metadata: GoalCommandMetadata {
+                command_id: format!("command-add-{}", goal.goal_id),
+                source_identity: None,
+                seq: 1,
+            },
+            goal,
+        })
+        .unwrap();
+    store
+}
+
+fn open_task_network_store() -> SledTaskNetworkStore {
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    SledTaskNetworkStore::open(db, "network-docs").unwrap()
 }
 
 fn unsatisfied_state() -> WorldState {
@@ -394,5 +438,135 @@ fn invalid_request_shape_returns_input_errors() {
             .plan_goal(request(nonground_goal, unsatisfied_state()))
             .unwrap_err(),
         PlanningInputError::NonGroundGoal { .. }
+    ));
+}
+
+#[test]
+fn planning_actor_reads_active_goals_and_submits_lowered_composition() {
+    let goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
+    let mut task_network = open_task_network_store();
+    let actor = planning_actor();
+    let mut projection_requests = Vec::new();
+    let mut projection = |request: PlanningWorldStateRequest| {
+        projection_requests.push(request.clone());
+        Ok(PlanningWorldStateProjection {
+            world_state: unsatisfied_state(),
+            frame: frame(),
+        })
+    };
+
+    let report = actor
+        .run_once(
+            &goal_store,
+            &mut task_network,
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap();
+
+    assert_eq!(projection_requests.len(), 1);
+    assert_eq!(projection_requests[0].goal_id, "goal-docs");
+    assert_eq!(report.actor_id, "execution.planning.runtime");
+    assert_eq!(report.active_goal_count, 1);
+    assert_eq!(report.attempted, 1);
+    assert_eq!(report.committed, 1);
+    assert!(report.retryable_errors.is_empty());
+    assert!(report.fatal_errors.is_empty());
+    assert!(!report.budget_exhausted);
+    assert!(report.input_revision < report.output_revision);
+    assert_eq!(task_network.state().tasks.len(), 1);
+    assert_eq!(task_network.journal().len(), 1);
+    assert!(matches!(
+        &report.results[0],
+        PlanningRuntimeActorGoalResult::Submitted {
+            response: Response::Accepted { .. },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn planning_actor_repeated_tick_skips_already_materialized_plan() {
+    let goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
+    let mut task_network = open_task_network_store();
+    let actor = planning_actor();
+    let mut projection = |_request: PlanningWorldStateRequest| {
+        Ok(PlanningWorldStateProjection {
+            world_state: unsatisfied_state(),
+            frame: frame(),
+        })
+    };
+
+    let first = actor
+        .run_once(
+            &goal_store,
+            &mut task_network,
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap();
+    let first_output_revision = task_network.state().revision;
+    let second = actor
+        .run_once(
+            &goal_store,
+            &mut task_network,
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap();
+
+    assert_eq!(first.committed, 1);
+    assert_eq!(second.committed, 0);
+    assert!(second.retryable_errors.is_empty());
+    assert!(second.fatal_errors.is_empty());
+    assert_eq!(second.input_revision, first_output_revision);
+    assert_eq!(second.output_revision, first_output_revision);
+    assert_eq!(task_network.journal().len(), 1);
+    assert!(matches!(
+        &second.results[0],
+        PlanningRuntimeActorGoalResult::Lowered { .. }
+    ));
+}
+
+#[test]
+fn planning_actor_projection_failure_does_not_mutate_task_network_state() {
+    let goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
+    let mut task_network = open_task_network_store();
+    let input_revision = task_network.state().revision;
+    let input_hash = task_network.state().state_hash.clone();
+    let actor = planning_actor();
+    let mut projection_requests = Vec::new();
+    let mut projection = |request: PlanningWorldStateRequest| {
+        projection_requests.push(request);
+        Err(PlanningProjectionError::retryable("projection unavailable"))
+    };
+
+    let report = actor
+        .run_once(
+            &goal_store,
+            &mut task_network,
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap();
+
+    assert_eq!(projection_requests.len(), 1);
+    assert_eq!(report.active_goal_count, 1);
+    assert_eq!(report.attempted, 1);
+    assert_eq!(report.committed, 0);
+    assert_eq!(report.input_revision, input_revision);
+    assert_eq!(report.output_revision, input_revision);
+    assert_eq!(task_network.state().revision, input_revision);
+    assert_eq!(task_network.state().state_hash, input_hash);
+    assert!(task_network.state().tasks.is_empty());
+    assert!(task_network.journal().is_empty());
+    assert_eq!(report.retryable_errors.len(), 1);
+    assert!(report.fatal_errors.is_empty());
+    assert!(matches!(
+        &report.results[0],
+        PlanningRuntimeActorGoalResult::ProjectionFailed {
+            retryable: true,
+            ..
+        }
     ));
 }

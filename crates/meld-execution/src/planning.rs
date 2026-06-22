@@ -10,7 +10,7 @@ pub mod contracts;
 pub mod lowering;
 /// Method loading, verification, and deterministic ordering.
 pub mod method_library;
-/// First-slice planning runtime facade.
+/// First-slice planning runtime and bounded actor facade.
 pub mod runtime;
 /// Execution-side world state projection request contracts.
 pub mod world_state;
@@ -30,5 +30,9 @@ pub use method_library::{
     MethodLibrary, MethodLibraryLoadError, MethodSourceRef, MethodVerification,
     MethodVerificationDiagnostic, VerifiedMethodEntry,
 };
-pub use runtime::PlanningRuntime;
+pub use runtime::{
+    PlanningProjectionError, PlanningProjectionPort, PlanningRuntime, PlanningRuntimeActor,
+    PlanningRuntimeActorError, PlanningRuntimeActorGoalResult, PlanningRuntimeActorIssue,
+    PlanningRuntimeActorReport, PlanningRuntimeActorRequest, PlanningWorldStateProjection,
+};
 pub use world_state::{PlanningWorldStateFrameRef, PlanningWorldStateRequest};

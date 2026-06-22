@@ -359,8 +359,10 @@ fn publish_marked_publication(
         marked_revision: 0,
         event_seq: Some(event_seq),
     };
-    let command_id =
-        format!("task-network-publication-mark::{publication_id}::published::{event_record_id}");
+    let base_revision = store.state().revision;
+    let command_id = format!(
+        "task-network-publication-mark::{publication_id}::published::{event_record_id}::rev::{base_revision}"
+    );
     match submit_mark_publication(store, command_id, publication)? {
         command::Response::Accepted { .. } | command::Response::Duplicate { .. } => {
             if let Some(result) =
@@ -390,8 +392,9 @@ fn record_append_failure(
     publication.state = PublicationState::Failed {
         error: error.clone(),
     };
+    let base_revision = store.state().revision;
     let command_id = format!(
-        "task-network-publication-mark::{publication_id}::failed::{}",
+        "task-network-publication-mark::{publication_id}::failed::{}::rev::{base_revision}",
         stable_error_hash(&error)
     );
     match submit_mark_publication(store, command_id, publication)? {

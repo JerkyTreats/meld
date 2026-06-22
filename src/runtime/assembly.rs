@@ -153,6 +153,24 @@ pub struct RuntimeHandleStartReport {
     pub runtime_id: String,
 }
 
+/// Report returned when an inert handle accepts a stop request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeHandleStopReport {
+    /// Runtime id that accepted the stop.
+    pub runtime_id: String,
+    /// Whether the handle was running before the stop request.
+    pub was_started: bool,
+}
+
+/// Report returned when an inert handle reaches a safe point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeHandleSafePointReport {
+    /// Runtime id that reached the safe point.
+    pub runtime_id: String,
+    /// Whether the handle is safe for product flush.
+    pub safe_for_flush: bool,
+}
+
 /// Diagnostic snapshot from one inert runtime handle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeHandleDiagnostic {
@@ -596,6 +614,24 @@ impl InertRuntimeHandle {
             runtime_id: self.runtime_id.clone(),
             flushed_resource: false,
         })
+    }
+
+    /// Request that an inert handle stop at its next safe point.
+    pub fn request_stop(&mut self) -> RuntimeHandleStopReport {
+        let was_started = self.started;
+        self.started = false;
+        RuntimeHandleStopReport {
+            runtime_id: self.runtime_id.clone(),
+            was_started,
+        }
+    }
+
+    /// Wait for an inert handle safe point.
+    pub fn wait_for_safe_point(&self) -> RuntimeHandleSafePointReport {
+        RuntimeHandleSafePointReport {
+            runtime_id: self.runtime_id.clone(),
+            safe_for_flush: !self.started,
+        }
     }
 
     /// Start only after the supervisor supplies a matching non-empty lease.
@@ -1054,6 +1090,13 @@ mod tests {
         let flush = handle.flush_resources().unwrap();
         assert_eq!(flush.runtime_id, "event.append");
         assert!(!flush.flushed_resource);
+        let stop = handle.request_stop();
+        assert_eq!(stop.runtime_id, "event.append");
+        assert!(stop.was_started);
+        assert!(!handle.is_started());
+        let safe_point = handle.wait_for_safe_point();
+        assert_eq!(safe_point.runtime_id, "event.append");
+        assert!(safe_point.safe_for_flush);
     }
 
     #[test]

@@ -214,6 +214,11 @@ impl FrameStorage {
         Ok(())
     }
 
+    /// Flush frame blobs and shard directories to the filesystem boundary.
+    pub fn flush(&self) -> Result<(), StorageError> {
+        sync_path_recursively(&self.root)
+    }
+
     /// Compute the filesystem path for a given FrameID
     ///
     /// Path structure: `{root}/frames/{hex[0..2]}/{hex[2..4]}/{frame_id}.frame`
@@ -234,6 +239,24 @@ impl FrameStorage {
             .join(prefix2)
             .join(format!("{}.frame", hex))
     }
+}
+
+fn sync_path_recursively(path: &Path) -> Result<(), StorageError> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if path.is_file() {
+        fs::File::open(path)?.sync_all()?;
+        return Ok(());
+    }
+    if path.is_dir() {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            sync_path_recursively(&entry.path())?;
+        }
+        fs::File::open(path)?.sync_all()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -458,5 +481,25 @@ mod tests {
 
         let result = storage.get(&frame.frame_id);
         assert!(matches!(result, Err(StorageError::HashMismatch { .. })));
+    }
+
+    #[test]
+    fn flush_syncs_frame_storage_tree() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = FrameStorage::new(temp_dir.path()).unwrap();
+        let node_id: NodeID = [1u8; 32];
+        let frame = Frame::new(
+            Basis::Node(node_id),
+            b"test".to_vec(),
+            "test".to_string(),
+            "test-agent".to_string(),
+            HashMap::new(),
+        )
+        .unwrap();
+
+        storage.store(&frame).unwrap();
+        storage.flush().unwrap();
+
+        assert!(storage.exists(&frame.frame_id).unwrap());
     }
 }

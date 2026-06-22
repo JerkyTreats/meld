@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use meld_lang::{
@@ -8,10 +9,11 @@ use meld_world_model::agent::{
     curate_goal_satisfaction, curate_threshold_rule, ActiveGoalSummary, AgentActivationRecord,
     AgentActivationStatus, AgentCuration, AgentCurationDedupeKey, AgentCurationInput,
     AgentCurationInputRefs, AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery,
-    AgentGoalCommand, AgentGoalMutationCommand, AgentGoalMutationKind, AgentGoalSatisfactionInput,
-    AgentQuery, AgentRegistration, AgentSatisfactionReview, AgentStatus, AgentStore,
-    AgentSubscription, AgentSubscriptionRecord, AgentSubscriptionStatus, SeedAgentRegistration,
-    SubscribeAgentCommand,
+    AgentGoalCommand, AgentGoalCurationRuntime, AgentGoalMutationCommand, AgentGoalMutationKind,
+    AgentGoalSatisfactionInput, AgentQuery, AgentRegistration, AgentSatisfactionCurationRuntime,
+    AgentSatisfactionReview, AgentSinkError, AgentSinkReceiptKind, AgentSinkSubmission,
+    AgentStatus, AgentStore, AgentSubscription, AgentSubscriptionRecord, AgentSubscriptionStatus,
+    SeedAgentRegistration, SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
     BeliefProvenanceSummary, BeliefQuery, BeliefStore, BranchScope, ContradictionState,
@@ -352,6 +354,7 @@ fn agent_source_scans_reject_execution_internals_and_private_store_imports() {
         "src/agent/curation.rs",
         "src/agent/query.rs",
         "src/agent/registration.rs",
+        "src/agent/runtime.rs",
         "src/agent/subscription.rs",
     ] {
         let source = std::fs::read_to_string(manifest_dir.join(path)).unwrap();
@@ -975,6 +978,255 @@ fn agent_delivery_is_idempotent_and_advances_cursor_after_decision() {
 }
 
 #[test]
+fn agent_goal_runtime_duplicate_delivery_does_not_emit_second_sink_call() {
+    let (_agent_temp, agent_store) = agent_store();
+    let (_agent, subscription) = setup_agent(&agent_store);
+    let belief_temp = tempfile::tempdir().unwrap();
+    let belief_store =
+        BeliefStore::new(sled::open(belief_temp.path().join("belief")).unwrap()).unwrap();
+    belief_store
+        .put_view(&test_view(0.2, "revision-a", 7))
+        .unwrap();
+    let belief_query = BeliefQuery::new(&belief_store);
+    let (_graph_temp, graph_store) = seeded_graph();
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&graph_store),
+    );
+    let delivery = AgentDelivery {
+        agent_id: AGENT_ID.to_string(),
+        subscription_id: subscription.subscription_id.clone(),
+        belief_revision_id: "revision-a".to_string(),
+        revision_seq: 7,
+    };
+    let sink_calls = RefCell::new(Vec::new());
+    let mut sink = |command: &AgentGoalCommand| {
+        sink_calls.borrow_mut().push(command.command_id.clone());
+        Ok::<AgentSinkSubmission, AgentSinkError>(AgentSinkSubmission::new(
+            command.command_id.clone(),
+            command.goal.goal_id.clone(),
+            "applied",
+        ))
+    };
+    let runtime = AgentGoalCurationRuntime::new(&agent_store);
+
+    let first = runtime.handle_delivery(
+        delivery.clone(),
+        &belief_query,
+        &planner_query,
+        ActiveGoalSummary::default(),
+        rule_config(),
+        &mut sink,
+    );
+    let duplicate = runtime.handle_delivery(
+        delivery,
+        &belief_query,
+        &planner_query,
+        ActiveGoalSummary::default(),
+        rule_config(),
+        &mut sink,
+    );
+
+    assert_eq!(first.actor_id, AGENT_ID);
+    assert_eq!(first.input_sequence, 7);
+    assert_eq!(first.output_sequence, 7);
+    assert_eq!(first.delivered_count, 1);
+    assert_eq!(first.decision_count, 1);
+    assert_eq!(first.sink_submission_count, 1);
+    assert!(first.retryable_errors.is_empty());
+    assert!(first.fatal_errors.is_empty());
+    assert!(!first.budget_exhausted);
+    assert_eq!(duplicate.output_sequence, 7);
+    assert_eq!(duplicate.delivered_count, 0);
+    assert_eq!(duplicate.decision_count, 0);
+    assert_eq!(duplicate.sink_submission_count, 0);
+    assert_eq!(sink_calls.borrow().len(), 1);
+    assert_eq!(
+        agent_store
+            .get_subscription(&subscription.subscription_id)
+            .unwrap()
+            .unwrap()
+            .last_delivered_seq,
+        7
+    );
+    assert_eq!(
+        AgentQuery::new(&agent_store)
+            .recent_decisions(AGENT_ID, 10)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn agent_goal_runtime_sink_failure_leaves_subscription_cursor_unadvanced() {
+    let (_agent_temp, agent_store) = agent_store();
+    let (_agent, subscription) = setup_agent(&agent_store);
+    let belief_temp = tempfile::tempdir().unwrap();
+    let belief_store =
+        BeliefStore::new(sled::open(belief_temp.path().join("belief")).unwrap()).unwrap();
+    belief_store
+        .put_view(&test_view(0.2, "revision-a", 7))
+        .unwrap();
+    let belief_query = BeliefQuery::new(&belief_store);
+    let (_graph_temp, graph_store) = seeded_graph();
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&graph_store),
+    );
+    let delivery = AgentDelivery {
+        agent_id: AGENT_ID.to_string(),
+        subscription_id: subscription.subscription_id.clone(),
+        belief_revision_id: "revision-a".to_string(),
+        revision_seq: 7,
+    };
+    let sink_calls = RefCell::new(Vec::new());
+    let mut sink = |command: &AgentGoalCommand| {
+        sink_calls.borrow_mut().push(command.command_id.clone());
+        Err::<AgentSinkSubmission, AgentSinkError>(AgentSinkError::retryable(
+            "execution goal sink unavailable",
+        ))
+    };
+    let runtime = AgentGoalCurationRuntime::new(&agent_store);
+
+    let report = runtime.handle_delivery(
+        delivery,
+        &belief_query,
+        &planner_query,
+        ActiveGoalSummary::default(),
+        rule_config(),
+        &mut sink,
+    );
+
+    assert_eq!(report.output_sequence, 0);
+    assert_eq!(report.delivered_count, 1);
+    assert_eq!(report.decision_count, 1);
+    assert_eq!(report.sink_submission_count, 1);
+    assert_eq!(
+        report.retryable_errors,
+        vec!["execution goal sink unavailable".to_string()]
+    );
+    assert!(report.fatal_errors.is_empty());
+    assert_eq!(sink_calls.borrow().len(), 1);
+    assert_eq!(
+        agent_store
+            .get_subscription(&subscription.subscription_id)
+            .unwrap()
+            .unwrap()
+            .last_delivered_seq,
+        0
+    );
+    assert_eq!(
+        AgentQuery::new(&agent_store)
+            .recent_decisions(AGENT_ID, 10)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn agent_goal_runtime_recovers_receipt_from_visible_execution_goal() {
+    let (_agent_temp, agent_store) = agent_store();
+    let (_agent, subscription) = setup_agent(&agent_store);
+    let belief_temp = tempfile::tempdir().unwrap();
+    let belief_store =
+        BeliefStore::new(sled::open(belief_temp.path().join("belief")).unwrap()).unwrap();
+    belief_store
+        .put_view(&test_view(0.2, "revision-a", 7))
+        .unwrap();
+    let belief_query = BeliefQuery::new(&belief_store);
+    let (_graph_temp, graph_store) = seeded_graph();
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&graph_store),
+    );
+    let delivery = AgentDelivery {
+        agent_id: AGENT_ID.to_string(),
+        subscription_id: subscription.subscription_id.clone(),
+        belief_revision_id: "revision-a".to_string(),
+        revision_seq: 7,
+    };
+    let pending_outcome = {
+        let curation = AgentCuration::new(&agent_store);
+        let input = curation
+            .assemble_input(
+                &delivery,
+                &belief_query,
+                &planner_query,
+                ActiveGoalSummary::default(),
+                rule_config(),
+            )
+            .unwrap();
+        let outcome = curate_threshold_rule(input).unwrap();
+        agent_store.put_decision(&outcome.decision).unwrap();
+        agent_store.flush().unwrap();
+        outcome
+    };
+    let active_goal = active_goal_from_command(
+        pending_outcome
+            .goal_command
+            .clone()
+            .expect("goal command before sink"),
+    );
+    let sink_calls = RefCell::new(Vec::<String>::new());
+    let mut sink = |command: &AgentGoalCommand| {
+        sink_calls.borrow_mut().push(command.command_id.clone());
+        Ok::<AgentSinkSubmission, AgentSinkError>(AgentSinkSubmission::new(
+            command.command_id.clone(),
+            command.goal.goal_id.clone(),
+            "applied",
+        ))
+    };
+    let runtime = AgentGoalCurationRuntime::new(&agent_store);
+
+    let report = runtime.handle_delivery(
+        delivery,
+        &belief_query,
+        &planner_query,
+        ActiveGoalSummary {
+            goals: vec![active_goal.clone()],
+        },
+        rule_config(),
+        &mut sink,
+    );
+
+    assert!(report.retryable_errors.is_empty());
+    assert!(report.fatal_errors.is_empty());
+    assert_eq!(report.sink_submission_count, 0);
+    assert_eq!(sink_calls.borrow().len(), 0);
+    assert_eq!(report.sink_receipts.len(), 1);
+    assert_eq!(
+        report.sink_receipts[0].kind,
+        AgentSinkReceiptKind::GoalCommand
+    );
+    assert_eq!(
+        report.sink_receipts[0].submission.command_id,
+        pending_outcome
+            .decision
+            .goal_command_id
+            .clone()
+            .expect("persisted command id")
+    );
+    assert_eq!(
+        report.sink_receipts[0].submission.goal_id,
+        active_goal.goal_id
+    );
+    assert_eq!(
+        agent_store
+            .get_subscription(&subscription.subscription_id)
+            .unwrap()
+            .unwrap()
+            .last_delivered_seq,
+        7
+    );
+    assert!(agent_store
+        .sink_receipt_by_decision(&pending_outcome.decision.decision_id)
+        .unwrap()
+        .is_some());
+}
+
+#[test]
 fn agent_satisfaction_review_persists_decision_before_returning_mutation() {
     let (agent_temp, agent_store) = agent_store();
     let (_agent, subscription) = setup_agent(&agent_store);
@@ -1089,6 +1341,125 @@ fn agent_satisfaction_review_replays_by_review_identity() {
             .len(),
         1
     );
+}
+
+#[test]
+fn agent_satisfaction_runtime_reuses_durable_sink_receipt_on_replay() {
+    let (_agent_temp, agent_store) = agent_store();
+    let (_agent, subscription) = setup_agent(&agent_store);
+    let belief_temp = tempfile::tempdir().unwrap();
+    let belief_store =
+        BeliefStore::new(sled::open(belief_temp.path().join("belief")).unwrap()).unwrap();
+    belief_store
+        .put_view(&test_view(0.95, "revision-b", 22))
+        .unwrap();
+    let belief_query = BeliefQuery::new(&belief_store);
+    let (_graph_temp, graph_store) = seeded_graph();
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&graph_store),
+    );
+    let mut goal = low_confidence_goal_command().goal;
+    goal.lifecycle = GoalLifecycle::Active;
+    let review = satisfaction_review(&subscription, 22);
+    let sink_calls = RefCell::new(Vec::<String>::new());
+    let mut sink = |command: &AgentGoalMutationCommand| {
+        sink_calls.borrow_mut().push(command.command_id.clone());
+        Ok::<AgentSinkSubmission, AgentSinkError>(AgentSinkSubmission::new(
+            command.command_id.clone(),
+            command.goal_id.clone(),
+            "applied",
+        ))
+    };
+    let runtime = AgentSatisfactionCurationRuntime::new(&agent_store);
+
+    let first = runtime.handle_review(
+        review.clone(),
+        &belief_query,
+        &planner_query,
+        ActiveGoalSummary {
+            goals: vec![goal.clone()],
+        },
+        &mut sink,
+    );
+    goal.lifecycle = GoalLifecycle::Satisfied { at_seq: 22 };
+    let replay = runtime.handle_review(
+        review.clone(),
+        &belief_query,
+        &planner_query,
+        ActiveGoalSummary { goals: vec![goal] },
+        &mut sink,
+    );
+
+    assert!(first.fatal_errors.is_empty());
+    assert_eq!(first.sink_submission_count, 1);
+    assert_eq!(first.sink_receipts.len(), 1);
+    assert_eq!(
+        first.sink_receipts[0].kind,
+        AgentSinkReceiptKind::GoalMutationCommand
+    );
+    assert_eq!(replay.output_sequence, 22);
+    assert!(replay.retryable_errors.is_empty());
+    assert!(replay.fatal_errors.is_empty());
+    assert_eq!(replay.sink_submission_count, 0);
+    assert_eq!(replay.sink_receipts.len(), 1);
+    assert_eq!(sink_calls.borrow().len(), 1);
+    assert!(agent_store
+        .sink_receipt_by_decision(&first.sink_receipts[0].decision_id)
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn agent_satisfaction_runtime_rejects_not_found_sink_submission() {
+    let (_agent_temp, agent_store) = agent_store();
+    let (_agent, subscription) = setup_agent(&agent_store);
+    let belief_temp = tempfile::tempdir().unwrap();
+    let belief_store =
+        BeliefStore::new(sled::open(belief_temp.path().join("belief")).unwrap()).unwrap();
+    belief_store
+        .put_view(&test_view(0.95, "revision-b", 22))
+        .unwrap();
+    let belief_query = BeliefQuery::new(&belief_store);
+    let (_graph_temp, graph_store) = seeded_graph();
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&graph_store),
+    );
+    let mut goal = low_confidence_goal_command().goal;
+    goal.lifecycle = GoalLifecycle::Active;
+    let review = satisfaction_review(&subscription, 22);
+    let sink_calls = RefCell::new(Vec::<String>::new());
+    let mut sink = |command: &AgentGoalMutationCommand| {
+        sink_calls.borrow_mut().push(command.command_id.clone());
+        Ok::<AgentSinkSubmission, AgentSinkError>(AgentSinkSubmission::new(
+            command.command_id.clone(),
+            command.goal_id.clone(),
+            "not_found",
+        ))
+    };
+
+    let report = AgentSatisfactionCurationRuntime::new(&agent_store).handle_review(
+        review,
+        &belief_query,
+        &planner_query,
+        ActiveGoalSummary { goals: vec![goal] },
+        &mut sink,
+    );
+
+    assert_eq!(report.output_sequence, 0);
+    assert_eq!(report.delivered_count, 1);
+    assert_eq!(report.decision_count, 1);
+    assert_eq!(report.sink_submission_count, 1);
+    assert!(report.retryable_errors.is_empty());
+    assert_eq!(report.fatal_errors.len(), 1);
+    assert!(report.fatal_errors[0].contains("not an accepted command outcome"));
+    assert!(report.sink_receipts.is_empty());
+    assert_eq!(sink_calls.borrow().len(), 1);
+    assert!(AgentQuery::new(&agent_store)
+        .decision_by_satisfaction_review(&satisfaction_review(&subscription, 22))
+        .unwrap()
+        .is_some());
 }
 
 #[test]

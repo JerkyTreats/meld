@@ -1,19 +1,14 @@
 #[path = "../../crates/meld-execution/tests/support/task_network.rs"]
 mod task_network_support;
 
-use std::sync::Arc;
-
-use meld::execution::{
-    build_docs_task_success_evidence, satisfy_request_from_agent_mutation,
-    DocsTaskSuccessEvidenceRequest, GoalMutationRequest,
-};
+use meld::runtime::assembly::ProductRuntimeAssembly;
 use meld::runtime::contracts::WorkerTickReport;
+use meld::runtime::ports::{
+    DocsTaskEvidenceReplayRequest, ProductRuntimePorts, ProviderPortConfig,
+};
 use meld::runtime::storage::{OpenProductStores, ProductStorageLayout};
 use meld_events::{EventEnvelope, EventRecord};
-use meld_execution::goals::{
-    GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
-    GoalSetApi,
-};
+use meld_execution::goals::GoalCommandOutcome;
 use meld_execution::planning::{
     PlanningRequest, PlanningResult, PlanningWorldStateFrameRef, PlanningWorldStateRequest,
 };
@@ -22,31 +17,33 @@ use meld_execution::task_network::command::{Command, Response};
 use meld_execution::task_network::dispatch::{Outcome, OutcomeStatus, Request as DispatchRequest};
 use meld_execution::task_network::outcome::PublicationState;
 use meld_execution::task_network::publication::{
-    publish_pending_publications, PublicationPublishResult, PublishPendingPublicationsRequest,
+    publish_pending_publications, EventAppendSink, PublicationPublishResult,
+    PublishPendingPublicationsRequest,
 };
 use meld_execution::task_network::readiness::compute_ready_set;
 use meld_execution::task_network::state::TaskStatus;
 use meld_execution::task_network::store::SledTaskNetworkStore;
+use meld_execution::task_network::PublicationRuntime;
 use meld_lang::{Condition, GoalLifecycle, Literal, Proposition, Term, WorldState};
 use meld_world_model::agent::{
-    ActiveGoalSummary, AgentCuration, AgentCurationDedupeKey, AgentDelivery, AgentGoalCommand,
-    AgentQuery, AgentRegistration, AgentSatisfactionReview, AgentSubscription,
-    SubscribeAgentCommand,
+    ActiveGoalSummary, AgentActiveGoalQueryError, AgentCurationDedupeKey, AgentDelivery,
+    AgentGoalCommand, AgentGoalCurationRuntime, AgentGoalMutationCommand, AgentQuery,
+    AgentRegistration, AgentSatisfactionCurationRuntime, AgentSatisfactionReview, AgentSinkError,
+    AgentSinkSubmission, AgentSubscription, SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
-    ingest_promoted_evidence, BeliefConfigLoader, BeliefProvenanceSummary, BeliefQuery,
-    BeliefRuntime, ContradictionState, FreshnessState, HydrationRefs, PlannerProjectionSummary,
-    PosteriorSummary, PromotedEvidenceIngestionRequest,
+    BeliefConfigLoader, BeliefProvenanceSummary, BeliefQuery, BeliefRuntime, ContradictionState,
+    FreshnessState, HydrationRefs, PlannerProjectionSummary, PosteriorSummary,
 };
 use meld_world_model::planner::{PlannerQuery, PLANNER_PROJECTION_VERSION};
 use meld_world_model::{BeliefStatus, BeliefView, TraversalQuery};
 use serde_json::json;
 
 use super::docs_freshness_fixture::{
-    DocsFreshnessFirstProofFixture, AGENT_ID, ARTIFACT_ID, CONTENT_SOURCE_KIND, DIMENSION_ID,
-    GOAL_COMMAND_REVISION_ID, GRAPH_PERSPECTIVE_ID, GRAPH_PERSPECTIVE_KIND, OUTCOME_ID,
-    PUBLICATION_EVENT_TYPE, PUBLICATION_ID, REQUIRED_ARTIFACT_TYPE_ID, SESSION_ID,
-    TASK_ARTIFACT_REPO_ID, TASK_INSTANCE_ID, TASK_NETWORK_ID, THRESHOLD, WORKER_ID,
+    DocsFreshnessFirstProofFixture, AGENT_ID, ARTIFACT_ID, DIMENSION_ID, GOAL_COMMAND_REVISION_ID,
+    GRAPH_PERSPECTIVE_ID, GRAPH_PERSPECTIVE_KIND, OUTCOME_ID, PUBLICATION_EVENT_TYPE,
+    PUBLICATION_ID, REQUIRED_ARTIFACT_TYPE_ID, SESSION_ID, TASK_ARTIFACT_REPO_ID, TASK_INSTANCE_ID,
+    TASK_NETWORK_ID, THRESHOLD, WORKER_ID,
 };
 
 struct ReopenHarness {
@@ -71,6 +68,15 @@ impl ReopenHarness {
         OpenProductStores::open(&self.layout).unwrap()
     }
 
+    fn assembly(&self) -> ProductRuntimeAssembly {
+        let _keep_tempdir = self.temp.path();
+        ProductRuntimeAssembly::load_for_product_root(self.layout.root.clone()).unwrap()
+    }
+
+    fn ports(&self, stores: &OpenProductStores) -> ProductRuntimePorts {
+        ProductRuntimePorts::from_stores(stores, ProviderPortConfig::default()).unwrap()
+    }
+
     fn flush_and_reopen(&self, stores: OpenProductStores) -> OpenProductStores {
         stores.flush_boundary().unwrap();
         drop(stores);
@@ -80,6 +86,169 @@ impl ReopenHarness {
     fn open_network(&self, stores: &OpenProductStores) -> SledTaskNetworkStore {
         stores.task_networks.open_network(TASK_NETWORK_ID).unwrap()
     }
+}
+
+#[test]
+fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
+    let harness = ReopenHarness::new();
+    let stores = setup_reopened_pending_publication(&harness);
+    let ports = harness.ports(&stores);
+    let mut network = harness.open_network(&stores);
+    seed_event_allocator_before_publication(&stores, &harness.fixture);
+
+    let publication_runtime = PublicationRuntime::new();
+    let report = publication_runtime
+        .publish_pending(
+            &mut network,
+            ports.event_append(),
+            PublishPendingPublicationsRequest {
+                session_id: SESSION_ID.to_string(),
+                worker_id: WORKER_ID.to_string(),
+                limit: Some(1),
+            },
+        )
+        .unwrap();
+    assert_eq!(report.attempted, 1);
+    assert_eq!(report.committed, 1);
+    assert!(report.retryable_errors.is_empty());
+    assert!(report.fatal_errors.is_empty());
+    assert!(report.output_revision > report.input_revision);
+
+    network.flush().unwrap();
+    drop(network);
+    stores.flush_boundary().unwrap();
+    drop(ports);
+    drop(stores);
+
+    let stores = harness.open();
+    let ports = harness.ports(&stores);
+    let records = ports
+        .event_replay()
+        .read_after_limit(harness.fixture.publication_event_seq() - 1, 1)
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    let event = records[0].clone();
+    assert_eq!(event.seq, harness.fixture.publication_event_seq());
+    assert_eq!(event.envelope.event_type, PUBLICATION_EVENT_TYPE);
+    let duplicate_seq = ports
+        .event_append()
+        .append_envelope_idempotent(event.envelope.clone())
+        .unwrap();
+    assert_eq!(duplicate_seq, event.seq);
+
+    let network = stores.task_networks.open_network(TASK_NETWORK_ID).unwrap();
+    let publication = network
+        .state()
+        .publications
+        .values()
+        .next()
+        .expect("expected published publication");
+    assert!(matches!(
+        publication.state,
+        PublicationState::Published {
+            event_seq: Some(seq),
+            ..
+        } if seq == event.seq
+    ));
+    drop(network);
+
+    let ingestion = ports
+        .docs_task_evidence()
+        .ingest_after_limit(DocsTaskEvidenceReplayRequest {
+            after_seq: harness.fixture.publication_event_seq() - 1,
+            limit: 1,
+            subject: harness.fixture.subject(),
+            config: BeliefConfigLoader::load_json(harness.fixture.belief_config_json()).unwrap(),
+            perspective: harness.fixture.perspective(),
+            branch_scope: harness.fixture.branch_scope(),
+            owner_id: WORKER_ID.to_string(),
+            required_artifact_type_id: Some(REQUIRED_ARTIFACT_TYPE_ID.to_string()),
+        })
+        .unwrap();
+    assert_eq!(ingestion.events_attempted, 1);
+    assert_eq!(ingestion.promoted_evidence_count, 1);
+    assert_eq!(ingestion.normalized_evidence_count, 2);
+    assert_eq!(ingestion.new_assignment_count, 2);
+    assert!(ingestion
+        .ingestions
+        .iter()
+        .any(|result| !result.committed.is_empty()));
+
+    let review = AgentSatisfactionReview {
+        agent_id: AGENT_ID.to_string(),
+        subscription_id: harness.fixture.expected_subscription_id(),
+        review_seq: harness.fixture.satisfaction_review_seq(),
+    };
+    let mut goal_query = |_agent_id: &str| {
+        stores
+            .goal_store
+            .active_goals()
+            .map(|goals| ActiveGoalSummary { goals })
+            .map_err(|error| AgentActiveGoalQueryError::retryable(error.to_string()))
+    };
+    let mut mutation_sink = |command: &AgentGoalMutationCommand| match ports
+        .goal_mutation()
+        .satisfy_agent_goal_mutation(command.clone())
+    {
+        Ok(outcome) => submission_from_mutation_outcome(command, outcome),
+        Err(error) => Err(AgentSinkError::retryable(error.to_string())),
+    };
+    let satisfaction_report = {
+        let belief_query = BeliefQuery::new(stores.belief_store.as_ref());
+        let planner_query = PlannerQuery::new(
+            BeliefQuery::new(stores.belief_store.as_ref()),
+            TraversalQuery::new(stores.traversal_store.as_ref()),
+        );
+        AgentSatisfactionCurationRuntime::new(stores.agent_store.as_ref())
+            .handle_review_with_goal_query(
+                review.clone(),
+                &belief_query,
+                &planner_query,
+                &mut goal_query,
+                &mut mutation_sink,
+            )
+    };
+    assert_eq!(satisfaction_report.delivered_count, 1);
+    assert_eq!(satisfaction_report.decision_count, 1);
+    assert_eq!(satisfaction_report.sink_submission_count, 1);
+    assert!(satisfaction_report.retryable_errors.is_empty());
+    assert!(satisfaction_report.fatal_errors.is_empty());
+    assert_eq!(
+        satisfaction_report.output_sequence,
+        harness.fixture.satisfaction_review_seq()
+    );
+
+    let persisted = AgentQuery::new(stores.agent_store.as_ref())
+        .decision_by_satisfaction_review(&review)
+        .unwrap()
+        .expect("expected persisted satisfaction decision");
+    assert_eq!(
+        persisted.goal_mutation_command_id.as_deref(),
+        Some(
+            harness
+                .fixture
+                .expected_satisfaction_mutation_command_id()
+                .as_str()
+        )
+    );
+    stores.flush_boundary().unwrap();
+    drop(ports);
+    drop(stores);
+
+    let final_assembly = harness.assembly();
+    assert_eq!(final_assembly.product_root(), harness.layout.root.as_path());
+    let record = final_assembly
+        .stores()
+        .goal_store
+        .get_goal(&harness.fixture.expected_goal_id())
+        .unwrap()
+        .expect("expected final goal record");
+    assert_eq!(
+        record.goal.lifecycle,
+        harness
+            .fixture
+            .expected_final_lifecycle(harness.fixture.satisfaction_review_seq())
+    );
 }
 
 #[test]
@@ -194,6 +363,7 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
     drop(network);
     stores = harness.flush_and_reopen(stores);
     let network = harness.open_network(&stores);
+    let ports = harness.ports(&stores);
 
     let records = stores
         .event_store
@@ -224,61 +394,71 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
         } if seq == event.seq
     ));
 
-    let promoted = build_docs_task_success_evidence(DocsTaskSuccessEvidenceRequest {
-        event,
-        subject: harness.fixture.subject(),
-        stale_probability: 0.0,
-        review_probability: 0.2,
-        source_kind: CONTENT_SOURCE_KIND.to_string(),
-        required_artifact_type_id: Some(REQUIRED_ARTIFACT_TYPE_ID.to_string()),
-    })
-    .unwrap()
-    .expect("expected docs evidence");
-    let runtime = BeliefRuntime::from_json_config(
-        stores.belief_store.clone(),
-        stores.traversal_store.clone(),
-        harness.fixture.belief_config_json(),
-    )
-    .unwrap();
-    let ingestion = ingest_promoted_evidence(
-        stores.belief_store.as_ref(),
-        &runtime,
-        PromotedEvidenceIngestionRequest {
-            record: promoted,
+    let ingestion = ports
+        .docs_task_evidence()
+        .ingest_after_limit(DocsTaskEvidenceReplayRequest {
+            after_seq: event.seq - 1,
+            limit: 1,
+            subject: harness.fixture.subject(),
             config: BeliefConfigLoader::load_json(harness.fixture.belief_config_json()).unwrap(),
             perspective: harness.fixture.perspective(),
             branch_scope: harness.fixture.branch_scope(),
-            owner_id: WORKER_ID,
-        },
-    )
-    .unwrap();
+            owner_id: WORKER_ID.to_string(),
+            required_artifact_type_id: Some(REQUIRED_ARTIFACT_TYPE_ID.to_string()),
+        })
+        .unwrap();
+    assert_eq!(ingestion.events_attempted, 1);
+    assert_eq!(ingestion.promoted_evidence_count, 1);
     assert_eq!(ingestion.normalized_evidence_count, 2);
     assert_eq!(ingestion.new_assignment_count, 2);
-    assert!(!ingestion.committed.is_empty());
+    assert!(ingestion
+        .ingestions
+        .iter()
+        .any(|result| !result.committed.is_empty()));
 
     let review = AgentSatisfactionReview {
         agent_id: AGENT_ID.to_string(),
         subscription_id: harness.fixture.expected_subscription_id(),
         review_seq: harness.fixture.satisfaction_review_seq(),
     };
-    let active_goals = stores.goal_store.active_goals().unwrap();
-    let outcome = {
+    let mut goal_query = |_agent_id: &str| {
+        stores
+            .goal_store
+            .active_goals()
+            .map(|goals| ActiveGoalSummary { goals })
+            .map_err(|error| AgentActiveGoalQueryError::retryable(error.to_string()))
+    };
+    let mut mutation_sink = |command: &AgentGoalMutationCommand| match ports
+        .goal_mutation()
+        .satisfy_agent_goal_mutation(command.clone())
+    {
+        Ok(outcome) => submission_from_mutation_outcome(command, outcome),
+        Err(error) => Err(AgentSinkError::retryable(error.to_string())),
+    };
+    let satisfaction_report = {
         let belief_query = BeliefQuery::new(stores.belief_store.as_ref());
         let planner_query = PlannerQuery::new(
             BeliefQuery::new(stores.belief_store.as_ref()),
             TraversalQuery::new(stores.traversal_store.as_ref()),
         );
-        AgentCuration::new(stores.agent_store.as_ref())
-            .handle_satisfaction_review(
+        AgentSatisfactionCurationRuntime::new(stores.agent_store.as_ref())
+            .handle_review_with_goal_query(
                 review.clone(),
                 &belief_query,
                 &planner_query,
-                ActiveGoalSummary {
-                    goals: active_goals,
-                },
+                &mut goal_query,
+                &mut mutation_sink,
             )
-            .unwrap()
     };
+    assert_eq!(satisfaction_report.delivered_count, 1);
+    assert_eq!(satisfaction_report.decision_count, 1);
+    assert_eq!(satisfaction_report.sink_submission_count, 1);
+    assert!(satisfaction_report.retryable_errors.is_empty());
+    assert!(satisfaction_report.fatal_errors.is_empty());
+    assert_eq!(
+        satisfaction_report.output_sequence,
+        harness.fixture.satisfaction_review_seq()
+    );
 
     let persisted = AgentQuery::new(stores.agent_store.as_ref())
         .decision_by_satisfaction_review(&review)
@@ -295,18 +475,6 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
         "{persisted:?}"
     );
 
-    let mutation = outcome
-        .goal_mutation_command
-        .expect("expected satisfaction mutation");
-    assert_eq!(
-        mutation.command_id,
-        harness.fixture.expected_satisfaction_mutation_command_id()
-    );
-    let satisfy =
-        satisfy_request_from_agent_mutation(GoalMutationRequest { command: mutation }).unwrap();
-    let goal_store = Arc::get_mut(&mut stores.goal_store).expect("unique goal store");
-    GoalSetApi::new(goal_store).satisfy_goal(satisfy).unwrap();
-
     let record = stores
         .goal_store
         .get_goal(&harness.fixture.expected_goal_id())
@@ -321,7 +489,7 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
 }
 
 fn setup_reopened_active_goal(harness: &ReopenHarness) -> OpenProductStores {
-    let mut stores = harness.open();
+    let stores = harness.open();
     let fixture = harness.fixture;
     fixture.seed_graph_into(stores.traversal_store.as_ref());
     BeliefRuntime::from_json_config(
@@ -356,39 +524,48 @@ fn setup_reopened_active_goal(harness: &ReopenHarness) -> OpenProductStores {
         .put_view(&belief_view(&fixture, 0.2, GOAL_COMMAND_REVISION_ID, 7))
         .unwrap();
 
-    let goal_command = {
-        let belief_query = BeliefQuery::new(stores.belief_store.as_ref());
-        let planner_query = PlannerQuery::new(
-            BeliefQuery::new(stores.belief_store.as_ref()),
-            TraversalQuery::new(stores.traversal_store.as_ref()),
-        );
-        let delivery = AgentDelivery {
-            agent_id: AGENT_ID.to_string(),
-            subscription_id: subscription.subscription_id,
-            belief_revision_id: GOAL_COMMAND_REVISION_ID.to_string(),
-            revision_seq: fixture.goal_acceptance_seq(),
-        };
-        AgentCuration::new(stores.agent_store.as_ref())
-            .handle_delivery(
-                delivery,
-                &belief_query,
-                &planner_query,
-                ActiveGoalSummary::default(),
-                fixture.curation_rule_config(),
-            )
-            .unwrap()
-            .expect("expected curation delivery")
-            .goal_command
-            .expect("expected goal command")
+    let ports = ProductRuntimePorts::from_stores(&stores, ProviderPortConfig::default()).unwrap();
+    let mut sink = |command: &AgentGoalCommand| match ports
+        .goal_command()
+        .accept_agent_goal_command(command.clone(), fixture.goal_acceptance_seq())
+    {
+        Ok(outcome) => submission_from_goal_outcome(command, outcome),
+        Err(error) => Err(AgentSinkError::retryable(error.to_string())),
     };
-    assert_eq!(goal_command.command_id, fixture.expected_goal_command_id());
-    assert_eq!(goal_command.goal.goal_id, fixture.expected_goal_id());
-
-    let request =
-        acceptance_request_from_agent_command(goal_command, fixture.goal_acceptance_seq());
-    let goal_store = Arc::get_mut(&mut stores.goal_store).expect("unique goal store");
-    let outcome = GoalSetApi::new(goal_store).accept_goal(request).unwrap();
-    assert!(matches!(outcome, GoalCommandOutcome::Applied(_)));
+    let belief_query = BeliefQuery::new(stores.belief_store.as_ref());
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(stores.belief_store.as_ref()),
+        TraversalQuery::new(stores.traversal_store.as_ref()),
+    );
+    let delivery = AgentDelivery {
+        agent_id: AGENT_ID.to_string(),
+        subscription_id: subscription.subscription_id,
+        belief_revision_id: GOAL_COMMAND_REVISION_ID.to_string(),
+        revision_seq: fixture.goal_acceptance_seq(),
+    };
+    let mut goal_query = |_agent_id: &str| {
+        stores
+            .goal_store
+            .active_goals()
+            .map(|goals| ActiveGoalSummary { goals })
+            .map_err(|error| AgentActiveGoalQueryError::retryable(error.to_string()))
+    };
+    let report = AgentGoalCurationRuntime::new(stores.agent_store.as_ref())
+        .handle_delivery_with_goal_query(
+            delivery,
+            &belief_query,
+            &planner_query,
+            &mut goal_query,
+            fixture.curation_rule_config(),
+            &mut sink,
+        );
+    assert_eq!(report.delivered_count, 1);
+    assert_eq!(report.decision_count, 1);
+    assert_eq!(report.sink_submission_count, 1);
+    assert!(report.retryable_errors.is_empty());
+    assert!(report.fatal_errors.is_empty());
+    assert_eq!(report.output_sequence, fixture.goal_acceptance_seq());
+    drop(ports);
 
     harness.flush_and_reopen(stores)
 }
@@ -522,20 +699,45 @@ fn seed_event_allocator_before_publication(
     stores.event_store.append_event_idempotent(&record).unwrap();
 }
 
-fn acceptance_request_from_agent_command(
-    command: AgentGoalCommand,
-    accepted_at_seq: u64,
-) -> GoalAcceptanceRequest {
-    command.validate().unwrap();
+fn submission_from_goal_outcome(
+    command: &AgentGoalCommand,
+    outcome: GoalCommandOutcome,
+) -> Result<AgentSinkSubmission, AgentSinkError> {
+    match outcome {
+        GoalCommandOutcome::Applied(record) => Ok(AgentSinkSubmission::new(
+            command.command_id.clone(),
+            record.goal.goal_id.clone(),
+            "applied",
+        )),
+        GoalCommandOutcome::Duplicate { existing_goal_id } => Ok(AgentSinkSubmission::new(
+            command.command_id.clone(),
+            existing_goal_id,
+            "duplicate",
+        )),
+        GoalCommandOutcome::NotFound { goal_id } => Err(AgentSinkError::fatal(format!(
+            "goal command sink did not find goal '{goal_id}'"
+        ))),
+    }
+}
 
-    GoalAcceptanceRequest {
-        metadata: GoalCommandMetadata {
-            command_id: command.command_id,
-            source_identity: Some(command.dedupe_key.index_key()),
-            seq: accepted_at_seq,
-        },
-        goal: command.goal,
-        lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
+fn submission_from_mutation_outcome(
+    command: &AgentGoalMutationCommand,
+    outcome: GoalCommandOutcome,
+) -> Result<AgentSinkSubmission, AgentSinkError> {
+    match outcome {
+        GoalCommandOutcome::Applied(record) => Ok(AgentSinkSubmission::new(
+            command.command_id.clone(),
+            record.goal.goal_id.clone(),
+            "applied",
+        )),
+        GoalCommandOutcome::Duplicate { existing_goal_id } => Ok(AgentSinkSubmission::new(
+            command.command_id.clone(),
+            existing_goal_id,
+            "duplicate",
+        )),
+        GoalCommandOutcome::NotFound { goal_id } => Err(AgentSinkError::fatal(format!(
+            "goal mutation sink did not find goal '{goal_id}'"
+        ))),
     }
 }
 

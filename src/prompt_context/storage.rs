@@ -187,6 +187,10 @@ impl PromptContextArtifactStorage {
         Ok(purged)
     }
 
+    pub fn flush(&self) -> Result<(), StorageError> {
+        sync_path_recursively(&self.root)
+    }
+
     fn artifact_path_for_digest(&self, digest: &str) -> PathBuf {
         if digest.len() < 4 {
             return self.root.join("invalid").join(format!("{}.blob", digest));
@@ -226,6 +230,24 @@ fn is_blob_file(path: &Path) -> bool {
         .and_then(|value| value.to_str())
         .map(|value| value.eq_ignore_ascii_case("blob"))
         .unwrap_or(false)
+}
+
+fn sync_path_recursively(path: &Path) -> Result<(), StorageError> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if path.is_file() {
+        fs::File::open(path)?.sync_all()?;
+        return Ok(());
+    }
+    if path.is_dir() {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            sync_path_recursively(&entry.path())?;
+        }
+        fs::File::open(path)?.sync_all()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -321,5 +343,18 @@ mod tests {
         assert_eq!(purged, 1);
         assert!(!old_path.exists());
         assert!(new_path.exists());
+    }
+
+    #[test]
+    fn flush_syncs_prompt_artifact_tree() {
+        let temp = TempDir::new().unwrap();
+        let storage = PromptContextArtifactStorage::new(temp.path()).unwrap();
+        let artifact = storage
+            .write_utf8(PromptContextArtifactKind::RenderedPrompt, "payload")
+            .unwrap();
+
+        storage.flush().unwrap();
+
+        assert_eq!(storage.read_verified(&artifact).unwrap(), b"payload");
     }
 }
