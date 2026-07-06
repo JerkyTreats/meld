@@ -4,8 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
+
 use crate::config::MerkleConfig;
-use crate::runtime::contracts::WorkBudget;
+use crate::runtime::contracts::{WorkBudget, WorkerTickReport};
 use crate::runtime::error::{RuntimeAssemblyError, RuntimeRegistryError};
 use crate::runtime::ports::{ProductRuntimePorts, ProviderPortConfig};
 use crate::runtime::storage::{OpenProductStores, ProductStorageLayout, ProductStorageRoot};
@@ -137,27 +139,43 @@ pub struct RuntimeFactoryRegistry {
     descriptors: BTreeMap<String, RuntimeFactoryDescriptor>,
 }
 
-/// Registry of inert runtime handle factories.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Registry of runtime handle factories.
 pub struct RuntimeHandleFactoryRegistry {
     factories: BTreeMap<String, RuntimeHandleFactory>,
 }
 
-/// Inert factory for one supervised runtime handle.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Factory for one supervised runtime handle.
 pub struct RuntimeHandleFactory {
     descriptor: RuntimeFactoryDescriptor,
+    semantic: RuntimeSemanticHandleFactory,
 }
 
-/// Inert supervised runtime handle.
+/// Supervised runtime handle.
 ///
-/// The handle exposes lifecycle shape only. It does not run bounded worker
-/// ticks, replay events, query goals, or call providers during construction.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The handle exposes lifecycle hooks and may own a bounded domain tick hook.
+/// Construction remains passive; semantic work only runs after supervisor
+/// lease acquisition and an explicit tick.
 pub struct InertRuntimeHandle {
     runtime_id: String,
     required_resources: Vec<RuntimeResource>,
     started: bool,
+    semantic: RuntimeSemanticHandle,
+}
+
+#[derive(Clone)]
+enum RuntimeSemanticHandleFactory {
+    None,
+    GraphReplay { graph_runtime: Arc<GraphRuntime> },
+}
+
+enum RuntimeSemanticHandle {
+    None,
+    GraphReplay(GraphReplayRuntimeHandle),
+}
+
+#[derive(Clone)]
+struct GraphReplayRuntimeHandle {
+    graph_runtime: Arc<GraphRuntime>,
 }
 
 /// Lease context supplied by the supervisor before a handle starts.
@@ -394,7 +412,8 @@ impl ProductRuntimeAssembly {
         provider.provider_required = provider_required(&registry, &desired_runtime_state);
         let supervisor_store = SupervisorStore::open(supervisor_store_path)?;
         let ports = ProductRuntimePorts::from_stores(stores.as_ref(), provider)?;
-        let handle_factories = RuntimeHandleFactoryRegistry::from_registry(&registry);
+        let handle_factories =
+            RuntimeHandleFactoryRegistry::from_registry(&registry, stores.as_ref(), &ports);
 
         Ok(Self {
             product_root,
@@ -607,7 +626,11 @@ impl RuntimeFactoryDescriptor {
 
 impl RuntimeHandleFactoryRegistry {
     /// Build inert handle factories from the runtime factory registry.
-    pub fn from_registry(registry: &RuntimeFactoryRegistry) -> Self {
+    pub fn from_registry(
+        registry: &RuntimeFactoryRegistry,
+        stores: &OpenProductStores,
+        ports: &ProductRuntimePorts,
+    ) -> Self {
         let factories = registry
             .descriptors()
             .map(|descriptor| {
@@ -615,6 +638,9 @@ impl RuntimeHandleFactoryRegistry {
                     descriptor.runtime_id.clone(),
                     RuntimeHandleFactory {
                         descriptor: descriptor.clone(),
+                        semantic: RuntimeSemanticHandleFactory::for_descriptor(
+                            descriptor, stores, ports,
+                        ),
                     },
                 )
             })
@@ -650,6 +676,7 @@ impl RuntimeHandleFactory {
             runtime_id: self.descriptor.runtime_id.clone(),
             required_resources: self.descriptor.required_resources.clone(),
             started: false,
+            semantic: self.semantic.build_handle(),
         }
     }
 }
@@ -668,6 +695,14 @@ impl InertRuntimeHandle {
     /// Return whether the supervisor has started this handle.
     pub fn is_started(&self) -> bool {
         self.started
+    }
+
+    /// Run one bounded semantic tick when this handle owns concrete work.
+    pub fn tick(&mut self, budget: WorkBudget) -> Option<WorkerTickReport> {
+        if !self.started {
+            return None;
+        }
+        self.semantic.tick(budget)
     }
 
     /// Return a supervisor-facing diagnostic snapshot.
@@ -691,6 +726,7 @@ impl InertRuntimeHandle {
     pub fn request_stop(&mut self) -> RuntimeHandleStopReport {
         let was_started = self.started;
         self.started = false;
+        self.semantic.request_stop();
         RuntimeHandleStopReport {
             runtime_id: self.runtime_id.clone(),
             was_started,
@@ -725,6 +761,66 @@ impl InertRuntimeHandle {
         Ok(RuntimeHandleStartReport {
             runtime_id: self.runtime_id.clone(),
         })
+    }
+}
+
+impl RuntimeSemanticHandleFactory {
+    fn for_descriptor(
+        descriptor: &RuntimeFactoryDescriptor,
+        stores: &OpenProductStores,
+        _ports: &ProductRuntimePorts,
+    ) -> Self {
+        match descriptor.runtime_id.as_str() {
+            "world_model.graph_replay" => Self::GraphReplay {
+                graph_runtime: Arc::new(GraphRuntime::from_stores(
+                    Arc::clone(&stores.event_store),
+                    Arc::clone(&stores.traversal_store),
+                )),
+            },
+            _ => Self::None,
+        }
+    }
+
+    fn build_handle(&self) -> RuntimeSemanticHandle {
+        match self {
+            Self::None => RuntimeSemanticHandle::None,
+            Self::GraphReplay { graph_runtime } => {
+                RuntimeSemanticHandle::GraphReplay(GraphReplayRuntimeHandle {
+                    graph_runtime: Arc::clone(graph_runtime),
+                })
+            }
+        }
+    }
+}
+
+impl RuntimeSemanticHandle {
+    fn tick(&mut self, budget: WorkBudget) -> Option<WorkerTickReport> {
+        match self {
+            Self::None => None,
+            Self::GraphReplay(handle) => Some(handle.tick(budget)),
+        }
+    }
+
+    fn request_stop(&mut self) {}
+}
+
+impl GraphReplayRuntimeHandle {
+    fn tick(&self, budget: WorkBudget) -> WorkerTickReport {
+        self.graph_runtime
+            .catch_up_bounded(GraphCatchUpBudget {
+                max_items: budget.max_items,
+            })
+            .map(WorkerTickReport::from)
+            .unwrap_or_else(|error| {
+                WorkerTickReport::fatal(
+                    "world_state.graph.reducer",
+                    "world_state",
+                    Some("graph"),
+                    "event_spine_seq",
+                    "graph_replay_failed",
+                    error.to_string(),
+                )
+            })
     }
 }
 
@@ -1153,7 +1249,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_package_exposes_inert_handle_factories() {
+    fn startup_package_exposes_runtime_handle_factories() {
         let temp = tempfile::tempdir().unwrap();
         let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
 

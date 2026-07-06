@@ -134,6 +134,7 @@ Assembly inputs come from config, environment, and process services. Missing or 
 Required product inputs:
 
 - product root path or workspace path from which the product root is derived
+- docs freshness activation document path when the `docs_freshness` flywheel is enabled
 - storage layout version or default layout selector
 - supervisor store path or default `supervisor.sled` path below the product root
 - enabled runtime ids
@@ -152,6 +153,10 @@ Required product inputs:
 
 The first physical `docs_freshness` config surface is detailed in [Docs Freshness Physical Configuration Requirements](docs_freshness_physical_configuration_requirements.md).
 
+For the product-visible `docs_freshness` slice, root assembly owns activation document loading and shape validation. The activation document is one physical file that may be TOML, YAML, or JSON behind a single DTO contract. Root assembly must split the validated DTO into owner-scoped runtime input packages before supervisor handoff.
+
+Domain runtimes must not receive the activation document path, raw parsed document, or source format metadata. They receive typed input values for their domain only.
+
 Required environment inputs:
 
 - filesystem access to the product root
@@ -163,7 +168,7 @@ Required environment inputs:
 - process signal source
 - bounded sleep or timer source used later by the supervisor
 
-Assembly may validate presence, path shape, runtime id format, duplicate ids, storage root writability, and provider config completeness. Assembly must not validate semantic correctness by querying active goals, belief views, pending publications, event payloads, or task network state.
+Assembly may validate presence, path shape, runtime id format, duplicate ids, storage root writability, provider config completeness, activation document schema version, and activation DTO syntax. Assembly must not validate semantic correctness by querying active goals, belief views, pending publications, event payloads, or task network state.
 
 Domain fixture values such as subject refs and branch ids are opaque to root assembly. Root assembly may pass them into owning domain factories after syntactic validation required by those factories.
 

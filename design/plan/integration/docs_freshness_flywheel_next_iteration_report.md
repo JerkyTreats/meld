@@ -57,7 +57,7 @@ The next iteration should produce one executable docs freshness flywheel from co
 | Step | Work Item | Owner Boundary | Expected Result |
 | --- | --- | --- | --- |
 | 1 | Add `workspace_scan` capability contract | `workspace` plus execution capability catalog | Scan becomes a normal task step, not a preflight blocker |
-| 2 | Add temporary docs freshness activation config | product assembly validates, domains own writes | A folder scoped docs freshness activation can be loaded deterministically |
+| 2 | Add single docs freshness activation file | product assembly parses and validates, domains own writes | A folder scoped docs freshness activation can be loaded deterministically and split into owner-scoped runtime inputs |
 | 3 | Add bootstrap runtime for directive and seed agent | world model agent domain | Directive, seed agent, and belief subscription are registered idempotently |
 | 4 | Bind docs freshness method to real docs writer package | execution planning and task package adapter | Planner output triggers the existing docs writer task path |
 | 5 | Start bounded semantic runtime handles | supervisor starts, domains execute | Bootstrap, curation, planning, publication, evidence replay, and satisfaction can tick under runtime |
@@ -95,16 +95,17 @@ The first slice should persist every decision that matters for replay and diagno
 | promoted evidence | world model belief | reason belief changed |
 | satisfaction decision | world model agent plus execution goals | reason the goal closed |
 
-The activation config may be temporary, but the records created from it should already use the intended durable boundaries.
+The activation file may be narrow, but the records created from it should already use the intended durable boundaries. Root assembly parses the file, validates the DTO, and passes typed input packages to runtimes. Runtimes do not parse the activation file and do not depend on its file format.
 
 ## Definition Of Done
 
-The next code iteration is complete when a focused command or integration test starts from a docs freshness activation config and a folder path, then reaches durable goal satisfaction without fixture only shortcuts.
+The next code iteration is complete when a focused command or integration test starts from one docs freshness activation file and a folder path, then reaches durable goal satisfaction without fixture only shortcuts.
 
 The proof should show:
 
 ```text
-activation config loaded
+activation file loaded
+-> validated activation split into owner-scoped runtime inputs
 -> bootstrap wrote or confirmed directive, agent, and subscription
 -> missing or stale workspace state requested workspace_scan
 -> scan produced workspace object refs
@@ -130,7 +131,7 @@ Directive identity is still not fully represented as an independent durable reco
 
 Patch one should add the `workspace_scan` capability contract, registration, and characterization tests around existing scan behavior.
 
-Patch two should add a temporary docs freshness activation config and world model bootstrap runtime that writes directive, seed agent, and subscription records idempotently.
+Patch two should add the single docs freshness activation file loader, validated activation DTO, owner-scoped runtime input packages, and world model bootstrap runtime that writes directive, seed agent, and subscription records idempotently.
 
 Patch three should bind the docs freshness planning method to the existing docs writer task package and prove the task network command shape.
 

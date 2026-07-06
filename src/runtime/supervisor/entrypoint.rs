@@ -9,6 +9,7 @@ use crate::runtime::assembly::{
     DesiredRuntimeState, InertRuntimeHandle, RuntimeHandleFlushReport, RuntimeHandleStopReport,
     RuntimeLeaseContext, SupervisorStartupPackage,
 };
+use crate::runtime::contracts::{WorkBudget, WorkerTickReport};
 use crate::runtime::error::RuntimeAssemblyError;
 
 use super::contracts::{
@@ -154,6 +155,7 @@ pub struct RuntimeSupervisor<'a> {
     supervisor_store: &'a SupervisorStore,
     handle_factories: &'a crate::runtime::assembly::RuntimeHandleFactoryRegistry,
     lifecycle_config: crate::runtime::assembly::RuntimeLifecycleConfig,
+    default_work_budget: WorkBudget,
     instance_id: String,
     started_at_ms: u64,
     desired: BTreeMap<String, SupervisorRuntimeDesired>,
@@ -212,6 +214,7 @@ impl<'a> RuntimeSupervisor<'a> {
             supervisor_store: package.supervisor_store,
             handle_factories: package.handle_factories,
             lifecycle_config: package.lifecycle_config.clone(),
+            default_work_budget: package.default_work_budget.clone(),
             instance_id: command.instance_id,
             started_at_ms: command.started_at_ms,
             desired,
@@ -261,26 +264,20 @@ impl<'a> RuntimeSupervisor<'a> {
                 .supervisor_store
                 .latest_lifecycle_event_for_runtime(&desired.runtime_id)?;
             let last_heartbeat_at_ms = heartbeat.as_ref().map(|record| record.observed_at_ms);
-            let heartbeat_age_ms = last_heartbeat_at_ms.map(|observed| {
-                if now_ms >= observed {
-                    now_ms - observed
-                } else {
-                    0
-                }
-            });
+            let heartbeat_age_ms =
+                last_heartbeat_at_ms.map(|observed| now_ms.saturating_sub(observed));
+            let default_health_status = if !desired.enabled {
+                RuntimeHealthStatus::Stopped
+            } else if !desired.factory_available {
+                RuntimeHealthStatus::Unhealthy
+            } else {
+                RuntimeHealthStatus::Unknown
+            };
             let health_status = health
                 .as_ref()
                 .map(|record| record.status)
                 .or_else(|| heartbeat.as_ref().map(|record| record.health.status))
-                .unwrap_or_else(|| {
-                    if !desired.enabled {
-                        RuntimeHealthStatus::Stopped
-                    } else if !desired.factory_available {
-                        RuntimeHealthStatus::Unhealthy
-                    } else {
-                        RuntimeHealthStatus::Unknown
-                    }
-                });
+                .unwrap_or(default_health_status);
             let restart_count = health
                 .as_ref()
                 .map(|record| record.restart_count)
@@ -463,7 +460,13 @@ impl<'a> RuntimeSupervisor<'a> {
             )?;
             renewed_runtime_ids.push(owner.runtime_id.to_string());
 
-            self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Healthy, now_ms)?;
+            let semantic_report = self
+                .handles
+                .get_mut(owner.runtime_id.as_str())
+                .and_then(|runtime| runtime.handle.tick(self.default_work_budget.clone()));
+            let health_status = health_status_from_tick_report(semantic_report.as_ref());
+
+            self.write_runtime_heartbeat(&owner, health_status, now_ms, semantic_report.as_ref())?;
             self.write_lifecycle_event(
                 Some(owner.runtime_id.clone()),
                 Some(owner.lease_id.clone()),
@@ -479,7 +482,7 @@ impl<'a> RuntimeSupervisor<'a> {
             self.write_health_snapshot(
                 &owner.runtime_id,
                 Some(owner.lease_id),
-                RuntimeHealthStatus::Healthy,
+                health_status,
                 now_ms,
                 existing_health
                     .as_ref()
@@ -556,7 +559,7 @@ impl<'a> RuntimeSupervisor<'a> {
             .collect::<Vec<_>>();
 
         for owner in owners {
-            self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Stopped, now_ms)?;
+            self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Stopped, now_ms, None)?;
             self.supervisor_store
                 .release_runtime_lease(&owner, now_ms)?;
             self.write_lifecycle_event(
@@ -762,7 +765,7 @@ impl<'a> RuntimeSupervisor<'a> {
             lease_id: lease.lease_id.clone(),
         })?;
         let owner = lease.owner();
-        self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Healthy, now_ms)?;
+        self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Healthy, now_ms, None)?;
         self.write_lifecycle_event(
             Some(runtime.clone()),
             Some(owner.lease_id.clone()),
@@ -864,6 +867,7 @@ impl<'a> RuntimeSupervisor<'a> {
         owner: &RuntimeLeaseOwner,
         status: RuntimeHealthStatus,
         now_ms: u64,
+        tick_report: Option<&WorkerTickReport>,
     ) -> Result<(), SupervisorRuntimeError> {
         let heartbeat = RuntimeHeartbeat {
             runtime_id: owner.runtime_id.clone(),
@@ -872,21 +876,35 @@ impl<'a> RuntimeSupervisor<'a> {
             observed_at_ms: now_ms,
             health: RuntimeHealth {
                 status,
-                retryable_error_count: NO_RUNTIME_ERRORS,
-                fatal_error_count: NO_RUNTIME_ERRORS,
-                budget_exhausted: false,
+                retryable_error_count: tick_report
+                    .map(|report| report.retryable_errors.len() as u64)
+                    .unwrap_or(NO_RUNTIME_ERRORS),
+                fatal_error_count: tick_report
+                    .map(|report| report.fatal_errors.len() as u64)
+                    .unwrap_or(NO_RUNTIME_ERRORS),
+                budget_exhausted: tick_report
+                    .map(|report| report.budget_exhausted)
+                    .unwrap_or(false),
                 last_successful_tick_at_ms: match status {
                     RuntimeHealthStatus::Healthy => Some(now_ms),
                     _ => None,
                 },
-                last_error_code: None,
+                last_error_code: tick_report.and_then(last_error_code),
             },
             diagnostic: Some(RuntimeDiagnosticSummary {
-                actor_id: owner.runtime_id.to_string(),
-                retryable_issue_count: NO_RUNTIME_ERRORS,
-                fatal_issue_count: NO_RUNTIME_ERRORS,
-                budget_exhausted: false,
-                last_error_code: None,
+                actor_id: tick_report
+                    .map(|report| report.actor_id.clone())
+                    .unwrap_or_else(|| owner.runtime_id.to_string()),
+                retryable_issue_count: tick_report
+                    .map(|report| report.retryable_errors.len() as u64)
+                    .unwrap_or(NO_RUNTIME_ERRORS),
+                fatal_issue_count: tick_report
+                    .map(|report| report.fatal_errors.len() as u64)
+                    .unwrap_or(NO_RUNTIME_ERRORS),
+                budget_exhausted: tick_report
+                    .map(|report| report.budget_exhausted)
+                    .unwrap_or(false),
+                last_error_code: tick_report.and_then(last_error_code),
             }),
         };
         self.supervisor_store.write_runtime_heartbeat(&heartbeat)?;
@@ -991,9 +1009,32 @@ fn is_retryable_restart_signal(heartbeat: &RuntimeHeartbeat) -> bool {
                 .is_some_and(|diagnostic| diagnostic.retryable_issue_count > 0))
 }
 
+fn health_status_from_tick_report(report: Option<&WorkerTickReport>) -> RuntimeHealthStatus {
+    let Some(report) = report else {
+        return RuntimeHealthStatus::Healthy;
+    };
+    if !report.fatal_errors.is_empty() {
+        RuntimeHealthStatus::Unhealthy
+    } else if !report.retryable_errors.is_empty() || report.budget_exhausted {
+        RuntimeHealthStatus::Degraded
+    } else {
+        RuntimeHealthStatus::Healthy
+    }
+}
+
+fn last_error_code(report: &WorkerTickReport) -> Option<String> {
+    report
+        .fatal_errors
+        .first()
+        .or_else(|| report.retryable_errors.first())
+        .map(|issue| issue.code.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::runtime::assembly::{ProductRuntimeAssembly, ProductRuntimeConfig};
+    use meld_events::{DomainObjectRef, EventEnvelope};
+    use serde_json::json;
 
     use super::*;
 
@@ -1327,6 +1368,58 @@ mod tests {
             event.event_type,
             SupervisorLifecycleEventType::HeartbeatAccepted
         );
+    }
+
+    #[test]
+    fn tick_runs_graph_replay_handle_and_records_worker_diagnostic() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let subject = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
+        assembly
+            .stores()
+            .event_store
+            .append_envelope(
+                EventEnvelope::new_domain(
+                    "2026-06-22T00:00:00Z".to_string(),
+                    "session-a",
+                    "workspace_fs",
+                    "workspace-a",
+                    "workspace.node.observed",
+                    None,
+                    json!({ "node": "node-a" }),
+                )
+                .with_graph(vec![subject], Vec::new())
+                .with_record_id("workspace-node-a"),
+            )
+            .unwrap();
+        let mut supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+        let runtime_id = RuntimeId::new("world_model.graph_replay").unwrap();
+
+        let report = supervisor.tick(120).unwrap();
+        let heartbeat = assembly
+            .supervisor_store()
+            .get_runtime_heartbeat(&runtime_id)
+            .unwrap()
+            .unwrap();
+        let reduced_seq = assembly
+            .stores()
+            .traversal_store
+            .last_reduced_seq()
+            .unwrap();
+
+        assert_eq!(report.renewed_runtime_ids, vec!["world_model.graph_replay"]);
+        assert_eq!(reduced_seq, 1);
+        assert_eq!(heartbeat.health.status, RuntimeHealthStatus::Healthy);
+        assert_eq!(heartbeat.health.last_successful_tick_at_ms, Some(120));
+        let diagnostic = heartbeat.diagnostic.expect("expected diagnostic");
+        assert_eq!(diagnostic.actor_id, "world_state.graph.reducer");
+        assert_eq!(diagnostic.fatal_issue_count, 0);
     }
 
     #[test]
