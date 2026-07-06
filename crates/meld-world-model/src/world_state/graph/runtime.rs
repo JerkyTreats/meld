@@ -84,6 +84,19 @@ impl GraphRuntime {
         })
     }
 
+    /// Build graph projection runtime from already opened product stores.
+    ///
+    /// This is used when the product runtime keeps the event ledger and world
+    /// model graph stores in separate physical databases while graph replay
+    /// ownership remains inside the world model domain.
+    pub fn from_stores(spine: Arc<EventStore>, traversal: Arc<TraversalStore>) -> Self {
+        Self {
+            spine,
+            traversal,
+            catch_up_lock: Mutex::new(()),
+        }
+    }
+
     /// Reduce new spine events into traversal indexes.
     pub fn catch_up(&self) -> Result<usize, StorageError> {
         let report = self.catch_up_unbounded()?;

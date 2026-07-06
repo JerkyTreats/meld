@@ -10,19 +10,27 @@ This document answers where the physical `docs_freshness` example gets its confi
 
 The short answer is:
 
+- the product-visible `docs_freshness` example should be described by one activation document
 - freshness belief family configuration already exists as world model belief runtime configuration
 - a directive has independent identity as a thin durable record, and the seed agent references it by `directive_id`
 - the current physical example seeds the directive from the integration fixture
 - the supervisor must not seed the directive
-- product assembly may load the seed directive config
+- product assembly loads and validates the activation document, then decomposes it into domain runtime inputs
 - world model agent bootstrap owns idempotent registration of the directive record and the seed agent that references it
 
 ## Configuration Planes
 
-The physical example needs separate configuration planes because each value has a different owner.
+The physical source should be one `docs_freshness` activation document.
+
+That document may be TOML, YAML, or JSON. The first implementation should choose one concrete format and parse it into the same typed DTO. Additional formats must be loaders for the same DTO, not new runtime contracts.
+
+The activation document is a transport and validation input for root product assembly. It is not semantic authority. Product assembly splits the validated DTO into owner-scoped runtime inputs. The downstream runtimes receive typed inputs and do not know whether those inputs came from TOML, YAML, JSON, fixture code, or CLI overrides.
+
+The physical example still needs separate configuration planes because each value has a different owner.
 
 | Plane | Owner | Purpose |
 | --- | --- | --- |
+| activation document source | root assembly | parse one external `docs_freshness` file into a validated DTO |
 | product root config | root assembly | choose product storage root and enabled runtime ids |
 | belief family config | `meld-world-model` belief runtime | define `docs_freshness` evidence, comparator, projection, and threshold |
 | seed directive config | `meld-world-model` agent runtime | define the trusted directive identity and text, plus the scope the referencing seed agent serves |
@@ -33,6 +41,8 @@ The physical example needs separate configuration planes because each value has 
 | proof fixture constants | integration proof only | pin first vertical proof identities and checkpoint expectations |
 
 No single supervisor record should combine these into semantic authority.
+
+No domain runtime should load or parse the activation document directly.
 
 ## Directive Identity And Cardinality
 
@@ -86,9 +96,9 @@ The seed directive exists today only in fixture code.
 
 That is proof fixture seeding, not product supervisor seeding.
 
-## Required Product Config Shape
+## Required Activation Document Shape
 
-The first product config surface should make the physical example explicit without moving ownership to root.
+The first product config surface should be one activation document that makes the physical example explicit without moving ownership to root.
 
 Suggested logical shape:
 
@@ -129,12 +139,16 @@ flywheel.docs_freshness:
     content_source_kind: content_written
 ```
 
-The first implementation may store this as fixture data, a JSON or TOML product config section, or a small embedded proof config. The important point is ownership:
+The product-visible implementation should not rely on fixture constants or embedded proof config for these values. It should load one activation document, validate it in product assembly, and build owner-scoped runtime input structs.
 
-- root assembly loads and validates the config shape
-- world model belief runtime loads the belief family config
-- world model agent runtime registers the directive record, the seed agent that references it, and the curation rule
-- execution loads method and task package config
+The important point is ownership:
+
+- root assembly loads the activation document and validates the DTO shape
+- root assembly resolves file paths, provider bindings, runtime ids, and references without querying semantic stores
+- root assembly builds owner-scoped runtime input packages
+- world model belief runtime receives its family config input or config ref from assembly and owns config snapshot persistence
+- world model agent runtime receives directive, seed agent, subscription, and curation rule inputs from assembly and owns durable registration
+- execution receives method, task package, artifact, task network, and publication mapping inputs from assembly and owns operational use
 - event runtime owns append and sequence only
 - supervisor owns lifecycle only
 
@@ -146,7 +160,9 @@ Correct ownership:
 
 ```text
 product assembly
--> load docs freshness seed config
+-> load docs freshness activation document
+-> validate activation DTO
+-> split DTO into domain runtime inputs
 -> build world model agent bootstrap runtime factory
 -> hand factory to supervisor
 -> supervisor acquires lease and starts runtime
@@ -234,7 +250,9 @@ Supervisor must not:
 
 ## Product Assembly Role
 
-Product assembly may load and validate the product config surface.
+Product assembly loads and validates the activation document.
+
+The assembly boundary owns source format parsing. Runtimes receive typed values only.
 
 Allowed validation:
 
@@ -246,24 +264,29 @@ Allowed validation:
 - method id presence
 - task network id syntax
 - event type syntax
+- activation document schema version
+- unsupported source format
+- unknown top level activation section
 
 Forbidden validation:
 
 - deciding if the directive is useful
 - deciding if docs freshness should be monitored
 - deciding if low confidence should create a goal
+- deciding which evidence supports `docs_freshness`
 - querying active goals
 - querying belief views
 - querying pending publications
 
-Assembly passes validated config into owning runtime factories. It does not register the seed agent itself unless it is executing a world model bootstrap API whose owner is explicit.
+Assembly passes validated input structs into owning runtime factories. It does not register the seed agent itself unless it is executing a world model bootstrap API whose owner is explicit.
 
 ## Vertical Proof Requirement
 
-The physical proof should keep fixture seeding but name it as a stand in for product config.
+The physical proof may keep fixture seeding while the activation loader is not implemented, but it must name fixture seeding as a stand in for the single activation document.
 
 The proof should assert:
 
+- one activation document can produce the same domain input packages as the fixture
 - fixture seed config can produce the same directive record and `SeedAgentRegistration`
 - the seed agent references the fixture `directive_id`
 - bootstrap registration is idempotent
@@ -276,6 +299,10 @@ The proof should assert:
 
 The physical example configuration is sufficiently designed when:
 
+- one activation document is the product source for the `docs_freshness` slice
+- root product assembly parses and validates that document before stores open
+- root product assembly distributes owner-scoped runtime inputs instead of sharing the raw document
+- downstream runtimes never parse the activation file and never depend on its source format
 - `docs_freshness` belief family config is loaded as world model runtime config
 - the directive has independent identity as a thin durable record and the seed agent references it by `directive_id`
 - seed directive config is represented as product input, not supervisor state

@@ -3,6 +3,8 @@ use meld::config::ConfigLoader;
 use meld::error::ApiError;
 use meld::runtime::assembly::ProductRuntimeAssembly;
 use meld::runtime::supervisor::RuntimeId;
+use meld_events::{DomainObjectRef, EventEnvelope};
+use serde_json::json;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -64,6 +66,57 @@ fn runtime_run_duration_starts_and_stops_cleanly() {
             .get_active_runtime_lease(&runtime_id)
             .unwrap()
             .is_none());
+    });
+}
+
+#[test]
+fn runtime_run_ticks_graph_replay_handle() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = workspace(&temp_dir);
+        let config = ConfigLoader::load(&workspace_root).unwrap();
+        let assembly =
+            ProductRuntimeAssembly::load_for_workspace(&workspace_root, &config).unwrap();
+        let subject = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
+        assembly
+            .stores()
+            .event_store
+            .append_envelope(
+                EventEnvelope::new_domain(
+                    "2026-06-22T00:00:00Z".to_string(),
+                    "session-a",
+                    "workspace_fs",
+                    "workspace-a",
+                    "workspace.node.observed",
+                    None,
+                    json!({ "node": "node-a" }),
+                )
+                .with_graph(vec![subject], Vec::new())
+                .with_record_id("workspace-node-a"),
+            )
+            .unwrap();
+        drop(assembly);
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&runtime_run_json(
+                Some("runtime-cli-test-graph"),
+                1,
+                Some(10),
+                "on-heartbeat-expiry",
+            ))
+            .unwrap();
+
+        let assembly =
+            ProductRuntimeAssembly::load_for_workspace(&workspace_root, &config).unwrap();
+        assert_eq!(
+            assembly
+                .stores()
+                .traversal_store
+                .last_reduced_seq()
+                .unwrap(),
+            1
+        );
     });
 }
 

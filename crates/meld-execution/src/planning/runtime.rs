@@ -113,6 +113,7 @@ pub struct PlanningRuntimeActorIssue {
 }
 
 /// Result for one active goal processed by the planning actor.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlanningRuntimeActorGoalResult {
     /// Projection failed before planning or task network mutation.

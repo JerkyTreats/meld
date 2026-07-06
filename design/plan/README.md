@@ -147,6 +147,8 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [integration/product_runtime_assembly_requirements.md](integration/product_runtime_assembly_requirements.md) - proposed product runtime assembly requirements
 - [integration/docs_freshness_physical_configuration_requirements.md](integration/docs_freshness_physical_configuration_requirements.md) - proposed docs freshness physical configuration requirements
 - [integration/docs_freshness_flywheel_next_iteration_report.md](integration/docs_freshness_flywheel_next_iteration_report.md) - proposed docs freshness flywheel next iteration report
+- [integration/docs_freshness_flywheel_domain_spec_skeleton.md](integration/docs_freshness_flywheel_domain_spec_skeleton.md) - proposed docs freshness domain spec skeleton
+- [integration/docs_freshness_flywheel_implementation_guide.md](integration/docs_freshness_flywheel_implementation_guide.md) - proposed docs freshness implementation guide
 - [integration/world_model_runtime_requirements.md](integration/world_model_runtime_requirements.md) - proposed world model runtime requirements
 - [integration/execution_runtime_requirements.md](integration/execution_runtime_requirements.md) - proposed execution runtime requirements
 - [integration/event_runtime_requirements.md](integration/event_runtime_requirements.md) - proposed event runtime requirements

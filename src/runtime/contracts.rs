@@ -1,17 +1,27 @@
-//! Runtime worker diagnostic contracts.
+//! Runtime worker diagnostic and operator visibility contracts.
 
-use meld_execution::task_network::PublicationBridgeReport;
+use std::path::PathBuf;
+
+use meld_execution::planning::PlanningRuntimeActorReport;
+use meld_execution::task_network::{PublicationBridgeReport, PublicationRuntimeReport};
 use meld_world_model::world_state::graph::runtime::GraphCatchUpReport;
+use meld_world_model::AgentRuntimeReport;
+use serde::{Deserialize, Serialize};
+
+use crate::runtime::ports::DocsTaskEvidenceReplayReport;
+
+/// Current schema version for runtime status cache records.
+pub const RUNTIME_STATUS_CACHE_SCHEMA_VERSION: u16 = 1;
 
 /// Bounded work request shared by runtime supervisor adapters.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkBudget {
     /// Maximum durable input items to attempt during one tick.
     pub max_items: usize,
 }
 
 /// Diagnostic scope for one worker tick.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkerScope {
     /// Owning domain identifier.
     pub domain_id: String,
@@ -30,7 +40,7 @@ pub struct WorkerScope {
 }
 
 /// Durable input or output checkpoint observed by a worker.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkerCheckpoint {
     /// Stable checkpoint name.
     pub name: String,
@@ -39,7 +49,7 @@ pub struct WorkerCheckpoint {
 }
 
 /// Diagnostic issue observed during a worker tick.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkerTickIssue {
     /// Optional domain item identifier.
     pub item_id: Option<String>,
@@ -50,7 +60,7 @@ pub struct WorkerTickIssue {
 }
 
 /// Supervisor-facing report from one bounded worker tick.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkerTickReport {
     /// Stable runtime actor identifier.
     pub actor_id: String,
@@ -72,10 +82,764 @@ pub struct WorkerTickReport {
     pub budget_exhausted: bool,
 }
 
+/// Full cache record written by one runtime status cache publisher.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusCacheRecord {
+    /// Cache schema version.
+    pub schema_version: u16,
+    /// Product root this cache describes.
+    pub product_root: PathBuf,
+    /// Supervisor store path this cache observes.
+    pub supervisor_store_path: PathBuf,
+    /// Directory that contains status cache files.
+    pub status_cache_path: PathBuf,
+    /// Writer identity for the process that produced the cache.
+    pub writer: RuntimeStatusWriterIdentity,
+    /// Latest runtime status snapshot.
+    pub snapshot: RuntimeStatusSnapshot,
+    /// Bounded recent action window copied into the latest cache file.
+    pub recent_actions: Vec<RuntimeActionRecord>,
+    /// Cache write time in milliseconds.
+    pub written_at_ms: u64,
+}
+
+impl RuntimeStatusCacheRecord {
+    /// Build a cache record with the current schema version.
+    pub fn new(
+        product_root: impl Into<PathBuf>,
+        supervisor_store_path: impl Into<PathBuf>,
+        status_cache_path: impl Into<PathBuf>,
+        writer: RuntimeStatusWriterIdentity,
+        snapshot: RuntimeStatusSnapshot,
+        recent_actions: Vec<RuntimeActionRecord>,
+        written_at_ms: u64,
+    ) -> Self {
+        Self {
+            schema_version: RUNTIME_STATUS_CACHE_SCHEMA_VERSION,
+            product_root: product_root.into(),
+            supervisor_store_path: supervisor_store_path.into(),
+            status_cache_path: status_cache_path.into(),
+            writer,
+            snapshot,
+            recent_actions,
+            written_at_ms,
+        }
+    }
+
+    /// Return cache age at the supplied wall clock time.
+    pub fn age_ms_at(&self, now_ms: u64) -> u64 {
+        now_ms.saturating_sub(self.written_at_ms)
+    }
+
+    /// Return true when the cache is older than a caller supplied threshold.
+    pub fn is_stale_at(&self, now_ms: u64, stale_after_ms: u64) -> bool {
+        self.age_ms_at(now_ms) > stale_after_ms
+    }
+}
+
+/// Request parameters for a cache reader operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeStatusReadRequest {
+    /// Wall clock used for age and stale derivation.
+    pub now_ms: u64,
+    /// Age after which a cache is reported stale.
+    pub stale_after_ms: u64,
+    /// Maximum recent action records to return.
+    pub recent_action_limit: usize,
+}
+
+/// Cache read result returned to operator commands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeStatusReadResult {
+    /// Latest cache record when present.
+    pub latest: Option<RuntimeStatusCacheRecord>,
+    /// Recent actions returned by the reader.
+    pub recent_actions: Vec<RuntimeActionRecord>,
+    /// Wall clock used for this read.
+    pub observed_at_ms: u64,
+    /// Derived cache state.
+    pub cache_state: RuntimeStatusCacheState,
+    /// Reader warnings for tolerant cache behavior.
+    pub warnings: Vec<RuntimeStatusCacheWarning>,
+}
+
+impl RuntimeStatusReadResult {
+    /// Derive a read result from an optional latest cache record.
+    pub fn from_latest(
+        latest: Option<RuntimeStatusCacheRecord>,
+        recent_actions: Vec<RuntimeActionRecord>,
+        observed_at_ms: u64,
+        stale_after_ms: u64,
+    ) -> Self {
+        let cache_state = match latest.as_ref() {
+            Some(record) if record.is_stale_at(observed_at_ms, stale_after_ms) => {
+                RuntimeStatusCacheState::Stale {
+                    age_ms: record.age_ms_at(observed_at_ms),
+                    stale_after_ms,
+                }
+            }
+            Some(record) => RuntimeStatusCacheState::Fresh {
+                age_ms: record.age_ms_at(observed_at_ms),
+            },
+            None => RuntimeStatusCacheState::Missing,
+        };
+        Self {
+            latest,
+            recent_actions,
+            observed_at_ms,
+            cache_state,
+            warnings: Vec::new(),
+        }
+    }
+}
+
+/// Derived status cache state for operator output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeStatusCacheState {
+    /// No cache file has been observed.
+    Missing,
+    /// Cache is present and inside the stale threshold.
+    Fresh {
+        /// Cache age in milliseconds.
+        age_ms: u64,
+    },
+    /// Cache is present but older than the stale threshold.
+    Stale {
+        /// Cache age in milliseconds.
+        age_ms: u64,
+        /// Stale threshold in milliseconds.
+        stale_after_ms: u64,
+    },
+}
+
+/// Identity of the cache writer process.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusWriterIdentity {
+    /// Supervisor instance id when startup has selected one.
+    pub instance_id: Option<String>,
+    /// Operating system process id when known.
+    pub process_id: Option<u32>,
+    /// Parent process id when known.
+    pub parent_process_id: Option<u32>,
+    /// How the supervisor was launched.
+    pub run_mode: RuntimeRunMode,
+    /// Current launch state.
+    pub launch_status: RuntimeLaunchStatus,
+}
+
+/// Runtime supervisor launch mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeRunMode {
+    /// Launch mode has not been observed.
+    Unknown,
+    /// Supervisor owns the current foreground CLI process.
+    Foreground,
+    /// Supervisor owns a child or background process.
+    Detached,
+}
+
+/// Operator-facing process launch status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeLaunchStatus {
+    /// Launch status has not been observed.
+    Unknown,
+    /// Runtime process has been started but is not ready.
+    Launching,
+    /// Runtime process has acquired initial ownership and written status.
+    Ready,
+    /// Runtime process is detached from the launching command.
+    Detached,
+    /// Runtime process is stopping.
+    Stopping,
+    /// Runtime process stopped cleanly.
+    Stopped,
+    /// Runtime process failed before clean shutdown.
+    Failed,
+    /// Runtime process appears stale to a cache reader.
+    Stale,
+}
+
+/// Latest operator-facing runtime snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusSnapshot {
+    /// Supervisor instance summary when known.
+    pub instance: Option<RuntimeStatusInstanceSummary>,
+    /// Process summary when known.
+    pub process: Option<RuntimeStatusProcessSummary>,
+    /// Shutdown summary when shutdown has started.
+    pub shutdown: Option<RuntimeStatusShutdownSummary>,
+    /// One row per desired or observed runtime.
+    pub runtimes: Vec<RuntimeStatusRuntimeRow>,
+    /// Aggregated health counts for quick text output.
+    pub health_counts: RuntimeStatusHealthCounts,
+    /// Cache warnings derived by writer or reader.
+    pub warnings: Vec<RuntimeStatusCacheWarning>,
+}
+
+/// Supervisor instance data copied into the status cache.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusInstanceSummary {
+    /// Supervisor instance id.
+    pub instance_id: String,
+    /// Instance lifecycle status as display text.
+    pub status: String,
+    /// Instance start time in milliseconds.
+    pub started_at_ms: u64,
+    /// Instance stop time in milliseconds when known.
+    pub stopped_at_ms: Option<u64>,
+}
+
+/// Runtime process data copied into the status cache.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusProcessSummary {
+    /// Operating system process id when known.
+    pub process_id: Option<u32>,
+    /// Parent process id when known.
+    pub parent_process_id: Option<u32>,
+    /// How the supervisor was launched.
+    pub run_mode: RuntimeRunMode,
+    /// Current launch status.
+    pub launch_status: RuntimeLaunchStatus,
+    /// Process start time in milliseconds when known.
+    pub started_at_ms: Option<u64>,
+    /// Process ready time in milliseconds when known.
+    pub ready_at_ms: Option<u64>,
+    /// Log path for process output when known.
+    pub log_path: Option<PathBuf>,
+}
+
+/// Shutdown data copied into the status cache.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusShutdownSummary {
+    /// Shutdown id when one has been created.
+    pub shutdown_id: Option<String>,
+    /// Shutdown lifecycle status as display text.
+    pub status: String,
+    /// Shutdown request time in milliseconds when known.
+    pub requested_at_ms: Option<u64>,
+    /// Shutdown completion time in milliseconds when known.
+    pub completed_at_ms: Option<u64>,
+}
+
+/// One operator-facing status row for a runtime id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusRuntimeRow {
+    /// Stable supervised runtime id.
+    pub runtime_id: String,
+    /// Whether this runtime was desired by configuration.
+    pub desired_enabled: bool,
+    /// Whether a matching factory was available.
+    pub factory_available: bool,
+    /// Observed handle kind.
+    pub handle_kind: RuntimeHandleKind,
+    /// Active lease summary when present.
+    pub lease: Option<RuntimeStatusLeaseSummary>,
+    /// Latest heartbeat summary when present.
+    pub heartbeat: Option<RuntimeStatusHeartbeatSummary>,
+    /// Latest health summary.
+    pub health: RuntimeStatusHealthSummary,
+    /// Restart attempt count observed by the supervisor.
+    pub restart_count: u64,
+    /// Last restart cause as display text.
+    pub last_restart_cause: Option<String>,
+    /// Last supervisor lifecycle event as display text.
+    pub last_lifecycle_event: Option<String>,
+    /// Last meaningful runtime action when present.
+    pub last_action: Option<RuntimeActionRecord>,
+    /// Last progress checkpoint when present.
+    pub last_progress: Option<RuntimeCheckpointObservation>,
+}
+
+/// Observed handle kind for one runtime row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeHandleKind {
+    /// The cache writer could not classify the handle.
+    Unknown,
+    /// No concrete domain work is currently wired behind this handle.
+    Inert,
+    /// A concrete domain worker is wired behind this handle.
+    Concrete,
+    /// Factory or required resource was unavailable.
+    Unavailable,
+}
+
+/// Lease data copied into one status row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusLeaseSummary {
+    /// Active lease id.
+    pub lease_id: String,
+    /// Lease status as display text.
+    pub status: String,
+    /// Lease expiry time in milliseconds.
+    pub expires_at_ms: u64,
+}
+
+/// Heartbeat data copied into one status row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusHeartbeatSummary {
+    /// Last heartbeat observation time in milliseconds.
+    pub observed_at_ms: u64,
+    /// Heartbeat age at cache write time in milliseconds.
+    pub age_ms: u64,
+}
+
+/// Health data copied into one status row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusHealthSummary {
+    /// Health status as display text.
+    pub status: String,
+    /// Retryable error count.
+    pub retryable_error_count: u64,
+    /// Fatal error count.
+    pub fatal_error_count: u64,
+    /// True when the last bounded worker report exhausted its budget.
+    pub budget_exhausted: bool,
+}
+
+/// Aggregated runtime health counts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusHealthCounts {
+    /// Count of runtimes with unknown health.
+    pub unknown: u64,
+    /// Count of runtimes that are starting.
+    pub starting: u64,
+    /// Count of healthy runtimes.
+    pub healthy: u64,
+    /// Count of degraded runtimes.
+    pub degraded: u64,
+    /// Count of unhealthy runtimes.
+    pub unhealthy: u64,
+    /// Count of stopped runtimes.
+    pub stopped: u64,
+}
+
+/// Warning recorded in a status cache snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusCacheWarning {
+    /// Stable warning code.
+    pub code: String,
+    /// Human-readable warning message.
+    pub message: String,
+}
+
+/// Observation record for one runtime action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeActionRecord {
+    /// Stable action id for dedupe and display.
+    pub action_id: String,
+    /// Observation time in milliseconds.
+    pub observed_at_ms: u64,
+    /// Supervised runtime id.
+    pub runtime_id: String,
+    /// Owning domain id.
+    pub domain_id: String,
+    /// Actor that produced the action.
+    pub actor_id: String,
+    /// Domain object touched by the action.
+    pub object_ref: RuntimeObjectRef,
+    /// Kind of action observed.
+    pub action_kind: RuntimeActionKind,
+    /// Cause that led to the action.
+    pub cause: RuntimeActionCause,
+    /// Outcome observed for the action.
+    pub outcome: RuntimeActionOutcome,
+    /// Bounded numeric summary.
+    pub metrics: RuntimeActionMetrics,
+    /// Checkpoint observations copied from the owning domain.
+    pub checkpoints: Vec<RuntimeCheckpointObservation>,
+    /// Bounded issue summaries.
+    pub issues: Vec<RuntimeActionIssueSummary>,
+    /// Whether sensitive values were absent or redacted.
+    pub redaction: RuntimeRedactionState,
+}
+
+impl RuntimeActionRecord {
+    /// Build a runtime action record from one bounded worker report.
+    pub fn from_worker_tick(
+        action_id: impl Into<String>,
+        runtime_id: impl Into<String>,
+        observed_at_ms: u64,
+        report: WorkerTickReport,
+    ) -> Self {
+        let runtime_id = runtime_id.into();
+        let domain_id = report.scope.domain_id.clone();
+        let object_ref = RuntimeObjectRef {
+            domain_id: domain_id.clone(),
+            object_type: report
+                .scope
+                .work_key
+                .clone()
+                .unwrap_or_else(|| "worker_tick".to_string()),
+            object_id: report
+                .scope
+                .stream_id
+                .clone()
+                .or_else(|| report.scope.subject_key.clone())
+                .or_else(|| report.scope.agent_id.clone())
+                .or_else(|| report.scope.work_key.clone())
+                .unwrap_or_else(|| runtime_id.clone()),
+            branch_id: report.scope.branch_id.clone(),
+            perspective_key: report.scope.perspective_key.clone(),
+            parent_refs: Vec::new(),
+            source_refs: report
+                .scope
+                .subject_key
+                .iter()
+                .cloned()
+                .chain(report.scope.agent_id.iter().cloned())
+                .collect(),
+        };
+        let issues = report
+            .retryable_errors
+            .iter()
+            .map(|issue| RuntimeActionIssueSummary {
+                severity: RuntimeActionIssueSeverity::Retryable,
+                item_id: issue.item_id.clone(),
+                code: issue.code.clone(),
+                message: issue.message.clone(),
+            })
+            .chain(
+                report
+                    .fatal_errors
+                    .iter()
+                    .map(|issue| RuntimeActionIssueSummary {
+                        severity: RuntimeActionIssueSeverity::Fatal,
+                        item_id: issue.item_id.clone(),
+                        code: issue.code.clone(),
+                        message: issue.message.clone(),
+                    }),
+            )
+            .collect();
+        let checkpoints = vec![RuntimeCheckpointObservation {
+            input_name: report.input_checkpoint.name.clone(),
+            output_name: report.output_checkpoint.name.clone(),
+            input_value: report.input_checkpoint.value,
+            output_value: report.output_checkpoint.value,
+        }];
+        Self {
+            action_id: action_id.into(),
+            observed_at_ms,
+            runtime_id,
+            domain_id,
+            actor_id: report.actor_id.clone(),
+            object_ref,
+            action_kind: RuntimeActionKind::Tick,
+            cause: RuntimeActionCause::SupervisorTick,
+            outcome: RuntimeActionOutcome::from_worker_tick(&report),
+            metrics: RuntimeActionMetrics::from_worker_tick(&report),
+            checkpoints,
+            issues,
+            redaction: RuntimeRedactionState::NotNeeded,
+        }
+    }
+}
+
+/// Domain object reference carried by a runtime action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeObjectRef {
+    /// Owning domain id.
+    pub domain_id: String,
+    /// Domain object type.
+    pub object_type: String,
+    /// Stable object id when known.
+    pub object_id: String,
+    /// Branch id when the action is branch scoped.
+    pub branch_id: Option<String>,
+    /// Perspective key when the action is perspective scoped.
+    pub perspective_key: Option<String>,
+    /// Parent object refs as compact ids.
+    pub parent_refs: Vec<String>,
+    /// Source refs as compact ids.
+    pub source_refs: Vec<String>,
+}
+
+/// Runtime action kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeActionKind {
+    /// Runtime startup action.
+    Startup,
+    /// Runtime shutdown action.
+    Shutdown,
+    /// Supervisor tick action.
+    Tick,
+    /// Lease action.
+    Lease,
+    /// Heartbeat action.
+    Heartbeat,
+    /// Health snapshot action.
+    Health,
+    /// Restart action.
+    Restart,
+    /// Event append action.
+    Append,
+    /// Event replay action.
+    Replay,
+    /// Domain reduction action.
+    Reduction,
+    /// Planner projection action.
+    Projection,
+    /// Domain command action.
+    Command,
+    /// Domain mutation action.
+    Mutation,
+    /// Task dispatch action.
+    Dispatch,
+    /// Provider action.
+    Provider,
+    /// Artifact action.
+    Artifact,
+    /// Publication action.
+    Publication,
+    /// Workspace scan action.
+    Scan,
+    /// Agent curation action.
+    Curation,
+}
+
+/// Cause that triggered a runtime action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeActionCause {
+    /// User or caller command.
+    OperatorCommand,
+    /// Periodic supervisor tick.
+    SupervisorTick,
+    /// Supervisor lease recovery.
+    LeaseRecovery,
+    /// Event replay batch.
+    ReplayBatch,
+    /// Domain command.
+    DomainCommand,
+    /// Task readiness.
+    TaskReadiness,
+    /// Retry after a prior failure.
+    Retry,
+    /// Shutdown request.
+    Shutdown,
+}
+
+/// Outcome observed for a runtime action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeActionOutcome {
+    /// Action has started.
+    Started,
+    /// Action completed successfully.
+    Succeeded,
+    /// Action found no durable work.
+    NoWork,
+    /// Action replayed a duplicate request.
+    Duplicate,
+    /// Action was rejected by a domain contract.
+    Rejected,
+    /// Action is blocked on a dependency.
+    Blocked,
+    /// Action failed in a retryable way.
+    RetryableFailure,
+    /// Action failed in a fatal way.
+    FatalFailure,
+    /// Action was cancelled.
+    Cancelled,
+}
+
+impl RuntimeActionOutcome {
+    /// Classify a worker tick into an operator-facing outcome.
+    pub fn from_worker_tick(report: &WorkerTickReport) -> Self {
+        if !report.fatal_errors.is_empty() {
+            Self::FatalFailure
+        } else if !report.retryable_errors.is_empty() {
+            Self::RetryableFailure
+        } else if report.made_progress() {
+            Self::Succeeded
+        } else {
+            Self::NoWork
+        }
+    }
+}
+
+/// Bounded numeric summary for a runtime action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeActionMetrics {
+    /// Durable items attempted.
+    pub attempted: u64,
+    /// Durable items committed.
+    pub committed: u64,
+    /// Retryable issue count.
+    pub retryable_issue_count: u64,
+    /// Fatal issue count.
+    pub fatal_issue_count: u64,
+    /// True when the action consumed its bounded budget.
+    pub budget_exhausted: bool,
+}
+
+impl RuntimeActionMetrics {
+    /// Build action metrics from one worker tick report.
+    pub fn from_worker_tick(report: &WorkerTickReport) -> Self {
+        Self {
+            attempted: report.items_attempted as u64,
+            committed: report.items_committed as u64,
+            retryable_issue_count: report.retryable_errors.len() as u64,
+            fatal_issue_count: report.fatal_errors.len() as u64,
+            budget_exhausted: report.budget_exhausted,
+        }
+    }
+}
+
+/// Input and output checkpoint values observed during an action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeCheckpointObservation {
+    /// Input checkpoint name.
+    pub input_name: String,
+    /// Output checkpoint name.
+    pub output_name: String,
+    /// Input value before the action.
+    pub input_value: u64,
+    /// Output value after the action.
+    pub output_value: u64,
+}
+
+/// Bounded issue summary copied into an action record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeActionIssueSummary {
+    /// Issue severity.
+    pub severity: RuntimeActionIssueSeverity,
+    /// Optional domain item id.
+    pub item_id: Option<String>,
+    /// Stable issue code.
+    pub code: String,
+    /// Human-readable issue message.
+    pub message: String,
+}
+
+/// Runtime action issue severity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeActionIssueSeverity {
+    /// Retryable issue.
+    Retryable,
+    /// Fatal issue.
+    Fatal,
+}
+
+/// Redaction state for an action record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeRedactionState {
+    /// No sensitive values were present.
+    NotNeeded,
+    /// Sensitive values were removed.
+    Redacted,
+    /// Sensitive values may still be present.
+    ContainsSensitiveData,
+}
+
+/// Cache publisher interface owned by the runtime supervisor domain.
+pub trait RuntimeStatusPublisher {
+    /// Error returned by the concrete publisher.
+    type Error;
+
+    /// Publish the startup snapshot.
+    fn publish_startup_snapshot(
+        &mut self,
+        record: &RuntimeStatusCacheRecord,
+    ) -> Result<(), Self::Error>;
+
+    /// Publish a tick snapshot.
+    fn publish_tick_snapshot(
+        &mut self,
+        record: &RuntimeStatusCacheRecord,
+    ) -> Result<(), Self::Error>;
+
+    /// Publish one runtime action.
+    fn publish_action(&mut self, action: &RuntimeActionRecord) -> Result<(), Self::Error>;
+
+    /// Publish the shutdown snapshot.
+    fn publish_shutdown_snapshot(
+        &mut self,
+        record: &RuntimeStatusCacheRecord,
+    ) -> Result<(), Self::Error>;
+
+    /// Flush cache data before the caller reports completion.
+    fn flush_cache(&mut self) -> Result<(), Self::Error>;
+}
+
+/// Cache reader interface used by operator commands.
+pub trait RuntimeStatusReader {
+    /// Error returned by the concrete reader.
+    type Error;
+
+    /// Read the latest cache snapshot when present.
+    fn read_latest_snapshot(&self) -> Result<Option<RuntimeStatusCacheRecord>, Self::Error>;
+
+    /// Read recent actions up to the requested limit.
+    fn read_recent_actions(&self, limit: usize) -> Result<Vec<RuntimeActionRecord>, Self::Error>;
+
+    /// Read latest status and derive cache state in one operation.
+    fn read_status(
+        &self,
+        request: RuntimeStatusReadRequest,
+    ) -> Result<RuntimeStatusReadResult, Self::Error> {
+        let latest = self.read_latest_snapshot()?;
+        let recent_actions = self.read_recent_actions(request.recent_action_limit)?;
+        Ok(RuntimeStatusReadResult::from_latest(
+            latest,
+            recent_actions,
+            request.now_ms,
+            request.stale_after_ms,
+        ))
+    }
+}
+
 impl WorkerTickReport {
     /// Returns true when the report indicates durable progress.
     pub fn made_progress(&self) -> bool {
         self.output_checkpoint.value > self.input_checkpoint.value || self.items_committed > 0
+    }
+
+    /// Build a fatal report for failures before a domain tick can complete.
+    pub fn fatal(
+        actor_id: impl Into<String>,
+        domain_id: impl Into<String>,
+        work_key: Option<&str>,
+        checkpoint_name: impl Into<String>,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        let checkpoint_name = checkpoint_name.into();
+        Self {
+            actor_id: actor_id.into(),
+            scope: WorkerScope {
+                domain_id: domain_id.into(),
+                stream_id: None,
+                work_key: work_key.map(str::to_string),
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: checkpoint_name.clone(),
+                value: 0,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: checkpoint_name,
+                value: 0,
+            },
+            items_attempted: 0,
+            items_committed: 0,
+            retryable_errors: Vec::new(),
+            fatal_errors: vec![WorkerTickIssue {
+                item_id: None,
+                code: code.into(),
+                message: message.into(),
+            }],
+            budget_exhausted: false,
+        }
     }
 }
 
@@ -171,9 +935,174 @@ impl From<PublicationBridgeReport> for WorkerTickReport {
     }
 }
 
+impl From<PublicationRuntimeReport> for WorkerTickReport {
+    fn from(report: PublicationRuntimeReport) -> Self {
+        Self {
+            actor_id: report.actor_id,
+            scope: WorkerScope {
+                domain_id: "execution".to_string(),
+                stream_id: Some(report.scope.network_id),
+                work_key: Some("publication_outbox".to_string()),
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "task_network_revision".to_string(),
+                value: report.input_revision,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "task_network_revision".to_string(),
+                value: report.output_revision,
+            },
+            items_attempted: report.attempted,
+            items_committed: report.committed,
+            retryable_errors: report
+                .retryable_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.publication_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            fatal_errors: report
+                .fatal_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.publication_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            budget_exhausted: report.budget_exhausted,
+        }
+    }
+}
+
+impl From<PlanningRuntimeActorReport> for WorkerTickReport {
+    fn from(report: PlanningRuntimeActorReport) -> Self {
+        Self {
+            actor_id: report.actor_id,
+            scope: WorkerScope {
+                domain_id: "execution".to_string(),
+                stream_id: None,
+                work_key: Some("planning".to_string()),
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "task_network_revision".to_string(),
+                value: report.input_revision,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "task_network_revision".to_string(),
+                value: report.output_revision,
+            },
+            items_attempted: report.attempted,
+            items_committed: report.committed,
+            retryable_errors: report
+                .retryable_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.goal_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            fatal_errors: report
+                .fatal_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.goal_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            budget_exhausted: report.budget_exhausted,
+        }
+    }
+}
+
+impl From<AgentRuntimeReport> for WorkerTickReport {
+    fn from(report: AgentRuntimeReport) -> Self {
+        Self {
+            actor_id: report.actor_id.clone(),
+            scope: WorkerScope {
+                domain_id: "world_model".to_string(),
+                stream_id: None,
+                work_key: Some("agent_curation".to_string()),
+                agent_id: Some(report.actor_id),
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "agent_input_sequence".to_string(),
+                value: report.input_sequence,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "agent_output_sequence".to_string(),
+                value: report.output_sequence,
+            },
+            items_attempted: report.delivered_count,
+            items_committed: report.decision_count + report.sink_submission_count,
+            retryable_errors: report
+                .retryable_errors
+                .into_iter()
+                .map(string_issue)
+                .collect(),
+            fatal_errors: report.fatal_errors.into_iter().map(string_issue).collect(),
+            budget_exhausted: report.budget_exhausted,
+        }
+    }
+}
+
+impl From<DocsTaskEvidenceReplayReport> for WorkerTickReport {
+    fn from(report: DocsTaskEvidenceReplayReport) -> Self {
+        Self {
+            actor_id: "world_model.evidence_ingestion".to_string(),
+            scope: WorkerScope {
+                domain_id: "world_model".to_string(),
+                stream_id: None,
+                work_key: Some("docs_task_evidence".to_string()),
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "event_spine_seq".to_string(),
+                value: report.input_event_seq,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "event_spine_seq".to_string(),
+                value: report.output_event_seq,
+            },
+            items_attempted: report.events_attempted,
+            items_committed: report.new_assignment_count,
+            retryable_errors: Vec::new(),
+            fatal_errors: Vec::new(),
+            budget_exhausted: false,
+        }
+    }
+}
+
+fn string_issue(message: String) -> WorkerTickIssue {
+    WorkerTickIssue {
+        item_id: None,
+        code: "runtime_issue".to_string(),
+        message,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use meld_execution::planning::PlanningRuntimeActorIssue;
     use meld_execution::task_network::publication::{
         PublicationBridgeIssue, PublicationBridgeScope,
     };
@@ -237,5 +1166,439 @@ mod tests {
             Some("publication-a")
         );
         assert!(worker.made_progress());
+    }
+
+    #[test]
+    fn publication_runtime_report_maps_to_worker_report() {
+        let report = PublicationRuntimeReport {
+            actor_id: "execution.publication".to_string(),
+            scope: PublicationBridgeScope {
+                network_id: "network-a".to_string(),
+                session_id: "session-a".to_string(),
+                worker_id: "worker-a".to_string(),
+            },
+            input_revision: 7,
+            output_revision: 8,
+            attempted: 2,
+            committed: 1,
+            retryable_errors: Vec::new(),
+            fatal_errors: vec![PublicationBridgeIssue {
+                publication_id: Some("publication-b".to_string()),
+                code: "mark_failed".to_string(),
+                message: "mark failed".to_string(),
+            }],
+            budget_exhausted: true,
+            results: Vec::new(),
+        };
+
+        let worker: WorkerTickReport = report.into();
+
+        assert_eq!(worker.actor_id, "execution.publication");
+        assert_eq!(worker.scope.stream_id.as_deref(), Some("network-a"));
+        assert_eq!(worker.input_checkpoint.value, 7);
+        assert_eq!(worker.output_checkpoint.value, 8);
+        assert_eq!(worker.items_attempted, 2);
+        assert_eq!(worker.items_committed, 1);
+        assert_eq!(
+            worker.fatal_errors[0].item_id.as_deref(),
+            Some("publication-b")
+        );
+        assert!(worker.budget_exhausted);
+    }
+
+    #[test]
+    fn planning_runtime_report_maps_to_worker_report() {
+        let report = PlanningRuntimeActorReport {
+            actor_id: "execution.planning".to_string(),
+            active_goal_count: 3,
+            input_revision: 10,
+            output_revision: 11,
+            attempted: 1,
+            committed: 1,
+            retryable_errors: vec![PlanningRuntimeActorIssue {
+                goal_id: Some("goal-a".to_string()),
+                code: "projection_unavailable".to_string(),
+                message: "projection unavailable".to_string(),
+            }],
+            fatal_errors: Vec::new(),
+            budget_exhausted: false,
+            results: Vec::new(),
+        };
+
+        let worker: WorkerTickReport = report.into();
+
+        assert_eq!(worker.actor_id, "execution.planning");
+        assert_eq!(worker.scope.work_key.as_deref(), Some("planning"));
+        assert_eq!(worker.input_checkpoint.name, "task_network_revision");
+        assert_eq!(worker.output_checkpoint.value, 11);
+        assert_eq!(worker.items_attempted, 1);
+        assert_eq!(worker.items_committed, 1);
+        assert_eq!(
+            worker.retryable_errors[0].item_id.as_deref(),
+            Some("goal-a")
+        );
+    }
+
+    #[test]
+    fn agent_runtime_report_maps_to_worker_report() {
+        let report = AgentRuntimeReport {
+            actor_id: "agent-a".to_string(),
+            input_sequence: 20,
+            output_sequence: 21,
+            delivered_count: 2,
+            decision_count: 1,
+            sink_submission_count: 1,
+            sink_receipts: Vec::new(),
+            retryable_errors: vec!["retry".to_string()],
+            fatal_errors: Vec::new(),
+            budget_exhausted: false,
+        };
+
+        let worker: WorkerTickReport = report.into();
+        let action = RuntimeActionRecord::from_worker_tick(
+            "action-agent",
+            "world_model.agent_goal_curation",
+            25,
+            worker.clone(),
+        );
+
+        assert_eq!(worker.actor_id, "agent-a");
+        assert_eq!(worker.scope.agent_id.as_deref(), Some("agent-a"));
+        assert_eq!(worker.input_checkpoint.name, "agent_input_sequence");
+        assert_eq!(worker.output_checkpoint.name, "agent_output_sequence");
+        assert_eq!(worker.items_attempted, 2);
+        assert_eq!(worker.items_committed, 2);
+        assert_eq!(worker.retryable_errors[0].code, "runtime_issue");
+        assert_eq!(action.object_ref.object_type, "agent_curation");
+        assert_eq!(action.object_ref.object_id, "agent-a");
+        assert_eq!(action.checkpoints[0].input_name, "agent_input_sequence");
+        assert_eq!(action.checkpoints[0].output_name, "agent_output_sequence");
+    }
+
+    #[test]
+    fn docs_evidence_replay_report_maps_to_worker_report() {
+        let report = DocsTaskEvidenceReplayReport {
+            input_event_seq: 30,
+            output_event_seq: 32,
+            events_attempted: 2,
+            promoted_evidence_count: 1,
+            rejected_evidence_count: 0,
+            normalized_evidence_count: 1,
+            new_assignment_count: 1,
+            ingestions: Vec::new(),
+        };
+
+        let worker: WorkerTickReport = report.into();
+
+        assert_eq!(worker.actor_id, "world_model.evidence_ingestion");
+        assert_eq!(worker.scope.work_key.as_deref(), Some("docs_task_evidence"));
+        assert_eq!(worker.input_checkpoint.value, 30);
+        assert_eq!(worker.output_checkpoint.value, 32);
+        assert_eq!(worker.items_attempted, 2);
+        assert_eq!(worker.items_committed, 1);
+        assert!(worker.made_progress());
+    }
+
+    #[test]
+    fn worker_report_maps_to_runtime_action_record() {
+        let report = WorkerTickReport {
+            actor_id: "world_state.graph.reducer".to_string(),
+            scope: WorkerScope {
+                domain_id: "world_state".to_string(),
+                stream_id: Some("event-spine".to_string()),
+                work_key: Some("graph".to_string()),
+                agent_id: None,
+                perspective_key: Some("default".to_string()),
+                branch_id: Some("main".to_string()),
+                subject_key: Some("subject-a".to_string()),
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "event_spine_seq".to_string(),
+                value: 2,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "event_spine_seq".to_string(),
+                value: 4,
+            },
+            items_attempted: 2,
+            items_committed: 1,
+            retryable_errors: Vec::new(),
+            fatal_errors: Vec::new(),
+            budget_exhausted: false,
+        };
+
+        let action = RuntimeActionRecord::from_worker_tick(
+            "action-a",
+            "world_model.graph_replay",
+            9,
+            report,
+        );
+
+        assert_eq!(action.action_id, "action-a");
+        assert_eq!(action.domain_id, "world_state");
+        assert_eq!(action.object_ref.object_type, "graph");
+        assert_eq!(action.object_ref.object_id, "event-spine");
+        assert_eq!(action.object_ref.branch_id.as_deref(), Some("main"));
+        assert_eq!(
+            action.object_ref.perspective_key.as_deref(),
+            Some("default")
+        );
+        assert_eq!(action.object_ref.source_refs, vec!["subject-a"]);
+        assert_eq!(action.action_kind, RuntimeActionKind::Tick);
+        assert_eq!(action.cause, RuntimeActionCause::SupervisorTick);
+        assert_eq!(action.outcome, RuntimeActionOutcome::Succeeded);
+        assert_eq!(action.metrics.attempted, 2);
+        assert_eq!(action.metrics.committed, 1);
+        assert_eq!(action.checkpoints[0].input_name, "event_spine_seq");
+        assert_eq!(action.checkpoints[0].output_name, "event_spine_seq");
+        assert_eq!(action.checkpoints[0].input_value, 2);
+        assert_eq!(action.checkpoints[0].output_value, 4);
+    }
+
+    #[test]
+    fn worker_report_action_classification_covers_issue_paths() {
+        let mut report = WorkerTickReport {
+            actor_id: "execution.planning".to_string(),
+            scope: WorkerScope {
+                domain_id: "execution".to_string(),
+                stream_id: None,
+                work_key: Some("planning".to_string()),
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: Some("goal-a".to_string()),
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "task_network_revision".to_string(),
+                value: 1,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "task_network_revision".to_string(),
+                value: 1,
+            },
+            items_attempted: 1,
+            items_committed: 0,
+            retryable_errors: Vec::new(),
+            fatal_errors: Vec::new(),
+            budget_exhausted: true,
+        };
+
+        let no_work = RuntimeActionRecord::from_worker_tick(
+            "action-no-work",
+            "execution.planning",
+            3,
+            report.clone(),
+        );
+        assert_eq!(no_work.outcome, RuntimeActionOutcome::NoWork);
+        assert_eq!(no_work.object_ref.object_id, "goal-a");
+        assert!(no_work.metrics.budget_exhausted);
+
+        report.retryable_errors.push(WorkerTickIssue {
+            item_id: Some("goal-a".to_string()),
+            code: "projection_unavailable".to_string(),
+            message: "projection unavailable".to_string(),
+        });
+        let retryable = RuntimeActionRecord::from_worker_tick(
+            "action-retryable",
+            "execution.planning",
+            4,
+            report.clone(),
+        );
+        assert_eq!(retryable.outcome, RuntimeActionOutcome::RetryableFailure);
+        assert_eq!(retryable.metrics.retryable_issue_count, 1);
+        assert_eq!(
+            retryable.issues[0].severity,
+            RuntimeActionIssueSeverity::Retryable
+        );
+
+        report.fatal_errors.push(WorkerTickIssue {
+            item_id: Some("goal-a".to_string()),
+            code: "planning_failed".to_string(),
+            message: "planning failed".to_string(),
+        });
+        let fatal =
+            RuntimeActionRecord::from_worker_tick("action-fatal", "execution.planning", 5, report);
+        assert_eq!(fatal.outcome, RuntimeActionOutcome::FatalFailure);
+        assert_eq!(fatal.metrics.fatal_issue_count, 1);
+        assert_eq!(fatal.issues[1].severity, RuntimeActionIssueSeverity::Fatal);
+    }
+
+    #[test]
+    fn status_cache_record_round_trips_json() {
+        let action = RuntimeActionRecord {
+            action_id: "action-a".to_string(),
+            observed_at_ms: 7,
+            runtime_id: "event.replay".to_string(),
+            domain_id: "event".to_string(),
+            actor_id: "event.replay".to_string(),
+            object_ref: RuntimeObjectRef {
+                domain_id: "event".to_string(),
+                object_type: "replay_batch".to_string(),
+                object_id: "batch-a".to_string(),
+                branch_id: None,
+                perspective_key: None,
+                parent_refs: Vec::new(),
+                source_refs: Vec::new(),
+            },
+            action_kind: RuntimeActionKind::Replay,
+            cause: RuntimeActionCause::ReplayBatch,
+            outcome: RuntimeActionOutcome::NoWork,
+            metrics: RuntimeActionMetrics {
+                attempted: 0,
+                committed: 0,
+                retryable_issue_count: 0,
+                fatal_issue_count: 0,
+                budget_exhausted: false,
+            },
+            checkpoints: vec![RuntimeCheckpointObservation {
+                input_name: "event_spine_seq".to_string(),
+                output_name: "event_spine_seq".to_string(),
+                input_value: 10,
+                output_value: 10,
+            }],
+            issues: Vec::new(),
+            redaction: RuntimeRedactionState::NotNeeded,
+        };
+        let snapshot = RuntimeStatusSnapshot {
+            instance: Some(RuntimeStatusInstanceSummary {
+                instance_id: "runtime-cli-1".to_string(),
+                status: "running".to_string(),
+                started_at_ms: 1,
+                stopped_at_ms: None,
+            }),
+            process: Some(RuntimeStatusProcessSummary {
+                process_id: Some(42),
+                parent_process_id: Some(41),
+                run_mode: RuntimeRunMode::Foreground,
+                launch_status: RuntimeLaunchStatus::Ready,
+                started_at_ms: Some(1),
+                ready_at_ms: Some(2),
+                log_path: None,
+            }),
+            shutdown: None,
+            runtimes: vec![RuntimeStatusRuntimeRow {
+                runtime_id: "event.replay".to_string(),
+                desired_enabled: true,
+                factory_available: true,
+                handle_kind: RuntimeHandleKind::Concrete,
+                lease: Some(RuntimeStatusLeaseSummary {
+                    lease_id: "lease-a".to_string(),
+                    status: "active".to_string(),
+                    expires_at_ms: 30_000,
+                }),
+                heartbeat: Some(RuntimeStatusHeartbeatSummary {
+                    observed_at_ms: 5,
+                    age_ms: 2,
+                }),
+                health: RuntimeStatusHealthSummary {
+                    status: "healthy".to_string(),
+                    retryable_error_count: 0,
+                    fatal_error_count: 0,
+                    budget_exhausted: false,
+                },
+                restart_count: 0,
+                last_restart_cause: None,
+                last_lifecycle_event: Some("heartbeat_accepted".to_string()),
+                last_action: Some(action.clone()),
+                last_progress: Some(RuntimeCheckpointObservation {
+                    input_name: "event_spine_seq".to_string(),
+                    output_name: "event_spine_seq".to_string(),
+                    input_value: 9,
+                    output_value: 10,
+                }),
+            }],
+            health_counts: RuntimeStatusHealthCounts {
+                unknown: 0,
+                starting: 0,
+                healthy: 1,
+                degraded: 0,
+                unhealthy: 0,
+                stopped: 0,
+            },
+            warnings: Vec::new(),
+        };
+        let record = RuntimeStatusCacheRecord::new(
+            "/tmp/product",
+            "/tmp/product/runtime/supervisor.sled",
+            "/tmp/product/runtime/status",
+            RuntimeStatusWriterIdentity {
+                instance_id: Some("runtime-cli-1".to_string()),
+                process_id: Some(42),
+                parent_process_id: Some(41),
+                run_mode: RuntimeRunMode::Foreground,
+                launch_status: RuntimeLaunchStatus::Ready,
+            },
+            snapshot,
+            vec![action],
+            7,
+        );
+
+        let encoded = serde_json::to_string(&record).unwrap();
+        let decoded: RuntimeStatusCacheRecord = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded.schema_version, RUNTIME_STATUS_CACHE_SCHEMA_VERSION);
+        assert_eq!(
+            decoded.supervisor_store_path,
+            std::path::PathBuf::from("/tmp/product/runtime/supervisor.sled")
+        );
+        assert_eq!(decoded.age_ms_at(12), 5);
+        assert!(decoded.is_stale_at(20, 10));
+        assert_eq!(decoded.snapshot.runtimes[0].runtime_id, "event.replay");
+        assert_eq!(
+            decoded.recent_actions[0].action_kind,
+            RuntimeActionKind::Replay
+        );
+    }
+
+    #[test]
+    fn status_read_result_derives_missing_fresh_and_stale_states() {
+        let missing = RuntimeStatusReadResult::from_latest(None, Vec::new(), 10, 5);
+        assert_eq!(missing.cache_state, RuntimeStatusCacheState::Missing);
+
+        let snapshot = RuntimeStatusSnapshot {
+            instance: None,
+            process: None,
+            shutdown: None,
+            runtimes: Vec::new(),
+            health_counts: RuntimeStatusHealthCounts {
+                unknown: 0,
+                starting: 0,
+                healthy: 0,
+                degraded: 0,
+                unhealthy: 0,
+                stopped: 0,
+            },
+            warnings: Vec::new(),
+        };
+        let record = RuntimeStatusCacheRecord::new(
+            "/tmp/product",
+            "/tmp/product/runtime/supervisor.sled",
+            "/tmp/product/runtime/status",
+            RuntimeStatusWriterIdentity {
+                instance_id: None,
+                process_id: None,
+                parent_process_id: None,
+                run_mode: RuntimeRunMode::Unknown,
+                launch_status: RuntimeLaunchStatus::Unknown,
+            },
+            snapshot,
+            Vec::new(),
+            10,
+        );
+
+        let fresh = RuntimeStatusReadResult::from_latest(Some(record.clone()), Vec::new(), 12, 5);
+        assert_eq!(
+            fresh.cache_state,
+            RuntimeStatusCacheState::Fresh { age_ms: 2 }
+        );
+
+        let stale = RuntimeStatusReadResult::from_latest(Some(record), Vec::new(), 20, 5);
+        assert_eq!(
+            stale.cache_state,
+            RuntimeStatusCacheState::Stale {
+                age_ms: 10,
+                stale_after_ms: 5,
+            }
+        );
     }
 }
