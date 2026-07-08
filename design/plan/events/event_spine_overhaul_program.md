@@ -145,7 +145,7 @@ Tasks:
 
 Exit criteria: consumers block until new events; no session read touches the legacy tree; storage-per-event bench improved or the encoding decision recorded as not worth it.
 
-### Phase 5: retention contract
+### Phase 5: retention contract — complete 2026-07-08
 
 Goal: land the contract consumers are written against; defer the compactor until data warrants it.
 
@@ -153,10 +153,10 @@ Key seams: spine meta, replay error surface, graph reducer error handling.
 
 Tasks:
 
-- [ ] retained lower boundary tracked in spine meta; replay below it returns a typed retention-gap error instead of silently skipping
-- [ ] graph reducer handles the gap error explicitly
-- [ ] genesis and snapshot hook: the contract by which a projection records rebuilt-from-snapshot at a sequence, so replay from zero is never required
-- [ ] compaction design doc with an explicit activation trigger; no compactor implementation
+- [x] retained lower boundary tracked in spine meta with monotonic raises; every replay path returns a typed retention-gap error instead of silently skipping
+- [x] graph reducer handles the gap explicitly: bounded ticks report a fatal `retention_gap` diagnostic without moving the cursor, and the unbounded CLI path propagates the typed error so a stranded cursor can never look like zero progress
+- [x] genesis and snapshot hook: `EventEnvelope::genesis_domain` records rebuilt-from-snapshot at a basis sequence with an idempotent record id
+- [x] compaction design doc with an explicit activation trigger, reader quiescence and session-consumer stories, and no compactor implementation
 
 Exit criteria: gap contract tested; consumers handle it; compaction doc exists with a named threshold.
 
@@ -275,6 +275,14 @@ Further dispositions: migrated rows receive migration-time sequences at the spin
 Behavior change called out per compatibility policy: rows written into the legacy tree after a store has opened are no longer served by reads. No production writer targets the legacy tree; only tests did, and they now stage rows before open.
 
 Bench evidence: bytes per event on disk fell from 1625 to 1153, twenty-nine percent, from the empty-value index. Replay decode cost is unchanged at roughly 1.25 microseconds per event, which drove the recorded keep-JSON encoding decision.
+
+### Phase 5 — complete 2026-07-08
+
+Gate evidence, in ladder order: formatter clean; clippy zero warnings; boundary script passed; full workspace green at 1414 tests; fresh adversarial review returned no blockers; docs style scan clean on the new compaction doc.
+
+What changed: the retained lower boundary lives in spine meta, defaults to one, and only rises; `check_retention` guards every replay path including the subscription surface; `RetentionGap` is typed in meld-events and mirrored in the root error contract; `genesis_domain` records snapshot bases idempotently; the graph reducer surfaces gaps fatally without cursor movement; the compaction design doc names its activation trigger.
+
+Review dispositions: the reviewer confirmed every gap edge case and every guarded path, then found the unbounded `catch_up` swallowing the fatal report into a zero-progress success — fixed in-phase so CLI callers receive the typed error, with the test extended to pin it. Design doc hardening from review: reader quiescence before boundary raises so a concurrent prune cannot produce a silently gapped batch, raise-and-flush ordering, the session-consumer re-anchoring story, and the genesis determinism plus reserved-suffix sentences. Accepted as nits: the boundary setter is get-then-insert, acceptable while its only callers are tests and a future single supervised compactor. Noted: one pre-existing flake in `current_snapshot_matches_workspace_root_hash`, unrelated to retention, tracked for the closeout phase.
 
 ### Phase 2 — complete 2026-07-08
 
