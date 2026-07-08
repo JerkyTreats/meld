@@ -3,8 +3,8 @@
 //! Owner: event store.
 //! Inputs: sequenced records, unsequenced envelopes, and legacy session event
 //! rows.
-//! Outputs: runtime-wide sequence allocation, idempotent append results,
-//! session-scoped reads, and cursor reads across sessions.
+//! Outputs: atomically sequenced append results, idempotent append results,
+//! session-scoped reads, and seek-based cursor reads across sessions.
 //! Does not own: this module does not publish to telemetry sinks or interpret
 //! producer payloads.
 //!
@@ -39,6 +39,7 @@ use sled::{
     transaction::{ConflictableTransactionError, TransactionError, Transactional},
     Db, Tree,
 };
+use tracing::warn;
 
 use crate::error::StorageError;
 use crate::events::EventEnvelope;
@@ -50,6 +51,8 @@ const TREE_SESSION_EVENT_INDEX: &str = "obs_session_event_index";
 const TREE_SPINE_META: &str = "obs_spine_meta";
 const TREE_SPINE_RECORD_INDEX: &str = "obs_spine_record_index";
 const EVENT_KEY_PAD: usize = 20;
+const META_KEY_GLOBAL: &[u8] = b"global";
+const META_KEY_RECORD_INDEX_BACKFILLED: &[u8] = b"record_index_backfilled";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SpineMeta {
@@ -72,6 +75,10 @@ pub struct EventStore {
 
 impl EventStore {
     /// Opens all event trees on the supplied database handle.
+    ///
+    /// Opening repairs sequence metadata that lags the greatest persisted
+    /// record and backfills the record index once for stores written before
+    /// the index existed, so reads and idempotency lookups never scan.
     pub fn new(db: Db) -> Result<Self, StorageError> {
         let legacy_events = db.open_tree(TREE_EVENTS).map_err(to_storage_io)?;
         let spine_events = db.open_tree(TREE_SPINE_EVENTS).map_err(to_storage_io)?;
@@ -82,14 +89,17 @@ impl EventStore {
         let spine_record_index = db
             .open_tree(TREE_SPINE_RECORD_INDEX)
             .map_err(to_storage_io)?;
-        Ok(Self {
+        let store = Self {
             db,
             legacy_events,
             spine_events,
             session_event_index,
             spine_meta,
             spine_record_index,
-        })
+        };
+        store.repair_sequence_meta()?;
+        store.backfill_record_index_once()?;
+        Ok(store)
     }
 
     /// Opens the store behind an `Arc` for runtimes and ingestors.
@@ -122,15 +132,12 @@ impl EventStore {
         self.write_event_idempotent(event)
     }
 
-    /// Allocates the next spine sequence and appends an envelope.
+    /// Appends an envelope, allocating its spine sequence atomically.
     pub fn append_envelope(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
-        let seq = self.allocate_next_seq()?;
-        let event = EventRecord::from_envelope(envelope, seq);
-        self.append_event(&event)?;
-        Ok(seq)
+        self.persist_envelope_write(&envelope, false)
     }
 
-    /// Allocates and appends an envelope unless its idempotency key already exists.
+    /// Appends an envelope unless its idempotency key already exists.
     pub fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
         if let Some(record_id) = envelope.record_id.as_deref() {
             if let Some(existing_seq) = self.lookup_record_seq(record_id)? {
@@ -138,9 +145,7 @@ impl EventStore {
             }
         }
 
-        let seq = self.allocate_next_seq()?;
-        let event = EventRecord::from_envelope(envelope, seq);
-        self.append_event_idempotent(&event)
+        self.persist_envelope_write(&envelope, true)
     }
 
     fn write_event(&self, event: &EventRecord) -> Result<(), StorageError> {
@@ -176,14 +181,14 @@ impl EventStore {
                         }
                     }
 
-                    let mut meta = match spine_meta.get(b"global")? {
+                    let mut meta = match spine_meta.get(META_KEY_GLOBAL)? {
                         Some(raw) => serde_json::from_slice(&raw).map_err(to_transaction_data)?,
                         None => SpineMeta { next_seq: 1 },
                     };
                     if meta.next_seq <= write.seq {
                         meta.next_seq = write.seq + 1;
                         spine_meta.insert(
-                            b"global",
+                            META_KEY_GLOBAL,
                             serde_json::to_vec(&meta).map_err(to_transaction_data)?,
                         )?;
                     }
@@ -196,6 +201,64 @@ impl EventStore {
                     }
 
                     Ok(write.seq)
+                },
+            )
+            .map_err(to_transaction)
+    }
+
+    /// Allocates a sequence and persists an unsequenced envelope in one
+    /// serializable transaction, so concurrent appenders can never collide on
+    /// a sequence or overwrite each other's records.
+    fn persist_envelope_write(
+        &self,
+        envelope: &EventEnvelope,
+        idempotent: bool,
+    ) -> Result<u64, StorageError> {
+        let idempotency_key = if idempotent {
+            envelope
+                .record_id
+                .as_deref()
+                .map(|record_id| record_id.as_bytes().to_vec())
+        } else {
+            None
+        };
+        (
+            &self.spine_meta,
+            &self.spine_events,
+            &self.session_event_index,
+            &self.spine_record_index,
+        )
+            .transaction(
+                |(spine_meta, spine_events, session_event_index, spine_record_index)| {
+                    if let Some(idempotency_key) = idempotency_key.clone() {
+                        if let Some(raw) = spine_record_index.get(idempotency_key)? {
+                            return decode_seq(&raw).map_err(to_transaction_storage);
+                        }
+                    }
+
+                    let mut meta = match spine_meta.get(META_KEY_GLOBAL)? {
+                        Some(raw) => serde_json::from_slice(&raw).map_err(to_transaction_data)?,
+                        None => SpineMeta { next_seq: 1 },
+                    };
+                    let seq = meta.next_seq;
+                    meta.next_seq += 1;
+                    spine_meta.insert(
+                        META_KEY_GLOBAL,
+                        serde_json::to_vec(&meta).map_err(to_transaction_data)?,
+                    )?;
+
+                    let record = EventRecord::from_envelope(envelope.clone(), seq);
+                    let value = serde_json::to_vec(&record).map_err(to_transaction_data)?;
+                    spine_events.insert(encode_spine_key(seq).into_bytes(), value.clone())?;
+                    session_event_index.insert(
+                        encode_session_event_index_key(&envelope.session, seq).into_bytes(),
+                        value,
+                    )?;
+                    if let Some(record_id) = envelope.record_id.as_deref() {
+                        spine_record_index.insert(record_id.as_bytes(), &encode_seq(seq))?;
+                    }
+
+                    Ok(seq)
                 },
             )
             .map_err(to_transaction)
@@ -220,20 +283,22 @@ impl EventStore {
     }
 
     /// Reads all events after a spine sequence across sessions.
+    ///
+    /// Spine keys are zero-padded sequences, so the read seeks directly to
+    /// the cursor and returns records in sequence order; cost is proportional
+    /// to the records returned, not to total history.
     pub fn read_all_events_after(&self, after_seq: u64) -> Result<Vec<EventRecord>, StorageError> {
         let mut out = Vec::new();
-        for result in self.spine_events.iter() {
+        let start = encode_spine_key(after_seq.saturating_add(1)).into_bytes();
+        for result in self.spine_events.range(start..) {
             let (_, value) = result.map_err(to_storage_io)?;
-            let parsed = decode_event(&value)?;
-            if parsed.seq > after_seq {
-                out.push(parsed);
-            }
+            out.push(decode_event(&value)?);
         }
-        out.sort_by_key(|event| event.seq);
         Ok(out)
     }
 
-    /// Reads at most `limit` events after a spine sequence across sessions.
+    /// Reads at most `limit` events after a spine sequence across sessions,
+    /// in sequence order.
     pub fn read_all_events_after_limit(
         &self,
         after_seq: u64,
@@ -244,26 +309,12 @@ impl EventStore {
         }
 
         let mut out = Vec::with_capacity(limit);
-        for result in self.spine_events.iter() {
+        let start = encode_spine_key(after_seq.saturating_add(1)).into_bytes();
+        for result in self.spine_events.range(start..).take(limit) {
             let (_, value) = result.map_err(to_storage_io)?;
-            let parsed = decode_event(&value)?;
-            if parsed.seq > after_seq {
-                out.push(parsed);
-                if out.len() == limit {
-                    break;
-                }
-            }
+            out.push(decode_event(&value)?);
         }
         Ok(out)
-    }
-
-    /// Reserves the next runtime-wide spine sequence.
-    pub fn allocate_next_seq(&self) -> Result<u64, StorageError> {
-        let mut meta = self.get_spine_meta()?.unwrap_or(SpineMeta { next_seq: 1 });
-        let seq = meta.next_seq;
-        meta.next_seq += 1;
-        self.put_spine_meta(&meta)?;
-        Ok(seq)
     }
 
     /// Flushes pending sled writes to durable storage.
@@ -282,16 +333,7 @@ impl EventStore {
         session_id: &str,
         after_seq: u64,
     ) -> Result<Vec<EventRecord>, StorageError> {
-        let prefix = format!("{session_id}:");
-        let mut out = Vec::new();
-        for result in self.session_event_index.scan_prefix(prefix.as_bytes()) {
-            let (_, value) = result.map_err(to_storage_io)?;
-            let parsed = decode_event(&value)?;
-            if parsed.seq > after_seq {
-                out.push(parsed);
-            }
-        }
-        Ok(out)
+        Self::read_session_tree_after(&self.session_event_index, session_id, after_seq)
     }
 
     fn read_legacy_events_after(
@@ -299,31 +341,32 @@ impl EventStore {
         session_id: &str,
         after_seq: u64,
     ) -> Result<Vec<EventRecord>, StorageError> {
-        let prefix = format!("{session_id}:");
+        Self::read_session_tree_after(&self.legacy_events, session_id, after_seq)
+    }
+
+    /// Seeks within one session's key range instead of scanning and
+    /// filtering the whole prefix. Session keys are `{session}:{seq:020}`,
+    /// so the range starts at the cursor and `;` bounds the `:` separator.
+    fn read_session_tree_after(
+        tree: &Tree,
+        session_id: &str,
+        after_seq: u64,
+    ) -> Result<Vec<EventRecord>, StorageError> {
+        let start =
+            encode_session_event_index_key(session_id, after_seq.saturating_add(1)).into_bytes();
+        let end = format!("{session_id};").into_bytes();
         let mut out = Vec::new();
-        for result in self.legacy_events.scan_prefix(prefix.as_bytes()) {
+        for result in tree.range(start..end) {
             let (_, value) = result.map_err(to_storage_io)?;
             let parsed = decode_event(&value)?;
+            // Foreign session ids sharing this prefix plus a colon byte-sort
+            // into the range regardless of their sequence; the filter keeps
+            // exact cursor semantics for those leaked records.
             if parsed.seq > after_seq {
                 out.push(parsed);
             }
         }
         Ok(out)
-    }
-
-    fn get_spine_meta(&self) -> Result<Option<SpineMeta>, StorageError> {
-        let Some(raw) = self.spine_meta.get(b"global").map_err(to_storage_io)? else {
-            return Ok(None);
-        };
-        Ok(Some(serde_json::from_slice(&raw).map_err(to_storage_data)?))
-    }
-
-    fn put_spine_meta(&self, meta: &SpineMeta) -> Result<(), StorageError> {
-        let value = serde_json::to_vec(meta).map_err(to_storage_data)?;
-        self.spine_meta
-            .insert(b"global", value)
-            .map_err(to_storage_io)?;
-        Ok(())
     }
 
     fn lookup_record_seq(&self, record_id: &str) -> Result<Option<u64>, StorageError> {
@@ -332,24 +375,99 @@ impl EventStore {
             .get(record_id.as_bytes())
             .map_err(to_storage_io)?
         else {
-            return self.lookup_record_seq_by_event_scan(record_id);
+            return Ok(None);
         };
         Ok(Some(decode_seq(&raw)?))
     }
 
-    fn lookup_record_seq_by_event_scan(
-        &self,
-        record_id: &str,
-    ) -> Result<Option<u64>, StorageError> {
+    /// Repairs sequence metadata that lags the greatest persisted record, so
+    /// allocation can never reuse a persisted sequence after legacy writes or
+    /// external tampering left metadata behind.
+    fn repair_sequence_meta(&self) -> Result<(), StorageError> {
+        let Some((key, _)) = self.spine_events.last().map_err(to_storage_io)? else {
+            return Ok(());
+        };
+        // The sequence is derived from the zero-padded key rather than the
+        // record value, so one undecodable record cannot fail store open.
+        let Some(max_seq) = std::str::from_utf8(&key)
+            .ok()
+            .and_then(|key| key.parse::<u64>().ok())
+        else {
+            warn!("spine events tail key is not a sequence; skipping meta repair");
+            return Ok(());
+        };
+        let meta = match self
+            .spine_meta
+            .get(META_KEY_GLOBAL)
+            .map_err(to_storage_io)?
+        {
+            Some(raw) => serde_json::from_slice::<SpineMeta>(&raw).map_err(to_storage_data)?,
+            None => SpineMeta { next_seq: 1 },
+        };
+        if meta.next_seq <= max_seq {
+            let repaired = SpineMeta {
+                next_seq: max_seq + 1,
+            };
+            let value = serde_json::to_vec(&repaired).map_err(to_storage_data)?;
+            self.spine_meta
+                .insert(META_KEY_GLOBAL, value)
+                .map_err(to_storage_io)?;
+        }
+        Ok(())
+    }
+
+    // TODO compat-shim: remove once no deployed store predates the record
+    // index. Backfills index entries for records persisted before the index
+    // tree existed, replacing the old per-lookup full-tree scan fallback.
+    // Removal requires idempotent_append_reuses_record_sequence contract
+    // coverage to stay green against a store created without this backfill.
+    fn backfill_record_index_once(&self) -> Result<(), StorageError> {
+        if self
+            .spine_meta
+            .get(META_KEY_RECORD_INDEX_BACKFILLED)
+            .map_err(to_storage_io)?
+            .is_some()
+        {
+            return Ok(());
+        }
         for result in self.spine_events.iter() {
-            let (_, value) = result.map_err(to_storage_io)?;
-            let event = decode_event(&value)?;
-            if event.record_id.as_deref() == Some(record_id) {
+            let (key, value) = result.map_err(to_storage_io)?;
+            // An undecodable record cannot be idempotency-replayed, so it is
+            // skipped with a warning instead of failing store open.
+            let event = match decode_event(&value) {
+                Ok(event) => event,
+                Err(error) => {
+                    warn!(
+                        key = %String::from_utf8_lossy(&key),
+                        error = %error,
+                        "skipping undecodable record during index backfill"
+                    );
+                    continue;
+                }
+            };
+            let Some(record_id) = event.record_id.as_deref() else {
+                continue;
+            };
+            if self
+                .spine_record_index
+                .get(record_id.as_bytes())
+                .map_err(to_storage_io)?
+                .is_none()
+            {
+                // Full rewrite rather than a bare index insert: pre-index
+                // records may also miss their session index entry, and the
+                // old per-lookup repair restored both.
                 self.write_event(&event)?;
-                return Ok(Some(event.seq));
             }
         }
-        Ok(None)
+        // The flag must not become durable before the repairs it records:
+        // with the per-lookup scan fallback gone, a persisted flag over lost
+        // repairs would duplicate idempotent replays forever.
+        self.db.flush().map_err(to_storage_io)?;
+        self.spine_meta
+            .insert(META_KEY_RECORD_INDEX_BACKFILLED, &[1u8])
+            .map_err(to_storage_io)?;
+        Ok(())
     }
 }
 

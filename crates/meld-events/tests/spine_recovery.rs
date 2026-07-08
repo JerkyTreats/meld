@@ -276,12 +276,22 @@ fn assert_unique_sorted_sequences(cycle: u64, events: &[EventRecord]) {
 
 fn assert_sequence_meta_ahead(cycle: u64, store: &EventStore, events: &[EventRecord]) {
     let max_seq = events.last().map(|event| event.seq).unwrap_or(0);
-    let allocated = store.allocate_next_seq().unwrap();
     // Invariant: sequence metadata never lags the greatest persisted sequence,
-    // so a reopened allocator can never hand out an already-used sequence.
+    // so a reopened store can never assign an already-used sequence. Probed
+    // through an appended event because appends are the only allocation path.
+    let probe = EventEnvelope::new_domain(
+        String::new(),
+        "recovery-probe",
+        "spine_recovery",
+        "recovery-probe",
+        "spine.recovery.probe",
+        None,
+        serde_json::json!({ "cycle": cycle }),
+    );
+    let probe_seq = store.append_envelope(probe).unwrap();
     assert!(
-        allocated > max_seq,
-        "cycle {cycle}: allocate_next_seq returned {allocated} but max persisted seq is {max_seq}"
+        probe_seq > max_seq,
+        "cycle {cycle}: probe append received {probe_seq} but max persisted seq is {max_seq}"
     );
 }
 

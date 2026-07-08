@@ -1,9 +1,9 @@
 //! Micro benchmarks for the event spine store and runtime.
 //!
-//! These benches establish the baseline cost profile of the current spine
-//! before the overhaul: per-event fsync on the producer path, full-tree scans
-//! on cursor reads, and sequence allocation outside the append transaction.
-//! Slow numbers here are expected — they are the point of the measurement.
+//! These benches track the spine cost profile across the overhaul: producer
+//! path flush cost, seek-based cursor reads, and atomically sequenced
+//! appends. Compare runs against the recorded baselines in the overhaul PLAN
+//! to catch regressions.
 //!
 //! Set `MELD_SPINE_BENCH_LARGE=1` to add a 1,000,000-event history size to the
 //! replay and idle-tick curves; it is off by default to keep suite runtime
@@ -140,10 +140,9 @@ fn append_throughput(c: &mut Criterion) {
         });
     });
 
-    // Multi-producer contention on a shared store. Known baseline caveat:
-    // allocate_next_seq is a read-modify-write outside the append transaction,
-    // so concurrent producers can collide on a sequence; the numbers still
-    // capture the wall-time cost of the current contention behavior.
+    // Multi-producer contention on a shared store: sequence allocation is
+    // transactional, so the numbers capture serialization plus fsync cost
+    // under contention.
     const MULTI_TOTAL: usize = 1_000;
     group.throughput(Throughput::Elements(MULTI_TOTAL as u64));
     for threads in [2usize, 4, 8] {
@@ -191,9 +190,8 @@ fn replay_vs_history(c: &mut Criterion, fixtures: &[HistoryFixture]) {
 
     for fixture in fixtures {
         let size = fixture.size;
-        // Cursor parked at tip returns zero events and should be ~O(1); the
-        // current implementation decodes the whole tree regardless, so this
-        // curve is expected to grow linearly with total history.
+        // Cursor parked at tip returns zero events; reads seek to the
+        // cursor key, so this must stay flat as total history grows.
         let tip = size as u64;
         group.bench_with_input(
             BenchmarkId::new("tip_zero_events", size),
@@ -243,8 +241,7 @@ fn idle_catch_up(c: &mut Criterion, fixtures: &[HistoryFixture]) {
 
     for fixture in fixtures {
         // Supervisor idle tick: limit 256 with the cursor at tip returns
-        // nothing, but still pays a decode of every event at or below the
-        // cursor before the limit can apply.
+        // nothing and must stay flat as history grows.
         let tip = fixture.size as u64;
         group.bench_with_input(
             BenchmarkId::new("limit_256_at_tip", fixture.size),
