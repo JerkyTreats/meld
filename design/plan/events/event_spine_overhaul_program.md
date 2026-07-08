@@ -75,7 +75,7 @@ flowchart LR
 
 Decisions above are phase zero and land with this PLAN.
 
-### Phase 1: test and bench harness
+### Phase 1: test and bench harness — complete 2026-07-08
 
 Goal: build the harness against the broken implementation so it fails for the right reasons, and record baselines that indict the current mechanics.
 
@@ -85,12 +85,12 @@ Known-red convention: tests that fail on known defects land marked `#[ignore]` w
 
 Tasks:
 
-- [ ] concurrency suite: multi-thread append storms assert distinct sequences and zero lost records across bus, direct, and idempotent paths
-- [ ] determinism suite: same cursor plus unchanged spine yields identical batches on bounded and unbounded reads; interleaved append and replay never skips or duplicates; property tests against an in-memory oracle
-- [ ] recovery suite: child-process self-invocation harness kills the writer mid-storm, reopens, asserts no torn records, sequence meta at least max persisted plus one, idempotency index consistent
-- [ ] bench harness micro: append throughput by producer count and flush policy; replay latency versus history size at 10^3 through 10^6; session reads; idle catch-up cost; bytes per event
-- [ ] bench harness macro: flywheel bench with realistic producer mix and a reducer-shaped consumer measuring append-to-projection-visible latency
-- [ ] baselines recorded for the current implementation, including the replay-cost-versus-history curve
+- [x] concurrency suite: multi-thread append storms assert distinct sequences and zero lost records across bus, direct, and idempotent paths
+- [x] determinism suite: same cursor plus unchanged spine yields identical batches on bounded and unbounded reads; interleaved append and replay never skips or duplicates; property tests against an in-memory oracle
+- [x] recovery suite: child-process self-invocation harness kills the writer mid-storm, reopens, asserts no torn records, sequence meta at least max persisted plus one, idempotency index consistent
+- [x] bench harness micro: append throughput by producer count and flush policy; replay latency versus history size at 10^3 through 10^6; session reads; idle catch-up cost; bytes per event
+- [x] bench harness macro: flywheel bench with realistic producer mix and a reducer-shaped consumer measuring append-to-projection-visible latency
+- [x] baselines recorded for the current implementation, including the replay-cost-versus-history curve
 
 Exit criteria: suites compile and run green with known-reds ignored and documented; criterion baselines captured and summarized in this PLAN.
 
@@ -104,8 +104,10 @@ Tasks:
 
 - [ ] seek-based reads: `read_all_events_after*` range from the encoded cursor key; session and legacy readers seek within their prefix
 - [ ] atomic sequencing: allocation moves inside the existing multi-tree sled transaction; the two-step allocate-then-append public path collapses
+- [ ] idempotent append lookup: the full-scan repair fallback in `lookup_record_seq` no longer runs on every novel record id; novel ids take the index-miss fast path and repair becomes an explicit operation, removing the quadratic idempotent-append cost found while benching
 - [ ] cursor advance: `catch_up_with_limit` advances only to the highest processed source sequence, never to derived-event sequences
 - [ ] supervisor lifecycle key width widened past six digits
+- [ ] recovery probe migrates off `allocate_next_seq` to an appended probe event when the allocate-then-append path collapses, honoring the review waiver noted below
 - [ ] read-contract documentation matches actual guarantees
 
 Exit criteria: formerly ignored tests un-ignored and green; replay-latency bench flat with respect to history size; full workspace tests green.
@@ -215,6 +217,38 @@ Retention contract lands, then the engine gate closes the program.
 - PLAN and decisions recorded 2026-07-08.
 - Domain assessment: [Event Spine Overhaul Assessment By Domain](event_spine_overhaul_domain_assessment.md).
 - Baseline evidence: recorded below at the Phase 1 checkpoint.
+
+### Phase 1 — complete 2026-07-08
+
+Gate evidence, in ladder order: `cargo fmt --all -- --check` clean; `cargo clippy -p meld-events --all-targets` zero warnings after fixes; boundary script passed; full `cargo test -p meld-events` green at 58 tests with 3 known-reds ignored; full `cargo test --workspace` green; fresh review agent returned no blockers, one should-fix, three nits; baselines below. Commits `c80e073`, `ae4cf62`, `193297e`.
+
+Known-red inventory, all verified failing on current code via the ignored set: three storm tests in `spine_concurrency.rs`, all attributed to non-atomic sequence allocation. Observed loss: roughly two thirds of 2000 plain concurrent appends, roughly two percent of 2000 idempotent appends, and 20 of 1600 mixed-path events.
+
+Findings discovered by the harness beyond the review's defect list:
+
+- Idempotent appends are quadratic in history: `lookup_record_seq` falls back to a full event-tree scan on every novel record id and the append path performs the lookup twice. A 10000-event flywheel iteration took 45 seconds. Added as a Phase 2 task.
+- Crash durability is sound: roughly two hundred kill-reopen cycles produced zero torn records, zero duplicate sequences, and sequence meta never lagged persisted records; the allocator meta write reaches the sled log before its event transaction, so crashes only leave benign gaps. The predicted crash-side red did not materialize; the allocation defect is concurrency-only.
+- Concurrent duplicate record ids are already safe through the transactional index re-check and stay green.
+
+Review gate outcome: should-fix applied before baselines — the flywheel latency fixture grew during measurement, inflating the recorded median from 11.7 ms to a corrected 7.16 ms on a stationary copy-per-iteration fixture. Nits applied: bench teardown moved outside timed routines; vacuous-pass caveat documented on no-flush recovery tests. Waived with reason: the recovery probe's use of `allocate_next_seq` stays until Phase 2 collapses that API, where the probe migrates to an appended event; tracked as a Phase 2 task.
+
+Baselines, criterion medians on the development machine, defaults without `MELD_SPINE_BENCH_LARGE`:
+
+| Measurement | Value |
+| --- | --- |
+| append, flush per event | 15.8 µs per event |
+| append, flush per 100 batch | 11.8 µs per event |
+| emit_domain_event producer path | 15.9 µs per event |
+| multi-producer 2, 4, 8 threads, 1000 events | 11.0, 11.9, 11.9 ms — throughput degrades with threads |
+| replay at tip, zero events returned | 1.04 ms at 1k history, 10.9 ms at 10k, 128 ms at 100k — linear in total history |
+| replay last ten percent | within ten percent of tip cost; decode dominates |
+| idle catch-up, limit 256 at tip | 0.93 ms at 1k, 9.6 ms at 10k, 104 ms at 100k |
+| session read after tip, 1k-event session | 0.96 ms |
+| bytes per event on disk at 10k events | 1520 |
+| flywheel sustained produce-plus-consume, 2000 events | 1.76 s, roughly 1.1 Kelem per second |
+| flywheel append-to-projection-visible | 7.16 ms median at 5k history |
+
+The replay-at-tip curve is the headline indictment: reading zero new events costs 128 ms at 100k history, and every supervisor idle tick pays it.
 
 ## Related Documentation
 
