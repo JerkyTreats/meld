@@ -53,6 +53,9 @@ const TREE_SPINE_RECORD_INDEX: &str = "obs_spine_record_index";
 const EVENT_KEY_PAD: usize = 20;
 const META_KEY_GLOBAL: &[u8] = b"global";
 const META_KEY_RECORD_INDEX_BACKFILLED: &[u8] = b"record_index_backfilled";
+const META_KEY_LEGACY_SESSIONS_MIGRATED: &[u8] = b"legacy_sessions_migrated";
+const META_KEY_SESSION_INDEX_SLIMMED: &[u8] = b"session_index_slimmed";
+const SESSION_INDEX_EMPTY_VALUE: &[u8] = &[];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SpineMeta {
@@ -62,7 +65,7 @@ struct SpineMeta {
 /// Append-only event spine backed by sled.
 ///
 /// The store owns sequence allocation, idempotency lookup, session indexes,
-/// and compatibility reads from the older session event tree.
+/// and one-time open migrations that fold legacy session rows into the spine.
 #[derive(Clone)]
 pub struct EventStore {
     db: Db,
@@ -97,8 +100,10 @@ impl EventStore {
             spine_meta,
             spine_record_index,
         };
+        store.migrate_legacy_sessions_once()?;
         store.repair_sequence_meta()?;
         store.backfill_record_index_once()?;
+        store.slim_session_index_once()?;
         Ok(store)
     }
 
@@ -194,8 +199,10 @@ impl EventStore {
                     }
 
                     spine_events.insert(write.event_key.clone(), write.value.clone())?;
+                    // The sequence lives in the index key; the value stays
+                    // empty so records are stored once, in the spine tree.
                     session_event_index
-                        .insert(write.session_index_key.clone(), write.value.clone())?;
+                        .insert(write.session_index_key.clone(), SESSION_INDEX_EMPTY_VALUE)?;
                     if let Some((record_key, record_value)) = write.record_index.clone() {
                         spine_record_index.insert(record_key, record_value)?;
                     }
@@ -249,10 +256,12 @@ impl EventStore {
 
                     let record = EventRecord::from_envelope(envelope.clone(), seq);
                     let value = serde_json::to_vec(&record).map_err(to_transaction_data)?;
-                    spine_events.insert(encode_spine_key(seq).into_bytes(), value.clone())?;
+                    spine_events.insert(encode_spine_key(seq).into_bytes(), value)?;
+                    // The sequence lives in the index key; the value stays
+                    // empty so records are stored once, in the spine tree.
                     session_event_index.insert(
                         encode_session_event_index_key(&envelope.session, seq).into_bytes(),
-                        value,
+                        SESSION_INDEX_EMPTY_VALUE,
                     )?;
                     if let Some(record_id) = envelope.record_id.as_deref() {
                         spine_record_index.insert(record_id.as_bytes(), &encode_seq(seq))?;
@@ -275,11 +284,7 @@ impl EventStore {
         session_id: &str,
         after_seq: u64,
     ) -> Result<Vec<EventRecord>, StorageError> {
-        let mut out = self.read_spine_session_events_after(session_id, after_seq)?;
-        let mut legacy = self.read_legacy_events_after(session_id, after_seq)?;
-        out.append(&mut legacy);
-        out.sort_by_key(|event| event.seq);
-        Ok(out)
+        self.read_session_events_after(session_id, after_seq)
     }
 
     /// Reads all events after a spine sequence across sessions.
@@ -328,27 +333,12 @@ impl EventStore {
         encode_legacy_event_key(session_id, seq)
     }
 
-    fn read_spine_session_events_after(
+    /// Seeks within one session's key range and resolves each entry through
+    /// the spine tree. Session keys are `{session}:{seq:020}`, so the range
+    /// starts at the cursor, `;` bounds the `:` separator, and the sequence
+    /// comes from the key tail; index values carry no record payload.
+    fn read_session_events_after(
         &self,
-        session_id: &str,
-        after_seq: u64,
-    ) -> Result<Vec<EventRecord>, StorageError> {
-        Self::read_session_tree_after(&self.session_event_index, session_id, after_seq)
-    }
-
-    fn read_legacy_events_after(
-        &self,
-        session_id: &str,
-        after_seq: u64,
-    ) -> Result<Vec<EventRecord>, StorageError> {
-        Self::read_session_tree_after(&self.legacy_events, session_id, after_seq)
-    }
-
-    /// Seeks within one session's key range instead of scanning and
-    /// filtering the whole prefix. Session keys are `{session}:{seq:020}`,
-    /// so the range starts at the cursor and `;` bounds the `:` separator.
-    fn read_session_tree_after(
-        tree: &Tree,
         session_id: &str,
         after_seq: u64,
     ) -> Result<Vec<EventRecord>, StorageError> {
@@ -356,15 +346,30 @@ impl EventStore {
             encode_session_event_index_key(session_id, after_seq.saturating_add(1)).into_bytes();
         let end = format!("{session_id};").into_bytes();
         let mut out = Vec::new();
-        for result in tree.range(start..end) {
-            let (_, value) = result.map_err(to_storage_io)?;
-            let parsed = decode_event(&value)?;
+        for result in self.session_event_index.range(start..end) {
+            let (key, _) = result.map_err(to_storage_io)?;
+            let Some(seq) = decode_session_key_seq(&key) else {
+                warn!(
+                    key = %String::from_utf8_lossy(&key),
+                    "skipping malformed session index key"
+                );
+                continue;
+            };
             // Foreign session ids sharing this prefix plus a colon byte-sort
             // into the range regardless of their sequence; the filter keeps
             // exact cursor semantics for those leaked records.
-            if parsed.seq > after_seq {
-                out.push(parsed);
+            if seq <= after_seq {
+                continue;
             }
+            let Some(value) = self
+                .spine_events
+                .get(encode_spine_key(seq).as_bytes())
+                .map_err(to_storage_io)?
+            else {
+                warn!(seq, "session index entry has no spine record");
+                continue;
+            };
+            out.push(decode_event(&value)?);
         }
         Ok(out)
     }
@@ -413,6 +418,110 @@ impl EventStore {
                 .insert(META_KEY_GLOBAL, value)
                 .map_err(to_storage_io)?;
         }
+        Ok(())
+    }
+
+    // TODO compat-shim: remove once no deployed store predates the spine
+    // trees, together with `encode_event_key`. Migrates rows from the legacy
+    // session event tree into the spine so session reads have one source;
+    // before this, reads merged the legacy tree on every call. Removal
+    // requires the migrated-legacy contract tests, including the
+    // multi-session and legacy-plus-spine coexistence cases, to stay green
+    // against a store created without legacy rows.
+    fn migrate_legacy_sessions_once(&self) -> Result<(), StorageError> {
+        if self
+            .spine_meta
+            .get(META_KEY_LEGACY_SESSIONS_MIGRATED)
+            .map_err(to_storage_io)?
+            .is_some()
+        {
+            return Ok(());
+        }
+
+        // Legacy sequences were allocated per session and restart at one in
+        // every session, so they cannot map onto the global spine keyspace.
+        // Every row is re-sequenced through fresh global allocation instead;
+        // lexicographic key order groups sessions and preserves each
+        // session's relative order. Rows are decoded outside the transaction
+        // so the closure stays pure over this list on retry.
+        let mut rows = Vec::new();
+        for result in self.legacy_events.iter() {
+            let (key, value) = result.map_err(to_storage_io)?;
+            // An undecodable legacy row cannot be served by any read path;
+            // skipped with a warning instead of failing store open.
+            match decode_event(&value) {
+                Ok(event) => rows.push(event),
+                Err(error) => {
+                    warn!(
+                        key = %String::from_utf8_lossy(&key),
+                        error = %error,
+                        "skipping undecodable legacy row during migration"
+                    );
+                }
+            }
+        }
+
+        // One transaction covers every migrated row, the sequence metadata,
+        // and the flag, so a crash can never leave partial migration state
+        // or a durable flag over missing history.
+        (
+            &self.spine_meta,
+            &self.spine_events,
+            &self.session_event_index,
+        )
+            .transaction(|(spine_meta, spine_events, session_event_index)| {
+                let mut meta = match spine_meta.get(META_KEY_GLOBAL)? {
+                    Some(raw) => serde_json::from_slice(&raw).map_err(to_transaction_data)?,
+                    None => SpineMeta { next_seq: 1 },
+                };
+                for event in &rows {
+                    let seq = meta.next_seq;
+                    meta.next_seq += 1;
+                    let record = EventRecord::from_envelope(event.envelope.clone(), seq);
+                    let value = serde_json::to_vec(&record).map_err(to_transaction_data)?;
+                    spine_events.insert(encode_spine_key(seq).into_bytes(), value)?;
+                    session_event_index.insert(
+                        encode_session_event_index_key(&record.session, seq).into_bytes(),
+                        SESSION_INDEX_EMPTY_VALUE,
+                    )?;
+                }
+                spine_meta.insert(
+                    META_KEY_GLOBAL,
+                    serde_json::to_vec(&meta).map_err(to_transaction_data)?,
+                )?;
+                spine_meta.insert(META_KEY_LEGACY_SESSIONS_MIGRATED, &[1u8])?;
+                Ok(())
+            })
+            .map_err(to_transaction)?;
+        self.db.flush().map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    // TODO compat-shim: remove once no deployed store predates empty session
+    // index values. Rewrites full-record index values to empty markers so the
+    // spine tree is the only copy of each record. Removal requires the
+    // slimmed-index contract test to stay green against a store created
+    // without full-value rows.
+    fn slim_session_index_once(&self) -> Result<(), StorageError> {
+        if self
+            .spine_meta
+            .get(META_KEY_SESSION_INDEX_SLIMMED)
+            .map_err(to_storage_io)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        for result in self.session_event_index.iter() {
+            let (key, value) = result.map_err(to_storage_io)?;
+            if !value.is_empty() {
+                self.session_event_index
+                    .insert(key, SESSION_INDEX_EMPTY_VALUE)
+                    .map_err(to_storage_io)?;
+            }
+        }
+        self.spine_meta
+            .insert(META_KEY_SESSION_INDEX_SLIMMED, &[1u8])
+            .map_err(to_storage_io)?;
         Ok(())
     }
 
@@ -503,6 +612,17 @@ fn encode_legacy_event_key(session_id: &str, seq: u64) -> String {
 
 fn encode_spine_key(seq: u64) -> String {
     format!("{seq:0EVENT_KEY_PAD$}")
+}
+
+/// Parses the sequence from a session index key's fixed-width tail.
+fn decode_session_key_seq(key: &[u8]) -> Option<u64> {
+    if key.len() <= EVENT_KEY_PAD {
+        return None;
+    }
+    std::str::from_utf8(&key[key.len() - EVENT_KEY_PAD..])
+        .ok()?
+        .parse()
+        .ok()
 }
 
 fn encode_session_event_index_key(session_id: &str, seq: u64) -> String {
@@ -609,11 +729,13 @@ mod tests {
         assert_eq!(events[1].seq, 2);
     }
 
+    // Legacy rows persisted before the spine trees existed are migrated
+    // into the spine at open, after which reads never consult the legacy
+    // tree; a row that appears there later is intentionally invisible.
     #[test]
-    fn legacy_events_remain_readable() {
+    fn legacy_events_migrate_into_spine_at_open() {
         let dir = tempfile::TempDir::new().unwrap();
         let db = sled::open(dir.path()).unwrap();
-        let store = EventStore::new(db.clone()).unwrap();
         let session = "legacy_session";
 
         let legacy_tree = db.open_tree("obs_events").unwrap();
@@ -636,9 +758,23 @@ mod tests {
         .unwrap();
         legacy_tree.insert(key.as_bytes(), raw).unwrap();
 
+        let store = EventStore::new(db).unwrap();
         let events = store.read_events(session).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].domain_id, "telemetry");
         assert_eq!(events[0].stream_id, session);
+        assert_eq!(store.read_all_events_after(0).unwrap().len(), 1);
+        // Migration advanced sequence metadata past the migrated row.
+        assert_eq!(
+            store
+                .append_envelope(EventEnvelope::new(
+                    "2".to_string(),
+                    session.to_string(),
+                    "session_ended",
+                    serde_json::json!({}),
+                ))
+                .unwrap(),
+            2
+        );
     }
 }

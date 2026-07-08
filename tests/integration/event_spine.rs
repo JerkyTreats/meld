@@ -54,14 +54,13 @@ fn runtime_wide_sequence_is_monotonic() {
 fn legacy_spine_events_remain_readable_with_graph_fields() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let runtime = ProgressRuntime::new(db).unwrap();
     let session_id = "legacy-session";
-    let legacy_tree = runtime.store().db().open_tree("obs_events").unwrap();
+    let legacy_tree = db.open_tree("obs_events").unwrap();
     let key = meld::telemetry::sinks::store::ProgressStore::encode_event_key(session_id, 1);
     let raw = r#"{"ts":"2026-02-14T12:34:56.789Z","session":"legacy-session","seq":1,"type":"session_started","data":{"command":"scan"}}"#;
-
     legacy_tree.insert(key.as_bytes(), raw.as_bytes()).unwrap();
 
+    let runtime = ProgressRuntime::new(db).unwrap();
     let events = runtime.store().read_events(session_id).unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].session, session_id);
@@ -79,14 +78,14 @@ fn legacy_spine_events_remain_readable_with_graph_fields() {
 fn mixed_spine_events_replay_with_object_refs() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let runtime = ProgressRuntime::new(db).unwrap();
     let session_id = "mixed-session";
-    let legacy_tree = runtime.store().db().open_tree("obs_events").unwrap();
+    let legacy_tree = db.open_tree("obs_events").unwrap();
     let legacy_key = ProgressStore::encode_event_key(session_id, 1);
     let legacy_raw = r#"{"ts":"2026-02-14T12:34:56.789Z","session":"mixed-session","seq":1,"type":"session_started","data":{"command":"scan"}}"#;
     legacy_tree
         .insert(legacy_key.as_bytes(), legacy_raw.as_bytes())
         .unwrap();
+    let runtime = ProgressRuntime::new(db).unwrap();
 
     let task_run = DomainObjectRef::new("execution", "task_run", "run_a").unwrap();
     let artifact = DomainObjectRef::new("execution", "artifact", "artifact_a").unwrap();
@@ -345,14 +344,13 @@ fn non_idempotent_append_keeps_duplicate_record_ids() {
 fn legacy_records_ignore_missing_record_id() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let runtime = ProgressRuntime::new(db).unwrap();
     let session_id = "legacy-record-id";
-    let legacy_tree = runtime.store().db().open_tree("obs_events").unwrap();
+    let legacy_tree = db.open_tree("obs_events").unwrap();
     let key = ProgressStore::encode_event_key(session_id, 1);
     let raw = r#"{"ts":"2026-02-14T12:34:56.789Z","session":"legacy-record-id","seq":1,"type":"session_started","data":{"command":"scan"}}"#;
-
     legacy_tree.insert(key.as_bytes(), raw.as_bytes()).unwrap();
 
+    let runtime = ProgressRuntime::new(db).unwrap();
     let events = runtime.store().read_events(session_id).unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].record_id, None);

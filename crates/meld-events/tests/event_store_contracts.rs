@@ -465,6 +465,132 @@ fn idempotent_append_reuses_record_sequence_and_survives_reopen() {
     assert_eq!(reopened.read_events(SESSION_A).unwrap().len(), 1);
 }
 
+// Legacy sequences were per session and restart at one in every session:
+// multi-session legacy stores must migrate completely, with every session's
+// history preserved in its relative order under fresh global sequences.
+#[test]
+fn multi_session_legacy_stores_migrate_completely() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = sled::open(temp_dir.path().join("events")).unwrap();
+    let legacy_tree = db.open_tree("obs_events").unwrap();
+    for session in ["alpha", "beta"] {
+        for seq in 1u64..=3 {
+            let legacy = legacy_record_json(LegacyRecordJson {
+                ts: RECORDED_AT.to_string(),
+                recorded_at: String::new(),
+                session: session.to_string(),
+                seq,
+                domain_id: String::new(),
+                stream_id: String::new(),
+                event_type: format!("legacy.{session}.{seq}"),
+                data: json!({ "seq": seq }),
+            });
+            let key = EventStore::encode_event_key(session, seq);
+            legacy_tree
+                .insert(key.as_bytes(), serde_json::to_vec(&legacy).unwrap())
+                .unwrap();
+        }
+    }
+
+    let store = EventStore::new(db).unwrap();
+    let all = store.read_all_events_after(0).unwrap();
+    assert_eq!(all.len(), 6);
+    for session in ["alpha", "beta"] {
+        let events = store.read_events(session).unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.event_type.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                format!("legacy.{session}.1"),
+                format!("legacy.{session}.2"),
+                format!("legacy.{session}.3"),
+            ]
+        );
+        assert!(events.windows(2).all(|pair| pair[0].seq < pair[1].seq));
+    }
+}
+
+// A transition-era store holds spine records and legacy rows whose
+// per-session sequences collide numerically with spine sequences; migration
+// must keep both histories intact by re-sequencing the legacy rows.
+#[test]
+fn legacy_rows_coexist_with_spine_history_after_migration() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = sled::open(temp_dir.path().join("events")).unwrap();
+    {
+        let store = EventStore::new(db.clone()).unwrap();
+        store
+            .append_envelope(domain_envelope("spine.first"))
+            .unwrap();
+        store
+            .append_envelope(domain_envelope("spine.second"))
+            .unwrap();
+        store.flush().unwrap();
+    }
+    let legacy = legacy_record_json(LegacyRecordJson {
+        ts: RECORDED_AT.to_string(),
+        recorded_at: String::new(),
+        session: "legacy-era".to_string(),
+        seq: 1,
+        domain_id: String::new(),
+        stream_id: String::new(),
+        event_type: "legacy.colliding".to_string(),
+        data: json!({}),
+    });
+    let legacy_tree = db.open_tree("obs_events").unwrap();
+    let key = EventStore::encode_event_key("legacy-era", 1);
+    legacy_tree
+        .insert(key.as_bytes(), serde_json::to_vec(&legacy).unwrap())
+        .unwrap();
+
+    // The first open already set the migrated flag on an empty legacy tree,
+    // so this store models a transition-era db by clearing it.
+    db.open_tree("obs_spine_meta")
+        .unwrap()
+        .remove("legacy_sessions_migrated")
+        .unwrap();
+
+    let store = EventStore::new(db).unwrap();
+    let all = store.read_all_events_after(0).unwrap();
+    assert_eq!(all.len(), 3);
+    assert_eq!(all[0].event_type, "spine.first");
+    assert_eq!(all[1].event_type, "spine.second");
+    assert_eq!(all[2].event_type, "legacy.colliding");
+    assert_eq!(all[2].seq, 3);
+    assert_eq!(store.read_events("legacy-era").unwrap().len(), 1);
+}
+
+// Stores written before empty index values hold full records in the session
+// index; opening slims them and reads resolve through the spine only.
+#[test]
+fn full_value_session_index_rows_slim_at_open() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = sled::open(temp_dir.path().join("events")).unwrap();
+    let record = EventRecord::from_envelope(domain_envelope("execution.task.completed"), 1);
+    let value = serde_json::to_vec(&record).unwrap();
+    db.open_tree("obs_spine_events")
+        .unwrap()
+        .insert(format!("{:020}", 1).as_bytes(), value.clone())
+        .unwrap();
+    db.open_tree("obs_session_event_index")
+        .unwrap()
+        .insert(format!("{SESSION_A}:{:020}", 1).as_bytes(), value)
+        .unwrap();
+    db.flush().unwrap();
+
+    let store = EventStore::new(db.clone()).unwrap();
+    assert_eq!(store.read_events(SESSION_A).unwrap(), vec![record]);
+    let (_, slimmed) = db
+        .open_tree("obs_session_event_index")
+        .unwrap()
+        .first()
+        .unwrap()
+        .unwrap();
+    assert!(slimmed.is_empty());
+}
+
 // Records persisted before the record index existed carry no index entry
 // and no sequence metadata. Opening the store must repair both, so
 // idempotent appends reuse the legacy sequence and new appends never
@@ -580,7 +706,10 @@ fn store_flush_writes_pending_bytes_to_disk() {
 
 #[test]
 fn legacy_events_normalize_defaults() {
-    let (_temp_dir, store) = event_store();
+    // Legacy rows exist before the store opens; open-time migration moves
+    // them into the spine with normalized defaults.
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = sled::open(temp_dir.path().join("events")).unwrap();
     let legacy = legacy_record_json(LegacyRecordJson {
         ts: RECORDED_AT.to_string(),
         recorded_at: String::new(),
@@ -591,11 +720,12 @@ fn legacy_events_normalize_defaults() {
         event_type: "session.started".to_string(),
         data: json!({ "legacy": true }),
     });
-    let legacy_tree = store.db().open_tree("obs_events").unwrap();
+    let legacy_tree = db.open_tree("obs_events").unwrap();
     let key = EventStore::encode_event_key(SESSION_A, 1);
     legacy_tree
         .insert(key.as_bytes(), serde_json::to_vec(&legacy).unwrap())
         .unwrap();
+    let store = EventStore::new(db).unwrap();
 
     let events = store.read_events(SESSION_A).unwrap();
     let after_equal = store.read_events_after(SESSION_A, 1).unwrap();
@@ -940,7 +1070,8 @@ proptest! {
         seq in 1u64..10_000,
         marker in any::<u16>(),
     ) {
-        let (_temp_dir, store) = event_store();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db = sled::open(temp_dir.path().join("events")).unwrap();
         let legacy = legacy_record_json(LegacyRecordJson {
             ts: ts.clone(),
             recorded_at: String::new(),
@@ -951,12 +1082,13 @@ proptest! {
             event_type: "legacy.generated".to_string(),
             data: json!({ "marker": marker }),
         });
-        let legacy_tree = store.db().open_tree("obs_events").unwrap();
+        let legacy_tree = db.open_tree("obs_events").unwrap();
         let key = EventStore::encode_event_key(&session, seq);
         legacy_tree
             .insert(key.as_bytes(), serde_json::to_vec(&legacy).unwrap())
             .unwrap();
 
+        let store = EventStore::new(db).unwrap();
         let events = store.read_events(&session).unwrap();
 
         prop_assert_eq!(events.len(), 1);
