@@ -94,7 +94,7 @@ Tasks:
 
 Exit criteria: suites compile and run green with known-reds ignored and documented; criterion baselines captured and summarized in this PLAN.
 
-### Phase 2: correctness core
+### Phase 2: correctness core — complete 2026-07-08
 
 Goal: flip every known-red proof green with surgical diffs.
 
@@ -102,13 +102,13 @@ Key seams: `crates/meld-events/src/events/store.rs`, `crates/meld-world-model/sr
 
 Tasks:
 
-- [ ] seek-based reads: `read_all_events_after*` range from the encoded cursor key; session and legacy readers seek within their prefix
-- [ ] atomic sequencing: allocation moves inside the existing multi-tree sled transaction; the two-step allocate-then-append public path collapses
-- [ ] idempotent append lookup: the full-scan repair fallback in `lookup_record_seq` no longer runs on every novel record id; novel ids take the index-miss fast path and repair becomes an explicit operation, removing the quadratic idempotent-append cost found while benching
-- [ ] cursor advance: `catch_up_with_limit` advances only to the highest processed source sequence, never to derived-event sequences
-- [ ] supervisor lifecycle key width widened past six digits
-- [ ] recovery probe migrates off `allocate_next_seq` to an appended probe event when the allocate-then-append path collapses, honoring the review waiver noted below
-- [ ] read-contract documentation matches actual guarantees
+- [x] seek-based reads: `read_all_events_after*` range from the encoded cursor key; session and legacy readers seek within their prefix
+- [x] atomic sequencing: allocation moves inside the existing multi-tree sled transaction; the two-step allocate-then-append public path collapses
+- [x] idempotent append lookup: the full-scan repair fallback in `lookup_record_seq` no longer runs on every novel record id; repair happens once at store open with a compat-shim removal note, removing the quadratic idempotent-append cost found while benching
+- [x] cursor advance: `catch_up_with_limit` advances only to the highest processed source sequence, never to derived-event sequences
+- [x] supervisor lifecycle key width widened past six digits
+- [x] recovery probe migrates off `allocate_next_seq` to an appended probe event when the allocate-then-append path collapses, honoring the review waiver noted below
+- [x] read-contract documentation matches actual guarantees
 
 Exit criteria: formerly ignored tests un-ignored and green; replay-latency bench flat with respect to history size; full workspace tests green.
 
@@ -249,6 +249,29 @@ Baselines, criterion medians on the development machine, defaults without `MELD_
 | flywheel append-to-projection-visible | 7.16 ms median at 5k history |
 
 The replay-at-tip curve is the headline indictment: reading zero new events costs 128 ms at 100k history, and every supervisor idle tick pays it.
+
+### Phase 2 — complete 2026-07-08
+
+Gate evidence, in ladder order: formatter clean; clippy zero warnings on changed crates; boundary script passed; full crate suites green at 61 tests with the three storm reds un-ignored and passing; full `cargo test --workspace` green at 33 suites; adversarial two-lens fresh review returned no blockers across both lenses; bench comparison below.
+
+What changed: sequence allocation moved inside the multi-tree sled transaction, making concurrent collisions structurally impossible; all cursor reads seek from the encoded key instead of scanning history; the per-lookup index-repair scan became a one-time open repair with sequence-meta self-healing; `allocate_next_seq` left the public API; the traversal cursor pins to the highest processed source sequence; supervisor lifecycle keys widened to sequence width.
+
+Breaking change: `EventStore::allocate_next_seq` is removed. No production caller existed; appends are the only allocation path. Recorded per compatibility policy in the store commit footer.
+
+Review findings and dispositions: both reviewers confirmed the storm reds were genuine and the fix sound. Applied during review: repair derives the maximum sequence from the key so one undecodable record cannot fail store open; backfill skips undecodable records with a warning; the backfill flag is flushed after its repairs so lost repairs cannot strand a durable flag; stale bench comments refreshed per commenting policy; the session cursor filter is restored inside the seek range so prefix-colliding session ids cannot leak stale records to polling consumers. Accepted as nits without change: the cursor at `u64::MAX` boundary is unreachable through allocation; open-time repair is non-transactional but production opens precede workers and sled's file lock prevents cross-process sharing; torn index states created by external writers after open no longer lazily self-heal, which the reworked contract test documents. Pre-existing observation for the ingress phase: pre-sequenced `append_event` remains caller-responsibility semantics and debug builds panic on sequence overflow at `u64::MAX`.
+
+Bench comparison against the recorded baselines, criterion medians:
+
+| Measurement | Baseline | After | Change |
+| --- | --- | --- | --- |
+| replay at tip, 100k history | 128 ms | 0.47 µs | flat across history sizes |
+| idle catch-up limit 256 at tip, 100k | 104 ms | 0.56 µs | flat across history sizes |
+| session read after tip | 963 µs | 0.86 µs | seek plus filter |
+| flywheel append-to-projection-visible | 7.16 ms | 54 µs | one tick no longer scans history |
+| flywheel produce-plus-consume, 2000 events | 1.76 s | 34 ms | quadratic idempotent lookup removed |
+| append flush per event | 15.8 µs | 15.0 µs | unchanged, fsync-bound, ingress phase target |
+| multi-producer contended appends | 11.0 to 11.9 ms per 1000 | 11.7 to 12.3 ms per 1000 | three to seven percent transactional-allocation cost, accepted for correctness |
+| bytes per event on disk | 1520 | 1625 | seven percent, reclaimed by the read path phase seq-ref index |
 
 ## Related Documentation
 
