@@ -55,6 +55,7 @@ const META_KEY_GLOBAL: &[u8] = b"global";
 const META_KEY_RECORD_INDEX_BACKFILLED: &[u8] = b"record_index_backfilled";
 const META_KEY_LEGACY_SESSIONS_MIGRATED: &[u8] = b"legacy_sessions_migrated";
 const META_KEY_SESSION_INDEX_SLIMMED: &[u8] = b"session_index_slimmed";
+const META_KEY_RETAINED_FROM: &[u8] = b"retained_from";
 const SESSION_INDEX_EMPTY_VALUE: &[u8] = &[];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +294,7 @@ impl EventStore {
     /// the cursor and returns records in sequence order; cost is proportional
     /// to the records returned, not to total history.
     pub fn read_all_events_after(&self, after_seq: u64) -> Result<Vec<EventRecord>, StorageError> {
+        self.check_retention(after_seq)?;
         let mut out = Vec::new();
         let start = encode_spine_key(after_seq.saturating_add(1)).into_bytes();
         for result in self.spine_events.range(start..) {
@@ -309,6 +311,7 @@ impl EventStore {
         after_seq: u64,
         limit: usize,
     ) -> Result<Vec<EventRecord>, StorageError> {
+        self.check_retention(after_seq)?;
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -320,6 +323,50 @@ impl EventStore {
             out.push(decode_event(&value)?);
         }
         Ok(out)
+    }
+
+    /// Returns the first sequence still retained by the spine.
+    ///
+    /// One means full history. A future compactor raises the boundary when
+    /// it prunes; until then it never moves.
+    pub fn retained_lower_boundary(&self) -> Result<u64, StorageError> {
+        let Some(raw) = self
+            .spine_meta
+            .get(META_KEY_RETAINED_FROM)
+            .map_err(to_storage_io)?
+        else {
+            return Ok(1);
+        };
+        decode_seq(&raw)
+    }
+
+    /// Raises the retained lower boundary; the compactor's contract hook.
+    ///
+    /// Raising the boundary promises that every sequence below it is gone;
+    /// replay from a cursor below the boundary returns a typed retention gap
+    /// instead of silently skipping history. The boundary never lowers.
+    pub fn set_retained_lower_boundary(&self, retained_from: u64) -> Result<(), StorageError> {
+        let current = self.retained_lower_boundary()?;
+        if retained_from <= current {
+            return Ok(());
+        }
+        self.spine_meta
+            .insert(META_KEY_RETAINED_FROM, &encode_seq(retained_from))
+            .map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    /// Fails with a typed retention gap when a cursor predates retained
+    /// history, so no replay can silently skip compacted events.
+    fn check_retention(&self, after_seq: u64) -> Result<(), StorageError> {
+        let retained_from = self.retained_lower_boundary()?;
+        if after_seq.saturating_add(1) < retained_from {
+            return Err(StorageError::RetentionGap {
+                after_seq,
+                retained_from,
+            });
+        }
+        Ok(())
     }
 
     /// Flushes pending sled writes to durable storage.
@@ -342,6 +389,7 @@ impl EventStore {
         session_id: &str,
         after_seq: u64,
     ) -> Result<Vec<EventRecord>, StorageError> {
+        self.check_retention(after_seq)?;
         let start =
             encode_session_event_index_key(session_id, after_seq.saturating_add(1)).into_bytes();
         let end = format!("{session_id};").into_bytes();

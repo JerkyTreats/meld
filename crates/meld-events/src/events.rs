@@ -188,6 +188,27 @@ impl EventEnvelope {
         }
     }
 
+    /// Creates a genesis fact marking a projection rebuilt from a snapshot.
+    ///
+    /// Replay for the stream may start at this fact plus later deltas
+    /// instead of from the beginning of history; `basis_seq` records the
+    /// highest source sequence the snapshot covers, and the idempotency key
+    /// makes re-recording the same genesis safe.
+    pub fn genesis_domain(
+        session: impl Into<String>,
+        domain_id: impl Into<String>,
+        stream_id: impl Into<String>,
+        basis_seq: u64,
+        data: Value,
+    ) -> Self {
+        let domain_id = domain_id.into();
+        let stream_id = stream_id.into();
+        let event_type = format!("{domain_id}.genesis");
+        let record_id = format!("genesis::{domain_id}::{stream_id}::{basis_seq}");
+        Self::with_now_domain(session, domain_id, stream_id, event_type, None, data)
+            .with_record_id(record_id)
+    }
+
     /// Attaches graph materialization references to the envelope.
     pub fn with_graph(
         mut self,

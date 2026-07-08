@@ -22,6 +22,11 @@ pub enum StorageError {
     #[error("Backpressure: {0}")]
     Backpressure(String),
 
+    #[error(
+        "Retention gap: cursor {after_seq} predates retained history starting at {retained_from}"
+    )]
+    RetentionGap { after_seq: u64, retained_from: u64 },
+
     #[error("Storage I/O error: {0}")]
     IoError(#[from] std::io::Error),
 }
@@ -37,6 +42,13 @@ impl Clone for StorageError {
             },
             StorageError::InvalidPath(path) => StorageError::InvalidPath(path.clone()),
             StorageError::Backpressure(message) => StorageError::Backpressure(message.clone()),
+            StorageError::RetentionGap {
+                after_seq,
+                retained_from,
+            } => StorageError::RetentionGap {
+                after_seq: *after_seq,
+                retained_from: *retained_from,
+            },
             StorageError::IoError(err) => {
                 StorageError::IoError(std::io::Error::new(err.kind(), err.to_string()))
             }
@@ -295,6 +307,13 @@ impl From<meld_events::error::StorageError> for StorageError {
             meld_events::error::StorageError::Backpressure(message) => {
                 StorageError::Backpressure(message)
             }
+            meld_events::error::StorageError::RetentionGap {
+                after_seq,
+                retained_from,
+            } => StorageError::RetentionGap {
+                after_seq,
+                retained_from,
+            },
             meld_events::error::StorageError::IoError(err) => StorageError::IoError(err),
         }
     }

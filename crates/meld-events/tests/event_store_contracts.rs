@@ -465,6 +465,66 @@ fn idempotent_append_reuses_record_sequence_and_survives_reopen() {
     assert_eq!(reopened.read_events(SESSION_A).unwrap().len(), 1);
 }
 
+// Replay below the retained lower boundary must fail with a typed gap so
+// no consumer can silently skip compacted history; cursors at or above the
+// boundary replay normally.
+#[test]
+fn replay_below_retained_boundary_returns_typed_gap() {
+    let (_temp_dir, store) = event_store();
+    for i in 0..5 {
+        store
+            .append_envelope(domain_envelope(&format!("execution.step.{i}")))
+            .unwrap();
+    }
+    assert_eq!(store.retained_lower_boundary().unwrap(), 1);
+
+    store.set_retained_lower_boundary(3).unwrap();
+    // Lowering attempts are ignored: the boundary is a one-way promise.
+    store.set_retained_lower_boundary(2).unwrap();
+    assert_eq!(store.retained_lower_boundary().unwrap(), 3);
+
+    let global = store.read_all_events_after(1).unwrap_err();
+    assert!(matches!(
+        global,
+        meld_events::error::StorageError::RetentionGap {
+            after_seq: 1,
+            retained_from: 3,
+        }
+    ));
+    assert!(store.read_all_events_after_limit(0, 2).is_err());
+    assert!(store.read_events(SESSION_A).is_err());
+
+    // A cursor exactly at the boundary edge replays without a gap.
+    assert_eq!(store.read_all_events_after(2).unwrap().len(), 3);
+    assert_eq!(store.read_events_after(SESSION_A, 2).unwrap().len(), 3);
+}
+
+// A genesis fact records rebuilt-from-snapshot at a basis sequence, with an
+// idempotency key so re-recording the same genesis cannot duplicate.
+#[test]
+fn genesis_facts_record_snapshot_basis_idempotently() {
+    let (_temp_dir, store) = event_store();
+    let genesis = meld_events::EventEnvelope::genesis_domain(
+        SESSION_A,
+        "world_state",
+        "graph",
+        42,
+        json!({ "snapshot": "snapshot-a" }),
+    );
+
+    let first = store.append_envelope_idempotent(genesis.clone()).unwrap();
+    let second = store.append_envelope_idempotent(genesis).unwrap();
+
+    assert_eq!(first, second);
+    let events = store.read_all_events_after(0).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, "world_state.genesis");
+    assert_eq!(
+        events[0].record_id.as_deref(),
+        Some("genesis::world_state::graph::42")
+    );
+}
+
 // Legacy sequences were per session and restart at one in every session:
 // multi-session legacy stores must migrate completely, with every session's
 // history preserved in its relative order under fresh global sequences.
