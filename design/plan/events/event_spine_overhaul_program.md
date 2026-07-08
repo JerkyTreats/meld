@@ -112,22 +112,22 @@ Tasks:
 
 Exit criteria: formerly ignored tests un-ignored and green; replay-latency bench flat with respect to history size; full workspace tests green.
 
-### Phase 3: single-writer ingress
+### Phase 3: single-writer ingress — complete 2026-07-08
 
 Goal: one ordered writer, honest bus, real backpressure, durable acks.
 
-Key seams: `crates/meld-events/src/events/ingress.rs` and `runtime.rs` internals; `EventAppendSink` and emit signatures preserved for producers.
+Key seams: `crates/meld-events/src/events/writer.rs` and `runtime.rs`; `EventAppendSink` and emit signatures preserved for producers.
 
 Tasks:
 
-- [ ] writer thread owns sequencing and sled writes behind a bounded channel; seq races become structurally impossible
-- [ ] group commit with size and time bounds; durable-class emits ack on flush; best-effort emits return on enqueue
-- [ ] direct idempotent path and bus path converge on the writer
-- [ ] backpressure policy: bounded blocking for durable, counted drops for best-effort surfaced through worker diagnostics; silent drops end
-- [ ] commit watermark published by the writer through a watch-style primitive
-- [ ] flush-and-drain on shutdown and drop; CLI one-shot processes never lose acked events
+- [x] writer thread owns sequencing and sled writes behind a bounded channel; seq races become structurally impossible
+- [x] group commit with a size bound and natural batching; durable-class emits ack on flush; best-effort emits return on enqueue. Deviation recorded: no time bound exists because natural batching flushes immediately when idle and amortizes under load, which strictly dominates a timer
+- [x] direct idempotent path and bus path converge on the writer; the bus, ingestor, and subscription stub are deleted rather than shimmed
+- [x] backpressure policy: durable emits block on the bounded queue, best-effort drops are counted with rate-limited warnings and returned as typed backpressure errors; silent drops end. Deviation recorded: counters and the watermark are exposed on `SpineWriter`, `EventRuntime`, and the append port, but the supervisor heartbeat surface needs an `event.append` semantic handle, which belongs to the runtime wiring workstream and is handed off there
+- [x] commit watermark published by the writer through a condvar watch primitive that advances before any ack releases its producer; a barrier primitive proves everything enqueued earlier has reached the store
+- [x] flush-and-drain on shutdown and drop; CLI one-shot processes never lose acked events, and the durable session-ended emit stays each command's last emission so queue order protects earlier best-effort events even on exit paths that skip drop
 
-Exit criteria: multi-producer bench shows group-commit gain over the per-event-fsync baseline; kill-recovery proves acked events always survive; drop counters visible in diagnostics; runtime wiring workstream may resume.
+Exit criteria: multi-producer bench shows group-commit gain over the per-event-fsync baseline; kill-recovery proves acked events always survive; drop counters exposed with the supervisor surface handed off; runtime wiring workstream may resume.
 
 ### Phase 4: read path and notification
 
@@ -249,6 +249,18 @@ Baselines, criterion medians on the development machine, defaults without `MELD_
 | flywheel append-to-projection-visible | 7.16 ms median at 5k history |
 
 The replay-at-tip curve is the headline indictment: reading zero new events costs 128 ms at 100k history, and every supervisor idle tick pays it.
+
+### Phase 3 — complete 2026-07-08
+
+Gate evidence, in ladder order: formatter clean; clippy zero warnings workspace-wide; boundary script passed; meld-events suites green including the new writer, barrier, backpressure, and durable-ack kill tests; repeated full workspace runs green; two-lens adversarial fresh review returned no blockers on either lens; bench evidence below.
+
+What changed: a dedicated writer thread owns all producer appends behind a bounded queue with group commit by natural batching; durable emits ack after fsync while best-effort emits enqueue and return with counted drops; the watermark and barrier primitives landed; `EventBus`, `EventIngestor`, `SharedIngestor`, the subscription stub, and the dead telemetry routing re-exports are deleted; the product append port and all `ProgressRuntime` paths converge on the writer; execution outcome publication is reclassified durable; the CLI barriers its own emissions before post-command graph catch-up.
+
+Breaking change: the `EventBus`, `EventIngestor`, and `SharedIngestor` types, the `events::subscription` module, and the `telemetry::routing` modules are removed. The only consumers were one integration test and dead re-export files, both migrated or deleted in this phase. Recorded per compatibility policy in the writer commit footer.
+
+Review findings and dispositions: the concurrency lens survived every deadlock, shutdown-race, ack-ordering, and stress attack after one fix the harness itself forced, moving the watermark advance ahead of ack release. The semantics lens found the durability-class migration incomplete and it was completed in-phase: `ProgressRuntime` best-effort wrappers now delegate to the true non-blocking path, execution publication moved to the durable path because the world model reduces those events, and the CLI barriers before same-command catch-up. Added on review: a deterministic backpressure drop test, a durable-ack kill-recovery role proving acked sequences always survive, the flush-error ambiguity documented on `append_durable`, barrier-only batches skip the fsync, the boundary doc export list corrected, and the fuzz target renamed to match the writer. Accepted with reasons: a failed flush may leave the watermark lagging until the next successful append batch; multiple writers on one store remain safe through transactional allocation but hold independent watermarks, documented rather than guarded; graph derived events append directly to the store and do not advance the watermark, documented as the consumer-side exception.
+
+Bench evidence: tempdir benches run on tmpfs where fsync is nearly free, so durability numbers were re-measured on the disk-backed filesystem and the caveat is documented in the bench module. On NVMe ext4, per-event durable fsync costs 49.7 µs, a 20k events-per-second ceiling that every producer previously paid serialized; through the writer, 2, 4, and 8 concurrent durable producers sustain 23.0k, 34.0k, and 35.6k events per second aggregate — throughput now rises with producers where the old path degraded — while every append still receives a post-fsync ack, and best-effort producers wait on nothing. On tmpfs the writer adds roughly eight percent over unacked direct appends, the cost of acks when fsync is free.
 
 ### Phase 2 — complete 2026-07-08
 

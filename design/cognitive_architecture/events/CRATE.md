@@ -45,9 +45,8 @@ Primary exports are:
 - `EventEnvelope`
 - `EventRecord`
 - `EventRuntime`
-- `EventBus`
-- `EventIngestor`
-- `SharedIngestor`
+- `SpineWriter`
+- `CommitWatermark`
 - `DomainObjectRef`
 - `EventRelation`
 - `store::EventStore`
