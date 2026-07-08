@@ -11,11 +11,10 @@ use crate::ignore;
 use crate::store::{NodeRecord, NodeRecordStore};
 use crate::telemetry::ProgressRuntime;
 use crate::tree::builder::TreeBuilder;
-use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
-use crate::workspace::events::{
-    node_observed_envelope, scan_completed_envelope, snapshot_materialized_envelope,
-    snapshot_selected_envelope, source_attached_envelope,
+use crate::workspace::scan::{
+    build_publication_candidates, execute_workspace_scan_observed, stored_workspace_root_hash,
+    workspace_walker_config, WorkspaceScanPolicy, WorkspaceScanRequest, WorkspaceScanStatus,
 };
 use crate::workspace::section;
 use crate::workspace::types::{
@@ -28,16 +27,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-
-pub(crate) fn workspace_walker_config(workspace_root: &Path) -> WalkerConfig {
-    let ignore_patterns = ignore::load_ignore_patterns(workspace_root)
-        .unwrap_or_else(|_| WalkerConfig::default().ignore_patterns);
-    WalkerConfig {
-        follow_symlinks: false,
-        ignore_patterns,
-        max_depth: None,
-    }
-}
 
 pub(crate) fn current_workspace_root_hash(workspace_root: &Path) -> Result<NodeID, ApiError> {
     TreeBuilder::new(workspace_root.to_path_buf())
@@ -55,48 +44,6 @@ fn workspace_lookup_path(workspace_root: &Path, path: &Path) -> PathBuf {
     PathBuf::from(crate::tree::path::normalize_path_string(
         &resolved.to_string_lossy(),
     ))
-}
-
-pub(crate) fn stored_workspace_root_hash(
-    node_store: &dyn NodeRecordStore,
-    workspace_root: &Path,
-    current_root_hash: &NodeID,
-) -> Result<Option<String>, ApiError> {
-    if node_store
-        .get(current_root_hash)
-        .map_err(ApiError::from)?
-        .is_some()
-    {
-        return Ok(Some(hex::encode(current_root_hash)));
-    }
-
-    let canonical_root =
-        crate::tree::path::canonicalize_path(workspace_root).map_err(ApiError::StorageError)?;
-    let mapped = node_store
-        .find_by_path(&canonical_root)
-        .map_err(ApiError::from)?
-        .map(|record| hex::encode(record.node_id));
-    if mapped.is_some() {
-        return Ok(mapped);
-    }
-
-    let active = node_store.list_active().map_err(ApiError::from)?;
-    if let Some(record) = active
-        .iter()
-        .find(|record| record.parent.is_none() && record.path == Path::new("."))
-    {
-        return Ok(Some(hex::encode(record.node_id)));
-    }
-
-    let parentless: Vec<_> = active
-        .iter()
-        .filter(|record| record.parent.is_none())
-        .collect();
-    if parentless.len() == 1 {
-        return Ok(Some(hex::encode(parentless[0].node_id)));
-    }
-
-    Ok(None)
 }
 
 pub(crate) fn assess_workspace_scan_state(
@@ -567,7 +514,7 @@ impl WorkspaceCommandService {
         Ok(ListDeletedResult { rows })
     }
 
-    /// Scan filesystem and rebuild tree: ignore load, TreeBuilder, store population, flush, ignore sync.
+    /// Scan filesystem and rebuild tree through the workspace scan core.
     /// Returns a summary string. Progress/session_id optional for telemetry events.
     pub fn scan(
         api: &ContextApi,
@@ -577,109 +524,59 @@ impl WorkspaceCommandService {
         session_id: Option<&str>,
     ) -> Result<String, ApiError> {
         let scan_started = Instant::now();
-        let ignore_patterns = ignore::load_ignore_patterns(workspace_root)
-            .unwrap_or_else(|_| WalkerConfig::default().ignore_patterns);
-        let walker_config = WalkerConfig {
-            follow_symlinks: false,
-            ignore_patterns,
-            max_depth: None,
+        let telemetry = match (progress, session_id) {
+            (Some(progress), Some(session_id)) => Some((progress, session_id)),
+            _ => None,
         };
-        let builder =
-            TreeBuilder::new(workspace_root.to_path_buf()).with_walker_config(walker_config);
-        let tree = builder.build().map_err(ApiError::StorageError)?;
-        let total_nodes = tree.nodes.len();
-        let previous_root_hash =
-            stored_workspace_root_hash(api.node_store().as_ref(), workspace_root, &tree.root_id)?;
-
-        if !force
-            && api
-                .node_store()
-                .get(&tree.root_id)
-                .map_err(ApiError::from)?
-                .is_some()
-        {
-            if let (Some(prog), Some(sid)) = (progress, session_id) {
-                prog.emit_event_best_effort(
-                    sid,
+        let request = WorkspaceScanRequest {
+            workspace_root: workspace_root.to_path_buf(),
+            policy: WorkspaceScanPolicy { force },
+            session_id: telemetry.map(|(_, session_id)| session_id.to_string()),
+            // The CLI reports summary facts and forwards publication
+            // candidates; it never reads per-node observed refs.
+            collect_observed: false,
+        };
+        let mut emit_scan_progress = |processed: usize, total: usize| {
+            if let Some((progress, session_id)) = telemetry {
+                progress.emit_event_best_effort(
+                    session_id,
                     "scan_progress",
                     json!({
-                        "node_count": total_nodes,
-                        "total_nodes": total_nodes
+                        "node_count": processed,
+                        "total_nodes": total
                     }),
                 );
             }
-            let root_hex = hex::encode(tree.root_id);
-            return Ok(format!(
-                "Tree already exists (root: {}). Use --force to rebuild.",
-                root_hex
-            ));
-        }
+        };
+        let outcome =
+            execute_workspace_scan_observed(api, &request, Some(&mut emit_scan_progress))?;
 
-        let store = api.node_store().as_ref() as &dyn NodeRecordStore;
-        const SCAN_PROGRESS_BATCH_NODES: usize = 128;
-        let mut processed_nodes = 0usize;
-        for (node_id, node) in &tree.nodes {
-            let record = NodeRecord::from_merkle_node(*node_id, node, &tree)
-                .map_err(ApiError::StorageError)?;
-            store.put(&record).map_err(ApiError::from)?;
-            processed_nodes += 1;
-            if let (Some(prog), Some(sid)) = (progress, session_id) {
-                if processed_nodes.is_multiple_of(SCAN_PROGRESS_BATCH_NODES)
-                    || processed_nodes == total_nodes
-                {
-                    prog.emit_event_best_effort(
-                        sid,
-                        "scan_progress",
+        match outcome.summary.status {
+            WorkspaceScanStatus::UpToDate => Ok(format!(
+                "Tree already exists (root: {}). Use --force to rebuild.",
+                outcome.summary.root_node_id
+            )),
+            WorkspaceScanStatus::Scanned => {
+                if let Some((progress, session_id)) = telemetry {
+                    for envelope in outcome.publication_candidates {
+                        progress.emit_envelope_best_effort(envelope);
+                    }
+                    progress.emit_event_best_effort(
+                        session_id,
+                        "scan_completed",
                         json!({
-                            "node_count": processed_nodes,
-                            "total_nodes": total_nodes
+                            "force": force,
+                            "node_count": outcome.summary.node_count,
+                            "duration_ms": scan_started.elapsed().as_millis(),
                         }),
                     );
                 }
+                Ok(format!(
+                    "Scanned {} nodes (root: {})",
+                    outcome.summary.node_count, outcome.summary.root_node_id
+                ))
             }
         }
-        if total_nodes == 0 {
-            if let (Some(prog), Some(sid)) = (progress, session_id) {
-                prog.emit_event_best_effort(
-                    sid,
-                    "scan_progress",
-                    json!({
-                        "node_count": 0,
-                        "total_nodes": 0
-                    }),
-                );
-            }
-        }
-        store.flush().map_err(ApiError::StorageError)?;
-
-        let _ = ignore::maybe_sync_gitignore_after_tree(
-            workspace_root,
-            tree.find_gitignore_node_id().as_ref(),
-        );
-
-        let root_hex = hex::encode(tree.root_id);
-        if let (Some(prog), Some(sid)) = (progress, session_id) {
-            emit_workspace_scan_facts(
-                prog,
-                sid,
-                workspace_root,
-                &tree,
-                previous_root_hash.as_deref(),
-            );
-            prog.emit_event_best_effort(
-                sid,
-                "scan_completed",
-                json!({
-                    "force": force,
-                    "node_count": total_nodes,
-                    "duration_ms": scan_started.elapsed().as_millis(),
-                }),
-            );
-        }
-        Ok(format!(
-            "Scanned {} nodes (root: {})",
-            total_nodes, root_hex
-        ))
     }
 
     /// Fan-in workspace + agent + provider status for `meld status`.
@@ -760,6 +657,9 @@ impl WorkspaceCommandService {
     }
 }
 
+/// Emits the workspace snapshot fact sequence for the watch path,
+/// best-effort: nodes missing from the tree or failing record conversion are
+/// skipped. The sequence itself comes from the scan core's shared builder.
 pub(crate) fn emit_workspace_snapshot_facts(
     progress: &Arc<ProgressRuntime>,
     session_id: &str,
@@ -768,70 +668,20 @@ pub(crate) fn emit_workspace_snapshot_facts(
     previous_root_hash: Option<&str>,
     observed_node_ids: &[NodeID],
 ) {
-    let current_root_hex = hex::encode(tree.root_id);
-    if previous_root_hash.is_none() {
-        progress.emit_envelope_best_effort(source_attached_envelope(session_id, workspace_root));
-    }
-    progress.emit_envelope_best_effort(snapshot_materialized_envelope(
-        session_id,
-        workspace_root,
-        tree.root_id,
-    ));
-    let previous_root_node_id = previous_root_hash.and_then(decode_node_id_hex);
-    if previous_root_hash != Some(current_root_hex.as_str()) {
-        progress.emit_envelope_best_effort(snapshot_selected_envelope(
-            session_id,
-            workspace_root,
-            tree.root_id,
-            previous_root_node_id,
-        ));
-    }
-    for node_id in observed_node_ids {
-        let Some(node) = tree.nodes.get(node_id) else {
-            continue;
-        };
-        let record = match NodeRecord::from_merkle_node(*node_id, node, tree) {
-            Ok(record) => record,
-            Err(_) => continue,
-        };
-        progress.emit_envelope_best_effort(node_observed_envelope(
-            session_id,
-            workspace_root,
-            tree.root_id,
-            &record,
-        ));
-    }
-}
-
-fn emit_workspace_scan_facts(
-    progress: &Arc<ProgressRuntime>,
-    session_id: &str,
-    workspace_root: &Path,
-    tree: &crate::tree::builder::Tree,
-    previous_root_hash: Option<&str>,
-) {
-    let observed_node_ids: Vec<_> = tree.nodes.keys().copied().collect();
-    emit_workspace_snapshot_facts(
-        progress,
+    let observed: Vec<NodeRecord> = observed_node_ids
+        .iter()
+        .filter_map(|node_id| {
+            let node = tree.nodes.get(node_id)?;
+            NodeRecord::from_merkle_node(*node_id, node, tree).ok()
+        })
+        .collect();
+    for envelope in build_publication_candidates(
         session_id,
         workspace_root,
         tree,
         previous_root_hash,
-        &observed_node_ids,
-    );
-    progress.emit_envelope_best_effort(scan_completed_envelope(
-        session_id,
-        workspace_root,
-        tree.nodes.len(),
-    ));
-}
-
-fn decode_node_id_hex(value: &str) -> Option<NodeID> {
-    let bytes = hex::decode(value).ok()?;
-    if bytes.len() != 32 {
-        return None;
+        &observed,
+    ) {
+        progress.emit_envelope_best_effort(envelope);
     }
-    let mut node_id = [0u8; 32];
-    node_id.copy_from_slice(&bytes);
-    Some(node_id)
 }

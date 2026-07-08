@@ -12,6 +12,10 @@ pub fn build_workflow_task_path_runtime() -> Result<WorkflowTaskPathRuntime, Api
 
     registry.register(
         &mut catalog,
+        crate::workspace::capability::WorkspaceScanCapability,
+    )?;
+    registry.register(
+        &mut catalog,
         crate::workspace::capability::WorkspaceResolveNodeIdCapability,
     )?;
     registry.register(

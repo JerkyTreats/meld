@@ -22,17 +22,19 @@ use crate::provider::{ChatMessage, CompletionResponse};
 use crate::store::{NodeRecord, NodeType};
 use crate::types::{FrameID, NodeID};
 use crate::workflow::registry::RegisteredWorkflowProfile;
+use crate::world_state::belief::{BeliefQuery, BeliefStatus, BranchScope};
+use crate::world_state::PerspectiveKey;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::path::Path;
 
 pub use meld_execution::{
-    ExecutionEventContext, ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind,
-    ExecutionNodeRecord, FrameMetadataValidationProgressEventData, PreparedPromptLineage,
-    PreviousMetadataSnapshotView, PromptContextLineageProgressEventData, PromptLineageRequest,
-    PromptLinkContractView, ProviderPreparationView, TaskRunArtifactAnchor,
-    WorkflowForceResetProgressEventData, WorkflowTargetProgressEventData,
-    WorkflowTurnProgressEventData,
+    BeliefStatusLabel, BeliefSubjectSignal, ExecutionEventContext, ExecutionFrame,
+    ExecutionNodeContext, ExecutionNodeKind, ExecutionNodeRecord,
+    FrameMetadataValidationProgressEventData, PreparedPromptLineage, PreviousMetadataSnapshotView,
+    PromptContextLineageProgressEventData, PromptLineageRequest, PromptLinkContractView,
+    ProviderPreparationView, TaskRunArtifactAnchor, WorkflowForceResetProgressEventData,
+    WorkflowTargetProgressEventData, WorkflowTurnProgressEventData,
 };
 
 pub trait ContextReadPort:
@@ -211,9 +213,31 @@ pub trait ExecutionProgressPort: meld_execution::ExecutionProgressPort<Error = A
 
 impl<T> ExecutionProgressPort for T where T: meld_execution::ExecutionProgressPort<Error = ApiError> {}
 
+pub trait WorkspaceScanPort:
+    meld_execution::WorkspaceScanPort<
+    Error = ApiError,
+    ScanRequest = crate::workspace::scan::WorkspaceScanRequest,
+    ScanOutcome = crate::workspace::scan::WorkspaceScanOutcome,
+>
+{
+}
+
+impl<T> WorkspaceScanPort for T where
+    T: meld_execution::WorkspaceScanPort<
+        Error = ApiError,
+        ScanRequest = crate::workspace::scan::WorkspaceScanRequest,
+        ScanOutcome = crate::workspace::scan::WorkspaceScanOutcome,
+    >
+{
+}
+
 pub trait WorldModelQueryPort: meld_execution::WorldModelQueryPort<Error = ApiError> {}
 
 impl<T> WorldModelQueryPort for T where T: meld_execution::WorldModelQueryPort<Error = ApiError> {}
+
+pub trait BeliefContextReadPort: meld_execution::BeliefContextReadPort<Error = ApiError> {}
+
+impl<T> BeliefContextReadPort for T where T: meld_execution::BeliefContextReadPort<Error = ApiError> {}
 
 pub trait WorkflowProfileLoadPort:
     meld_execution::WorkflowProfileLoadPort<
@@ -256,12 +280,12 @@ impl<T> ExecutionContext for T where
 }
 
 pub trait ExecutionRuntimeContext:
-    ExecutionContext + EventPublicationPort + ExecutionProgressPort
+    ExecutionContext + EventPublicationPort + ExecutionProgressPort + WorkspaceScanPort
 {
 }
 
 impl<T> ExecutionRuntimeContext for T where
-    T: ExecutionContext + EventPublicationPort + ExecutionProgressPort
+    T: ExecutionContext + EventPublicationPort + ExecutionProgressPort + WorkspaceScanPort
 {
 }
 
@@ -548,6 +572,7 @@ impl meld_execution::PromptLineagePort for ContextApi {
                 user_prompt_template: input.user_prompt_template.clone(),
                 rendered_prompt: input.rendered_prompt.clone(),
                 context_payload: input.context_payload.clone(),
+                belief_context_bundle: input.belief_context_bundle.clone(),
             },
         )?;
         let prompt_link_contract = PromptLinkContractV1::from_lineage(&prepared.lineage);
@@ -572,6 +597,7 @@ impl meld_execution::PromptLineagePort for ContextApi {
                     .rendered_prompt_artifact_id
                     .clone(),
                 context_artifact_id: prompt_link_contract.context_artifact_id.clone(),
+                belief_bundle_digest: prompt_link_contract.belief_bundle_digest.clone(),
             },
             metadata_input,
         })
@@ -617,6 +643,19 @@ impl meld_execution::GeneratedMetadataPort for ContextApi {
     }
 }
 
+impl meld_execution::WorkspaceScanPort for ContextApi {
+    type Error = ApiError;
+    type ScanOutcome = crate::workspace::scan::WorkspaceScanOutcome;
+    type ScanRequest = crate::workspace::scan::WorkspaceScanRequest;
+
+    fn scan_workspace(
+        &self,
+        request: &crate::workspace::scan::WorkspaceScanRequest,
+    ) -> Result<crate::workspace::scan::WorkspaceScanOutcome, ApiError> {
+        crate::workspace::scan::execute_workspace_scan(self, request)
+    }
+}
+
 impl meld_execution::EventPublicationPort for ContextApi {
     type Error = ApiError;
     type EventEnvelope = EventEnvelope;
@@ -642,6 +681,64 @@ impl meld_execution::ExecutionProgressPort for ContextApi {
     ) -> Result<(), ApiError> {
         self.emit_progress_event_best_effort(&event_context.session_id, event_type, payload);
         Ok(())
+    }
+}
+
+impl meld_execution::BeliefContextReadPort for ContextApi {
+    type Error = ApiError;
+
+    // Reads through the world model's belief query facade. Views are
+    // filtered to the requested family on the default perspective and main
+    // branch, then picked by lowest index key so repeated reads over the
+    // same store state return the same signal.
+    fn current_belief_signal(
+        &self,
+        node_id_hex: &str,
+        family_id: &str,
+    ) -> Result<Option<BeliefSubjectSignal>, ApiError> {
+        let Some(store) = self.belief_store() else {
+            return Ok(None);
+        };
+        let subject =
+            DomainObjectRef::new("workspace_fs", "node", node_id_hex).map_err(ApiError::from)?;
+        let perspective = PerspectiveKey::new("default", "default").map_err(ApiError::from)?;
+        let query = BeliefQuery::new(&store);
+        let mut views: Vec<_> = query
+            .current_views_for_subject(&subject, &perspective)
+            .map_err(ApiError::from)?
+            .into_iter()
+            .filter(|view| {
+                view.key.dimension_id == family_id && view.key.branch_scope == BranchScope::main()
+            })
+            .collect();
+        views.sort_by_key(|view| view.key.index_key());
+
+        // Borrowed and Copy fields are read first so the owned collections
+        // can be moved out of the consumed view instead of cloned.
+        Ok(views.into_iter().next().map(|view| BeliefSubjectSignal {
+            status: belief_status_label(&view.status),
+            confidence: view.planner_projection.confidence,
+            stale: view.freshness.stale,
+            contradicted: view.contradiction.contradicted,
+            as_of_seq: view.freshness.high_water_seq,
+            revision_id: view.current_revision_id,
+            contradicted_evidence_ids: view.contradiction.contradicted_evidence_ids,
+            evidence_ids: view.hydration.evidence_ids,
+            source_fact_ids: view.hydration.source_fact_ids,
+        }))
+    }
+}
+
+// Exhaustive on the world model side so a new `BeliefStatus` variant forces
+// an explicit mapping into the port label instead of a silent default.
+fn belief_status_label(status: &BeliefStatus) -> BeliefStatusLabel {
+    match status {
+        BeliefStatus::Settled => BeliefStatusLabel::Settled,
+        BeliefStatus::Stale => BeliefStatusLabel::Stale,
+        BeliefStatus::NeedsObservation => BeliefStatusLabel::NeedsObservation,
+        BeliefStatus::NeedsAssessment => BeliefStatusLabel::NeedsAssessment,
+        BeliefStatus::AssessmentPending => BeliefStatusLabel::AssessmentPending,
+        BeliefStatus::Invalid => BeliefStatusLabel::Invalid,
     }
 }
 

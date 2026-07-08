@@ -1,6 +1,7 @@
 //! Execution adapter ports used by workflow and task runtimes.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 
@@ -365,6 +366,24 @@ pub trait ExecutionProgressPort: Send + Sync {
     ) -> Result<(), Self::Error>;
 }
 
+/// Executes workspace scans behind the workspace domain boundary.
+///
+/// The adapter owns filesystem walking and workspace tree updates. Canonical
+/// event append stays behind the runtime publication boundary: the outcome
+/// carries publication candidates instead of appended events.
+pub trait WorkspaceScanPort: Send + Sync {
+    /// Adapter error type.
+    type Error;
+    /// Typed scan request accepted by the adapter.
+    type ScanRequest;
+    /// Typed scan outcome produced by the adapter.
+    type ScanOutcome;
+
+    /// Executes one workspace scan and returns its typed outcome.
+    fn scan_workspace(&self, request: &Self::ScanRequest)
+        -> Result<Self::ScanOutcome, Self::Error>;
+}
+
 /// Reads task-run artifact anchors from the world model.
 pub trait WorldModelQueryPort: Send + Sync {
     /// Adapter error type.
@@ -376,6 +395,92 @@ pub trait WorldModelQueryPort: Send + Sync {
         task_run_id: &str,
         artifact_type_id: &str,
     ) -> Result<Option<TaskRunArtifactAnchor>, Self::Error>;
+}
+
+/// Typed belief status label carried by [`BeliefSubjectSignal`].
+///
+/// Mirrors the world model's belief status set: this crate cannot depend on
+/// the world model, so the owning adapter maps its status into this label at
+/// the port boundary and must be extended in lockstep. Serialized as the
+/// bare variant name (`"Settled"`), byte-identical to the string labels it
+/// replaced, so existing bundle canonical JSON and digests are unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BeliefStatusLabel {
+    /// View is settled on a current revision.
+    Settled,
+    /// View is flagged stale by freshness tracking.
+    Stale,
+    /// View needs a new observation before it can settle.
+    NeedsObservation,
+    /// View needs assessment of gathered observations.
+    NeedsAssessment,
+    /// Assessment is queued but not complete.
+    AssessmentPending,
+    /// View is invalid and must not be trusted.
+    Invalid,
+}
+
+impl BeliefStatusLabel {
+    /// Stable string form, identical to the serde-serialized value.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BeliefStatusLabel::Settled => "Settled",
+            BeliefStatusLabel::Stale => "Stale",
+            BeliefStatusLabel::NeedsObservation => "NeedsObservation",
+            BeliefStatusLabel::NeedsAssessment => "NeedsAssessment",
+            BeliefStatusLabel::AssessmentPending => "AssessmentPending",
+            BeliefStatusLabel::Invalid => "Invalid",
+        }
+    }
+}
+
+impl std::fmt::Display for BeliefStatusLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Planner-safe belief signal for one subject, projected for context-side
+/// selection and prompt conditioning. This is a thin view over the world
+/// model's belief query surface; it never carries prompt text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BeliefSubjectSignal {
+    /// Current belief revision id, when the view has settled at least once.
+    pub revision_id: Option<String>,
+    /// Belief status label for the current view.
+    pub status: BeliefStatusLabel,
+    /// Planner-facing confidence for the current view.
+    pub confidence: f64,
+    /// True when the view is flagged stale by freshness tracking.
+    pub stale: bool,
+    /// True when unresolved counterevidence contradicts the view.
+    pub contradicted: bool,
+    /// Evidence ids counted as unresolved contradicted claims.
+    pub contradicted_evidence_ids: Vec<String>,
+    /// Evidence ids hydratable for provenance.
+    pub evidence_ids: Vec<String>,
+    /// Source fact ids hydratable for provenance.
+    pub source_fact_ids: Vec<String>,
+    /// Sequence the view is current as of; selection is deterministic at
+    /// this sequence.
+    pub as_of_seq: u64,
+}
+
+/// Read port for current belief signals consumed by context assembly.
+///
+/// Owned by the world model side of the boundary; the context domain only
+/// reads projected signals and never mutates belief state through it.
+pub trait BeliefContextReadPort: Send + Sync {
+    /// Adapter error type.
+    type Error;
+
+    /// Reads the current belief signal for one workspace node subject under
+    /// the given belief family, or `None` when no belief covers the subject.
+    fn current_belief_signal(
+        &self,
+        node_id_hex: &str,
+        family_id: &str,
+    ) -> Result<Option<BeliefSubjectSignal>, Self::Error>;
 }
 
 /// Loads workflow profiles for execution.

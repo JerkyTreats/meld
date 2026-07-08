@@ -21,16 +21,21 @@ pub fn lower_traversal_prerequisite_expansion_template(
     expansion: &TraversalPrerequisitePackageExpansionSpec,
     context: &PreparedWorkflowPackageContext,
 ) -> Result<TaskExpansionTemplate, ApiError> {
+    // Stamp the belief slot from prepared context so replayed expansion
+    // templates carry the flag decision durably instead of re-reading it.
+    let mut repeated_region = lower_workflow_region_template(
+        profile,
+        request,
+        expansion,
+        &context.prompts_by_turn_id,
+        &context.gates_by_id,
+    )?;
+    repeated_region.belief_init_slot_id = context.belief_init_slot_id.clone();
+
     Ok(TaskExpansionTemplate {
         expansion_kind: expansion.expansion_kind.clone(),
         content: serde_json::to_value(TraversalPrerequisiteExpansionTemplate {
-            repeated_region: lower_workflow_region_template(
-                profile,
-                request,
-                expansion,
-                &context.prompts_by_turn_id,
-                &context.gates_by_id,
-            )?,
+            repeated_region,
             prerequisite_template: TraversalPrerequisiteTemplate {
                 producer_turn_id: expansion.prerequisite.producer_turn_id.clone(),
                 producer_stage_id: expansion.prerequisite.producer_stage_id.clone(),
@@ -74,6 +79,8 @@ pub fn lower_workflow_region_template(
         frame_type: request.frame_type.clone(),
         force: request.force,
         force_init_slot_id: expansion.repeated_region.force_init_slot_id.clone(),
+        // Owned by template-level lowering, which stamps the prepared value.
+        belief_init_slot_id: None,
         node_ref_slot_template: expansion.repeated_region.node_ref_slot_template.clone(),
         existing_output_slot_template: expansion
             .repeated_region
@@ -180,6 +187,7 @@ mod tests {
             target_agent_id: None,
             target_frame_type: None,
             final_artifact_type: None,
+            belief_context: None,
         }
     }
 
@@ -277,6 +285,7 @@ mod tests {
                 },
             )]),
             traversal_expansion: expansion(),
+            belief_init_slot_id: None,
         }
     }
 

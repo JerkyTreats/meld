@@ -33,6 +33,10 @@ pub struct PromptLinkRecordV1 {
     pub rendered_prompt_artifact_id: String,
     /// Artifact identifier for the context payload lineage record.
     pub context_artifact_id: String,
+    /// Digest of the belief context bundle artifact that conditioned this
+    /// prompt, present only for `belief_context`-conditioned generations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub belief_bundle_digest: Option<String>,
     /// Creation time in milliseconds since the Unix epoch.
     pub created_at_ms: u64,
 }
@@ -68,6 +72,7 @@ pub fn prompt_link_record_from_contract_v1(
         user_prompt_template_artifact_id: contract.user_prompt_template_artifact_id.clone(),
         rendered_prompt_artifact_id: contract.rendered_prompt_artifact_id.clone(),
         context_artifact_id: contract.context_artifact_id.clone(),
+        belief_bundle_digest: contract.belief_bundle_digest.clone(),
         created_at_ms: input.created_at_ms,
     }
 }
@@ -116,6 +121,10 @@ pub fn validate_prompt_link_record_references(record: &PromptLinkRecordV1) -> Re
         &record.context_artifact_id,
     )
     .map_err(map_reference_error)?;
+    if let Some(belief_bundle_digest) = &record.belief_bundle_digest {
+        validate_hex64(RECORD_TYPE, "belief_bundle_digest", belief_bundle_digest)
+            .map_err(map_reference_error)?;
+    }
     Ok(())
 }
 
@@ -149,6 +158,7 @@ mod tests {
             user_prompt_template_artifact_id: hex64('d'),
             rendered_prompt_artifact_id: hex64('e'),
             context_artifact_id: hex64('f'),
+            belief_bundle_digest: Some(hex64('a')),
             created_at_ms: 1,
         }
     }
@@ -184,6 +194,11 @@ mod tests {
             (
                 "bad node id",
                 Box::new(|record| record.node_id = "bad".to_string()),
+                "references",
+            ),
+            (
+                "bad belief bundle digest",
+                Box::new(|record| record.belief_bundle_digest = Some("bad".to_string())),
                 "references",
             ),
             (

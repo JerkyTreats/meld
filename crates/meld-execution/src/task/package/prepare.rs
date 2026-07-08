@@ -18,7 +18,7 @@ use crate::task::expansion::{
     TaskExpansionTemplate, TASK_EXPANSION_SCHEMA_VERSION, TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID,
 };
 use crate::task::init::{InitArtifactValue, TaskInitializationPayload, TaskRunContext};
-use crate::workflow::profile::{WorkflowGate, WorkflowProfile};
+use crate::workflow::profile::{belief_context_enabled, WorkflowGate, WorkflowProfile};
 use crate::workflow::registry::RegisteredWorkflowProfile;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -62,6 +62,16 @@ where
     let prompts_by_turn_id =
         prompt_map(&traversal_expansion.repeated_region.turns, resolve_prompt)?;
     let gates_by_id = gate_map(&registered_profile.profile);
+    // The belief slot only exists when the flag is on so flag-off preparation
+    // stays byte-identical to pre-flag behavior.
+    let belief_init_slot_id = if belief_context_enabled(&registered_profile.profile) {
+        find_seed_artifact(package_spec, |source| {
+            matches!(source, SeedSourceSpec::GoalBeliefHydration)
+        })
+        .map(|artifact| artifact.init_slot_id.clone())
+    } else {
+        None
+    };
 
     Ok(PreparedWorkflowPackageContext {
         target_node_id,
@@ -69,29 +79,52 @@ where
         prompts_by_turn_id,
         gates_by_id,
         traversal_expansion,
+        belief_init_slot_id,
     })
 }
 
+/// Trigger-time resolver closures threaded through task package preparation
+/// as one unit, so preparation entrypoints stay narrow and closure arguments
+/// cannot be transposed at call sites.
+pub struct PackageRunResolvers<PromptResolver, TemplateBuilder, BundleResolver> {
+    /// Resolves one authored turn `prompt_ref` into prompt text.
+    pub resolve_prompt: PromptResolver,
+    /// Lowers the prepared package context into the seeded expansion template.
+    pub build_expansion_template: TemplateBuilder,
+    /// Hydrates the belief context bundle for the trigger target subject.
+    /// Invoked only when the workflow's `belief_context` flag is on and the
+    /// package authors a `goal_belief_hydration` seed.
+    pub resolve_belief_bundle: BundleResolver,
+}
+
 /// Prepares one workflow-backed task run from a package spec and package-specific expansion lowering.
-#[allow(clippy::too_many_arguments)]
-pub fn prepare_workflow_task_run<E, A, R, F>(
+///
+/// The `belief_context` flag is resolved exactly once, inside
+/// [`prepare_workflow_package_context`]; every downstream decision derives
+/// from the prepared `belief_init_slot_id` rather than re-reading the flag.
+pub fn prepare_workflow_task_run<E, A, PromptResolver, TemplateBuilder, BundleResolver>(
     api: &A,
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowPackageTriggerRequest,
     catalog: &CapabilityCatalog,
     package_spec: &TaskPackageSpec,
-    resolve_prompt: R,
-    build_expansion_template: F,
+    resolvers: PackageRunResolvers<PromptResolver, TemplateBuilder, BundleResolver>,
 ) -> Result<PreparedTaskRun, E>
 where
     E: From<ApiError>,
     A: ContextReadPort<Error = E, NodeId = NodeId>
         + NodeResolutionPort<Error = E, NodeId = NodeId>
         + ?Sized,
-    R: FnMut(&str) -> Result<String, E>,
-    F: FnOnce(&PreparedWorkflowPackageContext) -> Result<TaskExpansionTemplate, E>,
+    PromptResolver: FnMut(&str) -> Result<String, E>,
+    TemplateBuilder: FnOnce(&PreparedWorkflowPackageContext) -> Result<TaskExpansionTemplate, E>,
+    BundleResolver: FnOnce(NodeId) -> Result<Value, E>,
 {
+    let PackageRunResolvers {
+        resolve_prompt,
+        build_expansion_template,
+        resolve_belief_bundle,
+    } = resolvers;
     let context = prepare_workflow_package_context(
         api,
         workspace_root,
@@ -101,8 +134,16 @@ where
         resolve_prompt,
     )?;
     let expansion_template = build_expansion_template(&context)?;
-    let task_definition = build_initial_task_definition(&registered_profile.profile, package_spec);
+    // Derived from the single flag resolution in package-context preparation.
+    let belief_context = context.belief_init_slot_id.is_some();
+    let task_definition =
+        build_initial_task_definition(&registered_profile.profile, package_spec, belief_context);
     let compiled_task = compile_task_definition(&task_definition, catalog)?;
+    let belief_bundle = if belief_context {
+        Some(resolve_belief_bundle(context.target_node_id)?)
+    } else {
+        None
+    };
     let init_payload = build_task_initialization_payload(
         &registered_profile.profile,
         package_spec,
@@ -110,6 +151,7 @@ where
         context.target_node_id,
         &context.target_path,
         expansion_template,
+        belief_bundle,
     )?;
 
     Ok(PreparedTaskRun {
@@ -275,9 +317,13 @@ pub fn gate_map(profile: &WorkflowProfile) -> HashMap<String, WorkflowGate> {
 }
 
 /// Builds the initial traversal-seeding task definition from package authoring data.
+///
+/// `belief_context` carries the flag decision resolved once during package
+/// preparation; this function never re-reads flag configuration.
 pub fn build_initial_task_definition(
     profile: &WorkflowProfile,
     package_spec: &TaskPackageSpec,
+    belief_context: bool,
 ) -> TaskDefinition {
     let traversal_strategy = find_traversal_prerequisite_expansion::<ApiError>(package_spec)
         .map(|spec| spec.traversal_strategy.clone())
@@ -290,6 +336,11 @@ pub fn build_initial_task_definition(
             .seed
             .artifacts
             .iter()
+            // Flag-gated seeds are dropped when the flag is off so the
+            // compiled task stays byte-identical to pre-flag behavior.
+            .filter(|artifact| {
+                !matches!(artifact.source, SeedSourceSpec::GoalBeliefHydration) || belief_context
+            })
             .map(|artifact| TaskInitSlotSpec {
                 init_slot_id: artifact.init_slot_id.clone(),
                 artifact_type_id: artifact.artifact_type_id.clone(),
@@ -335,6 +386,12 @@ pub fn build_initial_task_definition(
 }
 
 /// Builds the initialization payload from package seed contracts and one expansion template.
+///
+/// `belief_bundle` supplies the hydrated `belief_context_bundle` content and
+/// carries the flag decision resolved once during package preparation: it
+/// must be `Some` exactly when the workflow's `belief_context` flag is on and
+/// the package authors a `goal_belief_hydration` seed. This function never
+/// re-reads flag configuration.
 pub fn build_task_initialization_payload(
     profile: &WorkflowProfile,
     package_spec: &TaskPackageSpec,
@@ -342,6 +399,7 @@ pub fn build_task_initialization_payload(
     target_node_id: NodeId,
     target_path: &str,
     expansion_template: TaskExpansionTemplate,
+    belief_bundle: Option<Value>,
 ) -> Result<TaskInitializationPayload, ApiError> {
     let force_posture_spec = find_seed_artifact(package_spec, |source| {
         matches!(source, SeedSourceSpec::ForcePosture)
@@ -371,6 +429,59 @@ pub fn build_task_initialization_payload(
         ))
     })?;
 
+    let mut init_artifacts = vec![
+        InitArtifactValue {
+            init_slot_id: force_posture_spec.init_slot_id.clone(),
+            artifact_type_id: force_posture_spec.artifact_type_id.clone(),
+            schema_version: force_posture_spec.schema_version,
+            content: json!({
+                "force": request.force,
+                "replay": false,
+            }),
+        },
+        InitArtifactValue {
+            init_slot_id: target_node_spec.init_slot_id.clone(),
+            artifact_type_id: target_node_spec.artifact_type_id.clone(),
+            schema_version: target_node_spec.schema_version,
+            content: json!({
+                "node_id": hex::encode(target_node_id),
+                "path": target_path,
+            }),
+        },
+        InitArtifactValue {
+            init_slot_id: expansion_init_spec.init_slot_id.clone(),
+            artifact_type_id: expansion_init_spec.artifact_type_id.clone(),
+            schema_version: expansion_init_spec.schema_version,
+            content: serde_json::to_value(expansion_template).map_err(|err| {
+                ApiError::ConfigError(format!(
+                    "Failed to encode task expansion template artifact: {}",
+                    err
+                ))
+            })?,
+        },
+    ];
+
+    // The belief seed is materialized only when the caller resolved the flag
+    // on and hydrated a bundle; a flag-off payload carries exactly the three
+    // legacy init artifacts.
+    if let Some(content) = belief_bundle {
+        let belief_spec = find_seed_artifact(package_spec, |source| {
+            matches!(source, SeedSourceSpec::GoalBeliefHydration)
+        })
+        .ok_or_else(|| {
+            ApiError::ConfigError(format!(
+                "Package '{}' has no belief context seed for the hydrated bundle",
+                package_spec.package_id
+            ))
+        })?;
+        init_artifacts.push(InitArtifactValue {
+            init_slot_id: belief_spec.init_slot_id.clone(),
+            artifact_type_id: belief_spec.artifact_type_id.clone(),
+            schema_version: belief_spec.schema_version,
+            content,
+        });
+    }
+
     Ok(TaskInitializationPayload {
         task_id: task_id(profile),
         compiled_task_ref: format!(
@@ -379,37 +490,7 @@ pub fn build_task_initialization_payload(
             profile.version,
             &hex::encode(target_node_id)[..16]
         ),
-        init_artifacts: vec![
-            InitArtifactValue {
-                init_slot_id: force_posture_spec.init_slot_id.clone(),
-                artifact_type_id: force_posture_spec.artifact_type_id.clone(),
-                schema_version: force_posture_spec.schema_version,
-                content: json!({
-                    "force": request.force,
-                    "replay": false,
-                }),
-            },
-            InitArtifactValue {
-                init_slot_id: target_node_spec.init_slot_id.clone(),
-                artifact_type_id: target_node_spec.artifact_type_id.clone(),
-                schema_version: target_node_spec.schema_version,
-                content: json!({
-                    "node_id": hex::encode(target_node_id),
-                    "path": target_path,
-                }),
-            },
-            InitArtifactValue {
-                init_slot_id: expansion_init_spec.init_slot_id.clone(),
-                artifact_type_id: expansion_init_spec.artifact_type_id.clone(),
-                schema_version: expansion_init_spec.schema_version,
-                content: serde_json::to_value(expansion_template).map_err(|err| {
-                    ApiError::ConfigError(format!(
-                        "Failed to encode task expansion template artifact: {}",
-                        err
-                    ))
-                })?,
-            },
-        ],
+        init_artifacts,
         task_run_context: TaskRunContext {
             task_run_id: workflow_task_run_id(&profile.workflow_id, target_node_id),
             session_id: request.session_id.clone(),
@@ -602,6 +683,7 @@ mod tests {
                 target_agent_id: None,
                 target_frame_type: None,
                 final_artifact_type: None,
+                belief_context: None,
             },
             source_path: None,
         }
@@ -803,7 +885,7 @@ mod tests {
     #[test]
     fn build_initial_task_definition_uses_seed_contracts() {
         let definition =
-            build_initial_task_definition(&registered_profile().profile, &package_spec());
+            build_initial_task_definition(&registered_profile().profile, &package_spec(), false);
 
         assert_eq!(definition.task_id, "task::docs_writer_thread_v1");
         assert_eq!(definition.init_slots.len(), 3);
@@ -833,6 +915,7 @@ mod tests {
                 expansion_kind: "traversal_prerequisite_expansion".to_string(),
                 content: json!({ "template": "value" }),
             },
+            None,
         )
         .unwrap();
 
@@ -844,5 +927,31 @@ mod tests {
             payload.init_artifacts[2].artifact_type_id,
             TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID
         );
+    }
+
+    #[test]
+    fn build_initial_task_definition_flag_off_drops_belief_seed_identically() {
+        let mut spec_with_belief_seed = package_spec();
+        spec_with_belief_seed.seed.artifacts.push(SeedArtifactSpec {
+            init_slot_id: "belief_context_bundle".to_string(),
+            artifact_type_id: "belief_context_bundle".to_string(),
+            schema_version: 1,
+            source: SeedSourceSpec::GoalBeliefHydration,
+        });
+        let profile = registered_profile().profile;
+
+        // Flag off compiles the same definition as a package that never
+        // authored the belief seed.
+        let flag_off = build_initial_task_definition(&profile, &spec_with_belief_seed, false);
+        let without_seed = build_initial_task_definition(&profile, &package_spec(), false);
+        assert_eq!(flag_off, without_seed);
+
+        // Flag on keeps the authored belief seed as one extra init slot.
+        let flag_on = build_initial_task_definition(&profile, &spec_with_belief_seed, true);
+        assert_eq!(flag_on.init_slots.len(), without_seed.init_slots.len() + 1);
+        assert!(flag_on
+            .init_slots
+            .iter()
+            .any(|slot| slot.init_slot_id == "belief_context_bundle"));
     }
 }

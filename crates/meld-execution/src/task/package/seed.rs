@@ -35,4 +35,9 @@ pub enum SeedSourceSpec {
         /// Expansion template identifier used as the seed source.
         template_id: String,
     },
+    /// Hydrated belief context bundle for the trigger target subject.
+    ///
+    /// Only materialized when the workflow's `belief_context` flag is on;
+    /// otherwise the seed is skipped so flag-off runs stay byte-identical.
+    GoalBeliefHydration,
 }

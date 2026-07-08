@@ -38,6 +38,72 @@ pub struct WorkflowProfile {
     /// Optional artifact type expected from the final workflow turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_artifact_type: Option<String>,
+    /// Opt-in flag for belief-conditioned generation: belief context bundle
+    /// seeding plus belief-endorsed frame selection. Off when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub belief_context: Option<bool>,
+}
+
+/// Environment override for the `belief_context` workflow flag.
+///
+/// A recognized token wins over the profile in both directions: `1`, `true`,
+/// or `on` enables the flag; `0`, `false`, or `off` disables it. Matching is
+/// trimmed and case-insensitive. Any other set value is not a silent
+/// disable: it logs a warning and falls back to the profile, so a
+/// misspelled override cannot silently flip an experiment arm.
+pub const BELIEF_CONTEXT_ENV_VAR: &str = "MELD_BELIEF_CONTEXT";
+
+/// Resolves the `belief_context` flag for one workflow profile.
+///
+/// Off by default; a profile may opt in per workflow, and a recognized
+/// `MELD_BELIEF_CONTEXT` token overrides the profile in either direction.
+pub fn belief_context_enabled(profile: &WorkflowProfile) -> bool {
+    let env_value = std::env::var(BELIEF_CONTEXT_ENV_VAR).ok();
+    resolve_belief_context(env_value.as_deref(), profile)
+}
+
+/// Parses one `MELD_BELIEF_CONTEXT` override token: `Some(true)` for a
+/// truthy token, `Some(false)` for a falsy token, `None` when the token is
+/// unrecognized and the profile must decide.
+///
+/// ```rust
+/// use meld_execution::workflow::profile::parse_belief_context_token;
+///
+/// assert_eq!(parse_belief_context_token(" TRUE "), Some(true));
+/// assert_eq!(parse_belief_context_token("off"), Some(false));
+/// assert_eq!(parse_belief_context_token("yes"), None);
+/// ```
+pub fn parse_belief_context_token(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "on" => Some(true),
+        "0" | "false" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Resolves the `belief_context` flag from an explicit environment override
+/// value and the workflow profile. An unrecognized override value warns and
+/// falls back to the profile instead of disabling the flag. Pure over its
+/// inputs apart from that warning, so the resolution rules are testable
+/// without mutating process-global environment state;
+/// [`belief_context_enabled`] supplies the live `MELD_BELIEF_CONTEXT` value.
+pub fn resolve_belief_context(env_value: Option<&str>, profile: &WorkflowProfile) -> bool {
+    let profile_default = profile.belief_context.unwrap_or(false);
+    match env_value {
+        Some(value) => match parse_belief_context_token(value) {
+            Some(enabled) => enabled,
+            None => {
+                tracing::warn!(
+                    "Unrecognized {} value '{}'; expected 1/true/on or 0/false/off, \
+                     falling back to the workflow profile",
+                    BELIEF_CONTEXT_ENV_VAR,
+                    value
+                );
+                profile_default
+            }
+        },
+        None => profile_default,
+    }
 }
 
 /// Workflow thread policy contract used by execution runtimes.
@@ -351,6 +417,7 @@ mod tests {
             target_agent_id: None,
             target_frame_type: None,
             final_artifact_type: None,
+            belief_context: None,
         }
     }
 
@@ -494,6 +561,37 @@ mod tests {
 
         assert_eq!(ordered[0].turn_id, "turn-2");
         assert_eq!(profile.turns[0].turn_id, "turn-1");
+    }
+
+    #[test]
+    fn belief_context_flag_defaults_off_profile_opts_in_env_overrides() {
+        let mut profile = valid_profile();
+        assert!(!resolve_belief_context(None, &profile));
+
+        profile.belief_context = Some(true);
+        assert!(resolve_belief_context(None, &profile));
+        assert!(!resolve_belief_context(Some("0"), &profile));
+        assert!(!resolve_belief_context(Some("false"), &profile));
+
+        profile.belief_context = None;
+        assert!(resolve_belief_context(Some("1"), &profile));
+        assert!(resolve_belief_context(Some(" TRUE "), &profile));
+        assert!(!resolve_belief_context(Some("off"), &profile));
+    }
+
+    #[test]
+    fn belief_context_unrecognized_env_value_falls_back_to_profile() {
+        // Natural-but-unsupported spellings and the empty string are not
+        // silent disables: the profile decides in both directions.
+        let mut profile = valid_profile();
+        for value in ["yes", "enabled", ""] {
+            assert!(!resolve_belief_context(Some(value), &profile));
+        }
+
+        profile.belief_context = Some(true);
+        for value in ["yes", "enabled", ""] {
+            assert!(resolve_belief_context(Some(value), &profile));
+        }
     }
 
     #[test]

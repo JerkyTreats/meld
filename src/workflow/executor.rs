@@ -7,7 +7,8 @@ use crate::context::frame::{Basis, Frame};
 use crate::context::generation::contracts::GeneratedMetadataBuilder;
 use crate::error::ApiError;
 use crate::execution::{
-    ExecutionEventContext, ExecutionRuntimeContext, SystemPromptPort, WorldModelQueryPort,
+    BeliefContextReadPort, ExecutionEventContext, ExecutionRuntimeContext, SystemPromptPort,
+    WorldModelQueryPort,
 };
 use crate::metadata::frame_write_contract::build_generated_metadata;
 use crate::task::{
@@ -35,7 +36,11 @@ pub fn execute_registered_workflow<A>(
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<WorkflowExecutionSummary, ApiError>
 where
-    A: ExecutionRuntimeContext + SystemPromptPort + WorldModelQueryPort + 'static,
+    A: ExecutionRuntimeContext
+        + SystemPromptPort
+        + WorldModelQueryPort
+        + BeliefContextReadPort
+        + 'static,
 {
     let rt = tokio::runtime::Runtime::new()
         .map_err(|err| ApiError::ProviderError(format!("Failed to create runtime: {}", err)))?;
@@ -62,7 +67,11 @@ pub(crate) async fn execute_registered_workflow_async<A>(
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<WorkflowExecutionSummary, ApiError>
 where
-    A: ExecutionRuntimeContext + SystemPromptPort + WorldModelQueryPort + 'static,
+    A: ExecutionRuntimeContext
+        + SystemPromptPort
+        + WorldModelQueryPort
+        + BeliefContextReadPort
+        + 'static,
 {
     let metadata_builder: &GeneratedMetadataBuilder = &build_generated_metadata;
     let state_store = WorkflowStateStore::new(workspace_root)?.into_inner();
@@ -109,7 +118,7 @@ fn workflow_node_not_found(node_id: FrameID) -> ApiError {
 #[async_trait]
 impl<A> WorkflowTaskPathExecutor<A, ApiError> for WorkflowTaskPathRuntime
 where
-    A: ExecutionRuntimeContext + WorldModelQueryPort + 'static,
+    A: ExecutionRuntimeContext + WorldModelQueryPort + BeliefContextReadPort + 'static,
 {
     fn uses_task_package_path(
         &self,

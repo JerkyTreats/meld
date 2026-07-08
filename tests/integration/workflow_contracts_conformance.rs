@@ -37,6 +37,7 @@ fn context_lineage_maps_to_valid_prompt_link_record() {
             user_prompt_template: "template".to_string(),
             rendered_prompt: "rendered".to_string(),
             context_payload: "context".to_string(),
+            belief_context_bundle: None,
         },
     )
     .unwrap();
@@ -67,6 +68,7 @@ fn invalid_prompt_link_reference_is_typed() {
         user_prompt_template_artifact_id: "3".repeat(64),
         rendered_prompt_artifact_id: "4".repeat(64),
         context_artifact_id: "5".repeat(64),
+        belief_bundle_digest: Some("6".repeat(64)),
         created_at_ms: 1,
     };
     record.context_artifact_id = "deadbeef".to_string();

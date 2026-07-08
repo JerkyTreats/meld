@@ -56,6 +56,7 @@ pub async fn execute_generation_request(
             user_prompt_template: prompt_output.user_prompt_template.clone(),
             rendered_prompt: prompt_output.rendered_prompt.clone(),
             context_payload: prompt_output.context_payload.clone(),
+            belief_context_bundle: None,
         },
         &request.agent_id,
         &request.provider.provider_name,

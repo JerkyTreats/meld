@@ -265,6 +265,7 @@ mod tests {
             user_prompt_template: artifact_ref(PromptContextArtifactKind::UserPromptTemplate, "d"),
             rendered_prompt: artifact_ref(PromptContextArtifactKind::RenderedPrompt, "e"),
             context_payload: artifact_ref(PromptContextArtifactKind::ContextPayload, "f"),
+            belief_context_bundle: None,
         };
 
         let input =

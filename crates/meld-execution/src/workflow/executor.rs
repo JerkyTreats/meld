@@ -819,6 +819,7 @@ mod tests {
                     user_prompt_template_artifact_id: hex64('b'),
                     rendered_prompt_artifact_id: hex64('c'),
                     context_artifact_id: hex64('d'),
+                    belief_bundle_digest: None,
                 },
                 metadata_input: GeneratedFrameMetadataInput {
                     agent_id: "agent".to_string(),
@@ -1031,6 +1032,7 @@ mod tests {
             target_agent_id: None,
             target_frame_type: None,
             final_artifact_type: None,
+            belief_context: None,
         }
     }
 

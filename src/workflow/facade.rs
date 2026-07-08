@@ -28,6 +28,7 @@ where
         + crate::execution::ExecutionRuntimeContext
         + SystemPromptPort
         + crate::execution::WorldModelQueryPort
+        + crate::execution::BeliefContextReadPort
         + 'static,
 {
     let workflow_id = request.program.workflow_id().ok_or_else(|| {
@@ -59,6 +60,7 @@ where
         + crate::execution::ExecutionRuntimeContext
         + SystemPromptPort
         + crate::execution::WorldModelQueryPort
+        + crate::execution::BeliefContextReadPort
         + 'static,
 {
     let workflow_id = request.program.workflow_id().ok_or_else(|| {
@@ -92,6 +94,7 @@ where
     A: crate::execution::ExecutionRuntimeContext
         + SystemPromptPort
         + crate::execution::WorldModelQueryPort
+        + crate::execution::BeliefContextReadPort
         + 'static,
 {
     if request.program.kind != TargetExecutionProgramKind::Workflow {
@@ -147,6 +150,7 @@ where
     A: crate::execution::ExecutionRuntimeContext
         + SystemPromptPort
         + crate::execution::WorldModelQueryPort
+        + crate::execution::BeliefContextReadPort
         + 'static,
 {
     if request.program.kind != TargetExecutionProgramKind::Workflow {

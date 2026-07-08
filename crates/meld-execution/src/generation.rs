@@ -151,6 +151,10 @@ pub struct PromptLineageRequest {
     pub rendered_prompt: String,
     /// Context payload assembled for provider execution.
     pub context_payload: String,
+    /// Canonical JSON for the belief context bundle that conditioned this
+    /// prompt. Present only for `belief_context`-enabled runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub belief_context_bundle: Option<String>,
 }
 
 /// Stable view of prompt lineage artifact identifiers and content digests.
@@ -170,6 +174,10 @@ pub struct PromptLinkContractView {
     pub rendered_prompt_artifact_id: String,
     /// Artifact identifier for the context payload lineage record.
     pub context_artifact_id: String,
+    /// Digest of the persisted belief context bundle artifact, when one
+    /// conditioned this prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub belief_bundle_digest: Option<String>,
 }
 
 /// Prompt lineage output prepared before generated frame metadata is built.

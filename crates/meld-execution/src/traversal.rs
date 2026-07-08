@@ -44,6 +44,11 @@ pub struct WorkflowRegionTemplate {
     pub existing_output_slot_template: String,
     /// Artifact type used for existing workflow output inputs.
     pub existing_output_artifact_type_id: String,
+    /// Init slot carrying the belief context bundle for the trigger target.
+    /// Present only when the workflow's `belief_context` flag was on at
+    /// lowering time; absence keeps templates byte-identical to prior runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub belief_init_slot_id: Option<String>,
     /// Ordered workflow turn templates in this repeated region.
     pub turns: Vec<WorkflowTurnTemplate>,
 }

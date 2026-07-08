@@ -35,7 +35,7 @@ pub fn handle_scan_command(
         .and_then(|_| {
             Some(
                 crate::tree::builder::TreeBuilder::new(workspace_root.to_path_buf())
-                    .with_walker_config(crate::workspace::commands::workspace_walker_config(
+                    .with_walker_config(crate::workspace::scan::workspace_walker_config(
                         workspace_root,
                     ))
                     .build()

@@ -1,12 +1,11 @@
 //! Root task package adapters over extracted package behavior.
 
-use crate::capability::CapabilityCatalog;
 use crate::error::ApiError;
 use crate::execution::{ContextReadPort, NodeResolutionPort, PromptArtifactReadPort};
 use crate::task::expansion::TaskExpansionTemplate;
 use crate::task::package::{
-    PreparedTaskRun, PreparedWorkflowPackageContext, TaskPackageSpec,
-    TraversalPrerequisitePackageExpansionSpec, TurnSpec, WorkflowPackageTriggerRequest,
+    PreparedWorkflowPackageContext, TaskPackageSpec, TraversalPrerequisitePackageExpansionSpec,
+    TurnSpec, WorkflowPackageTriggerRequest,
 };
 use crate::task::{TaskDefinition, TaskInitializationPayload};
 use crate::types::NodeID;
@@ -41,37 +40,6 @@ pub fn prepare_workflow_package_context(
                 prompt_ref,
             )
         },
-    )
-}
-
-/// Prepares one workflow-backed task run from a package spec and package-specific expansion lowering.
-pub fn prepare_workflow_task_run<F>(
-    api: &(impl ContextReadPort + NodeResolutionPort + PromptArtifactReadPort + ?Sized),
-    workspace_root: &Path,
-    registered_profile: &RegisteredWorkflowProfile,
-    request: &WorkflowPackageTriggerRequest,
-    catalog: &CapabilityCatalog,
-    package_spec: &TaskPackageSpec,
-    build_expansion_template: F,
-) -> Result<PreparedTaskRun, ApiError>
-where
-    F: FnOnce(&PreparedWorkflowPackageContext) -> Result<TaskExpansionTemplate, ApiError>,
-{
-    meld_execution::task::package::prepare_workflow_task_run(
-        api,
-        workspace_root,
-        registered_profile,
-        request,
-        catalog,
-        package_spec,
-        |prompt_ref| {
-            crate::task::package::resolve_workflow_package_prompt_template(
-                api,
-                registered_profile,
-                prompt_ref,
-            )
-        },
-        build_expansion_template,
     )
 }
 
@@ -124,15 +92,28 @@ pub fn gate_map(profile: &WorkflowProfile) -> HashMap<String, WorkflowGate> {
     meld_execution::task::package::gate_map(profile)
 }
 
-/// Builds the initial traversal-seeding task definition from package authroing data.
+/// Builds the initial traversal-seeding task definition from package authoring data.
+///
+/// `belief_context` carries the flag decision resolved once during package
+/// preparation.
 pub fn build_initial_task_definition(
     profile: &WorkflowProfile,
     package_spec: &TaskPackageSpec,
+    belief_context: bool,
 ) -> TaskDefinition {
-    meld_execution::task::package::build_initial_task_definition(profile, package_spec)
+    meld_execution::task::package::build_initial_task_definition(
+        profile,
+        package_spec,
+        belief_context,
+    )
 }
 
 /// Builds the initialization payload from package seed contracts and one expansion template.
+///
+/// `belief_bundle` carries the hydrated `belief_context_bundle` content and
+/// the flag decision resolved once during package preparation: it must be
+/// `Some` exactly when the workflow's `belief_context` flag is on and the
+/// package authors a `goal_belief_hydration` seed.
 pub fn build_task_initialization_payload(
     profile: &WorkflowProfile,
     package_spec: &TaskPackageSpec,
@@ -140,6 +121,7 @@ pub fn build_task_initialization_payload(
     target_node_id: NodeID,
     target_path: &str,
     expansion_template: TaskExpansionTemplate,
+    belief_bundle: Option<serde_json::Value>,
 ) -> Result<TaskInitializationPayload, ApiError> {
     Ok(
         meld_execution::task::package::build_task_initialization_payload(
@@ -149,6 +131,7 @@ pub fn build_task_initialization_payload(
             target_node_id,
             target_path,
             expansion_template,
+            belief_bundle,
         )?,
     )
 }

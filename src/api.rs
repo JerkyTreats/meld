@@ -27,6 +27,7 @@ use crate::telemetry::ProgressRuntime;
 use crate::types::{FrameID, NodeID};
 use crate::views::ViewPolicy;
 use crate::workflow::registry::{RegisteredWorkflowProfile, WorkflowRegistry};
+use crate::world_state::belief::BeliefStore;
 use crate::world_state::WorldModelQueries;
 use hex;
 use serde_json::Value;
@@ -65,6 +66,8 @@ pub struct ContextApi {
     progress_context: Arc<parking_lot::RwLock<Option<ProgressEmitterContext>>>,
     /// Optional world model query service for graph backed cross domain reads.
     world_model_queries: Arc<parking_lot::RwLock<Option<Arc<WorldModelQueries>>>>,
+    /// Optional belief store handle for read-only belief context queries.
+    belief_store: Arc<parking_lot::RwLock<Option<Arc<BeliefStore>>>>,
     /// Optional workflow registry adapter for execution and queue hosted workflow runs.
     workflow_registry: Arc<parking_lot::RwLock<Option<Arc<parking_lot::RwLock<WorkflowRegistry>>>>>,
 }
@@ -97,6 +100,7 @@ impl ContextApi {
             workspace_root: None,
             progress_context: Arc::new(parking_lot::RwLock::new(None)),
             world_model_queries: Arc::new(parking_lot::RwLock::new(None)),
+            belief_store: Arc::new(parking_lot::RwLock::new(None)),
             workflow_registry: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
@@ -124,6 +128,7 @@ impl ContextApi {
             workspace_root: Some(workspace_root),
             progress_context: Arc::new(parking_lot::RwLock::new(None)),
             world_model_queries: Arc::new(parking_lot::RwLock::new(None)),
+            belief_store: Arc::new(parking_lot::RwLock::new(None)),
             workflow_registry: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
@@ -149,6 +154,22 @@ impl ContextApi {
 
     pub fn world_model_queries(&self) -> Option<Arc<WorldModelQueries>> {
         self.world_model_queries.read().as_ref().map(Arc::clone)
+    }
+
+    /// Installs the shared belief store used for read-only belief context
+    /// queries. Belief writes stay with the world model runtime; the context
+    /// side only reads projected views through `BeliefQuery`.
+    pub fn set_belief_store(&self, store: Arc<BeliefStore>) {
+        *self.belief_store.write() = Some(store);
+    }
+
+    /// Crate-internal handle backing the read-only `BeliefContextReadPort`
+    /// impl. Deliberately not public: `BeliefStore` write methods take
+    /// `&self`, so exposing the handle would let execution-side callers
+    /// mutate belief state past the read-only boundary the belief
+    /// microarchitecture requires the public API to enforce.
+    pub(crate) fn belief_store(&self) -> Option<Arc<BeliefStore>> {
+        self.belief_store.read().as_ref().map(Arc::clone)
     }
 
     pub fn set_workflow_registry(&self, registry: Arc<parking_lot::RwLock<WorkflowRegistry>>) {

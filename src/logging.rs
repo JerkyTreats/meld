@@ -237,62 +237,60 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                 )
                 .init();
         }
+    } else if output.file && output.stderr {
+        let file_writer = get_file_writer()?;
+        let writer = file_writer.and(std::io::stderr);
+        base_subscriber
+            .with(
+                fmt::layer()
+                    .with_target(true)
+                    .with_timer(ChronoUtc::rfc_3339())
+                    .with_ansi(false)
+                    .with_writer(writer),
+            )
+            .init();
+    } else if output.file {
+        let file_writer = get_file_writer()?;
+        base_subscriber
+            .with(
+                fmt::layer()
+                    .with_target(true)
+                    .with_timer(ChronoUtc::rfc_3339())
+                    .with_ansi(false)
+                    .with_writer(file_writer),
+            )
+            .init();
+    } else if output.stdout && output.stderr {
+        let writer = std::io::stdout.and(std::io::stderr);
+        base_subscriber
+            .with(
+                fmt::layer()
+                    .with_target(true)
+                    .with_timer(ChronoUtc::rfc_3339())
+                    .with_ansi(use_color)
+                    .with_writer(writer),
+            )
+            .init();
+    } else if output.stderr {
+        base_subscriber
+            .with(
+                fmt::layer()
+                    .with_target(true)
+                    .with_timer(ChronoUtc::rfc_3339())
+                    .with_ansi(use_color)
+                    .with_writer(std::io::stderr),
+            )
+            .init();
     } else {
-        if output.file && output.stderr {
-            let file_writer = get_file_writer()?;
-            let writer = file_writer.and(std::io::stderr);
-            base_subscriber
-                .with(
-                    fmt::layer()
-                        .with_target(true)
-                        .with_timer(ChronoUtc::rfc_3339())
-                        .with_ansi(false)
-                        .with_writer(writer),
-                )
-                .init();
-        } else if output.file {
-            let file_writer = get_file_writer()?;
-            base_subscriber
-                .with(
-                    fmt::layer()
-                        .with_target(true)
-                        .with_timer(ChronoUtc::rfc_3339())
-                        .with_ansi(false)
-                        .with_writer(file_writer),
-                )
-                .init();
-        } else if output.stdout && output.stderr {
-            let writer = std::io::stdout.and(std::io::stderr);
-            base_subscriber
-                .with(
-                    fmt::layer()
-                        .with_target(true)
-                        .with_timer(ChronoUtc::rfc_3339())
-                        .with_ansi(use_color)
-                        .with_writer(writer),
-                )
-                .init();
-        } else if output.stderr {
-            base_subscriber
-                .with(
-                    fmt::layer()
-                        .with_target(true)
-                        .with_timer(ChronoUtc::rfc_3339())
-                        .with_ansi(use_color)
-                        .with_writer(std::io::stderr),
-                )
-                .init();
-        } else {
-            base_subscriber
-                .with(
-                    fmt::layer()
-                        .with_target(true)
-                        .with_timer(ChronoUtc::rfc_3339())
-                        .with_ansi(use_color)
-                        .with_writer(std::io::stdout),
-                )
-                .init();
-        }
+        base_subscriber
+            .with(
+                fmt::layer()
+                    .with_target(true)
+                    .with_timer(ChronoUtc::rfc_3339())
+                    .with_ansi(use_color)
+                    .with_writer(std::io::stdout),
+            )
+            .init();
     }
 
     Ok(())

@@ -17,6 +17,7 @@ pub fn prompt_link_record_from_contract_v1(
             user_prompt_template_artifact_id: contract.user_prompt_template_artifact_id.clone(),
             rendered_prompt_artifact_id: contract.rendered_prompt_artifact_id.clone(),
             context_artifact_id: contract.context_artifact_id.clone(),
+            belief_bundle_digest: contract.belief_bundle_digest.clone(),
         },
         input,
     )
@@ -56,6 +57,10 @@ pub fn validate_prompt_link_record_references(
     .map_err(map_reference_error)?;
     validate_hex64("context_artifact_id", &record.context_artifact_id)
         .map_err(map_reference_error)?;
+    if let Some(belief_bundle_digest) = &record.belief_bundle_digest {
+        validate_hex64("belief_bundle_digest", belief_bundle_digest)
+            .map_err(map_reference_error)?;
+    }
     Ok(())
 }
 

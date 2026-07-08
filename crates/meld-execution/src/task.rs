@@ -85,6 +85,6 @@ pub use invocation::assemble_invocation_payload;
 pub use readiness::compute_ready_capability_instances;
 pub use runtime::{execute_task_to_completion, TaskRunSummary, WorkflowTaskTelemetry};
 pub use templates::{
-    prepare_registered_workflow_task_run, workflow_task_run_id_for_target,
-    workflow_uses_task_package_path,
+    prepare_registered_workflow_task_run, traversal_package_run_resolvers,
+    workflow_task_run_id_for_target, workflow_uses_task_package_path,
 };

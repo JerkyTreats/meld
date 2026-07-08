@@ -362,6 +362,7 @@ mod tests {
             user_prompt_template_artifact_id: hex64('d'),
             rendered_prompt_artifact_id: hex64('e'),
             context_artifact_id: hex64('f'),
+            belief_bundle_digest: None,
             created_at_ms: 1,
         };
 

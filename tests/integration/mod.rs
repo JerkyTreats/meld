@@ -2,6 +2,7 @@
 
 mod agent_authorization;
 mod agent_cli;
+mod belief_context;
 mod blake3_verification;
 mod branches_query;
 mod branches_runtime;
@@ -47,8 +48,13 @@ mod workflow_task_compatibility;
 mod workflow_traversal;
 mod workspace_commands;
 mod workspace_isolation;
+mod workspace_scan_capability;
 mod workspace_traversal;
 mod world_state_graph;
 mod xdg_config;
 
-pub use test_utils::{with_env_lock, with_xdg_data_home, with_xdg_env};
+pub use test_utils::{
+    create_test_agent, create_test_provider, register_docs_writer_capabilities,
+    spawn_docs_writer_server, spawn_wrapped_docs_writer_server, with_env_lock, with_xdg_data_home,
+    with_xdg_env,
+};

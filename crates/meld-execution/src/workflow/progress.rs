@@ -194,6 +194,7 @@ mod tests {
             target_agent_id: None,
             target_frame_type: None,
             final_artifact_type: None,
+            belief_context: None,
         }
     }
 

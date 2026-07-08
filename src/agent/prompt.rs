@@ -32,7 +32,13 @@ pub fn resolve_prompt_path(path: &str, base_dir: &Path) -> Result<PathBuf, ApiEr
 
 /// Prompt file cache with modification time tracking
 pub struct PromptCache {
-    cache: HashMap<PathBuf, (String, SystemTime)>,
+    cache: HashMap<PathBuf, CachedPrompt>,
+}
+
+struct CachedPrompt {
+    content: String,
+    modified: SystemTime,
+    len: u64,
 }
 
 impl PromptCache {
@@ -58,9 +64,10 @@ impl PromptCache {
                 e
             ))
         })?;
-        if let Some((cached_content, cached_mtime)) = self.cache.get(path) {
-            if *cached_mtime == mtime {
-                return Ok(cached_content.clone());
+        let len = metadata.len();
+        if let Some(cached) = self.cache.get(path) {
+            if cached.modified == mtime && cached.len == len {
+                return Ok(cached.content.clone());
             }
         }
         let content = std::fs::read_to_string(path).map_err(|e| {
@@ -76,8 +83,14 @@ impl PromptCache {
                 path.display()
             )));
         }
-        self.cache
-            .insert(path.to_path_buf(), (content.clone(), mtime));
+        self.cache.insert(
+            path.to_path_buf(),
+            CachedPrompt {
+                content: content.clone(),
+                modified: mtime,
+                len,
+            },
+        );
         Ok(content)
     }
 }

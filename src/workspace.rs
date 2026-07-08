@@ -9,6 +9,7 @@ mod facade;
 mod format;
 pub mod publish;
 pub(crate) mod reducer;
+pub mod scan;
 mod section;
 pub mod summary;
 pub mod tooling;
