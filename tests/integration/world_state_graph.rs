@@ -51,7 +51,7 @@ fn fact_store_indexes_claims_by_object_ref() {
     let evidence = EvidenceRecord {
         evidence_id: "evidence_a".to_string(),
         claim_id: "claim_a".to_string(),
-        source_fact_id: "spine_fact_a".to_string(),
+        source_fact_id: "ledger_fact_a".to_string(),
         source_event_type: "execution.control.node_completed".to_string(),
         objects: vec![
             subject.clone(),
@@ -71,7 +71,7 @@ fn fact_store_indexes_claims_by_object_ref() {
             event_type: "world_state.claim_added".to_string(),
             claim_id: Some("claim_a".to_string()),
             evidence_id: None,
-            source_spine_fact_id: Some("spine_fact_a".to_string()),
+            source_spine_fact_id: Some("ledger_fact_a".to_string()),
             seq: 10,
         })
         .unwrap();
@@ -86,7 +86,10 @@ fn fact_store_indexes_claims_by_object_ref() {
     assert_eq!(current.len(), 1);
     assert_eq!(current[0].claim_id, "claim_a");
     assert_eq!(provenance.evidence_ids, vec!["evidence_a".to_string()]);
-    assert_eq!(provenance.source_fact_ids, vec!["spine_fact_a".to_string()]);
+    assert_eq!(
+        provenance.source_fact_ids,
+        vec!["ledger_fact_a".to_string()]
+    );
 }
 
 #[test]
@@ -134,10 +137,10 @@ fn supersession_chain_remains_queryable() {
 fn replay_rebuilds_current_claim_projection() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let spine = ProgressStore::new(db.clone()).unwrap();
+    let ledger = ProgressStore::new(db.clone()).unwrap();
     let world_state = WorldStateStore::new(db).unwrap();
 
-    spine
+    ledger
         .append_event(&ProgressEvent::from_envelope(
             node_completed_envelope(
                 "session_a",
@@ -155,7 +158,7 @@ fn replay_rebuilds_current_claim_projection() {
         ))
         .unwrap();
 
-    let reducer = WorldStateReducer::replay_from_spine(&spine, &world_state, 0).unwrap();
+    let reducer = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
     let query = WorldStateQuery::new(&world_state);
     let current = query
         .current_claims_for_object(&DomainObjectRef::new("workspace_fs", "node", "node_a").unwrap())
@@ -170,10 +173,10 @@ fn replay_rebuilds_current_claim_projection() {
 fn later_generation_success_supersedes_prior_failure() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let spine = ProgressStore::new(db.clone()).unwrap();
+    let ledger = ProgressStore::new(db.clone()).unwrap();
     let world_state = WorldStateStore::new(db).unwrap();
 
-    spine
+    ledger
         .append_event(&ProgressEvent::from_envelope(
             node_failed_envelope(
                 "session_a",
@@ -190,7 +193,7 @@ fn later_generation_success_supersedes_prior_failure() {
             1,
         ))
         .unwrap();
-    spine
+    ledger
         .append_event(&ProgressEvent::from_envelope(
             node_completed_envelope(
                 "session_a",
@@ -208,7 +211,7 @@ fn later_generation_success_supersedes_prior_failure() {
         ))
         .unwrap();
 
-    let reducer = WorldStateReducer::replay_from_spine(&spine, &world_state, 0).unwrap();
+    let reducer = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
     let subject = DomainObjectRef::new("workspace_fs", "node", "node_a").unwrap();
     let current = WorldStateQuery::new(&world_state)
         .current_claims_for_object(&subject)
@@ -234,19 +237,19 @@ fn later_generation_success_supersedes_prior_failure() {
 fn provenance_query_returns_supporting_execution_fact() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let spine = ProgressStore::new(db.clone()).unwrap();
+    let ledger = ProgressStore::new(db.clone()).unwrap();
     let world_state = WorldStateStore::new(db).unwrap();
     let mut task_event = TaskEvent::new("task_artifact_emitted", "task_a", "run_a");
     task_event.artifact_id = Some("artifact_a".to_string());
 
-    spine
+    ledger
         .append_event(&ProgressEvent::from_envelope(
             build_execution_task_envelope("session_a", &task_event).unwrap(),
             1,
         ))
         .unwrap();
 
-    let _ = WorldStateReducer::replay_from_spine(&spine, &world_state, 0).unwrap();
+    let _ = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
     let provenance = WorldStateQuery::new(&world_state)
         .provenance_for_claim("claim::artifact_available::execution::task_run::run_a::1")
         .unwrap();
@@ -260,10 +263,10 @@ fn provenance_query_returns_supporting_execution_fact() {
 fn current_claims_for_workspace_node_are_index_backed() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let spine = ProgressStore::new(db.clone()).unwrap();
+    let ledger = ProgressStore::new(db.clone()).unwrap();
     let world_state = WorldStateStore::new(db).unwrap();
 
-    spine
+    ledger
         .append_event(&ProgressEvent::from_envelope(
             node_completed_envelope(
                 "session_a",
@@ -281,7 +284,7 @@ fn current_claims_for_workspace_node_are_index_backed() {
         ))
         .unwrap();
 
-    let _ = WorldStateReducer::replay_from_spine(&spine, &world_state, 0).unwrap();
+    let _ = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
 
     let current = WorldStateQuery::new(&world_state)
         .current_claims_for_object(&DomainObjectRef::new("workspace_fs", "node", "node_a").unwrap())
@@ -295,19 +298,19 @@ fn current_claims_for_workspace_node_are_index_backed() {
 fn claim_history_for_task_run_is_index_backed() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let spine = ProgressStore::new(db.clone()).unwrap();
+    let ledger = ProgressStore::new(db.clone()).unwrap();
     let world_state = WorldStateStore::new(db).unwrap();
     let mut task_event = TaskEvent::new("task_artifact_emitted", "task_a", "run_a");
     task_event.artifact_id = Some("artifact_a".to_string());
 
-    spine
+    ledger
         .append_event(&ProgressEvent::from_envelope(
             build_execution_task_envelope("session_a", &task_event).unwrap(),
             1,
         ))
         .unwrap();
 
-    let _ = WorldStateReducer::replay_from_spine(&spine, &world_state, 0).unwrap();
+    let _ = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
 
     let history = WorldStateQuery::new(&world_state)
         .claim_history_for_object(&DomainObjectRef::new("execution", "task_run", "run_a").unwrap())
@@ -321,18 +324,18 @@ fn claim_history_for_task_run_is_index_backed() {
 fn reducer_ignores_irrelevant_execution_events() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let spine = ProgressStore::new(db.clone()).unwrap();
+    let ledger = ProgressStore::new(db.clone()).unwrap();
     let world_state = WorldStateStore::new(db).unwrap();
     let task_event = TaskEvent::new("task_started", "task_a", "run_a");
 
-    spine
+    ledger
         .append_event(&ProgressEvent::from_envelope(
             build_execution_task_envelope("session_a", &task_event).unwrap(),
             1,
         ))
         .unwrap();
 
-    let reducer = WorldStateReducer::replay_from_spine(&spine, &world_state, 0).unwrap();
+    let reducer = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
     let history = WorldStateQuery::new(&world_state)
         .claim_history_for_object(&DomainObjectRef::new("execution", "task_run", "run_a").unwrap())
         .unwrap();
@@ -346,10 +349,10 @@ fn reducer_ignores_irrelevant_execution_events() {
 fn world_state_facts_are_replayable_after_restart() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let spine = ProgressStore::new(db.clone()).unwrap();
+    let ledger = ProgressStore::new(db.clone()).unwrap();
     let world_state = WorldStateStore::new(db.clone()).unwrap();
 
-    spine
+    ledger
         .append_event(&ProgressEvent::from_envelope(
             node_completed_envelope(
                 "session_a",
@@ -367,10 +370,10 @@ fn world_state_facts_are_replayable_after_restart() {
         ))
         .unwrap();
 
-    let _ = WorldStateReducer::replay_from_spine(&spine, &world_state, 0).unwrap();
+    let _ = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
     world_state.db().flush().unwrap();
     drop(world_state);
-    drop(spine);
+    drop(ledger);
     drop(db);
 
     let reopened_db = sled::open(dir.path()).unwrap();

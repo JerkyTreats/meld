@@ -13,7 +13,7 @@ use thiserror::Error;
 /// Request to map one docs task success fact into generic promoted evidence.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DocsTaskSuccessEvidenceRequest {
-    /// Published event spine record.
+    /// Published event ledger record.
     pub event: EventRecord,
     /// Workspace subject whose belief should receive the promoted evidence.
     pub subject: DomainObjectRef,
@@ -89,6 +89,9 @@ pub fn build_docs_task_success_evidence(
         .envelope
         .record_id
         .clone()
+        // The event-spine:: prefix is a frozen stored-identifier format:
+        // existing evidence records reference it, so it survives the ledger
+        // renaming.
         .unwrap_or_else(|| format!("event-spine::{}", event.seq));
     Ok(Some(PromotedEvidenceRecord {
         source_kind: request.source_kind,

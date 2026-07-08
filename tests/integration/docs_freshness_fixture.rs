@@ -376,7 +376,7 @@ impl DocsFreshnessFirstProofFixture {
         let relation = EventRelation::new("selected", node.clone(), frame.clone()).unwrap();
         let fact = TraversalFactRecord {
             fact_id: "fact-a".to_string(),
-            source_spine_fact_id: "spine-a".to_string(),
+            source_spine_fact_id: "ledger-a".to_string(),
             seq: SEED_GRAPH_SEQ,
             event_type: "context.head.selected".to_string(),
             objects: vec![node.clone(), frame.clone()],
@@ -388,7 +388,7 @@ impl DocsFreshnessFirstProofFixture {
             subject: node.clone(),
             perspective: self.graph_perspective(),
             target: frame,
-            source_fact_ids: vec!["spine-a".to_string()],
+            source_fact_ids: vec!["ledger-a".to_string()],
             created_by_fact_id: "fact-a".to_string(),
             selected_at_seq: SEED_GRAPH_SEQ,
             ended_at_seq: None,

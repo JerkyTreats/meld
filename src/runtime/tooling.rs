@@ -322,7 +322,7 @@ fn duration_elapsed(started: Instant, duration_ms: Option<u64>) -> bool {
     duration_ms.is_some_and(|limit| started.elapsed().as_millis() >= u128::from(limit))
 }
 
-/// Waits out the tick interval but wakes early when the spine writer commits
+/// Waits out the tick interval but wakes early when the ledger writer commits
 /// new events, so work-driven ticks replace pure wall-clock polling while the
 /// configured interval stays the fallback heartbeat.
 fn sleep_until_next_tick(

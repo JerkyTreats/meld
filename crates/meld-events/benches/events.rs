@@ -1,11 +1,11 @@
-//! Micro benchmarks for the event spine store and runtime.
+//! Micro benchmarks for the event ledger store and runtime.
 //!
-//! These benches track the spine cost profile across the overhaul: producer
+//! These benches track the ledger cost profile across the overhaul: producer
 //! path flush cost, seek-based cursor reads, and atomically sequenced
 //! appends. Compare runs against the recorded baselines in the overhaul PLAN
 //! to catch regressions.
 //!
-//! Set `MELD_SPINE_BENCH_LARGE=1` to add a 1,000,000-event history size to the
+//! Set `MELD_EVENT_BENCH_LARGE=1` to add a 1,000,000-event history size to the
 //! replay and idle-tick curves; it is off by default to keep suite runtime
 //! sane.
 //!
@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use meld_events::events::store::EventStore;
-use meld_events::{EventEnvelope, EventRuntime, SpineWriter};
+use meld_events::{EventEnvelope, EventRuntime, EventWriter};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -56,7 +56,7 @@ fn populate(store: &EventStore, sessions: usize, total: usize) {
 
 fn history_sizes() -> Vec<usize> {
     let mut sizes = vec![1_000, 10_000, 100_000];
-    if std::env::var("MELD_SPINE_BENCH_LARGE").is_ok() {
+    if std::env::var("MELD_EVENT_BENCH_LARGE").is_ok() {
         sizes.push(1_000_000);
     }
     sizes
@@ -195,7 +195,7 @@ fn append_throughput(c: &mut Criterion) {
                 b.iter_batched(
                     || {
                         let (dir, store) = temp_store();
-                        let writer = SpineWriter::spawn(Arc::new(store));
+                        let writer = EventWriter::spawn(Arc::new(store));
                         (dir, Arc::new(writer))
                     },
                     |(dir, writer)| {
@@ -323,7 +323,7 @@ fn bytes_per_event(c: &mut Criterion) {
     group.finish();
 }
 
-fn spine_benches(c: &mut Criterion) {
+fn event_benches(c: &mut Criterion) {
     append_throughput(c);
     let fixtures = build_history_fixtures();
     replay_vs_history(c, &fixtures);
@@ -332,5 +332,5 @@ fn spine_benches(c: &mut Criterion) {
     bytes_per_event(c);
 }
 
-criterion_group!(benches, spine_benches);
+criterion_group!(benches, event_benches);
 criterion_main!(benches);

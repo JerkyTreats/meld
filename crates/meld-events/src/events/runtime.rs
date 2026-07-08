@@ -1,4 +1,4 @@
-//! Event runtime facade over the spine writer.
+//! Event runtime facade over the ledger writer.
 //!
 //! Owner: event runtime.
 //! Inputs: legacy telemetry events, domain events, and prepared envelopes.
@@ -41,14 +41,14 @@ use tracing::warn;
 
 use crate::error::{ApiError, StorageError};
 use crate::events::store::EventStore;
-use crate::events::writer::{CommitWatermark, SpineWriter};
+use crate::events::writer::{CommitWatermark, EventWriter};
 use crate::events::EventEnvelope;
 
 /// Producer-facing event runtime routing all appends through one writer.
 #[derive(Clone)]
 pub struct EventRuntime {
     store: Arc<EventStore>,
-    writer: Arc<SpineWriter>,
+    writer: Arc<EventWriter>,
 }
 
 impl EventRuntime {
@@ -59,7 +59,7 @@ impl EventRuntime {
 
     /// Creates a runtime and its writer over an already opened store.
     pub fn from_store(store: Arc<EventStore>) -> Self {
-        let writer = Arc::new(SpineWriter::spawn(Arc::clone(&store)));
+        let writer = Arc::new(EventWriter::spawn(Arc::clone(&store)));
         Self { store, writer }
     }
 

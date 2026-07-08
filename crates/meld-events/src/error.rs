@@ -29,7 +29,7 @@ pub enum StorageError {
     RetentionGap {
         /// Cursor the caller supplied.
         after_seq: u64,
-        /// First sequence still retained by the spine.
+        /// First sequence still retained by the ledger.
         retained_from: u64,
     },
 

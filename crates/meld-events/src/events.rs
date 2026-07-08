@@ -55,10 +55,10 @@ pub mod writer;
 
 pub use contracts::{DomainObjectRef, EventRelation};
 pub use runtime::EventRuntime;
-pub use subscription::{SpineCursor, SpineSubscription};
-pub use writer::{CommitWatermark, SpineWriter};
+pub use subscription::{EventCursor, EventSubscription};
+pub use writer::{CommitWatermark, EventWriter};
 
-/// Persisted event record in the global event spine.
+/// Persisted event record in the global event ledger.
 ///
 /// Records are append-only after a sequence is assigned. The record owns store
 /// sequence metadata and contains the prepared producer envelope unchanged.
@@ -234,7 +234,7 @@ impl EventEnvelope {
 }
 
 impl EventRecord {
-    /// Assigns a spine sequence to an envelope without changing producer data.
+    /// Assigns a ledger sequence to an envelope without changing producer data.
     pub fn from_envelope(envelope: EventEnvelope, seq: u64) -> Self {
         Self { seq, envelope }
     }

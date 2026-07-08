@@ -3,7 +3,7 @@
 use super::events::{ChangeEvent, EventBatcher, WatchConfig};
 use crate::agent::AgentIdentity;
 use crate::api::ContextApi;
-use crate::context::head::backfill_legacy_heads_into_spine;
+use crate::context::head::backfill_legacy_heads_into_ledger;
 use crate::context::queue::{FrameGenerationQueue, QueueEventContext};
 use crate::error::ApiError;
 use crate::execution::ExecutionEventContext;
@@ -65,13 +65,13 @@ impl WatchDaemon {
                 .as_deref()
                 .unwrap_or("context_head_backfill");
             let head_index = api.head_index().read();
-            if let Err(err) = backfill_legacy_heads_into_spine(
+            if let Err(err) = backfill_legacy_heads_into_ledger(
                 progress,
                 &head_index,
                 api.frame_storage(),
                 session_id,
             ) {
-                warn!(error = %err, "failed to backfill legacy heads into spine");
+                warn!(error = %err, "failed to backfill legacy heads into ledger");
             }
         }
 

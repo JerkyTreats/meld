@@ -22,7 +22,7 @@
 //!             subject: node,
 //!             perspective: meld_world_model::PerspectiveKey::new("frame_type", "analysis").unwrap(),
 //!             target: frame,
-//!             source_fact_ids: vec!["spine-a".to_string()],
+//!             source_fact_ids: vec!["ledger-a".to_string()],
 //!             created_by_fact_id: "fact-a".to_string(),
 //!             selected_at_seq: 1,
 //!             ended_at_seq: None,

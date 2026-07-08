@@ -1,5 +1,5 @@
 use meld::control::projection::ExecutionProjection;
-use meld::events::SpineWriter;
+use meld::events::EventWriter;
 use meld::session::policy::PrunePolicy;
 use meld::task::ExecutionTaskEventData;
 use meld::telemetry::emission::emit_command_summary;
@@ -196,7 +196,7 @@ fn slow_or_missing_consumer_does_not_break_append() {
     // No subscriber exists anywhere; the writer persists both durability
     // classes on its own, and shutdown drains everything still queued.
     {
-        let writer = SpineWriter::spawn(store.clone());
+        let writer = EventWriter::spawn(store.clone());
         let seq = writer
             .append_durable(
                 ProgressEnvelope::with_now("s1", "session_started", json!({})),
@@ -220,7 +220,7 @@ fn slow_or_missing_consumer_does_not_break_append() {
 }
 
 #[test]
-fn session_prune_does_not_delete_canonical_spine_history() {
+fn session_prune_does_not_delete_canonical_ledger_history() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
     let runtime = ProgressRuntime::new(db).unwrap();

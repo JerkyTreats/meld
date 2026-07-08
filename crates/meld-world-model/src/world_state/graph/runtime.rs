@@ -1,6 +1,6 @@
 //! Runtime wrapper for graph event reduction.
 //!
-//! `GraphRuntime` owns the event spine and traversal store that share one sled
+//! `GraphRuntime` owns the event ledger and traversal store that share one sled
 //! database. Reads call `catch_up` before querying so graph indexes observe all
 //! durable events seen by the runtime.
 //!
@@ -49,15 +49,15 @@ pub struct GraphWorkerIssue {
 pub struct GraphCatchUpReport {
     /// Stable runtime actor identifier.
     pub actor_id: String,
-    /// Event spine sequence read before replay.
+    /// Event ledger sequence read before replay.
     pub input_event_seq: u64,
-    /// Event spine sequence durably reduced after replay.
+    /// Event ledger sequence durably reduced after replay.
     pub output_event_seq: u64,
     /// Event records selected for this tick.
     pub events_attempted: usize,
     /// Source events that produced graph facts.
     pub traversal_events_applied: usize,
-    /// Derived graph events appended idempotently to the spine.
+    /// Derived graph events appended idempotently to the ledger.
     pub derived_events_appended: usize,
     /// Retryable diagnostics observed during the tick.
     pub retryable_errors: Vec<GraphWorkerIssue>,
@@ -69,16 +69,16 @@ pub struct GraphCatchUpReport {
 
 /// Event-backed graph projection runtime.
 pub struct GraphRuntime {
-    spine: Arc<EventStore>,
+    ledger: Arc<EventStore>,
     traversal: Arc<TraversalStore>,
     catch_up_lock: Mutex<()>,
 }
 
 impl GraphRuntime {
-    /// Open the event spine and traversal store against one shared database.
+    /// Open the event ledger and traversal store against one shared database.
     pub fn new(db: sled::Db) -> Result<Self, StorageError> {
         Ok(Self {
-            spine: EventStore::shared(db.clone())?,
+            ledger: EventStore::shared(db.clone())?,
             traversal: TraversalStore::shared(db)?,
             catch_up_lock: Mutex::new(()),
         })
@@ -89,15 +89,15 @@ impl GraphRuntime {
     /// This is used when the product runtime keeps the event ledger and world
     /// model graph stores in separate physical databases while graph replay
     /// ownership remains inside the world model domain.
-    pub fn from_stores(spine: Arc<EventStore>, traversal: Arc<TraversalStore>) -> Self {
+    pub fn from_stores(ledger: Arc<EventStore>, traversal: Arc<TraversalStore>) -> Self {
         Self {
-            spine,
+            ledger,
             traversal,
             catch_up_lock: Mutex::new(()),
         }
     }
 
-    /// Reduce new spine events into traversal indexes.
+    /// Reduce new ledger events into traversal indexes.
     ///
     /// A retention gap propagates as its typed error so CLI catch-up
     /// callers can never mistake a stranded cursor for zero progress.
@@ -110,13 +110,13 @@ impl GraphRuntime {
         {
             return Err(StorageError::RetentionGap {
                 after_seq: self.traversal.last_reduced_seq()?,
-                retained_from: self.spine.retained_lower_boundary()?,
+                retained_from: self.ledger.retained_lower_boundary()?,
             });
         }
         Ok(report.traversal_events_applied)
     }
 
-    /// Reduce a bounded number of new spine events into traversal indexes.
+    /// Reduce a bounded number of new ledger events into traversal indexes.
     pub fn catch_up_bounded(
         &self,
         budget: GraphCatchUpBudget,
@@ -141,9 +141,9 @@ impl GraphRuntime {
         let after_seq = self.traversal.last_reduced_seq()?;
         let read = match max_items {
             Some(max_items) => self
-                .spine
+                .ledger
                 .read_all_events_after_limit(after_seq, max_items.saturating_add(1)),
-            None => self.spine.read_all_events_after(after_seq),
+            None => self.ledger.read_all_events_after(after_seq),
         };
         let (events, budget_exhausted) = match read {
             Ok(mut events) => match max_items {
@@ -196,9 +196,9 @@ impl GraphRuntime {
         let last_persisted_seq = reducer.last_seen_seq;
         let derived_events_appended = reducer.emitted_envelopes.len();
         for envelope in reducer.emitted_envelopes {
-            self.spine.append_envelope_idempotent(envelope)?;
+            self.ledger.append_envelope_idempotent(envelope)?;
         }
-        self.spine.flush()?;
+        self.ledger.flush()?;
         self.traversal.set_last_reduced_seq(last_persisted_seq)?;
         self.traversal.flush()?;
         Ok(GraphCatchUpReport {
@@ -219,10 +219,10 @@ impl GraphRuntime {
         Arc::clone(&self.traversal)
     }
 
-    /// Append a source event to the spine.
+    /// Append a source event to the ledger.
     pub fn append_envelope(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
-        let seq = self.spine.append_envelope(envelope)?;
-        self.spine.flush()?;
+        let seq = self.ledger.append_envelope(envelope)?;
+        self.ledger.flush()?;
         Ok(seq)
     }
 }

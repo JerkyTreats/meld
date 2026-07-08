@@ -62,7 +62,7 @@ pub struct ContextApi {
     lock_manager: Arc<NodeLockManager>,
     /// Workspace root for persistence (optional)
     workspace_root: Option<PathBuf>,
-    /// Optional spine emitter context for canonical context facts.
+    /// Optional ledger emitter context for canonical context facts.
     progress_context: Arc<parking_lot::RwLock<Option<ProgressEmitterContext>>>,
     /// Optional world model query service for graph backed cross domain reads.
     world_model_queries: Arc<parking_lot::RwLock<Option<Arc<WorldModelQueries>>>>,

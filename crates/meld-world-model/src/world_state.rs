@@ -1,4 +1,4 @@
-//! World-state domains built from the shared event spine.
+//! World-state domains built from the shared event ledger.
 //!
 //! The module contains two related surfaces. The graph domain is the current
 //! substrate for anchors, provenance, object facts, and traversal queries. The

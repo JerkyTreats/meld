@@ -1,6 +1,6 @@
 //! Legacy frame head compatibility index.
 //!
-//! The event spine and graph anchors are the source of truth for current heads
+//! The event ledger and graph anchors are the source of truth for current heads
 //! when a graph runtime is configured. This index remains for legacy workspace
 //! migration, graphless tests, restore compatibility, and tombstone compacting.
 

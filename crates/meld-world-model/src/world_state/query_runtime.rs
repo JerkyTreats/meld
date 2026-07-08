@@ -1,7 +1,7 @@
 //! Catch-up-aware query facade for the graph runtime.
 //!
 //! `WorldModelQueries` is the runtime-safe read surface used by application code.
-//! Each query first catches the graph projection up to the event spine, then
+//! Each query first catches the graph projection up to the event ledger, then
 //! delegates to `TraversalQuery`.
 //!
 //! # Example

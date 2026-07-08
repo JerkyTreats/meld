@@ -16,7 +16,7 @@ pub(crate) mod docs_freshness_fixture;
 mod docs_freshness_fixture_contract;
 mod docs_freshness_reopen_contract;
 mod docs_writer_task;
-mod event_spine;
+mod event_ledger;
 mod execution_projection;
 mod frame_queue;
 mod generation_parity;

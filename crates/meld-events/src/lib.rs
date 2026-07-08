@@ -1,4 +1,4 @@
-//! Canonical event spine contracts and runtime helpers for Meld.
+//! Canonical event ledger contracts and runtime helpers for Meld.
 //!
 //! This crate owns event envelopes, sequenced event records, domain object
 //! references carried by events, the single-writer ingress engine, and the
@@ -16,7 +16,7 @@
 //!   runtime emission.
 //!
 //! Start with [`EventEnvelope`] when publishing a domain event,
-//! [`events::store::EventStore`] when persisting or querying the event spine,
+//! [`events::store::EventStore`] when persisting or querying the event ledger,
 //! and [`EventRuntime`] when a caller needs durable or best-effort emission.
 //!
 //! # Example

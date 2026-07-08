@@ -2,7 +2,7 @@
 
 use crate::api::ContextApi;
 use crate::config::MerkleConfig;
-use crate::context::head::backfill_legacy_heads_into_spine;
+use crate::context::head::backfill_legacy_heads_into_ledger;
 use crate::error::ApiError;
 use crate::heads::HeadIndex;
 use crate::store::persistence::SledNodeRecordStore;
@@ -67,13 +67,13 @@ impl CliRuntimeAssembly {
         ));
         {
             let head_index_guard = head_index.read();
-            if let Err(err) = backfill_legacy_heads_into_spine(
+            if let Err(err) = backfill_legacy_heads_into_ledger(
                 &progress,
                 &head_index_guard,
                 frame_storage.as_ref(),
                 "context_head_backfill",
             ) {
-                tracing::warn!(error = %err, "failed to backfill legacy heads into spine");
+                tracing::warn!(error = %err, "failed to backfill legacy heads into ledger");
             }
         }
 

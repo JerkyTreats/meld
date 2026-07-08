@@ -12,7 +12,7 @@ fn event_store() -> (tempfile::TempDir, EventStore) {
     (temp_dir, EventStore::new(db).unwrap())
 }
 
-fn spine_envelope(session: &str, marker: usize) -> EventEnvelope {
+fn ledger_envelope(session: &str, marker: usize) -> EventEnvelope {
     EventEnvelope::new_domain(
         RECORDED_AT.to_string(),
         session,
@@ -28,7 +28,7 @@ fn populated_store(total: usize) -> (tempfile::TempDir, EventStore) {
     let (temp_dir, store) = event_store();
     for marker in 0..total {
         store
-            .append_envelope(spine_envelope(SESSIONS[marker % SESSIONS.len()], marker))
+            .append_envelope(ledger_envelope(SESSIONS[marker % SESSIONS.len()], marker))
             .unwrap();
     }
     (temp_dir, store)
@@ -121,7 +121,7 @@ fn cursor_consumer_never_skips_or_repeats_across_interleaved_appends() {
         for _ in 0..(round % 4) {
             appended += 1;
             store
-                .append_envelope(spine_envelope(
+                .append_envelope(ledger_envelope(
                     SESSIONS[round % SESSIONS.len()],
                     appended as usize,
                 ))

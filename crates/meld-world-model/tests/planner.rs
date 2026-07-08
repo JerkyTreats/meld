@@ -90,7 +90,7 @@ fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>, DomainObjectRef) {
     let relation = EventRelation::new("selected", node.clone(), frame.clone()).unwrap();
     let fact = TraversalFactRecord {
         fact_id: "fact-a".to_string(),
-        source_spine_fact_id: "spine-a".to_string(),
+        source_spine_fact_id: "ledger-a".to_string(),
         seq: 1,
         event_type: "context.head.selected".to_string(),
         objects: vec![node.clone(), frame.clone()],
@@ -102,7 +102,7 @@ fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>, DomainObjectRef) {
         subject: node.clone(),
         perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
         target: frame,
-        source_fact_ids: vec!["spine-a".to_string()],
+        source_fact_ids: vec!["ledger-a".to_string()],
         created_by_fact_id: "fact-a".to_string(),
         selected_at_seq: 1,
         ended_at_seq: None,
@@ -169,7 +169,7 @@ fn test_view(dimension_id: &str, confidence: f64, stale: bool, observation: bool
         advisory_posture: "ready".to_string(),
         provenance: BeliefProvenanceSummary {
             evidence_ids: vec!["evidence-a".to_string()],
-            source_fact_ids: vec!["spine-a".to_string()],
+            source_fact_ids: vec!["ledger-a".to_string()],
             graph_anchor_ids: vec!["anchor-a".to_string()],
             objects: vec![subject],
             relations: Vec::new(),
@@ -177,7 +177,7 @@ fn test_view(dimension_id: &str, confidence: f64, stale: bool, observation: bool
         },
         hydration: HydrationRefs {
             evidence_ids: vec!["evidence-a".to_string()],
-            source_fact_ids: vec!["spine-a".to_string()],
+            source_fact_ids: vec!["ledger-a".to_string()],
             graph_anchor_ids: vec!["anchor-a".to_string()],
             revision_id: Some("revision-a".to_string()),
         },
@@ -191,7 +191,7 @@ fn projection_input(view: Option<BeliefView>) -> PlannerProjectionInput {
         graph_scope: Some(PlannerGraphScope {
             accessible: true,
             anchor_ids: vec!["anchor-a".to_string()],
-            source_fact_ids: vec!["spine-a".to_string()],
+            source_fact_ids: vec!["ledger-a".to_string()],
         }),
         field_config: PlannerFieldProjectionConfig::default(),
     }
@@ -252,7 +252,7 @@ fn planner_contracts_round_trip() {
     };
     let hydration = PlannerHydrationRefs {
         evidence_ids: vec!["evidence-a".to_string()],
-        source_fact_ids: vec!["spine-a".to_string()],
+        source_fact_ids: vec!["ledger-a".to_string()],
         graph_anchor_ids: vec!["anchor-a".to_string()],
         revision_ids: vec!["revision-a".to_string()],
     };
@@ -368,7 +368,7 @@ fn planner_graph_projection() {
         graph_scope: Some(PlannerGraphScope {
             accessible: true,
             anchor_ids: vec!["anchor-a".to_string()],
-            source_fact_ids: vec!["spine-a".to_string()],
+            source_fact_ids: vec!["ledger-a".to_string()],
         }),
         field_config: PlannerFieldProjectionConfig::default(),
     })
@@ -426,9 +426,9 @@ fn planner_determinism() {
             "anchor-a".to_string(),
         ],
         source_fact_ids: vec![
-            "spine-b".to_string(),
-            "spine-a".to_string(),
-            "spine-a".to_string(),
+            "ledger-b".to_string(),
+            "ledger-a".to_string(),
+            "ledger-a".to_string(),
         ],
     });
 
@@ -492,7 +492,7 @@ fn planner_query_reopen() {
         let relation = EventRelation::new("selected", node.clone(), frame.clone()).unwrap();
         let fact = TraversalFactRecord {
             fact_id: "fact-a".to_string(),
-            source_spine_fact_id: "spine-a".to_string(),
+            source_spine_fact_id: "ledger-a".to_string(),
             seq: 1,
             event_type: "context.head.selected".to_string(),
             objects: vec![node.clone(), frame.clone()],
@@ -504,7 +504,7 @@ fn planner_query_reopen() {
             subject: node.clone(),
             perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
             target: frame,
-            source_fact_ids: vec!["spine-a".to_string()],
+            source_fact_ids: vec!["ledger-a".to_string()],
             created_by_fact_id: "fact-a".to_string(),
             selected_at_seq: 1,
             ended_at_seq: None,

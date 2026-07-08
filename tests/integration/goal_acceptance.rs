@@ -100,7 +100,7 @@ fn test_view(confidence: f64, revision_id: &str, seq: u64) -> BeliefView {
         advisory_posture: "ready".to_string(),
         provenance: BeliefProvenanceSummary {
             evidence_ids: vec![format!("evidence-{revision_id}")],
-            source_fact_ids: vec![format!("spine-{seq}")],
+            source_fact_ids: vec![format!("ledger-{seq}")],
             graph_anchor_ids: vec!["anchor-a".to_string()],
             objects: vec![subject()],
             relations: Vec::new(),
@@ -108,7 +108,7 @@ fn test_view(confidence: f64, revision_id: &str, seq: u64) -> BeliefView {
         },
         hydration: HydrationRefs {
             evidence_ids: vec![format!("evidence-{revision_id}")],
-            source_fact_ids: vec![format!("spine-{seq}")],
+            source_fact_ids: vec![format!("ledger-{seq}")],
             graph_anchor_ids: vec!["anchor-a".to_string()],
             revision_id: Some(revision_id.to_string()),
         },

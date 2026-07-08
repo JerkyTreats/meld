@@ -7,7 +7,7 @@ use meld::compat::{ContextApi, GraphRuntime, TraversalStore};
 use meld::concurrency::NodeLockManager;
 use meld::context::events::{frame_added_envelope, head_ref, head_selected_envelope};
 use meld::context::frame::{Basis, Frame, FrameStorage};
-use meld::context::head::backfill_legacy_heads_into_spine;
+use meld::context::head::backfill_legacy_heads_into_ledger;
 use meld::heads::HeadIndex;
 use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::{NodeRecord, NodeType, SledNodeRecordStore};
@@ -29,9 +29,9 @@ use crate::integration::with_xdg_env;
 
 fn create_runtime_and_traversal() -> (Arc<ProgressRuntime>, TraversalStore, tempfile::TempDir) {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let spine_db = sled::open(temp_dir.path().join("spine")).unwrap();
+    let ledger_db = sled::open(temp_dir.path().join("ledger")).unwrap();
     let traversal_db = sled::open(temp_dir.path().join("traversal")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(spine_db).unwrap());
+    let progress = Arc::new(ProgressRuntime::new(ledger_db).unwrap());
     let traversal = TraversalStore::new(traversal_db).unwrap();
     (progress, traversal, temp_dir)
 }
@@ -117,7 +117,7 @@ fn append(
 }
 
 fn replay(runtime: &ProgressRuntime, traversal: &TraversalStore) -> TraversalReducer {
-    TraversalReducer::replay_from_spine(runtime.store(), traversal, 0).unwrap()
+    TraversalReducer::replay_from_ledger(runtime.store(), traversal, 0).unwrap()
 }
 
 fn node_ref(node_id: NodeID) -> DomainObjectRef {
@@ -326,8 +326,8 @@ fn replay_rebuilds_same_context_heads() {
     let workspace_root = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace_root).unwrap();
 
-    let spine_db = sled::open(temp_dir.path().join("spine")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(spine_db).unwrap());
+    let ledger_db = sled::open(temp_dir.path().join("ledger")).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(ledger_db).unwrap());
     let session_id = progress
         .start_command_session("traversal.context".to_string())
         .unwrap();
@@ -391,8 +391,8 @@ fn current_frame_head_matches_legacy_head_index() {
     let workspace_root = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace_root).unwrap();
 
-    let spine_db = sled::open(temp_dir.path().join("spine")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(spine_db).unwrap());
+    let ledger_db = sled::open(temp_dir.path().join("ledger")).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(ledger_db).unwrap());
     let session_id = progress
         .start_command_session("traversal.context".to_string())
         .unwrap();
@@ -438,9 +438,9 @@ fn api_get_head_uses_graph_when_runtime_is_configured() {
     let workspace_root = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&workspace_root).unwrap();
 
-    let spine_db = sled::open(temp_dir.path().join("spine")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(spine_db.clone()).unwrap());
-    let graph_runtime = Arc::new(GraphRuntime::new(spine_db).unwrap());
+    let ledger_db = sled::open(temp_dir.path().join("ledger")).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(ledger_db.clone()).unwrap());
+    let graph_runtime = Arc::new(GraphRuntime::new(ledger_db).unwrap());
     let session_id = progress
         .start_command_session("traversal.context".to_string())
         .unwrap();
@@ -474,7 +474,7 @@ fn api_get_head_uses_graph_when_runtime_is_configured() {
 #[test]
 fn legacy_head_backfill_populates_graph_anchor_idempotently() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let db = sled::open(temp_dir.path().join("spine")).unwrap();
+    let db = sled::open(temp_dir.path().join("ledger")).unwrap();
     let progress = ProgressRuntime::new(db.clone()).unwrap();
     let graph_runtime = GraphRuntime::new(db).unwrap();
     let frame_storage = FrameStorage::new(temp_dir.path().join("frames")).unwrap();
@@ -494,8 +494,8 @@ fn legacy_head_backfill_populates_graph_anchor_idempotently() {
         .update_head(&node_id, "analysis", &frame_id)
         .unwrap();
 
-    backfill_legacy_heads_into_spine(&progress, &head_index, &frame_storage, "backfill").unwrap();
-    backfill_legacy_heads_into_spine(&progress, &head_index, &frame_storage, "backfill").unwrap();
+    backfill_legacy_heads_into_ledger(&progress, &head_index, &frame_storage, "backfill").unwrap();
+    backfill_legacy_heads_into_ledger(&progress, &head_index, &frame_storage, "backfill").unwrap();
     let head_selected_count = progress
         .store()
         .read_all_events_after(0)
@@ -521,8 +521,8 @@ fn current_snapshot_matches_workspace_root_hash() {
     std::fs::create_dir_all(&workspace_root).unwrap();
     std::fs::write(workspace_root.join("doc.txt"), "hello").unwrap();
 
-    let spine_db = sled::open(temp_dir.path().join("spine")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(spine_db.clone()).unwrap());
+    let ledger_db = sled::open(temp_dir.path().join("ledger")).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(ledger_db.clone()).unwrap());
     let session_id = progress
         .start_command_session("traversal.scan".to_string())
         .unwrap();
@@ -686,7 +686,7 @@ fn legacy_claim_query_reads_through_traversal_adapter() {
 #[test]
 fn graph_runtime_repeated_catch_up_is_idempotent() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let db = sled::open(temp_dir.path().join("spine")).unwrap();
+    let db = sled::open(temp_dir.path().join("ledger")).unwrap();
     let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
     let runtime = GraphRuntime::new(db).unwrap();
     let node_id = [24u8; 32];
@@ -744,7 +744,7 @@ fn graph_runtime_repeated_catch_up_is_idempotent() {
 #[test]
 fn graph_catch_up_reports_retention_gap_without_moving_cursor() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let db = sled::open(temp_dir.path().join("spine")).unwrap();
+    let db = sled::open(temp_dir.path().join("ledger")).unwrap();
     let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
     let runtime = GraphRuntime::new(db).unwrap();
     let node_id = [40u8; 32];
@@ -783,7 +783,7 @@ fn graph_catch_up_reports_retention_gap_without_moving_cursor() {
 #[test]
 fn graph_runtime_bounded_report_resumes_without_skipping_source_events() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("spine");
+    let db_path = temp_dir.path().join("ledger");
     let db = sled::open(&db_path).unwrap();
     let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
     let runtime = GraphRuntime::new(db.clone()).unwrap();
@@ -857,7 +857,7 @@ fn graph_runtime_bounded_report_resumes_without_skipping_source_events() {
 #[test]
 fn graph_runtime_persists_anchor_selected_events_idempotently() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let db = sled::open(temp_dir.path().join("spine")).unwrap();
+    let db = sled::open(temp_dir.path().join("ledger")).unwrap();
     let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
     let runtime = GraphRuntime::new(db).unwrap();
     let node_id = [26u8; 32];
@@ -889,9 +889,9 @@ fn graph_runtime_persists_anchor_selected_events_idempotently() {
 }
 
 #[test]
-fn derived_anchor_events_are_readable_from_spine_after_restart() {
+fn derived_anchor_events_are_readable_from_ledger_after_restart() {
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("spine");
+    let db_path = temp_dir.path().join("ledger");
     let db = sled::open(&db_path).unwrap();
     let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
     let runtime = GraphRuntime::new(db.clone()).unwrap();

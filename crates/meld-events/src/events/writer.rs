@@ -1,4 +1,4 @@
-//! Single-writer ingress engine for the event spine.
+//! Single-writer ingress engine for the event ledger.
 //!
 //! Owner: event ingress.
 //! Inputs: producer envelopes with a durability class.
@@ -83,27 +83,27 @@ enum WriteRequest {
     Shutdown,
 }
 
-/// Owner of the spine writer thread and its producer-facing queue.
+/// Owner of the ledger writer thread and its producer-facing queue.
 ///
 /// Dropping the writer drains every queued request, flushes, and joins the
 /// thread, so short-lived processes never lose acked events.
-pub struct SpineWriter {
+pub struct EventWriter {
     sender: SyncSender<WriteRequest>,
     watermark: Arc<CommitWatermark>,
     dropped: Arc<AtomicU64>,
     join: Mutex<Option<JoinHandle<()>>>,
 }
 
-impl SpineWriter {
+impl EventWriter {
     /// Spawns the writer thread over a shared store.
     pub fn spawn(store: Arc<EventStore>) -> Self {
         let (sender, receiver) = sync_channel(WRITER_QUEUE_CAPACITY);
         let watermark = Arc::new(CommitWatermark::new());
         let thread_watermark = Arc::clone(&watermark);
         let join = std::thread::Builder::new()
-            .name("meld-spine-writer".to_string())
+            .name("meld-event-writer".to_string())
             .spawn(move || run_writer(store, receiver, thread_watermark))
-            .expect("spawn spine writer thread");
+            .expect("spawn ledger writer thread");
         Self {
             sender,
             watermark,
@@ -178,11 +178,11 @@ impl SpineWriter {
                 if dropped.is_power_of_two() {
                     warn!(
                         dropped,
-                        "spine writer queue full; dropping best-effort events"
+                        "ledger writer queue full; dropping best-effort events"
                     );
                 }
                 Err(StorageError::Backpressure(format!(
-                    "spine writer queue full; {dropped} best-effort events dropped"
+                    "ledger writer queue full; {dropped} best-effort events dropped"
                 )))
             }
             Err(TrySendError::Disconnected(_)) => Err(disconnected()),
@@ -214,7 +214,7 @@ impl SpineWriter {
     }
 }
 
-impl Drop for SpineWriter {
+impl Drop for EventWriter {
     fn drop(&mut self) {
         let _ = self.sender.send(WriteRequest::Shutdown);
         if let Some(join) = self
@@ -305,7 +305,7 @@ fn commit_batch(store: &EventStore, watermark: &CommitWatermark, batch: Vec<Writ
             Some(ack) => acks.push((ack, result)),
             None => {
                 if let Err(error) = result {
-                    warn!(error = %error, "best-effort spine append failed");
+                    warn!(error = %error, "best-effort ledger append failed");
                 }
             }
         }
@@ -337,7 +337,7 @@ fn commit_batch(store: &EventStore, watermark: &CommitWatermark, batch: Vec<Writ
 }
 
 fn disconnected() -> StorageError {
-    StorageError::IoError(std::io::Error::other("spine writer disconnected"))
+    StorageError::IoError(std::io::Error::other("ledger writer disconnected"))
 }
 
 #[cfg(test)]
@@ -345,11 +345,11 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn temp_writer() -> (tempfile::TempDir, Arc<EventStore>, SpineWriter) {
+    fn temp_writer() -> (tempfile::TempDir, Arc<EventStore>, EventWriter) {
         let dir = tempfile::TempDir::new().unwrap();
         let db = sled::open(dir.path()).unwrap();
         let store = EventStore::shared(db).unwrap();
-        let writer = SpineWriter::spawn(Arc::clone(&store));
+        let writer = EventWriter::spawn(Arc::clone(&store));
         (dir, store, writer)
     }
 
@@ -407,7 +407,7 @@ mod tests {
         let db = sled::open(dir.path()).unwrap();
         let store = EventStore::shared(db).unwrap();
         {
-            let writer = SpineWriter::spawn(Arc::clone(&store));
+            let writer = EventWriter::spawn(Arc::clone(&store));
             for i in 0..64 {
                 writer.append_best_effort(envelope(i), false).unwrap();
             }
@@ -430,7 +430,7 @@ mod tests {
         // Built without a writer thread so the queue stays full
         // deterministically; capacity one means the second enqueue must drop.
         let (sender, receiver) = sync_channel(1);
-        let writer = SpineWriter {
+        let writer = EventWriter {
             sender,
             watermark: Arc::new(CommitWatermark::new()),
             dropped: Arc::new(AtomicU64::new(0)),

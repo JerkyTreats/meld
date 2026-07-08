@@ -26,7 +26,7 @@ pub mod journal;
 pub mod mutation;
 /// Outcome publication outbox contracts.
 pub mod outcome;
-/// Publication bridge into the event spine.
+/// Publication bridge into the event ledger.
 pub mod publication;
 /// Ready set computation over reduced task network state.
 pub mod readiness;

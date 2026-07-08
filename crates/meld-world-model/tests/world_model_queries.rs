@@ -31,7 +31,7 @@ fn world_state_query_reads_claims_and_provenance() {
     let evidence = EvidenceRecord {
         evidence_id: "evidence-a".to_string(),
         claim_id: claim.claim_id.clone(),
-        source_fact_id: "spine-a".to_string(),
+        source_fact_id: "ledger-a".to_string(),
         source_event_type: "execution.task.completed".to_string(),
         objects: vec![subject.clone(), source],
         relations: Vec::new(),
@@ -47,7 +47,7 @@ fn world_state_query_reads_claims_and_provenance() {
 
     assert_eq!(current_claims, vec![claim]);
     assert_eq!(provenance.evidence_ids, vec!["evidence-a"]);
-    assert_eq!(provenance.source_fact_ids, vec!["spine-a"]);
+    assert_eq!(provenance.source_fact_ids, vec!["ledger-a"]);
     assert_eq!(provenance.objects.len(), 2);
 }
 
@@ -62,7 +62,7 @@ fn traversal_query_reads_current_anchor_and_neighbors() {
 
     let fact = TraversalFactRecord {
         fact_id: "fact-a".to_string(),
-        source_spine_fact_id: "spine-a".to_string(),
+        source_spine_fact_id: "ledger-a".to_string(),
         seq: 1,
         event_type: "context.head.selected".to_string(),
         objects: vec![node.clone(), frame.clone()],
@@ -74,7 +74,7 @@ fn traversal_query_reads_current_anchor_and_neighbors() {
         subject: node.clone(),
         perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
         target: frame.clone(),
-        source_fact_ids: vec!["spine-a".to_string()],
+        source_fact_ids: vec!["ledger-a".to_string()],
         created_by_fact_id: "fact-a".to_string(),
         selected_at_seq: 1,
         ended_at_seq: None,

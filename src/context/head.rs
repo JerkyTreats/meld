@@ -87,7 +87,7 @@ fn head_object_id(node_id: NodeID, frame_type: &str) -> String {
     format!("{}::{}", hex::encode(node_id), frame_type)
 }
 
-pub fn backfill_legacy_heads_into_spine(
+pub fn backfill_legacy_heads_into_ledger(
     runtime: &ProgressRuntime,
     head_index: &HeadIndex,
     frame_storage: &FrameStorage,

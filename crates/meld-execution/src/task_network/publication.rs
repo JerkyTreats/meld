@@ -1,8 +1,8 @@
-//! Task network publication bridge into the event spine.
+//! Task network publication bridge into the event ledger.
 //!
 //! Owner: task network.
 //! Inputs: durable retryable task outcome publication records.
-//! Outputs: idempotent event spine appends and publication mark commands.
+//! Outputs: idempotent event ledger appends and publication mark commands.
 //! Does not own: this module does not schedule background workers or map
 //! execution facts into world model evidence.
 
@@ -23,7 +23,7 @@ const PUBLICATION_ACTOR_ID: &str = "execution.task_network.publication";
 /// Request to publish retryable task network publication records.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishPendingPublicationsRequest {
-    /// Event spine session partition for produced envelopes.
+    /// Event ledger session partition for produced envelopes.
     pub session_id: String,
     /// Worker identity for audit and request validation.
     pub worker_id: String,
@@ -58,9 +58,9 @@ pub struct PublicationBridgeIssue {
 pub struct PublicationAppend {
     /// Task network publication id.
     pub publication_id: String,
-    /// Deterministic event spine record id.
+    /// Deterministic event ledger record id.
     pub event_record_id: String,
-    /// Event spine sequence returned by append.
+    /// Event ledger sequence returned by append.
     pub event_seq: u64,
 }
 
@@ -71,9 +71,9 @@ pub enum PublicationPublishResult {
     Published {
         /// Task network publication id.
         publication_id: String,
-        /// Deterministic event spine record id.
+        /// Deterministic event ledger record id.
         event_record_id: String,
-        /// Event spine sequence returned by append.
+        /// Event ledger sequence returned by append.
         event_seq: u64,
         /// Task network revision that recorded the mark.
         marked_revision: u64,
@@ -142,7 +142,7 @@ pub enum PublicationBridgeError {
 
 /// Event append capability used by the bridge and tests.
 pub trait EventAppendSink {
-    /// Appends an envelope idempotently and returns the event spine sequence.
+    /// Appends an envelope idempotently and returns the event ledger sequence.
     fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, String>;
 }
 
@@ -152,7 +152,7 @@ impl EventAppendSink for EventStore {
     }
 }
 
-/// Builds a canonical event spine envelope for one task network publication.
+/// Builds a canonical event ledger envelope for one task network publication.
 pub fn build_publication_envelope(
     session_id: &str,
     publication: &Publication,

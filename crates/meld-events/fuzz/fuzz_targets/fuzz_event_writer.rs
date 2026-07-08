@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use libfuzzer_sys::fuzz_target;
 use meld_events::events::store::EventStore;
-use meld_events::{EventEnvelope, SpineWriter};
+use meld_events::{EventEnvelope, EventWriter};
 use serde_json::json;
 
 fn event_store() -> Arc<EventStore> {
@@ -29,7 +29,7 @@ fn envelope(index: usize, byte: u8) -> EventEnvelope {
 
 fuzz_target!(|data: &[u8]| {
     let store = event_store();
-    let writer = SpineWriter::spawn(Arc::clone(&store));
+    let writer = EventWriter::spawn(Arc::clone(&store));
     let mut durable = 0usize;
     let mut expected_min = 0usize;
 

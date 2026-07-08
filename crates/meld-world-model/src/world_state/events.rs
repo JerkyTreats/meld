@@ -20,7 +20,7 @@
 //!             claim_kind: ClaimKind::GenerationSucceeded,
 //!             subject,
 //!             status: SettlementStatus::Active,
-//!             supporting_fact_ids: vec!["spine-a".to_string()],
+//!             supporting_fact_ids: vec!["ledger-a".to_string()],
 //!             superseded_by: None,
 //!             created_by_fact_id: "fact-a".to_string(),
 //!             created_at_seq: 1,

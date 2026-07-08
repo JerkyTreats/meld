@@ -118,7 +118,7 @@ fn test_view(confidence: f64, revision_id: &str, seq: u64) -> BeliefView {
         advisory_posture: "ready".to_string(),
         provenance: BeliefProvenanceSummary {
             evidence_ids: vec![format!("evidence-{revision_id}")],
-            source_fact_ids: vec![format!("spine-{seq}")],
+            source_fact_ids: vec![format!("ledger-{seq}")],
             graph_anchor_ids: vec!["anchor-a".to_string()],
             objects: vec![subject],
             relations: Vec::new(),
@@ -126,7 +126,7 @@ fn test_view(confidence: f64, revision_id: &str, seq: u64) -> BeliefView {
         },
         hydration: HydrationRefs {
             evidence_ids: vec![format!("evidence-{revision_id}")],
-            source_fact_ids: vec![format!("spine-{seq}")],
+            source_fact_ids: vec![format!("ledger-{seq}")],
             graph_anchor_ids: vec!["anchor-a".to_string()],
             revision_id: Some(revision_id.to_string()),
         },
@@ -142,7 +142,7 @@ fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>) {
     let relation = EventRelation::new("selected", node.clone(), frame.clone()).unwrap();
     let fact = TraversalFactRecord {
         fact_id: "fact-a".to_string(),
-        source_spine_fact_id: "spine-a".to_string(),
+        source_spine_fact_id: "ledger-a".to_string(),
         seq: 1,
         event_type: "context.head.selected".to_string(),
         objects: vec![node.clone(), frame.clone()],
@@ -154,7 +154,7 @@ fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>) {
         subject: node,
         perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
         target: frame,
-        source_fact_ids: vec!["spine-a".to_string()],
+        source_fact_ids: vec!["ledger-a".to_string()],
         created_by_fact_id: "fact-a".to_string(),
         selected_at_seq: 1,
         ended_at_seq: None,

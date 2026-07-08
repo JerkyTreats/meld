@@ -1305,7 +1305,7 @@ mod tests {
             actor_id: "world_state.graph.reducer".to_string(),
             scope: WorkerScope {
                 domain_id: "world_state".to_string(),
-                stream_id: Some("event-spine".to_string()),
+                stream_id: Some("event-ledger".to_string()),
                 work_key: Some("graph".to_string()),
                 agent_id: None,
                 perspective_key: Some("default".to_string()),
@@ -1337,7 +1337,7 @@ mod tests {
         assert_eq!(action.action_id, "action-a");
         assert_eq!(action.domain_id, "world_state");
         assert_eq!(action.object_ref.object_type, "graph");
-        assert_eq!(action.object_ref.object_id, "event-spine");
+        assert_eq!(action.object_ref.object_id, "event-ledger");
         assert_eq!(action.object_ref.branch_id.as_deref(), Some("main"));
         assert_eq!(
             action.object_ref.perspective_key.as_deref(),

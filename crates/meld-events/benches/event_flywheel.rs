@@ -1,11 +1,11 @@
-//! Macro benchmark simulating the cognitive flywheel over the event spine.
+//! Macro benchmark simulating the cognitive flywheel over the event ledger.
 //!
 //! The dependency direction forbids importing meld-world-model here, so this
 //! bench carries a reducer-shaped consumer of its own: it owns an in-memory
 //! cursor, reads batches of 256 events past the cursor per tick, applies them
 //! with a cheap event-type match, and appends one derived projection event per
 //! four source events through the idempotent path with deterministic
-//! record_ids. Derived events flow back through the same spine; only source
+//! record_ids. Derived events flow back through the same ledger; only source
 //! domains count toward derivation so the loop cannot feed on itself.
 //!
 //! Two measurements:
@@ -14,7 +14,7 @@
 //!   a 5,000-event history (each tick pays the current full-tree scan, which
 //!   is exactly the latency being indicted).
 //!
-//! Set `MELD_SPINE_BENCH_LARGE=1` to run the throughput leg at the full
+//! Set `MELD_EVENT_BENCH_LARGE=1` to run the throughput leg at the full
 //! 10,000 events; the default is 2,000 because the idempotent append path
 //! full-scans the event tree for every novel record_id, which makes the run
 //! cost quadratic (~45s per iteration at 10k on the current baseline).
@@ -98,7 +98,7 @@ impl ReducerConsumer {
             .expect("consumer read");
         for record in &batch {
             self.cursor = self.cursor.max(record.seq);
-            // Derived world_model events come back around through the spine;
+            // Derived world_model events come back around through the ledger;
             // exclude them from derivation so the flywheel does not feed on
             // its own output.
             if !record.event_type.starts_with("world_model.") {
@@ -138,7 +138,7 @@ fn flywheel_throughput(c: &mut Criterion) {
     // Every derived append pays an O(history) scan on the current baseline
     // (record-index miss falls back to a full event-tree scan), so run cost
     // grows quadratically with total events; the 10k leg is opt-in.
-    let total_events: usize = if std::env::var("MELD_SPINE_BENCH_LARGE").is_ok() {
+    let total_events: usize = if std::env::var("MELD_EVENT_BENCH_LARGE").is_ok() {
         10_000
     } else {
         2_000
@@ -156,7 +156,7 @@ fn flywheel_throughput(c: &mut Criterion) {
             |(dir, store)| {
                 let mut consumer = ReducerConsumer::new();
                 // Producer flushes once per chunk rather than per event; the
-                // per-event fsync cost is measured separately in the spine
+                // per-event fsync cost is measured separately in the ledger
                 // micro benches.
                 for chunk_start in (0..total_events).step_by(PRODUCE_CHUNK) {
                     let chunk_end = (chunk_start + PRODUCE_CHUNK).min(total_events);

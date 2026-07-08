@@ -440,7 +440,7 @@ impl TraversalStore {
         })
     }
 
-    /// Read the last event-spine sequence reduced into this store.
+    /// Read the last event-ledger sequence reduced into this store.
     pub fn last_reduced_seq(&self) -> Result<u64, StorageError> {
         let Some(raw) = self
             .runtime_meta
@@ -453,7 +453,7 @@ impl TraversalStore {
         value.parse::<u64>().map_err(to_storage_parse)
     }
 
-    /// Persist the last event-spine sequence reduced into this store.
+    /// Persist the last event-ledger sequence reduced into this store.
     pub fn set_last_reduced_seq(&self, seq: u64) -> Result<(), StorageError> {
         self.runtime_meta
             .insert(KEY_LAST_REDUCED_SEQ.as_bytes(), seq.to_string().as_bytes())

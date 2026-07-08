@@ -5,8 +5,8 @@
 //! cursors.
 //! Outputs: bounded, sequence-ordered batches that block until new events
 //! commit, and a durable cursor helper consumers embed in their own trees.
-//! Does not own: consumer cursor positions. The spine never persists a
-//! consumer's progress; `SpineCursor` writes into a consumer-owned tree.
+//! Does not own: consumer cursor positions. The ledger never persists a
+//! consumer's progress; `EventCursor` writes into a consumer-owned tree.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,17 +18,17 @@ use crate::events::store::EventStore;
 use crate::events::writer::CommitWatermark;
 use crate::events::EventRecord;
 
-/// Blocking, bounded reader over the spine for one consumer.
+/// Blocking, bounded reader over the ledger for one consumer.
 ///
 /// Reads happen before any wait, so events appended outside the writer,
 /// such as reducer-derived records, are always observable even though they
 /// do not advance the watermark.
-pub struct SpineSubscription {
+pub struct EventSubscription {
     store: Arc<EventStore>,
     watermark: Arc<CommitWatermark>,
 }
 
-impl SpineSubscription {
+impl EventSubscription {
     /// Binds a subscription to a store and its writer's watermark.
     pub fn new(store: Arc<EventStore>, watermark: Arc<CommitWatermark>) -> Self {
         Self { store, watermark }
@@ -62,16 +62,16 @@ impl SpineSubscription {
 /// The consumer advances the cursor only after its derived state is durable,
 /// per the event runtime requirements; the helper enforces monotonicity but
 /// owns no policy about when to advance.
-pub struct SpineCursor {
+pub struct EventCursor {
     tree: Tree,
     key: Vec<u8>,
 }
 
-impl SpineCursor {
+impl EventCursor {
     /// Binds a named cursor inside a consumer-owned tree.
     pub fn new(tree: Tree, name: impl AsRef<str>) -> Self {
         Self {
-            key: format!("spine_cursor::{}", name.as_ref()).into_bytes(),
+            key: format!("event_cursor::{}", name.as_ref()).into_bytes(),
             tree,
         }
     }
@@ -84,7 +84,7 @@ impl SpineCursor {
         let bytes: [u8; 8] = raw.as_ref().try_into().map_err(|_| {
             StorageError::IoError(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "invalid spine cursor payload",
+                "invalid ledger cursor payload",
             ))
         })?;
         Ok(u64::from_be_bytes(bytes))
@@ -111,21 +111,21 @@ fn to_storage_io(err: sled::Error) -> StorageError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::writer::SpineWriter;
+    use crate::events::writer::EventWriter;
     use crate::events::EventEnvelope;
     use serde_json::json;
 
     fn subscription() -> (
         tempfile::TempDir,
         Arc<EventStore>,
-        SpineWriter,
-        SpineSubscription,
+        EventWriter,
+        EventSubscription,
     ) {
         let dir = tempfile::TempDir::new().unwrap();
         let db = sled::open(dir.path()).unwrap();
         let store = EventStore::shared(db).unwrap();
-        let writer = SpineWriter::spawn(Arc::clone(&store));
-        let subscription = SpineSubscription::new(Arc::clone(&store), writer.watermark());
+        let writer = EventWriter::spawn(Arc::clone(&store));
+        let subscription = EventSubscription::new(Arc::clone(&store), writer.watermark());
         (dir, store, writer, subscription)
     }
 
@@ -187,14 +187,14 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let db = sled::open(dir.path()).unwrap();
         let tree = db.open_tree("consumer_meta").unwrap();
-        let cursor = SpineCursor::new(tree.clone(), "graph");
+        let cursor = EventCursor::new(tree.clone(), "graph");
 
         assert_eq!(cursor.get().unwrap(), 0);
         assert_eq!(cursor.advance(7).unwrap(), 7);
         assert_eq!(cursor.advance(3).unwrap(), 7);
         assert_eq!(cursor.get().unwrap(), 7);
 
-        let reopened = SpineCursor::new(tree, "graph");
+        let reopened = EventCursor::new(tree, "graph");
         assert_eq!(reopened.get().unwrap(), 7);
     }
 }

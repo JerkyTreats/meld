@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use meld_events::events::store::EventStore;
-use meld_events::{CommitWatermark, DomainObjectRef, EventEnvelope, EventRecord, SpineWriter};
+use meld_events::{CommitWatermark, DomainObjectRef, EventEnvelope, EventRecord, EventWriter};
 use meld_execution::goals::{
     GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
     GoalSetApi, PersistentGoalSetStore,
@@ -110,7 +110,7 @@ pub struct DocsTaskEvidenceReplayReport {
     pub ingestions: Vec<PromotedEvidenceIngestionResult>,
 }
 
-/// Execution callable event append port backed by the spine writer.
+/// Execution callable event append port backed by the ledger writer.
 ///
 /// The port appends envelopes idempotently through the single-writer ingress
 /// so producer appends share group commits, and returns the event sequence.
@@ -118,7 +118,7 @@ pub struct DocsTaskEvidenceReplayReport {
 /// execution publication state.
 #[derive(Clone)]
 pub struct ProductEventAppendPort {
-    writer: Arc<SpineWriter>,
+    writer: Arc<EventWriter>,
 }
 
 /// Bounded event replay source backed by the event store.
@@ -302,10 +302,10 @@ impl RuntimeAdapterPorts {
 }
 
 impl ProductEventAppendPort {
-    /// Bind the port to a spine writer over the opened event store.
+    /// Bind the port to a ledger writer over the opened event store.
     pub fn new(store: Arc<EventStore>) -> Self {
         Self {
-            writer: Arc::new(SpineWriter::spawn(store)),
+            writer: Arc::new(EventWriter::spawn(store)),
         }
     }
 

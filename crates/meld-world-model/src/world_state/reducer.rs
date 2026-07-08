@@ -1,4 +1,4 @@
-//! Event-spine reducer for legacy claim state.
+//! Event-ledger reducer for legacy claim state.
 //!
 //! The reducer reads execution events, materializes claim and evidence records,
 //! supersedes conflicting generation claims, and emits world-state envelopes for
@@ -13,9 +13,9 @@
 //!
 //! let temp = tempfile::tempdir().unwrap();
 //! let db = sled::open(temp.path()).unwrap();
-//! let spine = EventStore::new(db.clone()).unwrap();
+//! let ledger = EventStore::new(db.clone()).unwrap();
 //! let store = WorldStateStore::new(db).unwrap();
-//! let reducer = WorldStateReducer::replay_from_spine(&spine, &store, 0).unwrap();
+//! let reducer = WorldStateReducer::replay_from_ledger(&ledger, &store, 0).unwrap();
 //! assert!(reducer.emitted_envelopes.is_empty());
 //! ```
 
@@ -42,8 +42,8 @@ pub struct WorldStateReducer {
 
 impl WorldStateReducer {
     /// Replay execution events after a cursor into claim storage.
-    pub fn replay_from_spine(
-        spine: &EventStore,
+    pub fn replay_from_ledger(
+        ledger: &EventStore,
         store: &WorldStateStore,
         after_seq: u64,
     ) -> Result<Self, StorageError> {
@@ -52,7 +52,7 @@ impl WorldStateReducer {
             provenance: ClaimProvenanceProjection::default(),
             emitted_envelopes: Vec::new(),
         };
-        for event in spine.read_all_events_after(after_seq)? {
+        for event in ledger.read_all_events_after(after_seq)? {
             reducer.apply_event(store, &event)?;
         }
         Ok(reducer)
@@ -238,6 +238,8 @@ fn find_object_ref(
         .cloned()
 }
 
+// The spine:: prefix is a frozen stored-identifier format: existing claim
+// and evidence records reference it, so it survives the ledger renaming.
 fn source_fact_id(seq: u64) -> String {
     format!("spine::{seq}")
 }

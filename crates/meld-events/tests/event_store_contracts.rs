@@ -1,5 +1,5 @@
 use meld_events::events::store::EventStore;
-use meld_events::{DomainObjectRef, EventEnvelope, EventRecord, EventRuntime, SpineWriter};
+use meld_events::{DomainObjectRef, EventEnvelope, EventRecord, EventRuntime, EventWriter};
 use proptest::prelude::*;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -332,7 +332,7 @@ fn store_orders_session_reads_and_filters_after_cursor() {
 
     let all_session_a = store.read_events(SESSION_A).unwrap();
     let after_first = store.read_events_after(SESSION_A, 1).unwrap();
-    let all_spine = store.read_all_events_after(0).unwrap();
+    let all_events = store.read_all_events_after(0).unwrap();
 
     assert_eq!(
         all_session_a
@@ -349,7 +349,7 @@ fn store_orders_session_reads_and_filters_after_cursor() {
         vec![3]
     );
     assert_eq!(
-        all_spine.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        all_events.iter().map(|event| event.seq).collect::<Vec<_>>(),
         vec![1, 2, 3]
     );
     assert_eq!(
@@ -572,20 +572,20 @@ fn multi_session_legacy_stores_migrate_completely() {
     }
 }
 
-// A transition-era store holds spine records and legacy rows whose
-// per-session sequences collide numerically with spine sequences; migration
+// A transition-era store holds ledger records and legacy rows whose
+// per-session sequences collide numerically with ledger sequences; migration
 // must keep both histories intact by re-sequencing the legacy rows.
 #[test]
-fn legacy_rows_coexist_with_spine_history_after_migration() {
+fn legacy_rows_coexist_with_ledger_history_after_migration() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("events")).unwrap();
     {
         let store = EventStore::new(db.clone()).unwrap();
         store
-            .append_envelope(domain_envelope("spine.first"))
+            .append_envelope(domain_envelope("ledger.first"))
             .unwrap();
         store
-            .append_envelope(domain_envelope("spine.second"))
+            .append_envelope(domain_envelope("ledger.second"))
             .unwrap();
         store.flush().unwrap();
     }
@@ -615,15 +615,15 @@ fn legacy_rows_coexist_with_spine_history_after_migration() {
     let store = EventStore::new(db).unwrap();
     let all = store.read_all_events_after(0).unwrap();
     assert_eq!(all.len(), 3);
-    assert_eq!(all[0].event_type, "spine.first");
-    assert_eq!(all[1].event_type, "spine.second");
+    assert_eq!(all[0].event_type, "ledger.first");
+    assert_eq!(all[1].event_type, "ledger.second");
     assert_eq!(all[2].event_type, "legacy.colliding");
     assert_eq!(all[2].seq, 3);
     assert_eq!(store.read_events("legacy-era").unwrap().len(), 1);
 }
 
 // Stores written before empty index values hold full records in the session
-// index; opening slims them and reads resolve through the spine only.
+// index; opening slims them and reads resolve through the ledger only.
 #[test]
 fn full_value_session_index_rows_slim_at_open() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -767,7 +767,7 @@ fn store_flush_writes_pending_bytes_to_disk() {
 #[test]
 fn legacy_events_normalize_defaults() {
     // Legacy rows exist before the store opens; open-time migration moves
-    // them into the spine with normalized defaults.
+    // them into the ledger with normalized defaults.
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("events")).unwrap();
     let legacy = legacy_record_json(LegacyRecordJson {
@@ -800,7 +800,7 @@ fn legacy_events_normalize_defaults() {
 fn writer_commits_appends_in_submission_order() {
     let (_temp_dir, store) = event_store();
     let shared = Arc::new(store);
-    let writer = SpineWriter::spawn(shared.clone());
+    let writer = EventWriter::spawn(shared.clone());
 
     let first = writer
         .append_durable(domain_envelope("execution.started"), false)
@@ -827,7 +827,7 @@ fn best_effort_appends_survive_writer_shutdown() {
     let (_temp_dir, store) = event_store();
     let shared = Arc::new(store);
     {
-        let writer = SpineWriter::spawn(shared.clone());
+        let writer = EventWriter::spawn(shared.clone());
         writer
             .append_best_effort(domain_envelope("execution.started"), false)
             .unwrap();

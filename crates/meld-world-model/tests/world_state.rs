@@ -468,12 +468,12 @@ fn graph_runtime_catches_up_context_head_events() {
 fn traversal_reducer_reports_applied_events_and_ignores_other_domains() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("runtime")).unwrap();
-    let spine = EventStore::new(db.clone()).unwrap();
+    let ledger = EventStore::new(db.clone()).unwrap();
     let store = TraversalStore::new(db).unwrap();
     let node = object("workspace_fs", "node", "node-a");
     let frame = object("context", "frame", "frame-a");
     let head = object("context", "head", "node-a::analysis");
-    spine
+    ledger
         .append_envelope(event(
             "context",
             "context.head_selected",
@@ -481,7 +481,7 @@ fn traversal_reducer_reports_applied_events_and_ignores_other_domains() {
             Vec::new(),
         ))
         .unwrap();
-    spine
+    ledger
         .append_envelope(event(
             "context",
             "context.head_tombstoned",
@@ -489,7 +489,7 @@ fn traversal_reducer_reports_applied_events_and_ignores_other_domains() {
             Vec::new(),
         ))
         .unwrap();
-    spine
+    ledger
         .append_envelope(event(
             "unrelated",
             "unrelated.event",
@@ -499,8 +499,8 @@ fn traversal_reducer_reports_applied_events_and_ignores_other_domains() {
         .unwrap();
 
     let reducer =
-        meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_spine(
-            &spine, &store, 0,
+        meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_ledger(
+            &ledger, &store, 0,
         )
         .unwrap();
 
@@ -513,13 +513,13 @@ fn traversal_reducer_reports_applied_events_and_ignores_other_domains() {
 fn traversal_reducer_anchor_events_carry_anchor_records() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("runtime")).unwrap();
-    let spine = EventStore::new(db.clone()).unwrap();
+    let ledger = EventStore::new(db.clone()).unwrap();
     let store = TraversalStore::new(db).unwrap();
     let node = object("workspace_fs", "node", "node-a");
     let head = object("context", "head", "node-a::analysis");
     let first_frame = object("context", "frame", "frame-a");
     let second_frame = object("context", "frame", "frame-b");
-    spine
+    ledger
         .append_envelope(event(
             "context",
             "context.head_selected",
@@ -527,7 +527,7 @@ fn traversal_reducer_anchor_events_carry_anchor_records() {
             Vec::new(),
         ))
         .unwrap();
-    spine
+    ledger
         .append_envelope(event(
             "context",
             "context.head_selected",
@@ -537,8 +537,8 @@ fn traversal_reducer_anchor_events_carry_anchor_records() {
         .unwrap();
 
     let reducer =
-        meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_spine(
-            &spine, &store, 0,
+        meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_ledger(
+            &ledger, &store, 0,
         )
         .unwrap();
     let selected = reducer
@@ -568,7 +568,7 @@ fn traversal_reducer_anchor_events_carry_anchor_records() {
 fn traversal_reducer_replays_existing_anchor_over_equal_seq_current() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("runtime")).unwrap();
-    let spine = EventStore::new(db.clone()).unwrap();
+    let ledger = EventStore::new(db.clone()).unwrap();
     let store = TraversalStore::new(db).unwrap();
     let node = object("workspace_fs", "node", "node-a");
     let old_frame = object("context", "frame", "frame-old");
@@ -586,7 +586,7 @@ fn traversal_reducer_replays_existing_anchor_over_equal_seq_current() {
     store.put_anchor(&current).unwrap();
     store.set_current_anchor(&current).unwrap();
     store.put_anchor(&existing).unwrap();
-    spine
+    ledger
         .append_event(&event_record(
             5,
             "context",
@@ -595,8 +595,8 @@ fn traversal_reducer_replays_existing_anchor_over_equal_seq_current() {
         ))
         .unwrap();
 
-    meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_spine(
-        &spine, &store, 0,
+    meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_ledger(
+        &ledger, &store, 0,
     )
     .unwrap();
 
@@ -607,7 +607,7 @@ fn traversal_reducer_replays_existing_anchor_over_equal_seq_current() {
 fn traversal_reducer_ignores_older_existing_anchor_than_current() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("runtime")).unwrap();
-    let spine = EventStore::new(db.clone()).unwrap();
+    let ledger = EventStore::new(db.clone()).unwrap();
     let store = TraversalStore::new(db).unwrap();
     let node = object("workspace_fs", "node", "node-a");
     let current_frame = object("context", "frame", "frame-current");
@@ -625,7 +625,7 @@ fn traversal_reducer_ignores_older_existing_anchor_than_current() {
     store.put_anchor(&current).unwrap();
     store.set_current_anchor(&current).unwrap();
     store.put_anchor(&older).unwrap();
-    spine
+    ledger
         .append_event(&event_record(
             5,
             "context",
@@ -634,8 +634,8 @@ fn traversal_reducer_ignores_older_existing_anchor_than_current() {
         ))
         .unwrap();
 
-    meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_spine(
-        &spine, &store, 0,
+    meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_ledger(
+        &ledger, &store, 0,
     )
     .unwrap();
 
@@ -778,10 +778,10 @@ fn world_state_query_summarizes_provenance() {
 fn world_state_reducer_materializes_claim_and_evidence() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("world")).unwrap();
-    let spine = EventStore::new(db.clone()).unwrap();
+    let ledger = EventStore::new(db.clone()).unwrap();
     let store = WorldStateStore::new(db).unwrap();
     let node = object("workspace_fs", "node", "node-a");
-    spine
+    ledger
         .append_envelope(event(
             "execution",
             "execution.control.node_completed",
@@ -790,7 +790,7 @@ fn world_state_reducer_materializes_claim_and_evidence() {
         ))
         .unwrap();
 
-    let reducer = WorldStateReducer::replay_from_spine(&spine, &store, 0).unwrap();
+    let reducer = WorldStateReducer::replay_from_ledger(&ledger, &store, 0).unwrap();
     let current = store.current_claims_for_object(&node).unwrap();
     let fact = store
         .get_fact(&format!(
@@ -844,10 +844,10 @@ fn world_state_reducer_materializes_claim_and_evidence() {
 fn world_state_reducer_materializes_artifact_claims() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("world")).unwrap();
-    let spine = EventStore::new(db.clone()).unwrap();
+    let ledger = EventStore::new(db.clone()).unwrap();
     let store = WorldStateStore::new(db).unwrap();
     let task_run = object("execution", "task_run", "run-a");
-    spine
+    ledger
         .append_envelope(event(
             "execution",
             "execution.task.artifact_emitted",
@@ -856,7 +856,7 @@ fn world_state_reducer_materializes_artifact_claims() {
         ))
         .unwrap();
 
-    WorldStateReducer::replay_from_spine(&spine, &store, 0).unwrap();
+    WorldStateReducer::replay_from_ledger(&ledger, &store, 0).unwrap();
     let current = store.current_claims_for_object(&task_run).unwrap();
 
     assert_eq!(current.len(), 1);
@@ -868,12 +868,12 @@ fn world_state_reducer_materializes_artifact_claims() {
 fn world_state_reducer_finds_object_by_domain_and_kind() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("world")).unwrap();
-    let spine = EventStore::new(db.clone()).unwrap();
+    let ledger = EventStore::new(db.clone()).unwrap();
     let store = WorldStateStore::new(db).unwrap();
     let wrong_domain = object("execution", "node", "wrong-domain");
     let wrong_kind = object("workspace_fs", "artifact", "wrong-kind");
     let node = object("workspace_fs", "node", "node-a");
-    spine
+    ledger
         .append_envelope(event(
             "execution",
             "execution.control.node_completed",
@@ -882,7 +882,7 @@ fn world_state_reducer_finds_object_by_domain_and_kind() {
         ))
         .unwrap();
 
-    WorldStateReducer::replay_from_spine(&spine, &store, 0).unwrap();
+    WorldStateReducer::replay_from_ledger(&ledger, &store, 0).unwrap();
     let current = store.current_claims_for_object(&node).unwrap();
 
     assert_eq!(current.len(), 1);
@@ -893,10 +893,10 @@ fn world_state_reducer_finds_object_by_domain_and_kind() {
 fn world_state_reducer_supersedes_conflicting_generation_claims() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("world")).unwrap();
-    let spine = EventStore::new(db.clone()).unwrap();
+    let ledger = EventStore::new(db.clone()).unwrap();
     let store = WorldStateStore::new(db).unwrap();
     let node = object("workspace_fs", "node", "node-a");
-    spine
+    ledger
         .append_envelope(event(
             "execution",
             "execution.control.node_completed",
@@ -904,7 +904,7 @@ fn world_state_reducer_supersedes_conflicting_generation_claims() {
             Vec::new(),
         ))
         .unwrap();
-    spine
+    ledger
         .append_envelope(event(
             "execution",
             "execution.control.node_failed",
@@ -913,7 +913,7 @@ fn world_state_reducer_supersedes_conflicting_generation_claims() {
         ))
         .unwrap();
 
-    let reducer = WorldStateReducer::replay_from_spine(&spine, &store, 0).unwrap();
+    let reducer = WorldStateReducer::replay_from_ledger(&ledger, &store, 0).unwrap();
     let current = store.current_claims_for_object(&node).unwrap();
     let history = store.claim_history_for_object(&node).unwrap();
     let superseded_event = reducer

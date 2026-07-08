@@ -125,10 +125,10 @@ impl RunContext {
         );
         let result = self.execute_inner(command, &session_id);
         // Best-effort emissions from the command are still queued on the
-        // spine writer; the barrier makes this command's own events visible
+        // ledger writer; the barrier makes this command's own events visible
         // to the catch-up below instead of the next command's startup pass.
         if let Err(err) = self.assembly.progress().barrier() {
-            warn!(error = %err, "failed to drain spine writer before graph catch-up");
+            warn!(error = %err, "failed to drain ledger writer before graph catch-up");
         }
         match self.assembly.graph_runtime().catch_up() {
             Ok(applied_events) => {

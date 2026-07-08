@@ -1,13 +1,13 @@
-//! Crash-recovery harness for the event spine.
+//! Crash-recovery harness for the event ledger.
 //!
 //! Protocol: each parent test re-invokes this test binary as a writer child
 //! (`child_writer_entrypoint`, selected via `--exact` and gated on
-//! `MELD_SPINE_RECOVERY_ROLE`), lets it append events into a shared sled
+//! `MELD_EVENT_RECOVERY_ROLE`), lets it append events into a shared sled
 //! directory, SIGKILLs it mid-write, reaps it, then reopens the database
 //! in-process and asserts recovery invariants. The reopen must happen only
 //! after the child is reaped so the sled directory lock is released.
 //!
-//! Set `MELD_SPINE_RECOVERY_SKIP` to skip the kill-cycle tests.
+//! Set `MELD_EVENT_RECOVERY_SKIP` to skip the kill-cycle tests.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -19,19 +19,19 @@ use std::time::{Duration, Instant};
 use std::sync::Arc;
 
 use meld_events::events::store::EventStore;
-use meld_events::{EventEnvelope, EventRecord, SpineWriter};
+use meld_events::{EventEnvelope, EventRecord, EventWriter};
 use serde_json::json;
 
 const SESSION_A: &str = "session-a";
 const SESSION_B: &str = "session-b";
 const RECORDED_AT: &str = "2026-04-26T16:00:00Z";
 
-const SKIP_ENV: &str = "MELD_SPINE_RECOVERY_SKIP";
-const ROLE_ENV: &str = "MELD_SPINE_RECOVERY_ROLE";
-const DB_ENV: &str = "MELD_SPINE_RECOVERY_DB";
-const CYCLE_ENV: &str = "MELD_SPINE_RECOVERY_CYCLE";
-const STARTED_ENV: &str = "MELD_SPINE_RECOVERY_STARTED";
-const WATERMARK_ENV: &str = "MELD_SPINE_RECOVERY_WATERMARK";
+const SKIP_ENV: &str = "MELD_EVENT_RECOVERY_SKIP";
+const ROLE_ENV: &str = "MELD_EVENT_RECOVERY_ROLE";
+const DB_ENV: &str = "MELD_EVENT_RECOVERY_DB";
+const CYCLE_ENV: &str = "MELD_EVENT_RECOVERY_CYCLE";
+const STARTED_ENV: &str = "MELD_EVENT_RECOVERY_STARTED";
+const WATERMARK_ENV: &str = "MELD_EVENT_RECOVERY_WATERMARK";
 
 const ROLE_WRITER_FLUSH: &str = "writer-flush";
 const ROLE_WRITER_NO_FLUSH: &str = "writer-no-flush";
@@ -75,15 +75,15 @@ fn child_writer_entrypoint() {
 
     // The flush role must reach durable storage only through explicit flush
     // barriers; the no-flush role relies on sled's background flusher alone;
-    // the durable role goes through the spine writer and trusts its acks.
+    // the durable role goes through the ledger writer and trusts its acks.
     let flush_every_ms = match role.as_str() {
         ROLE_WRITER_FLUSH | ROLE_WRITER_DURABLE => None,
         ROLE_WRITER_NO_FLUSH => Some(100),
         other => panic!("unknown writer role {other}"),
     };
     let store = EventStore::new(open_db_with_retry(&db_path, flush_every_ms)).unwrap();
-    let spine_writer =
-        (role == ROLE_WRITER_DURABLE).then(|| SpineWriter::spawn(Arc::new(store.clone())));
+    let event_writer =
+        (role == ROLE_WRITER_DURABLE).then(|| EventWriter::spawn(Arc::new(store.clone())));
 
     let mut run_start: Option<u64> = None;
     let mut max_appended = 0u64;
@@ -104,7 +104,7 @@ fn child_writer_entrypoint() {
         } else {
             envelope
         };
-        let seq = match &spine_writer {
+        let seq = match &event_writer {
             Some(writer) => writer.append_durable(envelope, idempotent).unwrap(),
             None if idempotent => store.append_envelope_idempotent(envelope).unwrap(),
             None => store.append_envelope(envelope).unwrap(),
@@ -151,7 +151,7 @@ fn open_db_with_retry(path: &str, flush_every_ms: Option<u64>) -> sled::Db {
             Err(err) => {
                 assert!(
                     Instant::now() < deadline,
-                    "child failed to open spine db: {err}"
+                    "child failed to open ledger db: {err}"
                 );
                 std::thread::sleep(Duration::from_millis(20));
             }
@@ -281,7 +281,7 @@ fn persisted_events(store: &EventStore) -> Vec<EventRecord> {
 }
 
 fn assert_unique_sorted_sequences(cycle: u64, events: &[EventRecord]) {
-    // Invariant: persisted spine sequences are unique after crash recovery.
+    // Invariant: persisted ledger sequences are unique after crash recovery.
     for pair in events.windows(2) {
         assert!(
             pair[0].seq < pair[1].seq,
@@ -300,9 +300,9 @@ fn assert_sequence_meta_ahead(cycle: u64, store: &EventStore, events: &[EventRec
     let probe = EventEnvelope::new_domain(
         String::new(),
         "recovery-probe",
-        "spine_recovery",
+        "event_recovery",
         "recovery-probe",
-        "spine.recovery.probe",
+        "ledger.recovery.probe",
         None,
         serde_json::json!({ "cycle": cycle }),
     );
@@ -319,7 +319,7 @@ fn killed_flush_writer_records_decode_with_unique_sequences() {
         return;
     }
     run_kill_reopen_cycles(ROLE_WRITER_FLUSH, |cycle, store, _| {
-        // Invariant: every persisted spine value decodes as an EventRecord.
+        // Invariant: every persisted ledger value decodes as an EventRecord.
         let events = persisted_events(store);
         assert!(
             !events.is_empty(),
@@ -392,7 +392,7 @@ fn idempotency_index_matches_persisted_records_after_kill() {
         );
 
         // Invariant: replaying a persisted record_id returns the existing
-        // sequence and never grows the spine.
+        // sequence and never grows the ledger.
         for (record_id, seq) in &seq_by_record_id {
             let replayed = store
                 .append_envelope_idempotent(
@@ -407,13 +407,13 @@ fn idempotency_index_matches_persisted_records_after_kill() {
         assert_eq!(
             persisted_events(store).len(),
             events.len(),
-            "cycle {cycle}: idempotent replays grew the persisted spine"
+            "cycle {cycle}: idempotent replays grew the persisted ledger"
         );
     });
 }
 
 #[test]
-fn session_reads_match_global_spine_after_kill() {
+fn session_reads_match_global_ledger_after_kill() {
     if skip_requested() {
         return;
     }
@@ -432,16 +432,16 @@ fn session_reads_match_global_spine_after_kill() {
                     event.seq
                 );
                 // Invariant: session reads never surface phantom records that
-                // are missing from (or differ from) the global spine.
+                // are missing from (or differ from) the global ledger.
                 let global = by_seq.get(&event.seq).unwrap_or_else(|| {
                     panic!(
-                        "cycle {cycle}: session {session} seq {} not in global spine",
+                        "cycle {cycle}: session {session} seq {} not in global ledger",
                         event.seq
                     )
                 });
                 assert_eq!(
                     *global, event,
-                    "cycle {cycle}: session {session} seq {} diverges from global spine",
+                    "cycle {cycle}: session {session} seq {} diverges from global ledger",
                     event.seq
                 );
             }
@@ -451,7 +451,7 @@ fn session_reads_match_global_spine_after_kill() {
         assert_eq!(
             session_total,
             events.len(),
-            "cycle {cycle}: session reads do not partition the global spine"
+            "cycle {cycle}: session reads do not partition the global ledger"
         );
     });
 }
@@ -490,7 +490,7 @@ fn acked_durable_appends_survive_kill() {
             .map(|event| event.seq)
             .collect();
         // Invariant: a durable ack means durable bytes, so every sequence
-        // the spine writer acked before the kill must survive reopen.
+        // the ledger writer acked before the kill must survive reopen.
         for seq in run_start..=acked_max {
             assert!(
                 persisted.contains(&seq),

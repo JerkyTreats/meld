@@ -1,6 +1,6 @@
 //! Public graph traversal contracts.
 //!
-//! These records describe facts extracted from the event spine and anchors that
+//! These records describe facts extracted from the event ledger and anchors that
 //! identify the current object for a subject under a perspective. Anchors are
 //! generic graph contracts, not belief or planner decisions.
 //!
@@ -124,7 +124,7 @@ pub enum TraversalIntent {
     EndAnchor(AnchorEndInput),
 }
 
-/// Graph-readable fact copied from the event spine.
+/// Graph-readable fact copied from the event ledger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraversalFactRecord {
     pub fact_id: TraversalFactId,

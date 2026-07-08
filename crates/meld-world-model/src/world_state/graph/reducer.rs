@@ -1,4 +1,4 @@
-//! Event-spine reducer for graph traversal state.
+//! Event-ledger reducer for graph traversal state.
 //!
 //! The reducer consumes source events, stores graph-readable facts, derives
 //! anchor intents, and updates current-anchor indexes. It emits traversal events
@@ -13,9 +13,9 @@
 //!
 //! let temp = tempfile::tempdir().unwrap();
 //! let db = sled::open(temp.path()).unwrap();
-//! let spine = EventStore::new(db.clone()).unwrap();
+//! let ledger = EventStore::new(db.clone()).unwrap();
 //! let traversal = TraversalStore::new(db).unwrap();
-//! let reducer = TraversalReducer::replay_from_spine(&spine, &traversal, 0).unwrap();
+//! let reducer = TraversalReducer::replay_from_ledger(&ledger, &traversal, 0).unwrap();
 //! assert_eq!(reducer.applied_events, 0);
 //! ```
 
@@ -39,7 +39,7 @@ pub struct TraversalReducer {
     pub current_anchors: CurrentAnchorProjection,
     /// Anchor lineage observed during this replay pass.
     pub lineage: AnchorLineageProjection,
-    /// Derived traversal events to append to the spine after replay.
+    /// Derived traversal events to append to the ledger after replay.
     pub emitted_envelopes: Vec<EventEnvelope>,
     /// Number of source events applied by this replay pass.
     pub applied_events: usize,
@@ -49,12 +49,12 @@ pub struct TraversalReducer {
 
 impl TraversalReducer {
     /// Replay source events after a cursor into traversal storage.
-    pub fn replay_from_spine(
-        spine: &EventStore,
+    pub fn replay_from_ledger(
+        ledger: &EventStore,
         store: &TraversalStore,
         after_seq: u64,
     ) -> Result<Self, StorageError> {
-        let events = spine.read_all_events_after(after_seq)?;
+        let events = ledger.read_all_events_after(after_seq)?;
         Self::replay_events(store, after_seq, events)
     }
 
@@ -90,6 +90,8 @@ impl TraversalReducer {
             return Ok(false);
         }
 
+        // The spine:: prefix is a frozen stored-identifier format: existing
+        // traversal facts reference it, so it survives the ledger renaming.
         let source_fact_id = format!("spine::{}", event.seq);
         let fact_id = format!("traversal::fact::{}", event.seq);
         store.put_fact(&TraversalFactRecord {

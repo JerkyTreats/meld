@@ -178,7 +178,7 @@ fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>, DomainObjectRef) {
     let relation = EventRelation::new("selected", node.clone(), frame.clone()).unwrap();
     let fact = TraversalFactRecord {
         fact_id: "fact-a".to_string(),
-        source_spine_fact_id: "spine-a".to_string(),
+        source_spine_fact_id: "ledger-a".to_string(),
         seq: 1,
         event_type: "context.head.selected".to_string(),
         objects: vec![node.clone(), frame.clone()],
@@ -190,7 +190,7 @@ fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>, DomainObjectRef) {
         subject: node.clone(),
         perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
         target: frame,
-        source_fact_ids: vec!["spine-a".to_string()],
+        source_fact_ids: vec!["ledger-a".to_string()],
         created_by_fact_id: "fact-a".to_string(),
         selected_at_seq: 1,
         ended_at_seq: None,
@@ -211,7 +211,7 @@ fn promoted_content_record(node: DomainObjectRef, seq: u64) -> PromotedEvidenceR
         source_kind: "content_written".to_string(),
         source_id: format!("content-written-{seq}"),
         subject: node.clone(),
-        source_fact_ids: vec![format!("spine-content-{seq}")],
+        source_fact_ids: vec![format!("ledger-content-{seq}")],
         graph_anchor_ids: vec!["anchor-a".to_string()],
         objects: vec![node],
         relations: Vec::new(),
@@ -299,7 +299,7 @@ fn belief_evidence_normalizes_anchor_and_preserves_provenance() {
     let item = evidence.first().unwrap();
 
     assert_eq!(item.candidate_key.subject, node);
-    assert!(item.source_fact_ids.contains(&"spine-a".to_string()));
+    assert!(item.source_fact_ids.contains(&"ledger-a".to_string()));
     assert!(item.source_fact_ids.contains(&"fact-a".to_string()));
     assert_eq!(item.graph_anchor_ids, vec!["anchor-a"]);
     assert_eq!(item.provenance.objects.len(), 2);
@@ -333,7 +333,7 @@ fn belief_evidence_normalizes_promoted_record() {
     assert_eq!(item.content_hash.as_deref(), Some("hash-2"));
     assert!(item
         .source_fact_ids
-        .contains(&"spine-content-2".to_string()));
+        .contains(&"ledger-content-2".to_string()));
 }
 
 #[test]
@@ -742,7 +742,7 @@ fn belief_runtime_persists_revision_and_view() {
         .unwrap()
         .unwrap()
         .source_fact_ids
-        .contains(&"spine-a".to_string()));
+        .contains(&"ledger-a".to_string()));
     assert!(belief_store
         .current_revision(&views[0].key)
         .unwrap()

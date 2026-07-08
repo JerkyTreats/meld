@@ -215,7 +215,7 @@ Retention contract lands, then the engine gate closes the program.
 ## Exceptions
 
 - `cargo test -- --ignored` is the sanctioned way to reproduce known-red defect proofs before their fixing phase; ignored tests carry the defect and fixing phase in their reason string.
-- Kill-based recovery tests spawn child processes from the test binary; they are skipped under environments that forbid subprocess spawning by honoring `MELD_SPINE_RECOVERY_SKIP`.
+- Kill-based recovery tests spawn child processes from the test binary; they are skipped under environments that forbid subprocess spawning by honoring `MELD_EVENT_RECOVERY_SKIP`.
 - Criterion runs are not part of the default `cargo test` path; bench gates run explicitly at phase exits.
 
 ## Phase Completion Notes
@@ -240,7 +240,7 @@ Findings discovered by the harness beyond the review's defect list:
 
 Review gate outcome: should-fix applied before baselines — the flywheel latency fixture grew during measurement, inflating the recorded median from 11.7 ms to a corrected 7.16 ms on a stationary copy-per-iteration fixture. Nits applied: bench teardown moved outside timed routines; vacuous-pass caveat documented on no-flush recovery tests. Waived with reason: the recovery probe's use of `allocate_next_seq` stays until Phase 2 collapses that API, where the probe migrates to an appended event; tracked as a Phase 2 task.
 
-Baselines, criterion medians on the development machine, defaults without `MELD_SPINE_BENCH_LARGE`:
+Baselines, criterion medians on the development machine, defaults without `MELD_EVENT_BENCH_LARGE`:
 
 | Measurement | Value |
 | --- | --- |

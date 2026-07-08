@@ -144,7 +144,7 @@ pub enum PublicationState {
     Published {
         /// Revision that marked the publication as complete.
         marked_revision: u64,
-        /// Event spine sequence returned by the successful append.
+        /// Event ledger sequence returned by the successful append.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         event_seq: Option<u64>,
     },

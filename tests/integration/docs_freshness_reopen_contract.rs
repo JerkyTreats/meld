@@ -819,7 +819,7 @@ fn belief_view(
         advisory_posture: "ready".to_string(),
         provenance: BeliefProvenanceSummary {
             evidence_ids: vec![format!("evidence-{revision_id}")],
-            source_fact_ids: vec![format!("spine-{seq}")],
+            source_fact_ids: vec![format!("ledger-{seq}")],
             graph_anchor_ids: vec!["anchor-a".to_string()],
             objects: vec![fixture.subject()],
             relations: Vec::new(),
@@ -827,7 +827,7 @@ fn belief_view(
         },
         hydration: HydrationRefs {
             evidence_ids: vec![format!("evidence-{revision_id}")],
-            source_fact_ids: vec![format!("spine-{seq}")],
+            source_fact_ids: vec![format!("ledger-{seq}")],
             graph_anchor_ids: vec!["anchor-a".to_string()],
             revision_id: Some(revision_id.to_string()),
         },
