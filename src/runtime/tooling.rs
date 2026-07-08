@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
-use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -236,6 +235,7 @@ fn runtime_run(
     let started = Instant::now();
     let mut tick_count = 0;
     let mut last_supervisor_time_ms = started_at_ms;
+    let watermark = assembly.ports().event_append().watermark();
     let tick_result = run_tick_loop(
         &mut supervisor,
         &cancelled,
@@ -244,6 +244,7 @@ fn runtime_run(
         &mut tick_count,
         started,
         &mut last_supervisor_time_ms,
+        watermark.as_ref(),
     );
     let shutdown_at_ms = shutdown_time_ms(started_at_ms, started).max(last_supervisor_time_ms);
     let shutdown_result = supervisor.request_shutdown(shutdown_at_ms);
@@ -278,6 +279,7 @@ fn runtime_run(
     format_runtime_run_result(&run_result, options.format)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_tick_loop(
     supervisor: &mut RuntimeSupervisor<'_>,
     cancelled: &AtomicBool,
@@ -286,6 +288,7 @@ fn run_tick_loop(
     tick_count: &mut u64,
     started: Instant,
     last_supervisor_time_ms: &mut u64,
+    watermark: &meld_events::CommitWatermark,
 ) -> Result<(), SupervisorRuntimeError> {
     loop {
         if cancelled.load(Ordering::SeqCst) || duration_elapsed(started, duration_ms) {
@@ -310,7 +313,7 @@ fn run_tick_loop(
         if sleep_ms == 0 {
             break;
         }
-        sleep_until_next_tick(cancelled, started, duration_ms, sleep_ms);
+        sleep_until_next_tick(cancelled, started, duration_ms, sleep_ms, watermark);
     }
     Ok(())
 }
@@ -319,19 +322,32 @@ fn duration_elapsed(started: Instant, duration_ms: Option<u64>) -> bool {
     duration_ms.is_some_and(|limit| started.elapsed().as_millis() >= u128::from(limit))
 }
 
+/// Waits out the tick interval but wakes early when the spine writer commits
+/// new events, so work-driven ticks replace pure wall-clock polling while the
+/// configured interval stays the fallback heartbeat.
 fn sleep_until_next_tick(
     cancelled: &AtomicBool,
     started: Instant,
     duration_ms: Option<u64>,
     sleep_ms: u64,
+    watermark: &meld_events::CommitWatermark,
 ) {
+    // The baseline is captured after the tick on purpose: events committed
+    // during the tick wait for the fallback interval instead of waking
+    // immediately, because ticks emit their own telemetry through the writer
+    // and a pre-tick baseline would self-wake into a spin.
+    let baseline_seq = watermark.committed_seq();
     let mut remaining_ms = sleep_ms;
     while remaining_ms > 0
         && !cancelled.load(Ordering::SeqCst)
         && !duration_elapsed(started, duration_ms)
     {
+        // Short chunks keep cancellation responsive while the condvar wait
+        // keeps idle chunks free of scans and writes.
         let chunk_ms = remaining_ms.min(50);
-        thread::sleep(Duration::from_millis(chunk_ms));
+        if watermark.wait_past(baseline_seq, Duration::from_millis(chunk_ms)) > baseline_seq {
+            return;
+        }
         remaining_ms -= chunk_ms;
     }
 }

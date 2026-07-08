@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use meld_events::events::store::EventStore;
-use meld_events::{DomainObjectRef, EventEnvelope, EventRecord, SpineWriter};
+use meld_events::{CommitWatermark, DomainObjectRef, EventEnvelope, EventRecord, SpineWriter};
 use meld_execution::goals::{
     GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
     GoalSetApi, PersistentGoalSetStore,
@@ -307,6 +307,16 @@ impl ProductEventAppendPort {
         Self {
             writer: Arc::new(SpineWriter::spawn(store)),
         }
+    }
+
+    /// Return the writer's commit watermark for wake-on-commit consumers.
+    pub fn watermark(&self) -> Arc<CommitWatermark> {
+        self.writer.watermark()
+    }
+
+    /// Return how many best-effort events backpressure has dropped.
+    pub fn dropped_events(&self) -> u64 {
+        self.writer.dropped_events()
     }
 }
 
