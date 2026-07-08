@@ -665,8 +665,10 @@ impl meld_execution::EventPublicationPort for ContextApi {
         _event_context: &meld_execution::ExecutionEventContext,
         envelope: EventEnvelope,
     ) -> Result<(), ApiError> {
-        self.emit_envelope_best_effort(envelope);
-        Ok(())
+        // Execution outcomes are durable-class facts: the world model and
+        // execution projection reduce them, so a dropped envelope would be
+        // a permanent hole in canonical history.
+        self.emit_context_envelope_required(envelope)
     }
 }
 

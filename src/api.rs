@@ -933,7 +933,10 @@ impl ContextApi {
         context.runtime.emit_envelope_best_effort(envelope);
     }
 
-    fn emit_context_envelope_required(&self, envelope: EventEnvelope) -> Result<(), ApiError> {
+    pub(crate) fn emit_context_envelope_required(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<(), ApiError> {
         if let Some(context) = self.current_progress_context() {
             return context.runtime.emit_envelope(envelope);
         }
@@ -953,10 +956,6 @@ impl ContextApi {
         context
             .runtime
             .emit_event_best_effort(session_id, event_type, payload);
-    }
-
-    pub(crate) fn emit_envelope_best_effort(&self, envelope: EventEnvelope) {
-        self.emit_context_envelope(envelope);
     }
 
     /// Get access to agent registry (for tooling)
