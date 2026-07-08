@@ -48,11 +48,14 @@ pub mod contracts;
 pub mod runtime;
 /// Append-only sled-backed event store.
 pub mod store;
+/// Consumer subscription surface and durable cursor helper.
+pub mod subscription;
 /// Single-writer ingress engine with group commit and watermark.
 pub mod writer;
 
 pub use contracts::{DomainObjectRef, EventRelation};
 pub use runtime::EventRuntime;
+pub use subscription::{SpineCursor, SpineSubscription};
 pub use writer::{CommitWatermark, SpineWriter};
 
 /// Persisted event record in the global event spine.
