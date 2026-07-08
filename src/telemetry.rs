@@ -1,4 +1,4 @@
-//! Telemetry domain: events, sessions, routing, sinks, and emission.
+//! Telemetry domain: events, sessions, sinks, and emission.
 
 mod types;
 
@@ -6,7 +6,6 @@ pub mod contracts;
 pub mod emission;
 pub mod events;
 pub mod facade;
-pub mod routing;
 pub mod sessions;
 pub mod sinks;
 pub mod summary;

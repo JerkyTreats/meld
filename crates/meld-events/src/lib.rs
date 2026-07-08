@@ -1,8 +1,8 @@
 //! Canonical event spine contracts and runtime helpers for Meld.
 //!
 //! This crate owns event envelopes, sequenced event records, domain object
-//! references carried by events, an in-process event bus, and the sled-backed
-//! append-only event store.
+//! references carried by events, the single-writer ingress engine, and the
+//! sled-backed append-only event store.
 //!
 //! This crate does not own task execution, workflow orchestration, world model
 //! materialization, or telemetry sink routing. Those domains publish events into
@@ -17,7 +17,7 @@
 //!
 //! Start with [`EventEnvelope`] when publishing a domain event,
 //! [`events::store::EventStore`] when persisting or querying the event spine,
-//! and [`EventRuntime`] when a caller needs synchronous emit and flush behavior.
+//! and [`EventRuntime`] when a caller needs durable or best-effort emission.
 //!
 //! # Example
 //!

@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use tracing::warn;
 
 use crate::error::ApiError;
 use crate::events::store::EventStore;
@@ -91,17 +90,15 @@ impl ProgressRuntime {
             .map_err(ApiError::from)
     }
 
+    /// Enqueues without waiting for durability; readers synchronize through
+    /// [`ProgressRuntime::barrier`].
     pub fn emit_event_best_effort(&self, session_id: &str, event_type: &str, data: Value) {
-        if let Err(err) = self.emit_event(session_id, event_type, data) {
-            warn!(
-                session_id = %session_id,
-                event_type = %event_type,
-                error = %err,
-                "failed to emit progress event"
-            );
-        }
+        self.events
+            .emit_event_best_effort(session_id, event_type, data);
     }
 
+    /// Enqueues without waiting for durability; readers synchronize through
+    /// [`ProgressRuntime::barrier`].
     pub fn emit_domain_event_best_effort(
         &self,
         session_id: &str,
@@ -111,49 +108,26 @@ impl ProgressRuntime {
         content_hash: Option<String>,
         data: Value,
     ) {
-        if let Err(err) = self.emit_domain_event(
+        self.events.emit_domain_event_best_effort(
             session_id,
             domain_id,
             stream_id,
             event_type,
             content_hash,
             data,
-        ) {
-            warn!(
-                session_id = %session_id,
-                domain_id = %domain_id,
-                stream_id = %stream_id,
-                event_type = %event_type,
-                error = %err,
-                "failed to emit domain event"
-            );
-        }
+        );
     }
 
+    /// Enqueues without waiting for durability; readers synchronize through
+    /// [`ProgressRuntime::barrier`].
     pub fn emit_envelope_best_effort(&self, envelope: crate::events::EventEnvelope) {
-        let session_id = envelope.session.clone();
-        let event_type = envelope.event_type.clone();
-        if let Err(err) = self.emit_envelope(envelope) {
-            warn!(
-                session_id = %session_id,
-                event_type = %event_type,
-                error = %err,
-                "failed to emit envelope"
-            );
-        }
+        self.events.emit_envelope_best_effort(envelope);
     }
 
+    /// Enqueues without waiting for durability; readers synchronize through
+    /// [`ProgressRuntime::barrier`].
     pub fn emit_envelope_idempotent_best_effort(&self, envelope: crate::events::EventEnvelope) {
-        let session_id = envelope.session.clone();
-        let event_type = envelope.event_type.clone();
-        if let Err(err) = self.emit_envelope_idempotent(envelope) {
-            warn!(
-                session_id = %session_id,
-                event_type = %event_type,
-                error = %err,
-                "failed to emit idempotent envelope"
-            );
-        }
+        self.events.emit_envelope_idempotent_best_effort(envelope);
     }
 
     pub fn mark_interrupted_sessions(&self) -> Result<usize, ApiError> {
@@ -169,6 +143,12 @@ impl ProgressRuntime {
         let pruned = self.sessions.prune(policy)?;
         self.events.store().flush().map_err(ApiError::from)?;
         Ok(pruned)
+    }
+
+    /// Blocks until every previously enqueued emit has reached the store,
+    /// the synchronization point for observing best-effort emissions.
+    pub fn barrier(&self) -> Result<(), ApiError> {
+        self.events.barrier().map_err(ApiError::from)
     }
 
     pub fn store(&self) -> &EventStore {

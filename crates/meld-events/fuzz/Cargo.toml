@@ -32,8 +32,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_event_ingestor"
-path = "fuzz_targets/fuzz_event_ingestor.rs"
+name = "fuzz_event_writer"
+path = "fuzz_targets/fuzz_event_writer.rs"
 test = false
 doc = false
 bench = false

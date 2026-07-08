@@ -64,6 +64,7 @@ fn brand_new_scan_emits_source_and_snapshot() {
     )
     .unwrap();
 
+    progress.barrier().unwrap();
     let events = progress.store().read_events_after(&session_id, 0).unwrap();
     assert!(events
         .iter()
@@ -99,6 +100,7 @@ fn repeated_scan_reuses_source_identity() {
     )
     .unwrap();
 
+    progress.barrier().unwrap();
     let events = progress.store().read_events_after(&session_id, 0).unwrap();
     let mut source_ids = std::collections::BTreeSet::new();
     for event in events
@@ -129,6 +131,7 @@ fn snapshot_selected_changes_only_when_root_hash_changes() {
         Some(&session_id),
     )
     .unwrap();
+    progress.barrier().unwrap();
     let before = progress
         .store()
         .read_events_after(&session_id, 0)
@@ -145,6 +148,7 @@ fn snapshot_selected_changes_only_when_root_hash_changes() {
         Some(&session_id),
     )
     .unwrap();
+    progress.barrier().unwrap();
     let same_root = progress
         .store()
         .read_events_after(&session_id, 0)
@@ -163,6 +167,7 @@ fn snapshot_selected_changes_only_when_root_hash_changes() {
         Some(&session_id),
     )
     .unwrap();
+    progress.barrier().unwrap();
     let changed_root = progress
         .store()
         .read_events_after(&session_id, 0)

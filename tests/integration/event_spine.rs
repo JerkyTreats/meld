@@ -1,10 +1,9 @@
 use meld::control::projection::ExecutionProjection;
+use meld::events::SpineWriter;
 use meld::session::policy::PrunePolicy;
 use meld::task::ExecutionTaskEventData;
 use meld::telemetry::emission::emit_command_summary;
 use meld::telemetry::events::ProgressEnvelope;
-use meld::telemetry::routing::bus::ProgressBus;
-use meld::telemetry::routing::ingestor::EventIngestor;
 use meld::telemetry::sinks::store::ProgressStore;
 use meld::telemetry::ProgressRuntime;
 use meld::telemetry::{DomainObjectRef, EventRelation};
@@ -176,6 +175,8 @@ fn telemetry_is_downstream_only() {
         None,
     );
 
+    // Summaries are best-effort; the barrier makes them observable.
+    runtime.barrier().unwrap();
     let events = runtime.store().read_all_events_after(0).unwrap();
     assert!(events
         .iter()
@@ -192,26 +193,30 @@ fn slow_or_missing_consumer_does_not_break_append() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
     let store = ProgressStore::shared(db).unwrap();
-    let (bus, receiver) = ProgressBus::new_pair_with_capacity(1);
 
-    bus.emit("s1", "session_started", json!({})).unwrap();
-    assert!(matches!(
-        bus.emit("s1", "session_ended", json!({})),
-        Err(std::sync::mpsc::TrySendError::Full(_))
-    ));
-
-    let mut ingestor = EventIngestor::new(store.clone(), receiver);
-    ingestor.ingest_pending().unwrap();
-
-    let events = store.read_all_events_after(0).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].seq, 1);
-
-    bus.emit("s1", "session_ended", json!({})).unwrap();
-    ingestor.ingest_pending().unwrap();
+    // No subscriber exists anywhere; the writer persists both durability
+    // classes on its own, and shutdown drains everything still queued.
+    {
+        let writer = SpineWriter::spawn(store.clone());
+        let seq = writer
+            .append_durable(
+                ProgressEnvelope::with_now("s1", "session_started", json!({})),
+                false,
+            )
+            .unwrap();
+        assert_eq!(seq, 1);
+        writer
+            .append_best_effort(
+                ProgressEnvelope::with_now("s1", "session_ended", json!({})),
+                false,
+            )
+            .unwrap();
+        assert_eq!(writer.dropped_events(), 0);
+    }
 
     let events = store.read_all_events_after(0).unwrap();
     assert_eq!(events.len(), 2);
+    assert_eq!(events[0].seq, 1);
     assert_eq!(events[1].seq, 2);
 }
 

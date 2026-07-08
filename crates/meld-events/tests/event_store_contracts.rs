@@ -1,7 +1,5 @@
 use meld_events::events::store::EventStore;
-use meld_events::{
-    DomainObjectRef, EventBus, EventEnvelope, EventIngestor, EventRecord, EventRuntime,
-};
+use meld_events::{DomainObjectRef, EventEnvelope, EventRecord, EventRuntime, SpineWriter};
 use proptest::prelude::*;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -609,18 +607,19 @@ fn legacy_events_normalize_defaults() {
 }
 
 #[test]
-fn ingestor_drains_bus_into_runtime_order() {
+fn writer_commits_appends_in_submission_order() {
     let (_temp_dir, store) = event_store();
     let shared = Arc::new(store);
-    let (bus, rx) = EventBus::new_pair();
-    let mut ingestor = EventIngestor::new(shared.clone(), rx);
+    let writer = SpineWriter::spawn(shared.clone());
 
-    bus.emit_envelope(domain_envelope("execution.started"))
+    let first = writer
+        .append_durable(domain_envelope("execution.started"), false)
         .unwrap();
-    bus.emit_envelope(domain_envelope("execution.completed"))
+    let second = writer
+        .append_durable(domain_envelope("execution.completed"), false)
         .unwrap();
 
-    assert_eq!(ingestor.ingest_pending().unwrap(), 2);
+    assert_eq!((first, second), (1, 2));
     assert_eq!(
         shared
             .read_all_events_after(0)
@@ -630,23 +629,24 @@ fn ingestor_drains_bus_into_runtime_order() {
             .collect::<Vec<_>>(),
         vec![1, 2]
     );
+    assert_eq!(writer.watermark().committed_seq(), 2);
 }
 
 #[test]
-fn bounded_bus_reports_backpressure_without_dropping_queued_event() {
+fn best_effort_appends_survive_writer_shutdown() {
     let (_temp_dir, store) = event_store();
     let shared = Arc::new(store);
-    let (bus, rx) = EventBus::new_pair_with_capacity(1);
-    let mut ingestor = EventIngestor::new(shared.clone(), rx);
-
-    bus.emit_envelope(domain_envelope("execution.started"))
-        .unwrap();
-    assert!(bus
-        .emit_envelope(domain_envelope("execution.completed"))
-        .is_err());
-
-    assert_eq!(ingestor.ingest_pending().unwrap(), 1);
-    assert_eq!(shared.read_all_events_after(0).unwrap().len(), 1);
+    {
+        let writer = SpineWriter::spawn(shared.clone());
+        writer
+            .append_best_effort(domain_envelope("execution.started"), false)
+            .unwrap();
+        writer
+            .append_best_effort(domain_envelope("execution.completed"), false)
+            .unwrap();
+        assert_eq!(writer.dropped_events(), 0);
+    }
+    assert_eq!(shared.read_all_events_after(0).unwrap().len(), 2);
 }
 
 #[test]
@@ -745,6 +745,12 @@ fn runtime_best_effort_success_paths_persist_events() {
         domain_envelope("execution.idempotent").with_record_id("best-effort-record-a"),
     );
 
+    // Best-effort emits return before durability; the watermark is the
+    // synchronization point for observing them.
+    let committed = runtime
+        .watermark()
+        .wait_past(3, std::time::Duration::from_secs(5));
+    assert!(committed >= 4);
     let events = runtime.store().read_events(SESSION_A).unwrap();
     assert_eq!(events.len(), 4);
     assert_eq!(

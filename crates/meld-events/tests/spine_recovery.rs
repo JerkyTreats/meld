@@ -16,8 +16,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use std::sync::Arc;
+
 use meld_events::events::store::EventStore;
-use meld_events::{EventEnvelope, EventRecord};
+use meld_events::{EventEnvelope, EventRecord, SpineWriter};
 use serde_json::json;
 
 const SESSION_A: &str = "session-a";
@@ -33,6 +35,7 @@ const WATERMARK_ENV: &str = "MELD_SPINE_RECOVERY_WATERMARK";
 
 const ROLE_WRITER_FLUSH: &str = "writer-flush";
 const ROLE_WRITER_NO_FLUSH: &str = "writer-no-flush";
+const ROLE_WRITER_DURABLE: &str = "writer-durable";
 
 const KILL_CYCLES: u64 = 3;
 const FLUSH_INTERVAL: u64 = 8;
@@ -71,13 +74,16 @@ fn child_writer_entrypoint() {
     let watermark_path = std::env::var(WATERMARK_ENV).ok().map(PathBuf::from);
 
     // The flush role must reach durable storage only through explicit flush
-    // barriers; the no-flush role relies on sled's background flusher alone.
+    // barriers; the no-flush role relies on sled's background flusher alone;
+    // the durable role goes through the spine writer and trusts its acks.
     let flush_every_ms = match role.as_str() {
-        ROLE_WRITER_FLUSH => None,
+        ROLE_WRITER_FLUSH | ROLE_WRITER_DURABLE => None,
         ROLE_WRITER_NO_FLUSH => Some(100),
         other => panic!("unknown writer role {other}"),
     };
     let store = EventStore::new(open_db_with_retry(&db_path, flush_every_ms)).unwrap();
+    let spine_writer =
+        (role == ROLE_WRITER_DURABLE).then(|| SpineWriter::spawn(Arc::new(store.clone())));
 
     let mut run_start: Option<u64> = None;
     let mut max_appended = 0u64;
@@ -90,15 +96,18 @@ fn child_writer_entrypoint() {
             SESSION_A
         };
         let envelope = recovery_envelope(session, cycle, counter);
-        let seq = if counter.is_multiple_of(3) {
-            // Record ids repeat within a cycle so the idempotent-hit path is
-            // exercised while the child is being killed.
-            let record_id = format!("cycle-{cycle}-record-{}", counter % 5);
-            store
-                .append_envelope_idempotent(envelope.with_record_id(record_id))
-                .unwrap()
+        // Record ids repeat within a cycle so the idempotent-hit path is
+        // exercised while the child is being killed.
+        let idempotent = counter.is_multiple_of(3);
+        let envelope = if idempotent {
+            envelope.with_record_id(format!("cycle-{cycle}-record-{}", counter % 5))
         } else {
-            store.append_envelope(envelope).unwrap()
+            envelope
+        };
+        let seq = match &spine_writer {
+            Some(writer) => writer.append_durable(envelope, idempotent).unwrap(),
+            None if idempotent => store.append_envelope_idempotent(envelope).unwrap(),
+            None => store.append_envelope(envelope).unwrap(),
         };
         if run_start.is_none() {
             run_start = Some(seq);
@@ -109,6 +118,15 @@ fn child_writer_entrypoint() {
             // Sequencing: the watermark may only become visible after the
             // flush barrier that made [run_start, max_appended] durable.
             store.flush().unwrap();
+            write_watermark(
+                watermark_path.as_deref().unwrap(),
+                run_start.unwrap(),
+                max_appended,
+            );
+        }
+        if role == ROLE_WRITER_DURABLE {
+            // The durable ack is the barrier: every acked sequence must
+            // survive the kill, so the watermark records acks directly.
             write_watermark(
                 watermark_path.as_deref().unwrap(),
                 run_start.unwrap(),
@@ -241,8 +259,8 @@ fn run_kill_reopen_cycles(role: &str, mut check: impl FnMut(u64, &EventStore, Op
     let db_path = temp_dir.path().join("events");
     for cycle in 1..=KILL_CYCLES {
         let started_path = temp_dir.path().join(format!("started-{cycle}"));
-        let watermark_path =
-            (role == ROLE_WRITER_FLUSH).then(|| temp_dir.path().join(format!("watermark-{cycle}")));
+        let watermark_path = (role == ROLE_WRITER_FLUSH || role == ROLE_WRITER_DURABLE)
+            .then(|| temp_dir.path().join(format!("watermark-{cycle}")));
         let child = spawn_writer(
             role,
             &db_path,
@@ -455,6 +473,28 @@ fn flushed_prefix_survives_kill() {
             assert!(
                 persisted.contains(&seq),
                 "cycle {cycle}: seq {seq} inside flushed prefix [{run_start}, {flushed_max}] lost"
+            );
+        }
+    });
+}
+
+#[test]
+fn acked_durable_appends_survive_kill() {
+    if skip_requested() {
+        return;
+    }
+    run_kill_reopen_cycles(ROLE_WRITER_DURABLE, |cycle, store, watermark| {
+        let (run_start, acked_max) = watermark.expect("durable writer must publish acked seqs");
+        let persisted: BTreeSet<u64> = persisted_events(store)
+            .iter()
+            .map(|event| event.seq)
+            .collect();
+        // Invariant: a durable ack means durable bytes, so every sequence
+        // the spine writer acked before the kill must survive reopen.
+        for seq in run_start..=acked_max {
+            assert!(
+                persisted.contains(&seq),
+                "cycle {cycle}: acked seq {seq} in [{run_start}, {acked_max}] lost after kill"
             );
         }
     });
