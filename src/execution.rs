@@ -13,10 +13,11 @@ pub use outcome_evidence::{
     build_docs_task_success_evidence, DocsTaskSuccessEvidenceError, DocsTaskSuccessEvidenceRequest,
 };
 pub use ports::{
-    ContextReadPort, ContextWritePort, EventPublicationPort, ExecutionContext,
-    ExecutionEventContext, ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind,
-    ExecutionNodeRecord, ExecutionProgressPort, ExecutionRuntimeContext, GeneratedMetadataPort,
-    NodeResolutionPort, PromptArtifactReadPort, PromptLineagePort, ProviderExecutionPort,
-    ProviderPreparationView, ProviderValidationPort, SystemPromptPort, TaskRunArtifactAnchor,
-    WorkflowProfileLoadPort, WorldModelQueryPort,
+    BeliefContextReadPort, BeliefStatusLabel, BeliefSubjectSignal, ContextReadPort,
+    ContextWritePort, EventPublicationPort, ExecutionContext, ExecutionEventContext,
+    ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind, ExecutionNodeRecord,
+    ExecutionProgressPort, ExecutionRuntimeContext, GeneratedMetadataPort, NodeResolutionPort,
+    PromptArtifactReadPort, PromptLineagePort, ProviderExecutionPort, ProviderPreparationView,
+    ProviderValidationPort, SystemPromptPort, TaskRunArtifactAnchor, WorkflowProfileLoadPort,
+    WorkspaceScanPort, WorldModelQueryPort,
 };

@@ -284,6 +284,7 @@ impl PromptLineagePort for FakeExecutionContext {
                 user_prompt_template_artifact_id: "template".to_string(),
                 rendered_prompt_artifact_id: "rendered".to_string(),
                 context_artifact_id: "context".to_string(),
+                belief_bundle_digest: None,
             },
             metadata_input: GeneratedFrameMetadataInput {
                 agent_id: "agent".to_string(),

@@ -113,6 +113,7 @@ where
                 user_prompt_template: input.prompt_template.to_string(),
                 rendered_prompt: input.rendered_prompt.to_string(),
                 context_payload: input.resolved_inputs.context_payload.clone(),
+                belief_context_bundle: None,
             },
             &request.agent_id,
             &request.provider.provider_name,

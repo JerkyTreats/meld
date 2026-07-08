@@ -1,9 +1,19 @@
 //! Shared test utilities for integration tests
 //!
-//! Provides centralized setup/teardown for XDG directories and other test resources
-//! to avoid code duplication and ensure consistent test isolation.
+//! Provides centralized setup/teardown for XDG directories, the docs-writer
+//! task harness, and other test resources to avoid code duplication and
+//! ensure consistent test isolation.
 
+use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
+use meld::capability::{CapabilityCatalog, CapabilityExecutorRegistry};
+use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
+use meld::provider::capability::ProviderExecuteChatCapability;
+use meld::workspace::capability::WorkspaceResolveNodeIdCapability;
+use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::sync::Mutex;
+use std::thread;
 use tempfile::TempDir;
 
 /// Global mutex to serialize XDG environment variable access across all tests
@@ -132,4 +142,201 @@ where
 {
     let _guard = XDG_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     f()
+}
+
+/// Writes a docs-writer style agent config into the isolated XDG agents dir.
+pub fn create_test_agent(agent_id: &str, workflow_id: Option<&str>) {
+    let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
+    fs::create_dir_all(&agents_dir).unwrap();
+    let config_path = agents_dir.join(format!("{agent_id}.toml"));
+
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert(
+        "user_prompt_file".to_string(),
+        "Summarize file context".to_string(),
+    );
+    metadata.insert(
+        "user_prompt_directory".to_string(),
+        "Summarize directory context".to_string(),
+    );
+
+    let agent_config = AgentConfig {
+        agent_id: agent_id.to_string(),
+        role: AgentRole::Writer,
+        system_prompt: Some("You are a careful docs writer.".to_string()),
+        system_prompt_path: None,
+        workflow_id: workflow_id.map(ToString::to_string),
+        metadata: metadata.into(),
+    };
+
+    fs::write(&config_path, toml::to_string(&agent_config).unwrap()).unwrap();
+}
+
+/// Writes a local-custom provider config pointing at the fake server endpoint.
+pub fn create_test_provider(provider_name: &str, endpoint: &str) {
+    let providers_dir = xdg::providers_dir().unwrap();
+    fs::create_dir_all(&providers_dir).unwrap();
+    let config_path = providers_dir.join(format!("{provider_name}.toml"));
+
+    let provider_config = ProviderConfig {
+        provider_name: Some(provider_name.to_string()),
+        provider_type: ProviderType::LocalCustom,
+        model: "test-model".to_string(),
+        api_key: None,
+        endpoint: Some(endpoint.to_string()),
+        default_options: meld::provider::CompletionOptions::default(),
+    };
+
+    fs::write(&config_path, toml::to_string(&provider_config).unwrap()).unwrap();
+}
+
+/// Locates the end of an HTTP header block in a raw request buffer.
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| index + 4)
+}
+
+/// Spawns a fake chat-completion server that routes docs-writer turn prompts
+/// to canned structured completions. Returns the endpoint and a join handle
+/// that yields the number of requests handled.
+pub fn spawn_docs_writer_server(expected_requests: usize) -> (String, thread::JoinHandle<usize>) {
+    spawn_docs_writer_server_with_shape(expected_requests, false)
+}
+
+/// Variant of [`spawn_docs_writer_server`] whose structured completions are
+/// wrapped in markdown fences or prose, exercising wrapped-output parsing.
+pub fn spawn_wrapped_docs_writer_server(
+    expected_requests: usize,
+) -> (String, thread::JoinHandle<usize>) {
+    spawn_docs_writer_server_with_shape(expected_requests, true)
+}
+
+/// Single copy of the fake chat-completion server and its canned docs-writer
+/// completions, keyed to the docs_writer turn prompt text. Both response
+/// shapes delegate here so the canned strings cannot drift between tests.
+fn spawn_docs_writer_server_with_shape(
+    expected_requests: usize,
+    wrap_structured_output: bool,
+) -> (String, thread::JoinHandle<usize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+
+    let handle = thread::spawn(move || {
+        let mut handled = 0usize;
+        while handled < expected_requests {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let mut header_end = None;
+
+            loop {
+                let read = stream.read(&mut chunk).unwrap();
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if header_end.is_none() {
+                    header_end = find_header_end(&buffer);
+                }
+                if let Some(end) = header_end {
+                    let headers = String::from_utf8_lossy(&buffer[..end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let lower = line.to_ascii_lowercase();
+                            lower
+                                .strip_prefix("content-length:")
+                                .and_then(|value| value.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if buffer.len() >= end + content_length {
+                        break;
+                    }
+                }
+            }
+
+            let request_body = String::from_utf8_lossy(&buffer);
+            let completion = if request_body.contains("Build evidence for README generation") {
+                if wrap_structured_output {
+                    "```json\n{\"claims\":[{\"claim_id\":\"c1\",\"statement\":\"Provides greeting helpers.\",\"evidence_path\":\"src/lib.rs\",\"evidence_symbol\":\"greet\",\"evidence_quote\":\"pub fn greet(name: &str) -> String\"}]}\n```"
+                } else {
+                    r#"{"claims":[{"claim_id":"c1","statement":"Provides greeting helpers.","evidence_path":"src/lib.rs","evidence_symbol":"greet","evidence_quote":"pub fn greet(name: &str) -> String"}]}"#
+                }
+            } else if request_body.contains("Validate each claim against the provided evidence") {
+                if wrap_structured_output {
+                    "Here is the JSON you requested.\n{\"verified_claims\":[{\"claim_id\":\"c1\",\"statement\":\"Provides greeting helpers.\",\"evidence_path\":\"src/lib.rs\",\"evidence_symbol\":\"greet\",\"evidence_quote\":\"pub fn greet(name: &str) -> String\"}],\"rejected_claims\":[],\"reasons\":[]}"
+                } else {
+                    r#"{"verified_claims":[{"claim_id":"c1","statement":"Provides greeting helpers.","evidence_path":"src/lib.rs","evidence_symbol":"greet","evidence_quote":"pub fn greet(name: &str) -> String"}],"rejected_claims":[],"reasons":[]}"#
+                }
+            } else if request_body.contains("Build a structured README draft") {
+                if wrap_structured_output {
+                    "```json\n{\"title\":\"Workspace Library\",\"purpose\":\"Provides greeting helpers.\",\"usage\":\"Call greet with a user name.\"}\n```"
+                } else {
+                    r#"{"title":"Workspace Library","purpose":"Provides greeting helpers.","usage":"Call greet with a user name."}"#
+                }
+            } else {
+                "# Workspace Library\n\n## Purpose\n\nProvides greeting helpers.\n\n## Usage\n\nCall `greet` with a user name."
+            };
+            let response_body = format!(
+                r#"{{"id":"test","object":"chat.completion","created":0,"model":"test-model","choices":[{{"index":0,"message":{{"role":"assistant","content":{}}},"finish_reason":"stop"}}],"usage":{{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}}}"#,
+                serde_json::to_string(completion).unwrap()
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            handled += 1;
+        }
+
+        handled
+    });
+
+    (endpoint, handle)
+}
+
+/// Registers the capability set required to run the docs_writer task package.
+pub fn register_docs_writer_capabilities(
+    catalog: &mut CapabilityCatalog,
+    registry: &mut CapabilityExecutorRegistry,
+) {
+    registry
+        .register(catalog, WorkspaceResolveNodeIdCapability)
+        .unwrap();
+    registry
+        .register(
+            catalog,
+            meld::workspace::capability::WorkspaceFilterFrameHeadPublishCapability,
+        )
+        .unwrap();
+    registry
+        .register(
+            catalog,
+            meld::workspace::capability::WorkspaceWriteFrameHeadCapability,
+        )
+        .unwrap();
+    registry
+        .register(
+            catalog,
+            meld::merkle_traversal::capability::MerkleTraversalCapability,
+        )
+        .unwrap();
+    registry
+        .register(
+            catalog,
+            meld::context::capability::ContextGeneratePrepareCapability,
+        )
+        .unwrap();
+    registry
+        .register(catalog, ProviderExecuteChatCapability)
+        .unwrap();
+    registry
+        .register(
+            catalog,
+            meld::context::capability::ContextGenerateFinalizeCapability,
+        )
+        .unwrap();
 }

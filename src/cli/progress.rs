@@ -508,12 +508,10 @@ fn describe_current_work(
         } else {
             "1 target is actively generating"
         }
+    } else if workflow_mode {
+        "multiple workflow conversations are active in parallel"
     } else {
-        if workflow_mode {
-            "multiple workflow conversations are active in parallel"
-        } else {
-            "multiple targets are generating in parallel"
-        }
+        "multiple targets are generating in parallel"
     };
 
     format!(

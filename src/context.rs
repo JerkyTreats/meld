@@ -1,6 +1,7 @@
 //! Context domain: frame model, query, mutation, generation, and queue.
 //! Owns context behavior; CLI, agent adapter, and workspace watch consume via explicit contracts.
 
+pub mod belief_context;
 pub mod capability;
 pub mod events;
 pub mod facade;

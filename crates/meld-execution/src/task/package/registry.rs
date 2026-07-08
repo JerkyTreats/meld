@@ -139,6 +139,7 @@ fn load_task_package_spec_from_path(path: &Path) -> Result<TaskPackageSpec, ApiE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task::package::SeedSourceSpec;
     use crate::workflow::profile::{
         WorkflowArtifactPolicy, WorkflowFailurePolicy, WorkflowProfile, WorkflowThreadPolicy,
     };
@@ -152,7 +153,12 @@ mod tests {
         assert_eq!(spec.package_id, "docs_writer");
         assert_eq!(spec.workflow_id, "docs_writer_thread_v1");
         assert_eq!(spec.trigger.accepted_targets.len(), 2);
-        assert_eq!(spec.seed.artifacts.len(), 3);
+        assert_eq!(spec.seed.artifacts.len(), 4);
+        assert!(spec
+            .seed
+            .artifacts
+            .iter()
+            .any(|artifact| matches!(artifact.source, SeedSourceSpec::GoalBeliefHydration)));
         assert_eq!(spec.expansions.len(), 1);
     }
 
@@ -214,6 +220,7 @@ expansions: []
                 target_agent_id: None,
                 target_frame_type: None,
                 final_artifact_type: None,
+                belief_context: None,
             },
             source_path: Some(workflow_dir.join("docs_writer_thread_v1.yaml")),
         };

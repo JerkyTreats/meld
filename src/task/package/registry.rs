@@ -35,7 +35,13 @@ mod tests {
         assert_eq!(spec.package_id, "docs_writer");
         assert_eq!(spec.workflow_id, "docs_writer_thread_v1");
         assert_eq!(spec.trigger.accepted_targets.len(), 2);
-        assert_eq!(spec.seed.artifacts.len(), 3);
+        assert_eq!(spec.seed.artifacts.len(), 4);
+        assert!(spec.seed.artifacts.iter().any(|artifact| {
+            matches!(
+                artifact.source,
+                crate::task::package::SeedSourceSpec::GoalBeliefHydration
+            )
+        }));
         assert_eq!(spec.expansions.len(), 1);
     }
 
@@ -97,6 +103,7 @@ expansions: []
                 target_agent_id: None,
                 target_frame_type: None,
                 final_artifact_type: None,
+                belief_context: None,
             },
             source_path: Some(workflow_dir.join("docs_writer_thread_v1.yaml")),
         };

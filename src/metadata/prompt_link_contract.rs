@@ -15,6 +15,10 @@ pub struct PromptLinkContractV1 {
     pub user_prompt_template_artifact_id: String,
     pub rendered_prompt_artifact_id: String,
     pub context_artifact_id: String,
+    /// Digest of the belief context bundle artifact that conditioned this
+    /// prompt, present only for `belief_context`-conditioned generations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub belief_bundle_digest: Option<String>,
 }
 
 impl PromptLinkContractV1 {
@@ -27,6 +31,10 @@ impl PromptLinkContractV1 {
             user_prompt_template_artifact_id: lineage.user_prompt_template.artifact_id.clone(),
             rendered_prompt_artifact_id: lineage.rendered_prompt.artifact_id.clone(),
             context_artifact_id: lineage.context_payload.artifact_id.clone(),
+            belief_bundle_digest: lineage
+                .belief_context_bundle
+                .as_ref()
+                .map(|artifact| artifact.digest.clone()),
         }
     }
 
@@ -57,6 +65,14 @@ impl PromptLinkContractV1 {
             if !is_blake3_hex(value) {
                 return Err(ApiError::PromptLinkContractInvalid {
                     reason: format!("{} must be 64 char lowercase hex", name),
+                });
+            }
+        }
+
+        if let Some(belief_bundle_digest) = &self.belief_bundle_digest {
+            if !is_blake3_hex(belief_bundle_digest) {
+                return Err(ApiError::PromptLinkContractInvalid {
+                    reason: "belief_bundle_digest must be 64 char lowercase hex".to_string(),
                 });
             }
         }
@@ -93,7 +109,8 @@ mod tests {
             system_prompt_artifact_id: digest.clone(),
             user_prompt_template_artifact_id: digest.clone(),
             rendered_prompt_artifact_id: digest.clone(),
-            context_artifact_id: digest,
+            context_artifact_id: digest.clone(),
+            belief_bundle_digest: Some(digest),
         };
         contract.validate().unwrap();
     }
@@ -129,6 +146,12 @@ mod tests {
                 byte_len: 1,
                 kind: PromptContextArtifactKind::ContextPayload,
             },
+            belief_context_bundle: Some(PromptContextArtifactRef {
+                artifact_id: digest.clone(),
+                digest: digest.clone(),
+                byte_len: 1,
+                kind: PromptContextArtifactKind::BeliefContextBundle,
+            }),
         };
 
         let contract = PromptLinkContractV1::from_lineage(&lineage);
@@ -138,5 +161,6 @@ mod tests {
             contract.context_artifact_id,
             lineage.context_payload.artifact_id
         );
+        assert_eq!(contract.belief_bundle_digest, Some(digest));
     }
 }

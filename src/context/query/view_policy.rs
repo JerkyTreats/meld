@@ -15,6 +15,14 @@ pub enum OrderingPolicy {
     Type,
     /// Order by agent ID (lexicographic)
     Agent,
+    /// Belief-governed selection: prefer subjects whose belief is endorsed,
+    /// exclude or flag contradicted subjects, fall back to recency where no
+    /// belief family covers the subject. The subject-level judgment is owned
+    /// by context assembly (`context::generation::prompt_collection`), which
+    /// classifies subjects from the seeded belief bundle and never reads
+    /// live belief state; within one subject all frames share a belief, so
+    /// this layer orders by recency.
+    BeliefEndorsed,
 }
 
 /// Frame filter
@@ -66,7 +74,10 @@ pub fn get_context_view(
 
     let mut sorted_frames = filtered_frames;
     match policy.ordering {
-        OrderingPolicy::Recency => {
+        // BeliefEndorsed keeps recency ordering here: all frames in one node
+        // share the node's belief subject, so the belief-governed preference
+        // is applied across subjects by context assembly.
+        OrderingPolicy::Recency | OrderingPolicy::BeliefEndorsed => {
             sorted_frames.sort_by_key(|(_, frame)| std::cmp::Reverse(frame.timestamp));
         }
         OrderingPolicy::Type => {

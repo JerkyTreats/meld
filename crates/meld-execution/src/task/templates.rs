@@ -4,10 +4,11 @@ use crate::capability::CapabilityCatalog;
 use crate::error::ApiError;
 use crate::execution::{ContextReadPort, NodeResolutionPort};
 use crate::generation::NodeId;
+use crate::task::expansion::TaskExpansionTemplate;
 use crate::task::package::{
     load_task_package_spec_for_workflow, lower_traversal_prerequisite_expansion_template,
-    prepare_workflow_task_run, workflow_task_run_id, PreparedTaskRun,
-    WorkflowPackageTriggerRequest,
+    prepare_workflow_task_run, workflow_task_run_id, PackageRunResolvers, PreparedTaskRun,
+    PreparedWorkflowPackageContext, WorkflowPackageTriggerRequest,
 };
 use crate::workflow::registry::RegisteredWorkflowProfile;
 use std::path::Path;
@@ -31,22 +32,61 @@ pub fn workflow_task_run_id_for_target(
     workflow_task_run_id(&registered_profile.profile.workflow_id, node_id)
 }
 
+/// Builds the standard resolver set for one registered workflow trigger,
+/// pairing caller-supplied prompt and belief resolvers with the built-in
+/// traversal prerequisite expansion lowering.
+pub fn traversal_package_run_resolvers<'a, E, PromptResolver, BundleResolver>(
+    registered_profile: &'a RegisteredWorkflowProfile,
+    request: &'a WorkflowPackageTriggerRequest,
+    resolve_prompt: PromptResolver,
+    resolve_belief_bundle: BundleResolver,
+) -> PackageRunResolvers<
+    PromptResolver,
+    impl FnOnce(&PreparedWorkflowPackageContext) -> Result<TaskExpansionTemplate, E> + 'a,
+    BundleResolver,
+>
+where
+    E: From<ApiError>,
+    PromptResolver: FnMut(&str) -> Result<String, E>,
+    BundleResolver: FnOnce(NodeId) -> Result<serde_json::Value, E>,
+{
+    PackageRunResolvers {
+        resolve_prompt,
+        build_expansion_template: |context: &PreparedWorkflowPackageContext| {
+            Ok(lower_traversal_prerequisite_expansion_template(
+                &registered_profile.profile,
+                request,
+                &context.traversal_expansion,
+                context,
+            )?)
+        },
+        resolve_belief_bundle,
+    }
+}
+
 /// Prepares one registered workflow through the generic task package path.
-pub fn prepare_registered_workflow_task_run<E, A, R>(
+///
+/// `resolvers` carries the trigger-time closures; the standard traversal
+/// set comes from [`traversal_package_run_resolvers`]. The belief bundle
+/// resolver is invoked only when the workflow's `belief_context` flag is on
+/// and the package authors a `goal_belief_hydration` seed.
+pub fn prepare_registered_workflow_task_run<E, A, PromptResolver, TemplateBuilder, BundleResolver>(
     api: &A,
     workspace_root: &Path,
     registered_profile: &RegisteredWorkflowProfile,
     request: &WorkflowPackageTriggerRequest,
     catalog: &CapabilityCatalog,
     default_package_dir: Option<&Path>,
-    resolve_prompt: R,
+    resolvers: PackageRunResolvers<PromptResolver, TemplateBuilder, BundleResolver>,
 ) -> Result<PreparedTaskRun, E>
 where
     E: From<ApiError>,
     A: ContextReadPort<Error = E, NodeId = NodeId>
         + NodeResolutionPort<Error = E, NodeId = NodeId>
         + ?Sized,
-    R: FnMut(&str) -> Result<String, E>,
+    PromptResolver: FnMut(&str) -> Result<String, E>,
+    TemplateBuilder: FnOnce(&PreparedWorkflowPackageContext) -> Result<TaskExpansionTemplate, E>,
+    BundleResolver: FnOnce(NodeId) -> Result<serde_json::Value, E>,
 {
     let package_spec =
         load_task_package_spec_for_workflow(registered_profile, default_package_dir)?.ok_or_else(
@@ -65,15 +105,7 @@ where
         request,
         catalog,
         &package_spec,
-        resolve_prompt,
-        |context| {
-            Ok(lower_traversal_prerequisite_expansion_template(
-                &registered_profile.profile,
-                request,
-                &context.traversal_expansion,
-                context,
-            )?)
-        },
+        resolvers,
     )
 }
 
@@ -114,6 +146,7 @@ mod tests {
                 target_agent_id: None,
                 target_frame_type: None,
                 final_artifact_type: None,
+                belief_context: None,
             },
             source_path: None,
         }

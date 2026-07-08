@@ -12,6 +12,10 @@ pub use super::format::{
     format_agent_status_text, format_provider_status_text, format_section_heading,
     format_unified_status_text, format_workspace_status_text,
 };
+pub use super::scan::{
+    execute_workspace_scan, WorkspaceObservedNodeRef, WorkspaceScanOutcome, WorkspaceScanPolicy,
+    WorkspaceScanRequest, WorkspaceScanStatus, WorkspaceScanSummary,
+};
 pub use super::section::build_workspace_status;
 pub use super::types::{
     AgentStatusEntry, AgentStatusOutput, ContextCoverageEntry, IgnoreResult, ListDeletedResult,

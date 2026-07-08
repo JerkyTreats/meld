@@ -27,6 +27,11 @@ seed:
       source:
         kind: expansion_template
         template_id: docs_writer_bottom_up
+    - init_slot_id: goal_belief_hydration
+      artifact_type_id: belief_context_bundle
+      schema_version: 1
+      source:
+        kind: goal_belief_hydration
 expansions:
   - kind: traversal_prerequisite
     expansion_kind: traversal_prerequisite_expansion

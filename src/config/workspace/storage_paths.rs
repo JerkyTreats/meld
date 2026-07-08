@@ -98,18 +98,54 @@ impl Default for StorageConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+
+    static XDG_DATA_HOME_MUTEX: Mutex<()> = Mutex::new(());
+
+    struct EnvVarRestore {
+        key: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl Drop for EnvVarRestore {
+        fn drop(&mut self) {
+            if let Some(original) = &self.original {
+                std::env::set_var(self.key, original);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn with_isolated_xdg_data_home<T>(test: impl FnOnce() -> T) -> T {
+        let _guard = XDG_DATA_HOME_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let data_home = tempfile::tempdir().unwrap();
+        let _restore = EnvVarRestore {
+            key: "XDG_DATA_HOME",
+            original: std::env::var_os("XDG_DATA_HOME"),
+        };
+
+        std::env::set_var("XDG_DATA_HOME", data_home.path());
+
+        test()
+    }
 
     #[test]
     fn absent_product_root_resolves_to_xdg_runtime_root() {
-        let workspace = tempfile::tempdir().unwrap();
-        let config = StorageConfig::default();
+        with_isolated_xdg_data_home(|| {
+            let workspace = tempfile::tempdir().unwrap();
+            let config = StorageConfig::default();
 
-        let root = config.resolve_product_root(workspace.path()).unwrap();
-        let expected = xdg::workspace_data_dir(workspace.path())
-            .unwrap()
-            .join("runtime");
+            let root = config.resolve_product_root(workspace.path()).unwrap();
+            let expected = xdg::workspace_data_dir(workspace.path())
+                .unwrap()
+                .join("runtime");
 
-        assert_eq!(root, expected);
+            assert_eq!(root, expected);
+        });
     }
 
     #[test]
@@ -141,14 +177,16 @@ mod tests {
 
     #[test]
     fn existing_resolve_paths_behavior_is_unchanged() {
-        let workspace = tempfile::tempdir().unwrap();
-        let config = StorageConfig::default();
+        with_isolated_xdg_data_home(|| {
+            let workspace = tempfile::tempdir().unwrap();
+            let config = StorageConfig::default();
 
-        let (store, frames, artifacts) = config.resolve_paths(workspace.path()).unwrap();
-        let data_dir = xdg::workspace_data_dir(workspace.path()).unwrap();
+            let (store, frames, artifacts) = config.resolve_paths(workspace.path()).unwrap();
+            let data_dir = xdg::workspace_data_dir(workspace.path()).unwrap();
 
-        assert_eq!(store, data_dir.join("store"));
-        assert_eq!(frames, data_dir.join("frames"));
-        assert_eq!(artifacts, data_dir.join("artifacts"));
+            assert_eq!(store, data_dir.join("store"));
+            assert_eq!(frames, data_dir.join("frames"));
+            assert_eq!(artifacts, data_dir.join("artifacts"));
+        });
     }
 }

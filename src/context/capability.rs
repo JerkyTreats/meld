@@ -7,9 +7,10 @@ use crate::capability::{
     ExecutionClass, ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec,
     ScopeContract, SuppliedValueRef,
 };
+use crate::context::belief_context::{BeliefContextBundle, BELIEF_CONTEXT_BUNDLE_ARTIFACT_TYPE_ID};
 use crate::context::frame::{Basis, Frame};
 use crate::context::generation::contracts::{GenerationOrchestrationRequest, PromptAssemblyOutput};
-use crate::context::generation::prompt_collection::build_prompt_messages;
+use crate::context::generation::prompt_collection::build_prompt_messages_with_belief;
 use crate::error::ApiError;
 use crate::execution::ExecutionRuntimeContext;
 use crate::metadata::frame_write_contract::{
@@ -220,6 +221,30 @@ impl ContextGeneratePrepareCapability {
         })
     }
 
+    /// Decodes the seeded belief context bundle for a belief_context-enabled
+    /// invocation. The bundle input is required whenever the flag binding is
+    /// true; a missing input indicates broken wiring rather than "no belief"
+    /// (empty bundles are seeded explicitly).
+    fn parse_belief_bundle(
+        payload: &CapabilityInvocationPayload,
+    ) -> Result<BeliefContextBundle, ApiError> {
+        let input = payload
+            .supplied_inputs
+            .iter()
+            .find(|input| input.slot_id == BELIEF_CONTEXT_BUNDLE_ARTIFACT_TYPE_ID)
+            .ok_or_else(|| {
+                ApiError::ConfigError(format!(
+                    "Capability invocation '{}' enables belief_context but is missing 'belief_context_bundle'",
+                    payload.invocation_id
+                ))
+            })?;
+        let value = match &input.value {
+            SuppliedValueRef::Artifact(artifact) => &artifact.content,
+            SuppliedValueRef::StructuredValue(value) => value,
+        };
+        BeliefContextBundle::from_artifact_value(value)
+    }
+
     fn supporting_inputs(
         api: &dyn ExecutionRuntimeContext,
         payload: &CapabilityInvocationPayload,
@@ -354,6 +379,14 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
                     required: false,
                     affects_deterministic_identity: true,
                 },
+                // Bound true only for belief_context-enabled runs; absence
+                // keeps flag-off instances byte-identical to prior behavior.
+                BindingSpec {
+                    binding_id: "belief_context".to_string(),
+                    value_kind: BindingValueKind::Literal,
+                    required: false,
+                    affects_deterministic_identity: true,
+                },
             ],
             input_contract: vec![
                 InputSlotSpec {
@@ -369,6 +402,18 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
                 InputSlotSpec {
                     slot_id: "force_posture".to_string(),
                     accepted_artifact_type_ids: vec!["force_posture".to_string()],
+                    schema_versions: ArtifactSchemaVersionRange {
+                        min: ARTIFACT_SCHEMA_VERSION,
+                        max: ARTIFACT_SCHEMA_VERSION,
+                    },
+                    required: false,
+                    cardinality: InputCardinality::One,
+                },
+                InputSlotSpec {
+                    slot_id: BELIEF_CONTEXT_BUNDLE_ARTIFACT_TYPE_ID.to_string(),
+                    accepted_artifact_type_ids: vec![
+                        BELIEF_CONTEXT_BUNDLE_ARTIFACT_TYPE_ID.to_string()
+                    ],
                     schema_versions: ArtifactSchemaVersionRange {
                         min: ARTIFACT_SCHEMA_VERSION,
                         max: ARTIFACT_SCHEMA_VERSION,
@@ -494,8 +539,24 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
         let node_record = api
             .read_node_record(&node_id)?
             .ok_or(ApiError::NodeNotFound(node_id))?;
-        let mut prompt_output =
-            build_prompt_messages(api, &request, &node_record, &prompt_contract)?;
+        // belief_context gate: the binding is bound only for flag-on runs, so
+        // flag-off invocations take the legacy assembly path unchanged.
+        let belief_bundle = if Self::bool_binding(runtime_init, "belief_context") {
+            Some(Self::parse_belief_bundle(payload)?)
+        } else {
+            None
+        };
+        let belief_bundle_json = belief_bundle
+            .as_ref()
+            .map(BeliefContextBundle::canonical_json)
+            .transpose()?;
+        let mut prompt_output = build_prompt_messages_with_belief(
+            api,
+            &request,
+            &node_record,
+            &prompt_contract,
+            belief_bundle.as_ref(),
+        )?;
         let supporting_inputs = Self::supporting_inputs(api, payload)?;
         Self::append_supporting_context(&mut prompt_output, &supporting_inputs);
 
@@ -505,6 +566,7 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
                 user_prompt_template: prompt_output.user_prompt_template.clone(),
                 rendered_prompt: prompt_output.rendered_prompt.clone(),
                 context_payload: prompt_output.context_payload.clone(),
+                belief_context_bundle: belief_bundle_json,
             },
             &agent_id,
             &provider_binding.provider_name,
@@ -689,11 +751,21 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
                     ),
                     artifact_type_id: "prompt_context_lineage_summary".to_string(),
                     schema_version: ARTIFACT_SCHEMA_VERSION,
-                    content: json!({
-                        "prompt_link_id": prepared_lineage.prompt_link_contract.prompt_link_id,
-                        "prompt_digest": prepared_lineage.prompt_link_contract.prompt_digest,
-                        "context_digest": prepared_lineage.prompt_link_contract.context_digest,
-                    }),
+                    // The bundle digest key exists only for belief_context
+                    // runs so flag-off lineage summaries stay byte-identical.
+                    content: {
+                        let mut lineage_summary = json!({
+                            "prompt_link_id": prepared_lineage.prompt_link_contract.prompt_link_id,
+                            "prompt_digest": prepared_lineage.prompt_link_contract.prompt_digest,
+                            "context_digest": prepared_lineage.prompt_link_contract.context_digest,
+                        });
+                        if let Some(belief_bundle_digest) =
+                            &prepared_lineage.prompt_link_contract.belief_bundle_digest
+                        {
+                            lineage_summary["belief_bundle_digest"] = json!(belief_bundle_digest);
+                        }
+                        lineage_summary
+                    },
                     producer: ArtifactProducerRef {
                         output_slot_id: Some("prompt_context_lineage_summary".to_string()),
                         ..producer

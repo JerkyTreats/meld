@@ -109,4 +109,8 @@ pub struct PreparedWorkflowPackageContext {
     pub gates_by_id: HashMap<String, WorkflowGate>,
     /// Traversal expansion being lowered for this target.
     pub traversal_expansion: TraversalPrerequisitePackageExpansionSpec,
+    /// Init slot that carries the belief context bundle, resolved only when
+    /// the workflow's `belief_context` flag is on and the package authors a
+    /// `goal_belief_hydration` seed. `None` keeps lowering byte-identical.
+    pub belief_init_slot_id: Option<String>,
 }

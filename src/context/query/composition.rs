@@ -273,7 +273,9 @@ pub fn compose_frames(
         .into_iter()
         .map(|(node_id, frame)| {
             let score = match policy.ordering {
-                OrderingPolicy::Recency => {
+                // Belief-governed preference is applied by context assembly;
+                // composition scoring falls back to recency.
+                OrderingPolicy::Recency | OrderingPolicy::BeliefEndorsed => {
                     // Use timestamp as score (newer = higher)
                     frame
                         .timestamp
@@ -304,7 +306,7 @@ pub fn compose_frames(
 
     // Sort by score (descending for Recency, ascending for Type/Agent to maintain lexicographic order)
     match policy.ordering {
-        OrderingPolicy::Recency => {
+        OrderingPolicy::Recency | OrderingPolicy::BeliefEndorsed => {
             scored_frames.sort_by(|(score_a, _, _), (score_b, _, _)| score_b.cmp(score_a));
         }
         OrderingPolicy::Type | OrderingPolicy::Agent => {

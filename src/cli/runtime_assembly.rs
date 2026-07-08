@@ -8,6 +8,7 @@ use crate::heads::HeadIndex;
 use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::ProgressRuntime;
 use crate::workflow::WorkflowRegistry;
+use crate::world_state::belief::BeliefStore;
 use crate::world_state::graph::runtime::GraphRuntime;
 use crate::world_state::WorldModelQueries;
 use std::path::Path;
@@ -39,6 +40,7 @@ impl CliRuntimeAssembly {
         })?;
         let node_store = Arc::new(SledNodeRecordStore::from_db(db.clone()));
         let progress = Arc::new(ProgressRuntime::new(db.clone()).map_err(ApiError::from)?);
+        let belief_store = BeliefStore::shared(db.clone()).map_err(ApiError::from)?;
         let graph_runtime = Arc::new(GraphRuntime::new(db).map_err(ApiError::from)?);
         let world_model_queries = Arc::new(WorldModelQueries::new(Arc::clone(&graph_runtime)));
 
@@ -101,6 +103,7 @@ impl CliRuntimeAssembly {
             workspace_root.to_path_buf(),
         );
         api.set_world_model_queries(world_model_queries);
+        api.set_belief_store(belief_store);
         api.set_workflow_registry(Arc::clone(&workflow_registry));
 
         Ok(Self {

@@ -4,6 +4,7 @@ use crate::capability::{
     BoundBindingValue, BoundCapabilityInstance, BoundInputWiring, BoundInputWiringSource,
     CapabilityCatalog,
 };
+use crate::context::belief_context::BELIEF_CONTEXT_BUNDLE_ARTIFACT_TYPE_ID;
 use crate::error::ApiError;
 use crate::execution::ContextReadPort;
 use crate::task::compiler::compile_task_definition;
@@ -208,65 +209,79 @@ pub fn compile_traversal_prerequisite_expansion(
                     }
                 }
 
+                // belief_context wiring is derived from the durable template
+                // so replayed expansions do not re-read flag configuration.
+                let mut prepare_bindings = vec![
+                    binding("agent_id", json!(content.repeated_region.agent_id)),
+                    binding(
+                        "provider_binding",
+                        serde_json::to_value(&content.repeated_region.provider).map_err(|err| {
+                            ApiError::ConfigError(format!(
+                                "Failed to encode provider binding for expansion '{}': {}",
+                                expansion.expansion_id, err
+                            ))
+                        })?,
+                    ),
+                    binding("frame_type", json!(content.repeated_region.frame_type)),
+                    binding("prompt_text", json!(turn.prompt_text)),
+                    binding("turn_id", json!(turn.turn_id)),
+                    binding("workflow_id", json!(content.repeated_region.workflow_id)),
+                    binding("output_type", json!(turn.output_type)),
+                    binding(
+                        "gate",
+                        serde_json::to_value(&turn.gate).map_err(|err| {
+                            ApiError::ConfigError(format!(
+                                "Failed to encode workflow gate '{}' for expansion '{}': {}",
+                                turn.gate.gate_id, expansion.expansion_id, err
+                            ))
+                        })?,
+                    ),
+                ];
+                let mut prepare_wiring = vec![
+                    BoundInputWiring {
+                        slot_id: "resolved_node_ref".to_string(),
+                        sources: vec![BoundInputWiringSource::TaskInitSlot {
+                            init_slot_id: node_ref_slot_id,
+                            artifact_type_id: "resolved_node_ref".to_string(),
+                            schema_version: 1,
+                        }],
+                    },
+                    BoundInputWiring {
+                        slot_id: "force_posture".to_string(),
+                        sources: vec![BoundInputWiringSource::TaskInitSlot {
+                            init_slot_id: content.repeated_region.force_init_slot_id.clone(),
+                            artifact_type_id: "force_posture".to_string(),
+                            schema_version: 1,
+                        }],
+                    },
+                    BoundInputWiring {
+                        slot_id: content.prerequisite_template.consumer_input_slot_id.clone(),
+                        sources: upstream_sources,
+                    },
+                ];
+                if let Some(belief_init_slot_id) = &content.repeated_region.belief_init_slot_id {
+                    prepare_bindings.push(binding("belief_context", json!(true)));
+                    prepare_wiring.push(BoundInputWiring {
+                        slot_id: BELIEF_CONTEXT_BUNDLE_ARTIFACT_TYPE_ID.to_string(),
+                        sources: vec![BoundInputWiringSource::TaskInitSlot {
+                            init_slot_id: belief_init_slot_id.clone(),
+                            artifact_type_id: BELIEF_CONTEXT_BUNDLE_ARTIFACT_TYPE_ID.to_string(),
+                            schema_version: 1,
+                        }],
+                    });
+                }
+
                 capability_instances.push(BoundCapabilityInstance {
                     capability_instance_id: prepare_instance_id.clone(),
                     capability_type_id: "context_generate_prepare".to_string(),
                     capability_version: 1,
                     scope_ref: node.node_id.clone(),
                     scope_kind: "node".to_string(),
-                    binding_values: vec![
-                        binding("agent_id", json!(content.repeated_region.agent_id)),
-                        binding(
-                            "provider_binding",
-                            serde_json::to_value(&content.repeated_region.provider).map_err(
-                                |err| {
-                                    ApiError::ConfigError(format!(
-                                        "Failed to encode provider binding for expansion '{}': {}",
-                                        expansion.expansion_id, err
-                                    ))
-                                },
-                            )?,
-                        ),
-                        binding("frame_type", json!(content.repeated_region.frame_type)),
-                        binding("prompt_text", json!(turn.prompt_text)),
-                        binding("turn_id", json!(turn.turn_id)),
-                        binding("workflow_id", json!(content.repeated_region.workflow_id)),
-                        binding("output_type", json!(turn.output_type)),
-                        binding(
-                            "gate",
-                            serde_json::to_value(&turn.gate).map_err(|err| {
-                                ApiError::ConfigError(format!(
-                                    "Failed to encode workflow gate '{}' for expansion '{}': {}",
-                                    turn.gate.gate_id, expansion.expansion_id, err
-                                ))
-                            })?,
-                        ),
-                    ],
-                    input_wiring: vec![
-                        BoundInputWiring {
-                            slot_id: "resolved_node_ref".to_string(),
-                            sources: vec![BoundInputWiringSource::TaskInitSlot {
-                                init_slot_id: node_ref_slot_id,
-                                artifact_type_id: "resolved_node_ref".to_string(),
-                                schema_version: 1,
-                            }],
-                        },
-                        BoundInputWiring {
-                            slot_id: "force_posture".to_string(),
-                            sources: vec![BoundInputWiringSource::TaskInitSlot {
-                                init_slot_id: content.repeated_region.force_init_slot_id.clone(),
-                                artifact_type_id: "force_posture".to_string(),
-                                schema_version: 1,
-                            }],
-                        },
-                        BoundInputWiring {
-                            slot_id: content.prerequisite_template.consumer_input_slot_id.clone(),
-                            sources: upstream_sources,
-                        },
-                    ]
-                    .into_iter()
-                    .filter(|wiring| !wiring.sources.is_empty())
-                    .collect(),
+                    binding_values: prepare_bindings,
+                    input_wiring: prepare_wiring
+                        .into_iter()
+                        .filter(|wiring| !wiring.sources.is_empty())
+                        .collect(),
                 });
 
                 capability_instances.push(BoundCapabilityInstance {
