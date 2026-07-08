@@ -182,7 +182,7 @@ Every checkpoint commit passes the same gate ladder, in order:
 5. contract gate: the four contract suites green; known-reds only under the documented ignore convention
 6. bench gate at phase exits: criterion run compared against recorded baselines; regressions block the phase close
 7. policy gate: docs style scan on changed Markdown; shim removal notes present; breaking changes called out before commit per [Compatibility Policy](../../../governance/compatibility_policy.md); changed record shapes reviewed against [Semantic Unit Preservation Policy](../../../governance/semantic_unit_preservation_policy.md)
-8. review gate for behavior-changing phases: adversarial code review pass before commit
+8. fresh review gate: every checkpoint commit is reviewed by a fresh-context review agent that did not produce the change; the reviewer receives the staged diff and the relevant PLAN phase, and checks correctness, test honesty, commenting policy, semantic unit preservation, shim notes, and domain boundaries; confirmed findings are fixed or explicitly waived with a recorded reason before the commit lands; behavior-changing phases additionally get an adversarial multi-lens review
 
 Evidence for each gate is recorded in the phase completion notes below as work lands.
 
