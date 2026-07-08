@@ -141,17 +141,16 @@ impl GraphRuntime {
         };
         let events_attempted = events.len();
         let reducer = TraversalReducer::replay_events(self.traversal.as_ref(), after_seq, events)?;
-        let mut last_persisted_seq = reducer.last_seen_seq;
+        // The cursor never advances past the highest processed source event.
+        // Producers may append between this tick's read and its derived-event
+        // appends, so advancing to a derived sequence would skip those source
+        // events permanently. Re-reading own derived events next tick is safe:
+        // they are not traversal source events and their appends are
+        // idempotent.
+        let last_persisted_seq = reducer.last_seen_seq;
         let derived_events_appended = reducer.emitted_envelopes.len();
         for envelope in reducer.emitted_envelopes {
-            let seq = self.spine.append_envelope_idempotent(envelope)?;
-            // When source input remains past this tick, the traversal cursor must
-            // stay on the processed source event. Derived events are idempotent
-            // replay products, but advancing to their later spine sequence would
-            // skip unprocessed source events after restart.
-            if !budget_exhausted {
-                last_persisted_seq = last_persisted_seq.max(seq);
-            }
+            self.spine.append_envelope_idempotent(envelope)?;
         }
         self.spine.flush()?;
         self.traversal.set_last_reduced_seq(last_persisted_seq)?;
