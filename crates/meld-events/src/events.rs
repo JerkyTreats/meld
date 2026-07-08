@@ -1,8 +1,8 @@
 //! Canonical event domain contracts and compatibility surface.
 //!
 //! This domain owns unsequenced envelopes, persisted event records, graph
-//! materialization references, in-process ingestion, synchronous runtime
-//! emission, and append-only event storage.
+//! materialization references, single-writer ingestion with group commit,
+//! durable and best-effort emission, and append-only event storage.
 //!
 //! Inputs are producer envelopes from telemetry, execution, workflow, world
 //! model, and compatibility callers. Outputs are sequenced event records,
@@ -44,18 +44,16 @@ use serde_json::Value;
 pub mod compat;
 /// Domain object and relation records carried by event envelopes.
 pub mod contracts;
-/// Non-blocking event bus and queue drainers.
-pub mod ingress;
-/// Synchronous event emission facade.
+/// Event emission facade with durable and best-effort classes.
 pub mod runtime;
 /// Append-only sled-backed event store.
 pub mod store;
-/// Subscription compatibility surface for event bus callers.
-pub mod subscription;
+/// Single-writer ingress engine with group commit and watermark.
+pub mod writer;
 
 pub use contracts::{DomainObjectRef, EventRelation};
-pub use ingress::{EventBus, EventIngestor, SharedIngestor};
 pub use runtime::EventRuntime;
+pub use writer::{CommitWatermark, SpineWriter};
 
 /// Persisted event record in the global event spine.
 ///

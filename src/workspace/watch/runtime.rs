@@ -953,6 +953,7 @@ failure_policy:
         let daemon = WatchDaemon::new(api, config).unwrap();
 
         daemon.ensure_agent_frames_batched(&[node_id]).unwrap();
+        progress.barrier().unwrap();
 
         let events = progress.store().read_events_after(&session_id, 0).unwrap();
         let result = events
@@ -977,6 +978,7 @@ failure_policy:
         daemon
             .process_events(vec![ChangeEvent::Modified(target)])
             .unwrap();
+        progress.barrier().unwrap();
 
         let emitted = progress.store().read_events_after(&session_id, 0).unwrap();
         assert!(emitted
@@ -1012,11 +1014,13 @@ failure_policy:
         daemon
             .process_events(vec![ChangeEvent::Modified(target.clone())])
             .unwrap();
+        progress.barrier().unwrap();
 
         std::fs::write(&target, "hello again").unwrap();
         daemon
             .process_events(vec![ChangeEvent::Modified(target)])
             .unwrap();
+        progress.barrier().unwrap();
 
         let events = progress.store().read_events_after(&session_id, 0).unwrap();
         let mut source_ids = std::collections::BTreeSet::new();
@@ -1046,6 +1050,7 @@ failure_policy:
         daemon
             .process_events(vec![ChangeEvent::Modified(target.clone())])
             .unwrap();
+        progress.barrier().unwrap();
         let first_selected = progress
             .store()
             .read_events_after(&session_id, 0)
@@ -1057,6 +1062,7 @@ failure_policy:
         daemon
             .process_events(vec![ChangeEvent::Modified(target.clone())])
             .unwrap();
+        progress.barrier().unwrap();
         let same_root_selected = progress
             .store()
             .read_events_after(&session_id, 0)
@@ -1070,6 +1076,7 @@ failure_policy:
         daemon
             .process_events(vec![ChangeEvent::Modified(target)])
             .unwrap();
+        progress.barrier().unwrap();
         let changed_root_selected = progress
             .store()
             .read_events_after(&session_id, 0)
@@ -1098,6 +1105,7 @@ failure_policy:
         daemon
             .process_events(vec![ChangeEvent::Modified(changed.clone())])
             .unwrap();
+        progress.barrier().unwrap();
 
         let observed_paths: Vec<String> = progress
             .store()

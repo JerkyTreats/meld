@@ -1,10 +1,17 @@
-//! Synchronous event runtime facade.
+//! Event runtime facade over the spine writer.
 //!
 //! Owner: event runtime.
 //! Inputs: legacy telemetry events, domain events, and prepared envelopes.
-//! Outputs: flushed records in the backing [`crate::events::store::EventStore`].
+//! Outputs: writer-committed records in the backing
+//! [`crate::events::store::EventStore`], with durable acks or counted
+//! best-effort drops per the durability class.
 //! Does not own: this module does not interpret event payloads or materialize
 //! graph facts.
+//!
+//! Two durability classes exist. Plain `emit_*` calls are durable: they
+//! return after the writer's group commit fsyncs the record, so success means
+//! durable bytes. `*_best_effort` calls enqueue and return; a full queue
+//! drops the event, counts it, and logs, never blocking the producer.
 //!
 //! # Example
 //!
@@ -33,47 +40,42 @@ use serde_json::Value;
 use tracing::warn;
 
 use crate::error::{ApiError, StorageError};
-use crate::events::ingress::{EventBus, EventIngestor, SharedIngestor};
 use crate::events::store::EventStore;
+use crate::events::writer::{CommitWatermark, SpineWriter};
 use crate::events::EventEnvelope;
 
-/// Synchronous event runtime that drains emitted events into the store.
+/// Producer-facing event runtime routing all appends through one writer.
 #[derive(Clone)]
 pub struct EventRuntime {
     store: Arc<EventStore>,
-    bus: EventBus,
-    ingestor: SharedIngestor,
+    writer: Arc<SpineWriter>,
 }
 
 impl EventRuntime {
-    /// Creates a runtime with an in-process bus and shared store.
+    /// Creates a runtime and its writer over a dedicated database handle.
     pub fn new(db: sled::Db) -> Result<Self, StorageError> {
-        let store = EventStore::shared(db)?;
-        let (bus, rx) = EventBus::new_pair();
-        let ingestor = SharedIngestor::new(EventIngestor::new(store.clone(), rx));
-        Ok(Self {
-            store,
-            bus,
-            ingestor,
-        })
+        Ok(Self::from_store(EventStore::shared(db)?))
     }
 
-    /// Emits a legacy telemetry event and drains it immediately.
+    /// Creates a runtime and its writer over an already opened store.
+    pub fn from_store(store: Arc<EventStore>) -> Self {
+        let writer = Arc::new(SpineWriter::spawn(Arc::clone(&store)));
+        Self { store, writer }
+    }
+
+    /// Emits a legacy telemetry event durably.
     pub fn emit_event(
         &self,
         session_id: &str,
         event_type: &str,
         data: Value,
     ) -> Result<(), ApiError> {
-        self.bus
-            .emit(session_id.to_string(), event_type.to_string(), data)
-            .map_err(to_api_error)?;
-        self.ingestor.drain()?;
-        self.store.flush()?;
+        let envelope = EventEnvelope::with_now(session_id.to_string(), event_type, data);
+        self.writer.append_durable(envelope, false)?;
         Ok(())
     }
 
-    /// Emits a domain event and drains it immediately.
+    /// Emits a domain event durably.
     pub fn emit_domain_event(
         &self,
         session_id: &str,
@@ -83,74 +85,64 @@ impl EventRuntime {
         content_hash: Option<String>,
         data: Value,
     ) -> Result<(), ApiError> {
-        self.bus
-            .emit_envelope(EventEnvelope::with_now_domain(
-                session_id.to_string(),
-                domain_id.to_string(),
-                stream_id.to_string(),
-                event_type.to_string(),
-                content_hash,
-                data,
-            ))
-            .map_err(to_api_error)?;
-        self.ingestor.drain()?;
-        self.store.flush()?;
+        let envelope = EventEnvelope::with_now_domain(
+            session_id.to_string(),
+            domain_id.to_string(),
+            stream_id.to_string(),
+            event_type,
+            content_hash,
+            data,
+        );
+        self.writer.append_durable(envelope, false)?;
         Ok(())
     }
 
-    /// Emits a prepared envelope and drains it immediately.
+    /// Emits a prepared envelope durably.
     pub fn emit_envelope(&self, envelope: EventEnvelope) -> Result<(), ApiError> {
-        self.bus.emit_envelope(envelope).map_err(to_api_error)?;
-        self.ingestor.drain()?;
-        self.store.flush()?;
+        self.writer.append_durable(envelope, false)?;
         Ok(())
     }
 
-    /// Appends a prepared envelope through the idempotent store path.
+    /// Emits a prepared envelope durably through the idempotent path.
     pub fn emit_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<(), ApiError> {
-        self.store.append_envelope_idempotent(envelope)?;
-        self.store.flush()?;
+        self.writer.append_durable(envelope, true)?;
         Ok(())
     }
 
-    /// Emits a batch of envelopes and drains once after enqueueing.
+    /// Emits a batch durably, sharing the writer's group commit.
     pub fn emit_envelopes<I>(&self, envelopes: I) -> Result<(), ApiError>
     where
         I: IntoIterator<Item = EventEnvelope>,
     {
-        for envelope in envelopes {
-            self.bus.emit_envelope(envelope).map_err(to_api_error)?;
-        }
-        self.ingestor.drain()?;
-        self.store.flush()?;
+        self.writer
+            .append_durable_batch(envelopes.into_iter().collect(), false)?;
         Ok(())
     }
 
-    /// Appends a batch of envelopes through the idempotent store path.
+    /// Emits a batch durably through the idempotent path.
     pub fn emit_envelopes_idempotent<I>(&self, envelopes: I) -> Result<(), ApiError>
     where
         I: IntoIterator<Item = EventEnvelope>,
     {
-        for envelope in envelopes {
-            self.store.append_envelope_idempotent(envelope)?;
-        }
-        self.store.flush()?;
+        self.writer
+            .append_durable_batch(envelopes.into_iter().collect(), true)?;
         Ok(())
     }
 
-    /// Emits a legacy telemetry event and logs any failure.
+    /// Enqueues a legacy telemetry event without waiting for durability.
     pub fn emit_event_best_effort(&self, session_id: &str, event_type: &str, data: Value) {
-        if let Err(err) = self.emit_event(session_id, event_type, data) {
+        let envelope = EventEnvelope::with_now(session_id.to_string(), event_type, data);
+        if let Err(err) = self.writer.append_best_effort(envelope, false) {
             warn!(
                 session_id = %session_id,
                 event_type = %event_type,
                 error = %err,
-                "failed to emit event"
+                "failed to enqueue event"
             );
         }
     }
 
-    /// Emits a domain event and logs any failure.
+    /// Enqueues a domain event without waiting for durability.
     pub fn emit_domain_event_best_effort(
         &self,
         session_id: &str,
@@ -160,67 +152,76 @@ impl EventRuntime {
         content_hash: Option<String>,
         data: Value,
     ) {
-        if let Err(err) = self.emit_domain_event(
-            session_id,
-            domain_id,
-            stream_id,
+        let envelope = EventEnvelope::with_now_domain(
+            session_id.to_string(),
+            domain_id.to_string(),
+            stream_id.to_string(),
             event_type,
             content_hash,
             data,
-        ) {
+        );
+        if let Err(err) = self.writer.append_best_effort(envelope, false) {
             warn!(
                 session_id = %session_id,
                 domain_id = %domain_id,
                 stream_id = %stream_id,
                 event_type = %event_type,
                 error = %err,
-                "failed to emit domain event"
+                "failed to enqueue domain event"
             );
         }
     }
 
-    /// Emits a prepared envelope and logs any failure.
+    /// Enqueues a prepared envelope without waiting for durability.
     pub fn emit_envelope_best_effort(&self, envelope: EventEnvelope) {
         let session_id = envelope.session.clone();
         let event_type = envelope.event_type.clone();
-        if let Err(err) = self.emit_envelope(envelope) {
+        if let Err(err) = self.writer.append_best_effort(envelope, false) {
             warn!(
                 session_id = %session_id,
                 event_type = %event_type,
                 error = %err,
-                "failed to emit envelope"
+                "failed to enqueue envelope"
             );
         }
     }
 
-    /// Appends a prepared envelope idempotently and logs any failure.
+    /// Enqueues a prepared envelope idempotently without waiting for durability.
     pub fn emit_envelope_idempotent_best_effort(&self, envelope: EventEnvelope) {
         let session_id = envelope.session.clone();
         let event_type = envelope.event_type.clone();
-        if let Err(err) = self.emit_envelope_idempotent(envelope) {
+        if let Err(err) = self.writer.append_best_effort(envelope, true) {
             warn!(
                 session_id = %session_id,
                 event_type = %event_type,
                 error = %err,
-                "failed to emit idempotent envelope"
+                "failed to enqueue idempotent envelope"
             );
         }
+    }
+
+    /// Blocks until every previously enqueued emit has reached the store.
+    ///
+    /// Best-effort emits return before persistence; this is the
+    /// synchronization point for observing them.
+    pub fn barrier(&self) -> Result<(), ApiError> {
+        self.writer.barrier()?;
+        Ok(())
+    }
+
+    /// Returns the writer's committed-sequence watermark for consumers.
+    pub fn watermark(&self) -> Arc<CommitWatermark> {
+        self.writer.watermark()
+    }
+
+    /// Returns how many best-effort events backpressure has dropped.
+    pub fn dropped_events(&self) -> u64 {
+        self.writer.dropped_events()
     }
 
     /// Returns the backing event store for queries and tests.
     pub fn store(&self) -> &EventStore {
         &self.store
-    }
-}
-
-fn to_api_error(err: std::sync::mpsc::TrySendError<EventEnvelope>) -> ApiError {
-    match err {
-        std::sync::mpsc::TrySendError::Full(_) => {
-            ApiError::StorageError(StorageError::Backpressure("event bus is full".to_string()))
-        }
-        std::sync::mpsc::TrySendError::Disconnected(_) => ApiError::StorageError(
-            StorageError::IoError(std::io::Error::other("event bus disconnected")),
-        ),
     }
 }
 
@@ -243,5 +244,19 @@ mod tests {
 
         let events = runtime.store().read_events("session_a").unwrap();
         assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn durable_emit_advances_watermark() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let runtime = EventRuntime::new(db).unwrap();
+
+        runtime
+            .emit_event("session_a", "session_started", serde_json::json!({}))
+            .unwrap();
+
+        assert_eq!(runtime.watermark().committed_seq(), 1);
+        assert_eq!(runtime.dropped_events(), 0);
     }
 }

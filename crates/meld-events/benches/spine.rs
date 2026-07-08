@@ -8,6 +8,10 @@
 //! Set `MELD_SPINE_BENCH_LARGE=1` to add a 1,000,000-event history size to the
 //! replay and idle-tick curves; it is off by default to keep suite runtime
 //! sane.
+//!
+//! Durability benches fsync through the tempdir filesystem. On machines where
+//! `/tmp` is tmpfs the fsync is nearly free and group-commit gains vanish;
+//! set `TMPDIR` to a disk-backed path for meaningful durable-append numbers.
 
 use std::hint::black_box;
 use std::sync::Arc;
@@ -15,7 +19,7 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use meld_events::events::store::EventStore;
-use meld_events::{EventEnvelope, EventRuntime};
+use meld_events::{EventEnvelope, EventRuntime, SpineWriter};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -173,6 +177,46 @@ fn append_throughput(c: &mut Criterion) {
                         // Returned so tempdir and store teardown stay outside
                         // the timed routine.
                         (dir, store)
+                    },
+                    BatchSize::PerIteration,
+                );
+            },
+        );
+    }
+
+    // Durable producers through the single-writer ingress: every append
+    // waits for its fsynced ack, but concurrent producers share group
+    // commits, so throughput should rise with threads instead of degrading.
+    for threads in [2usize, 4, 8] {
+        group.bench_with_input(
+            BenchmarkId::new("writer_durable_multi", threads),
+            &threads,
+            |b, &threads| {
+                b.iter_batched(
+                    || {
+                        let (dir, store) = temp_store();
+                        let writer = SpineWriter::spawn(Arc::new(store));
+                        (dir, Arc::new(writer))
+                    },
+                    |(dir, writer)| {
+                        let per_thread = MULTI_TOTAL / threads;
+                        let handles: Vec<_> = (0..threads)
+                            .map(|t| {
+                                let writer = Arc::clone(&writer);
+                                std::thread::spawn(move || {
+                                    let session = format!("session-{t}");
+                                    for i in 0..per_thread {
+                                        writer
+                                            .append_durable(bench_envelope(&session, i), false)
+                                            .unwrap();
+                                    }
+                                })
+                            })
+                            .collect();
+                        for handle in handles {
+                            handle.join().unwrap();
+                        }
+                        (dir, writer)
                     },
                     BatchSize::PerIteration,
                 );

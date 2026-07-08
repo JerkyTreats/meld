@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use meld_events::events::store::EventStore;
-use meld_events::{DomainObjectRef, EventEnvelope, EventRecord};
+use meld_events::{DomainObjectRef, EventEnvelope, EventRecord, SpineWriter};
 use meld_execution::goals::{
     GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
     GoalSetApi, PersistentGoalSetStore,
@@ -110,14 +110,15 @@ pub struct DocsTaskEvidenceReplayReport {
     pub ingestions: Vec<PromotedEvidenceIngestionResult>,
 }
 
-/// Execution callable event append port backed by the event store.
+/// Execution callable event append port backed by the spine writer.
 ///
-/// The port appends envelopes idempotently and returns the event sequence. It
-/// does not inspect payload meaning, choose publication readiness, or mark
+/// The port appends envelopes idempotently through the single-writer ingress
+/// so producer appends share group commits, and returns the event sequence.
+/// It does not inspect payload meaning, choose publication readiness, or mark
 /// execution publication state.
 #[derive(Clone)]
 pub struct ProductEventAppendPort {
-    store: Arc<EventStore>,
+    writer: Arc<SpineWriter>,
 }
 
 /// Bounded event replay source backed by the event store.
@@ -301,16 +302,18 @@ impl RuntimeAdapterPorts {
 }
 
 impl ProductEventAppendPort {
-    /// Bind the port to an opened event store.
+    /// Bind the port to a spine writer over the opened event store.
     pub fn new(store: Arc<EventStore>) -> Self {
-        Self { store }
+        Self {
+            writer: Arc::new(SpineWriter::spawn(store)),
+        }
     }
 }
 
 impl EventAppendSink for ProductEventAppendPort {
     fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, String> {
-        self.store
-            .append_envelope_idempotent(envelope)
+        self.writer
+            .append_durable(envelope, true)
             .map_err(|error| error.to_string())
     }
 }
