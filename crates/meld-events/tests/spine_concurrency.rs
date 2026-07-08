@@ -86,7 +86,6 @@ fn assert_storm_kept_every_event(store: &EventStore, returned_seqs: &[u64], expe
 }
 
 #[test]
-#[ignore = "red: non-atomic sequence allocation loses concurrent appends; fixed by correctness core phase"]
 fn concurrent_append_envelope_storm_keeps_all_events_with_gapless_sequences() {
     let (_temp_dir, store) = shared_store();
 
@@ -104,7 +103,6 @@ fn concurrent_append_envelope_storm_keeps_all_events_with_gapless_sequences() {
 }
 
 #[test]
-#[ignore = "red: non-atomic sequence allocation loses concurrent appends; fixed by correctness core phase"]
 fn concurrent_idempotent_storm_with_unique_record_ids_keeps_all_events() {
     let (_temp_dir, store) = shared_store();
 
@@ -169,7 +167,6 @@ fn concurrent_duplicate_record_id_storm_settles_to_single_agreed_record() {
 }
 
 #[test]
-#[ignore = "red: non-atomic sequence allocation loses concurrent appends; fixed by correctness core phase"]
 fn mixed_runtime_and_idempotent_path_storm_keeps_all_events() {
     let (_temp_dir, runtime) = event_runtime();
     let domain_threads = 4;

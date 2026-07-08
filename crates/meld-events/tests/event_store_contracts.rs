@@ -416,12 +416,27 @@ fn manual_sequence_append_advances_allocator() {
 }
 
 #[test]
-fn sequence_allocator_progresses_without_append_repair() {
+fn appended_envelopes_receive_gapless_sequences_from_one() {
     let (_temp_dir, store) = event_store();
 
-    assert_eq!(store.allocate_next_seq().unwrap(), 1);
-    assert_eq!(store.allocate_next_seq().unwrap(), 2);
-    assert_eq!(store.allocate_next_seq().unwrap(), 3);
+    assert_eq!(
+        store
+            .append_envelope(domain_envelope("session.started"))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .append_envelope(domain_envelope("session.continued"))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        store
+            .append_envelope(domain_envelope("session.finished"))
+            .unwrap(),
+        3
+    );
 }
 
 #[test]
@@ -452,11 +467,14 @@ fn idempotent_append_reuses_record_sequence_and_survives_reopen() {
     assert_eq!(reopened.read_events(SESSION_A).unwrap().len(), 1);
 }
 
+// Records persisted before the record index existed carry no index entry
+// and no sequence metadata. Opening the store must repair both, so
+// idempotent appends reuse the legacy sequence and new appends never
+// collide with it.
 #[test]
-fn idempotent_append_repairs_torn_record_index_without_duplicate() {
+fn store_open_repairs_missing_record_index_and_sequence_meta() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("events")).unwrap();
-    let store = EventStore::new(db.clone()).unwrap();
     let record = EventRecord::from_envelope(
         domain_envelope("execution.task.completed").with_record_id("record-torn"),
         1,
@@ -470,6 +488,7 @@ fn idempotent_append_repairs_torn_record_index_without_duplicate() {
         .unwrap();
     db.flush().unwrap();
 
+    let store = EventStore::new(db).unwrap();
     let seq = store
         .append_envelope_idempotent(
             domain_envelope("execution.task.completed").with_record_id("record-torn"),
