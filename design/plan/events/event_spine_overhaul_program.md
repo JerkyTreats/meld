@@ -129,7 +129,7 @@ Tasks:
 
 Exit criteria: multi-producer bench shows group-commit gain over the per-event-fsync baseline; kill-recovery proves acked events always survive; drop counters exposed with the supervisor surface handed off; runtime wiring workstream may resume.
 
-### Phase 4: read path and notification
+### Phase 4: read path and notification — complete 2026-07-08
 
 Goal: consumers wake instead of poll; reads stop paying legacy and duplication taxes.
 
@@ -137,11 +137,11 @@ Key seams: new subscription surface in meld-events; `TREE_SESSION_EVENT_INDEX` l
 
 Tasks:
 
-- [ ] `SpineSubscription`: watermark notification plus bounded replay plus an optional cursor helper consumers embed in their own stores; the spine never persists a consumer position
-- [ ] supervisor tick wakes on watermark advance with the configured interval as fallback heartbeat
-- [ ] session index stores eight-byte sequence references resolved through the spine tree
-- [ ] legacy sunset: one-time backfill migrates `obs_events` rows, then the merge-on-read path is deleted per [Compatibility Shim Policy](../../../governance/compatibility_shim_policy.md); characterization tests precede, parity tests prove, removal notes mark any surviving seam
-- [ ] encoding decision from bench data: binary value encoding behind the store boundary only if serde_json cost is material; decision recorded either way
+- [x] `SpineSubscription`: watermark notification plus bounded replay plus an optional cursor helper consumers embed in their own stores; the spine never persists a consumer position
+- [x] supervisor tick wakes on watermark advance with the configured interval as fallback heartbeat
+- [x] session index keys carry the sequence and values stay empty, resolved through the spine tree; a one-time open migration slims existing full-value rows
+- [x] legacy sunset: one-time open migration moves `obs_events` rows into the spine with the spine winning sequence collisions, then the merge-on-read path is deleted per [Compatibility Shim Policy](../../../governance/compatibility_shim_policy.md); characterization tests stage legacy rows before open and pin normalization semantics; removal notes mark all three surviving migration seams
+- [x] encoding decision from bench data: JSON stays. Decode costs about 1.25 microseconds per event, so a full supervisor batch of 256 events decodes in about a third of a millisecond; at cognition-rate volumes that is immaterial and inspectability wins
 
 Exit criteria: consumers block until new events; no session read touches the legacy tree; storage-per-event bench improved or the encoding decision recorded as not worth it.
 
@@ -261,6 +261,20 @@ Breaking change: the `EventBus`, `EventIngestor`, and `SharedIngestor` types, th
 Review findings and dispositions: the concurrency lens survived every deadlock, shutdown-race, ack-ordering, and stress attack after one fix the harness itself forced, moving the watermark advance ahead of ack release. The semantics lens found the durability-class migration incomplete and it was completed in-phase: `ProgressRuntime` best-effort wrappers now delegate to the true non-blocking path, execution publication moved to the durable path because the world model reduces those events, and the CLI barriers before same-command catch-up. Added on review: a deterministic backpressure drop test, a durable-ack kill-recovery role proving acked sequences always survive, the flush-error ambiguity documented on `append_durable`, barrier-only batches skip the fsync, the boundary doc export list corrected, and the fuzz target renamed to match the writer. Accepted with reasons: a failed flush may leave the watermark lagging until the next successful append batch; multiple writers on one store remain safe through transactional allocation but hold independent watermarks, documented rather than guarded; graph derived events append directly to the store and do not advance the watermark, documented as the consumer-side exception.
 
 Bench evidence: tempdir benches run on tmpfs where fsync is nearly free, so durability numbers were re-measured on the disk-backed filesystem and the caveat is documented in the bench module. On NVMe ext4, per-event durable fsync costs 49.7 µs, a 20k events-per-second ceiling that every producer previously paid serialized; through the writer, 2, 4, and 8 concurrent durable producers sustain 23.0k, 34.0k, and 35.6k events per second aggregate — throughput now rises with producers where the old path degraded — while every append still receives a post-fsync ack, and best-effort producers wait on nothing. On tmpfs the writer adds roughly eight percent over unacked direct appends, the cost of acks when fsync is free.
+
+### Phase 4 — complete 2026-07-08
+
+Gate evidence, in ladder order: formatter clean; clippy zero warnings workspace-wide; boundary script passed; meld-events suites green including three new migration characterization tests; repeated full workspace runs green; adversarial fresh review found one blocker, fixed in-phase before commit; bench evidence below.
+
+What changed: session index values are empty with the sequence in the key tail, resolved through the spine tree, with a one-time open migration slimming existing full-value rows; legacy `obs_events` rows migrate into the spine once at open and the merge-on-read path is deleted; `SpineSubscription` and `SpineCursor` land as the consumer surface; the supervisor tick loop wakes early on watermark advance with the configured interval as fallback heartbeat.
+
+Review blocker, fixed before commit: the first migration draft mapped legacy rows onto the global spine keyspace and skipped sequence collisions. The reviewer proved from git history that legacy sequences were allocated per session and restart at one in every session, so the draft would have silently dropped every legacy session after the first behind a durable flag. The migration now re-sequences every legacy row through fresh global allocation inside one transaction that also carries the sequence metadata and the migration flag, so history is preserved completely, per-session order is kept, and a crash can never leave partial migration state. New characterization tests pin the multi-session and legacy-plus-spine coexistence cases the draft would have broken.
+
+Further dispositions: migrated rows receive migration-time sequences at the spine tip, so consumers with existing durable cursors observe them as new events and incremental replay converges with rebuild-from-zero replay — recorded as the intended semantics. The slim shim note gained its required proof clause and the slim path gained a test. The wake baseline is captured after the tick on purpose and now documents why: a pre-tick baseline would self-wake into a spin because ticks emit telemetry through the writer; events committed during a tick wait for the fallback interval, which matches pre-change latency. The reviewer verified from vendored sled source that multi-tree transaction commits are never partially visible to readers, so the session-index read path needs no torn-state handling. Deviation recorded: the PLAN said eight-byte sequence references in index values; the implementation stores empty values because the key tail already carries the sequence, which is strictly smaller.
+
+Behavior change called out per compatibility policy: rows written into the legacy tree after a store has opened are no longer served by reads. No production writer targets the legacy tree; only tests did, and they now stage rows before open.
+
+Bench evidence: bytes per event on disk fell from 1625 to 1153, twenty-nine percent, from the empty-value index. Replay decode cost is unchanged at roughly 1.25 microseconds per event, which drove the recorded keep-JSON encoding decision.
 
 ### Phase 2 — complete 2026-07-08
 
