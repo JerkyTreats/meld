@@ -98,8 +98,21 @@ impl GraphRuntime {
     }
 
     /// Reduce new spine events into traversal indexes.
+    ///
+    /// A retention gap propagates as its typed error so CLI catch-up
+    /// callers can never mistake a stranded cursor for zero progress.
     pub fn catch_up(&self) -> Result<usize, StorageError> {
         let report = self.catch_up_unbounded()?;
+        if report
+            .fatal_errors
+            .iter()
+            .any(|issue| issue.code == "retention_gap")
+        {
+            return Err(StorageError::RetentionGap {
+                after_seq: self.traversal.last_reduced_seq()?,
+                retained_from: self.spine.retained_lower_boundary()?,
+            });
+        }
         Ok(report.traversal_events_applied)
     }
 
@@ -126,18 +139,51 @@ impl GraphRuntime {
     ) -> Result<GraphCatchUpReport, StorageError> {
         let _guard = self.catch_up_lock.lock();
         let after_seq = self.traversal.last_reduced_seq()?;
-        let (events, budget_exhausted) = match max_items {
-            Some(max_items) => {
-                let mut events = self
-                    .spine
-                    .read_all_events_after_limit(after_seq, max_items.saturating_add(1))?;
-                let budget_exhausted = events.len() > max_items;
-                if budget_exhausted {
-                    events.truncate(max_items);
+        let read = match max_items {
+            Some(max_items) => self
+                .spine
+                .read_all_events_after_limit(after_seq, max_items.saturating_add(1)),
+            None => self.spine.read_all_events_after(after_seq),
+        };
+        let (events, budget_exhausted) = match read {
+            Ok(mut events) => match max_items {
+                Some(max_items) => {
+                    let budget_exhausted = events.len() > max_items;
+                    if budget_exhausted {
+                        events.truncate(max_items);
+                    }
+                    (events, budget_exhausted)
                 }
-                (events, budget_exhausted)
+                None => (events, false),
+            },
+            // A retention gap means compaction pruned events this cursor has
+            // not reduced. Replaying through the gap would corrupt the
+            // projection, so the tick reports a fatal diagnostic without
+            // moving the cursor; the operator rebuilds from a genesis fact.
+            Err(StorageError::RetentionGap {
+                after_seq: gap_cursor,
+                retained_from,
+            }) => {
+                return Ok(GraphCatchUpReport {
+                    actor_id: GRAPH_ACTOR_ID.to_string(),
+                    input_event_seq: after_seq,
+                    output_event_seq: after_seq,
+                    events_attempted: 0,
+                    traversal_events_applied: 0,
+                    derived_events_appended: 0,
+                    retryable_errors: Vec::new(),
+                    fatal_errors: vec![GraphWorkerIssue {
+                        item_id: Some(format!("event_spine_seq::{gap_cursor}")),
+                        code: "retention_gap".to_string(),
+                        message: format!(
+                            "traversal cursor {gap_cursor} predates retained history starting \
+                             at {retained_from}; rebuild the projection from a genesis fact"
+                        ),
+                    }],
+                    budget_exhausted: false,
+                });
             }
-            None => (self.spine.read_all_events_after(after_seq)?, false),
+            Err(error) => return Err(error),
         };
         let events_attempted = events.len();
         let reducer = TraversalReducer::replay_events(self.traversal.as_ref(), after_seq, events)?;

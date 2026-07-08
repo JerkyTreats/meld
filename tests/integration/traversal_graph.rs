@@ -738,6 +738,48 @@ fn graph_runtime_repeated_catch_up_is_idempotent() {
     assert_eq!(traversal.last_reduced_seq().unwrap(), 2);
 }
 
+// A retention gap below the traversal cursor must surface as a fatal
+// diagnostic without moving the cursor: replaying through pruned history
+// would corrupt the projection.
+#[test]
+fn graph_catch_up_reports_retention_gap_without_moving_cursor() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(temp_dir.path().join("spine")).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
+    let runtime = GraphRuntime::new(db).unwrap();
+    let node_id = [40u8; 32];
+    let frame_id = [41u8; 32];
+
+    append(
+        &progress,
+        head_selected_envelope("session_a", node_id, "analysis", frame_id, None),
+        1,
+    );
+    progress.store().set_retained_lower_boundary(3).unwrap();
+
+    let report = runtime
+        .catch_up_bounded(GraphCatchUpBudget { max_items: 8 })
+        .unwrap();
+    assert_eq!(report.fatal_errors.len(), 1);
+    assert_eq!(report.fatal_errors[0].code, "retention_gap");
+    assert_eq!(report.events_attempted, 0);
+    assert_eq!(report.input_event_seq, 0);
+    assert_eq!(report.output_event_seq, 0);
+    assert!(!report.budget_exhausted);
+    assert_eq!(runtime.traversal_store().last_reduced_seq().unwrap(), 0);
+
+    // The unbounded CLI path must propagate the gap as its typed error, not
+    // report zero progress.
+    assert!(matches!(
+        runtime.catch_up(),
+        Err(meld::events::error::StorageError::RetentionGap {
+            after_seq: 0,
+            retained_from: 3,
+        })
+    ));
+    assert_eq!(runtime.traversal_store().last_reduced_seq().unwrap(), 0);
+}
+
 #[test]
 fn graph_runtime_bounded_report_resumes_without_skipping_source_events() {
     let temp_dir = tempfile::TempDir::new().unwrap();
