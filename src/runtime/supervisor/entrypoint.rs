@@ -26,7 +26,7 @@ const DEFAULT_RESTART_BACKOFF_MS: u64 = 0;
 const INITIAL_EVENT_SEQUENCE: u64 = 0;
 const NO_RESTART_ATTEMPTS: u64 = 0;
 const NO_RUNTIME_ERRORS: u64 = 0;
-const LIFECYCLE_EVENT_SEQUENCE_WIDTH: usize = 6;
+const LIFECYCLE_EVENT_SEQUENCE_WIDTH: usize = 20;
 
 /// Error returned by the root supervisor lifecycle entrypoint.
 #[derive(Debug, Error)]
