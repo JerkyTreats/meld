@@ -65,11 +65,6 @@ impl PromptCache {
             ))
         })?;
         let len = metadata.len();
-        if let Some(cached) = self.cache.get(path) {
-            if cached.modified == mtime && cached.len == len {
-                return Ok(cached.content.clone());
-            }
-        }
         let content = std::fs::read_to_string(path).map_err(|e| {
             ApiError::ConfigError(format!(
                 "Failed to read prompt file {}: {}",
@@ -82,6 +77,11 @@ impl PromptCache {
                 "Prompt file {} is empty",
                 path.display()
             )));
+        }
+        if let Some(cached) = self.cache.get(path) {
+            if cached.modified == mtime && cached.len == len && cached.content == content {
+                return Ok(cached.content.clone());
+            }
         }
         self.cache.insert(
             path.to_path_buf(),
@@ -98,5 +98,32 @@ impl PromptCache {
 impl Default for PromptCache {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CachedPrompt, PromptCache};
+    use tempfile::TempDir;
+
+    #[test]
+    fn load_prompt_reloads_when_metadata_matches_stale_cache_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let prompt_file = temp_dir.path().join("prompt.md");
+        std::fs::write(&prompt_file, "prompt v2").unwrap();
+        let metadata = std::fs::metadata(&prompt_file).unwrap();
+        let mut cache = PromptCache::new();
+        cache.cache.insert(
+            prompt_file.clone(),
+            CachedPrompt {
+                content: "prompt v1".to_string(),
+                modified: metadata.modified().unwrap(),
+                len: metadata.len(),
+            },
+        );
+
+        let content = cache.load_prompt(&prompt_file).unwrap();
+
+        assert_eq!(content, "prompt v2");
     }
 }
