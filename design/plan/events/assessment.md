@@ -3,13 +3,13 @@
 Status: ready
 Depends on: none
 Design source: `design/cognitive_architecture/events/README.md`, `design/cognitive_architecture/events/multi_domain_spine.md`, `design/cognitive_architecture/events/CRATE.md`
-Evidence date: 2026-05-26
+Evidence date: 2026-07-08
 
 ## Verdict Summary
 
-Events are ready for the cognitive architecture plan.
+Events are ready for the cognitive architecture plan and hardened by the completed [Event Spine Overhaul](event_spine_overhaul_program.md).
 
-The ready slice covers durable append, replay, sequence, domain object references, event relations, and event ownership boundaries.
+The ready slice covers atomically sequenced durable and best-effort append, seek-based replay whose cost is independent of history size, single-writer group-commit ingress, the commit watermark and barrier, the subscription surface with consumer-owned cursors, the retention boundary contract with genesis facts, domain object references, event relations, and event ownership boundaries. Contract suites prove ordering under concurrent producers, crash durability of acked events across kill cycles, idempotency, and replay determinism; criterion baselines are recorded in the overhaul PLAN.
 
 ## Conceptual Correctness
 
@@ -49,8 +49,15 @@ Events support the runtime flywheel once sensory and execution define semantic f
 - `crates/meld-events/src/events.rs`
 - `crates/meld-events/src/events/`
 - `crates/meld-events/tests/event_store_contracts.rs`
+- `crates/meld-events/tests/spine_concurrency.rs`
+- `crates/meld-events/tests/spine_determinism.rs`
+- `crates/meld-events/tests/spine_recovery.rs`
+- `crates/meld-events/benches/spine.rs`
+- `crates/meld-events/benches/spine_flywheel.rs`
 - `src/events.rs`
 - `tests/integration/event_spine.rs`
+- [Event Spine Overhaul PLAN](event_spine_overhaul_program.md)
+- [Spine Compaction Design](spine_compaction_design.md)
 - `design/completed/events/README.md`
 - `design/completed/events/PLAN.md`
 - `design/completed/events/event_domain_extraction_spec.md`
@@ -60,6 +67,7 @@ Events support the runtime flywheel once sensory and execution define semantic f
 - Runtime flywheel event names must be selected for observation, action, outcome, and belief calibration.
 - Raw sensory streams remain outside events until promoted into compact semantic facts.
 - Domain event vocabularies remain source-domain owned.
+- Writer drop counters and the watermark are exposed on the runtime and append port; the supervisor heartbeat surface belongs to the runtime wiring workstream.
 
 ## Open Questions
 

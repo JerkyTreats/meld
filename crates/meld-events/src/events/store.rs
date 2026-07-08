@@ -274,7 +274,7 @@ impl EventStore {
             .map_err(to_transaction)
     }
 
-    /// Reads all events for a session from both current and legacy indexes.
+    /// Reads all events for a session in sequence order.
     pub fn read_events(&self, session_id: &str) -> Result<Vec<EventRecord>, StorageError> {
         self.read_events_after(session_id, 0)
     }

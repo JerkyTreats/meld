@@ -40,7 +40,7 @@ It consumes event history for summaries, metrics, operator feedback, and compati
 
 The event contract requires:
 
-- one runtime-wide sequence
+- one runtime-wide sequence assigned atomically with the append
 - append-only canonical history
 - stable `record_id` support for idempotent derived facts
 - domain and stream identity
@@ -50,7 +50,16 @@ The event contract requires:
 - optional content hash
 - graph object refs
 - graph relation edges
-- legacy read compatibility
+- one-time migration of legacy stored rows into the canonical ledger
+
+## Durability And Delivery Contract
+
+- Two producer classes: durable emits ack after the flush that made them durable; best-effort emits enqueue without blocking, and a full queue drops them with counted diagnostics, never silently.
+- One ordered writer owns producer appends; concurrent producers share group commits.
+- A commit watermark exposes the highest durably committed sequence; consumers wake on it instead of polling, and a barrier proves everything enqueued earlier has reached the store.
+- Replay cost is proportional to events returned, never to total history.
+- Consumer cursors live in consumer stores; the ledger never persists a consumer position.
+- A retained lower boundary bounds replay: cursors below it receive a typed retention gap rather than silently skipped history, and genesis facts record rebuilt-from-snapshot bases so replay from zero is never required.
 
 ## Inclusion Rule
 

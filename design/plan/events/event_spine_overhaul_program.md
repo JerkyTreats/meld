@@ -1,7 +1,7 @@
 # Event Spine Overhaul PLAN
 
 Date: 2026-07-08
-Status: active
+Status: complete
 Scope: make meld-events durable, fast, observable, and contract-stable without pre-extending past known requirements
 Workflow: complex change workflow active per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
 
@@ -160,18 +160,26 @@ Tasks:
 
 Exit criteria: gap contract tested; consumers handle it; compaction doc exists with a named threshold.
 
-### Phase 6: engine gate and close
+### Phase 6: engine gate and close — complete 2026-07-08
 
 Goal: decide the storage engine with data and close the program.
 
 Tasks:
 
-- [ ] rerun the full bench suite; compare fixed sled against one candidate only if sled numbers or maintenance risk justify the spike; record the decision
-- [ ] unify the CLI and product database topology or document the divergence as intentional with behavioral differences named
-- [ ] update `CRATE.md`, events README, and `assessment.md` to post-overhaul reality
-- [ ] mark this PLAN complete with gate evidence links
+- [x] rerun the full bench suite; compare fixed sled against one candidate only if sled numbers or maintenance risk justify the spike; record the decision
+- [x] document the CLI and product database topology divergence as intentional with behavioral differences named
+- [x] update `CRATE.md`, events README, and `assessment.md` to post-overhaul reality
+- [x] mark this PLAN complete with gate evidence links
 
 Exit criteria: final PLAN state shows gate pass status for all phases.
+
+### Decision 5: storage engine stays sled, re-evaluated at the compaction trigger
+
+The data does not justify a candidate spike. Post-overhaul sled delivers replay at tip in under a microsecond regardless of history size, twenty thousand durable events per second for a single producer on NVMe with group commit scaling past thirty-five thousand aggregate across eight, and proven crash recovery across hundreds of kill cycles. At cognition-rate volumes the engine is nowhere near the bottleneck. The genuine sled risk is maintenance status and space reclamation, and both matter exactly when compaction activates; the [Spine Compaction Design](spine_compaction_design.md) trigger is therefore also the engine re-evaluation gate. The `EventStore` public API remains the seam a replacement would implement.
+
+### Decision 6: the CLI and product database topologies stay divergent, on purpose
+
+The CLI opens one database for the spine, node store, beliefs, and traversal because a short-lived single process gains simplicity and shared flushes from one handle, and sled's directory lock already excludes concurrent processes. The product runtime splits the canonical ledger into its own database away from projections so projection rebuilds and world-model experiments can never endanger canonical history, and so the ledger can move to another engine independently. The behavioral difference to know: in the CLI topology the graph reducer's derived appends share the spine database and flush together; in the product topology the ledger flushes independently of projection stores, which is why consumer cursors advance only after consumer-side durability.
 
 ## Verification Strategy And Gates
 
@@ -283,6 +291,16 @@ Gate evidence, in ladder order: formatter clean; clippy zero warnings; boundary 
 What changed: the retained lower boundary lives in spine meta, defaults to one, and only rises; `check_retention` guards every replay path including the subscription surface; `RetentionGap` is typed in meld-events and mirrored in the root error contract; `genesis_domain` records snapshot bases idempotently; the graph reducer surfaces gaps fatally without cursor movement; the compaction design doc names its activation trigger.
 
 Review dispositions: the reviewer confirmed every gap edge case and every guarded path, then found the unbounded `catch_up` swallowing the fatal report into a zero-progress success — fixed in-phase so CLI callers receive the typed error, with the test extended to pin it. Design doc hardening from review: reader quiescence before boundary raises so a concurrent prune cannot produce a silently gapped batch, raise-and-flush ordering, the session-consumer re-anchoring story, and the genesis determinism plus reserved-suffix sentences. Accepted as nits: the boundary setter is get-then-insert, acceptable while its only callers are tests and a future single supervised compactor. Noted: one pre-existing flake in `current_snapshot_matches_workspace_root_hash`, unrelated to retention, tracked for the closeout phase.
+
+### Phase 6 and program close — 2026-07-08
+
+Gate evidence: formatter clean; clippy zero warnings; boundary script passed; full workspace green; docs style scan clean; closing bench run confirms the recorded picture — replay at tip 0.61 µs at 100k history against 0.47 µs recorded, idle catch-up 0.76 µs against 0.56 µs, flywheel append-to-projection latency 60 µs, flywheel throughput 36.6 ms per 2000 events, eight durable producers at 13.5 ms per 1000, disk at 1153 bytes per event; the sub-microsecond read deltas are run-to-run variance on the development machine and all orders-of-magnitude conclusions stand unchanged.
+
+Program outcome against the overview commitments: zero sequence collisions or lost events under storm, proven by un-ignored contract tests; kill-recovery proves acked durable events always survive; replay is deterministic, gap-typed below retention, and cost-independent of history size — roughly two hundred thousand times faster at tip on a 100k history; group commit reverses the old scaling direction, with eight durable producers sustaining about 1.8 times the single-producer fsync ceiling in aggregate while each still receives a per-event durable ack; drop counters, the watermark, and per-tick replay stats are exposed; envelope and port contracts unchanged for producers except the recorded breaking removals; consumer cursors remain consumer-owned; the harness stands as the regression sentinel with criterion baselines recorded here.
+
+Handoffs and known items: the runtime wiring workstream owns the `event.append` supervisor diagnostic surface including any writer queue depth accessor it needs, consumer registration for compaction, and the eleven inert runtime handles; the compaction trigger doubles as the sled re-evaluation gate; one pre-existing flake in `current_snapshot_matches_workspace_root_hash` predates this program, reproduces only under full parallel workspace runs, touches workspace scan hashing rather than the spine, and is left recorded here for the workspace domain.
+
+The complex change workflow deactivates with this closeout: the scoped work is complete.
 
 ### Phase 2 — complete 2026-07-08
 

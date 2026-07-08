@@ -20,11 +20,15 @@ The live implementation is in:
 - canonical `EventEnvelope` and `EventRecord`
 - `DomainObjectRef`
 - `EventRelation`
-- runtime wide sequencing
-- durable append
+- runtime wide sequencing, atomic with the append
+- durable and best-effort append classes
 - idempotent append through `record_id`
-- replay after sequence
-- event bus ingestion
+- seek-based replay after sequence
+- single-writer ingress with group commit
+- commit watermark and barrier primitives
+- consumer subscription surface with consumer-owned cursors
+- retention boundary contract and genesis facts
+- one-time legacy store migrations at open
 - event runtime helpers
 - stored envelope compatibility aliases
 
