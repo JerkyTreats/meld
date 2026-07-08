@@ -674,15 +674,14 @@ mod tests {
             ]
         }
 
-        /// Confidences restricted to three decimal digits: these parse back
-        /// to the identical `f64`. Full-precision floats do not round-trip
-        /// byte-stably because `serde_json` is built without its
-        /// `float_roundtrip` feature and may lose the last ULP when parsing
-        /// 16-plus significant digits; digests must therefore always be
-        /// computed from the originally serialized bundle bytes, never from
-        /// a decode-and-re-encode cycle.
+        /// Full-precision confidences in `[0, 1]`. Byte-stable decode and
+        /// re-encode of arbitrary `f64` values requires the workspace-wide
+        /// `serde_json` `float_roundtrip` feature; this strategy exercises
+        /// that guarantee, so a regression to the imprecise parser fails
+        /// here first. Digests should still be computed from originally
+        /// serialized bundle bytes as defense in depth.
         fn arb_confidence() -> impl Strategy<Value = f64> {
-            (0u32..=1000).prop_map(|thousandths| f64::from(thousandths) / 1000.0)
+            0.0f64..=1.0
         }
 
         fn arb_assertion() -> impl Strategy<Value = BeliefContextAssertion> {
