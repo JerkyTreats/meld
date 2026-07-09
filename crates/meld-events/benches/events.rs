@@ -323,12 +323,67 @@ fn bytes_per_event(c: &mut Criterion) {
     group.finish();
 }
 
+/// Observability reads must not regress ledger performance: the health
+/// query is the status command's whole cost, and the page wake is the tail
+/// follow loop's latency floor.
+fn observability_reads(c: &mut Criterion, fixtures: &[HistoryFixture]) {
+    use meld_events::events::observability::{
+        EventObservabilityPort, EventPageRequest, LedgerObservability,
+    };
+    use meld_events::{EventCursorRegistry, EventWriter};
+
+    let mut group = c.benchmark_group("observability_reads");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_millis(500));
+    group.measurement_time(Duration::from_secs(2));
+
+    for fixture in fixtures {
+        let registry = EventCursorRegistry::open(fixture.store.db()).unwrap();
+        registry
+            .report("bench.consumer", fixture.size as u64)
+            .unwrap();
+        let writer = EventWriter::spawn(Arc::new(fixture.store.clone()));
+        let port = LedgerObservability::new(
+            Arc::new(fixture.store.clone()),
+            writer.watermark(),
+            registry,
+            writer.dropped_handle(),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("health_query", fixture.size),
+            &fixture.size,
+            |b, _| {
+                b.iter(|| black_box(port.health().unwrap()));
+            },
+        );
+        let tip = fixture.size as u64;
+        group.bench_with_input(
+            BenchmarkId::new("page_at_tip", fixture.size),
+            &tip,
+            |b, &tip| {
+                b.iter(|| {
+                    black_box(
+                        port.next_page(EventPageRequest {
+                            after_seq: tip,
+                            limit: 64,
+                            timeout_ms: 0,
+                        })
+                        .unwrap(),
+                    )
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 fn event_benches(c: &mut Criterion) {
     append_throughput(c);
     let fixtures = build_history_fixtures();
     replay_vs_history(c, &fixtures);
     session_reads(c);
     idle_catch_up(c, &fixtures);
+    observability_reads(c, &fixtures);
     bytes_per_event(c);
 }
 
