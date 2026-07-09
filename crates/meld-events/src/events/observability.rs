@@ -20,6 +20,7 @@ mod session;
 /// Causal trace computation.
 mod trace;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -288,14 +289,17 @@ pub struct LedgerObservability {
     watermark: Arc<CommitWatermark>,
     registry: EventCursorRegistry,
     subscription: EventSubscription,
+    dropped: Arc<AtomicU64>,
 }
 
 impl LedgerObservability {
-    /// Binds the backing to an opened store, its watermark, and the registry.
+    /// Binds the backing to an opened store, its watermark, the registry,
+    /// and the writer's shared drop counter.
     pub fn new(
         store: Arc<EventStore>,
         watermark: Arc<CommitWatermark>,
         registry: EventCursorRegistry,
+        dropped: Arc<AtomicU64>,
     ) -> Self {
         let subscription = EventSubscription::new(Arc::clone(&store), Arc::clone(&watermark));
         Self {
@@ -303,6 +307,7 @@ impl LedgerObservability {
             watermark,
             registry,
             subscription,
+            dropped,
         }
     }
 
@@ -321,6 +326,11 @@ impl LedgerObservability {
     #[allow(dead_code)]
     pub(crate) fn consumer_snapshot(&self) -> Result<Vec<ConsumerCursor>, StorageError> {
         self.registry.snapshot()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn dropped_events(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
     }
 }
 

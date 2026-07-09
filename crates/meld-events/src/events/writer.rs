@@ -212,6 +212,11 @@ impl EventWriter {
     pub fn dropped_events(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
     }
+
+    /// Returns the shared drop counter for observability backings.
+    pub fn dropped_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.dropped)
+    }
 }
 
 impl Drop for EventWriter {

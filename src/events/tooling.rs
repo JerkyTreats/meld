@@ -1,13 +1,23 @@
 //! Event ledger observability CLI adapter.
 //!
 //! Parses the `meld event` command family, binds the in-process observability
-//! port over the ledger database, and formats reports as text or JSON. The
-//! adapter routes and renders only; every computation lives behind
-//! [`meld_events::EventObservabilityPort`].
+//! port over the ledger database, and delegates each subcommand to its unit
+//! module. The adapter routes and renders only; every computation lives
+//! behind [`meld_events::EventObservabilityPort`].
+
+/// Flow subcommand rendering.
+mod flow;
+/// Session subcommand rendering.
+mod session;
+/// Status subcommand rendering.
+mod status;
+/// Tail subcommand rendering and follow loop.
+mod tail;
+/// Trace subcommand rendering and subject parsing.
+mod trace;
 
 use std::sync::Arc;
 
-use meld_events::events::observability::EventObservabilityPort;
 use meld_events::{EventCursorRegistry, LedgerObservability};
 
 use crate::cli::EventCommands;
@@ -23,24 +33,33 @@ pub fn handle_cli_command(
     match command {
         EventCommands::Status { format } => {
             validate_format(format)?;
-            let report = port.health().map_err(|err| surface_error("status", err))?;
-            render(format, &report, render_status_text)
+            status::run(&port, format)
         }
-        EventCommands::Tail { format, .. } => {
+        EventCommands::Tail {
+            format,
+            after,
+            limit,
+            follow,
+        } => {
             validate_format(format)?;
-            Err(not_implemented("tail"))
+            tail::run(&port, format, *after, *limit, *follow)
         }
-        EventCommands::Trace { format, .. } => {
+        EventCommands::Trace {
+            format,
+            object,
+            stream,
+            seq,
+        } => {
             validate_format(format)?;
-            Err(not_implemented("trace"))
+            trace::run(&port, format, object.as_deref(), stream.as_deref(), *seq)
         }
-        EventCommands::Session { format, .. } => {
+        EventCommands::Session { format, session_id } => {
             validate_format(format)?;
-            Err(not_implemented("session"))
+            session::run(&port, format, session_id)
         }
-        EventCommands::Flow { format, .. } => {
+        EventCommands::Flow { format, window } => {
             validate_format(format)?;
-            Err(not_implemented("flow"))
+            flow::run(&port, format, *window)
         }
     }
 }
@@ -53,10 +72,11 @@ fn bind_port(progress: &Arc<ProgressRuntime>) -> Result<LedgerObservability, Api
         Arc::new(store.clone()),
         progress.watermark(),
         registry,
+        progress.dropped_handle(),
     ))
 }
 
-fn render<T: serde::Serialize>(
+pub(crate) fn render<T: serde::Serialize>(
     format: &str,
     report: &T,
     text: impl Fn(&T) -> String,
@@ -68,11 +88,6 @@ fn render<T: serde::Serialize>(
     }
 }
 
-fn render_status_text(report: &meld_events::EventHealthReport) -> String {
-    // Placeholder rendering; the health unit owns the real formatter.
-    format!("{report:#?}")
-}
-
 fn validate_format(format: &str) -> Result<(), ApiError> {
     match format {
         "text" | "json" => Ok(()),
@@ -82,7 +97,7 @@ fn validate_format(format: &str) -> Result<(), ApiError> {
     }
 }
 
-fn not_implemented(surface: &str) -> ApiError {
+pub(crate) fn not_implemented(surface: &str) -> ApiError {
     ApiError::ConfigError(format!(
         "meld event {surface} is not implemented yet; it lands with the observability surface units"
     ))
@@ -90,7 +105,7 @@ fn not_implemented(surface: &str) -> ApiError {
 
 // Unsupported surfaces read as friendly stubs, not disk failures; the
 // mapping retires with the last stub.
-fn surface_error(surface: &str, err: meld_events::error::StorageError) -> ApiError {
+pub(crate) fn surface_error(surface: &str, err: meld_events::error::StorageError) -> ApiError {
     if let meld_events::error::StorageError::IoError(io) = &err {
         if io.kind() == std::io::ErrorKind::Unsupported {
             return not_implemented(surface);

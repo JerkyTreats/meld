@@ -327,6 +327,20 @@ impl EventStore {
         Ok(out)
     }
 
+    /// Returns the highest persisted ledger sequence, zero when empty.
+    ///
+    /// Derived from the zero-padded key so one undecodable record cannot
+    /// fail the read.
+    pub fn tip_seq(&self) -> Result<u64, StorageError> {
+        let Some((key, _)) = self.spine_events.last().map_err(to_storage_io)? else {
+            return Ok(0);
+        };
+        Ok(std::str::from_utf8(&key)
+            .ok()
+            .and_then(|key| key.parse::<u64>().ok())
+            .unwrap_or(0))
+    }
+
     /// Returns the first sequence still retained by the ledger.
     ///
     /// One means full history. A future compactor raises the boundary when

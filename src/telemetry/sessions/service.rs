@@ -156,6 +156,11 @@ impl ProgressRuntime {
         self.events.watermark()
     }
 
+    /// Returns the writer's shared drop counter for observability consumers.
+    pub fn dropped_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+        self.events.dropped_handle()
+    }
+
     pub fn store(&self) -> &EventStore {
         self.events.store()
     }

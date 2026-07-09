@@ -219,6 +219,11 @@ impl EventRuntime {
         self.writer.dropped_events()
     }
 
+    /// Returns the shared drop counter for observability backings.
+    pub fn dropped_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+        self.writer.dropped_handle()
+    }
+
     /// Returns the backing event store for queries and tests.
     pub fn store(&self) -> &EventStore {
         &self.store

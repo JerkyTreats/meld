@@ -308,7 +308,12 @@ fn page_stream_blocks_and_pages_through_the_port() {
     let store = meld_events::events::store::EventStore::shared(db.clone()).unwrap();
     let registry = EventCursorRegistry::open(&db).unwrap();
     let writer = EventWriter::spawn(Arc::clone(&store));
-    let port = LedgerObservability::new(Arc::clone(&store), writer.watermark(), registry);
+    let port = LedgerObservability::new(
+        Arc::clone(&store),
+        writer.watermark(),
+        registry,
+        writer.dropped_handle(),
+    );
 
     for i in 0..3 {
         writer
