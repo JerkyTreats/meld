@@ -129,6 +129,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: RuntimeCommands,
     },
+    /// Event ledger observability
+    Event {
+        #[command(subcommand)]
+        command: EventCommands,
+    },
     /// Branch discovery and migration status
     Branches {
         #[command(subcommand)]
@@ -268,6 +273,71 @@ pub enum DangerCommands {
         /// Confirm destructive deletion of runtime state
         #[arg(long)]
         yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum EventCommands {
+    /// Show ledger health: tip, watermark, retention, drops, consumer lag
+    Status {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Follow ledger records as they commit
+    Tail {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Cursor to start after; defaults to the current tip
+        #[arg(long)]
+        after: Option<u64>,
+
+        /// Maximum records per page
+        #[arg(long, default_value_t = 64)]
+        limit: usize,
+
+        /// Keep following until interrupted
+        #[arg(long)]
+        follow: bool,
+    },
+    /// Trace the causal chain for an object, stream, or record
+    Trace {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Object subject as domain::kind::id
+        #[arg(long, conflicts_with_all = ["stream", "seq"])]
+        object: Option<String>,
+
+        /// Stream subject as domain::stream
+        #[arg(long, conflicts_with_all = ["object", "seq"])]
+        stream: Option<String>,
+
+        /// Record subject by ledger sequence
+        #[arg(long, conflicts_with_all = ["object", "stream"])]
+        seq: Option<u64>,
+    },
+    /// Reconstruct one session's timeline
+    Session {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Session identifier
+        session_id: String,
+    },
+    /// Show event flow over a trailing window
+    Flow {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Trailing window size in events
+        #[arg(long, default_value_t = 512)]
+        window: usize,
     },
 }
 

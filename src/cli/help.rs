@@ -2,7 +2,8 @@
 
 use crate::cli::parse::{
     AgentCommands, AgentPromptCommands, BranchesCommands, Commands, ContextCommands,
-    DangerCommands, ProviderCommands, RuntimeCommands, WorkflowCommands, WorkspaceCommands,
+    DangerCommands, EventCommands, ProviderCommands, RuntimeCommands, WorkflowCommands,
+    WorkspaceCommands,
 };
 use crate::telemetry::summary::TypedSummaryEvent;
 
@@ -20,8 +21,19 @@ pub fn command_name(command: &Commands) -> String {
         Commands::Context { command } => format!("context.{}", context_command_name(command)),
         Commands::Workflow { command } => format!("workflow.{}", workflow_command_name(command)),
         Commands::Runtime { command } => format!("runtime.{}", runtime_command_name(command)),
+        Commands::Event { command } => format!("event.{}", event_command_name(command)),
         Commands::Branches { command } => format!("branches.{}", branches_command_name(command)),
         Commands::Danger { command } => format!("danger.{}", danger_command_name(command)),
+    }
+}
+
+pub fn event_command_name(command: &EventCommands) -> &'static str {
+    match command {
+        EventCommands::Status { .. } => "status",
+        EventCommands::Tail { .. } => "tail",
+        EventCommands::Trace { .. } => "trace",
+        EventCommands::Session { .. } => "session",
+        EventCommands::Flow { .. } => "flow",
     }
 }
 

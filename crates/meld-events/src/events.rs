@@ -44,6 +44,10 @@ use serde_json::Value;
 pub mod compat;
 /// Domain object and relation records carried by event envelopes.
 pub mod contracts;
+/// Observability port, report contracts, and in-process backing.
+pub mod observability;
+/// Named consumer cursor registry for lag observability.
+pub mod registry;
 /// Event emission facade with durable and best-effort classes.
 pub mod runtime;
 /// Append-only sled-backed event store.
@@ -54,6 +58,13 @@ pub mod subscription;
 pub mod writer;
 
 pub use contracts::{DomainObjectRef, EventRelation};
+pub use observability::{
+    ConsumerLagReport, DomainAppendRate, DomainFlow, EventFlowReport, EventHealthReport,
+    EventObservabilityPort, EventPage, EventPageRequest, EventTraceReport, FlowWindow,
+    LedgerObservability, SessionStep, SessionTimelineReport, SilentDomain, TraceHop, TraceLink,
+    TraceSubject, TypeFlow,
+};
+pub use registry::{ConsumerCursor, EventCursorRegistry};
 pub use runtime::EventRuntime;
 pub use subscription::{EventCursor, EventSubscription};
 pub use writer::{CommitWatermark, EventWriter};

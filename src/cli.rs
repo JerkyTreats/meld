@@ -14,8 +14,8 @@ pub use help::{command_name, typed_summary_event};
 pub use output::map_error;
 pub use parse::{
     parse_provider_additional_json_file, AgentCommands, AgentPromptCommands, BranchesCommands, Cli,
-    Commands, ContextCommands, DangerCommands, ProviderCommands, RuntimeCommands, WorkflowCommands,
-    WorkspaceCommands,
+    Commands, ContextCommands, DangerCommands, EventCommands, ProviderCommands, RuntimeCommands,
+    WorkflowCommands, WorkspaceCommands,
 };
 pub use presentation::{
     format_agent_list_result_json, format_agent_list_result_text, format_agent_show_result_json,

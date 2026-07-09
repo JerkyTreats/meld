@@ -264,6 +264,9 @@ impl RunContext {
                 self.config_path.as_deref(),
                 command,
             ),
+            Commands::Event { command } => {
+                crate::events::tooling::handle_cli_command(self.assembly.progress(), command)
+            }
             Commands::Branches { command } => crate::branches::tooling::handle_cli_command(command),
             Commands::Danger { .. } => Err(ApiError::ConfigError(
                 "Danger commands must run from the CLI entry point".to_string(),

@@ -121,6 +121,12 @@ Contracts foundation lands first and freezes the seams. The four surface units b
 
 ## Phase Completion Notes
 
+### Phase 1 — complete 2026-07-08
+
+Gate evidence: formatter clean; clippy zero warnings; boundary script passed; full workspace green; nine wire-shape contract tests pin every report DTO including all trace link variants; the CLI skeleton smoke-tested live with format validation preceding stub failures.
+
+Review dispositions, fixed in-phase: registry reports are atomic through a merge so concurrent reporters can never persist a regression; the flattened export set is complete so fan-out units never touch the shared module file; every trace link variant's wire shape is pinned; the stub error for wired surfaces renders as a friendly not-implemented message rather than a storage failure; report contracts use `session_id` uniformly. Accepted with reasons: consumers that have never reported are absent from snapshots, registration-on-first-report is the convention and the docs say so; zero-limit pages are rejected rather than blocked on; `SilentDomain` carries `last_recorded_at` rather than a computed age, a presentation-free deviation from the design sketch recorded here.
+
 ### Phase 0
 
 - Design artifact and rename sweep committed as the workstream's opening checkpoints; rename verified behavior-neutral by fresh review across all changed string literals.

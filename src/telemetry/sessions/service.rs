@@ -151,6 +151,11 @@ impl ProgressRuntime {
         self.events.barrier().map_err(ApiError::from)
     }
 
+    /// Returns the writer's commit watermark for observability consumers.
+    pub fn watermark(&self) -> std::sync::Arc<crate::events::CommitWatermark> {
+        self.events.watermark()
+    }
+
     pub fn store(&self) -> &EventStore {
         self.events.store()
     }
