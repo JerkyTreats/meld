@@ -116,10 +116,18 @@ Contracts foundation lands first and freezes the seams. The four surface units b
 ## Exceptions
 
 - The `meld event` command family is workspace-scoped read-only diagnostics; no command takes `--path` targeting, called out per [CLI Targeting Policy](../../../governance/cli_targeting_policy.md).
-- `meld event tail` follow mode runs until interrupted; it is the one intentionally long-running command in the family.
+- `meld event tail` follow mode runs until interrupted or its output pipe closes; it is the one intentionally long-running command in the family. An interrupted follow leaves its command session without a session-ended record in the ledger, a recorded consequence of interruption-based exit; a closed pipe ends the command cleanly and completes the session.
 - Observability reads may open the product database only when no runtime process holds it; against a running daemon, `meld event status` reads published snapshots once Phase 4 and the wiring waves land.
 
 ## Phase Completion Notes
+
+### Phase 2 — complete 2026-07-08
+
+Gate evidence: formatter clean; clippy zero warnings; boundary script passed; full workspace green with twenty-six new surface tests across three meld-events suites plus twelve tail unit tests over a scripted port fake; all five commands live-verified against a scratch workspace including JSON rendering and subject-validation errors.
+
+Orchestration outcome: four builder agents ran concurrently with disjoint file ownership and zero collisions; every agent reported contract friction instead of working around it, and all friction resolved at integration — the dead stub helpers retired on schedule, and the tail unit's tip-accessor friction dissolved once integration routed its defaults through the health surface.
+
+Review dispositions, fixed at integration: the session timeline and both tail default cursors now start at the first readable cursor so no default path can trip a retention gap once a compactor raises the boundary, matching the degrade-not-fail rule the other surfaces implemented; one-shot tail defaults to the most recent records, matching its help text and its name; follow mode ends cleanly when its output pipe closes, which also completes the command session; trace text lines carry recorded time and domain so hops correlate against tail captures by eye. Accepted with reasons: clock-skew renders as a zero span in status and an absent gap in flow and session, both commented, unified rendering deferred until an operator complaint proves the inconsistency matters; the trace scan bound truncates from the retained boundary forward, so very old chains win over very new ones past one hundred thousand events — recorded for the end-to-end phase to weigh, with the bound documented on its constant; domains silent beyond the census window are invisible by documented bounded-cost design; an interrupted follow leaves its session without an ended record, recorded in the exception list.
 
 ### Phase 1 — complete 2026-07-08
 

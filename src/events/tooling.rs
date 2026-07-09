@@ -97,19 +97,6 @@ fn validate_format(format: &str) -> Result<(), ApiError> {
     }
 }
 
-pub(crate) fn not_implemented(surface: &str) -> ApiError {
-    ApiError::ConfigError(format!(
-        "meld event {surface} is not implemented yet; it lands with the observability surface units"
-    ))
-}
-
-// Unsupported surfaces read as friendly stubs, not disk failures; the
-// mapping retires with the last stub.
-pub(crate) fn surface_error(surface: &str, err: meld_events::error::StorageError) -> ApiError {
-    if let meld_events::error::StorageError::IoError(io) = &err {
-        if io.kind() == std::io::ErrorKind::Unsupported {
-            return not_implemented(surface);
-        }
-    }
+pub(crate) fn surface_error(_surface: &str, err: meld_events::error::StorageError) -> ApiError {
     ApiError::StorageError(crate::error::StorageError::from(err))
 }

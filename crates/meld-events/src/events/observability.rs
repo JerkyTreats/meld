@@ -311,24 +311,18 @@ impl LedgerObservability {
         }
     }
 
-    // Consumed by the surface unit modules as they land in the fan-out
-    // phase; the allowances retire with the last stub.
-    #[allow(dead_code)]
     pub(crate) fn store(&self) -> &EventStore {
         &self.store
     }
 
-    #[allow(dead_code)]
     pub(crate) fn watermark(&self) -> &CommitWatermark {
         &self.watermark
     }
 
-    #[allow(dead_code)]
     pub(crate) fn consumer_snapshot(&self) -> Result<Vec<ConsumerCursor>, StorageError> {
         self.registry.snapshot()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn dropped_events(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
     }
@@ -371,11 +365,4 @@ impl EventObservabilityPort for LedgerObservability {
             next_after_seq,
         })
     }
-}
-
-pub(crate) fn surface_not_implemented(surface: &str) -> StorageError {
-    StorageError::IoError(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        format!("event observability surface {surface} is not implemented yet"),
-    ))
 }
