@@ -19,6 +19,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::error::StorageError;
+use crate::events::registry::EventCursorRegistry;
 use crate::events::store::EventStore;
 use crate::events::EventEnvelope;
 use crate::world_state::graph::reducer::TraversalReducer;
@@ -72,15 +73,20 @@ pub struct GraphRuntime {
     ledger: Arc<EventStore>,
     traversal: Arc<TraversalStore>,
     catch_up_lock: Mutex<()>,
+    // Observational mirror on the ledger database; the traversal store's
+    // last_reduced_seq stays the cursor of record.
+    cursor_registry: Option<EventCursorRegistry>,
 }
 
 impl GraphRuntime {
     /// Open the event ledger and traversal store against one shared database.
     pub fn new(db: sled::Db) -> Result<Self, StorageError> {
+        let cursor_registry = EventCursorRegistry::open(&db).ok();
         Ok(Self {
             ledger: EventStore::shared(db.clone())?,
             traversal: TraversalStore::shared(db)?,
             catch_up_lock: Mutex::new(()),
+            cursor_registry,
         })
     }
 
@@ -88,12 +94,26 @@ impl GraphRuntime {
     ///
     /// This is used when the product runtime keeps the event ledger and world
     /// model graph stores in separate physical databases while graph replay
-    /// ownership remains inside the world model domain.
+    /// ownership remains inside the world model domain. The cursor registry
+    /// lives on the ledger database so observability enumerates it there.
     pub fn from_stores(ledger: Arc<EventStore>, traversal: Arc<TraversalStore>) -> Self {
+        let cursor_registry = EventCursorRegistry::open(ledger.db()).ok();
         Self {
             ledger,
             traversal,
             catch_up_lock: Mutex::new(()),
+            cursor_registry,
+        }
+    }
+
+    /// Mirrors the durable cursor into the observability registry after it
+    /// is already persisted; failures degrade to a missing lag row, never a
+    /// failed tick.
+    fn report_cursor(&self, seq: u64) {
+        if let Some(registry) = &self.cursor_registry {
+            // Best-effort mirror: the durable cursor is already persisted,
+            // so a failed report only costs a stale lag row.
+            let _ = registry.report(GRAPH_ACTOR_ID, seq);
         }
     }
 
@@ -201,6 +221,7 @@ impl GraphRuntime {
         self.ledger.flush()?;
         self.traversal.set_last_reduced_seq(last_persisted_seq)?;
         self.traversal.flush()?;
+        self.report_cursor(last_persisted_seq);
         Ok(GraphCatchUpReport {
             actor_id: GRAPH_ACTOR_ID.to_string(),
             input_event_seq: after_seq,
