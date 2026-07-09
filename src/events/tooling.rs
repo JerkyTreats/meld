@@ -55,7 +55,7 @@ pub fn handle_cli_command(
         }
         EventCommands::Session { format, session_id } => {
             validate_format(format)?;
-            session::run(&port, format, session_id)
+            session::run(&port, progress, format, session_id)
         }
         EventCommands::Flow { format, window } => {
             validate_format(format)?;

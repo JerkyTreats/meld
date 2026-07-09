@@ -1,8 +1,8 @@
 # Event Observability PLAN
 
 Date: 2026-07-08
-Status: complete except the Phase 4 publisher call, handed to the wiring workstream
-Workflow: complex change workflow active per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
+Status: closed 2026-07-09; the Phase 4 publisher call is carried by the wiring workstream ledger
+Workflow: complex change workflow deactivated at close per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
 Design source: [Event Observability Design](event_observability_design.md)
 
 ## Overview
@@ -121,13 +121,24 @@ Contracts foundation lands first and freezes the seams. The four surface units b
 
 ## Phase Completion Notes
 
+### Final polish pass — closed 2026-07-09
+
+Four fixes landed to retire the recorded nits and close the program, with no TUI work by decision:
+
+- The trace scan window now anchors at the ledger tip minus the scan limit, clamped to the first readable cursor, so traces favor recent activity instead of the oldest hundred thousand records. The Phase 3 disposition that accepted the old direction is superseded here.
+- The restart storm threshold is now the supervisor's configured restart attempt limit passed at construction, so a storm is exactly restarts exhausting the limit; the Phase 5 nit about an unreachable storm under a lowered limit is retired. A limit of zero disables restarts entirely and correctly emits no storm fact.
+- `meld event session` with an unknown id now fails with a not-found error naming both checks — no session record and no ledger events — instead of rendering an empty timeline with a success exit. A stored session with zero ledger events still renders.
+- Watcher fired-state for consumers absent from the health report is dropped each observation, keeping the maps bounded by live registry names.
+
+Gate evidence: formatter clean; clippy zero warnings; boundary script passed; full workspace green; docs scan clean. Fresh-context review approved the diff with five minor findings: the two doc amendments in this note, a rustdoc overclaim on the zero-limit storm case now corrected, an unexercised explicit-thresholds constructor now pinned by a watcher test, and an over-assertive not-found message now naming both checks honestly. Accepted without code change: the zero-event stored-session render branch and the tip-anchored trace window lack dedicated pinning tests because constructing them needs either a session store seam or a hundred-thousand-event fixture, and the retention clamp expression appears in three read surfaces — a pre-existing duplication left for whichever workstream next touches the observability module.
+
 ### Phase 6 and program close — 2026-07-08
 
 Gate evidence: formatter clean; clippy zero warnings; boundary script passed; full workspace green at 1466 tests; the closing bench run shows every ledger number within noise of the overhaul baselines — replay at tip 0.60 microseconds and idle catch-up 0.70 microseconds at one hundred thousand events, flywheel latency 43 microseconds, eight durable producers at 12.8 milliseconds per thousand, disk at 1101 bytes per event — so the observability layer cost the ledger nothing, and the observability reads themselves hold flat at 617 microseconds for health and 1.4 microseconds for a page at tip.
 
 Program outcome against the overview commitments: the port serves all five query surfaces over the in-process backing with every wire shape pinned; `meld event status`, `tail`, `trace`, `session`, and `flow` render text and JSON and were proven against real flywheel activity by an independent verification agent; the consumer cursor registry enumerates lag and doubles as compaction's consumer registration; the Wave 0 snapshot contract carries an optional ledger summary and the heartbeat path carries the watermark and drop diagnostics today; promoted runtime facts flow once per crossing under proven inclusion-rule discipline. The orchestration held: four concurrent builders with zero collisions, fresh reviews on every checkpoint including one caught blocker per behavior-changing phase, and an independent operator-perspective verification whose follow-mode finding shipped as an honest warning.
 
-Handoffs: the runtime wiring workstream owns the Phase 4 publisher call — the supervisor accepting an injected `RuntimeStatusPublisher` and copying `RuntimeStatusLedgerSummary::from_health` into tick snapshots, per the coordination entry in its ledger — plus the `event.append` heartbeat surface it should consume rather than duplicate. Future adapter work builds on the port: a TUI hosts in-process today, and the browser dashboard waits on the daemon edge, both pure presentation loops. The compaction workstream inherits the registry as its consumer registration. Open nits recorded in phase notes: the storm threshold and restart limit coincide by default without being linked, and the trace scan bound truncates from the retained boundary forward.
+Handoffs: the runtime wiring workstream owns the Phase 4 publisher call — the supervisor accepting an injected `RuntimeStatusPublisher` and copying `RuntimeStatusLedgerSummary::from_health` into tick snapshots, per the coordination entry in its ledger — plus the `event.append` heartbeat surface it should consume rather than duplicate. Future adapter work builds on the port: a TUI hosts in-process today, and the browser dashboard waits on the daemon edge, both pure presentation loops. The compaction workstream inherits the registry as its consumer registration. Open nits recorded in phase notes — the unlinked storm threshold and the trace scan bound anchored at the retained boundary — were both resolved by the final polish pass noted above.
 
 The complex change workflow deactivates for this program with the Phase 4 publisher call explicitly carried by the wiring workstream's ledger.
 

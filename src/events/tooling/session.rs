@@ -5,15 +5,22 @@ use meld_events::LedgerObservability;
 
 use crate::error::ApiError;
 use crate::events::tooling::{render, surface_error};
+use crate::telemetry::ProgressRuntime;
 
 pub(super) fn run(
     port: &LedgerObservability,
+    progress: &ProgressRuntime,
     format: &str,
     session_id: &str,
 ) -> Result<String, ApiError> {
     let report = port
         .session(session_id)
         .map_err(|err| surface_error("session", err))?;
+    if report.total_events == 0 && progress.get_session(session_id)?.is_none() {
+        return Err(ApiError::ConfigError(format!(
+            "no session named '{session_id}' in the session store and no ledger events for it; run 'meld event tail' to see recent activity"
+        )));
+    }
     render(format, &report, render_text)
 }
 
@@ -36,4 +43,50 @@ fn render_text(report: &SessionTimelineReport) -> String {
         ));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use meld_events::EventCursorRegistry;
+
+    use super::*;
+
+    fn bind(progress: &ProgressRuntime) -> LedgerObservability {
+        let store = progress.store();
+        let registry = EventCursorRegistry::open(store.db()).unwrap();
+        LedgerObservability::new(
+            Arc::new(store.clone()),
+            progress.watermark(),
+            registry,
+            progress.dropped_handle(),
+        )
+    }
+
+    fn open_runtime() -> ProgressRuntime {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        ProgressRuntime::new(db).unwrap()
+    }
+
+    #[test]
+    fn unknown_session_id_is_an_error_not_an_empty_timeline() {
+        let progress = open_runtime();
+        let port = bind(&progress);
+        let err = run(&port, &progress, "text", "no-such-session").unwrap_err();
+        assert!(err.to_string().contains("no session named"));
+    }
+
+    #[test]
+    fn known_session_renders_its_timeline() {
+        let progress = open_runtime();
+        let session_id = progress.start_command_session("scan".to_string()).unwrap();
+        progress
+            .finish_command_session(&session_id, true, None)
+            .unwrap();
+        let port = bind(&progress);
+        let output = run(&port, &progress, "text", &session_id).unwrap();
+        assert!(output.contains("session_started"));
+        assert!(output.contains("session_ended"));
+    }
 }

@@ -15,12 +15,14 @@ use crate::events::observability::{
 };
 use crate::events::{DomainObjectRef, EventRecord};
 
-/// Upper bound on events one trace scans, from the retained boundary forward.
+/// Upper bound on events one trace scans, anchored at the ledger tip.
 ///
 /// Trace is a diagnostic command, so its cost model is one bounded ledger
 /// scan; ledgers whose retained history exceeds the bound get a truncated
-/// chain rather than an unbounded read. A reference index that avoids the
-/// scan entirely is future work.
+/// chain rather than an unbounded read. The window covers the newest
+/// records because "why did this just happen" is the question trace
+/// exists for; a reference index that avoids the scan entirely is future
+/// work.
 const TRACE_SCAN_LIMIT: usize = 100_000;
 
 /// Depth bound for the provenance walk over event data payloads.
@@ -36,12 +38,15 @@ pub(super) fn compute(
     subject: TraceSubject,
 ) -> Result<EventTraceReport, StorageError> {
     let store = backing.store();
-    // Scan from the retained boundary forward: passing `retained_from - 1`
-    // as the cursor is exactly the first readable position, so a raised
-    // boundary can never trip the store's retention-gap check.
+    // The window is the last TRACE_SCAN_LIMIT events: the cursor anchors at
+    // tip minus the bound, clamped to the first readable position so a
+    // raised retention boundary can never trip the store's gap check.
     let retained_from = store.retained_lower_boundary()?;
-    let records =
-        store.read_all_events_after_limit(retained_from.saturating_sub(1), TRACE_SCAN_LIMIT)?;
+    let after_seq = store
+        .tip_seq()?
+        .saturating_sub(TRACE_SCAN_LIMIT as u64)
+        .max(retained_from.saturating_sub(1));
+    let records = store.read_all_events_after_limit(after_seq, TRACE_SCAN_LIMIT)?;
 
     let mut links: BTreeMap<u64, TraceLink> = BTreeMap::new();
     match &subject {

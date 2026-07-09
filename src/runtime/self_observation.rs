@@ -17,17 +17,16 @@ use meld_events::{EventEnvelope, EventHealthReport};
 use meld_execution::task_network::EventAppendSink;
 use serde_json::json;
 
-/// Consumer lag that counts as fallen behind.
-const LAG_THRESHOLD: u64 = 1024;
-
-/// Restart count that counts as a storm.
-const RESTART_STORM_THRESHOLD: u64 = 3;
+/// Default consumer lag that counts as fallen behind.
+const DEFAULT_LAG_THRESHOLD: u64 = 1024;
 
 /// Session partition for runtime self-observation facts.
 const RUNTIME_SESSION: &str = "runtime_self_observation";
 
 /// Threshold watcher emitting once-per-crossing runtime facts.
 pub struct SelfObservationWatcher {
+    lag_threshold: u64,
+    storm_threshold: u64,
     lag_fired: BTreeMap<String, bool>,
     gap_fired: BTreeMap<String, bool>,
     storm_fired: BTreeMap<String, bool>,
@@ -35,16 +34,23 @@ pub struct SelfObservationWatcher {
     last_dropped: Option<u64>,
 }
 
-impl Default for SelfObservationWatcher {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl SelfObservationWatcher {
     /// Creates a watcher with every condition armed.
-    pub fn new() -> Self {
+    ///
+    /// The storm threshold is the supervisor's configured restart attempt
+    /// limit rather than an independent constant, so a storm is exactly
+    /// "restarts exhausted the limit". A limit of zero disables restarts
+    /// entirely; the floor of one keeps the watcher well formed there, but
+    /// no storm fact can fire because the count never leaves zero.
+    pub fn new(restart_attempt_limit: u64) -> Self {
+        Self::with_thresholds(DEFAULT_LAG_THRESHOLD, restart_attempt_limit.max(1))
+    }
+
+    /// Creates a watcher with explicit thresholds.
+    pub fn with_thresholds(lag_threshold: u64, storm_threshold: u64) -> Self {
         Self {
+            lag_threshold: lag_threshold.max(1),
+            storm_threshold: storm_threshold.max(1),
             lag_fired: BTreeMap::new(),
             gap_fired: BTreeMap::new(),
             storm_fired: BTreeMap::new(),
@@ -69,9 +75,22 @@ impl SelfObservationWatcher {
     ) -> usize {
         let mut emitted = 0;
 
+        // Fired state for consumers absent from this report is dropped so
+        // the maps stay bounded by live registry names; a consumer that
+        // returns still lagging counts as a new crossing.
+        let live: std::collections::BTreeSet<&str> = health
+            .consumers
+            .iter()
+            .map(|consumer| consumer.name.as_str())
+            .collect();
+        self.lag_fired
+            .retain(|name, _| live.contains(name.as_str()));
+        self.gap_fired
+            .retain(|name, _| live.contains(name.as_str()));
+
         for consumer in &health.consumers {
             let fired = self.lag_fired.entry(consumer.name.clone()).or_default();
-            if consumer.lag >= LAG_THRESHOLD && !*fired {
+            if consumer.lag >= self.lag_threshold && !*fired {
                 *fired = true;
                 emitted += emit(
                     sink,
@@ -85,10 +104,10 @@ impl SelfObservationWatcher {
                         "lag": consumer.lag,
                         "reported_seq": consumer.reported_seq,
                         "committed_watermark": health.committed_watermark,
-                        "threshold": LAG_THRESHOLD,
+                        "threshold": self.lag_threshold,
                     }),
                 );
-            } else if consumer.lag < LAG_THRESHOLD {
+            } else if consumer.lag < self.lag_threshold {
                 *fired = false;
             }
 
@@ -140,7 +159,7 @@ impl SelfObservationWatcher {
 
         for (runtime_id, restart_count) in restart_counts {
             let fired = self.storm_fired.entry(runtime_id.clone()).or_default();
-            if *restart_count >= RESTART_STORM_THRESHOLD && !*fired {
+            if *restart_count >= self.storm_threshold && !*fired {
                 *fired = true;
                 // Restart counts reset every supervisor run, so the epoch
                 // keeps genuinely distinct storms from deduping into the
@@ -152,10 +171,10 @@ impl SelfObservationWatcher {
                     json!({
                         "runtime_id": runtime_id,
                         "restart_count": restart_count,
-                        "threshold": RESTART_STORM_THRESHOLD,
+                        "threshold": self.storm_threshold,
                     }),
                 );
-            } else if *restart_count < RESTART_STORM_THRESHOLD {
+            } else if *restart_count < self.storm_threshold {
                 *fired = false;
             }
         }
@@ -226,7 +245,7 @@ mod tests {
     #[test]
     fn quiet_runtime_emits_nothing_under_storm_of_observations() {
         let sink = RecordingSink::default();
-        let mut watcher = SelfObservationWatcher::new();
+        let mut watcher = SelfObservationWatcher::new(3);
         for _ in 0..1_000 {
             assert_eq!(
                 watcher.observe(&health(0, 0, 1), &[], "instance-a", &sink),
@@ -239,10 +258,15 @@ mod tests {
     #[test]
     fn lag_crossing_fires_once_and_rearms_after_recovery() {
         let sink = RecordingSink::default();
-        let mut watcher = SelfObservationWatcher::new();
+        let mut watcher = SelfObservationWatcher::new(3);
 
         for _ in 0..100 {
-            watcher.observe(&health(LAG_THRESHOLD + 5, 0, 1), &[], "instance-a", &sink);
+            watcher.observe(
+                &health(DEFAULT_LAG_THRESHOLD + 5, 0, 1),
+                &[],
+                "instance-a",
+                &sink,
+            );
         }
         assert_eq!(sink.envelopes.borrow().len(), 1);
         assert_eq!(
@@ -255,15 +279,41 @@ mod tests {
         // Recovery re-arms; the next crossing fires exactly once more.
         watcher.observe(&health(0, 0, 1), &[], "instance-a", &sink);
         for _ in 0..100 {
-            watcher.observe(&health(LAG_THRESHOLD, 0, 1), &[], "instance-a", &sink);
+            watcher.observe(
+                &health(DEFAULT_LAG_THRESHOLD, 0, 1),
+                &[],
+                "instance-a",
+                &sink,
+            );
         }
         assert_eq!(sink.envelopes.borrow().len(), 2);
     }
 
     #[test]
+    fn explicit_thresholds_override_the_defaults() {
+        let sink = RecordingSink::default();
+        let mut watcher = SelfObservationWatcher::with_thresholds(4, 3);
+
+        // Lag below the explicit threshold but far below the default stays
+        // quiet; crossing the explicit threshold fires.
+        assert_eq!(
+            watcher.observe(&health(3, 0, 1), &[], "instance-a", &sink),
+            0
+        );
+        assert_eq!(
+            watcher.observe(&health(4, 0, 1), &[], "instance-a", &sink),
+            1
+        );
+        assert_eq!(
+            sink.envelopes.borrow()[0].event_type,
+            "runtime.consumer_lag_exceeded"
+        );
+    }
+
+    #[test]
     fn drops_burst_fires_once_per_burst() {
         let sink = RecordingSink::default();
-        let mut watcher = SelfObservationWatcher::new();
+        let mut watcher = SelfObservationWatcher::new(3);
 
         watcher.observe(&health(0, 0, 1), &[], "instance-a", &sink);
         for dropped in [5, 9, 12] {
@@ -285,7 +335,7 @@ mod tests {
     #[test]
     fn retention_gap_fires_once_per_stranding() {
         let sink = RecordingSink::default();
-        let mut watcher = SelfObservationWatcher::new();
+        let mut watcher = SelfObservationWatcher::new(3);
 
         let mut report = health(0, 0, 1);
         report.consumers[0].reported_seq = 10;
@@ -303,7 +353,7 @@ mod tests {
     #[test]
     fn restart_storm_fires_once_per_runtime() {
         let sink = RecordingSink::default();
-        let mut watcher = SelfObservationWatcher::new();
+        let mut watcher = SelfObservationWatcher::new(3);
 
         let restarts = vec![("world_model.graph_replay".to_string(), 3)];
         for _ in 0..50 {
@@ -330,8 +380,13 @@ mod tests {
     #[test]
     fn record_ids_are_idempotent_per_crossing() {
         let sink = RecordingSink::default();
-        let mut watcher = SelfObservationWatcher::new();
-        watcher.observe(&health(LAG_THRESHOLD, 0, 1), &[], "instance-a", &sink);
+        let mut watcher = SelfObservationWatcher::new(3);
+        watcher.observe(
+            &health(DEFAULT_LAG_THRESHOLD, 0, 1),
+            &[],
+            "instance-a",
+            &sink,
+        );
         let record_id = sink.envelopes.borrow()[0].record_id.clone().unwrap();
         assert_eq!(
             record_id,

@@ -245,7 +245,9 @@ fn runtime_run(
             .map_err(runtime_error)?,
         assembly.ports().event_append().dropped_handle(),
     );
-    let mut watcher = crate::runtime::self_observation::SelfObservationWatcher::new();
+    let mut watcher = crate::runtime::self_observation::SelfObservationWatcher::new(
+        options.restart_attempt_limit,
+    );
     let tick_result = run_tick_loop(
         &mut supervisor,
         &cancelled,
