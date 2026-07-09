@@ -116,10 +116,34 @@ Contracts foundation lands first and freezes the seams. The four surface units b
 ## Exceptions
 
 - The `meld event` command family is workspace-scoped read-only diagnostics; no command takes `--path` targeting, called out per [CLI Targeting Policy](../../../governance/cli_targeting_policy.md).
-- `meld event tail` follow mode runs until interrupted or its output pipe closes; it is the one intentionally long-running command in the family. An interrupted follow leaves its command session without a session-ended record in the ledger, a recorded consequence of interruption-based exit; a closed pipe ends the command cleanly and completes the session.
+- `meld event tail` follow mode runs until interrupted or its output pipe closes; it is the one intentionally long-running command in the family. An interrupted follow leaves its command session without a session-ended record in the ledger, a recorded consequence of interruption-based exit; a closed pipe ends the command cleanly and completes the session. Follow holds the single-process database lock, so no concurrent meld command can produce events while it watches; the command says so on startup, and cross-process live following arrives with the daemon edge.
 - Observability reads may open the product database only when no runtime process holds it; against a running daemon, `meld event status` reads published snapshots once Phase 4 and the wiring waves land.
 
 ## Phase Completion Notes
+
+### Phase 3 — complete 2026-07-08
+
+Gate evidence: formatter clean; clippy zero warnings; boundary script passed; full workspace green; the graph reducer mirrors its cursor into the registry after each durable advance, with the mirror opened on the ledger database in both topologies and failures degrading to a stale lag row, never a failed tick.
+
+End-to-end evidence, real command output from a scratch workspace after one `meld scan`:
+
+```
+tip_seq:             23
+committed_watermark: 23
+retained_from:       1
+dropped_events:      0
+consumers:
+  world_state.graph.reducer  cursor=22        lag=1
+append_rates:
+  telemetry     events=13        window=38s
+  workspace_fs  events=9         window=38s
+```
+
+Flow showed all three domains with plausible counts. Tracing the snapshot object walked the promised chain: snapshot materialized, snapshot selected, node observations, and the derived anchor linked by stored fact provenance. The session timeline reconstructed the scan command completely with millisecond gaps. Tail showed the most recent records by default and the oldest with an explicit cursor.
+
+Independent verification: a verification agent reproduced the proof from this PLAN's instructions alone and passed every surface, judging the chains coherent and operator-useful with clear error messages and stable JSON. Its one significant finding: follow mode's live-following claim was not reproducible across processes, because the follower holds the single-process database lock and starves any producer — fixed by saying so on startup and in the help text, recorded in the exception list, with cross-process following arriving with the daemon edge. Accepted with reasons: an unknown session id returns an empty timeline rather than a not-found error, since the ledger cannot distinguish a typo from a session that emitted nothing; observer commands append their own telemetry, so diagnostics sessions shift flow counts, the honest cost of the observer living in the observed ledger. The steady consumer lag of one is correct behavior: each command's final session-ended record lands after the reducer's last catch-up.
+
+Bench evidence: health query 595 to 618 microseconds and page-at-tip 1.3 to 1.4 microseconds, both flat from one thousand to one hundred thousand events — the status command's cost is its bounded window decode, and the tail loop's wake floor is one page read. The cross-process wake latency bench is deferred to the daemon edge, where a cross-process wake first exists.
 
 ### Phase 2 — complete 2026-07-08
 
