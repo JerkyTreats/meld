@@ -318,6 +318,11 @@ impl ProductEventAppendPort {
     pub fn dropped_events(&self) -> u64 {
         self.writer.dropped_events()
     }
+
+    /// Return the writer's shared drop counter for observability backings.
+    pub fn dropped_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {
+        self.writer.dropped_handle()
+    }
 }
 
 impl EventAppendSink for ProductEventAppendPort {

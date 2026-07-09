@@ -10,6 +10,8 @@ pub mod error;
 pub mod ports;
 /// Runtime CLI presentation helpers.
 pub mod presentation;
+/// Promoted runtime-health facts emitted by the threshold watcher.
+pub mod self_observation;
 /// Product storage assembly for durable runtime stores.
 pub mod storage;
 /// Root supervisor lifecycle storage.

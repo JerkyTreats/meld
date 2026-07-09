@@ -236,6 +236,16 @@ fn runtime_run(
     let mut tick_count = 0;
     let mut last_supervisor_time_ms = started_at_ms;
     let watermark = assembly.ports().event_append().watermark();
+    // Self-observation: the watcher promotes threshold crossings into the
+    // ledger as runtime facts; per-tick health reads never enter it.
+    let observability = meld_events::LedgerObservability::new(
+        std::sync::Arc::clone(&assembly.stores().event_store),
+        std::sync::Arc::clone(&watermark),
+        meld_events::EventCursorRegistry::open(assembly.stores().event_store.db())
+            .map_err(runtime_error)?,
+        assembly.ports().event_append().dropped_handle(),
+    );
+    let mut watcher = crate::runtime::self_observation::SelfObservationWatcher::new();
     let tick_result = run_tick_loop(
         &mut supervisor,
         &cancelled,
@@ -245,6 +255,9 @@ fn runtime_run(
         started,
         &mut last_supervisor_time_ms,
         watermark.as_ref(),
+        &observability,
+        &mut watcher,
+        assembly.ports().event_append(),
     );
     let shutdown_at_ms = shutdown_time_ms(started_at_ms, started).max(last_supervisor_time_ms);
     let shutdown_result = supervisor.request_shutdown(shutdown_at_ms);
@@ -289,7 +302,11 @@ fn run_tick_loop(
     started: Instant,
     last_supervisor_time_ms: &mut u64,
     watermark: &meld_events::CommitWatermark,
+    observability: &meld_events::LedgerObservability,
+    watcher: &mut crate::runtime::self_observation::SelfObservationWatcher,
+    fact_sink: &crate::runtime::ports::ProductEventAppendPort,
 ) -> Result<(), SupervisorRuntimeError> {
+    use meld_events::events::observability::EventObservabilityPort;
     loop {
         if cancelled.load(Ordering::SeqCst) || duration_elapsed(started, duration_ms) {
             break;
@@ -299,6 +316,33 @@ fn run_tick_loop(
         *last_supervisor_time_ms = (*last_supervisor_time_ms).max(now_ms);
         supervisor.tick(now_ms)?;
         *tick_count += 1;
+
+        // Promote threshold crossings after the tick; a failed health read
+        // skips the observation rather than failing the loop.
+        match observability.health() {
+            Ok(health) => {
+                let restart_counts: Vec<(String, u64)> = match supervisor.status_snapshot(now_ms) {
+                    Ok(snapshot) => snapshot
+                        .runtimes
+                        .iter()
+                        .map(|row| (row.runtime_id.clone(), row.restart_count))
+                        .collect(),
+                    Err(error) => {
+                        tracing::debug!(error = %error, "restart counts unavailable this tick");
+                        Vec::new()
+                    }
+                };
+                watcher.observe(
+                    &health,
+                    &restart_counts,
+                    supervisor.instance_id(),
+                    fact_sink,
+                );
+            }
+            Err(error) => {
+                tracing::debug!(error = %error, "health read skipped this tick");
+            }
+        }
 
         if cancelled.load(Ordering::SeqCst) || duration_elapsed(started, duration_ms) {
             break;

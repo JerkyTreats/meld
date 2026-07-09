@@ -76,7 +76,7 @@ Implement `RuntimeStatusPublisher` publication of the health report from the sup
 
 Exit criteria: supervisor tick publishes snapshots through the trait; a contract test proves shape stability; handoff note recorded for the wiring workstream.
 
-### Phase 5: self-observation
+### Phase 5: self-observation — complete 2026-07-08
 
 Goal: the runtime emits promoted facts about its own health.
 
@@ -120,6 +120,14 @@ Contracts foundation lands first and freezes the seams. The four surface units b
 - Observability reads may open the product database only when no runtime process holds it; against a running daemon, `meld event status` reads published snapshots once Phase 4 and the wiring waves land.
 
 ## Phase Completion Notes
+
+### Phase 5 — complete 2026-07-08
+
+Gate evidence: formatter clean; clippy zero warnings; boundary script passed; full workspace green; six watcher tests prove the inclusion rule under storms — one thousand quiet observations emit nothing, each condition fires exactly once per crossing with an idempotent record id and re-arms only on recovery; a live supervised run confirmed three quiet ticks emit zero runtime facts while the consumer lag row stays live.
+
+What changed: `SelfObservationWatcher` in the runtime domain observes the health report and supervisor restart counts each tick and promotes threshold crossings into the ledger durably through the append port — consumer lag exceeded, ingest drops burst, retention gap encountered per stranded consumer, and restart storm per runtime. The runtime domain vocabulary is recorded in the canonical multi-domain ledger doc. The graph reducer ignores runtime-domain events by construction since they are not traversal source events.
+
+Semantics recorded: watcher state is process-local, so a restart re-observes a still-standing condition as a new crossing under a new record id — a new observation epoch by design. Emission failures leave the condition fired rather than retrying every tick, because the idempotent id makes later replay safe and a runtime that cannot append is already loud on the heartbeat path.
 
 ### Phase 4 — partial, deviation recorded 2026-07-08
 

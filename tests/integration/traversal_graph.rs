@@ -780,6 +780,38 @@ fn graph_catch_up_reports_retention_gap_without_moving_cursor() {
     assert_eq!(runtime.traversal_store().last_reduced_seq().unwrap(), 0);
 }
 
+// Runtime self-observation facts are not traversal source events: the
+// reducer must skip them while still advancing its cursor past them, so
+// promoted runtime health can never corrupt the graph projection.
+#[test]
+fn graph_reducer_ignores_runtime_domain_facts_and_advances_past_them() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(temp_dir.path().join("spine")).unwrap();
+    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
+    let runtime = GraphRuntime::new(db).unwrap();
+
+    append(
+        &progress,
+        meld::telemetry::events::ProgressEnvelope::with_now_domain(
+            "runtime_self_observation",
+            "runtime",
+            "self_observation",
+            "runtime.consumer_lag_exceeded",
+            None,
+            serde_json::json!({ "consumer": "world_state.graph.reducer", "lag": 2048 }),
+        ),
+        1,
+    );
+
+    let report = runtime
+        .catch_up_bounded(GraphCatchUpBudget { max_items: 8 })
+        .unwrap();
+    assert_eq!(report.events_attempted, 1);
+    assert_eq!(report.traversal_events_applied, 0);
+    assert_eq!(report.derived_events_appended, 0);
+    assert_eq!(runtime.traversal_store().last_reduced_seq().unwrap(), 1);
+}
+
 #[test]
 fn graph_runtime_bounded_report_resumes_without_skipping_source_events() {
     let temp_dir = tempfile::TempDir::new().unwrap();

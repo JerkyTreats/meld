@@ -90,6 +90,19 @@ Semantic facts include:
 - future belief revised
 - future calibration recorded
 
+### runtime
+
+Promoted threshold facts about the runtime's own health, emitted by the self-observation watcher.
+
+Semantic facts include:
+
+- consumer lag exceeded
+- ingest drops burst
+- retention gap encountered
+- restart storm
+
+Gauges, heartbeats, and per-tick samples stay outside the ledger; only once-per-crossing threshold facts with idempotent record ids enter.
+
 ### sensory
 
 Promoted observations from lowered sensory pipelines.
