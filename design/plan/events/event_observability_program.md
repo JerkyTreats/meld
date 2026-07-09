@@ -1,7 +1,7 @@
 # Event Observability PLAN
 
 Date: 2026-07-08
-Status: active
+Status: complete except the Phase 4 publisher call, handed to the wiring workstream
 Workflow: complex change workflow active per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
 Design source: [Event Observability Design](event_observability_design.md)
 
@@ -84,7 +84,7 @@ A threshold watcher over the health report emits `runtime.consumer_lag_exceeded`
 
 Exit criteria: threshold facts appear in the ledger exactly once per crossing under storm tests; the world model graph reducer ignores them cleanly today; vocabulary recorded in the events domain docs.
 
-### Phase 6: close
+### Phase 6: close — complete 2026-07-08
 
 Rerun benches, record evidence, update the observability design status, close the PLAN, and write the handoff list for the wiring workstream and future adapter work.
 
@@ -120,6 +120,16 @@ Contracts foundation lands first and freezes the seams. The four surface units b
 - Observability reads may open the product database only when no runtime process holds it; against a running daemon, `meld event status` reads published snapshots once Phase 4 and the wiring waves land.
 
 ## Phase Completion Notes
+
+### Phase 6 and program close — 2026-07-08
+
+Gate evidence: formatter clean; clippy zero warnings; boundary script passed; full workspace green at 1466 tests; the closing bench run shows every ledger number within noise of the overhaul baselines — replay at tip 0.60 microseconds and idle catch-up 0.70 microseconds at one hundred thousand events, flywheel latency 43 microseconds, eight durable producers at 12.8 milliseconds per thousand, disk at 1101 bytes per event — so the observability layer cost the ledger nothing, and the observability reads themselves hold flat at 617 microseconds for health and 1.4 microseconds for a page at tip.
+
+Program outcome against the overview commitments: the port serves all five query surfaces over the in-process backing with every wire shape pinned; `meld event status`, `tail`, `trace`, `session`, and `flow` render text and JSON and were proven against real flywheel activity by an independent verification agent; the consumer cursor registry enumerates lag and doubles as compaction's consumer registration; the Wave 0 snapshot contract carries an optional ledger summary and the heartbeat path carries the watermark and drop diagnostics today; promoted runtime facts flow once per crossing under proven inclusion-rule discipline. The orchestration held: four concurrent builders with zero collisions, fresh reviews on every checkpoint including one caught blocker per behavior-changing phase, and an independent operator-perspective verification whose follow-mode finding shipped as an honest warning.
+
+Handoffs: the runtime wiring workstream owns the Phase 4 publisher call — the supervisor accepting an injected `RuntimeStatusPublisher` and copying `RuntimeStatusLedgerSummary::from_health` into tick snapshots, per the coordination entry in its ledger — plus the `event.append` heartbeat surface it should consume rather than duplicate. Future adapter work builds on the port: a TUI hosts in-process today, and the browser dashboard waits on the daemon edge, both pure presentation loops. The compaction workstream inherits the registry as its consumer registration. Open nits recorded in phase notes: the storm threshold and restart limit coincide by default without being linked, and the trace scan bound truncates from the retained boundary forward.
+
+The complex change workflow deactivates for this program with the Phase 4 publisher call explicitly carried by the wiring workstream's ledger.
 
 ### Phase 5 — complete 2026-07-08
 

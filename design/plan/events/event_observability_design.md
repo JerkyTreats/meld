@@ -1,7 +1,7 @@
 # Event Observability Design
 
 Date: 2026-07-08
-Status: proposed
+Status: active
 Scope: observability primitives over the event ledger, one port for every presentation adapter, and the retirement of spine naming from the code
 
 ## Intent
@@ -99,12 +99,14 @@ Promoted runtime-health facts become first-class ledger events in a `runtime` do
 
 ## First Slice
 
+Delivered by the [Event Observability PLAN](event_observability_program.md):
+
 1. Rename sweep landing the event naming decision.
 2. `EventCursorRegistry` and the port trait with the in-process backing.
 3. `EventHealthReport` and `meld event status`.
 4. `EventPage` and `meld event tail`.
 5. `EventTraceReport` and `meld event trace`, structure-level only.
-6. Status cache health snapshot publication, coordinated with the runtime wiring workstream.
+6. Status cache health snapshot publication readiness, with the trait call itself coordinated to the runtime wiring workstream's Wave 1.
 
 ## Read With
 
