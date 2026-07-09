@@ -56,6 +56,14 @@ fn follow_forever(
                 .tip_seq
         }
     };
+    // The follower holds the single-process database lock, so concurrent
+    // meld commands cannot produce events while it watches; cross-process
+    // live following arrives with the daemon edge. Said out loud so a
+    // silent follow is not mistaken for a dead ledger.
+    eprintln!(
+        "watching the ledger from this process; other meld commands cannot \
+         write while tail runs"
+    );
     let stdout = std::io::stdout();
     loop {
         let page = next_page(port, cursor, limit, FOLLOW_PAGE_TIMEOUT_MS)?;

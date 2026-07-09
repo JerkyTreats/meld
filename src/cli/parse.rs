@@ -299,7 +299,8 @@ pub enum EventCommands {
         #[arg(long, default_value_t = 64)]
         limit: usize,
 
-        /// Keep following until interrupted
+        /// Keep following until interrupted; holds the database, so other
+        /// meld commands cannot write while following
         #[arg(long)]
         follow: bool,
     },
