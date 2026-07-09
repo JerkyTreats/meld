@@ -165,17 +165,34 @@ pub struct InertRuntimeHandle {
 #[derive(Clone)]
 enum RuntimeSemanticHandleFactory {
     None,
-    GraphReplay { graph_runtime: Arc<GraphRuntime> },
+    GraphReplay {
+        graph_runtime: Arc<GraphRuntime>,
+    },
+    EventAppend {
+        port: crate::runtime::ports::ProductEventAppendPort,
+    },
 }
 
 enum RuntimeSemanticHandle {
     None,
     GraphReplay(GraphReplayRuntimeHandle),
+    EventAppend(EventAppendRuntimeHandle),
 }
 
 #[derive(Clone)]
 struct GraphReplayRuntimeHandle {
     graph_runtime: Arc<GraphRuntime>,
+}
+
+/// Diagnostics-only handle publishing ledger ingress health through the
+/// standard tick report path: the watermark is its checkpoint and drop
+/// bursts surface as retryable issues, so heartbeats and health snapshots
+/// carry ledger state without new publisher plumbing.
+struct EventAppendRuntimeHandle {
+    port: crate::runtime::ports::ProductEventAppendPort,
+    // Baseline sampled on the first tick so a restart or an existing ledger
+    // never misreports history as fresh work or fresh drops.
+    last: Option<(u64, u64)>,
 }
 
 /// Lease context supplied by the supervisor before a handle starts.
@@ -768,7 +785,7 @@ impl RuntimeSemanticHandleFactory {
     fn for_descriptor(
         descriptor: &RuntimeFactoryDescriptor,
         stores: &OpenProductStores,
-        _ports: &ProductRuntimePorts,
+        ports: &ProductRuntimePorts,
     ) -> Self {
         match descriptor.runtime_id.as_str() {
             "world_model.graph_replay" => Self::GraphReplay {
@@ -776,6 +793,9 @@ impl RuntimeSemanticHandleFactory {
                     Arc::clone(&stores.event_store),
                     Arc::clone(&stores.traversal_store),
                 )),
+            },
+            "event.append" => Self::EventAppend {
+                port: ports.event_append().clone(),
             },
             _ => Self::None,
         }
@@ -789,6 +809,12 @@ impl RuntimeSemanticHandleFactory {
                     graph_runtime: Arc::clone(graph_runtime),
                 })
             }
+            Self::EventAppend { port } => {
+                RuntimeSemanticHandle::EventAppend(EventAppendRuntimeHandle {
+                    port: port.clone(),
+                    last: None,
+                })
+            }
         }
     }
 }
@@ -798,10 +824,67 @@ impl RuntimeSemanticHandle {
         match self {
             Self::None => None,
             Self::GraphReplay(handle) => Some(handle.tick(budget)),
+            Self::EventAppend(handle) => Some(handle.tick()),
         }
     }
 
     fn request_stop(&mut self) {}
+}
+
+impl EventAppendRuntimeHandle {
+    fn tick(&mut self) -> WorkerTickReport {
+        let watermark = self.port.watermark().committed_seq();
+        let dropped = self.port.dropped_events();
+        // The first tick only establishes the baseline: an existing ledger
+        // is not fresh work and all-time drops are not a fresh burst.
+        let (input_watermark, mut retryable_errors) = match self.last {
+            None => (watermark, Vec::new()),
+            Some((last_watermark, last_dropped)) => {
+                let mut issues = Vec::new();
+                if dropped > last_dropped {
+                    issues.push(crate::runtime::contracts::WorkerTickIssue {
+                        item_id: None,
+                        code: "ingest_drops_observed".to_string(),
+                        message: format!(
+                            "{} best-effort events dropped since the last tick, {dropped} total",
+                            dropped - last_dropped
+                        ),
+                    });
+                }
+                (last_watermark, issues)
+            }
+        };
+        retryable_errors.shrink_to_fit();
+        // Items stay zero: the observer commits nothing itself, and the
+        // checkpoint movement alone reports ledger progress.
+        let report = WorkerTickReport {
+            actor_id: "event.append".to_string(),
+            scope: crate::runtime::contracts::WorkerScope {
+                domain_id: "events".to_string(),
+                stream_id: None,
+                work_key: None,
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: crate::runtime::contracts::WorkerCheckpoint {
+                name: "event_commit_watermark".to_string(),
+                value: input_watermark,
+            },
+            output_checkpoint: crate::runtime::contracts::WorkerCheckpoint {
+                name: "event_commit_watermark".to_string(),
+                value: watermark,
+            },
+            items_attempted: 0,
+            items_committed: 0,
+            retryable_errors,
+            fatal_errors: Vec::new(),
+            budget_exhausted: false,
+        };
+        self.last = Some((watermark, dropped));
+        report
+    }
 }
 
 impl GraphReplayRuntimeHandle {
@@ -1572,5 +1655,45 @@ mod tests {
 
     fn subject() -> meld_events::DomainObjectRef {
         meld_events::DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap()
+    }
+
+    #[test]
+    fn event_append_handle_reports_watermark_and_drop_diagnostics() {
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let factory = assembly.handle_factories().get("event.append").unwrap();
+        let mut handle = factory.build_handle();
+        handle
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "event.append".to_string(),
+                lease_id: "lease-a".to_string(),
+            })
+            .unwrap();
+
+        let first = handle.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert_eq!(first.actor_id, "event.append");
+        assert_eq!(first.scope.domain_id, "events");
+        assert_eq!(first.input_checkpoint.name, "event_commit_watermark");
+        assert!(first.fatal_errors.is_empty());
+        assert!(first.retryable_errors.is_empty());
+        // The first tick is a baseline: an existing ledger is never
+        // reported as fresh progress or fresh work.
+        assert_eq!(first.input_checkpoint.value, first.output_checkpoint.value);
+        assert_eq!(first.items_committed, 0);
+        assert!(!first.made_progress());
+
+        assembly
+            .ports()
+            .event_append()
+            .append_envelope_idempotent(meld_events::EventEnvelope::with_now(
+                "session-a",
+                "session.tick",
+                serde_json::json!({}),
+            ))
+            .unwrap();
+        let second = handle.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert!(second.output_checkpoint.value > second.input_checkpoint.value);
+        assert!(second.made_progress());
+        assert_eq!(second.items_committed, 0);
     }
 }

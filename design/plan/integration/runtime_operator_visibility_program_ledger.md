@@ -35,6 +35,12 @@ Branch note:
 - The branch was created from `master` while existing dirty runtime and design changes were present.
 - Those existing changes were carried forward and were not reverted.
 
+## Coordination Entries
+
+### 2026-07-08 event observability workstream
+
+The event observability program additively extended the Wave 0 status contracts: `RuntimeStatusSnapshot` gains an optional, serde-defaulted `ledger` field carrying `RuntimeStatusLedgerSummary`, an operational projection of event ledger health whose authority remains the ledger watermark and cursor registry. Old cache JSON without the field still deserializes, proven by contract test. The `event.append` runtime id now builds a diagnostics-only semantic handle reporting the commit watermark and drop deltas through heartbeats; Wave 3's event runtime reports seam should consume rather than duplicate it, and Wave 1's publisher should copy the ledger summary into tick snapshots through `RuntimeStatusLedgerSummary::from_health`.
+
 ## Phase Inventory
 
 ### wave-0-shared-contracts

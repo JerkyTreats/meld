@@ -68,7 +68,7 @@ The integrator registers the graph reducer cursor in the registry as an alias of
 
 Exit criteria: a recorded end-to-end evidence note in this PLAN with real command output; workspace green; bench additions for status query and tail wake latency recorded.
 
-### Phase 4: status snapshot publication
+### Phase 4: status snapshot publication — partial, deviation recorded 2026-07-08
 
 Goal: health snapshots flow through the Wave 0 contract without crossing into the wiring workstream's write scope.
 
@@ -120,6 +120,16 @@ Contracts foundation lands first and freezes the seams. The four surface units b
 - Observability reads may open the product database only when no runtime process holds it; against a running daemon, `meld event status` reads published snapshots once Phase 4 and the wiring waves land.
 
 ## Phase Completion Notes
+
+### Phase 4 — partial, deviation recorded 2026-07-08
+
+Phase 4 as written asked the supervisor tick to publish health snapshots through the Wave 0 `RuntimeStatusPublisher` trait. This checkpoint deliberately lands the publishable shape, not the publication. `RuntimeStatusSnapshot` gains an optional, serde-defaulted ledger summary mapped by `RuntimeStatusLedgerSummary::from_health`, with its wire shape pinned by contract test and pre-field cache JSON proven to still deserialize. The `event.append` inert handle becomes a diagnostics-only semantic handle, so the existing heartbeat path carries the commit watermark as its checkpoint and drop deltas as retryable issues, visible through `meld runtime status` today.
+
+The trait plumbing was deferred by choice, not impossibility — a test-double publisher could prove the call today — because the only real implementor is the wiring workstream's blocked Wave 1, and dead plumbing was judged worse than a recorded gap. The exit criterion "supervisor tick publishes snapshots through the trait" is not met; the phase stays open until the supervisor accepts an injected publisher and a test proves the call, here or at Wave 1 integration.
+
+Coordination: this additively extends Wave 0's reviewed contract with an optional field that leaves old cache files readable, and it touches the event runtime reports seam that Wave 3 reserves; a coordination entry is recorded in the visibility program ledger. Content-rule check against the visibility skeleton: the ledger summary is an operational projection — sequence authority remains the ledger watermark and the cursor registry, and append rates are excluded as windowed computations — satisfying the cache's operational-projections-only rule and its prohibition on holding event sequence authority.
+
+Review dispositions from the two-lens pair: the handle now samples its baseline on the first tick, so an existing ledger is never reported as fresh work and all-time drops are never reported as a fresh burst after a restart, with items pinned at zero because the observer commits nothing itself — checkpoint movement alone reports ledger progress. Waived with reasons: sustained real drops under an on-retryable-failure restart policy would cycle the diagnostics handle, accepted because the baseline resample on rebuild breaks the historical-drop loop the reviewers traced, the default policy restarts only on heartbeat expiry, and a genuine restart storm would itself surface through Phase 5's facts; the work budget is unused by a diagnostics-only tick; the watermark checkpoint is process-scoped and reads zero after a process restart until the first commit, recorded here for the wiring workstream's action-metric consumers; the drop-issue branch is untested because forcing a full writer queue deterministically requires counter injection, and the branch is four lines guarded by the baseline. Pinned for the future: the handle writes nothing to the ledger — per-tick drop observations are heartbeat-path diagnostics under the inclusion rule, and threshold-crossing `runtime` facts with idempotent record ids remain Phase 5's exclusive channel.
 
 ### Phase 3 — complete 2026-07-08
 

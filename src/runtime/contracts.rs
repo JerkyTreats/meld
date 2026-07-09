@@ -275,8 +275,62 @@ pub struct RuntimeStatusSnapshot {
     pub runtimes: Vec<RuntimeStatusRuntimeRow>,
     /// Aggregated health counts for quick text output.
     pub health_counts: RuntimeStatusHealthCounts,
+    /// Event ledger health summary when the writer observed it.
+    #[serde(default)]
+    pub ledger: Option<RuntimeStatusLedgerSummary>,
     /// Cache warnings derived by writer or reader.
     pub warnings: Vec<RuntimeStatusCacheWarning>,
+}
+
+/// Event ledger health copied into the status cache.
+///
+/// An operational projection of the observability health report: the cache
+/// stays non-authoritative, and append rates stay out because they are
+/// windowed computations, not snapshot state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusLedgerSummary {
+    /// Highest persisted ledger sequence.
+    pub tip_seq: u64,
+    /// Highest writer-committed sequence.
+    pub committed_watermark: u64,
+    /// First retained sequence; one means full history.
+    pub retained_from: u64,
+    /// Best-effort events dropped by backpressure since process start.
+    pub dropped_events: u64,
+    /// Per-consumer positions and lag against the watermark.
+    pub consumers: Vec<RuntimeStatusConsumerLag>,
+}
+
+/// One consumer lag row copied into the status cache.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusConsumerLag {
+    /// Stable consumer name from the cursor registry.
+    pub name: String,
+    /// Highest sequence the consumer reported as durably reduced.
+    pub reported_seq: u64,
+    /// Watermark minus reported sequence, zero when caught up.
+    pub lag: u64,
+}
+
+impl RuntimeStatusLedgerSummary {
+    /// Copies the observability health report into cache vocabulary.
+    pub fn from_health(report: &meld_events::EventHealthReport) -> Self {
+        Self {
+            tip_seq: report.tip_seq,
+            committed_watermark: report.committed_watermark,
+            retained_from: report.retained_from,
+            dropped_events: report.dropped_events,
+            consumers: report
+                .consumers
+                .iter()
+                .map(|consumer| RuntimeStatusConsumerLag {
+                    name: consumer.name.clone(),
+                    reported_seq: consumer.reported_seq,
+                    lag: consumer.lag,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Supervisor instance data copied into the status cache.
@@ -1515,6 +1569,7 @@ mod tests {
                 unhealthy: 0,
                 stopped: 0,
             },
+            ledger: None,
             warnings: Vec::new(),
         };
         let record = RuntimeStatusCacheRecord::new(
@@ -1568,6 +1623,7 @@ mod tests {
                 unhealthy: 0,
                 stopped: 0,
             },
+            ledger: None,
             warnings: Vec::new(),
         };
         let record = RuntimeStatusCacheRecord::new(
@@ -1600,5 +1656,53 @@ mod tests {
                 stale_after_ms: 5,
             }
         );
+    }
+
+    #[test]
+    fn ledger_summary_shape_and_mapping_are_pinned() {
+        let report = meld_events::EventHealthReport {
+            tip_seq: 12,
+            committed_watermark: 10,
+            retained_from: 1,
+            dropped_events: 2,
+            consumers: vec![meld_events::ConsumerLagReport {
+                name: "world_state.graph.reducer".to_string(),
+                reported_seq: 9,
+                lag: 1,
+            }],
+            append_rates: Vec::new(),
+        };
+        let summary = RuntimeStatusLedgerSummary::from_health(&report);
+        assert_eq!(
+            serde_json::to_value(&summary).unwrap(),
+            serde_json::json!({
+                "tip_seq": 12,
+                "committed_watermark": 10,
+                "retained_from": 1,
+                "dropped_events": 2,
+                "consumers": [
+                    { "name": "world_state.graph.reducer", "reported_seq": 9, "lag": 1 }
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn snapshot_without_ledger_summary_still_deserializes() {
+        // Wave 1 cache files written before the ledger field must stay
+        // readable: the field is optional with a serde default.
+        let json = serde_json::json!({
+            "instance": null,
+            "process": null,
+            "shutdown": null,
+            "runtimes": [],
+            "health_counts": {
+                "unknown": 0, "starting": 0, "healthy": 0,
+                "degraded": 0, "unhealthy": 0, "stopped": 0
+            },
+            "warnings": []
+        });
+        let snapshot: RuntimeStatusSnapshot = serde_json::from_value(json).unwrap();
+        assert!(snapshot.ledger.is_none());
     }
 }
