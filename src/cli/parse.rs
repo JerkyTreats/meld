@@ -290,7 +290,8 @@ pub enum EventCommands {
         #[arg(long, default_value = "text")]
         format: String,
 
-        /// Cursor to start after; defaults to the current tip
+        /// Cursor to start after; defaults to the most recent records, or
+        /// to the tip when following
         #[arg(long)]
         after: Option<u64>,
 
