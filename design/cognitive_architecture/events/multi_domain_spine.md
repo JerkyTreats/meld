@@ -24,6 +24,30 @@ Examples:
 
 Without runtime-wide event sequence and cross-domain object refs, these questions collapse into ad hoc joins across local clocks.
 
+## Ledger Authority
+
+The shared clock belongs to one logical ledger authority per product identity.
+One authoritative binding maps the product identity to a stable ledger identity and one local or process-owned authority endpoint.
+
+The authority provides append, replay, subscription, watermark, and observability capabilities that all carry the same stable ledger identity.
+Every domain participating in one cognitive loop must use capabilities derived from that authority.
+No adapter or consuming domain may open a competing canonical event history.
+
+Root composition selects the physical storage binding once and distributes authority capabilities.
+The events domain owns ledger identity, sequence, append, replay, subscription, and observability contracts.
+Consuming domains own event meaning and their durable semantic cursors.
+Every authority client validates the ledger identity and fails on mismatch rather than selecting another history.
+
+Physical topology may vary without changing logical authority.
+The ledger may be colocated with projection trees or isolated from projections.
+One binding is selected for the product identity and remains stable across every client and process shape.
+All processes reach that binding directly or through an authority-preserving process boundary.
+Alternative bindings must not be writable concurrently for the same product.
+Changing between them is an explicit ledger migration with one cutover boundary.
+
+A legacy ledger may be read during compatibility migration.
+It must become read-only at cutover and must not continue as a second semantic stream.
+
 ## Domain Concerns
 
 Every domain has three concerns:
@@ -92,7 +116,10 @@ Semantic facts include:
 
 ### runtime
 
-Promoted threshold facts about the runtime's own health, emitted by the self-observation watcher.
+Promoted semantic facts about the runtime's own health.
+Runtime supplies raw health and restart signals.
+A producer-owned runtime-health or sensory concern owns thresholds, hysteresis, process epochs, retry and outbox state, and promotion decisions.
+Events owns only durable append of the promoted fact presented through the authority capability.
 
 Semantic facts include:
 
@@ -101,7 +128,8 @@ Semantic facts include:
 - retention gap encountered
 - restart storm
 
-Gauges, heartbeats, and per-tick samples stay outside the ledger; only once-per-crossing threshold facts with idempotent record ids enter.
+Gauges, heartbeats, and per-tick samples stay outside the ledger.
+Promoted health facts use idempotent record ids and explicit structural provenance.
 
 ### sensory
 
@@ -170,7 +198,7 @@ With `domain_id`, `stream_id`, `DomainObjectRef`, relations, and runtime-wide `s
 - query the latest relevant projection at or before that sequence
 - hydrate provenance through object refs and relations
 
-The event sequence is the shared clock.
+The authoritative event sequence is the shared clock.
 
 ## Batch Facts
 
@@ -196,7 +224,7 @@ Replaying genesis plus later deltas reconstructs that domain projection.
 
 ## Read With
 
-- [Event Ledger Requirements](event_manager_requirements.md)
+- [Events Domain](README.md)
 - [World Model Domain](../world_model/README.md)
 - [Graph](../world_model/graph/README.md)
 - [Execution Domain](../execution/README.md)

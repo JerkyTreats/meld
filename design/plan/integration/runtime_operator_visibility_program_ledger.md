@@ -39,7 +39,17 @@ Branch note:
 
 ### 2026-07-08 event observability workstream
 
-The event observability program additively extended the Wave 0 status contracts: `RuntimeStatusSnapshot` gains an optional, serde-defaulted `ledger` field carrying `RuntimeStatusLedgerSummary`, an operational projection of event ledger health whose authority remains the ledger watermark and cursor registry. Old cache JSON without the field still deserializes, proven by contract test. The `event.append` runtime id now builds a diagnostics-only semantic handle reporting the commit watermark and drop deltas through heartbeats; Wave 3's event runtime reports seam should consume rather than duplicate it, and Wave 1's publisher should copy the ledger summary into tick snapshots through `RuntimeStatusLedgerSummary::from_health`.
+The event observability program additively extended the Wave 0 status contracts: `RuntimeStatusSnapshot` gains an optional, serde-defaulted `ledger` field carrying `RuntimeStatusLedgerSummary`, an operational projection of event ledger health whose authority remains the ledger watermark and cursor registry. Old cache JSON without the field still deserializes, proven by contract test. The `event.append` runtime id now builds a diagnostics-only semantic handle reporting the commit watermark and drop deltas through heartbeats; Wave 3's event runtime reports seam should consume rather than duplicate it.
+
+Scope correction on 2026-07-10: events supplies `EventHealthReport` with stable mapping inputs. Wave 1 owns `RuntimeStatusLedgerSummary::from_health`, supervisor cadence, `RuntimeStatusPublisher` invocation, cache persistence, and staleness. Wave 3 owns heartbeat and runtime action mapping. None of those runtime tasks is an event closure gate.
+
+### 2026-07-10 event foundation dependency correction
+
+The canonical event architecture requires one logical ledger authority per product identity. The CLI compatibility assembly and product runtime assembly currently create separate writable event histories when `meld runtime run` passes through normal `RunContext` dispatch.
+
+The active [Event Foundation Closeout Program](../events/event_foundation_closeout_program.md) owns correctness repairs, identity-bearing authority, unified append and watermark truth, observability hardening, the remote contract seam, domain port migration, and direct product cutover. Its E5 [Product Event Authority Cutover](product_event_authority_cutover.md) owns CLI publication injection, product ledger selection, legacy history migration, and direct `meld event` routing.
+
+Runtime visibility resumes after E6 closes the events foundation. Runtime then owns status publisher invocation and cache, real daemon transport, console and action publishers, and the full flywheel proof. The provisional `SelfObservationWatcher` does not assign promotion policy to events; a producer-owned runtime-health or sensory concern owns thresholds, hysteresis, process epochs, retries, outbox state, and promotion decisions.
 
 ## Phase Inventory
 
@@ -106,6 +116,7 @@ Summary:
 Dependencies:
 
 - `wave-0-shared-contracts`
+- completed event foundation closeout E6
 
 Write scope:
 
@@ -298,13 +309,17 @@ Unresolved risks:
 ## Dependency Graph
 
 - `wave-1-runtime-visibility-core -> wave-0-shared-contracts` because cache persistence and route isolation consume shared snapshot and action shapes.
+- `wave-1-runtime-visibility-core -> event-foundation-closeout-E6` because runtime hosting resumes only after one direct product authority and event closure gates pass.
 - `wave-2-run-console-and-lifecycle-events -> wave-1-runtime-visibility-core` because console frames should use the same cache and status row data.
 - `wave-3-domain-action-publishers -> wave-0-shared-contracts` because domains must emit shared action records.
 - `wave-3-domain-action-publishers -> wave-1-runtime-visibility-core` because domain actions need a cache writer and reader path.
 - `wave-4-process-control -> wave-1-runtime-visibility-core` because readiness and stop behavior should publish stable status.
 - `wave-5-end-to-end-proof -> wave-3-domain-action-publishers` because the proof needs domain action depth.
+- `wave-5-end-to-end-proof -> event-foundation-closeout-E6` because the proof must consume the closed event authority and observe one canonical sequence across CLI activation and supervised work.
 
 ## Wave Plan
+
+Runtime resumption maps to the corrected dependency order as follows: Wave 1 is R1, Wave 4 supplies the daemon portion of R2, Waves 2 and 3 supply R3, and Wave 5 is R4. Real IPC work may extend Wave 4 without changing event contracts.
 
 Wave 0:
 

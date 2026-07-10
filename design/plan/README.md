@@ -103,27 +103,42 @@ These components predate the vertical slice and support all phases.
 
 | Component | Status | Owner |
 |---|---|---|
-| `events` | complete | `meld-events` |
+| `events` ledger mechanics | complete | `meld-events` |
+| event foundation closeout | active; E0 complete | `meld-events` with root `meld` |
+| product event authority cutover | pending E5 | `events` with root `meld` |
 | `integration/typed_loop` | complete | `meld-lang` integration tests |
+
+Foundation work follows this order:
+
+```text
+event authority and observability hardening
+-> product CLI authority cutover
+-> events foundation closed
+-> runtime visibility, daemon, and semantic wiring resume
+```
 
 ## Dependency Order
 
-1. `events` — complete
-2. `meld-lang` — complete, Phase 1
-3. `world_model/graph` — complete, Phase 2
-4. `world_model/belief` — complete, Phase 3
-5. `world_model/planner` — complete, Phase 4
-6. `world_model/agent` — complete, Phase 5
-7. `execution/goals` — first slice implemented, Phase 6
-8. `integration/typed_loop` — complete
-9. `execution/planning` — first slice implemented, Phase 6
-10. `execution/task_network` — first slice implemented, Phase 7
-11. `execution/task_network/expanded` — implemented, Phase 8
-12. `sensory` — deferred, Phase 9
-13. `world_model/causation` — deferred past vertical slice
-14. `world_model/regime` — deferred past vertical slice
-15. `world_model` — full integration deferred
-16. `execution` — full integration deferred
+1. `events` ledger mechanics — complete
+2. event authority and observability hardening — active, E1 through E4
+3. product event authority cutover — pending E5 before one product loop can claim one canonical history
+4. event foundation closure — pending E6
+5. runtime visibility, daemon, and semantic wiring — resume only after E6
+6. `meld-lang` — complete, Phase 1
+7. `world_model/graph` — complete, Phase 2
+8. `world_model/belief` — complete, Phase 3
+9. `world_model/planner` — complete, Phase 4
+10. `world_model/agent` — complete, Phase 5
+11. `execution/goals` — first slice implemented, Phase 6
+12. `integration/typed_loop` — complete
+13. `execution/planning` — first slice implemented, Phase 6
+14. `execution/task_network` — first slice implemented, Phase 7
+15. `execution/task_network/expanded` — implemented, Phase 8
+16. `sensory` — deferred, Phase 9
+17. `world_model/causation` — deferred past vertical slice
+18. `world_model/regime` — deferred past vertical slice
+19. `world_model` — full integration deferred
+20. `execution` — full integration deferred
 
 ## Implementation Plans
 
@@ -136,6 +151,7 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [execution/planning/PLAN.md](execution/planning/PLAN.md) — first slice implemented
 - [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — first slice implemented
 - [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
+- [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - active event foundation closeout
 - [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — template
 - [integration/durable_runtime_first_slice.md](integration/durable_runtime_first_slice.md) - proposed durable flywheel runtime design
 - [integration/durable_runtime_pre_implementation_gaps.md](integration/durable_runtime_pre_implementation_gaps.md) - proposed pre assembly gap requirements
@@ -145,6 +161,7 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [integration/runtime_requirements.md](integration/runtime_requirements.md) - proposed detailed runtime requirements index
 - [integration/runtime_phase_design_detail_audit.md](integration/runtime_phase_design_detail_audit.md) - implemented runtime phase detail audit
 - [integration/product_runtime_assembly_requirements.md](integration/product_runtime_assembly_requirements.md) - proposed product runtime assembly requirements
+- [integration/product_event_authority_cutover.md](integration/product_event_authority_cutover.md) - pending E5 CLI and product event authority cutover
 - [integration/docs_freshness_physical_configuration_requirements.md](integration/docs_freshness_physical_configuration_requirements.md) - proposed docs freshness physical configuration requirements
 - [integration/docs_freshness_flywheel_next_iteration_report.md](integration/docs_freshness_flywheel_next_iteration_report.md) - proposed docs freshness flywheel next iteration report
 - [integration/docs_freshness_flywheel_domain_spec_skeleton.md](integration/docs_freshness_flywheel_domain_spec_skeleton.md) - proposed docs freshness domain spec skeleton
@@ -165,6 +182,7 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - `design/plan/world_model/agent/assessment.md`
 - `design/plan/execution/goals/assessment.md`
 - `design/plan/integration/typed_loop.md`
+- `design/plan/integration/product_event_authority_domain_assessment.md`
 - `design/plan/execution/planning/assessment.md`
 - `design/plan/sensory/assessment.md`
 - `design/plan/world_model/causation/assessment.md`
@@ -187,6 +205,7 @@ Each phase implements the minimum needed for one `docs_freshness` flywheel turn.
 - workflow integration strategy
 - causal effect estimation
 - regime inference
+- event foundation closeout through direct product authority cutover
 
 ## Assessment Shape
 

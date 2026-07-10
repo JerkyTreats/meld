@@ -3,7 +3,7 @@
 Status: conditionally ready
 Depends on: `design/plan/events/assessment.md`, `design/plan/world_model/graph/assessment.md`
 Design source: `design/cognitive_architecture/sensory/README.md`, `design/cognitive_architecture/sensory/substrate.md`
-Evidence date: 2026-05-26
+Evidence date: 2026-07-10
 
 ## Verdict Summary
 
@@ -33,7 +33,8 @@ Sensory does not own belief updates, conflict resolution, event durability, repl
 
 ## Dependency Readiness
 
-Events and graph are ready.
+The event mechanics and graph contracts required for sensory design are ready.
+Production publication through one authority remains part of the active event foundation closeout.
 
 Typed-loop readiness does not require sensory runtime.
 

@@ -12,6 +12,10 @@ The immediate operator problem is that `meld runtime run` can own the runtime pr
 
 This plan starts with visibility and command behavior. It does not replace the existing runtime requirements for world model, execution, events, product assembly, or supervisor boundaries.
 
+Execution of this runtime plan starts after the [Event Foundation Closeout Program](../events/event_foundation_closeout_program.md) reaches E6.
+Events supplies `EventHealthReport`, stable status mapping inputs, one authority, and a transport-neutral remote contract.
+Runtime owns status mapping, supervisor cadence, `RuntimeStatusPublisher` invocation, status cache persistence and staleness, console and action publication, daemon hosting, real IPC, and process integration.
+
 ## Source Anchors
 
 - Runtime requirements index: `design/plan/integration/runtime_requirements.md`
@@ -881,6 +885,8 @@ The first implementation slice should be small and decisive.
 This first slice does not need every domain action publisher. It must still make clear when a runtime is inert versus doing concrete work.
 
 ## Delivery Waves
+
+These waves are runtime work and do not gate event closure.
 
 Wave 1: status cache substrate.
 

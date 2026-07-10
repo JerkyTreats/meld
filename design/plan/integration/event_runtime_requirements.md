@@ -23,9 +23,29 @@ world model runtime
 
 The event runtime must make this loop restart safe without taking over execution meaning or world model meaning.
 
+## Ledger Authority Requirement
+
+One product identity has one event ledger identity and one event authority.
+
+Append, replay, subscription, retention, diagnostics, and observability capabilities for that product must derive from the same authority.
+The event runtime must reject or expose authority mismatches rather than joining records and cursors from unrelated sequence spaces.
+
+Root assembly selects the physical ledger binding once.
+CLI, telemetry compatibility, product runtime, world model, and execution consume capabilities from that binding.
+No consumer may open a second writable canonical history for the same product identity.
+
+A legacy event store may be supplied as a migration source only.
+It must become read-only after an explicit, characterized, and parity-tested cutover.
+
+`EventAuthority` is the production aggregate that opens writable event state.
+It persists `LedgerIdentity` and derives identity-bearing append, replay, subscription, watermark, and observability capabilities.
+Every canonical append uses the authority writer and advances one notification source.
+The committed watermark initializes from durable authority state after reopen.
+Production domains cannot construct alternate writable `EventStore` values directly.
+
 ## Runtime Actors
 
-The first durable flywheel treats these event owned actors as distinct responsibilities even when they share one process and one `EventStore`.
+The first durable flywheel treats these event owned actors as distinct responsibilities even when they share one process and one `EventAuthority`.
 
 - idempotent append runtime
 - sequence assignment runtime
@@ -69,7 +89,8 @@ Replay inputs:
 
 Supervisor inputs:
 
-- opened event store handle or database handle
+- resolved event authority capabilities carrying the product ledger identity
+- physical storage binding only when constructing that authority for the first time
 - runtime id
 - lease or lifecycle context
 - configured queue capacity and replay batch limits
@@ -80,6 +101,7 @@ Supervisor inputs:
 Append outputs:
 
 - one persisted `EventRecord` for each accepted new envelope
+- the canonical ledger identity on append receipts
 - one runtime wide `seq` assigned by the event runtime
 - record id index entry for idempotent lookup when `record_id` is present
 - session index entry for session scoped compatibility reads
@@ -88,6 +110,7 @@ Append outputs:
 
 Replay outputs:
 
+- the canonical ledger identity on every response
 - ordered batches of persisted `EventRecord` values
 - a deterministic upper sequence boundary that the caller may persist only after caller owned output is durable
 - typed replay errors when the requested cursor is outside retained history
@@ -132,13 +155,23 @@ Subscription source:
 - uses bounded replay as the delivery mechanism
 - treats the caller supplied cursor as the delivery boundary
 - never advances a consumer cursor on behalf of the consumer
-- may later add push wakeups, but push wakeups must not become correctness state
+- uses the authority watermark only as a wakeup notification
+- never treats notification state as a replacement for durable replay truth
 
 Flush and health port:
 
 - flushes event storage before shutdown is acknowledged
 - exposes last assigned sequence, last flush status, queue health, replay health, and retention floor
 - exposes no event payload interpretation
+
+Remote authority contract:
+
+- defines transport-neutral append, replay, subscription, watermark, and observability requests and responses
+- carries ledger identity on every request and response where sequence-space mixing is possible
+- defines durable acknowledgement, retry, duplicate, retention-gap, mismatch, and unavailable outcomes
+- has one reusable conformance suite shared by local and remote implementations
+- is proved during event closure with a loopback adapter
+- leaves process hosting, IPC framing, reconnects, endpoint lifecycle, and authentication to runtime
 
 ## Idempotency And Sequence Rules
 
@@ -223,6 +256,8 @@ Shutdown recovery:
 ## Supervisor Contract
 
 The root supervisor may wrap the event runtime in a lifecycle handle.
+This section defines downstream runtime consumption after event closure.
+It does not add supervisor scheduling, status publication, or daemon hosting to event closure gates.
 
 Allowed supervisor behavior:
 
@@ -305,6 +340,10 @@ Diagnostics requirements:
 
 ## Implementation Phases
 
+The active [Event Foundation Closeout Program](../events/event_foundation_closeout_program.md) supersedes this older phase order for current implementation.
+ER-0 through ER-4 remain requirement groupings.
+E1 through E6 control closure sequencing and keep runtime hosting downstream.
+
 ### Phase ER-0 Contract Alignment
 
 Clarify that `meld-events` is the owner of append, sequence, idempotency, replay, and subscription semantics.
@@ -312,6 +351,7 @@ Clarify that `meld-events` is the owner of append, sequence, idempotency, replay
 Exit criteria:
 
 - design docs describe root as assembly and supervisor only
+- one product identity maps to one ledger identity across append, replay, and observability
 - execution publication still calls an event append sink directly
 - world model replay still calls an event replay source directly
 
@@ -385,23 +425,26 @@ Exit criteria:
 - operator status can explain append and replay health
 - diagnostics do not duplicate semantic domain state
 
-### Phase ER-5 Supervisor Wiring
+### Phase ER-5 Product Assembly Cutover
 
-Wire concrete event ports through root assembly and supervisor lifecycle.
+Wire concrete authority capabilities through direct root and product assembly.
 
 Requirements:
 
-- root assembly opens event store
-- root assembly passes append sink to execution runtime
-- root assembly passes replay source to world model runtime
-- supervisor starts or wraps event runtime with `events.ledger`
-- supervisor flushes event store on shutdown
+- root assembly resolves one event authority
+- `CliRuntimeAssembly` consumes an injected appender and opens no canonical event store
+- `ProductRuntimeAssembly` consumes the resolved authority
+- root assembly passes an authority-backed append sink to execution runtime
+- root assembly passes an authority-backed replay source to world model runtime
+- direct `meld event` commands read the configured authority
 
 Exit criteria:
 
 - root assembly does not inspect event payloads
-- root supervisor does not assign sequence
-- flywheel handoff works through direct ports
+- direct product assembly does not construct a second writable history
+- one route-level proof observes one ledger identity and one sequence
+
+Supervisor lifecycle, shutdown hosting, and real remote transport are runtime-owned work after event closure.
 
 ## Verification Requirements
 
@@ -423,7 +466,10 @@ event_runtime_rejects_durable_publication_without_record_id
 event_runtime_repairs_stale_sequence_metadata
 event_runtime_replay_reports_retention_gap
 event_runtime_subscription_does_not_advance_consumer_cursor
-event_runtime_shutdown_flushes_before_lease_release
+event_authority_reopens_with_same_ledger_identity
+event_authority_rejects_identity_mismatch
+event_authority_loopback_conformance
+event_product_route_uses_one_ledger_sequence
 minimal_runtime_flywheel_turn_persists_and_satisfies_goal
 failure_outcome_does_not_satisfy_goal
 ```
@@ -448,9 +494,12 @@ The event runtime requirements are satisfied when these statements are true.
 - World model consumes event records through bounded replay or subscription source ports.
 - World model owns and advances its replay cursors only after world model output is durable.
 - Root assembly wires concrete event ports but does not mediate semantic event handoff.
-- Root supervisor manages lifecycle, leases, health, restart, and flush without owning event meaning.
+- Direct CLI and product assembly consume one event authority and one ledger identity.
+- Local and loopback authority implementations pass the same transport-neutral conformance suite.
 - Canonical event history is retained for the first durable flywheel.
 - Retention gaps are explicit errors before any deletion based retention is enabled.
 - Diagnostics are bounded, operational, and not product world facts by default.
 - The minimal durable flywheel proof can reopen after event append and continue from stores.
 - A failed execution outcome can publish a failure event without creating false goal satisfaction.
+
+After these event-owned criteria pass, root runtime may host the authority and manage lifecycle, leases, health, restart, flush, status publication, and remote transport without owning event meaning.

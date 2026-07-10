@@ -12,16 +12,41 @@ The design goal is one durable temporal ledger across `workspace_fs`, `context`,
 
 Implementation history lives in [Completed Events](../../completed/events/README.md).
 
+## Ledger Authority Invariant
+
+One product identity has exactly one canonical event ledger authority and one event sequence space.
+One authoritative binding maps that product identity to a stable ledger identity and one local or process-owned authority endpoint.
+
+Every semantic producer, replay consumer, reducer, subscription, and observability surface must receive capabilities derived from that authority.
+CLI, runtime, daemon, TUI, and HTTP surfaces are clients of the authority.
+They must not construct or select an alternate canonical history for the same product identity.
+
+Physical storage layout does not change this invariant.
+The canonical ledger may share a database with projections or live in a dedicated database, but storage placement must not create a second logical ledger authority.
+These layouts are alternative bindings for the authority.
+Changing the binding is a ledger migration, not creation of another semantic stream.
+The selected binding remains stable across CLI, supervised runtime, daemon, and presentation clients.
+Each client reaches that binding directly or through an authority-preserving process boundary.
+Binding or ledger identity mismatches fail instead of selecting a fallback history.
+
+A compatibility ledger may exist only as a migration source.
+It must not remain a concurrent semantic writer after authority cutover.
+Migration requires characterization, parity proof, an explicit cutover boundary, and preservation of semantic history.
+
 ## Boundary
 
 `events` owns:
 
 - canonical envelope
+- ledger identity and authority capabilities
 - ingress
 - sequence
 - durable append
 - replay
 - subscription
+- commit watermark and notification truth
+- health, flow, trace, session, and paging contracts
+- transport-neutral authority requests, responses, durability outcomes, identity validation, and conformance
 - stored envelope compatibility
 - graph attachment primitives
 
@@ -32,6 +57,10 @@ Domain owners own event meaning:
 - `execution` owns task, control, workflow, and artifact facts
 - world model owns derived graph and later belief facts
 - `sensory` owns observation promotion rules
+- a producer-owned runtime-health or sensory concern owns health thresholds, hysteresis, process epochs, retry and outbox state, and promotion decisions
+
+`events` durably appends promoted facts presented through its authority capability.
+It does not promote raw health signals or define the policy that decides when a health observation becomes semantic.
 
 `telemetry` is downstream.
 It consumes event history for summaries, metrics, operator feedback, and compatibility.
@@ -40,6 +69,7 @@ It consumes event history for summaries, metrics, operator feedback, and compati
 
 The event contract requires:
 
+- one stable ledger identity per product identity
 - one runtime-wide sequence assigned atomically with the append
 - append-only canonical history
 - stable `record_id` support for idempotent derived facts
@@ -50,6 +80,9 @@ The event contract requires:
 - optional content hash
 - graph object refs
 - graph relation edges
+- identity-bearing observability reports
+- explicit scanned range and truncation state for bounded reads
+- structural provenance through object refs, relation edges, and record identity
 - one-time migration of legacy stored rows into the canonical ledger
 
 ## Durability And Delivery Contract
@@ -69,8 +102,6 @@ Raw sensory pulses, raw file watcher noise, transient worker chatter, and presen
 
 ## Active Documents
 
-- [Event Ledger Requirements](event_manager_requirements.md)
-  canonical envelope, ownership, ordering, durability, and replay requirements
 - [Multi-Domain Event Ledger](multi_domain_spine.md)
   cross-domain ledger model and reference contract
 - [Events Crate](CRATE.md)

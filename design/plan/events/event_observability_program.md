@@ -1,7 +1,7 @@
 # Event Observability PLAN
 
 Date: 2026-07-08
-Status: closed 2026-07-09; the Phase 4 publisher call is carried by the wiring workstream ledger
+Status: closed 2026-07-09; scope corrected 2026-07-10 with no runtime publication dependency
 Workflow: complex change workflow deactivated at close per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
 Design source: [Event Observability Design](event_observability_design.md)
 
@@ -9,26 +9,28 @@ Design source: [Event Observability Design](event_observability_design.md)
 
 ### Objective
 
-Complete the event observability workstream: every read model, port, command, and promoted self-observation fact the design defines, so an operator can tell what the cognitive layer is doing, whether it is progressing, and why something happened — through surfaces a future TUI or dashboard consumes as thin adapters.
+Complete the first event observability workstream: every read model, port, and command the design defines, plus proof that a producer-supplied promoted health fact can use durable append, so future TUI and dashboard surfaces remain thin adapters.
 
 ### Outcome
 
-`EventObservabilityPort` fully implemented over an in-process backing; `meld event status`, `tail`, `trace`, and `session` commands rendering text and JSON from serializable reports; a named consumer cursor registry shared with compaction; health snapshots publishable through the Wave 0 status contracts; and promoted runtime-health facts flowing into the ledger so the world model can form beliefs about the runtime's own health.
+`EventObservabilityPort` fully implemented over an in-process backing; `meld event status`, `tail`, `trace`, and `session` commands rendering text and JSON from serializable reports; a named consumer cursor registry shared with compaction; `EventHealthReport` plus stable status mapping inputs; and a provisional watcher demonstrating that promoted runtime-health facts can flow through the durable append capability.
 
 ### In Scope
 
 - `EventCursorRegistry` and registration of the existing graph reducer cursor
 - the port trait, all five query surfaces, and their DTOs
 - the `meld event` command family with text and JSON rendering
-- health snapshot publication behind the Wave 0 `RuntimeStatusPublisher` contract
-- promoted threshold facts in a `runtime` domain vocabulary with inclusion-rule discipline
+- `EventHealthReport` and stable mapping inputs for runtime status publication
+- durable append support for promoted facts supplied by a producer-owned policy concern
 - bench coverage for observability read costs
 
 ### Out of Scope
 
 - TUI and HTTP dashboard adapters; the port is their contract, their construction is gated on want
 - the daemon IPC or HTTP edge; out-of-process backings implement the same port later
-- status cache file persistence and console rendering, owned by the runtime wiring workstream waves
+- supervisor tick cadence and `RuntimeStatusPublisher` invocation
+- status cache persistence, staleness, `runtime status`, console rendering, action records, and heartbeat mapping
+- threshold, hysteresis, process epoch, retry, outbox, and promotion policy
 - compaction, the eleven inert runtime handles, and anything else handed to other workstreams
 
 ## Development Phases
@@ -68,25 +70,26 @@ The integrator registers the graph reducer cursor in the registry as an alias of
 
 Exit criteria: a recorded end-to-end evidence note in this PLAN with real command output; workspace green; bench additions for status query and tail wake latency recorded.
 
-### Phase 4: status snapshot publication — partial, deviation recorded 2026-07-08
+### Phase 4: status mapping inputs — complete 2026-07-08; scope corrected 2026-07-10
 
-Goal: health snapshots flow through the Wave 0 contract without crossing into the wiring workstream's write scope.
+Goal: event health has a stable shape that runtime can map into its status contracts.
 
-Implement `RuntimeStatusPublisher` publication of the health report from the supervisor tick, behind the existing Wave 0 trait; file cache persistence and console rendering remain the wiring workstream's waves. This is the coordination boundary and it is one bounded seam.
+Provide `EventHealthReport` with stable fields consumed by runtime status mapping.
+Runtime owns `RuntimeStatusLedgerSummary::from_health` and deciding when and where to invoke `RuntimeStatusPublisher`.
 
-Exit criteria: supervisor tick publishes snapshots through the trait; a contract test proves shape stability; handoff note recorded for the wiring workstream.
+Exit criteria: report and mapping contract tests prove input shape stability, and the runtime handoff names mapping and publisher invocation as downstream work.
 
-### Phase 5: self-observation — complete 2026-07-08
+### Phase 5: provisional self-observation — complete 2026-07-08
 
-Goal: the runtime emits promoted facts about its own health.
+Goal: prove that a producer can append promoted health facts through the durable event capability.
 
-A threshold watcher over the health report emits `runtime.consumer_lag_exceeded`, `runtime.ingest_drops_burst`, `runtime.retention_gap_encountered`, and `runtime.restart_storm` facts through the durable class, each carrying the crossing evidence. The inclusion rule is enforced by design and by test: gauges and per-tick samples never enter the ledger, thresholds emit once per crossing with idempotent record ids, and a quiet runtime emits nothing.
+The provisional threshold watcher over the health report emits `runtime.consumer_lag_exceeded`, `runtime.ingest_drops_burst`, `runtime.retention_gap_encountered`, and `runtime.restart_storm` facts through the durable class, each carrying the crossing evidence. The implementation proves inclusion-rule discipline and append behavior. It does not assign threshold, hysteresis, process epoch, retry, outbox, or promotion policy to the events domain.
 
-Exit criteria: threshold facts appear in the ledger exactly once per crossing under storm tests; the world model graph reducer ignores them cleanly today; vocabulary recorded in the events domain docs.
+Exit criteria: supplied promoted facts appear in the ledger through the durable append capability; the provisional watcher remains explicitly noncanonical; the world model graph reducer ignores the runtime vocabulary cleanly today.
 
 ### Phase 6: close — complete 2026-07-08
 
-Rerun benches, record evidence, update the observability design status, close the PLAN, and write the handoff list for the wiring workstream and future adapter work.
+Rerun benches, record evidence, update the observability design status, close the PLAN, and write the handoff list for runtime visibility and future adapter work.
 
 ## Orchestration
 
@@ -94,7 +97,7 @@ How agents and workflows execute this PLAN. Roles:
 
 - The integrator owns contracts, shared files, integration, commits, and PLAN evidence. Phases 1, 3, 4, and 6 are integrator-led because they touch shared seams or judge end-to-end truth.
 - Builder agents execute Phase 2's four units concurrently in the shared tree with disjoint file ownership, the pattern proven in the overhaul's harness phase: each agent owns exactly its module files and test files, never Cargo manifests or shared CLI files, which Phase 1 pre-wires. Each returns its diff summary and test evidence.
-- Fresh-context reviewers gate every checkpoint commit, receiving the staged diff and the relevant PLAN phase with no implementation context. Single reviewer for additive read-side phases; a two-lens adversarial pair for behavior-changing phases, which here means Phase 4, because it writes from the supervisor tick, and Phase 5, because it produces ledger facts. Review findings are fixed or waived with recorded reasons before landing, and reviewers are instructed to attack test honesty and inclusion-rule discipline specifically.
+- Fresh-context reviewers gate every checkpoint commit, receiving the staged diff and the relevant PLAN phase with no implementation context. Single reviewer for additive read-side phases; a two-lens adversarial pair for behavior-changing Phase 5 because it produces ledger facts. Review findings are fixed or waived with recorded reasons before landing, and reviewers are instructed to attack test honesty and inclusion-rule discipline specifically.
 - A verification agent in Phase 3 independently reproduces the end-to-end proof from the PLAN's instructions alone, so the evidence note reflects what an operator would actually see rather than what the integrator expected.
 
 Concurrency rules: builder agents share the tree and build cache; cargo serializes compilation; file ownership is stated in every agent brief; agents run tests scoped to their units and the integrator runs the full ladder. Stability gates rerun the workspace suite at least three times at phase exits that touched concurrency-adjacent code.
@@ -105,21 +108,34 @@ Checkpoint gates, identical ladder to the overhaul: formatter first, clippy zero
 
 - Formatter check precedes all test gates per workflow governance.
 - DTO stability: contract tests serialize every report and compare field names, so adapters can rely on the JSON shape; changes to shapes are called out as breaking.
-- Inclusion rule: Phase 5 storm tests prove threshold facts are once-per-crossing and quiet runtimes emit nothing.
+- Inclusion rule: Phase 5 storm tests characterize the provisional watcher and prove its facts are once-per-crossing while quiet runtimes emit nothing.
 - End-to-end: Phase 3's proof drives real flywheel activity and captures real command output into this PLAN.
 - Bench: observability reads must not regress ledger performance; status query cost and tail wake latency are recorded against the overhaul baselines.
 
 ## Implementation Order Summary
 
-Contracts foundation lands first and freezes the seams. The four surface units build concurrently and integrate one by one. The end-to-end proof validates against reality. Publication and self-observation land as reviewed behavior-changing checkpoints. The close records evidence and handoffs.
+Contracts foundation lands first and freezes the seams. The four surface units build concurrently and integrate one by one. The end-to-end proof validates against reality. Stable status mapping inputs and provisional self-observation land as reviewed checkpoints. Runtime publication remains a downstream handoff.
 
 ## Exceptions
 
 - The `meld event` command family is workspace-scoped read-only diagnostics; no command takes `--path` targeting, called out per [CLI Targeting Policy](../../../governance/cli_targeting_policy.md).
 - `meld event tail` follow mode runs until interrupted or its output pipe closes; it is the one intentionally long-running command in the family. An interrupted follow leaves its command session without a session-ended record in the ledger, a recorded consequence of interruption-based exit; a closed pipe ends the command cleanly and completes the session. Follow holds the single-process database lock, so no concurrent meld command can produce events while it watches; the command says so on startup, and cross-process live following arrives with the daemon edge.
-- Observability reads may open the product database only when no runtime process holds it; against a running daemon, `meld event status` reads published snapshots once Phase 4 and the wiring waves land.
+- Observability reads may open the product database only when no runtime process holds it. Direct configured-authority routing is closed by the successor event program. Access while a daemon owns the ledger waits for runtime-owned remote hosting and does not block event closure.
 
 ## Phase Completion Notes
+
+### Ownership correction — 2026-07-10
+
+The original Phase 4 mixed event report construction with runtime scheduling.
+Its corrected event-owned exit criterion is the delivered `EventHealthReport` plus stable fields that runtime can map into `RuntimeStatusLedgerSummary`.
+Supervisor invocation of `RuntimeStatusPublisher`, status cache persistence, staleness, console rendering, and action publication belong to runtime visibility and are not open work in this closed program.
+
+Phase 5 is also narrowed to its proven role.
+Events can durably append a promoted health fact supplied through the append capability.
+The existing `SelfObservationWatcher` is a provisional bridge rather than canonical event behavior.
+Thresholds, hysteresis, process epochs, retries, outbox state, and promotion decisions belong to a producer-owned runtime-health or sensory concern.
+
+Remaining event correctness, authority, observability, remote-contract, domain-port, and product-cutover work moves to the active [Event Foundation Closeout Program](event_foundation_closeout_program.md).
 
 ### Final polish pass — closed 2026-07-09
 
@@ -136,25 +152,27 @@ Gate evidence: formatter clean; clippy zero warnings; boundary script passed; fu
 
 Gate evidence: formatter clean; clippy zero warnings; boundary script passed; full workspace green at 1466 tests; the closing bench run shows every ledger number within noise of the overhaul baselines — replay at tip 0.60 microseconds and idle catch-up 0.70 microseconds at one hundred thousand events, flywheel latency 43 microseconds, eight durable producers at 12.8 milliseconds per thousand, disk at 1101 bytes per event — so the observability layer cost the ledger nothing, and the observability reads themselves hold flat at 617 microseconds for health and 1.4 microseconds for a page at tip.
 
-Program outcome against the overview commitments: the port serves all five query surfaces over the in-process backing with every wire shape pinned; `meld event status`, `tail`, `trace`, `session`, and `flow` render text and JSON and were proven against real flywheel activity by an independent verification agent; the consumer cursor registry enumerates lag and doubles as compaction's consumer registration; the Wave 0 snapshot contract carries an optional ledger summary and the heartbeat path carries the watermark and drop diagnostics today; promoted runtime facts flow once per crossing under proven inclusion-rule discipline. The orchestration held: four concurrent builders with zero collisions, fresh reviews on every checkpoint including one caught blocker per behavior-changing phase, and an independent operator-perspective verification whose follow-mode finding shipped as an honest warning.
+Program outcome against the corrected commitments: the port serves all five query surfaces over the in-process backing with every wire shape pinned; `meld event status`, `tail`, `trace`, `session`, and `flow` render text and JSON and were proven against real flywheel activity by an independent verification agent; the consumer cursor registry enumerates lag and doubles as compaction's consumer registration; the Wave 0 snapshot contract carries an optional ledger summary; and the provisional watcher proves promoted runtime facts can flow through durable append. The orchestration held: four concurrent builders with zero collisions, fresh reviews on every checkpoint, and an independent operator-perspective verification whose follow-mode finding shipped as an honest warning.
 
-Handoffs: the runtime wiring workstream owns the Phase 4 publisher call — the supervisor accepting an injected `RuntimeStatusPublisher` and copying `RuntimeStatusLedgerSummary::from_health` into tick snapshots, per the coordination entry in its ledger — plus the `event.append` heartbeat surface it should consume rather than duplicate. Future adapter work builds on the port: a TUI hosts in-process today, and the browser dashboard waits on the daemon edge, both pure presentation loops. The compaction workstream inherits the registry as its consumer registration. Open nits recorded in phase notes — the unlinked storm threshold and the trace scan bound anchored at the retained boundary — were both resolved by the final polish pass noted above.
+Handoffs: runtime visibility owns the supervisor accepting an injected `RuntimeStatusPublisher`, choosing publication cadence, copying `RuntimeStatusLedgerSummary::from_health` into tick snapshots, and mapping the `event.append` heartbeat and runtime actions. Runtime also owns cache persistence, daemon hosting, and real remote transport. The event closeout owns the transport-neutral remote contract and loopback conformance without a daemon. The compaction workstream inherits the registry as its consumer registration.
 
-The complex change workflow deactivates for this program with the Phase 4 publisher call explicitly carried by the wiring workstream's ledger.
+The complex change workflow deactivates for this program with no open event-owned phase.
 
 ### Phase 5 — complete 2026-07-08
 
 Gate evidence: formatter clean; clippy zero warnings; boundary script passed; full workspace green; six watcher tests prove the inclusion rule under storms — one thousand quiet observations emit nothing, each condition fires exactly once per crossing with an idempotent record id and re-arms only on recovery; a live supervised run confirmed three quiet ticks emit zero runtime facts while the consumer lag row stays live.
 
-What changed: `SelfObservationWatcher` in the runtime domain observes the health report and supervisor restart counts each tick and promotes threshold crossings into the ledger durably through the append port — consumer lag exceeded, ingest drops burst, retention gap encountered per stranded consumer, and restart storm per runtime. The runtime domain vocabulary is recorded in the canonical multi-domain ledger doc. The graph reducer ignores runtime-domain events by construction since they are not traversal source events.
+What changed: `SelfObservationWatcher` in the runtime domain observes the health report and supervisor restart counts each tick and promotes threshold crossings into the ledger durably through the append port — consumer lag exceeded, ingest drops burst, retention gap encountered per stranded consumer, and restart storm per runtime. This is a provisional compatibility implementation, not canonical event policy. The runtime domain vocabulary is recorded in the canonical multi-domain ledger doc. The graph reducer ignores runtime-domain events by construction since they are not traversal source events.
 
 Semantics recorded per condition, from review: consumer lag ids embed the crossing watermark, so every genuine re-crossing within or across runs is a distinct fact. Retention gap ids embed the boundary, so a restart re-observation dedups into the original fact until compaction moves the boundary — the condition never cleared, so one fact is the truth. Restart storm ids embed the supervisor instance epoch, because restart counts reset every run and epoch-free ids would dedup every storm after the first into invisibility, the blocker the review caught. Drops ids embed the monotonic total. Emission failures leave the condition fired rather than retrying every tick, because the idempotent id makes later replay safe and a runtime that cannot append is already loud on the heartbeat path. Recorded nit: the storm threshold equals the default restart attempt limit by coincidence, and a lower configured limit makes storms unreachable; linking them is future work.
 
-### Phase 4 — partial, deviation recorded 2026-07-08
+### Phase 4 — complete as corrected 2026-07-10
 
-Phase 4 as written asked the supervisor tick to publish health snapshots through the Wave 0 `RuntimeStatusPublisher` trait. This checkpoint deliberately lands the publishable shape, not the publication. `RuntimeStatusSnapshot` gains an optional, serde-defaulted ledger summary mapped by `RuntimeStatusLedgerSummary::from_health`, with its wire shape pinned by contract test and pre-field cache JSON proven to still deserialize. The `event.append` inert handle becomes a diagnostics-only semantic handle, so the existing heartbeat path carries the commit watermark as its checkpoint and drop deltas as retryable issues, visible through `meld runtime status` today.
+Phase 4 as originally written asked the supervisor tick to publish health snapshots through the Wave 0 `RuntimeStatusPublisher` trait. That was accidental scope mixing. The event-owned checkpoint is the stable `EventHealthReport` input shape. The same historical checkpoint added a runtime-owned optional ledger summary mapped by `RuntimeStatusLedgerSummary::from_health`, with its wire shape pinned by contract test and pre-field cache JSON proven to still deserialize.
 
-The trait plumbing was deferred by choice, not impossibility — a test-double publisher could prove the call today — because the only real implementor is the wiring workstream's blocked Wave 1, and dead plumbing was judged worse than a recorded gap. The exit criterion "supervisor tick publishes snapshots through the trait" is not met; the phase stays open until the supervisor accepts an injected publisher and a test proves the call, here or at Wave 1 integration.
+Supervisor trait plumbing is not an event exit criterion. Runtime visibility owns the mapping, tick, publisher invocation, cache, and presentation. The event phase is complete because it supplies `EventHealthReport` with the stable fields that runtime consumes.
+
+The `event.append` diagnostics handle landed in the same historical checkpoint, but heartbeat and runtime action mapping are runtime-owned compatibility plumbing and are not part of the corrected event exit criterion.
 
 Coordination: this additively extends Wave 0's reviewed contract with an optional field that leaves old cache files readable, and it touches the event runtime reports seam that Wave 3 reserves; a coordination entry is recorded in the visibility program ledger. Content-rule check against the visibility skeleton: the ledger summary is an operational projection — sequence authority remains the ledger watermark and the cursor registry, and append rates are excluded as windowed computations — satisfying the cache's operational-projections-only rule and its prohibition on holding event sequence authority.
 

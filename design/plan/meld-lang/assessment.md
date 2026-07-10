@@ -3,7 +3,7 @@
 Status: complete
 Depends on: `design/plan/events/assessment.md`
 Design source: `design/cognitive_architecture/meld-lang/README.md`, `design/cognitive_architecture/meld-lang/CRATE.md`, `design/cognitive_architecture/meld-lang/requirements.md`, `design/cognitive_architecture/meld-lang/primitives.md`, `design/cognitive_architecture/meld-lang/world_state.md`, `design/cognitive_architecture/meld-lang/goals_and_methods.md`, `design/cognitive_architecture/meld-lang/compositions.md`, `design/cognitive_architecture/meld-lang/operators.md`, `design/cognitive_architecture/meld-lang/PLAN.md`
-Evidence date: 2026-05-26
+Evidence date: 2026-07-10
 
 ## Verdict Summary
 
@@ -68,7 +68,8 @@ Runtime method loading, capability catalog lookup, task compilation, task dispat
 
 ## Dependency Readiness
 
-Events are ready and provide the identity types that `meld-lang` consumes.
+The event identity types that `meld-lang` consumes are ready.
+Production runtime integration remains downstream of the active event foundation closeout and does not block this pure-language slice.
 
 `meld-lang` must depend only on `meld-events`, `serde`, `serde_json`, and the standard library.
 

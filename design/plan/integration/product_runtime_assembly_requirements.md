@@ -8,7 +8,7 @@ Scope: Phase 1 requirements for root `ProductRuntimeAssembly`
 
 `ProductRuntimeAssembly` is the root product assembly boundary for the durable flywheel runtime.
 
-It resolves product configuration, opens product stores, opens the supervisor store, constructs direct handoff ports, builds the runtime factory registry, and produces inert runtime handles or handle factories for the supervisor.
+It resolves product configuration, consumes a root-resolved product event authority, opens the remaining product stores and the supervisor store, constructs direct handoff ports, builds the runtime factory registry, and produces inert runtime handles or handle factories for the supervisor.
 
 It does not run the flywheel. It does not own semantic progress. It does not mediate every transition after ports are wired.
 
@@ -40,7 +40,8 @@ Required authority:
 - resolve the product root from config and environment
 - derive `ProductStorageLayout`
 - create storage directories required by the layout
-- open `OpenProductStores`
+- consume exactly one root-resolved product event authority
+- open `OpenProductStores` without constructing canonical event storage
 - open the supervisor store
 - construct direct handoff port implementations
 - construct root adapter ports for context, provider, prompt, and workspace access
@@ -51,7 +52,7 @@ Required authority:
 - expose a product flush boundary for the supervisor to call
 - report assembly diagnostics for invalid config, failed opens, failed port construction, and invalid registry entries
 
-`ProductRuntimeAssembly` must be the place where physical stores and concrete adapters are assembled. Domain crates remain the place where record meaning, replay rules, command validation, idempotency, and semantic cursors are owned.
+`ProductRuntimeAssembly` must be the place where projection stores and concrete product adapters are assembled. Root event authority resolution is the one storage-construction exception. Domain crates remain the place where record meaning, replay rules, command validation, idempotency, and semantic cursors are owned.
 
 ## Non Authority
 
@@ -65,6 +66,7 @@ Forbidden authority:
 - decide whether an event payload has product meaning
 - decide whether a task network command is valid
 - decide whether a task publication should remain pending or become published
+- select or construct a competing canonical event history for the same product identity
 - choose where a domain runtime resumes after restart
 - route every world model to execution handoff after ports are wired
 - route every execution to event handoff after ports are wired
@@ -81,6 +83,7 @@ Allowed owned state:
 
 - product root path
 - product storage layout
+- resolved product event authority capabilities
 - opened product stores
 - opened supervisor store handle
 - direct handoff port values
@@ -182,23 +185,26 @@ Required construction order:
 2. Resolve the product root.
 3. Derive `ProductStorageLayout`.
 4. Create required product storage directories.
-5. Open `OpenProductStores`.
-6. Open the supervisor store.
-7. Build direct handoff ports from opened stores and root adapters.
-8. Build provider, context, prompt, and workspace adapters.
-9. Build runtime factory registry.
-10. Build inert runtime handles or handle factories.
-11. Build the supervisor startup handoff package.
+5. Consume the root-resolved product event authority and validate its product binding.
+6. Open `OpenProductStores` without constructing canonical event storage.
+7. Open the supervisor store.
+8. Build direct handoff ports from authority capabilities, opened stores, and root adapters.
+9. Build provider, context, prompt, and workspace adapters.
+10. Build runtime factory registry.
+11. Build inert runtime handles or handle factories.
+12. Build the supervisor startup handoff package.
 
-Steps one through ten must not start domain work. Step eleven must hand resources to the supervisor, which owns lease acquisition, runtime start, heartbeat monitoring, restart, and shutdown.
+Steps one through eleven must not start domain work. Step twelve must hand resources to the supervisor, which owns lease acquisition, runtime start, heartbeat monitoring, restart, and shutdown.
 
 ## Product Storage Opening
 
-Product storage opening must use `ProductStorageLayout` and `OpenProductStores`.
+Product storage paths must use `ProductStorageLayout`.
+The root authority resolver opens the ledger entry, and product assembly uses `OpenProductStores` for the remaining stores.
+E5 changes any current `OpenProductStores` ledger field into an authority capability or removes that field so opening product stores cannot construct a second canonical ledger.
 
-Required product storage entries:
+Required product storage layout entries:
 
-- `ledger.sled` for the event spine and session compatibility state
+- `ledger.sled` for the root-resolved event authority and session compatibility state
 - `workspace.sled` for workspace node records
 - `world_model.sled` for graph reducer state, belief state, agent state, and compatibility world state
 - `execution/goals.sled` for execution goals
@@ -207,9 +213,20 @@ Required product storage entries:
 - `context/frames` for context frame blobs
 - `context/prompt_artifacts` for prompt context artifacts
 
-Assembly opens always available product stores once and wraps them in typed store handles. It must not expose raw `sled::Db` handles through supervisor facing assembly fields.
+Root authority resolution opens `ledger.sled` once.
+Product assembly opens the remaining always available product stores once and wraps them in typed store handles.
+It must not expose raw `sled::Db` handles through supervisor facing assembly fields.
 
-Root opens stores. Owning domains own record meaning.
+The ledger storage entry must bind to one stable ledger identity for the product identity.
+Root composition resolves that authority before product assembly, and product assembly must consume it rather than open another event store.
+CLI compatibility storage must not remain a second writable canonical history.
+
+Append, replay, subscription, watermark, and observability ports must derive from the same product event authority.
+Physical separation between `ledger.sled` and projection stores remains required and does not imply separate logical event histories.
+
+Root authority resolution opens the ledger.
+Product assembly opens projection and domain stores.
+Owning domains own record meaning.
 
 Product storage open failure must return an assembly storage error before any runtime handle starts. Assembly must not delete or rewrite partially opened stores as a recovery shortcut.
 
@@ -217,9 +234,9 @@ Product storage open failure must return an assembly storage error before any ru
 
 `OpenProductStores::flush_boundary` is the product checkpoint boundary for always opened stores.
 
-It must flush:
+It must flush or invoke the typed flush capability for:
 
-- event store
+- event authority
 - workspace store
 - traversal store
 - belief store
@@ -292,11 +309,11 @@ The event append port must implement the execution callable `EventAppendSink` co
 
 Requirements:
 
-- backed by the opened event store
+- backed by the resolved event authority append capability
 - accepts an `EventEnvelope`
-- calls idempotent append through the event store
-- returns the event spine sequence assigned by the event store
-- preserves event store errors as append port errors
+- delegates idempotent append through the canonical event capability
+- returns the canonical event sequence assigned by the event authority
+- preserves event authority errors as append port errors
 - does not inspect event payload meaning
 - does not choose publication readiness
 - does not store the latest appended sequence as root progress
@@ -310,7 +327,7 @@ The event replay port must implement the world model callable bounded replay con
 
 Requirements:
 
-- backed by the opened event store or event runtime replay API
+- backed by the resolved event authority replay capability
 - accepts caller supplied `after_seq` and `limit`
 - returns ordered event records after the supplied sequence
 - enforces bounded limits required by the replay contract
@@ -613,11 +630,12 @@ Port errors after runtime start belong to the calling runtime and owning domain.
 
 ## Recovery Expectations
 
-Recovery begins by constructing a fresh `ProductRuntimeAssembly` from the same product root and config.
+Recovery begins by resolving the same product event authority and constructing a fresh `ProductRuntimeAssembly` from the same product root and config.
 
 Assembly recovery requirements:
 
 - reopen existing product stores through `ProductStorageLayout`
+- consume the reopened product event authority rather than construct event storage
 - reopen the supervisor store
 - rebuild direct handoff ports from reopened stores
 - rebuild root adapter ports from reopened stores and config
@@ -632,7 +650,7 @@ The supervisor handles stale instance records, expired leases, desired runtime r
 
 Domain runtimes handle semantic resume:
 
-- event runtime resumes from event store sequence and idempotency records
+- event runtime resumes from authority sequence and idempotency records
 - world model graph runtime resumes from graph replay cursor in world model storage
 - belief runtime resumes from belief evidence and revision state
 - agent runtimes resume from agent delivery and decision stores
@@ -652,9 +670,10 @@ Required unit tests:
 
 - product storage layout derives expected paths
 - assembly opens product stores through `OpenProductStores`
+- assembly consumes a root-resolved product event authority without opening canonical event storage
 - assembly opens `supervisor.sled`
-- assembly constructs event append port from event store
-- assembly constructs event replay port from event store
+- assembly constructs the execution event publication adapter from the resolved event authority append capability
+- assembly constructs the world model replay adapter from the resolved event authority replay capability
 - assembly constructs execution goal command port from goal store
 - assembly constructs execution goal mutation port from goal store
 - assembly constructs planner projection port from world model stores
@@ -699,11 +718,12 @@ Required acceptance outcomes:
 
 - product root is resolved from config and environment
 - product stores open through `ProductStorageLayout` and `OpenProductStores`
+- root-resolved product event authority is consumed without alternate writable construction
 - supervisor store opens beside product stores
 - product flush boundary is available to the supervisor
 - supervisor store flush remains separate
-- event append port is wired to event storage
-- event replay port is wired to event storage
+- execution event publication port is wired to the resolved event authority append capability
+- world model replay port is wired to the resolved event authority replay capability
 - execution goal command port is wired to execution goal storage
 - execution goal mutation port is wired to execution goal storage
 - planner projection port is wired to world model projection APIs

@@ -3,7 +3,7 @@
 Status: ready
 Depends on: `design/plan/events/assessment.md`
 Design source: `design/cognitive_architecture/world_model/graph/README.md`, `design/cognitive_architecture/world_model/graph/spec.md`, `design/cognitive_architecture/world_model/graph/requirements.md`
-Evidence date: 2026-05-27
+Evidence date: 2026-07-10
 
 ## Verdict Summary
 
@@ -33,7 +33,8 @@ Graph does not own belief confidence, contradiction handling, calibration, Bayes
 
 ## Dependency Readiness
 
-Events are ready and provide the object and relation facts that graph consumes.
+The event mechanics and object and relation contracts required by the implemented graph slice are ready.
+Production authority-backed graph replay and derived append remain part of the active event foundation closeout.
 
 No upstream blocker prevents the typed-loop slice.
 
@@ -43,7 +44,7 @@ Graph supports the typed loop by identifying the docs node subject and making it
 
 Belief consumes the current anchor and provenance query path for the first `docs_freshness` slice.
 
-Graph supports the runtime flywheel once sensory and execution publish graph-readable facts.
+Graph supports the runtime flywheel after the event foundation closes and sensory and execution publish graph-readable facts.
 
 ## Current Implementation Evidence
 

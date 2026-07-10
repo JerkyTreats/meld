@@ -3,7 +3,7 @@
 Status: first slice implemented
 Depends on: `design/plan/events/assessment.md`, `design/plan/world_model/graph/assessment.md`
 Design source: `design/cognitive_architecture/world_model/belief/README.md`, `design/cognitive_architecture/world_model/belief/belief_families.md`, `design/cognitive_architecture/world_model/belief/fact_to_belief.md`, `design/cognitive_architecture/world_model/belief/comparator_model.md`, `design/cognitive_architecture/world_model/belief/substrate.md`, `design/cognitive_architecture/world_model/belief/curation.md`, `design/cognitive_architecture/world_model/belief/microarchitecture.md`, `design/cognitive_architecture/world_model/belief/spec.md`
-Evidence date: 2026-05-27
+Evidence date: 2026-07-10
 
 ## Verdict Summary
 
@@ -35,7 +35,8 @@ Belief does not own graph anchors, event append, causal claims, regime identity,
 
 ## Dependency Readiness
 
-Events and graph are ready.
+The event mechanics and graph queries required by the implemented belief slice are ready.
+Production authority cutover remains part of the active event foundation closeout.
 
 Belief can consume current anchors, provenance, object history, graph walks, and promoted outcome facts.
 

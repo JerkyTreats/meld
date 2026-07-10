@@ -3,7 +3,7 @@
 Status: deferred
 Depends on: `design/plan/events/assessment.md`, `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`
 Design source: `design/cognitive_architecture/world_model/causation/README.md`, `design/cognitive_architecture/world_model/causation/spec.md`, `design/cognitive_architecture/world_model/causation/requirements.md`
-Evidence date: 2026-05-27
+Evidence date: 2026-07-10
 
 ## Verdict Summary
 
@@ -31,7 +31,8 @@ Causation does not own event append, temporal truth materialization, generic bel
 
 ## Dependency Readiness
 
-Events and graph are ready.
+The event mechanics and graph queries required for causation design work are ready.
+Production authority cutover remains part of the active event foundation closeout.
 
 Belief has landed the externally configured `docs_freshness` slice.
 

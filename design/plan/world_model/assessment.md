@@ -3,7 +3,7 @@
 Status: conditionally ready
 Depends on: `design/plan/events/assessment.md`, `design/plan/meld-lang/assessment.md`, `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`, `design/plan/world_model/planner/assessment.md`, `design/plan/world_model/agent/assessment.md`, `design/plan/world_model/causation/assessment.md`, `design/plan/world_model/regime/assessment.md`
 Design source: `design/cognitive_architecture/world_model/README.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/meld-lang/README.md`
-Evidence date: 2026-05-30
+Evidence date: 2026-07-10
 
 ## Verdict Summary
 
@@ -38,7 +38,8 @@ World model does not own canonical event append, sensory raw lanes, execution go
 
 ## Dependency Readiness
 
-Events are ready.
+The event mechanics required by the implemented world model slices are ready.
+Production authority-backed replay and derived append remain part of the active event foundation closeout.
 
 `meld-lang` is ready for typed-loop values and operations.
 
@@ -52,7 +53,7 @@ World model supports the typed-loop design path through graph, belief, planner p
 
 The runtime implementation performs the first planner projection and first agent curation handoff.
 
-Runtime loop closure remains blocked by execution runtime planning and outcome publication.
+Runtime loop closure remains blocked by event foundation closure, execution runtime planning, and outcome publication.
 
 ## Current Implementation Evidence
 

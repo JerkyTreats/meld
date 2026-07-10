@@ -10,7 +10,8 @@ Workflow: complex change workflow active per [Complex Change Workflow Governance
 ### Objective
 
 The event spine is the shared clock and durable history for the cognitive flywheel.
-The runtime wiring workstream is paused on it.
+The runtime wiring workstream was paused on its ledger mechanics.
+The successor event foundation closeout now finishes authority and product cutover before full runtime wiring resumes.
 This program overhauls meld-events so that when the remaining runtimes come online, the spine is the strongest crate they touch.
 
 ### Outcome
@@ -27,7 +28,7 @@ A spine with proven ordering, durability, idempotency, and replay-determinism co
 
 - No multi-spine, partitioning, or distributed sequencing. The single runtime-wide sequence is the product. The inclusion rule — only promoted semantic facts enter events — is the volume control, not sharding.
 - No async core. Tokio stays at the provider and workflow edge. The spine core remains synchronous with one ordered writer.
-- No pluggable storage-backend abstraction. The `EventStore` public API is the seam; a second implementation is written only if the engine gate decides to migrate.
+- No pluggable storage-backend abstraction. The event-owned persistence API behind `EventAuthority` is the engine seam; a second implementation is written only if the engine gate decides to migrate.
 - No spine-owned consumer cursors. Cursors remain in consumer domain stores per the event runtime requirements.
 - No sensory lane store. That is the sensory domain's work. This program only guarantees the spine absorbs promoted facts at cognition rate with headroom.
 
@@ -44,9 +45,12 @@ This codifies the multi-domain ledger design as a recorded decision so the curso
 ### Decision 2: process ownership
 
 sled is single-process.
-The CLI assembly and product assembly currently open different databases, which masks the question of who owns the spine when a runtime daemon and a CLI command run concurrently.
-Decision: single-process spine ownership enforced by the supervisor lease; the CLI and product runtime must not race on one spine database.
-The ingress writer stays behind a channel so a daemon-plus-IPC edge can be added later without another overhaul.
+One owning process opens the product's configured ledger binding.
+CLI and product runtime clients must not avoid process ownership by selecting different databases.
+When no daemon owns the ledger a short-lived client may open the configured binding directly.
+When a daemon owns it every other client uses authority-preserving IPC for append, replay, and observability.
+The supervisor lease and ledger identity guard ownership and reject split-brain access.
+The ingress writer stays behind a channel so the daemon IPC edge does not require another storage-engine overhaul.
 
 ### Decision 3: durability classes
 
@@ -70,7 +74,8 @@ flowchart LR
     P3 --> P4[Read path and notification]
     P4 --> P5[Retention contract]
     P5 --> P6[Engine gate and close]
-    P3 -. unblocks .-> RW[Runtime wiring workstream]
+    P6 --> EF[Event foundation closeout]
+    EF --> RW[Runtime wiring workstream]
 ```
 
 Decisions above are phase zero and land with this PLAN.
@@ -127,7 +132,7 @@ Tasks:
 - [x] commit watermark published by the writer through a condvar watch primitive that advances before any ack releases its producer; a barrier primitive proves everything enqueued earlier has reached the store
 - [x] flush-and-drain on shutdown and drop; CLI one-shot processes never lose acked events, and the durable session-ended emit stays each command's last emission so queue order protects earlier best-effort events even on exit paths that skip drop
 
-Exit criteria: multi-producer bench shows group-commit gain over the per-event-fsync baseline; kill-recovery proves acked events always survive; drop counters exposed with the supervisor surface handed off; runtime wiring workstream may resume.
+Exit criteria: multi-producer bench shows group-commit gain over the per-event-fsync baseline; kill-recovery proves acked events always survive; drop counters exposed with the supervisor surface handed off; event observability and authority follow-on work may proceed.
 
 ### Phase 4: read path and notification — complete 2026-07-08
 
@@ -167,7 +172,7 @@ Goal: decide the storage engine with data and close the program.
 Tasks:
 
 - [x] rerun the full bench suite; compare fixed sled against one candidate only if sled numbers or maintenance risk justify the spike; record the decision
-- [x] document the CLI and product database topology divergence as intentional with behavioral differences named
+- [x] document the physical CLI and product database topology differences with behavioral differences named
 - [x] update `CRATE.md`, events README, and `assessment.md` to post-overhaul reality
 - [x] mark this PLAN complete with gate evidence links
 
@@ -175,11 +180,18 @@ Exit criteria: final PLAN state shows gate pass status for all phases.
 
 ### Decision 5: storage engine stays sled, re-evaluated at the compaction trigger
 
-The data does not justify a candidate spike. Post-overhaul sled delivers replay at tip in under a microsecond regardless of history size, twenty thousand durable events per second for a single producer on NVMe with group commit scaling past thirty-five thousand aggregate across eight, and proven crash recovery across hundreds of kill cycles. At cognition-rate volumes the engine is nowhere near the bottleneck. The genuine sled risk is maintenance status and space reclamation, and both matter exactly when compaction activates; the [Spine Compaction Design](spine_compaction_design.md) trigger is therefore also the engine re-evaluation gate. The `EventStore` public API remains the seam a replacement would implement.
+The data does not justify a candidate spike. Post-overhaul sled delivers replay at tip in under a microsecond regardless of history size, twenty thousand durable events per second for a single producer on NVMe with group commit scaling past thirty-five thousand aggregate across eight, and proven crash recovery across hundreds of kill cycles. At cognition-rate volumes the engine is nowhere near the bottleneck. The genuine sled risk is maintenance status and space reclamation, and both matter exactly when compaction activates; the [Spine Compaction Design](spine_compaction_design.md) trigger is therefore also the engine re-evaluation gate. The `EventStore` persistence API remains the internal engine seam behind the event authority. It is not the cross-domain producer or consumer boundary.
 
-### Decision 6: the CLI and product database topologies stay divergent, on purpose
+### Decision 6: physical layouts may differ, logical event authority may not
 
-The CLI opens one database for the spine, node store, beliefs, and traversal because a short-lived single process gains simplicity and shared flushes from one handle, and sled's directory lock already excludes concurrent processes. The product runtime splits the canonical ledger into its own database away from projections so projection rebuilds and world-model experiments can never endanger canonical history, and so the ledger can move to another engine independently. The behavioral difference to know: in the CLI topology the graph reducer's derived appends share the spine database and flush together; in the product topology the ledger flushes independently of projection stores, which is why consumer cursors advance only after consumer-side durability.
+Event trees may be colocated with node storage, beliefs, and traversal, or the canonical ledger may be isolated from projection stores so projection rebuilds and world-model experiments cannot endanger canonical history. In the colocated layout graph-derived appends share a database flush with the ledger. In the isolated layout the ledger flushes independently and consumer cursors advance only after consumer-side durability.
+
+The physical distinction does not authorize two canonical histories for one product identity. The earlier interpretation that CLI and product event streams could remain independently writable is superseded. CLI and product adapters must consume one logical event authority and one sequence space.
+The selected storage binding is stable across CLI and supervised process shapes. Each process reaches it directly or through the owning process. The colocated and isolated layouts are alternative storage bindings, and moving a product between them requires an explicit migration and write cutover.
+
+The current CLI compatibility assembly and product runtime assembly do not yet satisfy this requirement when they are composed by `meld runtime run`.
+The active [Event Foundation Closeout Program](event_foundation_closeout_program.md) owns the remaining correctness, authority, observability, domain-port, and product-cutover work.
+Its E5 detail is the [Product Event Authority Cutover](../integration/product_event_authority_cutover.md).
 
 ## Verification Strategy And Gates
 
@@ -208,7 +220,7 @@ No push without explicit user verification per commit policy.
 Decisions and this PLAN land first as one design commit.
 Harness suites and benches build in parallel, integrate, and record baselines.
 Correctness fixes flip the known-reds.
-The ingress writer lands as one reviewed unit and unblocks the runtime wiring workstream.
+The ingress writer lands as one reviewed unit and unblocks the remaining event foundation work.
 Read path tracks parallelize after the writer exists.
 Retention contract lands, then the engine gate closes the program.
 
@@ -298,7 +310,7 @@ Gate evidence: formatter clean; clippy zero warnings; boundary script passed; fu
 
 Program outcome against the overview commitments: zero sequence collisions or lost events under storm, proven by un-ignored contract tests; kill-recovery proves acked durable events always survive; replay is deterministic, gap-typed below retention, and cost-independent of history size — roughly two hundred thousand times faster at tip on a 100k history; group commit reverses the old scaling direction, with eight durable producers sustaining about 1.8 times the single-producer fsync ceiling in aggregate while each still receives a per-event durable ack; drop counters, the watermark, and per-tick replay stats are exposed; envelope and port contracts unchanged for producers except the recorded breaking removals; consumer cursors remain consumer-owned; the harness stands as the regression sentinel with criterion baselines recorded here.
 
-Handoffs and known items: the runtime wiring workstream owns the `event.append` supervisor diagnostic surface including any writer queue depth accessor it needs, consumer registration for compaction, and the eleven inert runtime handles; the compaction trigger doubles as the sled re-evaluation gate; one pre-existing flake in `current_snapshot_matches_workspace_root_hash` predates this program, reproduces only under full parallel workspace runs, touches workspace scan hashing rather than the spine, and is left recorded here for the workspace domain.
+Handoffs and known items: runtime owns the `event.append` supervisor diagnostic surface including any writer queue depth accessor it needs and the eleven inert runtime handles; the event foundation closeout precedes that runtime resumption; consumer registration carries into compaction; the compaction trigger doubles as the sled re-evaluation gate; one pre-existing flake in `current_snapshot_matches_workspace_root_hash` predates this program, reproduces only under full parallel workspace runs, touches workspace scan hashing rather than the spine, and is left recorded here for the workspace domain.
 
 The complex change workflow deactivates with this closeout: the scoped work is complete.
 

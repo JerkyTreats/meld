@@ -6,7 +6,7 @@ Scope: observability primitives over the event ledger, one port for every presen
 
 ## Intent
 
-The event ledger is the durable, totally ordered record of everything the runtime does, with identity, timestamps, and causal references on every record. Observability of the cognitive layer is therefore mostly a read problem over data that already exists, plus a small number of facts the runtime does not yet emit about itself.
+The event ledger is the durable, totally ordered record of promoted semantic facts, with identity, timestamps, and causal references on every record. Observability of the cognitive layer is therefore mostly a read problem over data that already exists. Producer-owned concerns may also supply promoted runtime-health facts through the event append capability.
 
 This design defines the read models, the single port they are served through, and the adapter rule that keeps a CLI, a TUI, and a browser dashboard equally thin. It answers three operator questions with different machinery:
 
@@ -28,13 +28,12 @@ Event is a hardened domain; spine was the design metaphor that named it during g
 
 ```mermaid
 flowchart LR
-    Store[EventStore] --> Port[EventObservabilityPort]
-    Watermark[CommitWatermark] --> Port
-    Registry[EventCursorRegistry] --> Port
+    Authority[EventAuthority] --> Port[EventObservabilityPort]
     Port --> CLI[meld event commands]
     Port --> TUI[future TUI]
-    Port --> HTTP[future HTTP and SSE dashboard adapter]
-    Port --> Cache[status cache snapshots]
+    Port --> Remote[transport-neutral remote contract]
+    Port --> Mapping[health report and stable mapping inputs]
+    Mapping --> Runtime[runtime-owned publisher and cache]
 ```
 
 ### The port
@@ -57,13 +56,20 @@ pub trait EventObservabilityPort {
 
 sled is single process, so the port must be implementable twice and adapters must never know which backing they received:
 
-- In-process backing now: direct store plus watermark plus registry. Serves one-shot CLI commands when no daemon holds the database, and any TUI hosted inside the runtime process.
+- In-process backing now: authority-derived observability capability. Serves one-shot CLI commands when no daemon holds the database, and any TUI hosted inside the runtime process.
 - Out-of-process backing later: the owning daemon exposes the same port over the IPC or HTTP edge that the process ownership decision already reserves. A browser dashboard server implements the port over that edge; it is adapter work, not redesign.
-- Health snapshots additionally publish into the operator visibility status cache, so `meld event status` stays non-blocking against a running daemon per that program's read rule.
+- Event closure defines transport-neutral requests, responses, durability semantics, identity validation, and a reusable conformance suite proved by a loopback adapter.
+- Runtime owns the real process host, IPC framing, reconnects, endpoint lifecycle, authentication, and status cache publication.
+
+Both backings address the same ledger identity.
+Changing from direct access to IPC changes transport only and must never switch the product to another event history.
+A CLI compatibility database is not an alternate observability authority for a product runtime ledger.
 
 ### DTO discipline
 
-Every report is a plain serializable struct with stable field names, free of presentation:
+Every report is a plain serializable struct with stable field names, free of presentation.
+Every report carries the supplied authority's `LedgerIdentity`.
+Every bounded result carries its scanned range or an explicit truncation state.
 
 | Report | Contents |
 | --- | --- |
@@ -81,19 +87,28 @@ Consumers register named `EventCursor`s in one well-known registry tree, giving 
 
 ### Boundaries
 
-- meld-events owns structure-level reads: health, paging, and trace walks over object references, relations, and record ids, all events-owned contracts. It never interprets `event_type` meaning.
+- meld-events owns structure-level reads: health, paging, and trace walks over object references, relations, and record ids, all events-owned contracts. It never interprets `event_type` meaning or searches arbitrary payload strings for provenance.
 - telemetry owns semantic summaries that interpret event meaning, such as flywheel-stage rollups; it stays downstream.
 - views, CLI, TUI, and HTTP adapters own presentation only, per the thin adapter rule.
 - The status cache remains operational-only and never authoritative, per the operator visibility program.
+- Runtime owns mapping `EventHealthReport` into its status shape and deciding when and where to invoke `RuntimeStatusPublisher`.
 
 ## Self-observation
 
-Promoted runtime-health facts become first-class ledger events in a `runtime` domain vocabulary: consumer lag exceeding a threshold, drop bursts, retention gaps encountered, restart storms. The world model can then reduce them like any other domain and form beliefs about the runtime's own health. The inclusion rule stays sovereign: gauges, heartbeat chatter, and per-tick samples never enter the ledger; only threshold-crossing summaries are promoted. This layer lands after the read surfaces prove out.
+Events durably appends a promoted health fact that a producer presents through the authority append capability.
+It does not decide when raw runtime health becomes a semantic fact.
+
+Runtime supplies raw health and restart signals.
+A producer-owned runtime-health or sensory concern owns thresholds, hysteresis, process epochs, retry and outbox state, and promotion decisions.
+The inclusion rule stays sovereign: gauges, heartbeat chatter, and per-tick samples never enter the ledger.
+
+The existing `SelfObservationWatcher` is a provisional compatibility implementation.
+It may be hardened while migration proceeds, but it is not canonical event behavior and does not define event closure.
 
 ## Non-Goals
 
 - No external metrics stack. A Prometheus or OTLP exporter would be one more named consumer with a cursor whenever a real need appears; it is never a foundation.
-- No metrics in the ledger. Counters and gauges are ephemeral port reads or status cache entries; only promoted threshold facts are events.
+- No metrics in the ledger. Counters and gauges are ephemeral port reads or status cache entries; only promoted semantic health facts are events.
 - No second truth channel. Diagnostics that are semantic facts flow through the ledger; the status cache is the sanctioned non-authoritative exception.
 - No new persistence. Observability reads existing trees plus the one registry tree; it never becomes a store of record.
 
@@ -106,7 +121,9 @@ Delivered by the [Event Observability PLAN](event_observability_program.md):
 3. `EventHealthReport` and `meld event status`.
 4. `EventPage` and `meld event tail`.
 5. `EventTraceReport` and `meld event trace`, structure-level only.
-6. Status cache health snapshot publication readiness, with the trait call itself coordinated to the runtime wiring workstream's Wave 1.
+6. `EventHealthReport` and stable status mapping inputs, with publisher invocation owned entirely by runtime visibility.
+
+Remaining correctness, identity, coverage, remote-contract, and product-routing work is active in the [Event Foundation Closeout Program](event_foundation_closeout_program.md).
 
 ## Read With
 
