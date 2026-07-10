@@ -54,11 +54,15 @@ pub struct EventRuntime {
 impl EventRuntime {
     /// Creates a runtime and its writer over a dedicated database handle.
     pub fn new(db: sled::Db) -> Result<Self, StorageError> {
+        // TODO compat-shim: E5 removes raw runtime construction once product
+        // append and CLI route parity tests consume EventAuthority capabilities.
         Ok(Self::from_store(EventStore::shared(db)?))
     }
 
     /// Creates a runtime and its writer over an already opened store.
     pub fn from_store(store: Arc<EventStore>) -> Self {
+        // TODO compat-shim: E5 removes raw store injection with `new` after
+        // the same authority route and recovery gates pass.
         let writer = Arc::new(EventWriter::spawn(Arc::clone(&store)));
         Self { store, writer }
     }
@@ -211,6 +215,8 @@ impl EventRuntime {
 
     /// Returns the writer's committed-sequence watermark for consumers.
     pub fn watermark(&self) -> Arc<CommitWatermark> {
+        // TODO compat-shim: E5 removes this handle after telemetry and runtime
+        // callers consume EventWatermarkCapability with recovery parity.
         self.writer.watermark()
     }
 
@@ -221,11 +227,15 @@ impl EventRuntime {
 
     /// Returns the shared drop counter for observability backings.
     pub fn dropped_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+        // TODO compat-shim: E5 removes this handle after observability reads
+        // derive drop diagnostics from EventObservabilityCapability.
         self.writer.dropped_handle()
     }
 
     /// Returns the backing event store for queries and tests.
     pub fn store(&self) -> &EventStore {
+        // TODO compat-shim: E5 removes raw store access after product CLI,
+        // telemetry, and graph route parity tests use authority capabilities.
         &self.store
     }
 }

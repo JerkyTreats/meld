@@ -65,7 +65,7 @@ pub trait EventObservabilityPort {
     /// Bounded page after a cursor, blocking until events commit or the
     /// timeout elapses; an empty page means the timeout expired. Zero
     /// limits are rejected rather than blocked on.
-    fn next_page(&self, request: EventPageRequest) -> Result<EventPage, StorageError>;
+    fn next_page(&self, request: EventPageRequest) -> Result<LegacyEventPage, StorageError>;
 }
 
 /// Trailing window selector for flow reports.
@@ -114,7 +114,9 @@ pub struct EventPageRequest {
 /// Records travel intact as canonical products; the page adds only the
 /// cursor operational metadata around them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EventPage {
+// TODO compat-shim: E3 removes this identity-less page after direct CLI and
+// observability paging parity tests consume authority::EventPage.
+pub struct LegacyEventPage {
     /// Records in sequence order.
     pub records: Vec<EventRecord>,
     /// Cursor for the next request; unchanged when the page is empty.
@@ -394,7 +396,7 @@ impl EventObservabilityPort for LedgerObservability {
         session::compute_timeline(self, session_id)
     }
 
-    fn next_page(&self, request: EventPageRequest) -> Result<EventPage, StorageError> {
+    fn next_page(&self, request: EventPageRequest) -> Result<LegacyEventPage, StorageError> {
         validate_nonzero_bound("event page limit", request.limit, MAX_EVENT_PAGE_LIMIT)?;
         validate_upper_bound(
             "event page timeout_ms",
@@ -410,7 +412,7 @@ impl EventObservabilityPort for LedgerObservability {
             .last()
             .map(|record| record.seq)
             .unwrap_or(request.after_seq);
-        Ok(EventPage {
+        Ok(LegacyEventPage {
             records,
             next_after_seq,
         })

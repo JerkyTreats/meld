@@ -7,7 +7,7 @@
 
 use std::io::Write;
 
-use meld_events::{EventObservabilityPort, EventPage, EventPageRequest, EventRecord};
+use meld_events::{EventObservabilityPort, EventPageRequest, EventRecord, LegacyEventPage};
 
 use crate::error::ApiError;
 use crate::events::tooling::{render, surface_error};
@@ -95,7 +95,7 @@ fn next_page(
     after_seq: u64,
     limit: usize,
     timeout_ms: u64,
-) -> Result<EventPage, ApiError> {
+) -> Result<LegacyEventPage, ApiError> {
     port.next_page(EventPageRequest {
         after_seq,
         limit,
@@ -106,7 +106,7 @@ fn next_page(
 
 /// Next cursor after a page: the page's cursor when it carried records, the
 /// current cursor unchanged when it was empty (a timeout, not a gap).
-fn advance_cursor(cursor: u64, page: &EventPage) -> u64 {
+fn advance_cursor(cursor: u64, page: &LegacyEventPage) -> u64 {
     if page.records.is_empty() {
         cursor
     } else {
@@ -116,7 +116,7 @@ fn advance_cursor(cursor: u64, page: &EventPage) -> u64 {
 
 /// Renders one follow-mode page: text lines, or the whole page as a single
 /// JSON object line so `--format json --follow` streams one object per page.
-fn render_follow_page(format: &str, page: &EventPage) -> Result<String, ApiError> {
+fn render_follow_page(format: &str, page: &LegacyEventPage) -> Result<String, ApiError> {
     match format {
         "json" => serde_json::to_string(page)
             .map_err(|err| ApiError::ConfigError(format!("failed to render event page: {err}"))),
@@ -124,7 +124,7 @@ fn render_follow_page(format: &str, page: &EventPage) -> Result<String, ApiError
     }
 }
 
-fn render_page_text(page: &EventPage) -> String {
+fn render_page_text(page: &LegacyEventPage) -> String {
     page.records
         .iter()
         .map(render_record_line)
@@ -172,8 +172,8 @@ mod tests {
         EventRecord::from_envelope(envelope, seq)
     }
 
-    fn page(records: Vec<EventRecord>, next_after_seq: u64) -> EventPage {
-        EventPage {
+    fn page(records: Vec<EventRecord>, next_after_seq: u64) -> LegacyEventPage {
+        LegacyEventPage {
             records,
             next_after_seq,
         }
@@ -182,18 +182,18 @@ mod tests {
     /// Port fake serving scripted pages while recording every request, so
     /// cursor and timeout discipline are observable without a live ledger.
     struct ScriptedPort {
-        pages: RefCell<VecDeque<EventPage>>,
+        pages: RefCell<VecDeque<LegacyEventPage>>,
         requests: RefCell<Vec<EventPageRequest>>,
         tip_seq: u64,
         retained_from: u64,
     }
 
     impl ScriptedPort {
-        fn new(pages: Vec<EventPage>) -> Self {
+        fn new(pages: Vec<LegacyEventPage>) -> Self {
             Self::with_health(pages, 0, 1)
         }
 
-        fn with_health(pages: Vec<EventPage>, tip_seq: u64, retained_from: u64) -> Self {
+        fn with_health(pages: Vec<LegacyEventPage>, tip_seq: u64, retained_from: u64) -> Self {
             Self {
                 pages: RefCell::new(pages.into()),
                 requests: RefCell::new(Vec::new()),
@@ -227,7 +227,7 @@ mod tests {
             unimplemented!("tail tests exercise next_page only")
         }
 
-        fn next_page(&self, request: EventPageRequest) -> Result<EventPage, StorageError> {
+        fn next_page(&self, request: EventPageRequest) -> Result<LegacyEventPage, StorageError> {
             self.requests.borrow_mut().push(request);
             Ok(self
                 .pages

@@ -25,7 +25,7 @@ use std::time::Duration;
 use tracing::warn;
 
 use crate::error::StorageError;
-use crate::events::store::EventStore;
+use crate::events::store::{EventStore, StoreAppendOutcome};
 use crate::events::EventEnvelope;
 
 const WRITER_QUEUE_CAPACITY: usize = 1024;
@@ -41,9 +41,9 @@ pub struct CommitWatermark {
 }
 
 impl CommitWatermark {
-    fn new() -> Self {
+    fn with_initial(committed: u64) -> Self {
         Self {
-            committed: Mutex::new(0),
+            committed: Mutex::new(committed),
             changed: Condvar::new(),
         }
     }
@@ -77,7 +77,7 @@ enum WriteRequest {
     Append {
         envelope: Box<EventEnvelope>,
         idempotent: bool,
-        ack: Option<SyncSender<Result<u64, StorageError>>>,
+        ack: Option<SyncSender<Result<StoreAppendOutcome, StorageError>>>,
     },
     Barrier(SyncSender<()>),
     Shutdown,
@@ -97,8 +97,19 @@ pub struct EventWriter {
 impl EventWriter {
     /// Spawns the writer thread over a shared store.
     pub fn spawn(store: Arc<EventStore>) -> Self {
+        // TODO compat-shim: E5 removes direct writer spawning after authority
+        // append parity, recovery, and route-level one-sequence tests pass.
+        Self::spawn_with_watermark(store, 0)
+    }
+
+    /// Spawns the authority-owned writer at the recovered durable tip.
+    pub(crate) fn spawn_recovered(store: Arc<EventStore>, committed: u64) -> Self {
+        Self::spawn_with_watermark(store, committed)
+    }
+
+    fn spawn_with_watermark(store: Arc<EventStore>, committed: u64) -> Self {
         let (sender, receiver) = sync_channel(WRITER_QUEUE_CAPACITY);
-        let watermark = Arc::new(CommitWatermark::new());
+        let watermark = Arc::new(CommitWatermark::with_initial(committed));
         let thread_watermark = Arc::clone(&watermark);
         let join = std::thread::Builder::new()
             .name("meld-event-writer".to_string())
@@ -124,6 +135,16 @@ impl EventWriter {
         envelope: EventEnvelope,
         idempotent: bool,
     ) -> Result<u64, StorageError> {
+        self.append_durable_outcome(envelope, idempotent)
+            .map(|outcome| outcome.seq)
+    }
+
+    /// Appends durably and reports whether idempotency inserted a new row.
+    pub(crate) fn append_durable_outcome(
+        &self,
+        envelope: EventEnvelope,
+        idempotent: bool,
+    ) -> Result<StoreAppendOutcome, StorageError> {
         let (ack_sender, ack_receiver) = sync_channel(1);
         self.sender
             .send(WriteRequest::Append {
@@ -142,6 +163,16 @@ impl EventWriter {
         envelopes: Vec<EventEnvelope>,
         idempotent: bool,
     ) -> Result<Vec<u64>, StorageError> {
+        self.append_durable_outcomes_batch(envelopes, idempotent)
+            .map(|outcomes| outcomes.into_iter().map(|outcome| outcome.seq).collect())
+    }
+
+    /// Appends a durable batch and preserves each idempotency disposition.
+    pub(crate) fn append_durable_outcomes_batch(
+        &self,
+        envelopes: Vec<EventEnvelope>,
+        idempotent: bool,
+    ) -> Result<Vec<StoreAppendOutcome>, StorageError> {
         let mut receivers = Vec::with_capacity(envelopes.len());
         for envelope in envelopes {
             let (ack_sender, ack_receiver) = sync_channel(1);
@@ -162,6 +193,15 @@ impl EventWriter {
 
     /// Enqueues without waiting; a full queue drops the event and counts it.
     pub fn append_best_effort(
+        &self,
+        envelope: EventEnvelope,
+        idempotent: bool,
+    ) -> Result<(), StorageError> {
+        self.enqueue_best_effort(envelope, idempotent)
+    }
+
+    /// Enqueues one authority append without claiming durability or sequence.
+    pub(crate) fn enqueue_best_effort(
         &self,
         envelope: EventEnvelope,
         idempotent: bool,
@@ -205,6 +245,8 @@ impl EventWriter {
 
     /// Returns the shared committed-sequence watermark.
     pub fn watermark(&self) -> Arc<CommitWatermark> {
+        // TODO compat-shim: E5 removes this raw handle after all production
+        // callers use EventWatermarkCapability and recovery parity is green.
         Arc::clone(&self.watermark)
     }
 
@@ -215,6 +257,8 @@ impl EventWriter {
 
     /// Returns the shared drop counter for observability backings.
     pub fn dropped_handle(&self) -> Arc<AtomicU64> {
+        // TODO compat-shim: E5 removes this raw handle after authority-backed
+        // observability reports drops with report/CLI parity tests.
         Arc::clone(&self.dropped)
     }
 }
@@ -298,13 +342,9 @@ fn commit_batch(store: &EventStore, watermark: &CommitWatermark, batch: Vec<Writ
             WriteRequest::Shutdown => continue,
         };
         appends += 1;
-        let result = if idempotent {
-            store.append_envelope_idempotent(*envelope)
-        } else {
-            store.append_envelope(*envelope)
-        };
-        if let Ok(seq) = result {
-            max_seq = max_seq.max(seq);
+        let result = store.append_envelope_outcome(*envelope, idempotent);
+        if let Ok(outcome) = result.as_ref() {
+            max_seq = max_seq.max(outcome.seq);
         }
         match ack {
             Some(ack) => acks.push((ack, result)),
@@ -330,7 +370,9 @@ fn commit_batch(store: &EventStore, watermark: &CommitWatermark, batch: Vec<Writ
     // to the flush error when the fsync itself failed.
     for (ack, result) in acks {
         let final_result = match (&flush_result, result) {
-            (Err(flush_error), Ok(_)) => Err(flush_error.clone()),
+            (Err(flush_error), Ok(_)) => Err(StorageError::DurabilityIndeterminate(
+                flush_error.to_string(),
+            )),
             (_, result) => result,
         };
         let _ = ack.send(final_result);
@@ -342,7 +384,7 @@ fn commit_batch(store: &EventStore, watermark: &CommitWatermark, batch: Vec<Writ
 }
 
 fn disconnected() -> StorageError {
-    StorageError::IoError(std::io::Error::other("ledger writer disconnected"))
+    StorageError::Unavailable("ledger writer disconnected".to_string())
 }
 
 #[cfg(test)]
@@ -437,7 +479,7 @@ mod tests {
         let (sender, receiver) = sync_channel(1);
         let writer = EventWriter {
             sender,
-            watermark: Arc::new(CommitWatermark::new()),
+            watermark: Arc::new(CommitWatermark::with_initial(0)),
             dropped: Arc::new(AtomicU64::new(0)),
             join: Mutex::new(None),
         };

@@ -7,8 +7,8 @@
 use meld_events::error::StorageError;
 use meld_events::events::observability::{
     ConsumerLagReport, CoverageTruncation, DomainAppendRate, DomainFlow, EventFlowReport,
-    EventHealthReport, EventPage, EventPageRequest, EventReadCoverage, EventTraceReport,
-    FlowWindow, SessionStep, SessionTimelineReport, SilentDomain, TraceHop, TraceLink,
+    EventHealthReport, EventPageRequest, EventReadCoverage, EventTraceReport, FlowWindow,
+    LegacyEventPage, SessionStep, SessionTimelineReport, SilentDomain, TraceHop, TraceLink,
     TraceSubject, TypeFlow,
 };
 use meld_events::{DomainObjectRef, EventEnvelope, EventRecord};
@@ -317,7 +317,7 @@ fn event_page_shape_is_pinned_and_carries_records_intact() {
         ),
         4,
     );
-    let page = EventPage {
+    let page = LegacyEventPage {
         records: vec![record.clone()],
         next_after_seq: 4,
     };

@@ -40,6 +40,8 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+/// Identity-bound event authority and its derived capabilities.
+pub mod authority;
 /// Compatibility aliases for pre-extraction event callers.
 pub mod compat;
 /// Domain object and relation records carried by event envelopes.
@@ -59,13 +61,21 @@ pub mod subscription;
 /// Single-writer ingress engine with group commit and watermark.
 pub mod writer;
 
+pub use authority::{
+    AppendDisposition, AppendMode, AppendReceipt, BestEffortAppendReceipt, ConsumerCursorPosition,
+    EventAppendCapability, EventAuthority, EventAuthorityOpenOptions,
+    EventConsumerRegistryCapability, EventObservabilityCapability, EventPage,
+    EventReplayCapability, EventSubscriptionCapability, EventWatermark, EventWatermarkCapability,
+    LedgerCursor, ReplayRequest, SubscriptionPollRequest, MAX_REPLAY_LIMIT,
+    MAX_SUBSCRIPTION_TIMEOUT_MS,
+};
 pub use contracts::{DomainObjectRef, EventRelation};
 pub use identity::LedgerIdentity;
 pub use observability::{
     ConsumerLagReport, CoverageTruncation, DomainAppendRate, DomainFlow, EventFlowReport,
-    EventHealthReport, EventObservabilityPort, EventPage, EventPageRequest, EventReadCoverage,
-    EventTraceReport, FlowWindow, LedgerObservability, SessionStep, SessionTimelineReport,
-    SilentDomain, TraceHop, TraceLink, TraceSubject, TypeFlow,
+    EventHealthReport, EventObservabilityPort, EventPageRequest, EventReadCoverage,
+    EventTraceReport, FlowWindow, LedgerObservability, LegacyEventPage, SessionStep,
+    SessionTimelineReport, SilentDomain, TraceHop, TraceLink, TraceSubject, TypeFlow,
     MAX_EVENT_PAGE_LIMIT, MAX_EVENT_PAGE_TIMEOUT_MS, MAX_FLOW_WINDOW_EVENTS,
     MAX_SESSION_SCAN_EVENTS, MAX_TRACE_SCAN_EVENTS,
 };
