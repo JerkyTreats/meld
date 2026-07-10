@@ -1,6 +1,8 @@
 //! Session subcommand: renders one session's timeline.
 
-use meld_events::events::observability::{EventObservabilityPort, SessionTimelineReport};
+use meld_events::events::observability::{
+    CoverageTruncation, EventObservabilityPort, SessionTimelineReport,
+};
 use meld_events::LedgerObservability;
 
 use crate::error::ApiError;
@@ -16,7 +18,7 @@ pub(super) fn run(
     let report = port
         .session(session_id)
         .map_err(|err| surface_error("session", err))?;
-    if report.total_events == 0 && progress.get_session(session_id)?.is_none() {
+    if report.events_returned == 0 && progress.get_session(session_id)?.is_none() {
         return Err(ApiError::ConfigError(format!(
             "no session named '{session_id}' in the session store and no ledger events for it; run 'meld event tail' to see recent activity"
         )));
@@ -28,10 +30,24 @@ fn render_text(report: &SessionTimelineReport) -> String {
     let mut lines = vec![format!(
         "session {}: {} events, {} .. {}",
         report.session_id,
-        report.total_events,
-        report.started_at.as_deref().unwrap_or("-"),
-        report.ended_at.as_deref().unwrap_or("-"),
+        report.events_returned,
+        report.observed_started_at.as_deref().unwrap_or("-"),
+        report.observed_ended_at.as_deref().unwrap_or("-"),
     )];
+    let scanned = match (
+        report.coverage.scanned_from_seq,
+        report.coverage.scanned_through_seq,
+    ) {
+        (Some(from), Some(through)) => format!("{from}..={through}"),
+        _ => "empty".to_string(),
+    };
+    lines.push(format!(
+        "coverage retained_from={} tip={} scanned={} truncation={}",
+        report.coverage.retained_from,
+        report.coverage.tip_seq,
+        scanned,
+        truncation_label(report.coverage.truncation)
+    ));
     for step in &report.steps {
         let gap = step
             .gap_ms
@@ -43,6 +59,15 @@ fn render_text(report: &SessionTimelineReport) -> String {
         ));
     }
     lines.join("\n")
+}
+
+fn truncation_label(truncation: CoverageTruncation) -> &'static str {
+    match truncation {
+        CoverageTruncation::None => "none",
+        CoverageTruncation::Before => "before",
+        CoverageTruncation::After => "after",
+        CoverageTruncation::Both => "both",
+    }
 }
 
 #[cfg(test)]

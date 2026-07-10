@@ -330,6 +330,35 @@ impl EventStore {
         Ok(out)
     }
 
+    /// Reads at most `limit` retained events ending at `through_seq`.
+    ///
+    /// Selection is by record count rather than sequence distance, so sparse
+    /// imported ledgers still return the newest requested number of records.
+    /// Results are restored to ascending sequence order for consumers.
+    pub(crate) fn read_newest_events_through(
+        &self,
+        through_seq: u64,
+        limit: usize,
+    ) -> Result<Vec<EventRecord>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let retained_from = self.retained_lower_boundary()?;
+        if through_seq < retained_from {
+            return Ok(Vec::new());
+        }
+        let start = encode_record_key(retained_from).into_bytes();
+        let end = encode_record_key(through_seq).into_bytes();
+        let mut out = Vec::new();
+        for result in self.spine_events.range(start..=end).rev().take(limit) {
+            let (_, value) = result.map_err(to_storage_io)?;
+            out.push(decode_event(&value)?);
+        }
+        out.reverse();
+        Ok(out)
+    }
+
     /// Returns the highest persisted ledger sequence, zero when empty.
     ///
     /// Derived from the zero-padded key so one undecodable record cannot

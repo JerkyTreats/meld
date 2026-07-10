@@ -33,6 +33,17 @@ use crate::events::subscription::EventSubscription;
 use crate::events::writer::CommitWatermark;
 use crate::events::{DomainObjectRef, EventRecord};
 
+/// Largest page a caller may request from the streaming surface.
+pub const MAX_EVENT_PAGE_LIMIT: usize = 1_024;
+/// Largest page wait accepted by the streaming surface, in milliseconds.
+pub const MAX_EVENT_PAGE_TIMEOUT_MS: u64 = 30_000;
+/// Largest trailing event window accepted by the flow surface.
+pub const MAX_FLOW_WINDOW_EVENTS: usize = 100_000;
+/// Number of newest retained records a trace may inspect.
+pub const MAX_TRACE_SCAN_EVENTS: usize = 100_000;
+/// Number of newest retained records a session report may inspect.
+pub const MAX_SESSION_SCAN_EVENTS: usize = 100_000;
+
 /// One port for every observability read.
 ///
 /// Point-in-time queries answer health, flow, causality, and session
@@ -108,6 +119,35 @@ pub struct EventPage {
     pub records: Vec<EventRecord>,
     /// Cursor for the next request; unchanged when the page is empty.
     pub next_after_seq: u64,
+}
+
+/// Which side of a bounded read omitted ledger history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoverageTruncation {
+    /// The report covers all retained records through its frozen tip.
+    None,
+    /// Records before the scanned range were omitted.
+    Before,
+    /// Records after the scanned range but no later than the frozen tip were omitted.
+    After,
+    /// Records on both sides of the scanned range were omitted.
+    Both,
+}
+
+/// Exact durable range considered by one bounded ledger read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventReadCoverage {
+    /// First sequence the ledger declares retained.
+    pub retained_from: u64,
+    /// Durable ledger tip frozen before the scan began.
+    pub tip_seq: u64,
+    /// First record included in the computed window, absent when it is empty.
+    pub scanned_from_seq: Option<u64>,
+    /// Last record included in the computed window, absent when it is empty.
+    pub scanned_through_seq: Option<u64>,
+    /// Whether the bounded scan omitted records before or after its range.
+    pub truncation: CoverageTruncation,
 }
 
 /// Ledger health snapshot.
@@ -203,6 +243,8 @@ pub struct SilentDomain {
 pub struct EventTraceReport {
     /// Subject the trace was computed for.
     pub subject: TraceSubject,
+    /// Durable range inspected while computing the chain.
+    pub coverage: EventReadCoverage,
     /// Chain hops in sequence order.
     pub hops: Vec<TraceHop>,
 }
@@ -253,12 +295,14 @@ pub enum TraceLink {
 pub struct SessionTimelineReport {
     /// Session partition the timeline covers.
     pub session_id: String,
-    /// Recorded time of the first event, absent for empty sessions.
-    pub started_at: Option<String>,
-    /// Recorded time of the last event, absent for empty sessions.
-    pub ended_at: Option<String>,
-    /// Total events in the session.
-    pub total_events: u64,
+    /// Recorded time of the first returned event, absent for empty sessions.
+    pub observed_started_at: Option<String>,
+    /// Recorded time of the last returned event, absent for empty sessions.
+    pub observed_ended_at: Option<String>,
+    /// Number of session events returned from the bounded scan.
+    pub events_returned: u64,
+    /// Durable ledger range inspected for this session.
+    pub coverage: EventReadCoverage,
     /// Ordered steps with inter-step timing.
     pub steps: Vec<SessionStep>,
 }
@@ -334,6 +378,11 @@ impl EventObservabilityPort for LedgerObservability {
     }
 
     fn flow(&self, window: FlowWindow) -> Result<EventFlowReport, StorageError> {
+        validate_nonzero_bound(
+            "event flow window",
+            window.max_events,
+            MAX_FLOW_WINDOW_EVENTS,
+        )?;
         session::compute_flow(self, window)
     }
 
@@ -346,11 +395,12 @@ impl EventObservabilityPort for LedgerObservability {
     }
 
     fn next_page(&self, request: EventPageRequest) -> Result<EventPage, StorageError> {
-        if request.limit == 0 {
-            return Err(StorageError::InvalidPath(
-                "event page limit must be greater than zero".to_string(),
-            ));
-        }
+        validate_nonzero_bound("event page limit", request.limit, MAX_EVENT_PAGE_LIMIT)?;
+        validate_upper_bound(
+            "event page timeout_ms",
+            request.timeout_ms,
+            MAX_EVENT_PAGE_TIMEOUT_MS,
+        )?;
         let records = self.subscription.next_batch(
             request.after_seq,
             request.limit,
@@ -365,4 +415,30 @@ impl EventObservabilityPort for LedgerObservability {
             next_after_seq,
         })
     }
+}
+
+fn validate_nonzero_bound(name: &str, value: usize, maximum: usize) -> Result<(), StorageError> {
+    if !(1..=maximum).contains(&value) {
+        return Err(invalid_request(format!(
+            "{name} must be in 1..={maximum}, got {value}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_upper_bound(name: &str, value: u64, maximum: u64) -> Result<(), StorageError> {
+    if value > maximum {
+        return Err(invalid_request(format!(
+            "{name} must be in 0..={maximum}, got {value}"
+        )));
+    }
+    Ok(())
+}
+
+fn invalid_request(message: String) -> StorageError {
+    // TODO compat-shim: E2 replaces this legacy StorageError::InvalidPath
+    // mapping with EventAuthorityError::InvalidRequest. Remove it after the
+    // observability_contracts invalid-limit parity cases pass through the
+    // authority contract.
+    StorageError::InvalidPath(message)
 }

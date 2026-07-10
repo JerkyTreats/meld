@@ -12,8 +12,9 @@ use chrono::{DateTime, FixedOffset};
 
 use crate::error::StorageError;
 use crate::events::observability::{
-    DomainFlow, EventFlowReport, FlowWindow, LedgerObservability, SessionStep,
-    SessionTimelineReport, SilentDomain, TypeFlow,
+    CoverageTruncation, DomainFlow, EventFlowReport, EventReadCoverage, FlowWindow,
+    LedgerObservability, SessionStep, SessionTimelineReport, SilentDomain, TypeFlow,
+    MAX_SESSION_SCAN_EVENTS,
 };
 use crate::events::EventRecord;
 
@@ -29,13 +30,37 @@ pub(super) fn compute_timeline(
     backing: &LedgerObservability,
     session_id: &str,
 ) -> Result<SessionTimelineReport, StorageError> {
-    let records = backing.store().read_events_after(
-        session_id,
-        // Diagnostic reads degrade to everything-retained instead of
-        // tripping the retention gap; sessions above the boundary read
-        // identically either way.
-        backing.store().retained_lower_boundary()?.saturating_sub(1),
-    )?;
+    compute_timeline_with_scan_limit(backing, session_id, MAX_SESSION_SCAN_EVENTS)
+}
+
+fn compute_timeline_with_scan_limit(
+    backing: &LedgerObservability,
+    session_id: &str,
+    scan_limit: usize,
+) -> Result<SessionTimelineReport, StorageError> {
+    let store = backing.store();
+    let tip_seq = store.tip_seq()?;
+    let retained_from = store.retained_lower_boundary()?;
+    let mut scanned = store.read_newest_events_through(tip_seq, scan_limit.saturating_add(1))?;
+    let truncated_by_limit = scanned.len() > scan_limit;
+    if truncated_by_limit {
+        scanned.remove(0);
+    }
+    let coverage = EventReadCoverage {
+        retained_from,
+        tip_seq,
+        scanned_from_seq: scanned.first().map(|record| record.seq),
+        scanned_through_seq: scanned.last().map(|record| record.seq),
+        truncation: if retained_from > 1 || truncated_by_limit {
+            CoverageTruncation::Before
+        } else {
+            CoverageTruncation::None
+        },
+    };
+    let records: Vec<EventRecord> = scanned
+        .into_iter()
+        .filter(|record| record.session == session_id)
+        .collect();
 
     let mut steps = Vec::with_capacity(records.len());
     let mut previous: Option<DateTime<FixedOffset>> = None;
@@ -60,13 +85,14 @@ pub(super) fn compute_timeline(
 
     Ok(SessionTimelineReport {
         session_id: session_id.to_string(),
-        started_at: records
+        observed_started_at: records
             .first()
             .map(|record| record.envelope.recorded_at.clone()),
-        ended_at: records
+        observed_ended_at: records
             .last()
             .map(|record| record.envelope.recorded_at.clone()),
-        total_events: records.len() as u64,
+        events_returned: records.len() as u64,
+        coverage,
         steps,
     })
 }
@@ -77,14 +103,8 @@ pub(super) fn compute_flow(
 ) -> Result<EventFlowReport, StorageError> {
     let store = backing.store();
     let tip = store.tip_seq()?;
-    let retained_from = store.retained_lower_boundary()?;
 
-    // Seek to the trailing window by cursor, then clamp the cursor up to the
-    // retained boundary before reading: a window larger than retained history
-    // must degrade to "everything retained", never surface a retention-gap
-    // error for a purely diagnostic read.
-    let after_seq = clamp_to_retention(tip.saturating_sub(window.max_events as u64), retained_from);
-    let records = store.read_all_events_after_limit(after_seq, window.max_events)?;
+    let records = store.read_newest_events_through(tip, window.max_events)?;
 
     let span_seconds = match (records.first(), records.last()) {
         (Some(first), Some(last)) => match (parse_recorded_at(first), parse_recorded_at(last)) {
@@ -131,7 +151,7 @@ pub(super) fn compute_flow(
             .then_with(|| a.event_type.cmp(&b.event_type))
     });
 
-    let silent_domains = compute_silent_domains(backing, &records, retained_from, &by_domain)?;
+    let silent_domains = compute_silent_domains(backing, &records, &by_domain)?;
 
     Ok(EventFlowReport {
         window_events: records.len() as u64,
@@ -151,7 +171,6 @@ pub(super) fn compute_flow(
 fn compute_silent_domains(
     backing: &LedgerObservability,
     window_records: &[EventRecord],
-    retained_from: u64,
     by_domain: &[DomainFlow],
 ) -> Result<Vec<SilentDomain>, StorageError> {
     let Some(window_start) = window_records.first().map(|record| record.seq) else {
@@ -160,13 +179,9 @@ fn compute_silent_domains(
         return Ok(Vec::new());
     };
 
-    let census_after = clamp_to_retention(
-        window_start.saturating_sub(SILENT_CENSUS_EVENTS as u64 + 1),
-        retained_from,
-    );
     let preceding = backing
         .store()
-        .read_all_events_after_limit(census_after, SILENT_CENSUS_EVENTS)?;
+        .read_newest_events_through(window_start.saturating_sub(1), SILENT_CENSUS_EVENTS)?;
 
     let mut last_seen: BTreeMap<String, (u64, String)> = BTreeMap::new();
     for record in &preceding {
@@ -192,12 +207,58 @@ fn compute_silent_domains(
         .collect())
 }
 
-/// Raises a read cursor to the retained boundary so bounded diagnostic reads
-/// never trip the store's typed retention gap.
-fn clamp_to_retention(after_seq: u64, retained_from: u64) -> u64 {
-    after_seq.max(retained_from.saturating_sub(1))
-}
-
 fn parse_recorded_at(record: &EventRecord) -> Option<DateTime<FixedOffset>> {
     DateTime::parse_from_rfc3339(&record.envelope.recorded_at).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::events::registry::EventCursorRegistry;
+    use crate::events::store::EventStore;
+    use crate::events::writer::EventWriter;
+    use crate::events::EventEnvelope;
+
+    #[test]
+    fn bounded_session_selects_newest_records_from_sparse_sequence_space() {
+        assert_eq!(MAX_SESSION_SCAN_EVENTS, 100_000);
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = sled::open(dir.path()).unwrap();
+        let store = EventStore::shared(db.clone()).unwrap();
+        let registry = EventCursorRegistry::open(&db).unwrap();
+        let writer = EventWriter::spawn(Arc::clone(&store));
+        let port = LedgerObservability::new(
+            Arc::clone(&store),
+            writer.watermark(),
+            registry,
+            writer.dropped_handle(),
+        );
+
+        for seq in [1, 100, 10_000] {
+            let envelope = EventEnvelope::new_domain(
+                "2026-07-08T00:00:00Z".to_string(),
+                "session-a",
+                "execution",
+                "run-a",
+                "execution.tick",
+                None,
+                json!({ "seq": seq }),
+            );
+            store.append_event(&EventRecord { seq, envelope }).unwrap();
+        }
+
+        let report = compute_timeline_with_scan_limit(&port, "session-a", 2).unwrap();
+        assert_eq!(
+            report.steps.iter().map(|step| step.seq).collect::<Vec<_>>(),
+            vec![100, 10_000]
+        );
+        assert_eq!(report.events_returned, 2);
+        assert_eq!(report.coverage.scanned_from_seq, Some(100));
+        assert_eq!(report.coverage.scanned_through_seq, Some(10_000));
+        assert_eq!(report.coverage.truncation, CoverageTruncation::Before);
+    }
 }

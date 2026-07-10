@@ -6,10 +6,11 @@
 
 use std::sync::Arc;
 
+use meld_events::error::StorageError;
 use meld_events::events::observability::{EventObservabilityPort, FlowWindow};
 use meld_events::events::registry::EventCursorRegistry;
 use meld_events::events::store::EventStore;
-use meld_events::{EventEnvelope, EventWriter, LedgerObservability};
+use meld_events::{EventEnvelope, EventRecord, EventWriter, LedgerObservability};
 use serde_json::json;
 
 struct Fixture {
@@ -98,9 +99,19 @@ fn timeline_orders_steps_and_computes_gaps() {
     let report = fx.port.session("s-a").unwrap();
 
     assert_eq!(report.session_id, "s-a");
-    assert_eq!(report.total_events, 5);
-    assert_eq!(report.started_at.as_deref(), Some("2026-07-08T00:00:00Z"));
-    assert_eq!(report.ended_at.as_deref(), Some("2026-07-08T00:00:05Z"));
+    assert_eq!(report.events_returned, 5);
+    assert_eq!(
+        report.observed_started_at.as_deref(),
+        Some("2026-07-08T00:00:00Z")
+    );
+    assert_eq!(
+        report.observed_ended_at.as_deref(),
+        Some("2026-07-08T00:00:05Z")
+    );
+    assert_eq!(report.coverage.retained_from, 1);
+    assert_eq!(report.coverage.tip_seq, 6);
+    assert_eq!(report.coverage.scanned_from_seq, Some(1));
+    assert_eq!(report.coverage.scanned_through_seq, Some(6));
 
     let seqs: Vec<u64> = report.steps.iter().map(|step| step.seq).collect();
     assert_eq!(seqs, vec![1, 3, 4, 5, 6]);
@@ -129,10 +140,10 @@ fn empty_session_yields_empty_timeline_without_error() {
     let report = fx.port.session("s-missing").unwrap();
 
     assert_eq!(report.session_id, "s-missing");
-    assert_eq!(report.total_events, 0);
+    assert_eq!(report.events_returned, 0);
     assert!(report.steps.is_empty());
-    assert_eq!(report.started_at, None);
-    assert_eq!(report.ended_at, None);
+    assert_eq!(report.observed_started_at, None);
+    assert_eq!(report.observed_ended_at, None);
 }
 
 #[test]
@@ -233,6 +244,37 @@ fn flow_window_covers_only_trailing_events() {
 }
 
 #[test]
+fn flow_window_counts_records_in_sparse_sequence_space() {
+    let fx = fixture();
+    for (seq, domain) in [(1, "early"), (100, "middle"), (10_000, "late")] {
+        let envelope = EventEnvelope::new_domain(
+            "2026-07-08T00:00:00Z".to_string(),
+            "s",
+            domain,
+            format!("{domain}-stream"),
+            format!("{domain}.tick"),
+            None,
+            json!({}),
+        );
+        fx.store
+            .append_event(&EventRecord { seq, envelope })
+            .unwrap();
+    }
+
+    let report = fx.port.flow(FlowWindow { max_events: 2 }).unwrap();
+
+    assert_eq!(report.window_events, 2);
+    assert_eq!(
+        report
+            .by_domain
+            .iter()
+            .map(|flow| (flow.domain_id.as_str(), flow.last_seq))
+            .collect::<Vec<_>>(),
+        vec![("late", 10_000), ("middle", 100)]
+    );
+}
+
+#[test]
 fn silent_domain_reports_its_last_event_before_the_window() {
     let fx = fixture();
     append(
@@ -310,4 +352,41 @@ fn empty_ledger_flow_is_empty_without_error() {
     assert!(report.by_domain.is_empty());
     assert!(report.by_type.is_empty());
     assert!(report.silent_domains.is_empty());
+}
+
+#[test]
+fn flow_rejects_unbounded_or_empty_windows_before_reading() {
+    let fx = fixture();
+
+    for (max_events, expected) in [
+        (
+            0,
+            "event flow window must be in 1..=100000, got 0".to_string(),
+        ),
+        (
+            100_001,
+            "event flow window must be in 1..=100000, got 100001".to_string(),
+        ),
+        (
+            usize::MAX,
+            format!(
+                "event flow window must be in 1..=100000, got {}",
+                usize::MAX
+            ),
+        ),
+    ] {
+        let error = fx.port.flow(FlowWindow { max_events }).unwrap_err();
+        match error {
+            StorageError::InvalidPath(message) => assert_eq!(message, expected),
+            other => panic!("expected invalid request compatibility error, got {other}"),
+        }
+    }
+
+    let report = fx
+        .port
+        .flow(FlowWindow {
+            max_events: 100_000,
+        })
+        .unwrap();
+    assert_eq!(report.window_events, 0);
 }

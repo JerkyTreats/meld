@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use meld_events::events::observability::EventObservabilityPort;
+use meld_events::events::observability::{CoverageTruncation, EventObservabilityPort};
 use meld_events::events::registry::EventCursorRegistry;
 use meld_events::events::store::EventStore;
 use meld_events::{
@@ -120,6 +120,12 @@ fn object_trace_walks_references_relations_and_provenance_in_order() {
         .trace(TraceSubject::Object(node_ref("node-a")))
         .unwrap();
 
+    assert_eq!(report.coverage.retained_from, 1);
+    assert_eq!(report.coverage.tip_seq, derived);
+    assert_eq!(report.coverage.scanned_from_seq, Some(observed));
+    assert_eq!(report.coverage.scanned_through_seq, Some(derived));
+    assert_eq!(report.coverage.truncation, CoverageTruncation::None);
+
     let links: Vec<(u64, TraceLink)> = report
         .hops
         .iter()
@@ -221,7 +227,12 @@ fn record_trace_links_subject_shared_objects_and_provenance() {
         links,
         vec![
             (observed, TraceLink::Subject),
-            (related, TraceLink::ObjectRef),
+            (
+                related,
+                TraceLink::Relation {
+                    relation_type: "contains".to_string(),
+                }
+            ),
             (
                 derived,
                 TraceLink::SourceFact {
@@ -296,6 +307,97 @@ fn unknown_subjects_trace_to_empty_reports() {
 }
 
 #[test]
+fn relation_only_records_support_object_and_record_neighborhoods() {
+    let fx = fixture();
+    let first = fx
+        .store
+        .append_envelope(
+            EventEnvelope::new_domain(
+                "2026-07-08T00:00:00Z".to_string(),
+                "session-a",
+                "world_state",
+                "graph",
+                "world_state.edge_observed",
+                None,
+                json!({}),
+            )
+            .with_graph(
+                Vec::new(),
+                vec![
+                    EventRelation::new("contains", node_ref("node-a"), node_ref("node-b")).unwrap(),
+                ],
+            ),
+        )
+        .unwrap();
+    let second = fx
+        .store
+        .append_envelope(
+            EventEnvelope::new_domain(
+                "2026-07-08T00:00:01Z".to_string(),
+                "session-a",
+                "world_state",
+                "graph",
+                "world_state.edge_observed",
+                None,
+                json!({}),
+            )
+            .with_graph(
+                Vec::new(),
+                vec![
+                    EventRelation::new("depends_on", node_ref("node-b"), node_ref("node-c"))
+                        .unwrap(),
+                ],
+            ),
+        )
+        .unwrap();
+
+    let object_report = fx
+        .port
+        .trace(TraceSubject::Object(node_ref("node-a")))
+        .unwrap();
+    assert_eq!(object_report.hops.len(), 1);
+    assert_eq!(object_report.hops[0].seq, first);
+    assert_eq!(
+        object_report.hops[0].link,
+        TraceLink::Relation {
+            relation_type: "contains".to_string()
+        }
+    );
+
+    let record_report = fx.port.trace(TraceSubject::Record { seq: first }).unwrap();
+    assert_eq!(
+        record_report
+            .hops
+            .iter()
+            .map(|hop| (hop.seq, hop.link.clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            (first, TraceLink::Subject),
+            (
+                second,
+                TraceLink::Relation {
+                    relation_type: "depends_on".to_string()
+                }
+            )
+        ]
+    );
+}
+
+#[test]
+fn empty_trace_reports_empty_complete_coverage() {
+    let fx = fixture();
+
+    let report = fx.port.trace(TraceSubject::Record { seq: 1 }).unwrap();
+
+    assert!(report.hops.is_empty());
+    assert_eq!(report.coverage.retained_from, 1);
+    assert_eq!(report.coverage.tip_seq, 0);
+    assert_eq!(report.coverage.scanned_from_seq, None);
+    assert_eq!(report.coverage.scanned_through_seq, None);
+    assert_eq!(report.coverage.truncation, CoverageTruncation::None);
+}
+
+#[test]
 fn trace_scans_from_the_retained_boundary_without_a_gap_error() {
     let fx = fixture();
     let (observed, related, derived) = append_causal_chain(&fx.store);
@@ -326,4 +428,9 @@ fn trace_scans_from_the_retained_boundary_without_a_gap_error() {
     assert!(!report.hops.iter().any(|hop| hop.seq == related));
     assert!(report.hops.iter().any(|hop| hop.seq == late));
     assert!(report.hops.iter().all(|hop| hop.seq >= derived));
+    assert_eq!(report.coverage.retained_from, derived);
+    assert_eq!(report.coverage.tip_seq, late);
+    assert_eq!(report.coverage.scanned_from_seq, Some(derived));
+    assert_eq!(report.coverage.scanned_through_seq, Some(late));
+    assert_eq!(report.coverage.truncation, CoverageTruncation::Before);
 }

@@ -1,6 +1,6 @@
 //! Trace subcommand: renders causal chains and parses subject selectors.
 
-use meld_events::events::observability::EventObservabilityPort;
+use meld_events::events::observability::{CoverageTruncation, EventObservabilityPort};
 use meld_events::{
     DomainObjectRef, EventTraceReport, LedgerObservability, TraceLink, TraceSubject,
 };
@@ -66,6 +66,20 @@ fn parse_subject(
 
 fn format_text(report: &EventTraceReport) -> String {
     let mut out = format!("trace {}\n", subject_label(&report.subject));
+    let scanned = match (
+        report.coverage.scanned_from_seq,
+        report.coverage.scanned_through_seq,
+    ) {
+        (Some(from), Some(through)) => format!("{from}..={through}"),
+        _ => "empty".to_string(),
+    };
+    out.push_str(&format!(
+        "coverage retained_from={} tip={} scanned={} truncation={}\n",
+        report.coverage.retained_from,
+        report.coverage.tip_seq,
+        scanned,
+        truncation_label(report.coverage.truncation)
+    ));
     for hop in &report.hops {
         // Field order mirrors tail lines so hops correlate against a tail
         // capture by eye.
@@ -80,6 +94,15 @@ fn format_text(report: &EventTraceReport) -> String {
         ));
     }
     out
+}
+
+fn truncation_label(truncation: CoverageTruncation) -> &'static str {
+    match truncation {
+        CoverageTruncation::None => "none",
+        CoverageTruncation::Before => "before",
+        CoverageTruncation::After => "after",
+        CoverageTruncation::Both => "both",
+    }
 }
 
 fn subject_label(subject: &TraceSubject) -> String {
@@ -100,5 +123,57 @@ fn link_label(link: &TraceLink) -> String {
         TraceLink::Relation { relation_type } => format!("relation:{relation_type}"),
         TraceLink::SourceFact { .. } => "source_fact".to_string(),
         TraceLink::Stream => "stream".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use meld_events::EventReadCoverage;
+
+    use super::*;
+
+    #[test]
+    fn text_renderer_pins_complete_empty_and_truncated_coverage() {
+        let cases = [
+            (
+                EventReadCoverage {
+                    retained_from: 1,
+                    tip_seq: 2,
+                    scanned_from_seq: Some(1),
+                    scanned_through_seq: Some(2),
+                    truncation: CoverageTruncation::None,
+                },
+                "coverage retained_from=1 tip=2 scanned=1..=2 truncation=none",
+            ),
+            (
+                EventReadCoverage {
+                    retained_from: 1,
+                    tip_seq: 0,
+                    scanned_from_seq: None,
+                    scanned_through_seq: None,
+                    truncation: CoverageTruncation::None,
+                },
+                "coverage retained_from=1 tip=0 scanned=empty truncation=none",
+            ),
+            (
+                EventReadCoverage {
+                    retained_from: 3,
+                    tip_seq: 9,
+                    scanned_from_seq: Some(5),
+                    scanned_through_seq: Some(9),
+                    truncation: CoverageTruncation::Before,
+                },
+                "coverage retained_from=3 tip=9 scanned=5..=9 truncation=before",
+            ),
+        ];
+
+        for (coverage, expected) in cases {
+            let report = EventTraceReport {
+                subject: TraceSubject::Record { seq: 9 },
+                coverage,
+                hops: Vec::new(),
+            };
+            assert!(format_text(&report).contains(expected));
+        }
     }
 }

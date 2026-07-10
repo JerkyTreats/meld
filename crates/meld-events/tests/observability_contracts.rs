@@ -4,10 +4,12 @@
 //! a breaking change for every CLI, TUI, or dashboard consumer and must be
 //! called out under the compatibility policy.
 
+use meld_events::error::StorageError;
 use meld_events::events::observability::{
-    ConsumerLagReport, DomainAppendRate, DomainFlow, EventFlowReport, EventHealthReport, EventPage,
-    EventPageRequest, EventTraceReport, FlowWindow, SessionStep, SessionTimelineReport,
-    SilentDomain, TraceHop, TraceLink, TraceSubject, TypeFlow,
+    ConsumerLagReport, CoverageTruncation, DomainAppendRate, DomainFlow, EventFlowReport,
+    EventHealthReport, EventPage, EventPageRequest, EventReadCoverage, EventTraceReport,
+    FlowWindow, SessionStep, SessionTimelineReport, SilentDomain, TraceHop, TraceLink,
+    TraceSubject, TypeFlow,
 };
 use meld_events::{DomainObjectRef, EventEnvelope, EventRecord};
 use serde_json::json;
@@ -97,6 +99,13 @@ fn trace_report_shape_is_pinned() {
         TraceSubject::Object(DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap());
     let report = EventTraceReport {
         subject: subject.clone(),
+        coverage: EventReadCoverage {
+            retained_from: 1,
+            tip_seq: 5,
+            scanned_from_seq: Some(1),
+            scanned_through_seq: Some(5),
+            truncation: CoverageTruncation::None,
+        },
         hops: vec![
             TraceHop {
                 seq: 3,
@@ -131,6 +140,13 @@ fn trace_report_shape_is_pinned() {
                     "object_id": "node-a"
                 }
             },
+            "coverage": {
+                "retained_from": 1,
+                "tip_seq": 5,
+                "scanned_from_seq": 1,
+                "scanned_through_seq": 5,
+                "truncation": "none"
+            },
             "hops": [
                 {
                     "seq": 3,
@@ -152,6 +168,26 @@ fn trace_report_shape_is_pinned() {
                 }
             ]
         })
+    );
+}
+
+#[test]
+fn coverage_truncation_variants_are_pinned() {
+    assert_eq!(
+        serde_json::to_value(CoverageTruncation::None).unwrap(),
+        json!("none")
+    );
+    assert_eq!(
+        serde_json::to_value(CoverageTruncation::Before).unwrap(),
+        json!("before")
+    );
+    assert_eq!(
+        serde_json::to_value(CoverageTruncation::After).unwrap(),
+        json!("after")
+    );
+    assert_eq!(
+        serde_json::to_value(CoverageTruncation::Both).unwrap(),
+        json!("both")
     );
 }
 
@@ -205,9 +241,16 @@ fn trace_subject_variants_are_pinned() {
 fn session_timeline_shape_is_pinned() {
     let report = SessionTimelineReport {
         session_id: "session-a".to_string(),
-        started_at: Some("2026-07-08T00:00:00Z".to_string()),
-        ended_at: Some("2026-07-08T00:00:02Z".to_string()),
-        total_events: 2,
+        observed_started_at: Some("2026-07-08T00:00:00Z".to_string()),
+        observed_ended_at: Some("2026-07-08T00:00:02Z".to_string()),
+        events_returned: 2,
+        coverage: EventReadCoverage {
+            retained_from: 1,
+            tip_seq: 2,
+            scanned_from_seq: Some(1),
+            scanned_through_seq: Some(2),
+            truncation: CoverageTruncation::None,
+        },
         steps: vec![
             SessionStep {
                 seq: 1,
@@ -230,9 +273,16 @@ fn session_timeline_shape_is_pinned() {
         serde_json::to_value(&report).unwrap(),
         json!({
             "session_id": "session-a",
-            "started_at": "2026-07-08T00:00:00Z",
-            "ended_at": "2026-07-08T00:00:02Z",
-            "total_events": 2,
+            "observed_started_at": "2026-07-08T00:00:00Z",
+            "observed_ended_at": "2026-07-08T00:00:02Z",
+            "events_returned": 2,
+            "coverage": {
+                "retained_from": 1,
+                "tip_seq": 2,
+                "scanned_from_seq": 1,
+                "scanned_through_seq": 2,
+                "truncation": "none"
+            },
             "steps": [
                 {
                     "seq": 1,
@@ -353,4 +403,84 @@ fn page_stream_blocks_and_pages_through_the_port() {
         .unwrap();
     assert!(empty.records.is_empty());
     assert_eq!(empty.next_after_seq, 3);
+
+    for (limit, expected) in [
+        (0, "event page limit must be in 1..=1024, got 0".to_string()),
+        (
+            1_025,
+            "event page limit must be in 1..=1024, got 1025".to_string(),
+        ),
+        (
+            usize::MAX,
+            format!("event page limit must be in 1..=1024, got {}", usize::MAX),
+        ),
+    ] {
+        let error = port
+            .next_page(EventPageRequest {
+                after_seq: 3,
+                limit,
+                timeout_ms: 0,
+            })
+            .unwrap_err();
+        match error {
+            StorageError::InvalidPath(message) => assert_eq!(message, expected),
+            other => panic!("expected invalid request compatibility error, got {other}"),
+        }
+    }
+
+    for (timeout_ms, expected) in [
+        (
+            30_001,
+            "event page timeout_ms must be in 0..=30000, got 30001".to_string(),
+        ),
+        (
+            u64::MAX,
+            format!(
+                "event page timeout_ms must be in 0..=30000, got {}",
+                u64::MAX
+            ),
+        ),
+    ] {
+        let error = port
+            .next_page(EventPageRequest {
+                after_seq: 3,
+                limit: 1,
+                timeout_ms,
+            })
+            .unwrap_err();
+        match error {
+            StorageError::InvalidPath(message) => assert_eq!(message, expected),
+            other => panic!("expected invalid request compatibility error, got {other}"),
+        }
+    }
+
+    // Both inclusive maxima are accepted. The existing records make this
+    // immediate even though the timeout is the maximum permitted value.
+    let maximum = port
+        .next_page(EventPageRequest {
+            after_seq: 0,
+            limit: 1_024,
+            timeout_ms: 30_000,
+        })
+        .unwrap();
+    assert_eq!(maximum.records.len(), 3);
+
+    // Zero is a valid non-blocking timeout.
+    let non_blocking = port
+        .next_page(EventPageRequest {
+            after_seq: 3,
+            limit: 1,
+            timeout_ms: 0,
+        })
+        .unwrap();
+    assert!(non_blocking.records.is_empty());
+}
+
+#[test]
+fn oversized_json_numbers_do_not_reach_observability_allocations() {
+    let flow_overflow = r#"{"max_events":18446744073709551616}"#;
+    assert!(serde_json::from_str::<FlowWindow>(flow_overflow).is_err());
+
+    let page_overflow = r#"{"after_seq":0,"limit":1,"timeout_ms":18446744073709551616}"#;
+    assert!(serde_json::from_str::<EventPageRequest>(page_overflow).is_err());
 }
