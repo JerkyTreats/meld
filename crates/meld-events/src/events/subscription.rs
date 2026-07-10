@@ -81,27 +81,48 @@ impl EventCursor {
         let Some(raw) = self.tree.get(&self.key).map_err(to_storage_io)? else {
             return Ok(0);
         };
-        let bytes: [u8; 8] = raw.as_ref().try_into().map_err(|_| {
-            StorageError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "invalid ledger cursor payload",
-            ))
-        })?;
-        Ok(u64::from_be_bytes(bytes))
+        decode_cursor(raw.as_ref())
     }
 
     /// Advances the cursor monotonically; regressions are ignored so replays
     /// and restarts can never move a consumer backwards.
     pub fn advance(&self, seq: u64) -> Result<u64, StorageError> {
-        let current = self.get()?;
-        if seq <= current {
-            return Ok(current);
+        loop {
+            let observed = self.tree.get(&self.key).map_err(to_storage_io)?;
+            let current = match observed.as_deref() {
+                Some(raw) => decode_cursor(raw)?,
+                None => 0,
+            };
+            if seq <= current {
+                self.tree.flush().map_err(to_storage_io)?;
+                return Ok(current);
+            }
+
+            let encoded = seq.to_be_bytes();
+            let prior = observed.as_deref();
+            match self
+                .tree
+                .compare_and_swap(&self.key, prior, Some(encoded.as_slice()))
+                .map_err(to_storage_io)?
+            {
+                Ok(()) => {
+                    self.tree.flush().map_err(to_storage_io)?;
+                    return Ok(seq);
+                }
+                Err(_) => continue,
+            }
         }
-        self.tree
-            .insert(&self.key, &seq.to_be_bytes())
-            .map_err(to_storage_io)?;
-        Ok(seq)
     }
+}
+
+fn decode_cursor(raw: &[u8]) -> Result<u64, StorageError> {
+    let bytes: [u8; 8] = raw.try_into().map_err(|_| {
+        StorageError::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid ledger cursor payload",
+        ))
+    })?;
+    Ok(u64::from_be_bytes(bytes))
 }
 
 fn to_storage_io(err: sled::Error) -> StorageError {

@@ -318,7 +318,10 @@ impl EventStore {
             return Ok(Vec::new());
         }
 
-        let mut out = Vec::with_capacity(limit);
+        // The caller-provided limit is not trusted at this layer. Grow only
+        // as records are actually decoded instead of reserving the full
+        // requested capacity up front.
+        let mut out = Vec::new();
         let start = encode_record_key(after_seq.saturating_add(1)).into_bytes();
         for result in self.spine_events.range(start..).take(limit) {
             let (_, value) = result.map_err(to_storage_io)?;
@@ -421,7 +424,7 @@ impl EventStore {
             };
             // Foreign session ids sharing this prefix plus a colon byte-sort
             // into the range regardless of their sequence; the filter keeps
-            // exact cursor semantics for those leaked records.
+            // exact cursor semantics for those leaked index entries.
             if seq <= after_seq {
                 continue;
             }
@@ -433,7 +436,25 @@ impl EventStore {
                 warn!(seq, "session index entry has no ledger record");
                 continue;
             };
-            out.push(decode_event(&value)?);
+            let record = decode_event(&value)?;
+            if record.seq != seq {
+                warn!(
+                    index_seq = seq,
+                    record_seq = record.seq,
+                    "session index sequence disagrees with ledger record"
+                );
+                continue;
+            }
+            if record.session != session_id {
+                warn!(
+                    index_seq = seq,
+                    requested_session = session_id,
+                    record_session = record.session,
+                    "session index entry resolves to a foreign session"
+                );
+                continue;
+            }
+            out.push(record);
         }
         Ok(out)
     }

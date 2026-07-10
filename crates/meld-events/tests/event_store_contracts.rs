@@ -364,6 +364,84 @@ fn store_orders_session_reads_and_filters_after_cursor() {
 }
 
 #[test]
+fn store_session_reads_isolate_delimiter_collisions() {
+    let (_temp_dir, store) = event_store();
+    let sessions = [
+        "session",
+        "session:child",
+        "session::grandchild",
+        "session;peer",
+    ];
+
+    for (index, session) in sessions.into_iter().enumerate() {
+        store
+            .append_envelope(EventEnvelope::new(
+                RECORDED_AT.to_string(),
+                session.to_string(),
+                format!("session.marker.{index}"),
+                json!({ "index": index }),
+            ))
+            .unwrap();
+    }
+    store
+        .append_envelope(EventEnvelope::new(
+            RECORDED_AT.to_string(),
+            "session".to_string(),
+            "session.marker.final",
+            json!({ "index": sessions.len() }),
+        ))
+        .unwrap();
+
+    assert_eq!(
+        store
+            .read_events("session")
+            .unwrap()
+            .iter()
+            .map(|record| (record.seq, record.session.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "session"), (5, "session")]
+    );
+    assert_eq!(
+        store
+            .read_events_after("session", 1)
+            .unwrap()
+            .iter()
+            .map(|record| (record.seq, record.session.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(5, "session")]
+    );
+    for (expected_seq, session) in [(2, sessions[1]), (3, sessions[2]), (4, sessions[3])] {
+        let records = store.read_events(session).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].seq, expected_seq);
+        assert_eq!(records[0].session, session);
+    }
+}
+
+#[test]
+fn store_session_reads_skip_index_entries_with_mismatched_record_sequences() {
+    let (_temp_dir, store) = event_store();
+    let mismatched = runtime_event(7, SESSION_A, "session.mismatched");
+    store
+        .db()
+        .open_tree("obs_spine_events")
+        .unwrap()
+        .insert(
+            format!("{:020}", 2).as_bytes(),
+            serde_json::to_vec(&mismatched).unwrap(),
+        )
+        .unwrap();
+    store
+        .db()
+        .open_tree("obs_session_event_index")
+        .unwrap()
+        .insert(format!("{SESSION_A}:{:020}", 2).as_bytes(), &[])
+        .unwrap();
+
+    assert!(store.read_events(SESSION_A).unwrap().is_empty());
+}
+
+#[test]
 fn store_reads_all_events_after_with_limit() {
     let (_temp_dir, store) = event_store();
 
