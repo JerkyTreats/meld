@@ -44,6 +44,8 @@ use serde_json::Value;
 pub mod compat;
 /// Domain object and relation records carried by event envelopes.
 pub mod contracts;
+/// Durable ledger identity contract.
+pub mod identity;
 /// Observability port, report contracts, and in-process backing.
 pub mod observability;
 /// Named consumer cursor registry for lag observability.
@@ -58,13 +60,14 @@ pub mod subscription;
 pub mod writer;
 
 pub use contracts::{DomainObjectRef, EventRelation};
+pub use identity::LedgerIdentity;
 pub use observability::{
     ConsumerLagReport, CoverageTruncation, DomainAppendRate, DomainFlow, EventFlowReport,
     EventHealthReport, EventObservabilityPort, EventPage, EventPageRequest, EventReadCoverage,
     EventTraceReport, FlowWindow, LedgerObservability, SessionStep, SessionTimelineReport,
-    SilentDomain, TraceHop, TraceLink, TraceSubject, TypeFlow, MAX_EVENT_PAGE_LIMIT,
-    MAX_EVENT_PAGE_TIMEOUT_MS, MAX_FLOW_WINDOW_EVENTS, MAX_SESSION_SCAN_EVENTS,
-    MAX_TRACE_SCAN_EVENTS,
+    SilentDomain, TraceHop, TraceLink, TraceSubject, TypeFlow,
+    MAX_EVENT_PAGE_LIMIT, MAX_EVENT_PAGE_TIMEOUT_MS, MAX_FLOW_WINDOW_EVENTS,
+    MAX_SESSION_SCAN_EVENTS, MAX_TRACE_SCAN_EVENTS,
 };
 pub use registry::{ConsumerCursor, EventCursorRegistry};
 pub use runtime::EventRuntime;

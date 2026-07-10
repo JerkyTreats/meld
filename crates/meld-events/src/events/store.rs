@@ -32,6 +32,8 @@
 //! ```
 
 use std::io;
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -58,6 +60,7 @@ const META_KEY_RECORD_INDEX_BACKFILLED: &[u8] = b"record_index_backfilled";
 const META_KEY_LEGACY_SESSIONS_MIGRATED: &[u8] = b"legacy_sessions_migrated";
 const META_KEY_SESSION_INDEX_SLIMMED: &[u8] = b"session_index_slimmed";
 const META_KEY_RETAINED_FROM: &[u8] = b"retained_from";
+const META_KEY_LEDGER_IDENTITY: &[u8] = b"ledger_identity";
 const SESSION_INDEX_EMPTY_VALUE: &[u8] = &[];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +80,15 @@ pub struct EventStore {
     session_event_index: Tree,
     spine_meta: Tree,
     spine_record_index: Tree,
+    #[cfg(test)]
+    fail_next_flush: Arc<AtomicBool>,
+}
+
+/// Result of one atomic envelope append before the authority adds identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StoreAppendOutcome {
+    pub(crate) seq: u64,
+    pub(crate) inserted: bool,
 }
 
 impl EventStore {
@@ -86,6 +98,9 @@ impl EventStore {
     /// record and backfills the record index once for stores written before
     /// the index existed, so reads and idempotency lookups never scan.
     pub fn new(db: Db) -> Result<Self, StorageError> {
+        // TODO compat-shim: E5 seals this raw constructor after product,
+        // world-model, execution, benchmarks, and migration tests construct
+        // production behavior through EventAuthority capabilities.
         let legacy_events = db.open_tree(TREE_EVENTS).map_err(to_storage_io)?;
         let spine_events = db.open_tree(TREE_SPINE_EVENTS).map_err(to_storage_io)?;
         let session_event_index = db
@@ -102,6 +117,8 @@ impl EventStore {
             session_event_index,
             spine_meta,
             spine_record_index,
+            #[cfg(test)]
+            fail_next_flush: Arc::new(AtomicBool::new(false)),
         };
         store.migrate_legacy_sessions_once()?;
         store.repair_sequence_meta()?;
@@ -112,11 +129,16 @@ impl EventStore {
 
     /// Opens the store behind an `Arc` for runtimes and ingestors.
     pub fn shared(db: Db) -> Result<Arc<Self>, StorageError> {
+        // TODO compat-shim: E5 removes this raw shared-store constructor once
+        // the same authority-route parity gates named on `new` are green.
         Ok(Arc::new(Self::new(db)?))
     }
 
     /// Returns the underlying sled database.
     pub fn db(&self) -> &Db {
+        // TODO compat-shim: E5 removes raw database access after migration,
+        // registry, observability, and route-level parity tests use authority
+        // capabilities or the named migration seam.
         &self.db
     }
 
@@ -143,17 +165,22 @@ impl EventStore {
     /// Appends an envelope, allocating its ledger sequence atomically.
     pub fn append_envelope(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
         self.persist_envelope_write(&envelope, false)
+            .map(|outcome| outcome.seq)
     }
 
     /// Appends an envelope unless its idempotency key already exists.
     pub fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
-        if let Some(record_id) = envelope.record_id.as_deref() {
-            if let Some(existing_seq) = self.lookup_record_seq(record_id)? {
-                return Ok(existing_seq);
-            }
-        }
-
         self.persist_envelope_write(&envelope, true)
+            .map(|outcome| outcome.seq)
+    }
+
+    /// Appends an envelope and reports whether this call inserted it.
+    pub(crate) fn append_envelope_outcome(
+        &self,
+        envelope: EventEnvelope,
+        idempotent: bool,
+    ) -> Result<StoreAppendOutcome, StorageError> {
+        self.persist_envelope_write(&envelope, idempotent)
     }
 
     fn write_event(&self, event: &EventRecord) -> Result<(), StorageError> {
@@ -223,7 +250,7 @@ impl EventStore {
         &self,
         envelope: &EventEnvelope,
         idempotent: bool,
-    ) -> Result<u64, StorageError> {
+    ) -> Result<StoreAppendOutcome, StorageError> {
         let idempotency_key = if idempotent {
             envelope
                 .record_id
@@ -242,7 +269,12 @@ impl EventStore {
                 |(spine_meta, spine_events, session_event_index, spine_record_index)| {
                     if let Some(idempotency_key) = idempotency_key.clone() {
                         if let Some(raw) = spine_record_index.get(idempotency_key)? {
-                            return decode_seq(&raw).map_err(to_transaction_storage);
+                            return decode_seq(&raw)
+                                .map(|seq| StoreAppendOutcome {
+                                    seq,
+                                    inserted: false,
+                                })
+                                .map_err(to_transaction_storage);
                         }
                     }
 
@@ -270,7 +302,10 @@ impl EventStore {
                         spine_record_index.insert(record_id.as_bytes(), &encode_seq(seq))?;
                     }
 
-                    Ok(seq)
+                    Ok(StoreAppendOutcome {
+                        seq,
+                        inserted: true,
+                    })
                 },
             )
             .map_err(to_transaction)
@@ -324,6 +359,29 @@ impl EventStore {
         let mut out = Vec::new();
         let start = encode_record_key(after_seq.saturating_add(1)).into_bytes();
         for result in self.spine_events.range(start..).take(limit) {
+            let (_, value) = result.map_err(to_storage_io)?;
+            out.push(decode_event(&value)?);
+        }
+        Ok(out)
+    }
+
+    /// Reads at most `limit` events after a cursor and no later than a frozen
+    /// ledger tip.
+    pub(crate) fn read_all_events_between_limit(
+        &self,
+        after_seq: u64,
+        through_seq: u64,
+        limit: usize,
+    ) -> Result<Vec<EventRecord>, StorageError> {
+        self.check_retention(after_seq)?;
+        if limit == 0 || after_seq >= through_seq {
+            return Ok(Vec::new());
+        }
+
+        let start = encode_record_key(after_seq.saturating_add(1)).into_bytes();
+        let end = encode_record_key(through_seq).into_bytes();
+        let mut out = Vec::new();
+        for result in self.spine_events.range(start..=end).take(limit) {
             let (_, value) = result.map_err(to_storage_io)?;
             out.push(decode_event(&value)?);
         }
@@ -419,8 +477,61 @@ impl EventStore {
 
     /// Flushes pending sled writes to durable storage.
     pub fn flush(&self) -> Result<(), StorageError> {
+        #[cfg(test)]
+        if self.fail_next_flush.swap(false, Ordering::SeqCst) {
+            return Err(StorageError::IoError(io::Error::other(
+                "injected event-store flush failure",
+            )));
+        }
         self.db.flush().map_err(to_storage_io)?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_flush_for_test(&self) {
+        self.fail_next_flush.store(true, Ordering::SeqCst);
+    }
+
+    /// Reads the raw persisted ledger identity for authority validation.
+    pub(crate) fn ledger_identity_bytes(&self) -> Result<Option<Vec<u8>>, StorageError> {
+        self.spine_meta
+            .get(META_KEY_LEDGER_IDENTITY)
+            .map(|value| value.map(|bytes| bytes.to_vec()))
+            .map_err(to_storage_io)
+    }
+
+    /// Atomically establishes a ledger identity or returns the concurrent
+    /// winner, flushing a newly inserted value before returning.
+    pub(crate) fn establish_ledger_identity_bytes(
+        &self,
+        identity: &[u8],
+    ) -> Result<Vec<u8>, StorageError> {
+        match self
+            .spine_meta
+            .compare_and_swap(
+                META_KEY_LEDGER_IDENTITY,
+                None as Option<&[u8]>,
+                Some(identity),
+            )
+            .map_err(to_storage_io)?
+        {
+            Ok(()) => {
+                self.flush()?;
+                Ok(identity.to_vec())
+            }
+            Err(conflict) => {
+                let current = conflict
+                    .current
+                    .map(|value| value.to_vec())
+                    .ok_or_else(|| {
+                        StorageError::IoError(io::Error::other(
+                            "ledger identity compare-and-swap lost without a winner",
+                        ))
+                    })?;
+                self.flush()?;
+                Ok(current)
+            }
+        }
     }
 
     /// Encodes a legacy session event key.

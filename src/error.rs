@@ -22,6 +22,15 @@ pub enum StorageError {
     #[error("Backpressure: {0}")]
     Backpressure(String),
 
+    #[error("Event authority unavailable: {0}")]
+    EventAuthorityUnavailable(String),
+
+    #[error("Durability indeterminate: {0}")]
+    DurabilityIndeterminate(String),
+
+    #[error("Ledger identity mismatch: expected {expected}, got {actual}")]
+    LedgerIdentityMismatch { expected: String, actual: String },
+
     #[error(
         "Retention gap: cursor {after_seq} predates retained history starting at {retained_from}"
     )]
@@ -42,6 +51,18 @@ impl Clone for StorageError {
             },
             StorageError::InvalidPath(path) => StorageError::InvalidPath(path.clone()),
             StorageError::Backpressure(message) => StorageError::Backpressure(message.clone()),
+            StorageError::EventAuthorityUnavailable(message) => {
+                StorageError::EventAuthorityUnavailable(message.clone())
+            }
+            StorageError::DurabilityIndeterminate(message) => {
+                StorageError::DurabilityIndeterminate(message.clone())
+            }
+            StorageError::LedgerIdentityMismatch { expected, actual } => {
+                StorageError::LedgerIdentityMismatch {
+                    expected: expected.clone(),
+                    actual: actual.clone(),
+                }
+            }
             StorageError::RetentionGap {
                 after_seq,
                 retained_from,
@@ -306,6 +327,18 @@ impl From<meld_events::error::StorageError> for StorageError {
             meld_events::error::StorageError::InvalidPath(path) => StorageError::InvalidPath(path),
             meld_events::error::StorageError::Backpressure(message) => {
                 StorageError::Backpressure(message)
+            }
+            meld_events::error::StorageError::Unavailable(message) => {
+                StorageError::EventAuthorityUnavailable(message)
+            }
+            meld_events::error::StorageError::DurabilityIndeterminate(message) => {
+                StorageError::DurabilityIndeterminate(message)
+            }
+            meld_events::error::StorageError::IdentityMismatch { expected, actual } => {
+                StorageError::LedgerIdentityMismatch {
+                    expected: expected.to_string(),
+                    actual: actual.to_string(),
+                }
             }
             meld_events::error::StorageError::RetentionGap {
                 after_seq,
