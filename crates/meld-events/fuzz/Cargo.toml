@@ -16,6 +16,7 @@ sled = "0.34"
 
 [dependencies.meld-events]
 path = ".."
+features = ["test-support"]
 
 [[bin]]
 name = "fuzz_event_contracts"

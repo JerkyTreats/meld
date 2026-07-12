@@ -9,6 +9,8 @@
 //!
 //! Set `MELD_EVENT_RECOVERY_SKIP` to skip the kill-cycle tests.
 
+#![cfg(feature = "test-support")]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Write;
@@ -18,8 +20,10 @@ use std::time::{Duration, Instant};
 
 use std::sync::Arc;
 
-use meld_events::events::store::EventStore;
-use meld_events::{EventEnvelope, EventRecord, EventWriter};
+use meld_events::events::test_support::{
+    EventStore, EventStoreTestSupport as _, EventWriter, EventWriterTestSupport as _,
+};
+use meld_events::{EventEnvelope, EventRecord};
 use serde_json::json;
 
 const SESSION_A: &str = "session-a";

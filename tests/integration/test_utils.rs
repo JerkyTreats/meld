@@ -7,18 +7,118 @@
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
 use meld::capability::{CapabilityCatalog, CapabilityExecutorRegistry};
 use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
+use meld::control::projection::ExecutionProjection;
+use meld::events::{
+    EventAuthority, EventAuthorityOpenOptions, EventRecord, LedgerCursor, LedgerIdentity,
+    ReplayRequest, MAX_REPLAY_LIMIT,
+};
 use meld::provider::capability::ProviderExecuteChatCapability;
+use meld::runtime::ports::{
+    ProductEventAppendPort, ProductEventReplayPort, ProductGraphCursorPort,
+};
+use meld::session::{SessionRuntime, SessionStore};
+use meld::telemetry::ProgressRuntime;
 use meld::workspace::capability::WorkspaceResolveNodeIdCapability;
+use meld::world_state::graph::runtime::GraphRuntime;
+use meld::world_state::graph::store::TraversalStore;
+use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use tempfile::TempDir;
 
 /// Global mutex to serialize XDG environment variable access across all tests
 /// This prevents race conditions when tests run in parallel
 static XDG_ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Authority-backed event and session fixture for integration tests.
+///
+/// Tests use the same capability-only construction as production while still
+/// choosing a supplied database for legacy-row characterization.
+pub(crate) struct AuthorityProgressFixture {
+    pub(crate) authority: EventAuthority,
+    pub(crate) progress: ProgressRuntime,
+    pub(crate) store: std::sync::Arc<EventStore>,
+}
+
+pub(crate) fn open_authority_progress(db: sled::Db) -> AuthorityProgressFixture {
+    let authority = EventAuthority::open(db.clone(), EventAuthorityOpenOptions::default())
+        .expect("open test event authority");
+    let store = EventStore::shared(db.clone()).expect("open test event store");
+    let session_store = SessionStore::shared(db).expect("open test session store");
+    let sessions = std::sync::Arc::new(SessionRuntime::new(session_store));
+    let progress = ProgressRuntime::from_capabilities(authority.append_capability(), sessions);
+    AuthorityProgressFixture {
+        authority,
+        progress,
+        store,
+    }
+}
+
+impl AuthorityProgressFixture {
+    pub fn ledger_identity(&self) -> LedgerIdentity {
+        self.authority.ledger_identity()
+    }
+
+    pub fn replay_all(&self) -> Vec<EventRecord> {
+        let replay = self.authority.replay_capability();
+        let mut records = Vec::new();
+        let mut cursor = LedgerCursor {
+            ledger_id: self.ledger_identity(),
+            after_seq: 0,
+        };
+        loop {
+            let page = replay
+                .replay(ReplayRequest {
+                    cursor,
+                    limit: MAX_REPLAY_LIMIT,
+                })
+                .expect("replay test event page");
+            let is_complete = page.records.is_empty();
+            records.extend(page.records);
+            cursor = page.next_cursor;
+            if is_complete || cursor.after_seq >= page.coverage.tip_seq {
+                return records;
+            }
+        }
+    }
+
+    pub fn replay_session(&self, session_id: &str) -> Vec<EventRecord> {
+        self.replay_all()
+            .into_iter()
+            .filter(|record| record.session == session_id)
+            .collect()
+    }
+
+    pub fn replay_execution_projection(&self, after_seq: u64) -> ExecutionProjection {
+        ExecutionProjection::replay_from_source(
+            &self.authority.replay_capability(),
+            LedgerCursor {
+                ledger_id: self.ledger_identity(),
+                after_seq,
+            },
+            MAX_REPLAY_LIMIT,
+        )
+        .expect("replay execution projection")
+    }
+
+    pub fn graph_runtime(&self, db: sled::Db) -> std::sync::Arc<GraphRuntime> {
+        let replay = Arc::new(ProductEventReplayPort::new(
+            self.authority.replay_capability(),
+        ));
+        let append = Arc::new(ProductEventAppendPort::new(&self.authority));
+        let cursor = Arc::new(ProductGraphCursorPort::new(
+            self.authority.consumer_registry_capability(),
+        ));
+        let traversal = TraversalStore::shared(db).expect("open graph traversal test store");
+        Arc::new(
+            GraphRuntime::from_ports(replay, append, cursor, traversal)
+                .expect("open authority-backed graph runtime"),
+        )
+    }
+}
 
 /// Environment variable state to restore after test
 struct EnvState {
@@ -60,7 +160,7 @@ impl EnvState {
 /// Set up isolated XDG directories for a test with automatic cleanup
 ///
 /// This function:
-/// - Creates isolated XDG_CONFIG_HOME and XDG_DATA_HOME directories in the temp dir
+/// - Creates isolated XDG_CONFIG_HOME and an external XDG_DATA_HOME
 /// - Sets HOME to ensure fallback paths work correctly
 /// - Automatically restores original environment variables after the test
 /// - Uses a global mutex to prevent race conditions in parallel test execution
@@ -73,7 +173,7 @@ impl EnvState {
 /// let test_dir = TempDir::new().unwrap();
 /// with_xdg_env(&test_dir, || {
 ///     // Your test code here
-///     // XDG_CONFIG_HOME and XDG_DATA_HOME are set to test_dir
+///     // XDG_CONFIG_HOME and XDG_DATA_HOME are isolated for the test
 /// });
 /// // Environment automatically restored
 /// ```
@@ -86,7 +186,11 @@ where
 
         // Set up test directories
         let test_config_home = test_dir.path().to_path_buf();
-        let test_data_home = test_dir.path().join("data");
+        // Product storage must remain outside the target workspace. A
+        // separate temporary root keeps this helper valid even when callers
+        // use `test_dir.path()` itself as the workspace.
+        let external_data_home = tempfile::tempdir().unwrap();
+        let test_data_home = external_data_home.path().to_path_buf();
         let test_home = test_dir.path().join("home");
 
         std::fs::create_dir_all(&test_data_home).unwrap();
@@ -118,7 +222,8 @@ where
     with_env_lock(|| {
         let env_state = EnvState::capture();
 
-        let test_data_home = test_dir.path().join("data");
+        let external_data_home = tempfile::tempdir().unwrap();
+        let test_data_home = external_data_home.path().to_path_buf();
         let test_home = test_dir.path().join("home");
 
         std::fs::create_dir_all(&test_data_home).unwrap();

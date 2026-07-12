@@ -2,8 +2,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use meld_world_model::events::store::EventStore;
-
+use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
 use meld_world_model::events::error::EventAuthorityError;
 use meld_world_model::events::{
     AppendMode, AppendReceipt, DomainObjectRef, EventAppendCapability, EventAuthority,
@@ -16,6 +15,7 @@ use meld_world_model::world_state::graph::events::{
     anchor_selected_envelope_from_record, anchor_superseded_envelope_from_record,
     AnchorSelectedEventData, AnchorSupersededEventData,
 };
+use meld_world_model::world_state::graph::reducer::TraversalReducer;
 use meld_world_model::world_state::graph::runtime::GraphRuntime;
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::graph::{
@@ -29,6 +29,9 @@ use meld_world_model::{
     WorldStateQuery,
 };
 use serde_json::json;
+
+mod support;
+use support::GraphRuntimeTestFixture;
 
 fn object(domain_id: &str, object_kind: &str, object_id: &str) -> DomainObjectRef {
     DomainObjectRef::new(domain_id, object_kind, object_id).unwrap()
@@ -627,14 +630,15 @@ fn graph_neighbors_current_only_keeps_only_current_selected_target() {
 #[test]
 fn graph_runtime_catches_up_context_head_events() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let runtime = std::sync::Arc::new(
-        GraphRuntime::new(sled::open(temp_dir.path().join("runtime")).unwrap()).unwrap(),
-    );
+    let fixture =
+        GraphRuntimeTestFixture::open(sled::open(temp_dir.path().join("runtime")).unwrap())
+            .unwrap();
+    let runtime = fixture.runtime();
     let node = object("workspace_fs", "node", "node-a");
     let frame = object("context", "frame", "frame-a");
     let head = object("context", "head", "node-a::analysis");
-    runtime
-        .append_envelope(event(
+    fixture
+        .append(event(
             "context",
             "context.head_selected",
             vec![head, node.clone(), frame.clone()],
@@ -657,27 +661,29 @@ fn graph_runtime_catches_up_context_head_events() {
 fn graph_runtime_derived_events_carry_persisted_ledger_provenance() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("runtime")).unwrap();
-    let runtime = GraphRuntime::new(db.clone()).unwrap();
+    let fixture = GraphRuntimeTestFixture::open(db).unwrap();
+    let runtime = fixture.runtime();
     let ledger_id = runtime.ledger_identity();
     let node = object("workspace_fs", "node", "node-a");
     let frame = object("context", "frame", "frame-a");
     let head = object("context", "head", "node-a::analysis");
-    let source_seq = runtime
-        .append_envelope(event(
+    let source_seq = fixture
+        .append(event(
             "context",
             "context.head_selected",
             vec![head, node, frame],
             Vec::new(),
         ))
-        .unwrap();
+        .unwrap()
+        .seq;
 
     runtime.catch_up().unwrap();
 
-    let ledger = EventStore::new(db).unwrap();
-    let derived = ledger
-        .read_all_events_after(source_seq)
+    let derived = fixture
+        .records()
         .unwrap()
         .into_iter()
+        .filter(|record| record.seq > source_seq)
         .find(|record| record.event_type == "world_state.anchor_selected")
         .expect("graph runtime appended the reducer output");
     assert_eq!(
@@ -1341,11 +1347,13 @@ fn traversal_reducer_reports_applied_events_and_ignores_other_domains() {
         ))
         .unwrap();
 
-    let reducer =
-        meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_ledger(
-            &ledger, &store, 0,
-        )
-        .unwrap();
+    let reducer = TraversalReducer::replay_records(
+        &store,
+        ledger.compatibility_ledger_identity().unwrap(),
+        0,
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
 
     assert_eq!(reducer.applied_events, 2);
     assert_eq!(reducer.last_seen_seq, 3);
@@ -1379,11 +1387,13 @@ fn traversal_reducer_anchor_events_carry_anchor_records() {
         ))
         .unwrap();
 
-    let reducer =
-        meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_ledger(
-            &ledger, &store, 0,
-        )
-        .unwrap();
+    let reducer = TraversalReducer::replay_records(
+        &store,
+        ledger.compatibility_ledger_identity().unwrap(),
+        0,
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
     let selected = reducer
         .emitted_envelopes
         .iter()
@@ -1447,8 +1457,11 @@ fn traversal_reducer_replays_existing_anchor_over_equal_seq_current() {
         ))
         .unwrap();
 
-    meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_ledger(
-        &ledger, &store, 0,
+    TraversalReducer::replay_records(
+        &store,
+        ledger.compatibility_ledger_identity().unwrap(),
+        0,
+        ledger.read_all_events_after(0).unwrap(),
     )
     .unwrap();
 
@@ -1486,8 +1499,11 @@ fn traversal_reducer_ignores_older_existing_anchor_than_current() {
         ))
         .unwrap();
 
-    meld_world_model::world_state::graph::reducer::TraversalReducer::replay_from_ledger(
-        &ledger, &store, 0,
+    TraversalReducer::replay_records(
+        &store,
+        ledger.compatibility_ledger_identity().unwrap(),
+        0,
+        ledger.read_all_events_after(0).unwrap(),
     )
     .unwrap();
 
@@ -1511,22 +1527,23 @@ fn traversal_store_persists_reducer_cursor() {
 #[test]
 fn graph_runtime_tombstone_clears_current_head() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let runtime = std::sync::Arc::new(
-        GraphRuntime::new(sled::open(temp_dir.path().join("runtime")).unwrap()).unwrap(),
-    );
+    let fixture =
+        GraphRuntimeTestFixture::open(sled::open(temp_dir.path().join("runtime")).unwrap())
+            .unwrap();
+    let runtime = fixture.runtime();
     let node = object("workspace_fs", "node", "node-a");
     let frame = object("context", "frame", "frame-a");
     let head = object("context", "head", "node-a::analysis");
-    runtime
-        .append_envelope(event(
+    fixture
+        .append(event(
             "context",
             "context.head_selected",
             vec![head.clone(), node.clone(), frame],
             Vec::new(),
         ))
         .unwrap();
-    runtime
-        .append_envelope(event(
+    fixture
+        .append(event(
             "context",
             "context.head_tombstoned",
             vec![head, node.clone()],
@@ -1642,7 +1659,12 @@ fn world_state_reducer_materializes_claim_and_evidence() {
         ))
         .unwrap();
 
-    let reducer = WorldStateReducer::replay_from_ledger(&ledger, &store, 0).unwrap();
+    let reducer = WorldStateReducer::replay_events(
+        &store,
+        ledger.compatibility_ledger_identity().unwrap(),
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
     let current = store.current_claims_for_object(&node).unwrap();
     let fact = store
         .get_fact(&format!(
@@ -1655,6 +1677,15 @@ fn world_state_reducer_materializes_claim_and_evidence() {
     assert_eq!(reducer.emitted_envelopes.len(), 2);
     let claim_event = &reducer.emitted_envelopes[0];
     let evidence_event = &reducer.emitted_envelopes[1];
+    let source_record = EventRecordRef {
+        ledger_id: ledger.compatibility_ledger_identity().unwrap(),
+        seq: 1,
+    };
+    assert_eq!(claim_event.provenance.source_records, vec![source_record]);
+    assert_eq!(
+        evidence_event.provenance.source_records,
+        vec![source_record]
+    );
 
     assert!(claim_event.data.get("claim").is_some());
     assert!(claim_event.data.get("claim_id").is_none());
@@ -1708,7 +1739,12 @@ fn world_state_reducer_materializes_artifact_claims() {
         ))
         .unwrap();
 
-    WorldStateReducer::replay_from_ledger(&ledger, &store, 0).unwrap();
+    WorldStateReducer::replay_events(
+        &store,
+        ledger.compatibility_ledger_identity().unwrap(),
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
     let current = store.current_claims_for_object(&task_run).unwrap();
 
     assert_eq!(current.len(), 1);
@@ -1734,7 +1770,12 @@ fn world_state_reducer_finds_object_by_domain_and_kind() {
         ))
         .unwrap();
 
-    WorldStateReducer::replay_from_ledger(&ledger, &store, 0).unwrap();
+    WorldStateReducer::replay_events(
+        &store,
+        ledger.compatibility_ledger_identity().unwrap(),
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
     let current = store.current_claims_for_object(&node).unwrap();
 
     assert_eq!(current.len(), 1);
@@ -1765,7 +1806,12 @@ fn world_state_reducer_supersedes_conflicting_generation_claims() {
         ))
         .unwrap();
 
-    let reducer = WorldStateReducer::replay_from_ledger(&ledger, &store, 0).unwrap();
+    let reducer = WorldStateReducer::replay_events(
+        &store,
+        ledger.compatibility_ledger_identity().unwrap(),
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
     let current = store.current_claims_for_object(&node).unwrap();
     let history = store.claim_history_for_object(&node).unwrap();
     let superseded_event = reducer

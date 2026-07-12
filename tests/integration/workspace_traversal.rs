@@ -8,10 +8,19 @@ use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::SledNodeRecordStore;
 use meld::telemetry::ProgressRuntime;
 use meld::workspace::WorkspaceCommandService;
+use meld_events::events::test_support::EventStore;
+
+use crate::integration::test_utils::open_authority_progress;
 
 fn create_test_api(
     workspace_root: &std::path::Path,
-) -> (ContextApi, Arc<ProgressRuntime>, String, tempfile::TempDir) {
+) -> (
+    ContextApi,
+    Arc<ProgressRuntime>,
+    Arc<EventStore>,
+    String,
+    tempfile::TempDir,
+) {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let store_path = temp_dir.path().join("store");
     let frame_storage_path = temp_dir.path().join("frames");
@@ -30,7 +39,9 @@ fn create_test_api(
         meld::provider::ProviderRegistry::new(),
     ));
     let lock_manager = Arc::new(NodeLockManager::new());
-    let progress = Arc::new(ProgressRuntime::new(db).unwrap());
+    let fixture = open_authority_progress(db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let session_id = progress
         .start_command_session("workspace.traversal".to_string())
         .unwrap();
@@ -46,14 +57,15 @@ fn create_test_api(
         workspace_root.to_path_buf(),
     );
 
-    (api, progress, session_id, temp_dir)
+    (api, progress, event_store, session_id, temp_dir)
 }
 
 #[test]
 fn brand_new_scan_emits_source_and_snapshot() {
     let workspace_root = tempfile::TempDir::new().unwrap();
     std::fs::write(workspace_root.path().join("a.txt"), "hello").unwrap();
-    let (api, progress, session_id, _temp_dir) = create_test_api(workspace_root.path());
+    let (api, progress, event_store, session_id, _temp_dir) =
+        create_test_api(workspace_root.path());
 
     WorkspaceCommandService::scan(
         &api,
@@ -65,7 +77,7 @@ fn brand_new_scan_emits_source_and_snapshot() {
     .unwrap();
 
     progress.barrier().unwrap();
-    let events = progress.store().read_events_after(&session_id, 0).unwrap();
+    let events = event_store.read_events_after(&session_id, 0).unwrap();
     assert!(events
         .iter()
         .any(|event| event.event_type == "workspace_fs.source_attached"));
@@ -81,7 +93,8 @@ fn brand_new_scan_emits_source_and_snapshot() {
 fn repeated_scan_reuses_source_identity() {
     let workspace_root = tempfile::TempDir::new().unwrap();
     std::fs::write(workspace_root.path().join("a.txt"), "hello").unwrap();
-    let (api, progress, session_id, _temp_dir) = create_test_api(workspace_root.path());
+    let (api, progress, event_store, session_id, _temp_dir) =
+        create_test_api(workspace_root.path());
 
     WorkspaceCommandService::scan(
         &api,
@@ -101,7 +114,7 @@ fn repeated_scan_reuses_source_identity() {
     .unwrap();
 
     progress.barrier().unwrap();
-    let events = progress.store().read_events_after(&session_id, 0).unwrap();
+    let events = event_store.read_events_after(&session_id, 0).unwrap();
     let mut source_ids = std::collections::BTreeSet::new();
     for event in events
         .iter()
@@ -121,7 +134,8 @@ fn snapshot_selected_changes_only_when_root_hash_changes() {
     let workspace_root = tempfile::TempDir::new().unwrap();
     let target = workspace_root.path().join("a.txt");
     std::fs::write(&target, "hello").unwrap();
-    let (api, progress, session_id, _temp_dir) = create_test_api(workspace_root.path());
+    let (api, progress, event_store, session_id, _temp_dir) =
+        create_test_api(workspace_root.path());
 
     WorkspaceCommandService::scan(
         &api,
@@ -132,8 +146,7 @@ fn snapshot_selected_changes_only_when_root_hash_changes() {
     )
     .unwrap();
     progress.barrier().unwrap();
-    let before = progress
-        .store()
+    let before = event_store
         .read_events_after(&session_id, 0)
         .unwrap()
         .into_iter()
@@ -149,8 +162,7 @@ fn snapshot_selected_changes_only_when_root_hash_changes() {
     )
     .unwrap();
     progress.barrier().unwrap();
-    let same_root = progress
-        .store()
+    let same_root = event_store
         .read_events_after(&session_id, 0)
         .unwrap()
         .into_iter()
@@ -168,8 +180,7 @@ fn snapshot_selected_changes_only_when_root_hash_changes() {
     )
     .unwrap();
     progress.barrier().unwrap();
-    let changed_root = progress
-        .store()
+    let changed_root = event_store
         .read_events_after(&session_id, 0)
         .unwrap()
         .into_iter()

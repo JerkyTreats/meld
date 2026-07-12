@@ -1,13 +1,16 @@
+use std::ops::Deref;
+use std::sync::Arc;
+
 #[path = "../../crates/meld-execution/tests/support/task_network.rs"]
 mod task_network_support;
 
-use meld::runtime::assembly::ProductRuntimeAssembly;
+use meld::runtime::assembly::{ProductRuntimeAssembly, ProductRuntimeConfig};
 use meld::runtime::contracts::WorkerTickReport;
 use meld::runtime::ports::{
     DocsTaskEvidenceReplayRequest, ProductRuntimePorts, ProviderPortConfig,
 };
 use meld::runtime::storage::{OpenProductStores, ProductStorageLayout};
-use meld_events::{EventEnvelope, EventRecord};
+use meld_events::{AppendMode, EventAuthority, EventAuthorityOpenOptions, EventEnvelope};
 use meld_execution::goals::GoalCommandOutcome;
 use meld_execution::planning::{
     PlanningRequest, PlanningResult, PlanningWorldStateFrameRef, PlanningWorldStateRequest,
@@ -52,6 +55,19 @@ struct ReopenHarness {
     fixture: DocsFreshnessFirstProofFixture,
 }
 
+struct OpenReopenProduct {
+    stores: OpenProductStores,
+    authority: EventAuthority,
+}
+
+impl Deref for OpenReopenProduct {
+    type Target = OpenProductStores;
+
+    fn deref(&self) -> &Self::Target {
+        &self.stores
+    }
+}
+
 impl ReopenHarness {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
@@ -63,23 +79,44 @@ impl ReopenHarness {
         }
     }
 
-    fn open(&self) -> OpenProductStores {
+    fn open(&self) -> OpenReopenProduct {
         let _keep_tempdir = self.temp.path();
-        OpenProductStores::open(&self.layout).unwrap()
+        let stores = OpenProductStores::open(&self.layout).unwrap();
+        let db = sled::open(&self.layout.ledger_db).unwrap();
+        let authority = EventAuthority::open(db, EventAuthorityOpenOptions::default()).unwrap();
+        OpenReopenProduct { stores, authority }
     }
 
     fn assembly(&self) -> ProductRuntimeAssembly {
         let _keep_tempdir = self.temp.path();
-        ProductRuntimeAssembly::load_for_product_root(self.layout.root.clone()).unwrap()
+        self.layout.create_dirs().unwrap();
+        let authority = Arc::new(
+            EventAuthority::open(
+                sled::open(&self.layout.ledger_db).unwrap(),
+                EventAuthorityOpenOptions::default(),
+            )
+            .unwrap(),
+        );
+        ProductRuntimeAssembly::load_with_authority(
+            ProductRuntimeConfig::for_product_root(self.layout.root.clone()),
+            authority,
+        )
+        .unwrap()
     }
 
-    fn ports(&self, stores: &OpenProductStores) -> ProductRuntimePorts {
-        ProductRuntimePorts::from_stores(stores, ProviderPortConfig::default()).unwrap()
+    fn ports(&self, product: &OpenReopenProduct) -> ProductRuntimePorts {
+        ProductRuntimePorts::from_authority(
+            &product.stores,
+            &product.authority,
+            ProviderPortConfig::default(),
+        )
+        .unwrap()
     }
 
-    fn flush_and_reopen(&self, stores: OpenProductStores) -> OpenProductStores {
-        stores.flush_boundary().unwrap();
-        drop(stores);
+    fn flush_and_reopen(&self, product: OpenReopenProduct) -> OpenReopenProduct {
+        product.stores.flush_boundary().unwrap();
+        product.authority.append_capability().barrier().unwrap();
+        drop(product);
         self.open()
     }
 
@@ -367,9 +404,9 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
     let network = harness.open_network(&stores);
     let ports = harness.ports(&stores);
 
-    let records = stores
-        .event_store
-        .read_all_events_after(harness.fixture.publication_event_seq() - 1)
+    let records = ports
+        .event_replay()
+        .read_after_limit(harness.fixture.publication_event_seq() - 1, 1)
         .unwrap();
     assert_eq!(records.len(), 1);
     let event = records[0].clone();
@@ -490,7 +527,7 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
     );
 }
 
-fn setup_reopened_active_goal(harness: &ReopenHarness) -> OpenProductStores {
+fn setup_reopened_active_goal(harness: &ReopenHarness) -> OpenReopenProduct {
     let stores = harness.open();
     let fixture = harness.fixture;
     fixture.seed_graph_into(stores.traversal_store.as_ref());
@@ -526,7 +563,7 @@ fn setup_reopened_active_goal(harness: &ReopenHarness) -> OpenProductStores {
         .put_view(&belief_view(&fixture, 0.2, GOAL_COMMAND_REVISION_ID, 7))
         .unwrap();
 
-    let ports = ProductRuntimePorts::from_stores(&stores, ProviderPortConfig::default()).unwrap();
+    let ports = harness.ports(&stores);
     let mut sink = |command: &AgentGoalCommand| match ports
         .goal_command()
         .accept_agent_goal_command(command.clone(), fixture.goal_acceptance_seq())
@@ -572,7 +609,7 @@ fn setup_reopened_active_goal(harness: &ReopenHarness) -> OpenProductStores {
     harness.flush_and_reopen(stores)
 }
 
-fn setup_reopened_pending_publication(harness: &ReopenHarness) -> OpenProductStores {
+fn setup_reopened_pending_publication(harness: &ReopenHarness) -> OpenReopenProduct {
     let stores = setup_reopened_active_goal(harness);
     let active_goal = stores
         .goal_store
@@ -681,24 +718,33 @@ fn record_successful_outcome(stores: &OpenProductStores, network: &mut SledTaskN
 }
 
 fn seed_event_allocator_before_publication(
-    stores: &OpenProductStores,
+    product: &OpenReopenProduct,
     fixture: &DocsFreshnessFirstProofFixture,
 ) {
     let prior_seq = fixture.publication_event_seq() - 1;
-    let envelope = EventEnvelope::new_domain(
-        "2026-06-09T00:00:00Z".to_string(),
-        SESSION_ID,
-        "runtime",
-        "rtg-6::checkpoint",
-        "runtime.checkpoint.before_publication",
-        Some("hash-before-publication".to_string()),
-        json!({
-            "checkpoint": "before_publication",
-        }),
-    )
-    .with_record_id("runtime::checkpoint::before-publication");
-    let record = EventRecord::from_envelope(envelope, prior_seq);
-    stores.event_store.append_event_idempotent(&record).unwrap();
+    let envelopes = (1..=prior_seq)
+        .map(|seq| {
+            EventEnvelope::new_domain(
+                "2026-06-09T00:00:00Z".to_string(),
+                SESSION_ID,
+                "runtime",
+                "rtg-6::checkpoint",
+                "runtime.checkpoint.before_publication",
+                Some(format!("hash-before-publication-{seq}")),
+                json!({
+                    "checkpoint": "before_publication",
+                    "allocator_seq": seq,
+                }),
+            )
+            .with_record_id(format!("runtime::checkpoint::before-publication::{seq}"))
+        })
+        .collect();
+    let receipts = product
+        .authority
+        .append_capability()
+        .append_durable_batch(envelopes, AppendMode::Plain)
+        .unwrap();
+    assert_eq!(receipts.last().map(|receipt| receipt.seq), Some(prior_seq));
 }
 
 fn submission_from_goal_outcome(

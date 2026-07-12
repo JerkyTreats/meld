@@ -1,7 +1,7 @@
 //! Runtime CLI tooling adapter.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -9,7 +9,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use crate::cli::RuntimeCommands;
-use crate::config::{ConfigLoader, MerkleConfig};
 use crate::error::ApiError;
 use crate::runtime::assembly::{DesiredRuntimeState, ProductRuntimeAssembly};
 use crate::runtime::presentation::{format_runtime_run_result, format_runtime_status};
@@ -112,15 +111,14 @@ pub struct RuntimeCliRunResult {
 
 /// Dispatch one runtime CLI command.
 pub fn handle_cli_command(
-    workspace_root: &Path,
-    config_path: Option<&Path>,
+    assembly: &ProductRuntimeAssembly,
     command: &RuntimeCommands,
 ) -> Result<String, ApiError> {
     match command {
         RuntimeCommands::Status {
             format,
             runtime_ids,
-        } => runtime_status(workspace_root, config_path, format, runtime_ids),
+        } => runtime_status(assembly, format, runtime_ids),
         RuntimeCommands::Run {
             instance_id,
             tick_ms,
@@ -130,8 +128,7 @@ pub fn handle_cli_command(
             restart_attempt_limit,
             restart_backoff_ms,
         } => runtime_run(
-            workspace_root,
-            config_path,
+            assembly,
             RuntimeRunOptions {
                 instance_id: instance_id.clone(),
                 tick_ms: *tick_ms,
@@ -156,38 +153,28 @@ struct RuntimeRunOptions<'a> {
 }
 
 fn runtime_status(
-    workspace_root: &Path,
-    config_path: Option<&Path>,
+    assembly: &ProductRuntimeAssembly,
     format: &str,
     runtime_ids: &[String],
 ) -> Result<String, ApiError> {
     validate_format(format)?;
-    let config = load_config(workspace_root, config_path)?;
-    let description = ProductRuntimeAssembly::describe_for_workspace(workspace_root, &config)
-        .map_err(runtime_error)?;
-    let selected = select_desired_runtime_state(&description.desired_runtime_state, runtime_ids)?;
-    let store = SupervisorStore::open_existing(description.supervisor_store_path.clone())
-        .map_err(runtime_error)?;
+    let selected = select_desired_runtime_state(assembly.desired_runtime_state(), runtime_ids)?;
+    let store = assembly.supervisor_store();
     let now_ms = current_time_ms()?;
 
-    let instance = match store.as_ref() {
-        Some(store) => store
-            .latest_runtime_instance()
-            .map_err(runtime_error)?
-            .map(RuntimeCliInstanceStatus::from),
-        None => None,
-    };
-    if let Some(store) = store.as_ref() {
-        store.list_desired_runtime_state().map_err(runtime_error)?;
-    }
+    let instance = store
+        .latest_runtime_instance()
+        .map_err(runtime_error)?
+        .map(RuntimeCliInstanceStatus::from);
+    store.list_desired_runtime_state().map_err(runtime_error)?;
 
     let runtimes = selected
         .iter()
-        .map(|desired| runtime_status_row(desired, store.as_ref(), now_ms))
+        .map(|desired| runtime_status_row(desired, Some(store), now_ms))
         .collect::<Result<Vec<_>, _>>()?;
     let status = RuntimeCliStatus {
-        product_root: description.product_root,
-        supervisor_store_path: description.supervisor_store_path,
+        product_root: assembly.product_root().to_path_buf(),
+        supervisor_store_path: store.path().to_path_buf(),
         instance,
         runtimes,
     };
@@ -195,8 +182,7 @@ fn runtime_status(
 }
 
 fn runtime_run(
-    workspace_root: &Path,
-    config_path: Option<&Path>,
+    assembly: &ProductRuntimeAssembly,
     options: RuntimeRunOptions<'_>,
 ) -> Result<String, ApiError> {
     validate_format(options.format)?;
@@ -204,14 +190,11 @@ fn runtime_run(
         return Err(runtime_message("tick-ms must be greater than 0"));
     }
     let restart_policy = parse_restart_policy(options.restart_policy)?;
-    let config = load_config(workspace_root, config_path)?;
     let started_at_ms = current_time_ms()?;
     let instance_id = options
         .instance_id
         .unwrap_or_else(|| format!("runtime-cli-{}-{}", std::process::id(), started_at_ms));
 
-    let assembly = ProductRuntimeAssembly::load_for_workspace(workspace_root, &config)
-        .map_err(runtime_error)?;
     let cancelled = Arc::new(AtomicBool::new(false));
     install_ctrl_c_handler(Arc::clone(&cancelled))?;
     let mut command = SupervisorStartCommand::new(instance_id.clone(), started_at_ms);
@@ -546,17 +529,6 @@ fn validate_format(format: &str) -> Result<(), ApiError> {
         other => Err(runtime_message(format!(
             "invalid format '{other}', expected 'text' or 'json'"
         ))),
-    }
-}
-
-fn load_config(
-    workspace_root: &Path,
-    config_path: Option<&Path>,
-) -> Result<MerkleConfig, ApiError> {
-    if let Some(config_path) = config_path {
-        Ok(ConfigLoader::load_from_file(config_path)?)
-    } else {
-        Ok(ConfigLoader::load(workspace_root)?)
     }
 }
 

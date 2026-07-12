@@ -27,9 +27,10 @@ if grep -rq --include='*.rs' 'crate::tooling::' src/ 2>/dev/null; then
 fi
 
 # Production domains must consume event authority capabilities instead of
-# opening canonical stores or spawning independent writers. Temporary E5
-# compatibility and in-file test fixtures carry an explicit boundary marker.
-RAW_EVENT_CONSTRUCTORS='EventStore::(new|shared)|EventRuntime::(new|from_store)|EventWriter::spawn'
+# opening canonical stores, spawning independent writers, importing raw test
+# helpers, or opening the frozen event trees. In-file test fixtures carry an
+# explicit boundary marker on the matching line.
+RAW_EVENT_CONSTRUCTORS='EventStore::(new|shared)|EventRuntime::(new|from_store)|EventWriter::spawn|GraphRuntime::(new|from_stores)|events::test_support|graph::test_support|obs_events|obs_spine_events'
 EVENT_CONSTRUCTOR_MATCHES="$(
   rg -n "$RAW_EVENT_CONSTRUCTORS" src crates \
     --glob '*.rs' \
@@ -38,11 +39,7 @@ EVENT_CONSTRUCTOR_MATCHES="$(
     | while IFS= read -r match; do
         case "$match" in
           *'://!'*) ;;
-          crates/meld-world-model/src/world_state/graph/runtime.rs:*'boundary-allow: event-compat'*) ;;
-          crates/meld-world-model/src/world_state/graph/runtime.rs:*'boundary-allow: event-test'*) ;;
-          src/runtime/storage.rs:*'boundary-allow: event-compat'*) ;;
-          src/telemetry/sessions/service.rs:*'boundary-allow: event-compat'*) ;;
-          src/events/tooling/tail.rs:*'boundary-allow: event-test'*) ;;
+          *'boundary-allow: event-test'*) ;;
           *) echo "$match" ;;
         esac
       done \

@@ -10,19 +10,18 @@
 //!
 //! # Module Map
 //!
-//! - [`events`] defines the canonical envelope, record, runtime, store, and
-//!   compatibility surface.
-//! - [`error`] defines storage and API errors raised by event persistence and
-//!   runtime emission.
+//! - [`events`] defines canonical envelopes, records, authority capabilities,
+//!   observability, migration, and transport-neutral contracts.
+//! - [`error`] defines persistence and authority errors.
 //!
-//! Start with [`EventEnvelope`] when publishing a domain event,
-//! [`events::store::EventStore`] when persisting or querying the event ledger,
-//! and [`EventRuntime`] when a caller needs durable or best-effort emission.
+//! Product composition opens one [`EventAuthority`]. Producers use its
+//! [`EventAppendCapability`], while consumers derive identity-bound replay,
+//! subscription, watermark, registry, and observability capabilities.
 //!
 //! # Example
 //!
 //! ```rust
-//! use meld_events::{EventEnvelope, EventRecord};
+//! use meld_events::{AppendMode, EventAuthority, EventAuthorityOpenOptions, EventEnvelope};
 //! use serde_json::json;
 //!
 //! let envelope = EventEnvelope::new_domain(
@@ -34,10 +33,15 @@
 //!     None,
 //!     json!({ "started": true }),
 //! );
-//! let record = EventRecord::from_envelope(envelope, 1);
+//! let db = sled::Config::new().temporary(true).open().unwrap();
+//! let authority = EventAuthority::open(db, EventAuthorityOpenOptions::default()).unwrap();
+//! let receipt = authority
+//!     .append_capability()
+//!     .append_durable(envelope, AppendMode::Plain)
+//!     .unwrap();
 //!
-//! assert_eq!(record.seq, 1);
-//! assert_eq!(record.domain_id, "execution");
+//! assert_eq!(receipt.seq, 1);
+//! assert_eq!(receipt.ledger_id, authority.ledger_identity());
 //! ```
 
 #![deny(missing_docs)]

@@ -5,18 +5,8 @@
 //! legacy claim domain remains available for compatibility and older tests.
 //! Belief inference builds on graph contracts through its own domain boundary.
 //!
-//! # Example
-//!
-//! ```rust,no_run
-//! use meld_world_model::world_state::graph::runtime::GraphRuntime;
-//! use meld_world_model::WorldModelQueries;
-//! use std::sync::Arc;
-//!
-//! let temp = tempfile::tempdir().unwrap();
-//! let runtime = Arc::new(GraphRuntime::new(sled::open(temp.path()).unwrap()).unwrap());
-//! let queries = WorldModelQueries::new(runtime);
-//! assert!(queries.current_frame_head_count_by_type("analysis").unwrap() == 0);
-//! ```
+//! Product composition builds the graph runtime from event-authority ports and
+//! shares it with [`WorldModelQueries`].
 
 pub mod graph;
 

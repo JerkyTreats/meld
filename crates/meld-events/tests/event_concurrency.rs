@@ -1,5 +1,9 @@
-use meld_events::events::store::EventStore;
-use meld_events::{EventEnvelope, EventRuntime};
+#![cfg(feature = "test-support")]
+
+use meld_events::events::test_support::{
+    EventRuntime, EventRuntimeTestSupport as _, EventStore, EventStoreTestSupport as _,
+};
+use meld_events::EventEnvelope;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Barrier};

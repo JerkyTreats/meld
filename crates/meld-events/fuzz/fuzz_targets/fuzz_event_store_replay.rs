@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use meld_events::events::store::EventStore;
+use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
 use meld_events::EventEnvelope;
 use serde_json::json;
 

@@ -18,8 +18,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
-use meld_events::events::store::EventStore;
-use meld_events::{EventEnvelope, EventRuntime, EventWriter};
+use meld_events::events::test_support::{
+    EventCursorRegistry, EventCursorRegistryTestSupport as _, EventRuntime,
+    EventRuntimeTestSupport as _, EventStore, EventStoreTestSupport as _, EventWriter,
+    EventWriterTestSupport as _, LedgerObservability, LedgerObservabilityTestSupport as _,
+};
+use meld_events::EventEnvelope;
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -327,10 +331,7 @@ fn bytes_per_event(c: &mut Criterion) {
 /// query is the status command's whole cost, and the page wake is the tail
 /// follow loop's latency floor.
 fn observability_reads(c: &mut Criterion, fixtures: &[HistoryFixture]) {
-    use meld_events::events::observability::{
-        EventObservabilityPort, EventPageRequest, LedgerObservability,
-    };
-    use meld_events::{EventCursorRegistry, EventWriter};
+    use meld_events::events::observability::{EventObservabilityPort, EventPageRequest};
 
     let mut group = c.benchmark_group("observability_reads");
     group.sample_size(10);

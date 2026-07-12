@@ -1,8 +1,10 @@
-use meld_events::events::store::EventStore;
-use meld_events::{
-    DomainObjectRef, EventEnvelope, EventRecord, EventRecordRef, EventRuntime, EventWriter,
-    LedgerIdentity,
+#![cfg(feature = "test-support")]
+
+use meld_events::events::test_support::{
+    EventRuntime, EventRuntimeTestSupport as _, EventStore, EventStoreTestSupport as _,
+    EventWriter, EventWriterTestSupport as _,
 };
+use meld_events::{DomainObjectRef, EventEnvelope, EventRecord, EventRecordRef, LedgerIdentity};
 use proptest::prelude::*;
 use serde_json::json;
 use std::collections::BTreeMap;

@@ -4,12 +4,12 @@ use meld::control::events::{
 };
 use meld::task::{build_execution_task_envelope, TaskEvent};
 use meld::telemetry::events::ProgressEvent;
-use meld::telemetry::sinks::store::ProgressStore;
 use meld::telemetry::{DomainObjectRef, EventRelation};
 use meld::world_state::contracts::{ClaimKind, ClaimRecord, EvidenceRecord, SettlementStatus};
 use meld::world_state::query::WorldStateQuery;
 use meld::world_state::reducer::WorldStateReducer;
 use meld::world_state::store::StoredWorldStateFact;
+use meld_events::events::test_support::{EventStore as ProgressStore, EventStoreTestSupport as _};
 
 #[test]
 fn world_state_records_round_trip() {
@@ -158,7 +158,12 @@ fn replay_rebuilds_current_claim_projection() {
         ))
         .unwrap();
 
-    let reducer = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
+    let reducer = WorldStateReducer::replay_events(
+        &world_state,
+        ledger.compatibility_ledger_identity().unwrap(),
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
     let query = WorldStateQuery::new(&world_state);
     let current = query
         .current_claims_for_object(&DomainObjectRef::new("workspace_fs", "node", "node_a").unwrap())
@@ -211,7 +216,12 @@ fn later_generation_success_supersedes_prior_failure() {
         ))
         .unwrap();
 
-    let reducer = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
+    let reducer = WorldStateReducer::replay_events(
+        &world_state,
+        ledger.compatibility_ledger_identity().unwrap(),
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
     let subject = DomainObjectRef::new("workspace_fs", "node", "node_a").unwrap();
     let current = WorldStateQuery::new(&world_state)
         .current_claims_for_object(&subject)
@@ -249,7 +259,12 @@ fn provenance_query_returns_supporting_execution_fact() {
         ))
         .unwrap();
 
-    let _ = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
+    let _ = WorldStateReducer::replay_events(
+        &world_state,
+        ledger.compatibility_ledger_identity().unwrap(),
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
     let provenance = WorldStateQuery::new(&world_state)
         .provenance_for_claim("claim::artifact_available::execution::task_run::run_a::1")
         .unwrap();
@@ -284,7 +299,12 @@ fn current_claims_for_workspace_node_are_index_backed() {
         ))
         .unwrap();
 
-    let _ = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
+    let _ = WorldStateReducer::replay_events(
+        &world_state,
+        ledger.compatibility_ledger_identity().unwrap(),
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
 
     let current = WorldStateQuery::new(&world_state)
         .current_claims_for_object(&DomainObjectRef::new("workspace_fs", "node", "node_a").unwrap())
@@ -310,7 +330,12 @@ fn claim_history_for_task_run_is_index_backed() {
         ))
         .unwrap();
 
-    let _ = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
+    let _ = WorldStateReducer::replay_events(
+        &world_state,
+        ledger.compatibility_ledger_identity().unwrap(),
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
 
     let history = WorldStateQuery::new(&world_state)
         .claim_history_for_object(&DomainObjectRef::new("execution", "task_run", "run_a").unwrap())
@@ -335,7 +360,12 @@ fn reducer_ignores_irrelevant_execution_events() {
         ))
         .unwrap();
 
-    let reducer = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
+    let reducer = WorldStateReducer::replay_events(
+        &world_state,
+        ledger.compatibility_ledger_identity().unwrap(),
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
     let history = WorldStateQuery::new(&world_state)
         .claim_history_for_object(&DomainObjectRef::new("execution", "task_run", "run_a").unwrap())
         .unwrap();
@@ -370,7 +400,12 @@ fn world_state_facts_are_replayable_after_restart() {
         ))
         .unwrap();
 
-    let _ = WorldStateReducer::replay_from_ledger(&ledger, &world_state, 0).unwrap();
+    let _ = WorldStateReducer::replay_events(
+        &world_state,
+        ledger.compatibility_ledger_identity().unwrap(),
+        ledger.read_all_events_after(0).unwrap(),
+    )
+    .unwrap();
     world_state.db().flush().unwrap();
     drop(world_state);
     drop(ledger);

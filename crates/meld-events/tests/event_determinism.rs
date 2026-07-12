@@ -1,4 +1,6 @@
-use meld_events::events::store::EventStore;
+#![cfg(feature = "test-support")]
+
+use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
 use meld_events::{EventEnvelope, EventRecord};
 use proptest::prelude::*;
 use serde_json::json;

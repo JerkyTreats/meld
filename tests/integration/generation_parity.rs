@@ -14,8 +14,8 @@ use meld::metadata::frame_write_contract::{
 use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::persistence::SledNodeRecordStore;
 use meld::store::{NodeRecord, NodeType};
-use meld::telemetry::ProgressRuntime;
 use meld::types::{FrameID, Hash, NodeID};
+use meld_events::events::test_support::EventStore;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -24,6 +24,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
+
+use crate::integration::test_utils::open_authority_progress;
 
 #[derive(Serialize)]
 struct ParityArtifact {
@@ -169,6 +171,7 @@ fn terminal_error_class(error: &ApiError) -> String {
         ApiError::ProviderModelNotFound(_) => "ProviderModelNotFound",
         ApiError::StorageError(_) => "StorageError",
         ApiError::ConfigError(_) => "ConfigError",
+        ApiError::ProductRootInsideWorkspace { .. } => "ProductRootInsideWorkspace",
         ApiError::GenerationFailed(_) => "GenerationFailed",
         ApiError::PathNotInTree(_) => "PathNotInTree",
     }
@@ -244,8 +247,8 @@ fn normalize_context_digest(value: &mut Value) {
     }
 }
 
-fn event_counts(progress: &ProgressRuntime, session_id: &str) -> (usize, usize) {
-    let events = progress.store().read_events(session_id).unwrap();
+fn event_counts(event_store: &EventStore, session_id: &str) -> (usize, usize) {
+    let events = event_store.read_events(session_id).unwrap();
     let attempts = events
         .iter()
         .filter(|event| event.event_type == "request_processing")
@@ -421,7 +424,9 @@ async fn generation_parity_retryable_failure_matches_fixture() {
     register_writer_agent(api.as_ref(), "writer", true);
 
     let db = sled::open(temp_dir.path().join("progress")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(db).unwrap());
+    let fixture = open_authority_progress(db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let session_id = progress
         .start_command_session("generation.parity.retryable".to_string())
         .unwrap();
@@ -462,7 +467,7 @@ async fn generation_parity_retryable_failure_matches_fixture() {
         .unwrap();
 
     let error = result.unwrap_err();
-    let (attempt_count, retry_event_count) = event_counts(&progress, &session_id);
+    let (attempt_count, retry_event_count) = event_counts(&event_store, &session_id);
 
     let artifact = ParityArtifact {
         schema_version: 1,
@@ -495,7 +500,9 @@ async fn generation_parity_non_retryable_failure_matches_fixture() {
     put_file_node(api.as_ref(), node_id, &file_path, b"alpha");
 
     let db = sled::open(temp_dir.path().join("progress")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(db).unwrap());
+    let fixture = open_authority_progress(db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let session_id = progress
         .start_command_session("generation.parity.non_retryable".to_string())
         .unwrap();
@@ -536,7 +543,7 @@ async fn generation_parity_non_retryable_failure_matches_fixture() {
         .unwrap();
 
     let error = result.unwrap_err();
-    let (attempt_count, retry_event_count) = event_counts(&progress, &session_id);
+    let (attempt_count, retry_event_count) = event_counts(&event_store, &session_id);
 
     let artifact = ParityArtifact {
         schema_version: 1,

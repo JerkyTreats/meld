@@ -3,8 +3,10 @@
 use std::sync::Arc;
 
 use libfuzzer_sys::fuzz_target;
-use meld_events::events::store::EventStore;
-use meld_events::{EventEnvelope, EventWriter};
+use meld_events::events::test_support::{
+    EventStore, EventStoreTestSupport as _, EventWriter, EventWriterTestSupport as _,
+};
+use meld_events::EventEnvelope;
 use serde_json::json;
 
 fn event_store() -> Arc<EventStore> {

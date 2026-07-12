@@ -1,8 +1,10 @@
+#![cfg(feature = "test-support")]
+
 use std::sync::{Arc, Barrier};
 
 use meld_events::error::StorageError;
 use meld_events::events::identity::LedgerIdentity;
-use meld_events::EventCursor;
+use meld_events::events::test_support::{EventCursor, EventCursorTestSupport as _};
 
 const CURSOR_TREE: &str = "consumer_meta";
 

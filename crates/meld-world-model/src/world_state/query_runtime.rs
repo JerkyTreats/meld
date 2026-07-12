@@ -4,24 +4,8 @@
 //! Each query first catches the graph projection up to the event ledger, then
 //! delegates to `TraversalQuery`.
 //!
-//! # Example
-//!
-//! ```rust,no_run
-//! use std::sync::Arc;
-//! use meld_world_model::world_state::graph::runtime::GraphRuntime;
-//! use meld_world_model::WorldModelQueries;
-//!
-//! let temp = tempfile::tempdir().unwrap();
-//! let runtime = Arc::new(GraphRuntime::new(sled::open(temp.path()).unwrap()).unwrap());
-//! let queries = WorldModelQueries::new(runtime);
-//! let object = meld_world_model::events::DomainObjectRef::new(
-//!     "workspace_fs",
-//!     "node",
-//!     "node-a",
-//! )
-//! .unwrap();
-//! assert!(queries.current_anchors_for_subject(&object).unwrap().is_empty());
-//! ```
+//! Product composition supplies a shared, port-constructed graph runtime to
+//! [`WorldModelQueries::new`].
 
 use std::sync::Arc;
 

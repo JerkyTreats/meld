@@ -2,9 +2,11 @@
 //! object references, relation endpoints, and identity-bearing source-record
 //! provenance, through the public authority observability capability.
 
+#![cfg(feature = "test-support")]
+
 use std::sync::Arc;
 
-use meld_events::events::store::EventStore;
+use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
 use meld_events::{
     AppendMode, CoverageTruncation, DomainObjectRef, EventAppendCapability, EventAuthority,
     EventAuthorityOpenOptions, EventEnvelope, EventObservabilityCapability, EventRecordRef,

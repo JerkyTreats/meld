@@ -28,6 +28,9 @@ pub enum StorageError {
     #[error("Durability indeterminate: {0}")]
     DurabilityIndeterminate(String),
 
+    #[error("Event migration conflict: {0}")]
+    MigrationConflict(String),
+
     #[error("Ledger identity mismatch: expected {expected}, got {actual}")]
     LedgerIdentityMismatch { expected: String, actual: String },
 
@@ -56,6 +59,9 @@ impl Clone for StorageError {
             }
             StorageError::DurabilityIndeterminate(message) => {
                 StorageError::DurabilityIndeterminate(message.clone())
+            }
+            StorageError::MigrationConflict(message) => {
+                StorageError::MigrationConflict(message.clone())
             }
             StorageError::LedgerIdentityMismatch { expected, actual } => {
                 StorageError::LedgerIdentityMismatch {
@@ -192,6 +198,14 @@ pub enum ApiError {
     #[error("Configuration error: {0}")]
     ConfigError(String),
 
+    #[error(
+        "Product runtime storage cannot use the target workspace: old path {old_path}; resolved or replacement path {new_path}"
+    )]
+    ProductRootInsideWorkspace {
+        old_path: std::path::PathBuf,
+        new_path: std::path::PathBuf,
+    },
+
     #[error("Generation failed: {0}")]
     GenerationFailed(String),
 
@@ -309,6 +323,12 @@ impl Clone for ApiError {
             }
             ApiError::StorageError(err) => ApiError::StorageError(err.clone()),
             ApiError::ConfigError(message) => ApiError::ConfigError(message.clone()),
+            ApiError::ProductRootInsideWorkspace { old_path, new_path } => {
+                ApiError::ProductRootInsideWorkspace {
+                    old_path: old_path.clone(),
+                    new_path: new_path.clone(),
+                }
+            }
             ApiError::GenerationFailed(message) => ApiError::GenerationFailed(message.clone()),
             ApiError::PathNotInTree(path) => ApiError::PathNotInTree(path.clone()),
         }
@@ -333,6 +353,9 @@ impl From<meld_events::error::StorageError> for StorageError {
             }
             meld_events::error::StorageError::DurabilityIndeterminate(message) => {
                 StorageError::DurabilityIndeterminate(message)
+            }
+            meld_events::error::StorageError::MigrationConflict(message) => {
+                StorageError::MigrationConflict(message)
             }
             meld_events::error::StorageError::IdentityMismatch { expected, actual } => {
                 StorageError::LedgerIdentityMismatch {

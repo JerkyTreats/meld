@@ -475,6 +475,74 @@ fn test_scan_then_status_shows_scanned() {
 }
 
 #[test]
+fn custom_legacy_paths_drive_status_and_workspace_validation() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_data_home(&temp_dir, || {
+        let workspace_root = temp_dir.path().join("workspace");
+        fs::create_dir_all(workspace_root.join("config")).unwrap();
+        fs::write(workspace_root.join("a.txt"), "a").unwrap();
+        let custom_store = temp_dir.path().join("custom-store");
+        let custom_frames = temp_dir.path().join("custom-frames");
+        let custom_artifacts = temp_dir.path().join("custom-artifacts");
+        fs::write(
+            workspace_root.join("config/config.toml"),
+            format!(
+                r#"
+[system.storage]
+store_path = "{}"
+frames_path = "{}"
+artifacts_path = "{}"
+"#,
+                custom_store.display(),
+                custom_frames.display(),
+                custom_artifacts.display()
+            ),
+        )
+        .unwrap();
+
+        let ctx = RunContext::new(workspace_root.clone(), None).unwrap();
+        ctx.execute(&Commands::Scan { force: true }).unwrap();
+        fs::write(custom_frames.join("route-proof.frame"), b"fixture").unwrap();
+        let status = ctx
+            .execute(&Commands::Status {
+                format: "text".to_string(),
+                workspace_only: true,
+                agents_only: false,
+                providers_only: false,
+                breakdown: false,
+                test_connectivity: false,
+            })
+            .unwrap();
+        assert!(
+            status.contains("Scanned: yes"),
+            "unexpected status: {status}"
+        );
+        assert!(
+            status.contains(&format!("Store path: {}", custom_store.display())),
+            "status did not render the configured store: {status}"
+        );
+
+        let validation = ctx
+            .execute(&Commands::Workspace {
+                command: WorkspaceCommands::Validate {
+                    format: "text".to_string(),
+                },
+            })
+            .unwrap();
+        assert!(
+            validation.contains("Validation passed"),
+            "unexpected validation: {validation}"
+        );
+        assert!(
+            validation.contains("Frames: 1"),
+            "validation did not inspect the configured frames: {validation}"
+        );
+        assert!(custom_store.exists());
+        assert!(custom_frames.exists());
+    });
+}
+
+#[test]
 fn test_status_reports_stale_when_root_record_is_missing() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_data_home(&temp_dir, || {

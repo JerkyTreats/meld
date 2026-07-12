@@ -4,23 +4,10 @@
 //! anchor intents, and updates current-anchor indexes. It emits traversal events
 //! only when source events imply anchor changes.
 //!
-//! # Example
-//!
-//! ```rust,no_run
-//! use meld_world_model::events::store::EventStore;
-//! use meld_world_model::graph::reducer::TraversalReducer;
-//! use meld_world_model::world_state::graph::store::TraversalStore;
-//!
-//! let temp = tempfile::tempdir().unwrap();
-//! let db = sled::open(temp.path()).unwrap();
-//! let ledger = EventStore::new(db.clone()).unwrap();
-//! let traversal = TraversalStore::new(db).unwrap();
-//! let reducer = TraversalReducer::replay_from_ledger(&ledger, &traversal, 0).unwrap();
-//! assert_eq!(reducer.applied_events, 0);
-//! ```
+//! Runtime replay is driven by the identity-bearing graph replay port. Frozen
+//! raw-ledger characterization lives under `graph::test_support`.
 
 use crate::error::StorageError;
-use crate::events::store::EventStore;
 use crate::events::{EventEnvelope, EventRecord, EventRecordRef, LedgerIdentity};
 use crate::world_state::graph::contracts::{
     AnchorEndInput, AnchorSelectionInput, AnchorSelectionRecord, TraversalFactRecord,
@@ -48,22 +35,8 @@ pub struct TraversalReducer {
 }
 
 impl TraversalReducer {
-    /// Replay source events after a cursor into traversal storage.
-    pub fn replay_from_ledger(
-        ledger: &EventStore,
-        store: &TraversalStore,
-        after_seq: u64,
-    ) -> Result<Self, StorageError> {
-        // TODO compat-shim: E4 removes raw-ledger replay after graph ports
-        // supply the identity with each replay page. The reducer provenance
-        // and graph runtime parity tests cover the replacement.
-        let ledger_id = ledger.compatibility_ledger_identity()?;
-        let events = ledger.read_all_events_after(after_seq)?;
-        Self::replay_events(store, ledger_id, after_seq, events)
-    }
-
     /// Replay a caller-selected bounded event set into traversal storage.
-    pub fn replay_events(
+    pub fn replay_records(
         store: &TraversalStore,
         ledger_id: LedgerIdentity,
         after_seq: u64,

@@ -601,9 +601,11 @@ impl InMemoryTaskNetworkStore {
                             PublicationState::Pending
                                 | PublicationState::Failed { .. }
                                 | PublicationState::Published {
-                                    // TODO compat-shim(E5): remove this arm
-                                    // after persisted_legacy_receipt_reopens_and_upgrades
-                                    // proves old receipt-less rows are rewritten.
+                                    // TODO compat-shim: remove after the minimum supported
+                                    // persisted task-network schema guarantees identity-bearing
+                                    // receipts. Until then,
+                                    // persisted_legacy_receipt_reopens_and_upgrades proves the
+                                    // receipt-less row is retried and durably upgraded.
                                     receipt: None,
                                     ..
                                 }

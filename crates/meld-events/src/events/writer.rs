@@ -64,7 +64,7 @@ impl CommitWatermark {
         *guard
     }
 
-    fn advance(&self, seq: u64) {
+    pub(crate) fn advance(&self, seq: u64) {
         let mut guard = self.committed.lock().expect("watermark lock poisoned");
         if seq > *guard {
             *guard = seq;
@@ -96,9 +96,8 @@ pub struct EventWriter {
 
 impl EventWriter {
     /// Spawns the writer thread over a shared store.
-    pub fn spawn(store: Arc<EventStore>) -> Self {
-        // TODO compat-shim: E5 removes direct writer spawning after authority
-        // append parity, recovery, and route-level one-sequence tests pass.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn spawn(store: Arc<EventStore>) -> Self {
         Self::spawn_with_watermark(store, 0)
     }
 
@@ -130,6 +129,7 @@ impl EventWriter {
     /// distinguish lost from delayed persistence. Retrying with a
     /// `record_id` through the idempotent path is safe; retrying a plain
     /// append may duplicate the event.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn append_durable(
         &self,
         envelope: EventEnvelope,
@@ -158,6 +158,7 @@ impl EventWriter {
 
     /// Appends a batch, enqueueing everything before waiting so the whole
     /// batch shares the writer's group commits, and returns all sequences.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn append_durable_batch(
         &self,
         envelopes: Vec<EventEnvelope>,
@@ -192,6 +193,7 @@ impl EventWriter {
     }
 
     /// Enqueues without waiting; a full queue drops the event and counts it.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn append_best_effort(
         &self,
         envelope: EventEnvelope,
@@ -244,21 +246,18 @@ impl EventWriter {
     }
 
     /// Returns the shared committed-sequence watermark.
-    pub fn watermark(&self) -> Arc<CommitWatermark> {
-        // TODO compat-shim: E5 removes this raw handle after all production
-        // callers use EventWatermarkCapability and recovery parity is green.
+    pub(crate) fn watermark(&self) -> Arc<CommitWatermark> {
         Arc::clone(&self.watermark)
     }
 
     /// Returns how many best-effort events have been dropped by backpressure.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn dropped_events(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
     }
 
     /// Returns the shared drop counter for observability backings.
-    pub fn dropped_handle(&self) -> Arc<AtomicU64> {
-        // TODO compat-shim: E5 removes this raw handle after authority-backed
-        // observability reports drops with report/CLI parity tests.
+    pub(crate) fn dropped_handle(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.dropped)
     }
 }

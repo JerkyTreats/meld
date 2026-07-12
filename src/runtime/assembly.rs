@@ -4,6 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use meld_events::EventAuthority;
+#[cfg(test)]
+use meld_events::EventAuthorityOpenOptions;
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
 
 use crate::config::MerkleConfig;
@@ -22,6 +25,8 @@ pub struct ProductRuntimeAssembly {
     product_root: ProductStorageRoot,
     layout: ProductStorageLayout,
     stores: Arc<OpenProductStores>,
+    event_authority: Arc<EventAuthority>,
+    graph_runtime: Arc<GraphRuntime>,
     supervisor_store: SupervisorStore,
     ports: ProductRuntimePorts,
     registry: RuntimeFactoryRegistry,
@@ -385,28 +390,53 @@ impl ProductRuntimeAssembly {
         })
     }
 
-    /// Build assembly from a workspace and repository configuration.
-    pub fn load_for_workspace(
+    /// Build assembly from a workspace and an already-resolved event authority.
+    pub fn load_for_workspace_with_authority(
         workspace_root: &Path,
         config: &MerkleConfig,
+        event_authority: Arc<EventAuthority>,
     ) -> Result<Self, RuntimeAssemblyError> {
         let product_root = config
             .system
             .storage
             .resolve_product_root(workspace_root)
             .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
-        Self::load(ProductRuntimeConfig::for_product_root(product_root))
+        Self::load_with_authority(
+            ProductRuntimeConfig::for_product_root(product_root),
+            event_authority,
+        )
     }
 
-    /// Build assembly from an explicit product root.
-    pub fn load_for_product_root(
+    #[cfg(test)]
+    pub(crate) fn load_for_product_root(
         product_root: impl Into<PathBuf>,
     ) -> Result<Self, RuntimeAssemblyError> {
         Self::load(ProductRuntimeConfig::for_product_root(product_root))
     }
 
-    /// Open stores, build ports, and prepare inert runtime factory metadata.
-    pub fn load(config: ProductRuntimeConfig) -> Result<Self, RuntimeAssemblyError> {
+    #[cfg(test)]
+    pub(crate) fn load(config: ProductRuntimeConfig) -> Result<Self, RuntimeAssemblyError> {
+        if config.product_root.as_os_str().is_empty() {
+            return Err(RuntimeAssemblyError::Config(
+                "product root must not be empty".to_string(),
+            ));
+        }
+        let layout = ProductStorageLayout::from_root(config.product_root.clone());
+        layout.create_dirs()?;
+        let db = sled::open(&layout.ledger_db)
+            .map_err(|error| RuntimeAssemblyError::PortConstruction(error.to_string()))?;
+        let authority = Arc::new(
+            EventAuthority::open(db, EventAuthorityOpenOptions::default())
+                .map_err(|error| RuntimeAssemblyError::PortConstruction(error.to_string()))?,
+        );
+        Self::load_with_authority(config, authority)
+    }
+
+    /// Open non-event product stores and compose runtime around one supplied authority.
+    pub fn load_with_authority(
+        config: ProductRuntimeConfig,
+        event_authority: Arc<EventAuthority>,
+    ) -> Result<Self, RuntimeAssemblyError> {
         if config.product_root.as_os_str().is_empty() {
             return Err(RuntimeAssemblyError::Config(
                 "product root must not be empty".to_string(),
@@ -430,14 +460,29 @@ impl ProductRuntimeAssembly {
         let mut provider = config.provider;
         provider.provider_required = provider_required(&registry, &desired_runtime_state);
         let supervisor_store = SupervisorStore::open(supervisor_store_path)?;
-        let ports = ProductRuntimePorts::from_stores(stores.as_ref(), provider)?;
+        let ports = ProductRuntimePorts::from_authority(
+            stores.as_ref(),
+            event_authority.as_ref(),
+            provider,
+        )?;
+        let graph_runtime = Arc::new(
+            GraphRuntime::from_ports(
+                Arc::new(ports.event_replay().clone()),
+                Arc::new(ports.event_append().clone()),
+                Arc::new(ports.graph_cursor().clone()),
+                Arc::clone(&stores.traversal_store),
+            )
+            .map_err(|error| RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string()))?,
+        );
         let handle_factories =
-            RuntimeHandleFactoryRegistry::from_registry(&registry, stores.as_ref(), &ports)?;
+            RuntimeHandleFactoryRegistry::from_registry(&registry, &ports, &graph_runtime)?;
 
         Ok(Self {
             product_root,
             layout,
             stores,
+            event_authority,
+            graph_runtime,
             supervisor_store,
             ports,
             registry,
@@ -463,6 +508,16 @@ impl ProductRuntimeAssembly {
     /// Return opened product stores.
     pub fn stores(&self) -> &OpenProductStores {
         self.stores.as_ref()
+    }
+
+    /// Return the single event authority supplied by product binding resolution.
+    pub fn event_authority(&self) -> Arc<EventAuthority> {
+        Arc::clone(&self.event_authority)
+    }
+
+    /// Return the graph runtime shared by direct catch-up and supervisor handles.
+    pub fn graph_runtime(&self) -> Arc<GraphRuntime> {
+        Arc::clone(&self.graph_runtime)
     }
 
     /// Return supervisor lifecycle storage.
@@ -650,8 +705,8 @@ impl RuntimeHandleFactoryRegistry {
     /// Build inert handle factories from the runtime factory registry.
     pub fn from_registry(
         registry: &RuntimeFactoryRegistry,
-        stores: &OpenProductStores,
         ports: &ProductRuntimePorts,
+        graph_runtime: &Arc<GraphRuntime>,
     ) -> Result<Self, RuntimeAssemblyError> {
         let factories = registry
             .descriptors()
@@ -661,7 +716,9 @@ impl RuntimeHandleFactoryRegistry {
                     RuntimeHandleFactory {
                         descriptor: descriptor.clone(),
                         semantic: RuntimeSemanticHandleFactory::for_descriptor(
-                            descriptor, stores, ports,
+                            descriptor,
+                            ports,
+                            graph_runtime,
                         )?,
                     },
                 ))
@@ -789,22 +846,12 @@ impl InertRuntimeHandle {
 impl RuntimeSemanticHandleFactory {
     fn for_descriptor(
         descriptor: &RuntimeFactoryDescriptor,
-        stores: &OpenProductStores,
         ports: &ProductRuntimePorts,
+        graph_runtime: &Arc<GraphRuntime>,
     ) -> Result<Self, RuntimeAssemblyError> {
         match descriptor.runtime_id.as_str() {
             "world_model.graph_replay" => Ok(Self::GraphReplay {
-                graph_runtime: Arc::new(
-                    GraphRuntime::from_ports(
-                        Arc::new(ports.event_replay().clone()),
-                        Arc::new(ports.event_append().clone()),
-                        Arc::new(ports.graph_cursor().clone()),
-                        Arc::clone(&stores.traversal_store),
-                    )
-                    .map_err(|error| {
-                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
-                    })?,
-                ),
+                graph_runtime: Arc::clone(graph_runtime),
             }),
             "event.append" => Ok(Self::EventAppend {
                 port: ports.event_append().clone(),
@@ -1068,10 +1115,13 @@ mod tests {
         let description =
             ProductRuntimeAssembly::describe_for_workspace(&workspace, &config).unwrap();
 
-        assert_eq!(description.product_root, workspace.join(".meld-runtime"));
+        let expected_root = crate::config::xdg::workspace_data_dir(&workspace)
+            .unwrap()
+            .join(".meld-runtime");
+        assert_eq!(description.product_root, expected_root);
         assert_eq!(
             description.supervisor_store_path,
-            workspace.join(".meld-runtime").join("supervisor.sled")
+            expected_root.join("supervisor.sled")
         );
         assert_eq!(description.desired_runtime_state.len(), 12);
         assert!(!description.product_root.exists());
@@ -1259,6 +1309,40 @@ mod tests {
             Err(RuntimePortError::InvalidRequest(message))
                 if message == format!("event replay limit must be in 1..=1024, got {}", usize::MAX)
         ));
+    }
+
+    #[test]
+    fn supplied_authority_and_graph_runtime_are_shared_across_assembly() {
+        let temp = tempfile::tempdir().unwrap();
+        let authority_db = sled::open(temp.path().join("bound-ledger.sled")).unwrap();
+        let authority = Arc::new(
+            EventAuthority::open(authority_db, EventAuthorityOpenOptions::default()).unwrap(),
+        );
+        let expected_identity = authority.ledger_identity();
+
+        let assembly = ProductRuntimeAssembly::load_with_authority(
+            ProductRuntimeConfig::for_product_root(temp.path().join("product")),
+            Arc::clone(&authority),
+        )
+        .unwrap();
+
+        let assembled_authority = assembly.event_authority();
+        assert!(Arc::ptr_eq(&authority, &assembled_authority));
+        assert_eq!(
+            assembly.ports().event_replay().ledger_identity(),
+            expected_identity
+        );
+        let shared_graph = assembly.graph_runtime();
+        let factory = assembly
+            .handle_factories()
+            .get("world_model.graph_replay")
+            .unwrap();
+        match &factory.semantic {
+            RuntimeSemanticHandleFactory::GraphReplay { graph_runtime } => {
+                assert!(Arc::ptr_eq(&shared_graph, graph_runtime));
+            }
+            _ => panic!("graph replay factory must retain the shared graph runtime"),
+        }
     }
 
     #[test]
@@ -1502,9 +1586,9 @@ mod tests {
         let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
 
         assert!(assembly
-            .stores()
-            .event_store
-            .read_all_events_after(0)
+            .ports()
+            .event_replay()
+            .read_after_limit(0, 1)
             .unwrap()
             .is_empty());
         assert!(assembly.stores().goal_store.active_goals().is_err());

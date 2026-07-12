@@ -23,7 +23,7 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
-use meld_events::events::store::EventStore;
+use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
 use meld_events::{DomainObjectRef, EventEnvelope, EventRecord, EventRelation};
 use serde_json::json;
 use tempfile::TempDir;

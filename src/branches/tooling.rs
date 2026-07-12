@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::branches::format::{
     format_branch_graph_status_text, format_branches_status_text, format_federated_neighbors_text,
@@ -9,6 +10,7 @@ use crate::branches::{BranchQueryRuntime, BranchRuntime};
 use crate::cli::BranchesCommands;
 use crate::error::{ApiError, StorageError};
 use crate::events::DomainObjectRef;
+use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::{GraphWalkSpec, TraversalDirection};
 
 pub fn handle_cli_command(command: &BranchesCommands) -> Result<String, ApiError> {
@@ -19,6 +21,17 @@ pub fn handle_cli_command_with_workspace(
     command: &BranchesCommands,
     workspace_root: Option<&Path>,
 ) -> Result<String, ApiError> {
+    handle_cli_command_with_active_store(command, workspace_root, None)
+}
+
+pub fn handle_cli_command_with_active_store(
+    command: &BranchesCommands,
+    workspace_root: Option<&Path>,
+    active_store: Option<(&str, Arc<TraversalStore>)>,
+) -> Result<String, ApiError> {
+    let query_runtime = active_store
+        .map(|(branch_id, store)| BranchQueryRuntime::with_active_store(branch_id, store))
+        .unwrap_or_default();
     match command {
         BranchesCommands::Status { format } => {
             let output = BranchRuntime::new().status()?;
@@ -41,8 +54,8 @@ pub fn handle_cli_command_with_workspace(
             branch_ids,
             format,
         } => {
-            let output = BranchQueryRuntime::new()
-                .graph_status(parse_scope(scope, branch_ids)?, workspace_root)?;
+            let output =
+                query_runtime.graph_status(parse_scope(scope, branch_ids)?, workspace_root)?;
             render_output(format, &output, format_branch_graph_status_text)
         }
         BranchesCommands::GraphNeighbors {
@@ -59,7 +72,7 @@ pub fn handle_cli_command_with_workspace(
             let object = object_ref(domain, object_kind, object_id)?;
             let direction = parse_direction(direction)?;
             let relation_types = relation_types_filter(relation_types);
-            let output = BranchQueryRuntime::new().neighbors(
+            let output = query_runtime.neighbors(
                 parse_scope(scope, branch_ids)?,
                 workspace_root,
                 &object,
@@ -91,7 +104,7 @@ pub fn handle_cli_command_with_workspace(
                 current_only: *current_only,
                 include_facts: *include_facts,
             };
-            let output = BranchQueryRuntime::new().walk(
+            let output = query_runtime.walk(
                 parse_scope(scope, branch_ids)?,
                 workspace_root,
                 &object,

@@ -48,20 +48,27 @@ pub mod compat;
 pub mod contracts;
 /// Durable ledger identity contract.
 pub mod identity;
+/// Recoverable migration from frozen legacy ledgers into one authority.
+pub mod migration;
 /// Observability port, report contracts, and in-process backing.
 pub mod observability;
 /// Named consumer cursor registry for lag observability.
-pub mod registry;
+pub(crate) mod registry;
 /// Transport-neutral authority requests, responses, and client contract.
 pub mod remote;
-/// Event emission facade with durable and best-effort classes.
-pub mod runtime;
+/// Legacy event emission facade retained for internal compatibility tests.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) mod runtime;
 /// Append-only sled-backed event store.
-pub mod store;
+pub(crate) mod store;
 /// Consumer subscription surface and durable cursor helper.
-pub mod subscription;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) mod subscription;
+/// Explicit raw-ledger fixtures for low-level tests, benches, and fuzzing.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 /// Single-writer ingress engine with group commit and watermark.
-pub mod writer;
+pub(crate) mod writer;
 
 pub use authority::{
     AppendDisposition, AppendMode, AppendReceipt, BestEffortAppendReceipt, ConsumerCursorPosition,
@@ -73,22 +80,24 @@ pub use authority::{
 };
 pub use contracts::{DomainObjectRef, EventRelation};
 pub use identity::LedgerIdentity;
+pub use migration::{
+    LegacyEventCutoverMarker, LegacyEventMigrationMapping, LegacyEventMigrationOptions,
+    LegacyEventMigrationReport, LegacyEventMigrationSource,
+};
 pub use observability::{
     ConsumerLagReport, CoverageTruncation, DomainAppendRate, DomainFlow, EventFlowReport,
-    EventHealthReport, EventObservabilityPort, EventPageRequest, EventReadCoverage,
-    EventTraceReport, FlowWindow, LedgerObservability, LegacyEventPage, SessionStep,
+    EventHealthReport, EventReadCoverage, EventTraceReport, FlowWindow, SessionStep,
     SessionTimelineReport, SilentDomain, TraceHop, TraceLink, TraceSubject, TypeFlow,
     MAX_EVENT_PAGE_LIMIT, MAX_EVENT_PAGE_TIMEOUT_MS, MAX_FLOW_WINDOW_EVENTS,
     MAX_SESSION_SCAN_EVENTS, MAX_TRACE_SCAN_EVENTS,
 };
-pub use registry::{ConsumerCursor, EventCursorRegistry};
+#[cfg(any(test, feature = "test-support"))]
+pub use observability::{EventObservabilityPort, EventPageRequest, LegacyEventPage};
+pub use registry::ConsumerCursor;
 pub use remote::{
     BestEffortAppendRequest, DurableAppendRequest, EventAuthorityContract, FlowRequest,
     HealthRequest, SessionRequest, TraceRequest, WatermarkRequest,
 };
-pub use runtime::EventRuntime;
-pub use subscription::{EventCursor, EventSubscription};
-pub use writer::{CommitWatermark, EventWriter};
 
 /// Persisted event record in the global event ledger.
 ///

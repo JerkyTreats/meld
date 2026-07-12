@@ -50,6 +50,22 @@ impl RunContext {
             .map_err(ApiError::from)
     }
 
+    /// Bounded replay capability for the product-bound event authority.
+    pub fn event_replay_capability(&self) -> meld_events::EventReplayCapability {
+        self.assembly
+            .product_runtime()
+            .event_authority()
+            .replay_capability()
+    }
+
+    /// Durable watermark capability for the product-bound event authority.
+    pub fn event_watermark_capability(&self) -> meld_events::EventWatermarkCapability {
+        self.assembly
+            .product_runtime()
+            .event_authority()
+            .watermark_capability()
+    }
+
     /// Workflow profile registry.
     pub fn workflow_registry(&self) -> Arc<parking_lot::RwLock<crate::workflow::WorkflowRegistry>> {
         Arc::clone(self.assembly.workflow_registry())
@@ -62,15 +78,23 @@ impl RunContext {
         } else {
             ConfigLoader::load(&workspace_root)?
         };
+        // Reject invalid product storage before branch registration or any
+        // other startup metadata write.
+        config
+            .system
+            .storage
+            .resolve_product_root(&workspace_root)?;
         let branch_runtime = BranchRuntime::new();
         let active_branch = branch_runtime.resolve_active_branch(&workspace_root)?;
         if let Err(err) = branch_runtime.ensure_active_branch_registered(&active_branch) {
             warn!(error = %err, "failed to register active branch during startup");
         }
 
-        let (store_path, frame_storage_path, artifact_storage_path) =
-            config.system.storage.resolve_paths(&workspace_root)?;
-        let assembly = CliRuntimeAssembly::load(&workspace_root, &config)?;
+        let assembly =
+            CliRuntimeAssembly::load(&workspace_root, &config, active_branch.resolved())?;
+        let store_path = assembly.legacy_store_path().to_path_buf();
+        let frame_storage_path = assembly.frame_storage_path().to_path_buf();
+        let artifact_storage_path = assembly.artifact_storage_path().to_path_buf();
 
         match assembly.graph_runtime().catch_up() {
             Ok(applied_events) => {
@@ -83,6 +107,7 @@ impl RunContext {
                 };
                 if let Err(err) = branch_runtime.record_branch_graph_catch_up_success(
                     &active_branch,
+                    &assembly.product_runtime().layout().world_model_db,
                     last_reduced_seq,
                     applied_events,
                 ) {
@@ -91,9 +116,11 @@ impl RunContext {
             }
             Err(err) => {
                 warn!(error = %err, "failed to catch up graph runtime during startup");
-                if let Err(record_err) = branch_runtime
-                    .record_branch_graph_catch_up_failure(&active_branch, &err.to_string())
-                {
+                if let Err(record_err) = branch_runtime.record_branch_graph_catch_up_failure(
+                    &active_branch,
+                    &assembly.product_runtime().layout().world_model_db,
+                    &err.to_string(),
+                ) {
                     warn!(
                         error = %record_err,
                         "failed to record branch graph migration failure during startup"
@@ -123,7 +150,7 @@ impl RunContext {
             .api()
             .set_progress_context(Arc::clone(self.assembly.progress()), session_id.clone());
         let mut live_progress = LiveProgressHandle::start_if_supported(
-            Arc::clone(self.assembly.progress()),
+            self.event_replay_capability(),
             &session_id,
             command,
         );
@@ -146,6 +173,7 @@ impl RunContext {
                 if applied_events > 0 {
                     if let Err(err) = self.branch_runtime.record_branch_graph_catch_up_success(
                         &self.active_branch,
+                        &self.assembly.product_runtime().layout().world_model_db,
                         last_reduced_seq,
                         applied_events,
                     ) {
@@ -159,10 +187,11 @@ impl RunContext {
             }
             Err(err) => {
                 warn!(error = %err, "failed to catch up graph runtime after command execution");
-                if let Err(record_err) = self
-                    .branch_runtime
-                    .record_branch_graph_catch_up_failure(&self.active_branch, &err.to_string())
-                {
+                if let Err(record_err) = self.branch_runtime.record_branch_graph_catch_up_failure(
+                    &self.active_branch,
+                    &self.assembly.product_runtime().layout().world_model_db,
+                    &err.to_string(),
+                ) {
                     warn!(
                         error = %record_err,
                         "failed to record branch graph migration failure after command execution"
@@ -259,14 +288,30 @@ impl RunContext {
                 session_id,
             ),
             Commands::Runtime { command } => crate::runtime::tooling::handle_cli_command(
-                &self.workspace_root,
-                self.config_path.as_deref(),
+                self.assembly.product_runtime().as_ref(),
                 command,
             ),
             Commands::Event { command } => {
-                crate::events::tooling::handle_cli_command(self.assembly.progress(), command)
+                let authority = self.assembly.product_runtime().event_authority();
+                crate::events::tooling::handle_cli_command(
+                    &authority.observability_capability(),
+                    &authority.replay_capability(),
+                    &authority.subscription_capability(),
+                    self.assembly.progress(),
+                    command,
+                )
             }
-            Commands::Branches { command } => crate::branches::tooling::handle_cli_command(command),
+            Commands::Branches { command } => {
+                let graph_runtime = self.assembly.graph_runtime();
+                crate::branches::tooling::handle_cli_command_with_active_store(
+                    command,
+                    Some(&self.workspace_root),
+                    Some((
+                        self.active_branch.branch_id(),
+                        graph_runtime.traversal_store().clone(),
+                    )),
+                )
+            }
             Commands::Danger { .. } => Err(ApiError::ConfigError(
                 "Danger commands must run from the CLI entry point".to_string(),
             )),

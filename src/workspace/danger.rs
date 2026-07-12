@@ -97,6 +97,7 @@ impl WorkspaceDangerService {
 
         let (store_path, frames_path, artifacts_path) =
             config.system.storage.resolve_paths(workspace_root)?;
+        let product_root = config.system.storage.resolve_product_root(workspace_root)?;
 
         let mut targets = Vec::new();
         if let Ok(data_dir) = xdg::workspace_data_dir(workspace_root) {
@@ -121,6 +122,10 @@ impl WorkspaceDangerService {
         targets.push(FlushTarget {
             kind: "artifact_store",
             path: artifacts_path,
+        });
+        targets.push(FlushTarget {
+            kind: "product_runtime_root",
+            path: product_root,
         });
 
         Self::dedupe_and_validate_targets(workspace_root, targets)
@@ -238,5 +243,30 @@ mod tests {
 
         let error = WorkspaceDangerService::flush(&workspace, None, false, false).unwrap_err();
         assert!(error.to_string().contains("--yes"));
+    }
+
+    #[test]
+    fn flush_includes_configured_external_product_root() {
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().join("workspace");
+        let product_root = temp.path().join("external-product");
+        let config_path = temp.path().join("meld.toml");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(&product_root).unwrap();
+        fs::write(
+            &config_path,
+            format!(
+                "[system.storage]\nproduct_root = {:?}\n",
+                product_root.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let output =
+            WorkspaceDangerService::flush(&workspace, Some(&config_path), true, false).unwrap();
+
+        assert!(output.contains("product_runtime_root"));
+        assert!(output.contains(&product_root.to_string_lossy().to_string()));
+        assert!(product_root.exists());
     }
 }

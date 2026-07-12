@@ -1,24 +1,26 @@
 //! Flow subcommand: renders event flow over a trailing window.
 
-use meld_events::events::observability::{EventFlowReport, EventObservabilityPort, FlowWindow};
-use meld_events::LedgerObservability;
+use meld_events::{EventFlowReport, EventObservabilityCapability, FlowWindow};
 
 use crate::error::ApiError;
 use crate::events::tooling::status::coverage_text;
-use crate::events::tooling::{render, surface_error};
+use crate::events::tooling::{render, surface_authority_error};
 
 /// Event types rendered before the text view truncates with a count; the
 /// JSON view always carries the full report.
 const TYPE_LINES: usize = 10;
 
 pub(super) fn run(
-    port: &LedgerObservability,
+    observability: &EventObservabilityCapability,
     format: &str,
     window: usize,
 ) -> Result<String, ApiError> {
-    let report = port
-        .flow(FlowWindow { max_events: window })
-        .map_err(|err| surface_error("flow", err))?;
+    let report = observability
+        .flow(
+            observability.ledger_identity(),
+            FlowWindow { max_events: window },
+        )
+        .map_err(|err| surface_authority_error("flow", err))?;
     render(format, &report, render_text)
 }
 

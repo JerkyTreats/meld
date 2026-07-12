@@ -1,9 +1,11 @@
 use meld::cli::{Commands, RunContext, RuntimeCommands};
 use meld::config::ConfigLoader;
 use meld::error::ApiError;
+use meld::events::binding::resolve_product_event_authority;
 use meld::runtime::assembly::ProductRuntimeAssembly;
+use meld::runtime::storage::ProductStorageLayout;
 use meld::runtime::supervisor::RuntimeId;
-use meld_events::{DomainObjectRef, EventEnvelope};
+use meld_events::{AppendMode, DomainObjectRef, EventEnvelope};
 use serde_json::json;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -57,9 +59,8 @@ fn runtime_run_duration_starts_and_stops_cleanly() {
 
         assert!(started > 0);
         assert_eq!(parsed["stopped_runtime_count"].as_u64().unwrap(), started);
-        let config = ConfigLoader::load(&workspace_root).unwrap();
-        let assembly =
-            ProductRuntimeAssembly::load_for_workspace(&workspace_root, &config).unwrap();
+        drop(run_context);
+        let assembly = open_bound_assembly(&workspace_root);
         let runtime_id = RuntimeId::new("event.append").unwrap();
         assert!(assembly
             .supervisor_store()
@@ -74,14 +75,12 @@ fn runtime_run_ticks_graph_replay_handle() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         let workspace_root = workspace(&temp_dir);
-        let config = ConfigLoader::load(&workspace_root).unwrap();
-        let assembly =
-            ProductRuntimeAssembly::load_for_workspace(&workspace_root, &config).unwrap();
+        let assembly = open_bound_assembly(&workspace_root);
         let subject = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
-        assembly
-            .stores()
-            .event_store
-            .append_envelope(
+        let appended = assembly
+            .event_authority()
+            .append_capability()
+            .append_durable(
                 EventEnvelope::new_domain(
                     "2026-06-22T00:00:00Z".to_string(),
                     "session-a",
@@ -93,6 +92,7 @@ fn runtime_run_ticks_graph_replay_handle() {
                 )
                 .with_graph(vec![subject], Vec::new())
                 .with_record_id("workspace-node-a"),
+                AppendMode::Plain,
             )
             .unwrap();
         drop(assembly);
@@ -106,18 +106,47 @@ fn runtime_run_ticks_graph_replay_handle() {
                 "on-heartbeat-expiry",
             ))
             .unwrap();
+        drop(run_context);
 
-        let assembly =
-            ProductRuntimeAssembly::load_for_workspace(&workspace_root, &config).unwrap();
+        let assembly = open_bound_assembly(&workspace_root);
+        let cursor = assembly
+            .ports()
+            .graph_cursor()
+            .current()
+            .unwrap()
+            .expect("runtime graph replay should report its durable cursor");
         assert_eq!(
-            assembly.ports().graph_cursor().current().unwrap(),
-            Some(meld_events::ConsumerCursorPosition {
-                ledger_id: assembly.ports().event_replay().ledger_identity(),
-                name: "world_state.graph.reducer".to_string(),
-                reported_seq: 1,
-            })
+            cursor.ledger_id,
+            assembly.ports().event_replay().ledger_identity()
+        );
+        assert_eq!(cursor.name, "world_state.graph.reducer");
+        assert!(
+            cursor.reported_seq >= appended.seq,
+            "graph cursor {} did not cover appended event {}",
+            cursor.reported_seq,
+            appended.seq
         );
     });
+}
+
+fn open_bound_assembly(workspace_root: &std::path::Path) -> ProductRuntimeAssembly {
+    let config = ConfigLoader::load(workspace_root).unwrap();
+    let branch = meld::branches::locator::resolve_active_branch(workspace_root).unwrap();
+    let product_root = config
+        .system
+        .storage
+        .resolve_product_root(workspace_root)
+        .unwrap();
+    let layout = ProductStorageLayout::from_root(product_root);
+    let (legacy_store, _, _) = config.system.storage.resolve_paths(workspace_root).unwrap();
+    let resolved =
+        resolve_product_event_authority(&branch, &layout.ledger_db, &legacy_store).unwrap();
+    ProductRuntimeAssembly::load_for_workspace_with_authority(
+        workspace_root,
+        &config,
+        resolved.authority,
+    )
+    .unwrap()
 }
 
 #[test]

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use meld::agent::{AgentIdentity, AgentRegistry, AgentRole};
 use meld::cli::{Commands, RunContext};
-use meld::compat::{ContextApi, GraphRuntime, TraversalStore};
+use meld::compat::{ContextApi, TraversalStore};
 use meld::concurrency::NodeLockManager;
 use meld::context::events::{frame_added_envelope, head_ref, head_selected_envelope};
 use meld::context::frame::{Basis, Frame, FrameStorage};
@@ -12,7 +12,6 @@ use meld::heads::HeadIndex;
 use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::{NodeRecord, NodeType, SledNodeRecordStore};
 use meld::task::{build_execution_task_envelope, TaskEvent};
-use meld::telemetry::events::ProgressEvent;
 use meld::telemetry::{DomainObjectRef, ProgressRuntime};
 use meld::types::{FrameID, NodeID};
 use meld::workflow::events::{workflow_turn_completed_envelope, ExecutionWorkflowTurnEventData};
@@ -24,25 +23,35 @@ use meld::world_state::graph::query::TraversalQuery;
 use meld::world_state::graph::reducer::TraversalReducer;
 use meld::world_state::graph::runtime::GraphCatchUpBudget;
 use meld::world_state::{GraphWalkSpec, TraversalDirection, WorldModelQueries};
+use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
 
+use crate::integration::test_utils::open_authority_progress;
 use crate::integration::with_xdg_env;
 
-fn create_runtime_and_traversal() -> (Arc<ProgressRuntime>, TraversalStore, tempfile::TempDir) {
+fn create_runtime_and_traversal() -> (
+    Arc<ProgressRuntime>,
+    Arc<EventStore>,
+    TraversalStore,
+    tempfile::TempDir,
+) {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let ledger_db = sled::open(temp_dir.path().join("ledger")).unwrap();
     let traversal_db = sled::open(temp_dir.path().join("traversal")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(ledger_db).unwrap());
+    let fixture = open_authority_progress(ledger_db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let traversal = TraversalStore::new(traversal_db).unwrap();
-    (progress, traversal, temp_dir)
+    (progress, event_store, traversal, temp_dir)
 }
 
 fn create_context_api(
     workspace_root: &Path,
     progress: Arc<ProgressRuntime>,
+    event_store: &EventStore,
     session_id: &str,
     temp_dir: &tempfile::TempDir,
 ) -> ContextApi {
-    let db = progress.store().db().clone();
+    let db = event_store.db().clone();
     let node_store = Arc::new(SledNodeRecordStore::from_db(db));
     let frame_storage = Arc::new(FrameStorage::new(temp_dir.path().join("frames")).unwrap());
     let prompt_context_storage =
@@ -108,16 +117,19 @@ fn put_test_node(api: &ContextApi, workspace_root: &Path, node_id: NodeID) {
 fn append(
     runtime: &ProgressRuntime,
     envelope: meld::telemetry::events::ProgressEnvelope,
-    seq: u64,
+    _seq: u64,
 ) {
-    runtime
-        .store()
-        .append_event(&ProgressEvent::from_envelope(envelope, seq))
-        .unwrap();
+    runtime.emit_envelope(envelope).unwrap();
 }
 
-fn replay(runtime: &ProgressRuntime, traversal: &TraversalStore) -> TraversalReducer {
-    TraversalReducer::replay_from_ledger(runtime.store(), traversal, 0).unwrap()
+fn replay(event_store: &EventStore, traversal: &TraversalStore) -> TraversalReducer {
+    TraversalReducer::replay_records(
+        traversal,
+        event_store.compatibility_ledger_identity().unwrap(),
+        0,
+        event_store.read_all_events_after(0).unwrap(),
+    )
+    .unwrap()
 }
 
 fn node_ref(node_id: NodeID) -> DomainObjectRef {
@@ -196,7 +208,7 @@ fn load_cross_domain_graph(runtime: &ProgressRuntime, node_id: NodeID, frame_id:
 
 #[test]
 fn facts_for_object_are_seq_ordered() {
-    let (progress, traversal, _temp_dir) = create_runtime_and_traversal();
+    let (progress, event_store, traversal, _temp_dir) = create_runtime_and_traversal();
     let node_id = [7u8; 32];
     let frame_a = [8u8; 32];
     let frame_b = [9u8; 32];
@@ -219,7 +231,7 @@ fn facts_for_object_are_seq_ordered() {
         2,
     );
 
-    replay(&progress, &traversal);
+    replay(&event_store, &traversal);
     let facts = TraversalQuery::new(&traversal)
         .facts_for_object(&node_ref(node_id), 0)
         .unwrap();
@@ -232,7 +244,7 @@ fn facts_for_object_are_seq_ordered() {
 
 #[test]
 fn current_anchor_lookup_is_index_backed() {
-    let (progress, traversal, _temp_dir) = create_runtime_and_traversal();
+    let (progress, event_store, traversal, _temp_dir) = create_runtime_and_traversal();
     let node_id = [10u8; 32];
     let frame_id = [11u8; 32];
 
@@ -242,7 +254,7 @@ fn current_anchor_lookup_is_index_backed() {
         1,
     );
 
-    replay(&progress, &traversal);
+    replay(&event_store, &traversal);
     let query = TraversalQuery::new(&traversal);
     let head_anchor_ref = head_ref(node_id, "analysis");
     let current = query.current_anchor(&head_anchor_ref).unwrap().unwrap();
@@ -253,12 +265,12 @@ fn current_anchor_lookup_is_index_backed() {
 
 #[test]
 fn neighbors_are_index_backed() {
-    let (progress, traversal, _temp_dir) = create_runtime_and_traversal();
+    let (progress, event_store, traversal, _temp_dir) = create_runtime_and_traversal();
     let node_id = [12u8; 32];
     let frame_id = [13u8; 32];
 
     load_cross_domain_graph(&progress, node_id, frame_id);
-    replay(&progress, &traversal);
+    replay(&event_store, &traversal);
 
     let neighbors = TraversalQuery::new(&traversal)
         .neighbors(&node_ref(node_id), TraversalDirection::Both, None, true)
@@ -277,12 +289,12 @@ fn neighbors_are_index_backed() {
 
 #[test]
 fn walk_returns_bounded_subgraph() {
-    let (progress, traversal, _temp_dir) = create_runtime_and_traversal();
+    let (progress, event_store, traversal, _temp_dir) = create_runtime_and_traversal();
     let node_id = [14u8; 32];
     let frame_id = [15u8; 32];
 
     load_cross_domain_graph(&progress, node_id, frame_id);
-    replay(&progress, &traversal);
+    replay(&event_store, &traversal);
     let query = TraversalQuery::new(&traversal);
 
     let shallow = query
@@ -327,13 +339,16 @@ fn replay_rebuilds_same_context_heads() {
     std::fs::create_dir_all(&workspace_root).unwrap();
 
     let ledger_db = sled::open(temp_dir.path().join("ledger")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(ledger_db).unwrap());
+    let fixture = open_authority_progress(ledger_db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let session_id = progress
         .start_command_session("traversal.context".to_string())
         .unwrap();
     let api = create_context_api(
         &workspace_root,
         Arc::clone(&progress),
+        &event_store,
         &session_id,
         &temp_dir,
     );
@@ -367,7 +382,7 @@ fn replay_rebuilds_same_context_heads() {
 
     let traversal_a =
         TraversalStore::new(sled::open(temp_dir.path().join("traversal_a")).unwrap()).unwrap();
-    replay(&progress, &traversal_a);
+    replay(&event_store, &traversal_a);
     let current_a = TraversalQuery::new(&traversal_a)
         .current_frame_head(&node_ref(node_id), "analysis")
         .unwrap()
@@ -375,7 +390,7 @@ fn replay_rebuilds_same_context_heads() {
 
     let traversal_b =
         TraversalStore::new(sled::open(temp_dir.path().join("traversal_b")).unwrap()).unwrap();
-    replay(&progress, &traversal_b);
+    replay(&event_store, &traversal_b);
     let current_b = TraversalQuery::new(&traversal_b)
         .current_frame_head(&node_ref(node_id), "analysis")
         .unwrap()
@@ -392,13 +407,16 @@ fn current_frame_head_matches_legacy_head_index() {
     std::fs::create_dir_all(&workspace_root).unwrap();
 
     let ledger_db = sled::open(temp_dir.path().join("ledger")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(ledger_db).unwrap());
+    let fixture = open_authority_progress(ledger_db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let session_id = progress
         .start_command_session("traversal.context".to_string())
         .unwrap();
     let api = create_context_api(
         &workspace_root,
         Arc::clone(&progress),
+        &event_store,
         &session_id,
         &temp_dir,
     );
@@ -419,7 +437,7 @@ fn current_frame_head_matches_legacy_head_index() {
 
     let traversal =
         TraversalStore::new(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
-    replay(&progress, &traversal);
+    replay(&event_store, &traversal);
     let current = TraversalQuery::new(&traversal)
         .current_frame_head(&node_ref(node_id), "analysis")
         .unwrap()
@@ -439,14 +457,17 @@ fn api_get_head_uses_graph_when_runtime_is_configured() {
     std::fs::create_dir_all(&workspace_root).unwrap();
 
     let ledger_db = sled::open(temp_dir.path().join("ledger")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(ledger_db.clone()).unwrap());
-    let graph_runtime = Arc::new(GraphRuntime::new(ledger_db).unwrap());
+    let fixture = open_authority_progress(ledger_db.clone());
+    let graph_runtime = fixture.graph_runtime(ledger_db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let session_id = progress
         .start_command_session("traversal.context".to_string())
         .unwrap();
     let api = create_context_api(
         &workspace_root,
         Arc::clone(&progress),
+        &event_store,
         &session_id,
         &temp_dir,
     );
@@ -475,8 +496,10 @@ fn api_get_head_uses_graph_when_runtime_is_configured() {
 fn legacy_head_backfill_populates_graph_anchor_idempotently() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(temp_dir.path().join("ledger")).unwrap();
-    let progress = ProgressRuntime::new(db.clone()).unwrap();
-    let graph_runtime = GraphRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db.clone());
+    let graph_runtime = fixture.graph_runtime(db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = fixture.progress;
     let frame_storage = FrameStorage::new(temp_dir.path().join("frames")).unwrap();
     let mut head_index = HeadIndex::new();
     let node_id = [19u8; 32];
@@ -496,8 +519,7 @@ fn legacy_head_backfill_populates_graph_anchor_idempotently() {
 
     backfill_legacy_heads_into_ledger(&progress, &head_index, &frame_storage, "backfill").unwrap();
     backfill_legacy_heads_into_ledger(&progress, &head_index, &frame_storage, "backfill").unwrap();
-    let head_selected_count = progress
-        .store()
+    let head_selected_count = event_store
         .read_all_events_after(0)
         .unwrap()
         .into_iter()
@@ -522,13 +544,16 @@ fn current_snapshot_matches_workspace_root_hash() {
     std::fs::write(workspace_root.join("doc.txt"), "hello").unwrap();
 
     let ledger_db = sled::open(temp_dir.path().join("ledger")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(ledger_db.clone()).unwrap());
+    let fixture = open_authority_progress(ledger_db.clone());
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let session_id = progress
         .start_command_session("traversal.scan".to_string())
         .unwrap();
     let api = create_context_api(
         &workspace_root,
         Arc::clone(&progress),
+        &event_store,
         &session_id,
         &temp_dir,
     );
@@ -545,7 +570,7 @@ fn current_snapshot_matches_workspace_root_hash() {
     let scan_state = read_workspace_scan_state(&api, &workspace_root).unwrap();
     let traversal =
         TraversalStore::new(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
-    replay(&progress, &traversal);
+    replay(&event_store, &traversal);
     let query = TraversalQuery::new(&traversal);
     let source = source_ref(&workspace_root).unwrap();
     let current = query.current_snapshot_for_source(&source).unwrap().unwrap();
@@ -555,7 +580,7 @@ fn current_snapshot_matches_workspace_root_hash() {
 
 #[test]
 fn artifact_slot_selects_latest_artifact() {
-    let (progress, traversal, _temp_dir) = create_runtime_and_traversal();
+    let (progress, event_store, traversal, _temp_dir) = create_runtime_and_traversal();
     let node_id = [18u8; 32];
 
     append(
@@ -569,7 +594,7 @@ fn artifact_slot_selects_latest_artifact() {
         2,
     );
 
-    replay(&progress, &traversal);
+    replay(&event_store, &traversal);
     let query = TraversalQuery::new(&traversal);
     let current = query
         .current_artifact_for_task_run(&task_run_ref("run_a"), "summary")
@@ -590,12 +615,12 @@ fn artifact_slot_selects_latest_artifact() {
 
 #[test]
 fn walk_from_workspace_node_to_frame_to_turn_to_plan() {
-    let (progress, traversal, _temp_dir) = create_runtime_and_traversal();
+    let (progress, event_store, traversal, _temp_dir) = create_runtime_and_traversal();
     let node_id = [19u8; 32];
     let frame_id = [20u8; 32];
 
     load_cross_domain_graph(&progress, node_id, frame_id);
-    replay(&progress, &traversal);
+    replay(&event_store, &traversal);
 
     let result = TraversalQuery::new(&traversal)
         .walk(
@@ -627,7 +652,7 @@ fn walk_from_workspace_node_to_frame_to_turn_to_plan() {
 
 #[test]
 fn walk_from_task_run_to_node_and_artifact() {
-    let (progress, traversal, _temp_dir) = create_runtime_and_traversal();
+    let (progress, event_store, traversal, _temp_dir) = create_runtime_and_traversal();
     let node_id = [21u8; 32];
 
     append(
@@ -635,7 +660,7 @@ fn walk_from_task_run_to_node_and_artifact() {
         build_task_artifact_event("run_a", node_id, "artifact_a", "summary"),
         1,
     );
-    replay(&progress, &traversal);
+    replay(&event_store, &traversal);
 
     let result = TraversalQuery::new(&traversal)
         .walk(
@@ -662,7 +687,7 @@ fn walk_from_task_run_to_node_and_artifact() {
 
 #[test]
 fn legacy_claim_query_reads_through_traversal_adapter() {
-    let (progress, traversal, _temp_dir) = create_runtime_and_traversal();
+    let (progress, event_store, traversal, _temp_dir) = create_runtime_and_traversal();
     let node_id = [22u8; 32];
     let frame_id = [23u8; 32];
 
@@ -671,7 +696,7 @@ fn legacy_claim_query_reads_through_traversal_adapter() {
         head_selected_envelope("session_a", node_id, "review", frame_id, None),
         1,
     );
-    replay(&progress, &traversal);
+    replay(&event_store, &traversal);
 
     let subject = node_ref(node_id);
     let claims = LegacyClaimAdapter::new(&traversal)
@@ -687,8 +712,10 @@ fn legacy_claim_query_reads_through_traversal_adapter() {
 fn graph_runtime_repeated_catch_up_is_idempotent() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(temp_dir.path().join("ledger")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
-    let runtime = GraphRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db.clone());
+    let runtime = fixture.graph_runtime(db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let node_id = [24u8; 32];
     let frame_id = [25u8; 32];
 
@@ -711,8 +738,7 @@ fn graph_runtime_repeated_catch_up_is_idempotent() {
     assert!(!first_report.budget_exhausted);
     assert_eq!(runtime.catch_up().unwrap(), 0);
 
-    let derived_events: Vec<_> = progress
-        .store()
+    let derived_events: Vec<_> = event_store
         .read_all_events_after(0)
         .unwrap()
         .into_iter()
@@ -745,8 +771,10 @@ fn graph_runtime_repeated_catch_up_is_idempotent() {
 fn graph_catch_up_reports_retention_gap_without_moving_cursor() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(temp_dir.path().join("ledger")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
-    let runtime = GraphRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db.clone());
+    let runtime = fixture.graph_runtime(db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let node_id = [40u8; 32];
     let frame_id = [41u8; 32];
 
@@ -755,7 +783,7 @@ fn graph_catch_up_reports_retention_gap_without_moving_cursor() {
         head_selected_envelope("session_a", node_id, "analysis", frame_id, None),
         1,
     );
-    progress.store().set_retained_lower_boundary(3).unwrap();
+    event_store.set_retained_lower_boundary(3).unwrap();
 
     let report = runtime
         .catch_up_bounded(GraphCatchUpBudget { max_items: 8 })
@@ -787,8 +815,9 @@ fn graph_catch_up_reports_retention_gap_without_moving_cursor() {
 fn graph_reducer_ignores_runtime_domain_facts_and_advances_past_them() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(temp_dir.path().join("spine")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
-    let runtime = GraphRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db.clone());
+    let runtime = fixture.graph_runtime(db);
+    let progress = Arc::new(fixture.progress);
 
     append(
         &progress,
@@ -817,8 +846,11 @@ fn graph_runtime_bounded_report_resumes_without_skipping_source_events() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let db_path = temp_dir.path().join("ledger");
     let db = sled::open(&db_path).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
-    let runtime = GraphRuntime::new(db.clone()).unwrap();
+    let fixture = open_authority_progress(db.clone());
+    let runtime = fixture.graph_runtime(db.clone());
+    let event_store = fixture.store;
+    let authority = fixture.authority;
+    let progress = Arc::new(fixture.progress);
     let first_node_id = [30u8; 32];
     let first_frame_id = [31u8; 32];
     let second_node_id = [32u8; 32];
@@ -854,10 +886,13 @@ fn graph_runtime_bounded_report_resumes_without_skipping_source_events() {
 
     drop(runtime);
     drop(progress);
+    drop(event_store);
+    drop(authority);
     drop(db);
 
     let reopened_db = sled::open(&db_path).unwrap();
-    let reopened_runtime = GraphRuntime::new(reopened_db).unwrap();
+    let reopened_fixture = open_authority_progress(reopened_db.clone());
+    let reopened_runtime = reopened_fixture.graph_runtime(reopened_db);
     let second = reopened_runtime
         .catch_up_bounded(GraphCatchUpBudget { max_items: 8 })
         .unwrap();
@@ -890,8 +925,10 @@ fn graph_runtime_bounded_report_resumes_without_skipping_source_events() {
 fn graph_runtime_persists_anchor_selected_events_idempotently() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(temp_dir.path().join("ledger")).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
-    let runtime = GraphRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db.clone());
+    let runtime = fixture.graph_runtime(db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let node_id = [26u8; 32];
     let frame_id = [27u8; 32];
 
@@ -904,8 +941,7 @@ fn graph_runtime_persists_anchor_selected_events_idempotently() {
     assert_eq!(runtime.catch_up().unwrap(), 1);
     assert_eq!(runtime.catch_up().unwrap(), 0);
 
-    let derived: Vec<_> = progress
-        .store()
+    let derived: Vec<_> = event_store
         .read_all_events_after(0)
         .unwrap()
         .into_iter()
@@ -925,8 +961,11 @@ fn derived_anchor_events_are_readable_from_ledger_after_restart() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let db_path = temp_dir.path().join("ledger");
     let db = sled::open(&db_path).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(db.clone()).unwrap());
-    let runtime = GraphRuntime::new(db.clone()).unwrap();
+    let fixture = open_authority_progress(db.clone());
+    let runtime = fixture.graph_runtime(db.clone());
+    let event_store = fixture.store;
+    let authority = fixture.authority;
+    let progress = Arc::new(fixture.progress);
     let node_id = [28u8; 32];
     let frame_id = [29u8; 32];
 
@@ -939,14 +978,16 @@ fn derived_anchor_events_are_readable_from_ledger_after_restart() {
     assert_eq!(runtime.catch_up().unwrap(), 1);
     drop(runtime);
     drop(progress);
+    drop(event_store);
+    drop(authority);
     drop(db);
 
     let reopened_db = sled::open(&db_path).unwrap();
-    let reopened_progress = Arc::new(ProgressRuntime::new(reopened_db.clone()).unwrap());
-    let reopened_runtime = GraphRuntime::new(reopened_db).unwrap();
+    let reopened_fixture = open_authority_progress(reopened_db.clone());
+    let reopened_runtime = reopened_fixture.graph_runtime(reopened_db);
 
-    let derived: Vec<_> = reopened_progress
-        .store()
+    let derived: Vec<_> = reopened_fixture
+        .store
         .read_all_events_after(0)
         .unwrap()
         .into_iter()
@@ -969,10 +1010,11 @@ fn run_context_scan_bootstraps_graph_runtime() {
             .execute(&Commands::Scan { force: true })
             .unwrap();
 
-        let traversal =
-            TraversalStore::new(run_context.progress_runtime().store().db().clone()).unwrap();
         let source = source_ref(&workspace_root).unwrap();
-        let current = TraversalQuery::new(&traversal)
+        let current = run_context
+            .api()
+            .world_model_queries()
+            .expect("RunContext should install shared world model queries")
             .current_snapshot_for_source(&source)
             .unwrap()
             .unwrap();

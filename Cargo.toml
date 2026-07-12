@@ -6,6 +6,7 @@ authors = ["Meld Contributors"]
 description = "Deterministic filesystem state management using Merkle trees"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jerkytreats/meld"
+autotests = false
 
 [workspace]
 members = [
@@ -48,6 +49,7 @@ config = "0.14"
 
 # Storage
 sled = "0.34"
+fs2 = "0.4"
 
 # Filesystem
 walkdir = "2.4"
@@ -93,6 +95,7 @@ directories = "5.0"
 
 [dev-dependencies]
 # Testing
+meld-events = { path = "crates/meld-events", version = "2.7.0", features = ["test-support"] }
 proptest = "1.4"
 tempfile = "3.8"
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
@@ -103,6 +106,22 @@ criterion = "0.5"
 [[bin]]
 name = "meld"
 path = "src/bin/meld.rs"
+
+[[test]]
+name = "integration_tests"
+path = "tests/integration_tests.rs"
+
+[[test]]
+name = "property_tests"
+path = "tests/property_tests.rs"
+
+[[test]]
+name = "o1_lookup_verification"
+path = "tests/o1_lookup_verification.rs"
+
+[[test]]
+name = "task_artifact_repo"
+path = "tests/task_artifact_repo.rs"
 
 [[bench]]
 name = "node_lookup"

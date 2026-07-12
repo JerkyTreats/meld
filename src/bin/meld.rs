@@ -3,7 +3,7 @@
 //! Command-line interface for the Meld filesystem state management system.
 
 use clap::Parser;
-use meld::cli::{Cli, Commands, DangerCommands, RunContext};
+use meld::cli::{BranchesCommands, Cli, Commands, DangerCommands, RunContext};
 use meld::config::ConfigLoader;
 use meld::logging::{init_logging, LoggingConfig};
 use std::path::{Path, PathBuf};
@@ -111,12 +111,16 @@ fn try_execute_danger_command(cli: &Cli) -> Option<Result<String, meld::error::A
 
 fn try_execute_branch_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
     match &cli.command {
-        Commands::Branches { command } => {
-            Some(meld::branches::tooling::handle_cli_command_with_workspace(
-                command,
-                Some(cli.workspace.as_path()),
-            ))
-        }
+        Commands::Branches {
+            command:
+                command @ (BranchesCommands::Status { .. }
+                | BranchesCommands::Discover { .. }
+                | BranchesCommands::Migrate { .. }
+                | BranchesCommands::Attach { .. }),
+        } => Some(meld::branches::tooling::handle_cli_command_with_workspace(
+            command,
+            Some(cli.workspace.as_path()),
+        )),
         _ => None,
     }
 }

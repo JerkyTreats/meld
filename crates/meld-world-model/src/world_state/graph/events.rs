@@ -77,14 +77,6 @@ fn traversal_envelope(
     .with_graph(objects, relations)
 }
 
-/// Build a traversal event envelope for selecting an anchor.
-// TODO compat-shim: E4 removes this identity-less wrapper after
-// graph_derived_envelopes_carry_structural_source_record_provenance and the
-// graph-runtime port parity tests supply EventRecordRef for every append.
-pub fn anchor_selected_envelope(session_id: &str, data: AnchorSelectedEventData) -> EventEnvelope {
-    anchor_selected_envelope_inner(session_id, data)
-}
-
 /// Build a traversal event for selecting an anchor from one canonical source.
 pub fn anchor_selected_envelope_from_record(
     session_id: &str,
@@ -112,17 +104,6 @@ fn anchor_selected_envelope_inner(
         Vec::new(),
     )
     .with_record_id(anchor.created_by_fact_id.clone())
-}
-
-/// Build a traversal event envelope for superseding an anchor.
-// TODO compat-shim: E4 removes this identity-less wrapper after
-// graph_derived_envelopes_carry_structural_source_record_provenance and the
-// graph-runtime port parity tests supply EventRecordRef for every append.
-pub fn anchor_superseded_envelope(
-    session_id: &str,
-    data: AnchorSupersededEventData,
-) -> EventEnvelope {
-    anchor_superseded_envelope_inner(session_id, data)
 }
 
 /// Build a traversal event for superseding an anchor from one canonical source.

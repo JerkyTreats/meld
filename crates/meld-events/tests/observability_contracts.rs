@@ -4,11 +4,14 @@
 //! a breaking change for every CLI, TUI, or dashboard consumer and must be
 //! called out under the compatibility policy.
 
+#[cfg(feature = "test-support")]
 use meld_events::error::StorageError;
+#[cfg(feature = "test-support")]
+use meld_events::events::observability::EventPageRequest;
 use meld_events::events::observability::{
     ConsumerLagReport, CoverageTruncation, DomainAppendRate, DomainFlow, EventFlowReport,
-    EventHealthReport, EventPageRequest, EventReadCoverage, EventTraceReport, FlowWindow,
-    SessionStep, SessionTimelineReport, SilentDomain, TraceHop, TraceLink, TraceSubject, TypeFlow,
+    EventHealthReport, EventReadCoverage, EventTraceReport, FlowWindow, SessionStep,
+    SessionTimelineReport, SilentDomain, TraceHop, TraceLink, TraceSubject, TypeFlow,
 };
 use meld_events::{
     DomainObjectRef, EventEnvelope, EventPage, EventRecord, EventRecordRef, LedgerCursor,
@@ -409,16 +412,20 @@ fn flow_window_shape_is_pinned() {
     );
 }
 
+#[cfg(feature = "test-support")]
 #[test]
 fn page_stream_blocks_and_pages_through_the_port() {
     use meld_events::events::observability::EventObservabilityPort;
-    use meld_events::events::registry::EventCursorRegistry;
-    use meld_events::{EventWriter, LedgerObservability};
+    use meld_events::events::test_support::{
+        EventCursorRegistry, EventCursorRegistryTestSupport as _, EventStore,
+        EventStoreTestSupport as _, EventWriter, EventWriterTestSupport as _, LedgerObservability,
+        LedgerObservabilityTestSupport as _,
+    };
     use std::sync::Arc;
 
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let store = meld_events::events::store::EventStore::shared(db.clone()).unwrap();
+    let store = EventStore::shared(db.clone()).unwrap();
     let registry = EventCursorRegistry::open(&db).unwrap();
     let writer = EventWriter::spawn(Arc::clone(&store));
     let port = LedgerObservability::new(
@@ -586,18 +593,22 @@ fn page_stream_blocks_and_pages_through_the_port() {
     assert_eq!(retained.coverage.truncation, CoverageTruncation::Before);
 }
 
+#[cfg(feature = "test-support")]
 #[test]
 fn waiting_page_wakes_for_an_append_and_reports_the_post_wake_snapshot() {
     use meld_events::events::observability::EventObservabilityPort;
-    use meld_events::events::registry::EventCursorRegistry;
-    use meld_events::{EventWriter, LedgerObservability};
+    use meld_events::events::test_support::{
+        EventCursorRegistry, EventCursorRegistryTestSupport as _, EventStore,
+        EventStoreTestSupport as _, EventWriter, EventWriterTestSupport as _, LedgerObservability,
+        LedgerObservabilityTestSupport as _,
+    };
     use std::sync::mpsc;
     use std::sync::Arc;
     use std::time::Duration;
 
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let store = meld_events::events::store::EventStore::shared(db.clone()).unwrap();
+    let store = EventStore::shared(db.clone()).unwrap();
     let registry = EventCursorRegistry::open(&db).unwrap();
     let writer = EventWriter::spawn(Arc::clone(&store));
     let port = Arc::new(LedgerObservability::new(

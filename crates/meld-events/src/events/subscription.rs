@@ -33,9 +33,7 @@ pub struct EventSubscription {
 
 impl EventSubscription {
     /// Binds a subscription to a store and its writer's watermark.
-    pub fn new(store: Arc<EventStore>, watermark: Arc<CommitWatermark>) -> Self {
-        // TODO compat-shim: E5 removes arbitrary store/watermark pairing after
-        // authority subscription and direct CLI paging parity tests pass.
+    pub(crate) fn new(store: Arc<EventStore>, watermark: Arc<CommitWatermark>) -> Self {
         Self { store, watermark }
     }
 
@@ -57,9 +55,7 @@ impl EventSubscription {
     }
 
     /// Returns the shared commit watermark for callers that wake themselves.
-    pub fn watermark(&self) -> Arc<CommitWatermark> {
-        // TODO compat-shim: E5 removes raw watermark access after runtime and
-        // observability callers consume EventWatermarkCapability.
+    pub(crate) fn watermark(&self) -> Arc<CommitWatermark> {
         Arc::clone(&self.watermark)
     }
 }
@@ -89,9 +85,7 @@ struct PersistedCursor {
 
 impl EventCursor {
     /// Binds a named cursor inside a consumer-owned tree.
-    pub fn new(tree: Tree, name: impl AsRef<str>) -> Self {
-        // TODO compat-shim: E5 removes this unbound constructor after legacy
-        // graph cursor rebuild and authority cursor parity tests pass.
+    pub(crate) fn new(tree: Tree, name: impl AsRef<str>) -> Self {
         Self {
             key: format!("event_cursor::{}", name.as_ref()).into_bytes(),
             tree,
@@ -100,10 +94,7 @@ impl EventCursor {
     }
 
     /// Binds an identity-bearing cursor for compatibility and migration tests.
-    ///
-    /// TODO compat-shim: E5 replaces raw tree binding with the world-model
-    /// consumer cursor port after cursor rebuild and reopen parity tests pass.
-    pub fn bind_compatibility(
+    pub(crate) fn bind_compatibility(
         tree: Tree,
         name: impl AsRef<str>,
         ledger_id: LedgerIdentity,
@@ -117,10 +108,7 @@ impl EventCursor {
 
     /// Explicitly relabels one legacy eight-byte cursor after its sequence
     /// space has been proven to belong to `ledger_id`.
-    ///
-    /// TODO compat-shim: E5 removes this migration entry after legacy graph
-    /// cursor rebuild and cursor migration parity tests pass.
-    pub fn migrate_legacy(
+    pub(crate) fn migrate_legacy(
         tree: Tree,
         name: impl AsRef<str>,
         ledger_id: LedgerIdentity,

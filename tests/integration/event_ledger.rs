@@ -1,19 +1,23 @@
-use meld::control::projection::ExecutionProjection;
-use meld::events::EventWriter;
+use meld::events::AppendMode;
 use meld::session::policy::PrunePolicy;
 use meld::task::ExecutionTaskEventData;
 use meld::telemetry::emission::emit_command_summary;
 use meld::telemetry::events::ProgressEnvelope;
-use meld::telemetry::sinks::store::ProgressStore;
-use meld::telemetry::ProgressRuntime;
 use meld::telemetry::{DomainObjectRef, EventRelation};
+use meld_events::events::test_support::{
+    EventStore as ProgressStore, EventStoreTestSupport as _, EventWriter,
+    EventWriterTestSupport as _,
+};
 use serde_json::json;
+
+use super::test_utils::open_authority_progress;
 
 #[test]
 fn runtime_wide_sequence_is_monotonic() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let runtime = ProgressRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db);
+    let runtime = &fixture.progress;
 
     let session_one = runtime.start_command_session("scan".to_string()).unwrap();
     let session_two = runtime.start_command_session("watch".to_string()).unwrap();
@@ -25,14 +29,14 @@ fn runtime_wide_sequence_is_monotonic() {
         .emit_event(&session_two, "watch_tick", json!({ "count": 1 }))
         .unwrap();
 
-    let all_events = runtime.store().read_all_events_after(0).unwrap();
+    let all_events = fixture.replay_all();
     assert_eq!(all_events.len(), 4);
     assert!(all_events
         .windows(2)
         .all(|pair| pair[1].seq == pair[0].seq + 1));
 
-    let session_one_events = runtime.store().read_events(&session_one).unwrap();
-    let session_two_events = runtime.store().read_events(&session_two).unwrap();
+    let session_one_events = fixture.replay_session(&session_one);
+    let session_two_events = fixture.replay_session(&session_two);
 
     assert_eq!(
         session_one_events
@@ -56,12 +60,12 @@ fn legacy_spine_events_remain_readable_with_graph_fields() {
     let db = sled::open(dir.path()).unwrap();
     let session_id = "legacy-session";
     let legacy_tree = db.open_tree("obs_events").unwrap();
-    let key = meld::telemetry::sinks::store::ProgressStore::encode_event_key(session_id, 1);
+    let key = ProgressStore::encode_event_key(session_id, 1);
     let raw = r#"{"ts":"2026-02-14T12:34:56.789Z","session":"legacy-session","seq":1,"type":"session_started","data":{"command":"scan"}}"#;
     legacy_tree.insert(key.as_bytes(), raw.as_bytes()).unwrap();
 
-    let runtime = ProgressRuntime::new(db).unwrap();
-    let events = runtime.store().read_events(session_id).unwrap();
+    let fixture = open_authority_progress(db);
+    let events = fixture.replay_session(session_id);
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].session, session_id);
     assert_eq!(events[0].seq, 1);
@@ -85,39 +89,42 @@ fn mixed_spine_events_replay_with_object_refs() {
     legacy_tree
         .insert(legacy_key.as_bytes(), legacy_raw.as_bytes())
         .unwrap();
-    let runtime = ProgressRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db);
 
     let task_run = DomainObjectRef::new("execution", "task_run", "run_a").unwrap();
     let artifact = DomainObjectRef::new("execution", "artifact", "artifact_a").unwrap();
     let relation = EventRelation::new("produced", task_run.clone(), artifact.clone()).unwrap();
 
-    let event = meld::telemetry::events::ProgressEvent::from_envelope(
-        ProgressEnvelope::with_now_domain(
-            session_id.to_string(),
-            "execution".to_string(),
-            "run_a".to_string(),
-            "execution.task.artifact_emitted".to_string(),
-            None,
-            json!({
-                "task_id": "task_a",
-                "task_run_id": "run_a",
-                "capability_instance_id": null,
-                "invocation_id": null,
-                "artifact_id": "artifact_a",
-                "artifact_type_id": "artifact.type",
-                "attempt_index": null,
-                "ready_count": null,
-                "running_count": null,
-                "blocked_reason": null,
-                "error": null
-            }),
+    fixture
+        .authority
+        .append_capability()
+        .append_durable(
+            ProgressEnvelope::with_now_domain(
+                session_id.to_string(),
+                "execution".to_string(),
+                "run_a".to_string(),
+                "execution.task.artifact_emitted".to_string(),
+                None,
+                json!({
+                    "task_id": "task_a",
+                    "task_run_id": "run_a",
+                    "capability_instance_id": null,
+                    "invocation_id": null,
+                    "artifact_id": "artifact_a",
+                    "artifact_type_id": "artifact.type",
+                    "attempt_index": null,
+                    "ready_count": null,
+                    "running_count": null,
+                    "blocked_reason": null,
+                    "error": null
+                }),
+            )
+            .with_graph(vec![task_run, artifact], vec![relation]),
+            AppendMode::Plain,
         )
-        .with_graph(vec![task_run, artifact], vec![relation]),
-        2,
-    );
-    runtime.store().append_event(&event).unwrap();
+        .unwrap();
 
-    let events = runtime.store().read_events(session_id).unwrap();
+    let events = fixture.replay_session(session_id);
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].seq, 1);
     assert_eq!(events[1].seq, 2);
@@ -130,7 +137,8 @@ fn mixed_spine_events_replay_with_object_refs() {
 fn telemetry_is_downstream_only() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let runtime = ProgressRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db);
+    let runtime = &fixture.progress;
     let session_id = runtime
         .start_command_session("summary".to_string())
         .unwrap();
@@ -162,7 +170,7 @@ fn telemetry_is_downstream_only() {
         .unwrap();
 
     emit_command_summary(
-        &runtime,
+        runtime,
         &session_id,
         "summary",
         None,
@@ -176,12 +184,12 @@ fn telemetry_is_downstream_only() {
 
     // Summaries are best-effort; the barrier makes them observable.
     runtime.barrier().unwrap();
-    let events = runtime.store().read_all_events_after(0).unwrap();
+    let events = fixture.replay_all();
     assert!(events
         .iter()
         .any(|event| event.event_type == "command_summary"));
 
-    let projection = ExecutionProjection::replay_from_store(runtime.store(), 0).unwrap();
+    let projection = fixture.replay_execution_projection(0);
     assert!(projection.active_tasks.contains("run_one"));
     assert!(projection.completed_tasks.is_empty());
     assert!(projection.last_applied_seq < events.last().unwrap().seq);
@@ -223,7 +231,8 @@ fn slow_or_missing_consumer_does_not_break_append() {
 fn session_prune_does_not_delete_canonical_ledger_history() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let runtime = ProgressRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db);
+    let runtime = &fixture.progress;
 
     let session_id = runtime.start_command_session("scan".to_string()).unwrap();
     runtime
@@ -241,7 +250,7 @@ fn session_prune_does_not_delete_canonical_ledger_history() {
         .unwrap();
     assert_eq!(pruned, 1);
 
-    let all_events = runtime.store().read_all_events_after(0).unwrap();
+    let all_events = fixture.replay_all();
     assert_eq!(all_events.len(), 3);
     assert!(all_events.iter().any(|event| event.session == session_id));
 }
@@ -250,7 +259,8 @@ fn session_prune_does_not_delete_canonical_ledger_history() {
 fn read_events_after_pruned_session_still_reads_canonical_history() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let runtime = ProgressRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db);
+    let runtime = &fixture.progress;
 
     let session_id = runtime.start_command_session("scan".to_string()).unwrap();
     runtime
@@ -267,7 +277,7 @@ fn read_events_after_pruned_session_still_reads_canonical_history() {
         })
         .unwrap();
 
-    let events = runtime.store().read_events(&session_id).unwrap();
+    let events = fixture.replay_session(&session_id);
     assert_eq!(events.len(), 3);
     assert_eq!(events[0].event_type, "session_started");
     assert_eq!(events[1].event_type, "scan_progress");
@@ -278,7 +288,8 @@ fn read_events_after_pruned_session_still_reads_canonical_history() {
 fn idempotent_append_reuses_existing_record_id() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let runtime = ProgressRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db);
+    let runtime = &fixture.progress;
     let session_id = runtime.start_command_session("graph".to_string()).unwrap();
 
     let envelope = ProgressEnvelope::with_now_domain(
@@ -297,7 +308,7 @@ fn idempotent_append_reuses_existing_record_id() {
     runtime.emit_envelope_idempotent(envelope.clone()).unwrap();
     runtime.emit_envelope_idempotent(envelope).unwrap();
 
-    let events = runtime.store().read_all_events_after(0).unwrap();
+    let events = fixture.replay_all();
     let selected: Vec<_> = events
         .iter()
         .filter(|event| event.event_type == "world_state.anchor_selected")
@@ -313,7 +324,8 @@ fn idempotent_append_reuses_existing_record_id() {
 fn non_idempotent_append_keeps_duplicate_record_ids() {
     let dir = tempfile::TempDir::new().unwrap();
     let db = sled::open(dir.path()).unwrap();
-    let runtime = ProgressRuntime::new(db).unwrap();
+    let fixture = open_authority_progress(db);
+    let runtime = &fixture.progress;
     let session_id = runtime.start_command_session("graph".to_string()).unwrap();
 
     let envelope = ProgressEnvelope::with_now_domain(
@@ -332,7 +344,7 @@ fn non_idempotent_append_keeps_duplicate_record_ids() {
     runtime.emit_envelope(envelope.clone()).unwrap();
     runtime.emit_envelope(envelope).unwrap();
 
-    let events = runtime.store().read_all_events_after(0).unwrap();
+    let events = fixture.replay_all();
     let selected: Vec<_> = events
         .iter()
         .filter(|event| event.event_type == "world_state.anchor_selected")
@@ -350,8 +362,8 @@ fn legacy_records_ignore_missing_record_id() {
     let raw = r#"{"ts":"2026-02-14T12:34:56.789Z","session":"legacy-record-id","seq":1,"type":"session_started","data":{"command":"scan"}}"#;
     legacy_tree.insert(key.as_bytes(), raw.as_bytes()).unwrap();
 
-    let runtime = ProgressRuntime::new(db).unwrap();
-    let events = runtime.store().read_events(session_id).unwrap();
+    let fixture = open_authority_progress(db);
+    let events = fixture.replay_session(session_id);
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].record_id, None);
     assert_eq!(events[0].event_type, "session_started");

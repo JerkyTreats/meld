@@ -4,12 +4,17 @@
 //! the counter is asserted to surface as zero on a healthy ledger so the
 //! wiring is proven without forcing drops.
 
+#![cfg(feature = "test-support")]
+
 use std::sync::Arc;
 
 use meld_events::events::observability::EventObservabilityPort;
-use meld_events::events::registry::EventCursorRegistry;
-use meld_events::events::store::EventStore;
-use meld_events::{CoverageTruncation, EventEnvelope, EventWriter, LedgerObservability};
+use meld_events::events::test_support::{
+    EventCursorRegistry, EventCursorRegistryTestSupport as _, EventStore,
+    EventStoreTestSupport as _, EventWriter, EventWriterTestSupport as _, LedgerObservability,
+    LedgerObservabilityTestSupport as _,
+};
+use meld_events::{CoverageTruncation, EventEnvelope};
 use serde_json::json;
 
 struct Fixture {

@@ -6,15 +6,8 @@
 //! composition supplies identity-bearing event replay, derived-publication,
 //! and cursor-reporting ports from one event authority.
 //!
-//! # Example
-//!
-//! ```rust,no_run
-//! use meld_world_model::graph::runtime::GraphRuntime;
-//!
-//! let temp = tempfile::tempdir().unwrap();
-//! let runtime = GraphRuntime::new(sled::open(temp.path()).unwrap()).unwrap();
-//! runtime.catch_up().unwrap();
-//! ```
+//! Product composition creates [`runtime::GraphRuntime`] with [`runtime::GraphRuntime::from_ports`].
+//! Raw event storage construction is intentionally unavailable here.
 
 pub mod compat;
 pub mod contracts;
@@ -28,6 +21,8 @@ pub mod reducer;
 pub mod runtime;
 mod source_intent;
 pub mod store;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 pub use contracts::{
     AnchorEndInput, AnchorId, AnchorProvenanceRecord, AnchorSelectionInput, AnchorSelectionRecord,

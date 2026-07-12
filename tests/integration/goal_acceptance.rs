@@ -4,7 +4,8 @@ use meld::execution::{
     build_docs_task_success_evidence, satisfy_request_from_agent_mutation,
     DocsTaskSuccessEvidenceRequest, GoalMutationError, GoalMutationRequest,
 };
-use meld_events::{events::store::EventStore, DomainObjectRef, EventRecord};
+use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
+use meld_events::{DomainObjectRef, EventRecord};
 use meld_execution::goals::{
     GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
     GoalSetApi, PersistentGoalSetStore,

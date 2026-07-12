@@ -31,6 +31,11 @@ pub enum StorageError {
     #[error("Durability indeterminate: {0}")]
     DurabilityIndeterminate(String),
 
+    /// A legacy ledger was already cut over or durable migration evidence
+    /// conflicts with the requested semantic write.
+    #[error("Event migration conflict: {0}")]
+    MigrationConflict(String),
+
     /// An identity-bearing persisted payload belongs to another ledger.
     #[error("Ledger identity mismatch: expected {expected}, got {actual}")]
     IdentityMismatch {
@@ -66,6 +71,9 @@ impl Clone for StorageError {
             StorageError::Unavailable(message) => StorageError::Unavailable(message.clone()),
             StorageError::DurabilityIndeterminate(message) => {
                 StorageError::DurabilityIndeterminate(message.clone())
+            }
+            StorageError::MigrationConflict(message) => {
+                StorageError::MigrationConflict(message.clone())
             }
             StorageError::IdentityMismatch { expected, actual } => StorageError::IdentityMismatch {
                 expected: *expected,
@@ -208,6 +216,7 @@ impl From<StorageError> for EventAuthorityError {
             StorageError::DurabilityIndeterminate(message) => {
                 Self::DurabilityIndeterminate { message }
             }
+            StorageError::MigrationConflict(message) => Self::MigrationConflict { message },
             StorageError::IdentityMismatch { expected, actual } => {
                 Self::IdentityMismatch { expected, actual }
             }

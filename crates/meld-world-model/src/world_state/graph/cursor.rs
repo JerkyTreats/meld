@@ -65,6 +65,11 @@ impl GraphProjectionCursor {
             return Ok(cursor);
         }
 
+        // TODO compat-shim: remove after the minimum supported traversal schema
+        // guarantees an identity-bearing authority cursor. Until then,
+        // graph_runtime_resets_legacy_cursor_and_preserves_migration_evidence and
+        // graph_runtime_legacy_cursor_reset_rebuilds_conflicting_projection_sequence_space
+        // prove the old cursor is preserved as evidence and the projection is rebuilt.
         if let Some(legacy) = cursor.tree.get(KEY_LEGACY_CURSOR).map_err(to_storage_io)? {
             let legacy_cursor = decode_legacy_cursor(legacy.as_ref())?;
             match cursor

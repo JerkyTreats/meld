@@ -5,9 +5,9 @@ use std::sync::Arc;
 use meld_events::error::EventAuthorityError;
 use meld_events::{
     AppendMode, AppendReceipt, DomainObjectRef, EventAppendCapability, EventAuthority,
-    EventAuthorityOpenOptions, EventConsumerRegistryCapability, EventEnvelope,
-    EventObservabilityCapability, EventPage, EventRecord, EventReplayCapability, EventWatermark,
-    EventWatermarkCapability, LedgerCursor, LedgerIdentity, ReplayRequest,
+    EventConsumerRegistryCapability, EventEnvelope, EventObservabilityCapability, EventPage,
+    EventRecord, EventReplayCapability, EventWatermark, EventWatermarkCapability, LedgerCursor,
+    LedgerIdentity, ReplayRequest,
 };
 use meld_execution::goals::{
     GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
@@ -218,22 +218,6 @@ pub struct TaskNetworkFactoryPort {
 }
 
 impl ProductRuntimePorts {
-    /// Build all product runtime ports from opened stores and passive config.
-    pub fn from_stores(
-        stores: &OpenProductStores,
-        provider: ProviderPortConfig,
-    ) -> Result<Self, RuntimeAssemblyError> {
-        // TODO compat-shim: E5 removes authority construction from raw product
-        // stores after `product_event_authority_cutover` supplies the resolved
-        // product authority directly to `from_authority`.
-        let authority = EventAuthority::open(
-            stores.event_store.db().clone(),
-            EventAuthorityOpenOptions::default(),
-        )
-        .map_err(|error| RuntimeAssemblyError::PortConstruction(error.to_string()))?;
-        Self::from_authority(stores, &authority, provider)
-    }
-
     /// Build root adapters from one already-resolved event authority.
     pub fn from_authority(
         stores: &OpenProductStores,

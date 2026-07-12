@@ -22,6 +22,7 @@ pub struct EventCursorRegistry {
 
 #[derive(Clone, Copy)]
 enum RegistryBinding {
+    #[cfg(any(test, feature = "test-support"))]
     Legacy,
     Authority(LedgerIdentity),
 }
@@ -42,11 +43,9 @@ struct PersistedConsumerCursor {
 }
 
 impl EventCursorRegistry {
-    /// Opens the legacy unbound registry tree.
-    ///
-    /// TODO compat-shim: E5 removes this constructor after graph cursor
-    /// rebuild and observability parity tests use the authority capability.
-    pub fn open(db: &Db) -> Result<Self, StorageError> {
+    /// Opens the legacy unbound registry tree for explicit test support.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn open(db: &Db) -> Result<Self, StorageError> {
         Ok(Self {
             tree: db.open_tree(TREE_CONSUMER_CURSORS).map_err(to_storage_io)?,
             binding: RegistryBinding::Legacy,
@@ -62,10 +61,8 @@ impl EventCursorRegistry {
 
     /// Explicitly relabels legacy eight-byte registry payloads when the caller
     /// has proved their sequence space belongs to `ledger_id`.
-    ///
-    /// TODO compat-shim: E5 removes this migration entry after legacy graph
-    /// cursor rebuild and authority registry parity tests pass.
-    pub fn migrate_legacy_payloads(
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn migrate_legacy_payloads(
         db: &Db,
         ledger_id: LedgerIdentity,
     ) -> Result<Self, StorageError> {
@@ -143,6 +140,7 @@ impl EventCursorRegistry {
 
     fn decode_reported_seq(&self, raw: &[u8]) -> Result<u64, StorageError> {
         match self.binding {
+            #[cfg(any(test, feature = "test-support"))]
             RegistryBinding::Legacy => decode_legacy_seq(raw),
             RegistryBinding::Authority(ledger_id) => {
                 decode_bound_cursor(raw, ledger_id).map(|cursor| cursor.reported_seq)
@@ -152,6 +150,7 @@ impl EventCursorRegistry {
 
     fn encode_reported_seq(&self, reported_seq: u64) -> Result<Vec<u8>, StorageError> {
         match self.binding {
+            #[cfg(any(test, feature = "test-support"))]
             RegistryBinding::Legacy => Ok(reported_seq.to_be_bytes().to_vec()),
             RegistryBinding::Authority(ledger_id) => encode_bound_cursor(PersistedConsumerCursor {
                 ledger_id,
@@ -181,6 +180,7 @@ fn decode_bound_cursor(
     Ok(cursor)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn decode_legacy_seq(raw: &[u8]) -> Result<u64, StorageError> {
     let bytes: [u8; 8] = raw
         .try_into()

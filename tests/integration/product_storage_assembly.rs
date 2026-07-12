@@ -4,7 +4,10 @@ mod task_network_support;
 use meld::context::frame::{Basis, Frame};
 use meld::prompt_context::PromptContextArtifactKind;
 use meld::runtime::storage::{OpenProductStores, ProductStorageLayout, ProductStorageRoot};
-use meld_events::{DomainObjectRef, EventEnvelope};
+use meld_events::{
+    AppendMode, DomainObjectRef, EventAuthority, EventAuthorityOpenOptions, EventEnvelope,
+    LedgerCursor, ReplayRequest,
+};
 use meld_execution::goals::{AddGoalCommand, GoalCommandMetadata};
 use meld_execution::task::{ArtifactProducerRef, ArtifactRecord};
 use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
@@ -58,6 +61,7 @@ fn product_storage_open_creates_dirs_and_opens_stores() {
     let layout = ProductStorageLayout::from_root(temp.path().join("runtime"));
 
     let stores = OpenProductStores::open(&layout).unwrap();
+    let _authority = open_authority(&layout);
     stores.flush_boundary().unwrap();
 
     assert!(layout.root.exists());
@@ -81,17 +85,21 @@ fn product_storage_persists_and_reopens_runtime_stores() {
 
     {
         let stores = OpenProductStores::open(&layout).unwrap();
-        stores
-            .event_store
-            .append_envelope(EventEnvelope::new_domain(
-                "2026-06-14T00:00:00Z".to_string(),
-                "session-a",
-                "execution",
-                "stream-a",
-                "execution.test",
-                Some("record-a".to_string()),
-                json!({ "ok": true }),
-            ))
+        let authority = open_authority(&layout);
+        authority
+            .append_capability()
+            .append_durable(
+                EventEnvelope::new_domain(
+                    "2026-06-14T00:00:00Z".to_string(),
+                    "session-a",
+                    "execution",
+                    "stream-a",
+                    "execution.test",
+                    Some("record-a".to_string()),
+                    json!({ "ok": true }),
+                ),
+                AppendMode::Plain,
+            )
             .unwrap();
         stores.traversal_store.set_last_reduced_seq(42).unwrap();
         stores
@@ -141,12 +149,25 @@ fn product_storage_persists_and_reopens_runtime_stores() {
         );
         stored_frame_id = frame_id;
         stored_prompt_ref = prompt_ref;
+        drop(authority);
     }
 
     let reopened = OpenProductStores::open(&layout).unwrap();
+    let authority = open_authority(&layout);
 
     assert_eq!(
-        reopened.event_store.read_all_events_after(0).unwrap().len(),
+        authority
+            .replay_capability()
+            .replay(ReplayRequest {
+                cursor: LedgerCursor {
+                    ledger_id: authority.ledger_identity(),
+                    after_seq: 0,
+                },
+                limit: 1,
+            })
+            .unwrap()
+            .records
+            .len(),
         1
     );
     assert_eq!(reopened.traversal_store.last_reduced_seq().unwrap(), 42);
@@ -185,6 +206,11 @@ fn product_storage_persists_and_reopens_runtime_stores() {
             .unwrap(),
         b"prompt"
     );
+}
+
+fn open_authority(layout: &ProductStorageLayout) -> EventAuthority {
+    let db = sled::open(&layout.ledger_db).unwrap();
+    EventAuthority::open(db, EventAuthorityOpenOptions::default()).unwrap()
 }
 
 #[test]

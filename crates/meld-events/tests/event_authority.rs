@@ -8,8 +8,10 @@ use meld_events::events::authority::{
 };
 use meld_events::events::identity::LedgerIdentity;
 use meld_events::events::observability::CoverageTruncation;
-use meld_events::events::store::EventStore;
-use meld_events::events::subscription::EventCursor;
+#[cfg(feature = "test-support")]
+use meld_events::events::test_support::{
+    EventCursor, EventCursorTestSupport as _, EventStore, EventStoreTestSupport as _,
+};
 use meld_events::EventEnvelope;
 use serde_json::json;
 
@@ -135,6 +137,7 @@ fn corrupt_and_mismatched_identities_fail_closed() {
     );
 }
 
+#[cfg(feature = "test-support")]
 #[test]
 fn duplicate_same_database_and_copied_identity_are_rejected() {
     let first_db = sled::Config::new().temporary(true).open().unwrap();
@@ -176,6 +179,7 @@ fn final_capability_drop_releases_the_authority_lease() {
     EventAuthority::open(db, EventAuthorityOpenOptions::default()).unwrap();
 }
 
+#[cfg(feature = "test-support")]
 #[test]
 fn watermark_recovers_the_durable_tip() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -312,6 +316,7 @@ fn foreign_replay_subscription_watermark_and_registry_requests_are_rejected() {
     ));
 }
 
+#[cfg(feature = "test-support")]
 #[test]
 fn bound_cursor_rejects_legacy_and_foreign_payloads_until_explicit_migration() {
     let db = sled::Config::new().temporary(true).open().unwrap();

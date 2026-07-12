@@ -117,9 +117,10 @@ pub struct FederatedWalkOutput {
     pub walk: FederatedGraphWalkResult,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct BranchQueryRuntime {
     branch_runtime: BranchRuntime,
+    active_store: Option<(String, Arc<TraversalStore>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +132,13 @@ struct BranchSelection {
 impl BranchQueryRuntime {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_active_store(branch_id: impl Into<String>, store: Arc<TraversalStore>) -> Self {
+        Self {
+            branch_runtime: BranchRuntime::new(),
+            active_store: Some((branch_id.into(), store)),
+        }
     }
 
     pub fn graph_status(
@@ -390,6 +398,11 @@ impl BranchQueryRuntime {
         &self,
         entry: &BranchCatalogEntry,
     ) -> Result<Arc<TraversalStore>, ApiError> {
+        if let Some((branch_id, store)) = &self.active_store {
+            if branch_id == &entry.branch_id {
+                return Ok(Arc::clone(store));
+            }
+        }
         let store_path = branch_store_path(entry);
         if !store_path.exists() {
             return Err(ApiError::ConfigError(format!(

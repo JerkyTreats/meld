@@ -8,32 +8,14 @@
 //! Does not own: this module does not publish to telemetry sinks or interpret
 //! producer payloads.
 //!
-//! # Example
-//!
-//! ```rust
-//! use meld_events::events::store::EventStore;
-//! use meld_events::EventEnvelope;
-//! use serde_json::json;
-//!
-//! let db = sled::Config::new().temporary(true).open().unwrap();
-//! let store = EventStore::new(db).unwrap();
-//! let seq = store.append_envelope(EventEnvelope::new_domain(
-//!     "2026-04-26T16:00:00Z".to_string(),
-//!     "session-a",
-//!     "execution",
-//!     "workflow-a",
-//!     "execution.started",
-//!     None,
-//!     json!({ "started": true }),
-//! )).unwrap();
-//!
-//! assert_eq!(seq, 1);
-//! assert_eq!(store.read_events("session-a").unwrap().len(), 1);
-//! ```
+//! Production callers open [`crate::events::EventAuthority`] and use its
+//! derived capabilities. Raw store construction is available only through
+//! the `test-support` feature for frozen-format characterization.
 
 use std::io;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -44,7 +26,9 @@ use sled::{
 use tracing::warn;
 
 use crate::error::StorageError;
-use crate::events::{EventEnvelope, EventRecord, LedgerIdentity};
+#[cfg(any(test, feature = "test-support"))]
+use crate::events::LedgerIdentity;
+use crate::events::{EventEnvelope, EventRecord};
 
 // Tree names and the legacy tree are frozen on-disk formats from the spine
 // era; renaming them would buy a data migration for zero functional gain.
@@ -59,7 +43,8 @@ const META_KEY_RECORD_INDEX_BACKFILLED: &[u8] = b"record_index_backfilled";
 const META_KEY_LEGACY_SESSIONS_MIGRATED: &[u8] = b"legacy_sessions_migrated";
 const META_KEY_SESSION_INDEX_SLIMMED: &[u8] = b"session_index_slimmed";
 const META_KEY_RETAINED_FROM: &[u8] = b"retained_from";
-const META_KEY_LEDGER_IDENTITY: &[u8] = b"ledger_identity";
+pub(crate) const META_KEY_LEDGER_IDENTITY: &[u8] = b"ledger_identity";
+pub(crate) const META_KEY_AUTHORITY_CUTOVER: &[u8] = b"event_authority_cutover";
 const SESSION_INDEX_EMPTY_VALUE: &[u8] = &[];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,14 +76,9 @@ pub(crate) struct StoreAppendOutcome {
 }
 
 impl EventStore {
-    /// Resolves the persisted identity for callers still bound to the raw
-    /// store compatibility surface.
-    ///
-    /// TODO compat-shim: E4 removes this method when
-    /// `graph_runtime_derived_events_carry_persisted_ledger_provenance` and
-    /// the graph-port parity tests construct `GraphRuntime` from an
-    /// identity-bearing replay capability.
-    pub fn compatibility_ledger_identity(&self) -> Result<LedgerIdentity, StorageError> {
+    /// Resolves the persisted identity for a raw test fixture.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn compatibility_ledger_identity(&self) -> Result<LedgerIdentity, StorageError> {
         let candidate = LedgerIdentity::new();
         let raw = match self.ledger_identity_bytes()? {
             Some(raw) => raw,
@@ -116,10 +96,7 @@ impl EventStore {
     /// Opening repairs sequence metadata that lags the greatest persisted
     /// record and backfills the record index once for stores written before
     /// the index existed, so reads and idempotency lookups never scan.
-    pub fn new(db: Db) -> Result<Self, StorageError> {
-        // TODO compat-shim: E5 seals this raw constructor after product,
-        // world-model, execution, benchmarks, and migration tests construct
-        // production behavior through EventAuthority capabilities.
+    pub(crate) fn new(db: Db) -> Result<Self, StorageError> {
         let legacy_events = db.open_tree(TREE_EVENTS).map_err(to_storage_io)?;
         let spine_events = db.open_tree(TREE_SPINE_EVENTS).map_err(to_storage_io)?;
         let session_event_index = db
@@ -129,6 +106,10 @@ impl EventStore {
         let spine_record_index = db
             .open_tree(TREE_SPINE_RECORD_INDEX)
             .map_err(to_storage_io)?;
+        let semantic_writes_disabled = spine_meta
+            .get(META_KEY_AUTHORITY_CUTOVER)
+            .map_err(to_storage_io)?
+            .is_some();
         let store = Self {
             db,
             legacy_events,
@@ -139,36 +120,37 @@ impl EventStore {
             #[cfg(test)]
             fail_next_flush: Arc::new(AtomicBool::new(false)),
         };
-        store.migrate_legacy_sessions_once()?;
-        store.repair_sequence_meta()?;
-        store.backfill_record_index_once()?;
-        store.slim_session_index_once()?;
+        if !semantic_writes_disabled {
+            store.migrate_legacy_sessions_once()?;
+            store.repair_sequence_meta()?;
+            store.backfill_record_index_once()?;
+            store.slim_session_index_once()?;
+        }
         Ok(store)
     }
 
     /// Opens the store behind an `Arc` for runtimes and ingestors.
-    pub fn shared(db: Db) -> Result<Arc<Self>, StorageError> {
-        // TODO compat-shim: E5 removes this raw shared-store constructor once
-        // the same authority-route parity gates named on `new` are green.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn shared(db: Db) -> Result<Arc<Self>, StorageError> {
         Ok(Arc::new(Self::new(db)?))
     }
 
     /// Returns the underlying sled database.
-    pub fn db(&self) -> &Db {
-        // TODO compat-shim: E5 removes raw database access after migration,
-        // registry, observability, and route-level parity tests use authority
-        // capabilities or the named migration seam.
+    pub(crate) fn db(&self) -> &Db {
         &self.db
     }
 
     /// Appends a pre-sequenced record and advances future sequence allocation.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn append_event(&self, event: &EventRecord) -> Result<(), StorageError> {
         self.write_event(event)?;
         Ok(())
     }
 
     /// Appends a pre-sequenced record unless its idempotency key already exists.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn append_event_idempotent(&self, event: &EventRecord) -> Result<u64, StorageError> {
+        self.ensure_semantic_writes_allowed()?;
         let Some(record_id) = event.record_id.as_deref() else {
             self.append_event(event)?;
             return Ok(event.seq);
@@ -182,12 +164,14 @@ impl EventStore {
     }
 
     /// Appends an envelope, allocating its ledger sequence atomically.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn append_envelope(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
         self.persist_envelope_write(&envelope, false)
             .map(|outcome| outcome.seq)
     }
 
     /// Appends an envelope unless its idempotency key already exists.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
         self.persist_envelope_write(&envelope, true)
             .map(|outcome| outcome.seq)
@@ -207,6 +191,7 @@ impl EventStore {
         self.persist_event_write(write, None).map(|_| ())
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn write_event_idempotent(&self, event: &EventRecord) -> Result<u64, StorageError> {
         let record_id = event
             .record_id
@@ -229,6 +214,7 @@ impl EventStore {
         )
             .transaction(
                 |(spine_meta, spine_events, session_event_index, spine_record_index)| {
+                    ensure_transaction_writes_allowed(spine_meta)?;
                     if let Some(idempotency_key) = idempotency_key.clone() {
                         if let Some(raw) = spine_record_index.get(idempotency_key)? {
                             return decode_seq(&raw).map_err(to_transaction_storage);
@@ -286,6 +272,7 @@ impl EventStore {
         )
             .transaction(
                 |(spine_meta, spine_events, session_event_index, spine_record_index)| {
+                    ensure_transaction_writes_allowed(spine_meta)?;
                     if let Some(idempotency_key) = idempotency_key.clone() {
                         if let Some(raw) = spine_record_index.get(idempotency_key)? {
                             return decode_seq(&raw)
@@ -331,11 +318,13 @@ impl EventStore {
     }
 
     /// Reads all events for a session in sequence order.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn read_events(&self, session_id: &str) -> Result<Vec<EventRecord>, StorageError> {
         self.read_events_after(session_id, 0)
     }
 
     /// Reads events for a session after a ledger sequence.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn read_events_after(
         &self,
         session_id: &str,
@@ -349,6 +338,7 @@ impl EventStore {
     /// Record keys are zero-padded sequences, so the read seeks directly to
     /// the cursor and returns records in sequence order; cost is proportional
     /// to the records returned, not to total history.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn read_all_events_after(&self, after_seq: u64) -> Result<Vec<EventRecord>, StorageError> {
         self.check_retention(after_seq)?;
         let mut out = Vec::new();
@@ -362,6 +352,7 @@ impl EventStore {
 
     /// Reads at most `limit` events after a ledger sequence across sessions,
     /// in sequence order.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn read_all_events_after_limit(
         &self,
         after_seq: u64,
@@ -470,7 +461,9 @@ impl EventStore {
     /// Raising the boundary promises that every sequence below it is gone;
     /// replay from a cursor below the boundary returns a typed retention gap
     /// instead of silently skipping history. The boundary never lowers.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_retained_lower_boundary(&self, retained_from: u64) -> Result<(), StorageError> {
+        self.ensure_semantic_writes_allowed()?;
         let current = self.retained_lower_boundary()?;
         if retained_from <= current {
             return Ok(());
@@ -525,6 +518,7 @@ impl EventStore {
         &self,
         identity: &[u8],
     ) -> Result<Vec<u8>, StorageError> {
+        self.ensure_semantic_writes_allowed()?;
         match self
             .spine_meta
             .compare_and_swap(
@@ -554,6 +548,7 @@ impl EventStore {
     }
 
     /// Encodes a legacy session event key.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn encode_event_key(session_id: &str, seq: u64) -> String {
         encode_legacy_event_key(session_id, seq)
     }
@@ -562,6 +557,7 @@ impl EventStore {
     /// the ledger tree. Session keys are `{session}:{seq:020}`, so the range
     /// starts at the cursor, `;` bounds the `:` separator, and the sequence
     /// comes from the key tail; index values carry no record payload.
+    #[cfg(any(test, feature = "test-support"))]
     fn read_session_events_after(
         &self,
         session_id: &str,
@@ -618,6 +614,7 @@ impl EventStore {
         Ok(out)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn lookup_record_seq(&self, record_id: &str) -> Result<Option<u64>, StorageError> {
         let Some(raw) = self
             .spine_record_index
@@ -627,6 +624,21 @@ impl EventStore {
             return Ok(None);
         };
         Ok(Some(decode_seq(&raw)?))
+    }
+
+    fn ensure_semantic_writes_allowed(&self) -> Result<(), StorageError> {
+        if self
+            .spine_meta
+            .get(META_KEY_AUTHORITY_CUTOVER)
+            .map_err(to_storage_io)?
+            .is_some()
+        {
+            Err(StorageError::MigrationConflict(
+                "legacy event ledger is read-only after authority cutover".to_string(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     /// Repairs sequence metadata that lags the greatest persisted record, so
@@ -665,12 +677,12 @@ impl EventStore {
         Ok(())
     }
 
-    // TODO compat-shim: remove once no deployed store predates the ledger
+    // TODO compat-shim(post-E5): remove once no supported deployed store predates the ledger
     // trees, together with `encode_event_key`. Migrates rows from the legacy
     // session event tree into the ledger so session reads have one source;
     // before this, reads merged the legacy tree on every call. Removal
-    // requires the migrated-legacy contract tests, including the
-    // multi-session and legacy-plus-ledger coexistence cases, to stay green
+    // requires multi_session_legacy_stores_migrate_completely and
+    // legacy_rows_coexist_with_ledger_history_after_migration to stay green
     // against a store created without legacy rows.
     fn migrate_legacy_sessions_once(&self) -> Result<(), StorageError> {
         if self
@@ -741,11 +753,11 @@ impl EventStore {
         Ok(())
     }
 
-    // TODO compat-shim: remove once no deployed store predates empty session
+    // TODO compat-shim(post-E5): remove once no supported deployed store predates empty session
     // index values. Rewrites full-record index values to empty markers so the
     // ledger tree is the only copy of each record. Removal requires the
-    // slimmed-index contract test to stay green against a store created
-    // without full-value rows.
+    // full_value_session_index_rows_slim_at_open to stay green against a
+    // store created without full-value rows.
     fn slim_session_index_once(&self) -> Result<(), StorageError> {
         if self
             .spine_meta
@@ -769,11 +781,12 @@ impl EventStore {
         Ok(())
     }
 
-    // TODO compat-shim: remove once no deployed store predates the record
+    // TODO compat-shim(post-E5): remove once no supported deployed store predates the record
     // index. Backfills index entries for records persisted before the index
     // tree existed, replacing the old per-lookup full-tree scan fallback.
-    // Removal requires idempotent_append_reuses_record_sequence contract
-    // coverage to stay green against a store created without this backfill.
+    // Removal requires idempotent_append_reuses_record_sequence_and_survives_reopen
+    // and store_open_repairs_missing_record_index_and_sequence_meta to stay
+    // green against a store created without this backfill.
     fn backfill_record_index_once(&self) -> Result<(), StorageError> {
         if self
             .spine_meta
@@ -824,6 +837,20 @@ impl EventStore {
     }
 }
 
+fn ensure_transaction_writes_allowed(
+    spine_meta: &sled::transaction::TransactionalTree,
+) -> Result<(), ConflictableTransactionError<StorageError>> {
+    if spine_meta.get(META_KEY_AUTHORITY_CUTOVER)?.is_some() {
+        Err(ConflictableTransactionError::Abort(
+            StorageError::MigrationConflict(
+                "legacy event ledger is read-only after authority cutover".to_string(),
+            ),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 struct PreparedEventWrite {
     seq: u64,
     event_key: Vec<u8>,
@@ -850,6 +877,7 @@ impl PreparedEventWrite {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn encode_legacy_event_key(session_id: &str, seq: u64) -> String {
     format!("{session_id}:{seq:0EVENT_KEY_PAD$}")
 }
@@ -859,6 +887,7 @@ fn encode_record_key(seq: u64) -> String {
 }
 
 /// Parses the sequence from a session index key's fixed-width tail.
+#[cfg(any(test, feature = "test-support"))]
 fn decode_session_key_seq(key: &[u8]) -> Option<u64> {
     if key.len() <= EVENT_KEY_PAD {
         return None;

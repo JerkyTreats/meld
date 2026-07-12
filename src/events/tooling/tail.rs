@@ -7,33 +7,38 @@
 
 use std::io::Write;
 
-use meld_events::{EventObservabilityPort, EventPage, EventPageRequest, EventRecord};
+use meld_events::{
+    EventObservabilityCapability, EventPage, EventRecord, EventReplayCapability,
+    EventSubscriptionCapability, LedgerCursor, ReplayRequest, SubscriptionPollRequest,
+};
 
 use crate::error::ApiError;
-use crate::events::tooling::{render, surface_error};
+use crate::events::tooling::{render, surface_authority_error};
 
 /// Per-page wait in follow mode: short enough that interruption feels
 /// immediate, long enough to avoid busy polling on a quiet ledger.
 const FOLLOW_PAGE_TIMEOUT_MS: u64 = 500;
 
 pub(super) fn run(
-    port: &impl EventObservabilityPort,
+    observability: &EventObservabilityCapability,
+    replay: &EventReplayCapability,
+    subscription: &EventSubscriptionCapability,
     format: &str,
     after: Option<u64>,
     limit: usize,
     follow: bool,
 ) -> Result<String, ApiError> {
     if follow {
-        follow_forever(port, format, after, limit)
+        follow_forever(observability, subscription, format, after, limit)
     } else {
         // Tail semantics: without a cursor, select the most recent records
         // by count. Sequence subtraction is incorrect for sparse migrated
         // ledgers whose adjacent records need not have adjacent numbers.
         let page = match after {
-            Some(seq) => next_page(port, seq, limit, 0)?,
-            None => port
+            Some(seq) => replay_page(replay, seq, limit)?,
+            None => replay
                 .newest_page(limit)
-                .map_err(|err| surface_error("tail", err))?,
+                .map_err(|err| surface_authority_error("tail", err))?,
         };
         render(format, &page, render_page_text)
     }
@@ -43,7 +48,8 @@ pub(super) fn run(
 /// output pipe closes; a closed pipe ends the command cleanly so the session
 /// lifecycle still completes.
 fn follow_forever(
-    port: &impl EventObservabilityPort,
+    observability: &EventObservabilityCapability,
+    subscription: &EventSubscriptionCapability,
     format: &str,
     after: Option<u64>,
     limit: usize,
@@ -54,8 +60,9 @@ fn follow_forever(
     let mut cursor = match after {
         Some(seq) => seq,
         None => {
-            port.health()
-                .map_err(|err| surface_error("tail", err))?
+            observability
+                .health(observability.ledger_identity())
+                .map_err(|err| surface_authority_error("tail", err))?
                 .tip_seq
         }
     };
@@ -69,7 +76,7 @@ fn follow_forever(
     );
     let stdout = std::io::stdout();
     loop {
-        let page = next_page(port, cursor, limit, FOLLOW_PAGE_TIMEOUT_MS)?;
+        let page = poll_page(subscription, cursor, limit, FOLLOW_PAGE_TIMEOUT_MS)?;
         if !page.records.is_empty() {
             let mut out = stdout.lock();
             let rendered = render_follow_page(format, &page)?;
@@ -82,18 +89,40 @@ fn follow_forever(
     }
 }
 
-fn next_page(
-    port: &impl EventObservabilityPort,
+fn replay_page(
+    replay: &EventReplayCapability,
+    after_seq: u64,
+    limit: usize,
+) -> Result<EventPage, ApiError> {
+    replay
+        .replay(ReplayRequest {
+            cursor: LedgerCursor {
+                ledger_id: replay.ledger_identity(),
+                after_seq,
+            },
+            limit,
+        })
+        .map_err(|err| surface_authority_error("tail", err))
+}
+
+fn poll_page(
+    subscription: &EventSubscriptionCapability,
     after_seq: u64,
     limit: usize,
     timeout_ms: u64,
 ) -> Result<EventPage, ApiError> {
-    port.next_page(EventPageRequest {
-        after_seq,
-        limit,
-        timeout_ms,
-    })
-    .map_err(|err| surface_error("tail", err))
+    subscription
+        .poll(SubscriptionPollRequest {
+            replay: ReplayRequest {
+                cursor: LedgerCursor {
+                    ledger_id: subscription.ledger_identity(),
+                    after_seq,
+                },
+                limit,
+            },
+            timeout_ms,
+        })
+        .map_err(|err| surface_authority_error("tail", err))
 }
 
 /// Next cursor after a page: the page's cursor when it carried records, the
@@ -148,14 +177,9 @@ fn render_record_line(record: &EventRecord) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::collections::VecDeque;
-
-    use meld_events::error::StorageError;
     use meld_events::{
-        CoverageTruncation, EventEnvelope, EventFlowReport, EventHealthReport, EventReadCoverage,
-        EventTraceReport, FlowWindow, LedgerCursor, LedgerIdentity, SessionTimelineReport,
-        TraceSubject,
+        AppendMode, CoverageTruncation, EventAuthority, EventAuthorityOpenOptions, EventEnvelope,
+        EventReadCoverage, LedgerIdentity,
     };
     use serde_json::json;
 
@@ -201,81 +225,30 @@ mod tests {
         }
     }
 
-    /// Port fake serving scripted pages while recording every request, so
-    /// cursor and timeout discipline are observable without a live ledger.
-    struct ScriptedPort {
-        pages: RefCell<VecDeque<EventPage>>,
-        requests: RefCell<Vec<EventPageRequest>>,
-        newest_limits: RefCell<Vec<usize>>,
-        tip_seq: u64,
-        retained_from: u64,
+    fn authority() -> EventAuthority {
+        EventAuthority::open(
+            sled::Config::new().temporary(true).open().unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap()
     }
 
-    impl ScriptedPort {
-        fn new(pages: Vec<EventPage>) -> Self {
-            Self::with_health(pages, 0, 1)
-        }
-
-        fn with_health(pages: Vec<EventPage>, tip_seq: u64, retained_from: u64) -> Self {
-            Self {
-                pages: RefCell::new(pages.into()),
-                requests: RefCell::new(Vec::new()),
-                newest_limits: RefCell::new(Vec::new()),
-                tip_seq,
-                retained_from,
-            }
-        }
-    }
-
-    impl EventObservabilityPort for ScriptedPort {
-        fn health(&self) -> Result<EventHealthReport, StorageError> {
-            Ok(EventHealthReport {
-                ledger_id: ledger_id(),
-                tip_seq: self.tip_seq,
-                committed_watermark: self.tip_seq,
-                retained_from: self.retained_from,
-                dropped_events: 0,
-                consumers: Vec::new(),
-                append_rates: Vec::new(),
-                append_rate_coverage: EventReadCoverage {
-                    retained_from: self.retained_from,
-                    tip_seq: self.tip_seq,
-                    scanned_from_seq: None,
-                    scanned_through_seq: None,
-                    truncation: CoverageTruncation::None,
-                },
-            })
-        }
-
-        fn flow(&self, _window: FlowWindow) -> Result<EventFlowReport, StorageError> {
-            unimplemented!("tail tests exercise next_page only")
-        }
-
-        fn trace(&self, _subject: TraceSubject) -> Result<EventTraceReport, StorageError> {
-            unimplemented!("tail tests exercise next_page only")
-        }
-
-        fn session(&self, _session_id: &str) -> Result<SessionTimelineReport, StorageError> {
-            unimplemented!("tail tests exercise next_page only")
-        }
-
-        fn next_page(&self, request: EventPageRequest) -> Result<EventPage, StorageError> {
-            self.requests.borrow_mut().push(request);
-            Ok(self
-                .pages
-                .borrow_mut()
-                .pop_front()
-                .expect("test script ran out of pages"))
-        }
-
-        fn newest_page(&self, limit: usize) -> Result<EventPage, StorageError> {
-            self.newest_limits.borrow_mut().push(limit);
-            Ok(self
-                .pages
-                .borrow_mut()
-                .pop_front()
-                .expect("test script ran out of pages"))
-        }
+    fn append(authority: &EventAuthority, session: &str, stream: &str) {
+        authority
+            .append_capability()
+            .append_durable(
+                EventEnvelope::new_domain(
+                    "2026-07-08T12:00:00Z".to_string(),
+                    session,
+                    "execution",
+                    stream,
+                    "execution.task.progress",
+                    None,
+                    json!({}),
+                ),
+                AppendMode::Plain,
+            )
+            .unwrap();
     }
 
     #[test]
@@ -348,17 +321,38 @@ mod tests {
 
     #[test]
     fn one_shot_defaults_to_the_most_recent_records() {
-        let port = ScriptedPort::with_health(vec![page(vec![record(90, "s", "s")], 90)], 100, 1);
-        let output = run(&port, "text", None, 16, false).unwrap();
-        assert!(output.contains("90  "));
-        assert!(port.requests.borrow().is_empty());
-        assert_eq!(&*port.newest_limits.borrow(), &[16]);
+        let authority = authority();
+        append(&authority, "old", "old");
+        append(&authority, "new", "new");
+        let output = run(
+            &authority.observability_capability(),
+            &authority.replay_capability(),
+            &authority.subscription_capability(),
+            "text",
+            None,
+            1,
+            false,
+        )
+        .unwrap();
+        assert!(output.lines().any(|line| line.starts_with("2  ")));
+        assert!(!output.lines().any(|line| line.starts_with("1  ")));
+        assert!(output.contains("scanned=2..=2 truncation=before"));
     }
 
     #[test]
     fn one_shot_json_is_pretty_page() {
-        let port = ScriptedPort::new(vec![page(vec![record(1, "s", "s")], 1)]);
-        let output = run(&port, "json", Some(0), 16, false).unwrap();
+        let authority = authority();
+        append(&authority, "s", "s");
+        let output = run(
+            &authority.observability_capability(),
+            &authority.replay_capability(),
+            &authority.subscription_capability(),
+            "json",
+            Some(0),
+            16,
+            false,
+        )
+        .unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(value["next_cursor"]["after_seq"], 1);
         // Pretty rendering distinguishes the one-shot page from the
@@ -367,27 +361,18 @@ mod tests {
     }
 
     #[test]
-    fn one_shot_default_uses_record_count_on_a_real_sparse_ledger() {
-        use std::sync::Arc;
-
-        use meld_events::{EventCursorRegistry, EventWriter, LedgerObservability};
-
-        let db = sled::Config::new().temporary(true).open().unwrap();
-        let store = meld_events::events::store::EventStore::shared(db.clone()).unwrap(); // boundary-allow: event-test
-        store.append_event(&record(10, "s", "s")).unwrap();
-        store.append_event(&record(90, "s", "s")).unwrap();
-        let registry = EventCursorRegistry::open(&db).unwrap();
-        let writer = EventWriter::spawn(Arc::clone(&store)); // boundary-allow: event-test
-        let port = LedgerObservability::new(
-            Arc::clone(&store),
-            writer.watermark(),
-            registry,
-            writer.dropped_handle(),
-        );
-
-        let output = run(&port, "text", None, 1, false).unwrap();
-        assert!(output.lines().any(|line| line.starts_with("90  ")));
-        assert!(!output.lines().any(|line| line.starts_with("10  ")));
-        assert!(output.contains("scanned=90..=90 truncation=before"));
+    fn authority_capability_rejects_zero_limit_honestly() {
+        let authority = authority();
+        let error = run(
+            &authority.observability_capability(),
+            &authority.replay_capability(),
+            &authority.subscription_capability(),
+            "text",
+            Some(0),
+            0,
+            false,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("replay limit must be in"));
     }
 }

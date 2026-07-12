@@ -1,6 +1,5 @@
 use crate::cli::parse::{Commands, ContextCommands};
-use crate::events::EventRecord;
-use crate::telemetry::ProgressRuntime;
+use crate::events::{EventRecord, EventReplayCapability, LedgerCursor, ReplayRequest};
 use owo_colors::OwoColorize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -22,7 +21,7 @@ pub struct LiveProgressHandle {
 
 impl LiveProgressHandle {
     pub fn start_if_supported(
-        runtime: Arc<ProgressRuntime>,
+        replay: EventReplayCapability,
         session_id: &str,
         command: &Commands,
     ) -> Option<Self> {
@@ -51,7 +50,6 @@ impl LiveProgressHandle {
 
         let stop_flag = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop_flag);
-        let thread_runtime = Arc::clone(&runtime);
         let thread_session = session_id.to_string();
 
         let join_handle = thread::spawn(move || {
@@ -60,13 +58,18 @@ impl LiveProgressHandle {
             let mut last_seq = 0u64;
 
             while !thread_stop.load(Ordering::Relaxed) {
-                if let Ok(events) = thread_runtime
-                    .store()
-                    .read_events_after(&thread_session, last_seq)
-                {
-                    for event in events {
+                if let Ok(page) = replay.replay(ReplayRequest {
+                    cursor: LedgerCursor {
+                        ledger_id: replay.ledger_identity(),
+                        after_seq: last_seq,
+                    },
+                    limit: meld_events::MAX_REPLAY_LIMIT,
+                }) {
+                    for event in page.records {
                         last_seq = last_seq.max(event.seq);
-                        reducer.apply(&event);
+                        if event.session == thread_session {
+                            reducer.apply(&event);
+                        }
                     }
                     if reducer.has_visible_state() {
                         let width = renderer.width();
@@ -77,12 +80,17 @@ impl LiveProgressHandle {
                 thread::sleep(PANEL_REFRESH_INTERVAL);
             }
 
-            if let Ok(events) = thread_runtime
-                .store()
-                .read_events_after(&thread_session, last_seq)
-            {
-                for event in events {
-                    reducer.apply(&event);
+            if let Ok(page) = replay.replay(ReplayRequest {
+                cursor: LedgerCursor {
+                    ledger_id: replay.ledger_identity(),
+                    after_seq: last_seq,
+                },
+                limit: meld_events::MAX_REPLAY_LIMIT,
+            }) {
+                for event in page.records {
+                    if event.session == thread_session {
+                        reducer.apply(&event);
+                    }
                 }
             }
             renderer.clear();

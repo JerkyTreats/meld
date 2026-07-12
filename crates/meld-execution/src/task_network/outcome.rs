@@ -150,9 +150,10 @@ pub enum PublicationState {
         receipt: Option<AppendReceipt>,
         /// Pre-authority sequence retained only to replay historical state
         /// hashes exactly until the receipt is upgraded.
-        // TODO compat-shim(E5): remove after
+        // TODO compat-shim: remove after the minimum supported persisted task-network
+        // schema guarantees identity-bearing receipts. Until then,
         // task_network_publication_bridge::persisted_legacy_receipt_reopens_and_upgrades
-        // proves all stored event_seq-only publication states are rewritten.
+        // proves event_seq-only state is decoded, retried, and durably upgraded.
         #[serde(rename = "event_seq")]
         #[serde(default, skip_serializing_if = "Option::is_none")]
         legacy_event_seq: Option<u64>,

@@ -5,7 +5,6 @@ use serde_json::from_value;
 use meld_events::error::EventAuthorityError;
 
 use crate::error::StorageError;
-use crate::events::store::EventStore;
 use crate::events::{EventPage, EventRecord, LedgerCursor, LedgerIdentity, ReplayRequest};
 use crate::task::ExecutionTaskEventData;
 
@@ -65,17 +64,6 @@ impl ExecutionProjection {
                 .map_err(|error| EventAuthorityError::Internal {
                     message: error.to_string(),
                 })?;
-        }
-        Ok(projection)
-    }
-
-    /// TODO compat-shim: E5 removes raw-store replay after
-    /// `product_event_authority_cutover` proves projection parity through
-    /// `replay_from_source`.
-    pub fn replay_from_store(store: &EventStore, after_seq: u64) -> Result<Self, StorageError> {
-        let mut projection = Self::default();
-        for event in store.read_all_events_after(after_seq)? {
-            projection.apply(&event)?;
         }
         Ok(projection)
     }

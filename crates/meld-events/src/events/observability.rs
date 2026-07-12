@@ -22,6 +22,7 @@ mod trace;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+#[cfg(any(test, feature = "test-support"))]
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -31,7 +32,9 @@ use crate::events::authority::{EventPage, LedgerCursor};
 use crate::events::registry::{ConsumerCursor, EventCursorRegistry};
 use crate::events::store::EventStore;
 use crate::events::writer::CommitWatermark;
-use crate::events::{DomainObjectRef, EventRecord, EventRecordRef, LedgerIdentity};
+#[cfg(any(test, feature = "test-support"))]
+use crate::events::EventRecord;
+use crate::events::{DomainObjectRef, EventRecordRef, LedgerIdentity};
 
 /// Largest page a caller may request from the streaming surface.
 pub const MAX_EVENT_PAGE_LIMIT: usize = 1_024;
@@ -49,6 +52,7 @@ pub const MAX_SESSION_SCAN_EVENTS: usize = 100_000;
 /// Point-in-time queries answer health, flow, causality, and session
 /// questions; `next_page` is the universal stream primitive a tail command,
 /// a TUI render loop, and a server-sent-events adapter all share.
+#[cfg(any(test, feature = "test-support"))]
 pub trait EventObservabilityPort {
     /// Ledger health: tip, watermark, retention, drops, consumer lag, rates.
     fn health(&self) -> Result<EventHealthReport, StorageError>;
@@ -68,11 +72,7 @@ pub trait EventObservabilityPort {
     fn next_page(&self, request: EventPageRequest) -> Result<EventPage, StorageError>;
 
     /// Newest bounded records selected by record count rather than sequence
-    /// distance. This compatibility surface keeps sparse imported ledgers
-    /// honest until direct CLI reads move to the product authority in E5.
-    /// TODO compat-shim: E5 removes this method after
-    /// `product_event_authority_cutover` proves direct CLI tailing through the
-    /// authority replay capability on sparse history.
+    /// distance.
     fn newest_page(&self, limit: usize) -> Result<EventPage, StorageError>;
 }
 
@@ -108,9 +108,7 @@ pub enum TraceSubject {
 
 /// Cursor-paged stream request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-// TODO compat-shim: E5 replaces this identity-less request after
-// product_event_authority_cutover proves direct CLI paging passes a
-// LedgerCursor through the resolved authority.
+#[cfg(any(test, feature = "test-support"))]
 pub struct EventPageRequest {
     /// Compatibility cursor: only events with higher sequences are returned.
     pub after_seq: u64,
@@ -125,9 +123,7 @@ pub struct EventPageRequest {
 /// Records travel intact as canonical products; the page adds only the
 /// cursor operational metadata around them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-// TODO compat-shim: E5 removes this identity-less wire type after
-// product_event_authority_cutover proves every direct CLI page uses
-// authority::EventPage. Canonical observability no longer constructs it.
+#[cfg(any(test, feature = "test-support"))]
 pub struct LegacyEventPage {
     /// Records in sequence order.
     pub records: Vec<EventRecord>,
@@ -367,22 +363,21 @@ pub struct LedgerObservability {
 impl LedgerObservability {
     /// Binds the backing to an opened store, its watermark, the registry,
     /// and the writer's shared drop counter.
-    pub fn new(
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn new(
         store: Arc<EventStore>,
         watermark: Arc<CommitWatermark>,
         registry: EventCursorRegistry,
         dropped: Arc<AtomicU64>,
     ) -> Self {
-        // TODO compat-shim: E5 removes this infallible raw construction after
-        // product_event_authority_cutover and observability_contracts cover
-        // typed identity corruption through `try_new` and EventAuthority.
         Self::try_new(store, watermark, registry, dropped)
             .expect("legacy observability backing requires a valid persisted ledger identity")
     }
 
     /// Compatibility constructor that establishes or validates the ledger's
     /// persisted identity without inventing an identity per report.
-    pub fn try_new(
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn try_new(
         store: Arc<EventStore>,
         watermark: Arc<CommitWatermark>,
         registry: EventCursorRegistry,
@@ -435,6 +430,7 @@ impl LedgerObservability {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl EventObservabilityPort for LedgerObservability {
     fn health(&self) -> Result<EventHealthReport, StorageError> {
         health::compute(self)
@@ -553,6 +549,7 @@ impl crate::events::authority::EventObservabilityCapability {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn stable_ledger_identity(store: &EventStore) -> Result<LedgerIdentity, StorageError> {
     let bytes = match store.ledger_identity_bytes()? {
         Some(raw) => raw,
@@ -568,6 +565,7 @@ fn stable_ledger_identity(store: &EventStore) -> Result<LedgerIdentity, StorageE
     })
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn read_page(
     store: &EventStore,
     ledger_id: LedgerIdentity,
@@ -601,7 +599,7 @@ fn read_page(
     })
 }
 
-fn read_newest_page(
+pub(crate) fn read_newest_page(
     store: &EventStore,
     ledger_id: LedgerIdentity,
     limit: usize,
@@ -654,6 +652,7 @@ fn validate_nonzero_bound(name: &str, value: usize, maximum: usize) -> Result<()
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn validate_upper_bound(name: &str, value: u64, maximum: u64) -> Result<(), StorageError> {
     if value > maximum {
         return Err(invalid_request(format!(
@@ -664,9 +663,5 @@ fn validate_upper_bound(name: &str, value: u64, maximum: u64) -> Result<(), Stor
 }
 
 fn invalid_request(message: String) -> StorageError {
-    // TODO compat-shim: E2 replaces this legacy StorageError::InvalidPath
-    // mapping with EventAuthorityError::InvalidRequest. Remove it after the
-    // observability_contracts invalid-limit parity cases pass through the
-    // authority contract.
     StorageError::InvalidPath(message)
 }

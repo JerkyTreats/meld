@@ -13,26 +13,9 @@
 //! durable bytes. `*_best_effort` calls enqueue and return; a full queue
 //! drops the event, counts it, and logs, never blocking the producer.
 //!
-//! # Example
-//!
-//! ```rust
-//! use meld_events::EventRuntime;
-//! use serde_json::json;
-//!
-//! let db = sled::Config::new().temporary(true).open().unwrap();
-//! let runtime = EventRuntime::new(db).unwrap();
-//! runtime.emit_domain_event(
-//!     "session-a",
-//!     "execution",
-//!     "workflow-a",
-//!     "execution.started",
-//!     None,
-//!     json!({ "started": true }),
-//! ).unwrap();
-//!
-//! let events = runtime.store().read_events("session-a").unwrap();
-//! assert_eq!(events.len(), 1);
-//! ```
+//! Production producers receive an
+//! [`crate::events::EventAppendCapability`] from the authority. This facade
+//! remains internal for compatibility characterization only.
 
 use std::sync::Arc;
 
@@ -53,16 +36,12 @@ pub struct EventRuntime {
 
 impl EventRuntime {
     /// Creates a runtime and its writer over a dedicated database handle.
-    pub fn new(db: sled::Db) -> Result<Self, StorageError> {
-        // TODO compat-shim: E5 removes raw runtime construction once product
-        // append and CLI route parity tests consume EventAuthority capabilities.
+    pub(crate) fn new(db: sled::Db) -> Result<Self, StorageError> {
         Ok(Self::from_store(EventStore::shared(db)?))
     }
 
     /// Creates a runtime and its writer over an already opened store.
-    pub fn from_store(store: Arc<EventStore>) -> Self {
-        // TODO compat-shim: E5 removes raw store injection with `new` after
-        // the same authority route and recovery gates pass.
+    pub(crate) fn from_store(store: Arc<EventStore>) -> Self {
         let writer = Arc::new(EventWriter::spawn(Arc::clone(&store)));
         Self { store, writer }
     }
@@ -214,9 +193,7 @@ impl EventRuntime {
     }
 
     /// Returns the writer's committed-sequence watermark for consumers.
-    pub fn watermark(&self) -> Arc<CommitWatermark> {
-        // TODO compat-shim: E5 removes this handle after telemetry and runtime
-        // callers consume EventWatermarkCapability with recovery parity.
+    pub(crate) fn watermark(&self) -> Arc<CommitWatermark> {
         self.writer.watermark()
     }
 
@@ -226,16 +203,12 @@ impl EventRuntime {
     }
 
     /// Returns the shared drop counter for observability backings.
-    pub fn dropped_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
-        // TODO compat-shim: E5 removes this handle after observability reads
-        // derive drop diagnostics from EventObservabilityCapability.
+    pub(crate) fn dropped_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
         self.writer.dropped_handle()
     }
 
     /// Returns the backing event store for queries and tests.
-    pub fn store(&self) -> &EventStore {
-        // TODO compat-shim: E5 removes raw store access after product CLI,
-        // telemetry, and graph route parity tests use authority capabilities.
+    pub(crate) fn store(&self) -> &EventStore {
         &self.store
     }
 }

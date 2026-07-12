@@ -1,7 +1,6 @@
 use crate::integration::with_xdg_env;
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
 use meld::cli::{Commands, RunContext, WorkflowCommands};
-use meld::compat::{GraphRuntime, TraversalStore};
 use meld::config::{xdg, AgentConfig, ProviderConfig, ProviderType};
 use meld::events::DomainObjectRef;
 use meld::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
@@ -9,7 +8,7 @@ use meld::workflow::{
     build_workflow_task_path_runtime, execute_registered_workflow, RegisteredWorkflowProfile,
     WorkflowExecutionRequest, WorkflowStateStore, WorkflowThreadStatus,
 };
-use meld::world_state::graph::query::TraversalQuery;
+use meld_events::{EventRecord, LedgerCursor, ReplayRequest};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -150,11 +149,7 @@ fn docs_writer_profile(run_context: &RunContext) -> RegisteredWorkflowProfile {
 }
 
 fn latest_frame_ref_task_run_id(run_context: &RunContext) -> String {
-    run_context
-        .progress_runtime()
-        .store()
-        .read_all_events_after(0)
-        .unwrap()
+    product_event_records(run_context)
         .into_iter()
         .rev()
         .find_map(|event| {
@@ -182,15 +177,41 @@ fn current_frame_ref_anchor(
     run_context: &RunContext,
     task_run_id: &str,
 ) -> meld::world_state::graph::contracts::AnchorSelectionRecord {
-    let traversal =
-        TraversalStore::new(run_context.progress_runtime().store().db().clone()).unwrap();
-    TraversalQuery::new(&traversal)
+    run_context
+        .api()
+        .world_model_queries()
+        .expect("RunContext should install shared world model queries")
         .current_artifact_for_task_run(
             &DomainObjectRef::new("execution", "task_run", task_run_id).unwrap(),
             "frame_ref",
         )
         .unwrap()
         .unwrap()
+}
+
+fn product_event_records(run_context: &RunContext) -> Vec<EventRecord> {
+    let replay = run_context.event_replay_capability();
+    let ledger_id = replay.ledger_identity();
+    let mut cursor = LedgerCursor {
+        ledger_id,
+        after_seq: 0,
+    };
+    let mut records = Vec::new();
+
+    loop {
+        let page = replay
+            .replay(ReplayRequest {
+                cursor,
+                limit: 1024,
+            })
+            .unwrap();
+        let reached_tip = page.next_cursor.after_seq >= page.coverage.tip_seq;
+        cursor = page.next_cursor;
+        records.extend(page.records);
+        if reached_tip {
+            return records;
+        }
+    }
 }
 
 #[test]
@@ -368,17 +389,9 @@ fn workflow_task_path_live_and_replay_artifact_resolution_match() {
         let task_run_id = latest_frame_ref_task_run_id(&run_context);
         let live_anchor = current_frame_ref_anchor(&run_context, &task_run_id);
 
-        let db = run_context.progress_runtime().store().db().clone();
-        let replay_runtime = GraphRuntime::new(db).unwrap();
-        replay_runtime.catch_up().unwrap();
-        let replay_traversal = replay_runtime.traversal_store();
-        let replay_anchor = TraversalQuery::new(replay_traversal.as_ref())
-            .current_artifact_for_task_run(
-                &DomainObjectRef::new("execution", "task_run", &task_run_id).unwrap(),
-                "frame_ref",
-            )
-            .unwrap()
-            .unwrap();
+        drop(run_context);
+        let reopened = RunContext::new(workspace_root, None).unwrap();
+        let replay_anchor = current_frame_ref_anchor(&reopened, &task_run_id);
 
         assert_eq!(live_anchor.anchor_id, replay_anchor.anchor_id);
         assert_eq!(live_anchor.target, replay_anchor.target);

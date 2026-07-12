@@ -9,7 +9,7 @@ use meld_events::events::remote::conformance::{
 use meld_events::events::remote::{
     EventAuthorityContract, LocalEventAuthorityClient, SerdeLoopbackEventAuthorityClient,
 };
-use meld_events::events::store::EventStore;
+use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
 use meld_events::{EventAuthority, EventAuthorityOpenOptions, LedgerIdentity};
 
 #[derive(Clone, Copy)]

@@ -1,24 +1,24 @@
 //! Trace subcommand: renders causal chains and parses subject selectors.
 
-use meld_events::events::observability::{CoverageTruncation, EventObservabilityPort};
+use meld_events::events::observability::CoverageTruncation;
 use meld_events::{
-    DomainObjectRef, EventTraceReport, LedgerObservability, TraceLink, TraceSubject,
+    DomainObjectRef, EventObservabilityCapability, EventTraceReport, TraceLink, TraceSubject,
 };
 
 use crate::error::ApiError;
-use crate::events::tooling::{render, surface_error};
+use crate::events::tooling::{render, surface_authority_error};
 
 pub(super) fn run(
-    port: &LedgerObservability,
+    observability: &EventObservabilityCapability,
     format: &str,
     object: Option<&str>,
     stream: Option<&str>,
     seq: Option<u64>,
 ) -> Result<String, ApiError> {
     let subject = parse_subject(object, stream, seq)?;
-    let report = port
-        .trace(subject)
-        .map_err(|err| surface_error("trace", err))?;
+    let report = observability
+        .trace(observability.ledger_identity(), subject)
+        .map_err(|err| surface_authority_error("trace", err))?;
     render(format, &report, format_text)
 }
 

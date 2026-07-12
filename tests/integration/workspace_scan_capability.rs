@@ -22,14 +22,23 @@ use meld::workspace::capability::WorkspaceScanCapability;
 use meld::workspace::scan::{
     execute_workspace_scan, WorkspaceScanPolicy, WorkspaceScanRequest, WorkspaceScanStatus,
 };
+use meld_events::events::test_support::EventStore;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::integration::test_utils::open_authority_progress;
+
 fn create_test_api(
     workspace_root: &Path,
-) -> (ContextApi, Arc<ProgressRuntime>, String, tempfile::TempDir) {
+) -> (
+    ContextApi,
+    Arc<ProgressRuntime>,
+    Arc<EventStore>,
+    String,
+    tempfile::TempDir,
+) {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let store_path = temp_dir.path().join("store");
     let frame_storage_path = temp_dir.path().join("frames");
@@ -48,7 +57,9 @@ fn create_test_api(
         meld::provider::ProviderRegistry::new(),
     ));
     let lock_manager = Arc::new(NodeLockManager::new());
-    let progress = Arc::new(ProgressRuntime::new(db).unwrap());
+    let fixture = open_authority_progress(db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let session_id = progress
         .start_command_session("workspace.scan.capability".to_string())
         .unwrap();
@@ -64,7 +75,7 @@ fn create_test_api(
         workspace_root.to_path_buf(),
     );
 
-    (api, progress, session_id, temp_dir)
+    (api, progress, event_store, session_id, temp_dir)
 }
 
 fn fixture_workspace() -> tempfile::TempDir {
@@ -198,7 +209,7 @@ fn workspace_scan_contract_registers_in_task_path_runtime() {
 #[test]
 fn workspace_scan_capability_scans_fixture_tree() {
     let workspace = fixture_workspace();
-    let (api, progress, session_id, _store_dir) = create_test_api(workspace.path());
+    let (api, progress, event_store, session_id, _store_dir) = create_test_api(workspace.path());
     api.set_progress_context(progress.clone(), session_id.clone());
     let (_catalog, registry) = scan_registry();
 
@@ -292,7 +303,7 @@ fn workspace_scan_capability_scans_fixture_tree() {
 
     // Publication authority stays with the runtime: the capability reported
     // candidates above but appended nothing to the event store.
-    let events = progress.store().read_events_after(&session_id, 0).unwrap();
+    let events = event_store.read_events_after(&session_id, 0).unwrap();
     assert!(events.iter().all(|event| event.domain_id != "workspace_fs"));
     assert!(events
         .iter()
@@ -302,7 +313,7 @@ fn workspace_scan_capability_scans_fixture_tree() {
 #[test]
 fn workspace_scan_capability_second_scan_is_incremental() {
     let workspace = fixture_workspace();
-    let (api, _progress, session_id, _store_dir) = create_test_api(workspace.path());
+    let (api, _progress, _event_store, session_id, _store_dir) = create_test_api(workspace.path());
     let (_catalog, registry) = scan_registry();
 
     let first = invoke_scan(
@@ -370,7 +381,7 @@ fn workspace_scan_capability_second_scan_is_incremental() {
 #[test]
 fn workspace_scan_capability_filters_observed_refs_by_target_selector() {
     let workspace = fixture_workspace();
-    let (api, _progress, _session_id, _store_dir) = create_test_api(workspace.path());
+    let (api, _progress, _event_store, _session_id, _store_dir) = create_test_api(workspace.path());
     let (_catalog, registry) = scan_registry();
 
     let result = invoke_scan(
@@ -418,7 +429,8 @@ fn workspace_scan_publication_candidates_are_deterministic_for_a_fixed_tree() {
     // identical descriptors: node ids, path ordering, and candidate payloads
     // are pure functions of the tree and the bound session.
     let scan = || {
-        let (api, _progress, _session_id, _store_dir) = create_test_api(workspace.path());
+        let (api, _progress, _event_store, _session_id, _store_dir) =
+            create_test_api(workspace.path());
         let (_catalog, registry) = scan_registry();
         let result = invoke_scan(
             &api,
@@ -454,7 +466,7 @@ fn workspace_scan_publication_candidates_are_deterministic_for_a_fixed_tree() {
 #[test]
 fn workspace_scan_without_observed_collection_resolves_root_on_both_paths() {
     let workspace = fixture_workspace();
-    let (api, _progress, _session_id, _store_dir) = create_test_api(workspace.path());
+    let (api, _progress, _event_store, _session_id, _store_dir) = create_test_api(workspace.path());
     // The CLI scan path opts out of observed-ref collection.
     let request = WorkspaceScanRequest {
         workspace_root: workspace.path().to_path_buf(),

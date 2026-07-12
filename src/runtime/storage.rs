@@ -3,7 +3,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use meld_events::events::store::EventStore;
 use meld_execution::goals::PersistentGoalSetStore;
 use meld_execution::task::TaskArtifactRepoFactory;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
@@ -53,8 +52,6 @@ pub struct ProductStorageLayout {
 
 /// Opened product stores and execution-owned store factories.
 pub struct OpenProductStores {
-    /// Canonical event ledger for promoted semantic facts.
-    pub event_store: Arc<EventStore>,
     /// Workspace node record store.
     pub node_store: Arc<SledNodeRecordStore>,
     /// World model graph reducer state and traversal indexes.
@@ -84,8 +81,6 @@ pub enum ProductStorageError {
     Io(String),
     #[error("sled storage error: {0}")]
     Sled(String),
-    #[error("event store error: {0}")]
-    Events(String),
     #[error("world model store error: {0}")]
     WorldModel(String),
     #[error("execution store error: {0}")]
@@ -152,18 +147,12 @@ impl OpenProductStores {
     pub fn open(layout: &ProductStorageLayout) -> Result<Self, ProductStorageError> {
         layout.create_dirs()?;
 
-        let ledger_db = open_db(&layout.ledger_db)?;
         let workspace_db = open_db(&layout.workspace_db)?;
         let world_model_db = open_db(&layout.world_model_db)?;
         let execution_goals_db = open_db(&layout.execution_goals_db)?;
         let task_artifacts_db = open_db(&layout.task_artifacts_db)?;
 
         Ok(Self {
-            // TODO compat-shim: E5 removes raw canonical event storage from
-            // OpenProductStores after product_event_authority_cutover.
-            event_store: Arc::new(
-                EventStore::new(ledger_db).map_err(to_events)?, // boundary-allow: event-compat
-            ),
             node_store: Arc::new(SledNodeRecordStore::from_db(workspace_db)),
             traversal_store: Arc::new(
                 TraversalStore::new(world_model_db.clone()).map_err(to_world_model)?,
@@ -198,7 +187,6 @@ impl OpenProductStores {
     /// prove semantic convergence, release supervisor leases, or repair domain
     /// records after a failed checkpoint.
     pub fn flush_boundary(&self) -> Result<(), ProductStorageError> {
-        self.event_store.flush().map_err(to_events)?;
         self.node_store.flush().map_err(to_sled)?;
         self.traversal_store.flush().map_err(to_world_model)?;
         self.belief_store.flush().map_err(to_world_model)?;
@@ -221,10 +209,6 @@ fn create_dir_all(path: impl AsRef<Path>) -> Result<(), ProductStorageError> {
 
 fn open_db(path: &Path) -> Result<sled::Db, ProductStorageError> {
     sled::open(path).map_err(|error| ProductStorageError::Sled(error.to_string()))
-}
-
-fn to_events(error: impl ToString) -> ProductStorageError {
-    ProductStorageError::Events(error.to_string())
 }
 
 fn to_sled(error: impl ToString) -> ProductStorageError {

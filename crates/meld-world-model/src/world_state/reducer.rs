@@ -4,24 +4,8 @@
 //! supersedes conflicting generation claims, and emits world-state envelopes for
 //! downstream audit. Graph traversal and belief inference are separate reducers.
 //!
-//! # Example
-//!
-//! ```rust,no_run
-//! use meld_world_model::events::store::EventStore;
-//! use meld_world_model::world_state::reducer::WorldStateReducer;
-//! use meld_world_model::world_state::store::WorldStateStore;
-//!
-//! let temp = tempfile::tempdir().unwrap();
-//! let db = sled::open(temp.path()).unwrap();
-//! let ledger = EventStore::new(db.clone()).unwrap();
-//! let store = WorldStateStore::new(db).unwrap();
-//! let reducer = WorldStateReducer::replay_from_ledger(&ledger, &store, 0).unwrap();
-//! assert!(reducer.emitted_envelopes.is_empty());
-//! ```
-
 use crate::error::StorageError;
-use crate::events::store::EventStore;
-use crate::events::{DomainObjectRef, EventEnvelope, EventRecord};
+use crate::events::{DomainObjectRef, EventEnvelope, EventRecord, EventRecordRef, LedgerIdentity};
 use crate::world_state::contracts::{ClaimKind, ClaimRecord, EvidenceRecord, SettlementStatus};
 use crate::world_state::events::{
     claim_added_envelope, claim_superseded_envelope, evidence_attached_envelope,
@@ -41,19 +25,25 @@ pub struct WorldStateReducer {
 }
 
 impl WorldStateReducer {
-    /// Replay execution events after a cursor into claim storage.
-    pub fn replay_from_ledger(
-        ledger: &EventStore,
+    /// Replay supplied execution records into claim storage.
+    ///
+    /// The application owns ledger replay and supplies identity-validated,
+    /// ordered records through its event-authority adapter.
+    pub fn replay_events<I>(
         store: &WorldStateStore,
-        after_seq: u64,
-    ) -> Result<Self, StorageError> {
+        ledger_id: LedgerIdentity,
+        events: I,
+    ) -> Result<Self, StorageError>
+    where
+        I: IntoIterator<Item = EventRecord>,
+    {
         let mut reducer = Self {
             current_claims: CurrentClaimProjection::default(),
             provenance: ClaimProvenanceProjection::default(),
             emitted_envelopes: Vec::new(),
         };
-        for event in ledger.read_all_events_after(after_seq)? {
-            reducer.apply_event(store, &event)?;
+        for event in events {
+            reducer.apply_event(store, ledger_id, &event)?;
         }
         Ok(reducer)
     }
@@ -61,6 +51,7 @@ impl WorldStateReducer {
     fn apply_event(
         &mut self,
         store: &WorldStateStore,
+        ledger_id: LedgerIdentity,
         event: &EventRecord,
     ) -> Result<(), StorageError> {
         if event.domain_id != "execution" {
@@ -72,19 +63,37 @@ impl WorldStateReducer {
                 let Some(subject) = find_object_ref(&event.objects, "workspace_fs", "node") else {
                     return Ok(());
                 };
-                self.materialize_claim(store, event, subject, ClaimKind::GenerationSucceeded)?;
+                self.materialize_claim(
+                    store,
+                    ledger_id,
+                    event,
+                    subject,
+                    ClaimKind::GenerationSucceeded,
+                )?;
             }
             "execution.control.node_failed" => {
                 let Some(subject) = find_object_ref(&event.objects, "workspace_fs", "node") else {
                     return Ok(());
                 };
-                self.materialize_claim(store, event, subject, ClaimKind::GenerationFailed)?;
+                self.materialize_claim(
+                    store,
+                    ledger_id,
+                    event,
+                    subject,
+                    ClaimKind::GenerationFailed,
+                )?;
             }
             "execution.task.artifact_emitted" => {
                 let Some(subject) = find_object_ref(&event.objects, "execution", "task_run") else {
                     return Ok(());
                 };
-                self.materialize_claim(store, event, subject, ClaimKind::ArtifactAvailable)?;
+                self.materialize_claim(
+                    store,
+                    ledger_id,
+                    event,
+                    subject,
+                    ClaimKind::ArtifactAvailable,
+                )?;
             }
             _ => {}
         }
@@ -95,6 +104,7 @@ impl WorldStateReducer {
     fn materialize_claim(
         &mut self,
         store: &WorldStateStore,
+        ledger_id: LedgerIdentity,
         event: &EventRecord,
         subject: DomainObjectRef,
         claim_kind: ClaimKind,
@@ -152,12 +162,18 @@ impl WorldStateReducer {
                 claim_id.clone(),
                 event.seq,
             );
-            self.emitted_envelopes.push(claim_superseded_envelope(
-                &event.session,
-                ClaimSupersededEventData {
-                    claim: superseded_claim.clone(),
-                },
-            ));
+            self.emitted_envelopes.push(
+                claim_superseded_envelope(
+                    &event.session,
+                    ClaimSupersededEventData {
+                        claim: superseded_claim.clone(),
+                    },
+                )
+                .with_source_records(vec![EventRecordRef {
+                    ledger_id,
+                    seq: event.seq,
+                }]),
+            );
         }
 
         let claim_fact_id = format!("world_state::claim_added::{claim_id}");
@@ -210,18 +226,28 @@ impl WorldStateReducer {
             source_fact_id.clone(),
             event.seq,
         );
-        self.emitted_envelopes.push(claim_added_envelope(
-            &event.session,
-            ClaimAddedEventData {
-                claim: claim.clone(),
-            },
-        ));
-        self.emitted_envelopes.push(evidence_attached_envelope(
-            &event.session,
-            EvidenceAttachedEventData {
-                evidence: evidence.clone(),
-            },
-        ));
+        let source_record = EventRecordRef {
+            ledger_id,
+            seq: event.seq,
+        };
+        self.emitted_envelopes.push(
+            claim_added_envelope(
+                &event.session,
+                ClaimAddedEventData {
+                    claim: claim.clone(),
+                },
+            )
+            .with_source_records(vec![source_record]),
+        );
+        self.emitted_envelopes.push(
+            evidence_attached_envelope(
+                &event.session,
+                EvidenceAttachedEventData {
+                    evidence: evidence.clone(),
+                },
+            )
+            .with_source_records(vec![source_record]),
+        );
 
         Ok(())
     }

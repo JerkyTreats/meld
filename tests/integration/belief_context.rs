@@ -123,9 +123,8 @@ fn belief_view(subject: NodeID, seed: SeededBelief) -> BeliefView {
 /// the sled store takes an exclusive lock; the handle drops before returning
 /// so the next `RunContext` can open the store.
 fn seed_belief_views(workspace_root: &Path, seeds: Vec<(NodeID, SeededBelief)>) {
-    let store_path = meld::config::xdg::workspace_data_dir(workspace_root)
-        .unwrap()
-        .join("store");
+    let store_path = meld::config::xdg::workspace_data_dir(workspace_root).unwrap();
+    let store_path = store_path.join("store");
     let db = sled::open(&store_path).unwrap();
     let store = BeliefStore::new(db).unwrap();
     for (subject, seed) in seeds {

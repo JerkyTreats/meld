@@ -1033,7 +1033,7 @@ fn last_error_code(report: &WorkerTickReport) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use crate::runtime::assembly::{ProductRuntimeAssembly, ProductRuntimeConfig};
-    use meld_events::{DomainObjectRef, EventEnvelope};
+    use meld_events::{AppendMode, DomainObjectRef, EventEnvelope};
     use serde_json::json;
 
     use super::*;
@@ -1378,9 +1378,9 @@ mod tests {
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
         let subject = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
         assembly
-            .stores()
-            .event_store
-            .append_envelope(
+            .event_authority()
+            .append_capability()
+            .append_durable(
                 EventEnvelope::new_domain(
                     "2026-06-22T00:00:00Z".to_string(),
                     "session-a",
@@ -1392,6 +1392,7 @@ mod tests {
                 )
                 .with_graph(vec![subject], Vec::new())
                 .with_record_id("workspace-node-a"),
+                AppendMode::Idempotent,
             )
             .unwrap();
         let mut supervisor = RuntimeSupervisor::start(

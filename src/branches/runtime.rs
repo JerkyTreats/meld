@@ -7,7 +7,11 @@ use crate::branches::contracts::{
     BranchMigrationStepStatus, BranchStatusRow, BranchesStatusOutput, ResolvedBranch,
 };
 use crate::branches::{catalog, ledger, locator, manifest};
+use crate::config::ConfigLoader;
 use crate::error::ApiError;
+use crate::events::binding::resolve_product_event_authority;
+use crate::runtime::ports::{ProductRuntimePorts, ProviderPortConfig};
+use crate::runtime::storage::{OpenProductStores, ProductStorageLayout};
 use crate::world_state::graph::runtime::GraphRuntime;
 
 #[derive(Debug, Clone, Default)]
@@ -68,31 +72,25 @@ impl BranchRuntime {
         let branch_catalog = catalog::load(&catalog_path)?;
         for entry in branch_catalog.branches {
             let resolved = resolved_branch_from_catalog_entry(&entry);
-            let store_path = entry
+            let legacy_store_path = entry
                 .store_path
                 .as_ref()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| locator::branch_store_path(&resolved.data_home_path));
-            let db = sled::open(&store_path).map_err(to_api_storage_error)?;
-            let graph_runtime = GraphRuntime::new(db).map_err(ApiError::from)?;
-            match graph_runtime.catch_up() {
-                Ok(applied_events) => {
-                    let last_reduced_seq = graph_runtime
-                        .traversal_store()
-                        .last_reduced_seq()
-                        .map_err(ApiError::from)?;
+            match migrate_branch_graph(&resolved) {
+                Ok((last_reduced_seq, applied_events, projection_store_path)) => {
                     self.record_graph_success(
                         &resolved,
                         last_reduced_seq,
                         applied_events,
-                        Some(store_path.clone()),
+                        Some(projection_store_path),
                     )?;
                 }
                 Err(err) => {
                     self.record_graph_failure(
                         &resolved,
                         &err.to_string(),
-                        Some(store_path.clone()),
+                        Some(legacy_store_path.clone()),
                     )?;
                 }
             }
@@ -113,6 +111,7 @@ impl BranchRuntime {
     pub fn record_branch_graph_catch_up_success(
         &self,
         branch: &BranchHandle,
+        projection_store_path: &Path,
         last_reduced_seq: u64,
         applied_events: usize,
     ) -> Result<(), ApiError> {
@@ -120,23 +119,20 @@ impl BranchRuntime {
             branch.resolved(),
             last_reduced_seq,
             applied_events,
-            Some(locator::branch_store_path(
-                &branch.resolved().data_home_path,
-            )),
+            Some(projection_store_path.to_path_buf()),
         )
     }
 
     pub fn record_branch_graph_catch_up_failure(
         &self,
         branch: &BranchHandle,
+        projection_store_path: &Path,
         error: &str,
     ) -> Result<(), ApiError> {
         self.record_graph_failure(
             branch.resolved(),
             error,
-            Some(locator::branch_store_path(
-                &branch.resolved().data_home_path,
-            )),
+            Some(projection_store_path.to_path_buf()),
         )
     }
 
@@ -472,6 +468,45 @@ impl BranchRuntime {
     }
 }
 
+fn migrate_branch_graph(resolved: &ResolvedBranch) -> Result<(u64, usize, PathBuf), ApiError> {
+    let config = ConfigLoader::load(&resolved.canonical_locator)?;
+    let (legacy_store_path, _, _) = config
+        .system
+        .storage
+        .resolve_paths(&resolved.canonical_locator)?;
+    let product_root = config
+        .system
+        .storage
+        .resolve_product_root(&resolved.canonical_locator)?;
+    let layout = ProductStorageLayout::from_root(product_root);
+    let resolved_authority =
+        resolve_product_event_authority(resolved, &layout.ledger_db, &legacy_store_path)
+            .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+    let stores = std::sync::Arc::new(
+        OpenProductStores::open(&layout)
+            .map_err(|error| ApiError::ConfigError(error.to_string()))?,
+    );
+    let ports = ProductRuntimePorts::from_authority(
+        stores.as_ref(),
+        resolved_authority.authority.as_ref(),
+        ProviderPortConfig::default(),
+    )
+    .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+    let graph_runtime = GraphRuntime::from_ports(
+        std::sync::Arc::new(ports.event_replay().clone()),
+        std::sync::Arc::new(ports.event_append().clone()),
+        std::sync::Arc::new(ports.graph_cursor().clone()),
+        std::sync::Arc::clone(&stores.traversal_store),
+    )
+    .map_err(ApiError::from)?;
+    let applied_events = graph_runtime.catch_up().map_err(ApiError::from)?;
+    let last_reduced_seq = graph_runtime
+        .durable_event_cursor()
+        .map_err(ApiError::from)?
+        .after_seq;
+    Ok((last_reduced_seq, applied_events, layout.world_model_db))
+}
+
 fn append_started(
     resolved: &ResolvedBranch,
     plan_id: &str,
@@ -569,12 +604,6 @@ fn resolved_branch_from_catalog_entry(entry: &BranchCatalogEntry) -> ResolvedBra
         manifest_path: data_home_path.join("branch_manifest.json"),
         ledger_path: data_home_path.join("branch_migration_ledger.jsonl"),
     }
-}
-
-fn to_api_storage_error(error: sled::Error) -> ApiError {
-    ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::other(
-        format!("Failed to open sled database: {}", error),
-    )))
 }
 
 fn timestamp() -> String {

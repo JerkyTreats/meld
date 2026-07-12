@@ -13,6 +13,7 @@ const TREE_META: &str = "obs_session_meta";
 
 #[derive(Clone)]
 pub struct SessionStore {
+    db: Db,
     sessions: Tree,
     meta: Tree,
 }
@@ -20,6 +21,7 @@ pub struct SessionStore {
 impl SessionStore {
     pub fn new(db: Db) -> Result<Self, StorageError> {
         Ok(Self {
+            db: db.clone(),
             sessions: db.open_tree(TREE_SESSIONS).map_err(to_storage_io)?,
             meta: db.open_tree(TREE_META).map_err(to_storage_io)?,
         })
@@ -147,6 +149,12 @@ impl SessionStore {
         self.meta
             .remove(session_id.as_bytes())
             .map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    /// Flushes session compatibility state without coupling it to event storage.
+    pub fn flush(&self) -> Result<(), StorageError> {
+        self.db.flush().map_err(to_storage_io)?;
         Ok(())
     }
 }

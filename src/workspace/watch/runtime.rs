@@ -654,16 +654,32 @@ mod tests {
     use crate::agent::{AgentIdentity, AgentRegistry, AgentRole};
     use crate::config::{MerkleConfig, ProviderConfig, ProviderType, WorkflowConfig};
     use crate::context::frame::storage::FrameStorage;
+    use crate::events::{EventAuthority, EventAuthorityOpenOptions};
     use crate::heads::HeadIndex;
     use crate::prompt_context::PromptContextArtifactStorage;
     use crate::provider::ProviderRegistry;
+    use crate::session::{SessionRuntime, SessionStore};
     use crate::store::persistence::SledNodeRecordStore;
     use crate::store::{NodeRecord, NodeType};
     use crate::telemetry::ProgressRuntime;
     use crate::workflow::WorkflowRegistry;
     use crate::workspace::events::WorkspaceNodeObservedEventData;
+    use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _}; // boundary-allow: event-test
     use std::path::Path;
     use tempfile::TempDir;
+
+    fn open_test_progress(db: sled::Db) -> (Arc<ProgressRuntime>, Arc<EventStore>) {
+        let authority =
+            EventAuthority::open(db.clone(), EventAuthorityOpenOptions::default()).unwrap();
+        let event_store = EventStore::shared(db.clone()).unwrap(); // boundary-allow: event-test
+        let session_store = SessionStore::shared(db).unwrap();
+        let sessions = Arc::new(SessionRuntime::new(session_store));
+        let progress = Arc::new(ProgressRuntime::from_capabilities(
+            authority.append_capability(),
+            sessions,
+        ));
+        (progress, event_store)
+    }
 
     fn create_test_api(workspace_root: &Path) -> ContextApi {
         let store_path = workspace_root.join("store");
@@ -726,10 +742,10 @@ mod tests {
     fn create_watch_test_runtime(
         temp: &TempDir,
         workspace_root: PathBuf,
-    ) -> (WatchDaemon, Arc<ProgressRuntime>, String) {
+    ) -> (WatchDaemon, Arc<ProgressRuntime>, Arc<EventStore>, String) {
         let api = Arc::new(create_test_api(&workspace_root));
         let progress_db = sled::open(temp.path().join("progress")).unwrap();
-        let progress = Arc::new(ProgressRuntime::new(progress_db).unwrap());
+        let (progress, event_store) = open_test_progress(progress_db);
         let session_id = progress
             .start_command_session("workspace.watch".to_string())
             .unwrap();
@@ -741,7 +757,7 @@ mod tests {
             ..WatchConfig::default()
         };
         let daemon = WatchDaemon::new(api, config).unwrap();
-        (daemon, progress, session_id)
+        (daemon, progress, event_store, session_id)
     }
 
     #[test]
@@ -939,7 +955,7 @@ failure_policy:
             .unwrap();
 
         let progress_db = sled::open(temp.path().join("progress-watch-workflow")).unwrap();
-        let progress = Arc::new(ProgressRuntime::new(progress_db).unwrap());
+        let (progress, event_store) = open_test_progress(progress_db);
         let session_id = progress
             .start_command_session("workspace.watch".to_string())
             .unwrap();
@@ -955,7 +971,7 @@ failure_policy:
         daemon.ensure_agent_frames_batched(&[node_id]).unwrap();
         progress.barrier().unwrap();
 
-        let events = progress.store().read_events_after(&session_id, 0).unwrap();
+        let events = event_store.read_events_after(&session_id, 0).unwrap();
         let result = events
             .iter()
             .find(|event| event.event_type == "workflow_watch_result")
@@ -973,14 +989,14 @@ failure_policy:
         let target = workspace_root.join("doc.txt");
         std::fs::write(&target, "hello").unwrap();
 
-        let (daemon, progress, session_id) =
+        let (daemon, progress, event_store, session_id) =
             create_watch_test_runtime(&temp, workspace_root.clone());
         daemon
             .process_events(vec![ChangeEvent::Modified(target)])
             .unwrap();
         progress.barrier().unwrap();
 
-        let emitted = progress.store().read_events_after(&session_id, 0).unwrap();
+        let emitted = event_store.read_events_after(&session_id, 0).unwrap();
         assert!(emitted
             .iter()
             .any(|event| event.event_type == "file_changed"));
@@ -1009,7 +1025,7 @@ failure_policy:
         let target = workspace_root.join("doc.txt");
         std::fs::write(&target, "hello").unwrap();
 
-        let (daemon, progress, session_id) =
+        let (daemon, progress, event_store, session_id) =
             create_watch_test_runtime(&temp, workspace_root.clone());
         daemon
             .process_events(vec![ChangeEvent::Modified(target.clone())])
@@ -1022,7 +1038,7 @@ failure_policy:
             .unwrap();
         progress.barrier().unwrap();
 
-        let events = progress.store().read_events_after(&session_id, 0).unwrap();
+        let events = event_store.read_events_after(&session_id, 0).unwrap();
         let mut source_ids = std::collections::BTreeSet::new();
         for event in events
             .iter()
@@ -1045,14 +1061,13 @@ failure_policy:
         let target = workspace_root.join("doc.txt");
         std::fs::write(&target, "hello").unwrap();
 
-        let (daemon, progress, session_id) =
+        let (daemon, progress, event_store, session_id) =
             create_watch_test_runtime(&temp, workspace_root.clone());
         daemon
             .process_events(vec![ChangeEvent::Modified(target.clone())])
             .unwrap();
         progress.barrier().unwrap();
-        let first_selected = progress
-            .store()
+        let first_selected = event_store
             .read_events_after(&session_id, 0)
             .unwrap()
             .into_iter()
@@ -1063,8 +1078,7 @@ failure_policy:
             .process_events(vec![ChangeEvent::Modified(target.clone())])
             .unwrap();
         progress.barrier().unwrap();
-        let same_root_selected = progress
-            .store()
+        let same_root_selected = event_store
             .read_events_after(&session_id, 0)
             .unwrap()
             .into_iter()
@@ -1077,8 +1091,7 @@ failure_policy:
             .process_events(vec![ChangeEvent::Modified(target)])
             .unwrap();
         progress.barrier().unwrap();
-        let changed_root_selected = progress
-            .store()
+        let changed_root_selected = event_store
             .read_events_after(&session_id, 0)
             .unwrap()
             .into_iter()
@@ -1100,15 +1113,14 @@ failure_policy:
         std::fs::write(&changed, "hello").unwrap();
         std::fs::write(&untouched, "unchanged").unwrap();
 
-        let (daemon, progress, session_id) =
+        let (daemon, progress, event_store, session_id) =
             create_watch_test_runtime(&temp, workspace_root.clone());
         daemon
             .process_events(vec![ChangeEvent::Modified(changed.clone())])
             .unwrap();
         progress.barrier().unwrap();
 
-        let observed_paths: Vec<String> = progress
-            .store()
+        let observed_paths: Vec<String> = event_store
             .read_events_after(&session_id, 0)
             .unwrap()
             .into_iter()

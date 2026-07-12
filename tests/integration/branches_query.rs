@@ -1,22 +1,20 @@
 use meld::branches::{BranchQueryRuntime, BranchQueryScope, BranchRuntime};
-use meld::compat::{GraphRuntime, TraversalStore};
+use meld::compat::TraversalStore;
 use meld::context::events::{frame_added_envelope, head_selected_envelope};
 use meld::context::frame::Basis;
 use meld::task::{build_execution_task_envelope, TaskEvent};
-use meld::telemetry::events::{ProgressEnvelope, ProgressEvent};
+use meld::telemetry::events::ProgressEnvelope;
 use meld::telemetry::{DomainObjectRef, ProgressRuntime};
 use meld::workflow::events::{workflow_turn_completed_envelope, ExecutionWorkflowTurnEventData};
 use meld::world_state::graph::query::TraversalQuery;
 use meld::world_state::{GraphWalkSpec, TraversalDirection};
 use tempfile::TempDir;
 
+use crate::integration::test_utils::open_authority_progress;
 use crate::integration::with_xdg_data_home;
 
-fn append(runtime: &ProgressRuntime, envelope: ProgressEnvelope, seq: u64) {
-    runtime
-        .store()
-        .append_event(&ProgressEvent::from_envelope(envelope, seq))
-        .unwrap();
+fn append(runtime: &ProgressRuntime, envelope: ProgressEnvelope, _seq: u64) {
+    runtime.emit_envelope(envelope).unwrap();
 }
 
 fn node_ref(node_id: [u8; 32]) -> DomainObjectRef {
@@ -68,7 +66,9 @@ fn load_branch_graph(
     artifact_id: &str,
 ) {
     let db = sled::open(store_path).unwrap();
-    let progress = ProgressRuntime::new(db.clone()).unwrap();
+    let fixture = open_authority_progress(db.clone());
+    let graph_runtime = fixture.graph_runtime(db);
+    let progress = fixture.progress;
     append(
         &progress,
         frame_added_envelope(
@@ -100,7 +100,6 @@ fn load_branch_graph(
         4,
     );
 
-    let graph_runtime = GraphRuntime::new(db).unwrap();
     assert_eq!(graph_runtime.catch_up().unwrap(), 4);
 }
 

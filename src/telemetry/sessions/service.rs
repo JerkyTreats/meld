@@ -2,34 +2,38 @@
 
 use std::sync::Arc;
 
+use meld_events::error::EventAuthorityError;
 use serde_json::Value;
+use tracing::warn;
 
-use crate::error::ApiError;
-use crate::events::store::EventStore;
-use crate::events::EventRuntime;
+use crate::error::{ApiError, StorageError};
+use crate::events::{AppendMode, EventAppendCapability, EventEnvelope};
 use crate::session as lifecycle;
 use crate::session::events::{session_ended_envelope, session_started_envelope};
 
 #[derive(Clone)]
 pub struct ProgressRuntime {
-    events: Arc<EventRuntime>,
+    append: EventAppendCapability,
     sessions: Arc<lifecycle::SessionRuntime>,
 }
 
 impl ProgressRuntime {
-    pub fn new(db: sled::Db) -> Result<Self, crate::error::StorageError> {
-        // TODO compat-shim: E5 injects EventAppendCapability after
-        // product_event_authority_cutover and removes this writable runtime.
-        let events = Arc::new(EventRuntime::new(db.clone())?); // boundary-allow: event-compat
-        let session_store = Arc::new(lifecycle::SessionStore::new(db)?);
-        let sessions = Arc::new(lifecycle::SessionRuntime::new(session_store));
-        Ok(Self { events, sessions })
+    /// Constructs the production facade from product-resolved capabilities.
+    pub fn from_capabilities(
+        append: EventAppendCapability,
+        sessions: Arc<lifecycle::SessionRuntime>,
+    ) -> Self {
+        Self { append, sessions }
     }
 
     pub fn start_command_session(&self, command_name: String) -> Result<String, ApiError> {
         let session_id = self.sessions.start_command_session(command_name.clone())?;
-        self.events
-            .emit_envelope(session_started_envelope(&session_id, &command_name))?;
+        self.append
+            .append_durable(
+                session_started_envelope(&session_id, &command_name),
+                AppendMode::Plain,
+            )
+            .map_err(authority_api_error)?;
         Ok(session_id)
     }
 
@@ -40,8 +44,12 @@ impl ProgressRuntime {
         error: Option<String>,
     ) -> Result<(), ApiError> {
         let status = if success { "completed" } else { "failed" };
-        self.events
-            .emit_envelope(session_ended_envelope(session_id, status, error.clone()))?;
+        self.append
+            .append_durable(
+                session_ended_envelope(session_id, status, error.clone()),
+                AppendMode::Plain,
+            )
+            .map_err(authority_api_error)?;
         self.sessions
             .finish_command_session(session_id, success, error)?;
         Ok(())
@@ -53,9 +61,11 @@ impl ProgressRuntime {
         event_type: &str,
         data: Value,
     ) -> Result<(), ApiError> {
-        self.events
-            .emit_event(session_id, event_type, data)
-            .map_err(ApiError::from)
+        self.emit_envelope(EventEnvelope::with_now(
+            session_id.to_string(),
+            event_type,
+            data,
+        ))
     }
 
     pub fn emit_domain_event(
@@ -67,36 +77,41 @@ impl ProgressRuntime {
         content_hash: Option<String>,
         data: Value,
     ) -> Result<(), ApiError> {
-        self.events
-            .emit_domain_event(
-                session_id,
-                domain_id,
-                stream_id,
-                event_type,
-                content_hash,
-                data,
-            )
-            .map_err(ApiError::from)
+        self.emit_envelope(EventEnvelope::with_now_domain(
+            session_id.to_string(),
+            domain_id.to_string(),
+            stream_id.to_string(),
+            event_type,
+            content_hash,
+            data,
+        ))
     }
 
     pub fn emit_envelope(&self, envelope: crate::events::EventEnvelope) -> Result<(), ApiError> {
-        self.events.emit_envelope(envelope).map_err(ApiError::from)
+        self.append
+            .append_durable(envelope, AppendMode::Plain)
+            .map(|_| ())
+            .map_err(authority_api_error)
     }
 
     pub fn emit_envelope_idempotent(
         &self,
         envelope: crate::events::EventEnvelope,
     ) -> Result<(), ApiError> {
-        self.events
-            .emit_envelope_idempotent(envelope)
-            .map_err(ApiError::from)
+        self.append
+            .append_durable(envelope, AppendMode::Idempotent)
+            .map(|_| ())
+            .map_err(authority_api_error)
     }
 
     /// Enqueues without waiting for durability; readers synchronize through
     /// [`ProgressRuntime::barrier`].
     pub fn emit_event_best_effort(&self, session_id: &str, event_type: &str, data: Value) {
-        self.events
-            .emit_event_best_effort(session_id, event_type, data);
+        self.emit_envelope_best_effort(EventEnvelope::with_now(
+            session_id.to_string(),
+            event_type,
+            data,
+        ));
     }
 
     /// Enqueues without waiting for durability; readers synchronize through
@@ -110,31 +125,31 @@ impl ProgressRuntime {
         content_hash: Option<String>,
         data: Value,
     ) {
-        self.events.emit_domain_event_best_effort(
-            session_id,
-            domain_id,
-            stream_id,
+        self.emit_envelope_best_effort(EventEnvelope::with_now_domain(
+            session_id.to_string(),
+            domain_id.to_string(),
+            stream_id.to_string(),
             event_type,
             content_hash,
             data,
-        );
+        ));
     }
 
     /// Enqueues without waiting for durability; readers synchronize through
     /// [`ProgressRuntime::barrier`].
     pub fn emit_envelope_best_effort(&self, envelope: crate::events::EventEnvelope) {
-        self.events.emit_envelope_best_effort(envelope);
+        self.append_best_effort(envelope, AppendMode::Plain);
     }
 
     /// Enqueues without waiting for durability; readers synchronize through
     /// [`ProgressRuntime::barrier`].
     pub fn emit_envelope_idempotent_best_effort(&self, envelope: crate::events::EventEnvelope) {
-        self.events.emit_envelope_idempotent_best_effort(envelope);
+        self.append_best_effort(envelope, AppendMode::Idempotent);
     }
 
     pub fn mark_interrupted_sessions(&self) -> Result<usize, ApiError> {
         let changed = self.sessions.mark_interrupted_sessions()?;
-        self.events.store().flush().map_err(ApiError::from)?;
+        self.sessions.store().flush()?;
         Ok(changed)
     }
 
@@ -143,28 +158,14 @@ impl ProgressRuntime {
         policy: crate::telemetry::sessions::policy::Policy,
     ) -> Result<usize, ApiError> {
         let pruned = self.sessions.prune(policy)?;
-        self.events.store().flush().map_err(ApiError::from)?;
+        self.sessions.store().flush()?;
         Ok(pruned)
     }
 
     /// Blocks until every previously enqueued emit has reached the store,
     /// the synchronization point for observing best-effort emissions.
     pub fn barrier(&self) -> Result<(), ApiError> {
-        self.events.barrier().map_err(ApiError::from)
-    }
-
-    /// Returns the writer's commit watermark for observability consumers.
-    pub fn watermark(&self) -> std::sync::Arc<crate::events::CommitWatermark> {
-        self.events.watermark()
-    }
-
-    /// Returns the writer's shared drop counter for observability consumers.
-    pub fn dropped_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
-        self.events.dropped_handle()
-    }
-
-    pub fn store(&self) -> &EventStore {
-        self.events.store()
+        self.append.barrier().map_err(authority_api_error)
     }
 
     pub fn list_sessions(&self) -> Result<Vec<crate::session::SessionRecord>, ApiError> {
@@ -182,5 +183,146 @@ impl ProgressRuntime {
             .store()
             .get_session(session_id)
             .map_err(ApiError::from)
+    }
+
+    fn append_best_effort(&self, envelope: EventEnvelope, mode: AppendMode) {
+        let session_id = envelope.session.clone();
+        let event_type = envelope.event_type.clone();
+        if let Err(error) = self.append.append_best_effort(envelope, mode) {
+            warn!(
+                session_id = %session_id,
+                event_type = %event_type,
+                error = %error,
+                "failed to enqueue event"
+            );
+        }
+    }
+}
+
+fn authority_api_error(error: EventAuthorityError) -> ApiError {
+    ApiError::StorageError(authority_storage_error(error))
+}
+
+fn authority_storage_error(error: EventAuthorityError) -> StorageError {
+    match error {
+        EventAuthorityError::InvalidRequest { message } => StorageError::InvalidPath(message),
+        EventAuthorityError::IdentityMismatch { expected, actual } => {
+            StorageError::LedgerIdentityMismatch {
+                expected: expected.to_string(),
+                actual: actual.to_string(),
+            }
+        }
+        EventAuthorityError::DuplicateAuthorityBinding { ledger_id } => {
+            StorageError::EventAuthorityUnavailable(format!(
+                "duplicate writable binding for ledger {ledger_id}"
+            ))
+        }
+        EventAuthorityError::RetentionGap {
+            after_seq,
+            retained_from,
+            ..
+        } => StorageError::RetentionGap {
+            after_seq,
+            retained_from,
+        },
+        EventAuthorityError::Backpressure { message } => StorageError::Backpressure(message),
+        EventAuthorityError::DurabilityIndeterminate { message } => {
+            StorageError::DurabilityIndeterminate(message)
+        }
+        EventAuthorityError::Unavailable { message } => {
+            StorageError::EventAuthorityUnavailable(message)
+        }
+        EventAuthorityError::MigrationConflict { message } => {
+            StorageError::MigrationConflict(message)
+        }
+        EventAuthorityError::Persistence { message }
+        | EventAuthorityError::Internal { message }
+        | EventAuthorityError::CorruptPersistedIdentity { message } => {
+            StorageError::IoError(std::io::Error::other(message))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::{EventAuthority, EventAuthorityOpenOptions, LedgerCursor, ReplayRequest};
+    use crate::session::SessionStatus;
+    use serde_json::json;
+
+    #[test]
+    fn injected_capability_owns_canonical_event_emission() {
+        let event_db = sled::Config::new().temporary(true).open().unwrap();
+        let authority =
+            EventAuthority::open(event_db, EventAuthorityOpenOptions::default()).unwrap();
+        let session_db = sled::Config::new().temporary(true).open().unwrap();
+        let sessions = Arc::new(lifecycle::SessionRuntime::new(
+            lifecycle::SessionStore::shared(session_db).unwrap(),
+        ));
+        let runtime = ProgressRuntime::from_capabilities(
+            authority.append_capability(),
+            Arc::clone(&sessions),
+        );
+
+        let session_id = runtime.start_command_session("scan".to_string()).unwrap();
+        runtime.emit_event_best_effort(&session_id, "scan.progress", json!({ "files": 3 }));
+        runtime.barrier().unwrap();
+        runtime
+            .finish_command_session(&session_id, true, None)
+            .unwrap();
+
+        let page = authority
+            .replay_capability()
+            .replay(ReplayRequest {
+                cursor: LedgerCursor {
+                    ledger_id: authority.ledger_identity(),
+                    after_seq: 0,
+                },
+                limit: 10,
+            })
+            .unwrap();
+        let event_types: Vec<&str> = page
+            .records
+            .iter()
+            .map(|record| record.event_type.as_str())
+            .collect();
+        assert_eq!(
+            event_types,
+            vec!["session_started", "scan.progress", "session_ended"]
+        );
+        assert_eq!(
+            sessions
+                .store()
+                .get_session(&session_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            SessionStatus::Completed
+        );
+    }
+
+    #[test]
+    fn interrupted_session_repair_flushes_session_storage_directly() {
+        let root = tempfile::TempDir::new().unwrap();
+        let session_path = root.path().join("sessions");
+        let event_db = sled::Config::new().temporary(true).open().unwrap();
+        let authority =
+            EventAuthority::open(event_db, EventAuthorityOpenOptions::default()).unwrap();
+        let session_db = sled::open(&session_path).unwrap();
+        let session_store = lifecycle::SessionStore::shared(session_db.clone()).unwrap();
+        let sessions = Arc::new(lifecycle::SessionRuntime::new(session_store.clone()));
+        let runtime = ProgressRuntime::from_capabilities(authority.append_capability(), sessions);
+
+        let session_id = runtime.start_command_session("watch".to_string()).unwrap();
+        assert_eq!(runtime.mark_interrupted_sessions().unwrap(), 1);
+        drop(runtime);
+        drop(session_store);
+        drop(session_db);
+
+        let reopened = lifecycle::SessionStore::new(sled::open(&session_path).unwrap()).unwrap();
+        assert_eq!(
+            reopened.get_session(&session_id).unwrap().unwrap().status,
+            SessionStatus::Interrupted
+        );
     }
 }

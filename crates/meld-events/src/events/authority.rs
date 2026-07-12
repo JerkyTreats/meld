@@ -195,11 +195,78 @@ impl EventAuthority {
         db: sled::Db,
         options: EventAuthorityOpenOptions,
     ) -> Result<Self, EventAuthorityError> {
+        Self::open_inner(db, options, true)
+    }
+
+    /// Opens a previously bound ledger without seeding a missing identity.
+    ///
+    /// Product bindings use this after activation so deleting or substituting
+    /// the bound path cannot silently create a new empty ledger bearing the
+    /// expected identity.
+    pub fn open_existing(
+        db: sled::Db,
+        expected_ledger_id: LedgerIdentity,
+    ) -> Result<Self, EventAuthorityError> {
+        let meta_name = b"obs_spine_meta".as_slice();
+        if !db
+            .tree_names()
+            .iter()
+            .any(|name| name.as_ref() == meta_name)
+        {
+            return Err(EventAuthorityError::CorruptPersistedIdentity {
+                message: "bound ledger has no persisted ledger_identity".to_string(),
+            });
+        }
+        let meta = db
+            .open_tree(meta_name)
+            .map_err(|error| EventAuthorityError::Persistence {
+                message: error.to_string(),
+            })?;
+        let persisted = meta
+            .get(b"ledger_identity")
+            .map_err(|error| EventAuthorityError::Persistence {
+                message: error.to_string(),
+            })?
+            .ok_or_else(|| EventAuthorityError::CorruptPersistedIdentity {
+                message: "bound ledger has no persisted ledger_identity".to_string(),
+            })?;
+        let actual = LedgerIdentity::decode(&persisted).map_err(|error| {
+            EventAuthorityError::CorruptPersistedIdentity {
+                message: format!("ledger_identity must contain one 16-byte UUID: {error}"),
+            }
+        })?;
+        if actual != expected_ledger_id {
+            return Err(EventAuthorityError::IdentityMismatch {
+                expected: expected_ledger_id,
+                actual,
+            });
+        }
+        Self::open_inner(
+            db,
+            EventAuthorityOpenOptions {
+                expected_ledger_id: Some(expected_ledger_id),
+            },
+            false,
+        )
+    }
+
+    fn open_inner(
+        db: sled::Db,
+        options: EventAuthorityOpenOptions,
+        seed_missing_identity: bool,
+    ) -> Result<Self, EventAuthorityError> {
         let store = Arc::new(EventStore::new(db)?);
         let candidate = options.expected_ledger_id.unwrap_or_default();
         let identity_bytes = match store.ledger_identity_bytes()? {
             Some(raw) => raw,
-            None => store.establish_ledger_identity_bytes(&candidate.encode())?,
+            None if seed_missing_identity => {
+                store.establish_ledger_identity_bytes(&candidate.encode())?
+            }
+            None => {
+                return Err(EventAuthorityError::CorruptPersistedIdentity {
+                    message: "bound ledger has no persisted ledger_identity".to_string(),
+                });
+            }
         };
         let ledger_id = LedgerIdentity::decode(&identity_bytes).map_err(|error| {
             EventAuthorityError::CorruptPersistedIdentity {
@@ -275,6 +342,14 @@ impl EventAuthority {
         EventObservabilityCapability {
             inner: Arc::clone(&self.inner),
         }
+    }
+
+    pub(crate) fn migration_db(&self) -> sled::Db {
+        self.inner.store.db().clone()
+    }
+
+    pub(crate) fn acknowledge_migration_tip(&self, tip_seq: u64) {
+        self.inner.writer.watermark().advance(tip_seq);
     }
 }
 
@@ -365,6 +440,21 @@ impl EventReplayCapability {
     /// Replays one identity-checked, bounded page at a frozen durable tip.
     pub fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
         replay(&self.inner, request)
+    }
+
+    /// Returns the newest retained records by count at a frozen durable tip.
+    pub fn newest_page(&self, limit: usize) -> Result<EventPage, EventAuthorityError> {
+        if !(1..=MAX_REPLAY_LIMIT).contains(&limit) {
+            return Err(EventAuthorityError::invalid_request(format!(
+                "replay limit must be in 1..={MAX_REPLAY_LIMIT}, got {limit}"
+            )));
+        }
+        crate::events::observability::read_newest_page(
+            self.inner.store.as_ref(),
+            self.inner.ledger_id,
+            limit,
+        )
+        .map_err(|error| EventAuthorityError::from_storage_for_ledger(self.inner.ledger_id, error))
     }
 }
 
@@ -644,5 +734,60 @@ mod tests {
         let watermark = authority.watermark_capability().snapshot().unwrap();
         assert_eq!(watermark.committed_seq, 0);
         assert_eq!(watermark.tip_seq, 1);
+    }
+
+    #[test]
+    fn replay_capability_returns_newest_records_with_identity_and_bounds() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let authority = EventAuthority::open(db, EventAuthorityOpenOptions::default()).unwrap();
+        let append = authority.append_capability();
+        for index in 1..=3 {
+            append
+                .append_durable(
+                    EventEnvelope::new_domain(
+                        "2026-07-10T00:00:00Z".to_string(),
+                        "newest-test",
+                        "execution",
+                        "newest-test",
+                        format!("execution.event_{index}"),
+                        None,
+                        json!({}),
+                    ),
+                    AppendMode::Plain,
+                )
+                .unwrap();
+        }
+
+        let replay = authority.replay_capability();
+        let page = replay.newest_page(2).unwrap();
+        assert_eq!(page.ledger_id, authority.ledger_identity());
+        assert_eq!(
+            page.records
+                .iter()
+                .map(|record| record.seq)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert_eq!(page.next_cursor.after_seq, 3);
+        assert_eq!(page.coverage.truncation, CoverageTruncation::Before);
+        assert!(matches!(
+            replay.newest_page(0),
+            Err(EventAuthorityError::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn existing_open_rejects_a_missing_persisted_identity() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let expected = LedgerIdentity::new();
+
+        let error = EventAuthority::open_existing(db, expected)
+            .err()
+            .expect("missing bound identity must fail");
+
+        assert!(matches!(
+            error,
+            EventAuthorityError::CorruptPersistedIdentity { .. }
+        ));
     }
 }

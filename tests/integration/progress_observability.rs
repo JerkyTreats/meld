@@ -19,6 +19,7 @@ use meld::metadata::frame_write_contract::{
 use meld::provider::CompletionOptions;
 use meld::telemetry::{PrunePolicy, SessionStatus};
 use meld::workspace::resolve_workspace_node_id;
+use meld_events::{EventRecord, LedgerCursor, ReplayRequest, MAX_REPLAY_LIMIT};
 use tempfile::TempDir;
 
 use crate::integration::with_xdg_env;
@@ -141,6 +142,35 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
     buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
+fn replay_session_events(cli: &RunContext, session_id: &str) -> Vec<EventRecord> {
+    let replay = cli.event_replay_capability();
+    let mut cursor = LedgerCursor {
+        ledger_id: replay.ledger_identity(),
+        after_seq: 0,
+    };
+    let mut events = Vec::new();
+
+    loop {
+        let page = replay
+            .replay(ReplayRequest {
+                cursor,
+                limit: MAX_REPLAY_LIMIT,
+            })
+            .expect("product event authority replay should succeed");
+        let page_is_empty = page.records.is_empty();
+        events.extend(
+            page.records
+                .into_iter()
+                .filter(|record| record.session == session_id),
+        );
+        cursor = page.next_cursor;
+
+        if page_is_empty {
+            return events;
+        }
+    }
+}
+
 #[test]
 fn scan_emits_session_boundary_events() {
     let temp_dir = TempDir::new().unwrap();
@@ -160,10 +190,7 @@ fn scan_emits_session_boundary_events() {
             .expect("scan session should exist");
         assert_eq!(scan_session.status, SessionStatus::Completed);
 
-        let events = runtime
-            .store()
-            .read_events(&scan_session.session_id)
-            .unwrap();
+        let events = replay_session_events(&cli, &scan_session.session_id);
         assert!(events.len() >= 2);
         assert_eq!(events.first().unwrap().event_type, "session_started");
         assert_eq!(events.first().unwrap().seq, 1);
@@ -193,10 +220,7 @@ fn emitted_event_timestamps_are_iso_8601_with_milliseconds() {
             .iter()
             .find(|s| s.command == "scan")
             .expect("scan session should exist");
-        let events = runtime
-            .store()
-            .read_events(&scan_session.session_id)
-            .unwrap();
+        let events = replay_session_events(&cli, &scan_session.session_id);
         assert!(!events.is_empty());
 
         for event in events {
@@ -230,10 +254,7 @@ fn scan_emits_batched_progress_events_with_monotonic_counts() {
             .iter()
             .find(|s| s.command == "scan")
             .expect("scan session should exist");
-        let events = runtime
-            .store()
-            .read_events(&scan_session.session_id)
-            .unwrap();
+        let events = replay_session_events(&cli, &scan_session.session_id);
 
         let mut progress_counts: Vec<u64> = events
             .iter()
@@ -306,10 +327,7 @@ fn failed_command_emits_session_end() {
             .expect("context generate session should exist");
         assert_eq!(failed_session.status, SessionStatus::Failed);
 
-        let events = runtime
-            .store()
-            .read_events(&failed_session.session_id)
-            .unwrap();
+        let events = replay_session_events(&cli, &failed_session.session_id);
         assert_eq!(events.first().unwrap().event_type, "session_started");
         assert_eq!(events.last().unwrap().event_type, "session_ended");
         assert!(events.iter().any(|e| e.event_type == "command_summary"));
@@ -354,7 +372,7 @@ fn context_generate_plan_constructed_includes_path_field() {
             .iter()
             .find(|s| s.command == "context.generate")
             .expect("context.generate session should exist");
-        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let events = replay_session_events(&cli, &session.session_id);
         let plan = events
             .iter()
             .find(|e| e.event_type == "plan_constructed")
@@ -451,7 +469,7 @@ fn context_generate_node_skipped_includes_path_field() {
             .iter()
             .find(|s| s.command == "context.generate")
             .expect("context.generate session should exist");
-        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let events = replay_session_events(&cli, &session.session_id);
         let skipped = events
             .iter()
             .find(|e| e.event_type == "node_skipped")
@@ -502,10 +520,7 @@ fn context_get_emits_summary_event() {
             .find(|s| s.command == "context.get")
             .expect("context.get session should exist");
 
-        let events = runtime
-            .store()
-            .read_events(&context_get_session.session_id)
-            .unwrap();
+        let events = replay_session_events(&cli, &context_get_session.session_id);
         assert!(events
             .iter()
             .any(|e| e.event_type == "context_read_summary"));
@@ -628,7 +643,7 @@ fn command_families_emit_typed_summaries_with_command_summary() {
                 .iter()
                 .find(|s| s.command == command_name)
                 .unwrap_or_else(|| panic!("session {command_name} should exist"));
-            let events = runtime.store().read_events(&session.session_id).unwrap();
+            let events = replay_session_events(&cli, &session.session_id);
 
             let typed_idx = events
                 .iter()
@@ -687,7 +702,7 @@ fn workflow_execute_emits_lineage_and_provider_events() {
             .iter()
             .find(|s| s.command == "workflow.execute")
             .expect("workflow.execute session should exist");
-        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let events = replay_session_events(&cli, &session.session_id);
 
         assert!(events
             .iter()
@@ -752,7 +767,7 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
             .iter()
             .find(|s| s.command == "context.generate")
             .expect("context.generate session should exist");
-        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let events = replay_session_events(&cli, &session.session_id);
 
         let plan = events
             .iter()
@@ -851,7 +866,7 @@ fn context_generate_recursive_completes_levels_bottom_up() {
             .iter()
             .find(|s| s.command == "context.generate")
             .expect("context.generate session should exist");
-        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let events = replay_session_events(&cli, &session.session_id);
 
         let plan = events
             .iter()
@@ -980,7 +995,7 @@ fn workflow_force_generate_tombstones_stale_final_head_and_emits_reset_event() {
             .iter()
             .find(|s| s.command == "context.generate")
             .expect("context.generate session should exist");
-        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let events = replay_session_events(&cli, &session.session_id);
 
         let reset_event = events
             .iter()
@@ -1116,7 +1131,7 @@ fn context_regenerate_emits_context_generation_summary() {
             .iter()
             .find(|s| s.command == "context.regenerate")
             .expect("context.regenerate session should exist");
-        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let events = replay_session_events(&cli, &session.session_id);
 
         let typed_idx = events
             .iter()
@@ -1161,7 +1176,7 @@ fn command_summary_success_is_metric_focused_and_bounded() {
             .iter()
             .find(|s| s.command == "status")
             .expect("status session should exist");
-        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let events = replay_session_events(&cli, &session.session_id);
         let summary = events
             .iter()
             .find(|e| e.event_type == "command_summary")
@@ -1219,7 +1234,7 @@ fn command_summary_failure_message_is_bounded() {
             .iter()
             .find(|s| s.command == "context.generate")
             .expect("context.generate session should exist");
-        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let events = replay_session_events(&cli, &session.session_id);
         let summary = events
             .iter()
             .find(|e| e.event_type == "command_summary")
@@ -1272,7 +1287,7 @@ fn provider_test_failure_emits_provider_request_failed_event() {
             .iter()
             .find(|s| s.command == "provider.test")
             .expect("provider.test session should exist");
-        let events = runtime.store().read_events(&session.session_id).unwrap();
+        let events = replay_session_events(&cli, &session.session_id);
 
         let sent_idx = events
             .iter()
@@ -1316,7 +1331,7 @@ fn interrupted_session_remains_readable() {
             .expect("session should exist");
         assert_eq!(session.status, SessionStatus::Interrupted);
 
-        let events = runtime.store().read_events(&session_id).unwrap();
+        let events = replay_session_events(&cli, &session_id);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "session_started");
     });

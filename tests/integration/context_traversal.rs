@@ -10,8 +10,17 @@ use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::{NodeRecord, NodeType, SledNodeRecordStore};
 use meld::telemetry::ProgressRuntime;
 use meld::types::NodeID;
+use meld_events::events::test_support::EventStore;
 
-fn create_test_api() -> (ContextApi, Arc<ProgressRuntime>, String, tempfile::TempDir) {
+use crate::integration::test_utils::open_authority_progress;
+
+fn create_test_api() -> (
+    ContextApi,
+    Arc<ProgressRuntime>,
+    Arc<EventStore>,
+    String,
+    tempfile::TempDir,
+) {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let store_path = temp_dir.path().join("store");
     let frame_storage_path = temp_dir.path().join("frames");
@@ -30,7 +39,9 @@ fn create_test_api() -> (ContextApi, Arc<ProgressRuntime>, String, tempfile::Tem
         meld::provider::ProviderRegistry::new(),
     ));
     let lock_manager = Arc::new(NodeLockManager::new());
-    let progress = Arc::new(ProgressRuntime::new(db).unwrap());
+    let fixture = open_authority_progress(db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let session_id = progress
         .start_command_session("context.traversal".to_string())
         .unwrap();
@@ -46,7 +57,7 @@ fn create_test_api() -> (ContextApi, Arc<ProgressRuntime>, String, tempfile::Tem
     );
     api.set_progress_context(Arc::clone(&progress), session_id.clone());
 
-    (api, progress, session_id, temp_dir)
+    (api, progress, event_store, session_id, temp_dir)
 }
 
 fn create_test_node_record(node_id: NodeID) -> NodeRecord {
@@ -84,7 +95,7 @@ fn frame_metadata(agent_id: &str) -> std::collections::HashMap<String, String> {
 
 #[test]
 fn put_frame_emits_frame_and_head_events() {
-    let (api, progress, session_id, _temp_dir) = create_test_api();
+    let (api, _progress, event_store, session_id, _temp_dir) = create_test_api();
     let node_id: NodeID = [9u8; 32];
     api.node_store()
         .put(&create_test_node_record(node_id))
@@ -103,7 +114,7 @@ fn put_frame_emits_frame_and_head_events() {
         .put_frame(node_id, frame, "writer-1".to_string())
         .unwrap();
 
-    let events = progress.store().read_events_after(&session_id, 0).unwrap();
+    let events = event_store.read_events_after(&session_id, 0).unwrap();
     assert!(events
         .iter()
         .any(|event| event.event_type == "context.frame_added"));
@@ -123,7 +134,7 @@ fn put_frame_emits_frame_and_head_events() {
 
 #[test]
 fn tombstone_head_emits_head_tombstoned() {
-    let (api, progress, session_id, _temp_dir) = create_test_api();
+    let (api, _progress, event_store, session_id, _temp_dir) = create_test_api();
     let node_id: NodeID = [10u8; 32];
     api.node_store()
         .put(&create_test_node_record(node_id))
@@ -142,7 +153,7 @@ fn tombstone_head_emits_head_tombstoned() {
         .unwrap();
     api.tombstone_head(node_id, "analysis").unwrap();
 
-    let events = progress.store().read_events_after(&session_id, 0).unwrap();
+    let events = event_store.read_events_after(&session_id, 0).unwrap();
     assert!(events
         .iter()
         .any(|event| event.event_type == "context.head_tombstoned"));

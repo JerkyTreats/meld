@@ -4,15 +4,18 @@
 //! append envelopes with explicit timestamps so gap and span math is
 //! deterministic.
 
+#![cfg(feature = "test-support")]
+
 use std::sync::Arc;
 
 use meld_events::error::StorageError;
 use meld_events::events::observability::{EventObservabilityPort, FlowWindow};
-use meld_events::events::registry::EventCursorRegistry;
-use meld_events::events::store::EventStore;
-use meld_events::{
-    CoverageTruncation, EventEnvelope, EventRecord, EventWriter, LedgerObservability,
+use meld_events::events::test_support::{
+    EventCursorRegistry, EventCursorRegistryTestSupport as _, EventStore,
+    EventStoreTestSupport as _, EventWriter, EventWriterTestSupport as _, LedgerObservability,
+    LedgerObservabilityTestSupport as _,
 };
+use meld_events::{CoverageTruncation, EventEnvelope, EventRecord};
 use serde_json::json;
 
 struct Fixture {

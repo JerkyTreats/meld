@@ -28,11 +28,12 @@ use meld::metadata::FrameMetadata;
 use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::persistence::SledNodeRecordStore;
 use meld::store::{NodeRecord, NodeType};
-use meld::telemetry::ProgressRuntime;
 use meld::types::Hash;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+
+use crate::integration::test_utils::open_authority_progress;
 
 fn create_test_api() -> (ContextApi, TempDir) {
     let temp_dir = TempDir::new().unwrap();
@@ -616,7 +617,9 @@ async fn test_enqueue_emits_observability_events() {
     let db_path = temp_dir.path().join("progress_db");
     std::fs::create_dir_all(&db_path).unwrap();
     let db = sled::open(&db_path).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(db).unwrap());
+    let fixture = open_authority_progress(db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let session_id = progress
         .start_command_session("queue.test".to_string())
         .unwrap();
@@ -644,7 +647,7 @@ async fn test_enqueue_emits_observability_events() {
     progress
         .finish_command_session(&session_id, true, None)
         .unwrap();
-    let events = progress.store().read_events(&session_id).unwrap();
+    let events = event_store.read_events(&session_id).unwrap();
     assert!(events.iter().any(|e| e.event_type == "request_enqueued"));
     assert!(events.iter().any(|e| e.event_type == "queue_stats"));
 }
@@ -655,7 +658,9 @@ async fn test_batch_enqueue_emits_request_enqueued_per_item() {
     let db_path = temp_dir.path().join("progress_db");
     std::fs::create_dir_all(&db_path).unwrap();
     let db = sled::open(&db_path).unwrap();
-    let progress = Arc::new(ProgressRuntime::new(db).unwrap());
+    let fixture = open_authority_progress(db);
+    let event_store = Arc::clone(&fixture.store);
+    let progress = Arc::new(fixture.progress);
     let session_id = progress
         .start_command_session("queue.batch.test".to_string())
         .unwrap();
@@ -698,7 +703,7 @@ async fn test_batch_enqueue_emits_request_enqueued_per_item() {
     progress
         .finish_command_session(&session_id, true, None)
         .unwrap();
-    let events = progress.store().read_events(&session_id).unwrap();
+    let events = event_store.read_events(&session_id).unwrap();
     let enqueued_count = events
         .iter()
         .filter(|e| e.event_type == "request_enqueued")

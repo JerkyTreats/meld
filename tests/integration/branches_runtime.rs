@@ -1,6 +1,11 @@
 use meld::branches::{BranchCatalog, BranchManifest, BranchesStatusOutput};
-use meld::cli::{BranchesCommands, RunContext};
+use meld::cli::{BranchesCommands, Commands, RunContext};
 use meld::config::xdg;
+use meld::events::binding::ProductEventBinding;
+use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
+use meld_events::{EventEnvelope, LegacyEventMigrationSource};
+use serde_json::json;
+use std::process::Command;
 use tempfile::TempDir;
 
 use crate::integration::with_xdg_data_home;
@@ -159,5 +164,194 @@ fn branches_migrate_updates_registered_branch_status() {
 
         assert_eq!(migrated.migration_status, "not_needed");
         assert!(migrated.last_migration_at.is_some());
+    });
+}
+
+#[test]
+fn dormant_branch_migrations_keep_separate_product_authorities() {
+    let test_dir = TempDir::new().unwrap();
+    let workspace_a = TempDir::new().unwrap();
+    let workspace_b = TempDir::new().unwrap();
+
+    with_xdg_data_home(&test_dir, || {
+        for (workspace, record_id) in [(&workspace_a, "branch-a"), (&workspace_b, "branch-b")] {
+            let data_home = xdg::workspace_data_dir(workspace.path()).unwrap();
+            let store_path = data_home.join("store");
+            std::fs::create_dir_all(&store_path).unwrap();
+            let store = EventStore::new(sled::open(&store_path).unwrap()).unwrap();
+            store
+                .append_envelope(
+                    EventEnvelope::new_domain(
+                        "2026-07-12T00:00:00Z".to_string(),
+                        record_id,
+                        "workspace_fs",
+                        record_id,
+                        "workspace.branch.observed",
+                        None,
+                        json!({ "branch": record_id }),
+                    )
+                    .with_record_id(record_id),
+                )
+                .unwrap();
+            store.flush().unwrap();
+            drop(store);
+            meld::branches::tooling::handle_cli_command(&BranchesCommands::Attach {
+                path: workspace.path().to_path_buf(),
+                format: "json".to_string(),
+            })
+            .unwrap();
+        }
+
+        meld::branches::tooling::handle_cli_command(&BranchesCommands::Migrate {
+            format: "json".to_string(),
+        })
+        .unwrap();
+
+        let binding = |workspace: &TempDir| {
+            let path = xdg::workspace_data_dir(workspace.path())
+                .unwrap()
+                .join("event_authority.json");
+            serde_json::from_slice::<ProductEventBinding>(&std::fs::read(path).unwrap()).unwrap()
+        };
+        let binding_a = binding(&workspace_a);
+        let binding_b = binding(&workspace_b);
+        assert_ne!(binding_a.branch_id, binding_b.branch_id);
+        assert_ne!(binding_a.ledger_identity, binding_b.ledger_identity);
+        assert_ne!(binding_a.ledger_path, binding_b.ledger_path);
+    });
+}
+
+#[test]
+fn dormant_branch_migration_uses_its_configured_legacy_store() {
+    let test_dir = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    with_xdg_data_home(&test_dir, || {
+        let config_dir = workspace.path().join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.toml"),
+            r#"
+[system.storage]
+store_path = "custom-events"
+frames_path = "custom-frames"
+artifacts_path = "custom-artifacts"
+"#,
+        )
+        .unwrap();
+        let custom_store = workspace.path().join("custom-events");
+        let store = EventStore::new(sled::open(&custom_store).unwrap()).unwrap();
+        store
+            .append_envelope(
+                EventEnvelope::new_domain(
+                    "2026-07-12T00:00:00Z".to_string(),
+                    "custom-branch",
+                    "workspace_fs",
+                    "custom-branch",
+                    "workspace.branch.observed",
+                    None,
+                    json!({ "branch": "custom-branch" }),
+                )
+                .with_record_id("custom-branch"),
+            )
+            .unwrap();
+        store.flush().unwrap();
+        drop(store);
+
+        meld::branches::tooling::handle_cli_command(&BranchesCommands::Attach {
+            path: workspace.path().to_path_buf(),
+            format: "json".to_string(),
+        })
+        .unwrap();
+        meld::branches::tooling::handle_cli_command(&BranchesCommands::Migrate {
+            format: "json".to_string(),
+        })
+        .unwrap();
+
+        let binding_path = xdg::workspace_data_dir(workspace.path())
+            .unwrap()
+            .join("event_authority.json");
+        let binding: ProductEventBinding =
+            serde_json::from_slice(&std::fs::read(binding_path).unwrap()).unwrap();
+        assert_eq!(
+            binding.source.as_ref().unwrap().ledger_path,
+            custom_store.canonicalize().unwrap()
+        );
+        let source = LegacyEventMigrationSource::open(&custom_store).unwrap();
+        let marker = source.cutover_marker().unwrap().unwrap();
+        assert_eq!(marker.target_ledger_id, binding.ledger_identity);
+    });
+}
+
+#[test]
+fn active_branch_graph_status_reuses_the_open_product_projection() {
+    let test_dir = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    with_xdg_data_home(&test_dir, || {
+        let context = RunContext::new(workspace.path().to_path_buf(), None).unwrap();
+        context.execute(&Commands::Scan { force: true }).unwrap();
+
+        let output = context
+            .execute(&Commands::Branches {
+                command: BranchesCommands::GraphStatus {
+                    scope: "active".to_string(),
+                    branch_ids: Vec::new(),
+                    format: "json".to_string(),
+                },
+            })
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["branches"][0]["read_status"], "ready");
+        assert!(parsed["branches"][0]["last_reduced_seq"].is_u64());
+        assert!(parsed["branches"][0]["store_path"]
+            .as_str()
+            .unwrap()
+            .ends_with("world_model.sled"));
+    });
+}
+
+#[test]
+fn binary_active_graph_query_routes_through_run_context() {
+    let test_dir = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    with_xdg_data_home(&test_dir, || {
+        let bin = env!("CARGO_BIN_EXE_meld");
+        let scan = Command::new(bin)
+            .args([
+                "--workspace",
+                workspace.path().to_str().unwrap(),
+                "scan",
+                "--force",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            scan.status.success(),
+            "{}",
+            String::from_utf8_lossy(&scan.stderr)
+        );
+
+        let output = Command::new(bin)
+            .args([
+                "--workspace",
+                workspace.path().to_str().unwrap(),
+                "branches",
+                "graph-status",
+                "--scope",
+                "active",
+                "--format",
+                "json",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(parsed["branches"][0]["read_status"], "ready");
     });
 }

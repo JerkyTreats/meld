@@ -1,13 +1,17 @@
 //! Status subcommand: renders the ledger health report.
 
-use meld_events::events::observability::{EventHealthReport, EventObservabilityPort};
-use meld_events::LedgerObservability;
+use meld_events::{EventHealthReport, EventObservabilityCapability};
 
 use crate::error::ApiError;
-use crate::events::tooling::{render, surface_error};
+use crate::events::tooling::{render, surface_authority_error};
 
-pub(super) fn run(port: &LedgerObservability, format: &str) -> Result<String, ApiError> {
-    let report = port.health().map_err(|err| surface_error("status", err))?;
+pub(super) fn run(
+    observability: &EventObservabilityCapability,
+    format: &str,
+) -> Result<String, ApiError> {
+    let report = observability
+        .health(observability.ledger_identity())
+        .map_err(|err| surface_authority_error("status", err))?;
     render(format, &report, render_text)
 }
 

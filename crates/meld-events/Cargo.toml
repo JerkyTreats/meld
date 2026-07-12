@@ -12,6 +12,7 @@ default = []
 test-support = []
 
 [dependencies]
+blake3 = "1.5"
 chrono = "0.4"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -28,7 +29,9 @@ tempfile = "3.8"
 [[bench]]
 name = "events"
 harness = false
+required-features = ["test-support"]
 
 [[bench]]
 name = "event_flywheel"
 harness = false
+required-features = ["test-support"]
