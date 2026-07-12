@@ -114,9 +114,11 @@ pub enum EventAuthorityError {
 
     /// The requested cursor predates retained history.
     #[error(
-        "Retention gap: cursor {after_seq} predates retained history starting at {retained_from}"
+        "Retention gap in ledger {ledger_id}: cursor {after_seq} predates retained history starting at {retained_from}"
     )]
     RetentionGap {
+        /// Ledger whose sequence space contains the gap.
+        ledger_id: LedgerIdentity,
         /// Cursor supplied by the caller.
         after_seq: u64,
         /// First sequence still retained.
@@ -180,6 +182,21 @@ impl EventAuthorityError {
             message: message.into(),
         }
     }
+
+    /// Adds authority identity to storage failures that carry bare sequences.
+    pub(crate) fn from_storage_for_ledger(ledger_id: LedgerIdentity, error: StorageError) -> Self {
+        match error {
+            StorageError::RetentionGap {
+                after_seq,
+                retained_from,
+            } => Self::RetentionGap {
+                ledger_id,
+                after_seq,
+                retained_from,
+            },
+            error => error.into(),
+        }
+    }
 }
 
 impl From<StorageError> for EventAuthorityError {
@@ -197,9 +214,10 @@ impl From<StorageError> for EventAuthorityError {
             StorageError::RetentionGap {
                 after_seq,
                 retained_from,
-            } => Self::RetentionGap {
-                after_seq,
-                retained_from,
+            } => Self::Internal {
+                message: format!(
+                    "identity-free storage retention gap at cursor {after_seq}, retained from {retained_from}"
+                ),
             },
             StorageError::IoError(error) => Self::Persistence {
                 message: error.to_string(),

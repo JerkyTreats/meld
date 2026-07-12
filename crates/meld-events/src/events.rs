@@ -52,6 +52,8 @@ pub mod identity;
 pub mod observability;
 /// Named consumer cursor registry for lag observability.
 pub mod registry;
+/// Transport-neutral authority requests, responses, and client contract.
+pub mod remote;
 /// Event emission facade with durable and best-effort classes.
 pub mod runtime;
 /// Append-only sled-backed event store.
@@ -80,6 +82,10 @@ pub use observability::{
     MAX_SESSION_SCAN_EVENTS, MAX_TRACE_SCAN_EVENTS,
 };
 pub use registry::{ConsumerCursor, EventCursorRegistry};
+pub use remote::{
+    BestEffortAppendRequest, DurableAppendRequest, EventAuthorityContract, FlowRequest,
+    HealthRequest, SessionRequest, TraceRequest, WatermarkRequest,
+};
 pub use runtime::EventRuntime;
 pub use subscription::{EventCursor, EventSubscription};
 pub use writer::{CommitWatermark, EventWriter};

@@ -7,6 +7,10 @@ description = "Canonical event ledger contracts and runtime for Meld"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jerkytreats/meld"
 
+[features]
+default = []
+test-support = []
+
 [dependencies]
 chrono = "0.4"
 serde = { workspace = true }

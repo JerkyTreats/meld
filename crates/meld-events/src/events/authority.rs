@@ -516,11 +516,10 @@ fn replay(
 
     let tip_seq = inner.store.tip_seq()?;
     let retained_from = inner.store.retained_lower_boundary()?;
-    let mut records = inner.store.read_all_events_between_limit(
-        request.cursor.after_seq,
-        tip_seq,
-        request.limit + 1,
-    )?;
+    let mut records = inner
+        .store
+        .read_all_events_between_limit(request.cursor.after_seq, tip_seq, request.limit + 1)
+        .map_err(|error| EventAuthorityError::from_storage_for_ledger(inner.ledger_id, error))?;
     let truncated_after = records.len() > request.limit;
     records.truncate(request.limit);
     let scanned_from_seq = records.first().map(|record| record.seq);
