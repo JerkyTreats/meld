@@ -1514,12 +1514,22 @@ fn traversal_reducer_ignores_older_existing_anchor_than_current() {
 fn traversal_store_persists_reducer_cursor() {
     let temp_dir = tempfile::tempdir().unwrap();
     let path = temp_dir.path().join("graph");
-    {
-        let store = TraversalStore::new(sled::open(&path).unwrap()).unwrap();
-        store.set_last_reduced_seq(42).unwrap();
-        store.flush().unwrap();
-    }
-    let reopened = TraversalStore::new(sled::open(&path).unwrap()).unwrap();
+    let db = sled::open(&path).unwrap();
+    let store = TraversalStore::new(db.clone()).unwrap();
+    store.set_last_reduced_seq(42).unwrap();
+    store.flush().unwrap();
+    drop(store);
+    drop(db);
+    let reopened_db = (0..50)
+        .find_map(|_| match sled::open(&path) {
+            Ok(db) => Some(db),
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                None
+            }
+        })
+        .expect("reopen traversal store after prior handles close");
+    let reopened = TraversalStore::new(reopened_db).unwrap();
 
     assert_eq!(reopened.last_reduced_seq().unwrap(), 42);
 }
