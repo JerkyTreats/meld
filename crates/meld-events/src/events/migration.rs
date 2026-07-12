@@ -32,6 +32,8 @@ const EVENT_KEY_PAD: usize = 20;
 const CUTOVER_SCHEMA_VERSION: u32 = 1;
 const MAX_MIGRATION_BATCH_SIZE: usize = 10_000;
 const LEGACY_MISSING_TIMESTAMP: &str = "1970-01-01T00:00:00.000Z";
+const SOURCE_OPEN_RETRY_ATTEMPTS: usize = 100;
+const SOURCE_OPEN_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// Options for one recoverable migration run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,7 +147,7 @@ impl LegacyEventMigrationSource {
     /// and flushing the source ledger identity.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, EventAuthorityError> {
         let canonical_path = canonicalize_existing(path.as_ref(), "legacy event source")?;
-        let db = sled::open(&canonical_path).map_err(persistence)?;
+        let db = open_source_db(&canonical_path)?;
         let retained_from = read_retained_from(&db)?;
         let records = validate_source_rows(&db, retained_from)?;
         let ledger_id = establish_source_identity(&db)?;
@@ -1157,6 +1159,22 @@ fn canonicalize_existing(path: &Path, label: &str) -> Result<PathBuf, EventAutho
     std::fs::canonicalize(path).map_err(|error| EventAuthorityError::Persistence {
         message: format!("cannot resolve {label} {}: {error}", path.display()),
     })
+}
+
+fn open_source_db(path: &Path) -> Result<sled::Db, EventAuthorityError> {
+    for attempt in 0..SOURCE_OPEN_RETRY_ATTEMPTS {
+        match sled::open(path) {
+            Ok(db) => return Ok(db),
+            Err(sled::Error::Io(error))
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    && attempt + 1 < SOURCE_OPEN_RETRY_ATTEMPTS =>
+            {
+                std::thread::sleep(SOURCE_OPEN_RETRY_DELAY);
+            }
+            Err(error) => return Err(persistence(error)),
+        }
+    }
+    unreachable!("bounded source database open loop must return")
 }
 
 fn persistence(error: sled::Error) -> EventAuthorityError {
