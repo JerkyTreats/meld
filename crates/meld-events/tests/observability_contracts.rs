@@ -393,15 +393,18 @@ fn event_page_shape_is_pinned_and_carries_records_intact() {
     // The canonical record travels intact inside the page.
     assert_eq!(value["records"][0], serde_json::to_value(&record).unwrap());
 
-    let request = EventPageRequest {
-        after_seq: 3,
-        limit: 16,
-        timeout_ms: 250,
-    };
-    assert_eq!(
-        serde_json::to_value(&request).unwrap(),
-        json!({ "after_seq": 3, "limit": 16, "timeout_ms": 250 })
-    );
+    #[cfg(feature = "test-support")]
+    {
+        let request = EventPageRequest {
+            after_seq: 3,
+            limit: 16,
+            timeout_ms: 250,
+        };
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            json!({ "after_seq": 3, "limit": 16, "timeout_ms": 250 })
+        );
+    }
 }
 
 #[test]
@@ -657,6 +660,9 @@ fn oversized_json_numbers_do_not_reach_observability_allocations() {
     let flow_overflow = r#"{"max_events":18446744073709551616}"#;
     assert!(serde_json::from_str::<FlowWindow>(flow_overflow).is_err());
 
-    let page_overflow = r#"{"after_seq":0,"limit":1,"timeout_ms":18446744073709551616}"#;
-    assert!(serde_json::from_str::<EventPageRequest>(page_overflow).is_err());
+    #[cfg(feature = "test-support")]
+    {
+        let page_overflow = r#"{"after_seq":0,"limit":1,"timeout_ms":18446744073709551616}"#;
+        assert!(serde_json::from_str::<EventPageRequest>(page_overflow).is_err());
+    }
 }
