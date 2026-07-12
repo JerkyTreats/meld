@@ -7,14 +7,21 @@
 //! # Example
 //!
 //! ```rust
-//! use meld_world_model::events::DomainObjectRef;
-//! use meld_world_model::graph::events::{anchor_selected_envelope, AnchorSelectedEventData};
+//! use meld_world_model::events::{DomainObjectRef, EventRecordRef, LedgerIdentity};
+//! use meld_world_model::graph::events::{
+//!     anchor_selected_envelope_from_record, AnchorSelectedEventData,
+//! };
+//! use std::str::FromStr;
 //!
 //! let node = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
 //! let frame = DomainObjectRef::new("context", "frame", "frame-a").unwrap();
 //! let anchor_ref = DomainObjectRef::new("context", "head", "node-a::analysis").unwrap();
-//! let envelope = anchor_selected_envelope(
+//! let envelope = anchor_selected_envelope_from_record(
 //!     "session-a",
+//!     EventRecordRef {
+//!         ledger_id: LedgerIdentity::from_str("018d2fd1-6030-7c6a-b03f-41d44f348d63").unwrap(),
+//!         seq: 1,
+//!     },
 //!     AnchorSelectedEventData {
 //!         anchor: meld_world_model::AnchorSelectionRecord {
 //!             anchor_id: "anchor-a".to_string(),
@@ -34,11 +41,10 @@
 //! assert_eq!(envelope.event_type, "world_state.anchor_selected");
 //! ```
 
+use crate::events::{DomainObjectRef, EventEnvelope, EventRecordRef, EventRelation};
+use crate::world_state::graph::contracts::AnchorSelectionRecord;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-
-use crate::events::{DomainObjectRef, EventEnvelope, EventRelation};
-use crate::world_state::graph::contracts::AnchorSelectionRecord;
 
 /// Payload for selecting a current anchor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,7 +78,26 @@ fn traversal_envelope(
 }
 
 /// Build a traversal event envelope for selecting an anchor.
+// TODO compat-shim: E4 removes this identity-less wrapper after
+// graph_derived_envelopes_carry_structural_source_record_provenance and the
+// graph-runtime port parity tests supply EventRecordRef for every append.
 pub fn anchor_selected_envelope(session_id: &str, data: AnchorSelectedEventData) -> EventEnvelope {
+    anchor_selected_envelope_inner(session_id, data)
+}
+
+/// Build a traversal event for selecting an anchor from one canonical source.
+pub fn anchor_selected_envelope_from_record(
+    session_id: &str,
+    source_record: EventRecordRef,
+    data: AnchorSelectedEventData,
+) -> EventEnvelope {
+    anchor_selected_envelope_inner(session_id, data).with_source_records(vec![source_record])
+}
+
+fn anchor_selected_envelope_inner(
+    session_id: &str,
+    data: AnchorSelectedEventData,
+) -> EventEnvelope {
     let anchor = &data.anchor;
     traversal_envelope(
         session_id,
@@ -90,7 +115,26 @@ pub fn anchor_selected_envelope(session_id: &str, data: AnchorSelectedEventData)
 }
 
 /// Build a traversal event envelope for superseding an anchor.
+// TODO compat-shim: E4 removes this identity-less wrapper after
+// graph_derived_envelopes_carry_structural_source_record_provenance and the
+// graph-runtime port parity tests supply EventRecordRef for every append.
 pub fn anchor_superseded_envelope(
+    session_id: &str,
+    data: AnchorSupersededEventData,
+) -> EventEnvelope {
+    anchor_superseded_envelope_inner(session_id, data)
+}
+
+/// Build a traversal event for superseding an anchor from one canonical source.
+pub fn anchor_superseded_envelope_from_record(
+    session_id: &str,
+    source_record: EventRecordRef,
+    data: AnchorSupersededEventData,
+) -> EventEnvelope {
+    anchor_superseded_envelope_inner(session_id, data).with_source_records(vec![source_record])
+}
+
+fn anchor_superseded_envelope_inner(
     session_id: &str,
     data: AnchorSupersededEventData,
 ) -> EventEnvelope {

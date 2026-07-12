@@ -21,7 +21,7 @@ use parking_lot::Mutex;
 use crate::error::StorageError;
 use crate::events::registry::EventCursorRegistry;
 use crate::events::store::EventStore;
-use crate::events::EventEnvelope;
+use crate::events::{EventEnvelope, LedgerIdentity};
 use crate::world_state::graph::reducer::TraversalReducer;
 use crate::world_state::graph::store::TraversalStore;
 
@@ -71,6 +71,7 @@ pub struct GraphCatchUpReport {
 /// Event-backed graph projection runtime.
 pub struct GraphRuntime {
     ledger: Arc<EventStore>,
+    ledger_id: LedgerIdentity,
     traversal: Arc<TraversalStore>,
     catch_up_lock: Mutex<()>,
     // Observational mirror on the ledger database; the traversal store's
@@ -81,9 +82,15 @@ pub struct GraphRuntime {
 impl GraphRuntime {
     /// Open the event ledger and traversal store against one shared database.
     pub fn new(db: sled::Db) -> Result<Self, StorageError> {
+        // TODO compat-shim: E4 replaces raw database construction with graph
+        // ports that carry the authority identity. The GraphRuntime provenance
+        // parity test covers this bridge until removal.
         let cursor_registry = EventCursorRegistry::open(&db).ok();
+        let ledger = EventStore::shared(db.clone())?;
+        let ledger_id = ledger.compatibility_ledger_identity()?;
         Ok(Self {
-            ledger: EventStore::shared(db.clone())?,
+            ledger,
+            ledger_id,
             traversal: TraversalStore::shared(db)?,
             catch_up_lock: Mutex::new(()),
             cursor_registry,
@@ -96,14 +103,21 @@ impl GraphRuntime {
     /// model graph stores in separate physical databases while graph replay
     /// ownership remains inside the world model domain. The cursor registry
     /// lives on the ledger database so observability enumerates it there.
-    pub fn from_stores(ledger: Arc<EventStore>, traversal: Arc<TraversalStore>) -> Self {
+    pub fn from_stores(
+        ledger: Arc<EventStore>,
+        traversal: Arc<TraversalStore>,
+    ) -> Result<Self, StorageError> {
+        // TODO compat-shim: E4 removes identity discovery through EventStore
+        // when from_ports becomes the sole production constructor.
+        let ledger_id = ledger.compatibility_ledger_identity()?;
         let cursor_registry = EventCursorRegistry::open(ledger.db()).ok();
-        Self {
+        Ok(Self {
             ledger,
+            ledger_id,
             traversal,
             catch_up_lock: Mutex::new(()),
             cursor_registry,
-        }
+        })
     }
 
     /// Mirrors the durable cursor into the observability registry after it
@@ -206,7 +220,12 @@ impl GraphRuntime {
             Err(error) => return Err(error),
         };
         let events_attempted = events.len();
-        let reducer = TraversalReducer::replay_events(self.traversal.as_ref(), after_seq, events)?;
+        let reducer = TraversalReducer::replay_events(
+            self.traversal.as_ref(),
+            self.ledger_id,
+            after_seq,
+            events,
+        )?;
         // The cursor never advances past the highest processed source event.
         // Producers may append between this tick's read and its derived-event
         // appends, so advancing to a derived sequence would skip those source
@@ -238,6 +257,11 @@ impl GraphRuntime {
     /// Clone the shared traversal store.
     pub fn traversal_store(&self) -> Arc<TraversalStore> {
         Arc::clone(&self.traversal)
+    }
+
+    /// Returns the persisted identity of the source event ledger.
+    pub fn ledger_identity(&self) -> LedgerIdentity {
+        self.ledger_id
     }
 
     /// Append a source event to the ledger.

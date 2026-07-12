@@ -44,8 +44,7 @@ use sled::{
 use tracing::warn;
 
 use crate::error::StorageError;
-use crate::events::EventEnvelope;
-use crate::events::EventRecord;
+use crate::events::{EventEnvelope, EventRecord, LedgerIdentity};
 
 // Tree names and the legacy tree are frozen on-disk formats from the spine
 // era; renaming them would buy a data migration for zero functional gain.
@@ -92,6 +91,26 @@ pub(crate) struct StoreAppendOutcome {
 }
 
 impl EventStore {
+    /// Resolves the persisted identity for callers still bound to the raw
+    /// store compatibility surface.
+    ///
+    /// TODO compat-shim: E4 removes this method when
+    /// `graph_runtime_derived_events_carry_persisted_ledger_provenance` and
+    /// the graph-port parity tests construct `GraphRuntime` from an
+    /// identity-bearing replay capability.
+    pub fn compatibility_ledger_identity(&self) -> Result<LedgerIdentity, StorageError> {
+        let candidate = LedgerIdentity::new();
+        let raw = match self.ledger_identity_bytes()? {
+            Some(raw) => raw,
+            None => self.establish_ledger_identity_bytes(&candidate.encode())?,
+        };
+        LedgerIdentity::decode(&raw).map_err(|error| {
+            StorageError::InvalidPath(format!(
+                "persisted event ledger identity must contain one 16-byte UUID: {error}"
+            ))
+        })
+    }
+
     /// Opens all event trees on the supplied database handle.
     ///
     /// Opening repairs sequence metadata that lags the greatest persisted

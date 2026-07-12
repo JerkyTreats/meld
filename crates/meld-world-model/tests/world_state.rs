@@ -1,6 +1,14 @@
 use meld_world_model::events::store::EventStore;
-use meld_world_model::events::{DomainObjectRef, EventEnvelope, EventRecord, EventRelation};
+use std::str::FromStr;
+
+use meld_world_model::events::{
+    DomainObjectRef, EventEnvelope, EventRecord, EventRecordRef, EventRelation, LedgerIdentity,
+};
 use meld_world_model::world_state::graph::compat::LegacyClaimAdapter;
+use meld_world_model::world_state::graph::events::{
+    anchor_selected_envelope_from_record, anchor_superseded_envelope_from_record,
+    AnchorSelectedEventData, AnchorSupersededEventData,
+};
 use meld_world_model::world_state::graph::runtime::GraphRuntime;
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::reducer::WorldStateReducer;
@@ -92,6 +100,35 @@ fn generation_claim(
         created_at_seq: seq,
         last_updated_seq: seq,
     }
+}
+
+#[test]
+fn graph_derived_envelopes_carry_structural_source_record_provenance() {
+    let node = object("workspace_fs", "node", "node-a");
+    let frame = object("context", "frame", "frame-a");
+    let anchor = frame_anchor("anchor-a", &node, &frame, 41);
+    let source_record = EventRecordRef {
+        ledger_id: LedgerIdentity::from_str("018d2fd1-6030-7c6a-b03f-41d44f348d63").unwrap(),
+        seq: 41,
+    };
+
+    let selected = anchor_selected_envelope_from_record(
+        "session-a",
+        source_record,
+        AnchorSelectedEventData {
+            anchor: anchor.clone(),
+        },
+    );
+    let superseded = anchor_superseded_envelope_from_record(
+        "session-a",
+        source_record,
+        AnchorSupersededEventData { anchor },
+    );
+
+    assert_eq!(selected.provenance.source_records, vec![source_record]);
+    assert_eq!(superseded.provenance.source_records, vec![source_record]);
+    assert_eq!(selected.data["anchor"]["source_fact_ids"][0], "spine::41");
+    assert_eq!(superseded.data["anchor"]["source_fact_ids"][0], "spine::41");
 }
 
 #[test]
@@ -465,6 +502,42 @@ fn graph_runtime_catches_up_context_head_events() {
 }
 
 #[test]
+fn graph_runtime_derived_events_carry_persisted_ledger_provenance() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = sled::open(temp_dir.path().join("runtime")).unwrap();
+    let runtime = GraphRuntime::new(db.clone()).unwrap();
+    let ledger_id = runtime.ledger_identity();
+    let node = object("workspace_fs", "node", "node-a");
+    let frame = object("context", "frame", "frame-a");
+    let head = object("context", "head", "node-a::analysis");
+    let source_seq = runtime
+        .append_envelope(event(
+            "context",
+            "context.head_selected",
+            vec![head, node, frame],
+            Vec::new(),
+        ))
+        .unwrap();
+
+    runtime.catch_up().unwrap();
+
+    let ledger = EventStore::new(db).unwrap();
+    let derived = ledger
+        .read_all_events_after(source_seq)
+        .unwrap()
+        .into_iter()
+        .find(|record| record.event_type == "world_state.anchor_selected")
+        .expect("graph runtime appended the reducer output");
+    assert_eq!(
+        derived.provenance.source_records,
+        vec![EventRecordRef {
+            ledger_id,
+            seq: source_seq,
+        }]
+    );
+}
+
+#[test]
 fn traversal_reducer_reports_applied_events_and_ignores_other_domains() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db = sled::open(temp_dir.path().join("runtime")).unwrap();
@@ -562,6 +635,15 @@ fn traversal_reducer_anchor_events_carry_anchor_records() {
         .get("anchor")
         .and_then(|anchor| anchor.get("ended_by_anchor_id"))
         .is_some());
+    let ledger_id = selected.provenance.source_records[0].ledger_id;
+    assert_eq!(
+        selected.provenance.source_records,
+        vec![EventRecordRef { ledger_id, seq: 1 }]
+    );
+    assert_eq!(
+        superseded.provenance.source_records,
+        vec![EventRecordRef { ledger_id, seq: 2 }]
+    );
 }
 
 #[test]

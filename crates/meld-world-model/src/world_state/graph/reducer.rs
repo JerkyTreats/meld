@@ -21,14 +21,14 @@
 
 use crate::error::StorageError;
 use crate::events::store::EventStore;
-use crate::events::{EventEnvelope, EventRecord};
+use crate::events::{EventEnvelope, EventRecord, EventRecordRef, LedgerIdentity};
 use crate::world_state::graph::contracts::{
     AnchorEndInput, AnchorSelectionInput, AnchorSelectionRecord, TraversalFactRecord,
     TraversalIntent,
 };
 use crate::world_state::graph::events::{
-    anchor_selected_envelope, anchor_superseded_envelope, AnchorSelectedEventData,
-    AnchorSupersededEventData,
+    anchor_selected_envelope_from_record, anchor_superseded_envelope_from_record,
+    AnchorSelectedEventData, AnchorSupersededEventData,
 };
 use crate::world_state::graph::projection::{AnchorLineageProjection, CurrentAnchorProjection};
 use crate::world_state::graph::store::TraversalStore;
@@ -54,13 +54,18 @@ impl TraversalReducer {
         store: &TraversalStore,
         after_seq: u64,
     ) -> Result<Self, StorageError> {
+        // TODO compat-shim: E4 removes raw-ledger replay after graph ports
+        // supply the identity with each replay page. The reducer provenance
+        // and graph runtime parity tests cover the replacement.
+        let ledger_id = ledger.compatibility_ledger_identity()?;
         let events = ledger.read_all_events_after(after_seq)?;
-        Self::replay_events(store, after_seq, events)
+        Self::replay_events(store, ledger_id, after_seq, events)
     }
 
     /// Replay a caller-selected bounded event set into traversal storage.
     pub fn replay_events(
         store: &TraversalStore,
+        ledger_id: LedgerIdentity,
         after_seq: u64,
         events: impl IntoIterator<Item = EventRecord>,
     ) -> Result<Self, StorageError> {
@@ -73,7 +78,7 @@ impl TraversalReducer {
         };
         for event in events {
             reducer.last_seen_seq = event.seq;
-            if reducer.apply_event(store, &event)? {
+            if reducer.apply_event(store, ledger_id, &event)? {
                 reducer.applied_events += 1;
             }
         }
@@ -84,6 +89,7 @@ impl TraversalReducer {
     fn apply_event(
         &mut self,
         store: &TraversalStore,
+        ledger_id: LedgerIdentity,
         event: &EventRecord,
     ) -> Result<bool, StorageError> {
         if !is_traversal_source_event(event) {
@@ -106,7 +112,7 @@ impl TraversalReducer {
         for intent in reducer_intents_for_event(event, &source_fact_id)? {
             match intent {
                 TraversalIntent::SelectAnchor(input) => {
-                    self.select_anchor(store, event, input)?;
+                    self.select_anchor(store, ledger_id, event, input)?;
                 }
                 TraversalIntent::EndAnchor(input) => {
                     self.end_anchor(store, input)?;
@@ -120,6 +126,7 @@ impl TraversalReducer {
     fn select_anchor(
         &mut self,
         store: &TraversalStore,
+        ledger_id: LedgerIdentity,
         event: &EventRecord,
         input: AnchorSelectionInput,
     ) -> Result<(), StorageError> {
@@ -161,12 +168,17 @@ impl TraversalReducer {
             self.current_anchors.end(&anchor_ref.index_key(), event.seq);
             self.lineage
                 .add_supersession(&current.anchor_id, anchor_id.clone(), event.seq);
-            self.emitted_envelopes.push(anchor_superseded_envelope(
-                &event.session,
-                AnchorSupersededEventData {
-                    anchor: current.clone(),
-                },
-            ));
+            self.emitted_envelopes
+                .push(anchor_superseded_envelope_from_record(
+                    &event.session,
+                    EventRecordRef {
+                        ledger_id,
+                        seq: event.seq,
+                    },
+                    AnchorSupersededEventData {
+                        anchor: current.clone(),
+                    },
+                ));
         }
 
         let record = AnchorSelectionRecord {
@@ -187,12 +199,17 @@ impl TraversalReducer {
         self.current_anchors.select(record.clone());
         self.lineage
             .add_source_fact(&record.anchor_id, source_fact_id.clone(), event.seq);
-        self.emitted_envelopes.push(anchor_selected_envelope(
-            &event.session,
-            AnchorSelectedEventData {
-                anchor: record.clone(),
-            },
-        ));
+        self.emitted_envelopes
+            .push(anchor_selected_envelope_from_record(
+                &event.session,
+                EventRecordRef {
+                    ledger_id,
+                    seq: event.seq,
+                },
+                AnchorSelectedEventData {
+                    anchor: record.clone(),
+                },
+            ));
         Ok(())
     }
 

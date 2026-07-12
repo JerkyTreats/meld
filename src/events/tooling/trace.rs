@@ -65,7 +65,11 @@ fn parse_subject(
 }
 
 fn format_text(report: &EventTraceReport) -> String {
-    let mut out = format!("trace {}\n", subject_label(&report.subject));
+    let mut out = format!(
+        "trace ledger={} {}\n",
+        report.ledger_id,
+        subject_label(&report.subject)
+    );
     let scanned = match (
         report.coverage.scanned_from_seq,
         report.coverage.scanned_through_seq,
@@ -121,19 +125,22 @@ fn link_label(link: &TraceLink) -> String {
         TraceLink::Subject => "subject".to_string(),
         TraceLink::ObjectRef => "object_ref".to_string(),
         TraceLink::Relation { relation_type } => format!("relation:{relation_type}"),
-        TraceLink::SourceFact { .. } => "source_fact".to_string(),
+        TraceLink::SourceRecord { record } => {
+            format!("source_record:{}:{}", record.ledger_id, record.seq)
+        }
         TraceLink::Stream => "stream".to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use meld_events::EventReadCoverage;
+    use meld_events::{EventReadCoverage, LedgerIdentity};
 
     use super::*;
 
     #[test]
     fn text_renderer_pins_complete_empty_and_truncated_coverage() {
+        let ledger_id = LedgerIdentity::new();
         let cases = [
             (
                 EventReadCoverage {
@@ -169,11 +176,14 @@ mod tests {
 
         for (coverage, expected) in cases {
             let report = EventTraceReport {
+                ledger_id,
                 subject: TraceSubject::Record { seq: 9 },
                 coverage,
                 hops: Vec::new(),
             };
-            assert!(format_text(&report).contains(expected));
+            let rendered = format_text(&report);
+            assert!(rendered.contains(&format!("trace ledger={ledger_id} record 9")));
+            assert!(rendered.contains(expected));
         }
     }
 }

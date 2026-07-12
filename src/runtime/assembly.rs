@@ -430,7 +430,7 @@ impl ProductRuntimeAssembly {
         let supervisor_store = SupervisorStore::open(supervisor_store_path)?;
         let ports = ProductRuntimePorts::from_stores(stores.as_ref(), provider)?;
         let handle_factories =
-            RuntimeHandleFactoryRegistry::from_registry(&registry, stores.as_ref(), &ports);
+            RuntimeHandleFactoryRegistry::from_registry(&registry, stores.as_ref(), &ports)?;
 
         Ok(Self {
             product_root,
@@ -647,22 +647,22 @@ impl RuntimeHandleFactoryRegistry {
         registry: &RuntimeFactoryRegistry,
         stores: &OpenProductStores,
         ports: &ProductRuntimePorts,
-    ) -> Self {
+    ) -> Result<Self, RuntimeAssemblyError> {
         let factories = registry
             .descriptors()
             .map(|descriptor| {
-                (
+                Ok((
                     descriptor.runtime_id.clone(),
                     RuntimeHandleFactory {
                         descriptor: descriptor.clone(),
                         semantic: RuntimeSemanticHandleFactory::for_descriptor(
                             descriptor, stores, ports,
-                        ),
+                        )?,
                     },
-                )
+                ))
             })
-            .collect();
-        Self { factories }
+            .collect::<Result<_, RuntimeAssemblyError>>()?;
+        Ok(Self { factories })
     }
 
     /// Return one inert handle factory by runtime id.
@@ -786,18 +786,23 @@ impl RuntimeSemanticHandleFactory {
         descriptor: &RuntimeFactoryDescriptor,
         stores: &OpenProductStores,
         ports: &ProductRuntimePorts,
-    ) -> Self {
+    ) -> Result<Self, RuntimeAssemblyError> {
         match descriptor.runtime_id.as_str() {
-            "world_model.graph_replay" => Self::GraphReplay {
-                graph_runtime: Arc::new(GraphRuntime::from_stores(
-                    Arc::clone(&stores.event_store),
-                    Arc::clone(&stores.traversal_store),
-                )),
-            },
-            "event.append" => Self::EventAppend {
+            "world_model.graph_replay" => Ok(Self::GraphReplay {
+                graph_runtime: Arc::new(
+                    GraphRuntime::from_stores(
+                        Arc::clone(&stores.event_store),
+                        Arc::clone(&stores.traversal_store),
+                    )
+                    .map_err(|error| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                    })?,
+                ),
+            }),
+            "event.append" => Ok(Self::EventAppend {
                 port: ports.event_append().clone(),
-            },
-            _ => Self::None,
+            }),
+            _ => Ok(Self::None),
         }
     }
 

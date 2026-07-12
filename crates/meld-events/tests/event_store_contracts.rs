@@ -1,5 +1,8 @@
 use meld_events::events::store::EventStore;
-use meld_events::{DomainObjectRef, EventEnvelope, EventRecord, EventRuntime, EventWriter};
+use meld_events::{
+    DomainObjectRef, EventEnvelope, EventRecord, EventRecordRef, EventRuntime, EventWriter,
+    LedgerIdentity,
+};
 use proptest::prelude::*;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -223,6 +226,51 @@ fn event_contracts_round_trip_and_validate() {
 }
 
 #[test]
+fn empty_envelope_provenance_is_omitted_from_the_wire() {
+    let serialized = serde_json::to_value(domain_envelope("execution.started")).unwrap();
+
+    assert!(serialized.get("provenance").is_none());
+}
+
+#[test]
+fn envelopes_without_a_provenance_field_decode_with_empty_provenance() {
+    let serialized = json!({
+        "ts": RECORDED_AT,
+        "recorded_at": RECORDED_AT,
+        "record_id": null,
+        "session": SESSION_A,
+        "domain_id": "execution",
+        "stream_id": "workflow-a",
+        "type": "execution.started",
+        "occurred_at": null,
+        "content_hash": null,
+        "objects": [],
+        "relations": [],
+        "data": {}
+    });
+
+    let envelope: EventEnvelope = serde_json::from_value(serialized).unwrap();
+
+    assert!(envelope.provenance.source_records.is_empty());
+}
+
+#[test]
+fn nonempty_envelope_provenance_round_trips_structurally() {
+    let source = EventRecordRef {
+        ledger_id: LedgerIdentity::new(),
+        seq: 17,
+    };
+    let envelope = domain_envelope("execution.derived").with_source_records(vec![source]);
+    let serialized = serde_json::to_value(&envelope).unwrap();
+
+    assert_eq!(serialized["provenance"]["source_records"][0]["seq"], 17);
+    assert_eq!(
+        serde_json::from_value::<EventEnvelope>(serialized).unwrap(),
+        envelope
+    );
+}
+
+#[test]
 fn event_contracts_reject_empty_identity_components() {
     assert!(DomainObjectRef::new("", "task_run", "run-a").is_err());
     assert!(DomainObjectRef::new("execution", " ", "run-a").is_err());
@@ -296,6 +344,7 @@ fn event_record_deserializes_legacy_flattened_shape_with_current_parity() {
 
     assert_eq!(legacy, current);
     assert_eq!(legacy.envelope(), current.envelope());
+    assert!(legacy.provenance.source_records.is_empty());
 }
 
 #[test]

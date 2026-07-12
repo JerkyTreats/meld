@@ -290,6 +290,7 @@ impl EventAppendCapability {
         envelope: EventEnvelope,
         mode: AppendMode,
     ) -> Result<AppendReceipt, EventAuthorityError> {
+        validate_provenance(self.inner.ledger_id, &envelope)?;
         let outcome = self
             .inner
             .writer
@@ -312,6 +313,9 @@ impl EventAppendCapability {
         envelopes: Vec<EventEnvelope>,
         mode: AppendMode,
     ) -> Result<Vec<AppendReceipt>, EventAuthorityError> {
+        for envelope in &envelopes {
+            validate_provenance(self.inner.ledger_id, envelope)?;
+        }
         self.inner
             .writer
             .append_durable_outcomes_batch(envelopes, mode == AppendMode::Idempotent)?
@@ -336,6 +340,7 @@ impl EventAppendCapability {
         envelope: EventEnvelope,
         mode: AppendMode,
     ) -> Result<BestEffortAppendReceipt, EventAuthorityError> {
+        validate_provenance(self.inner.ledger_id, &envelope)?;
         self.inner
             .writer
             .enqueue_best_effort(envelope, mode == AppendMode::Idempotent)?;
@@ -555,6 +560,24 @@ fn validate_identity(
     } else {
         Err(EventAuthorityError::IdentityMismatch { expected, actual })
     }
+}
+
+fn validate_provenance(
+    ledger_id: LedgerIdentity,
+    envelope: &EventEnvelope,
+) -> Result<(), EventAuthorityError> {
+    if let Some(source) = envelope
+        .provenance
+        .source_records
+        .iter()
+        .find(|source| source.ledger_id != ledger_id)
+    {
+        return Err(EventAuthorityError::IdentityMismatch {
+            expected: ledger_id,
+            actual: source.ledger_id,
+        });
+    }
+    Ok(())
 }
 
 struct AuthorityLease {

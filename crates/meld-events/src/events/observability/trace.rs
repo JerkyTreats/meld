@@ -1,20 +1,19 @@
 //! Causal trace computation over object references, relations, and
-//! stored fact provenance.
+//! structural source-record provenance.
 //!
 //! The walk is purely structural: it matches the object references,
-//! relation endpoints, and `spine::{seq}` provenance strings that records
-//! carry, and never interprets `event_type` semantics, which producers own.
+//! relation endpoints, and identity-bearing source-record references that
+//! envelopes carry. It never interprets payload strings or `event_type`
+//! semantics, which producers own.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-
-use serde_json::Value;
 
 use crate::error::StorageError;
 use crate::events::observability::{
     CoverageTruncation, EventReadCoverage, EventTraceReport, LedgerObservability, TraceHop,
     TraceLink, TraceSubject, MAX_TRACE_SCAN_EVENTS,
 };
-use crate::events::{DomainObjectRef, EventRecord};
+use crate::events::{DomainObjectRef, EventRecord, EventRecordRef, LedgerIdentity};
 
 /// Upper bound on events one trace scans, anchored at the ledger tip.
 ///
@@ -24,14 +23,6 @@ use crate::events::{DomainObjectRef, EventRecord};
 /// records because "why did this just happen" is the question trace
 /// exists for; a reference index that avoids the scan entirely is future
 /// work.
-/// Depth bound for the provenance walk over event data payloads.
-///
-/// Provenance references sit near the top of producer payloads (record
-/// structs a level or two deep, plus their id arrays), so a shallow bound
-/// finds them while keeping the walk cheap on large or pathological
-/// payloads.
-const PROVENANCE_WALK_DEPTH: usize = 6;
-
 pub(super) fn compute(
     backing: &LedgerObservability,
     subject: TraceSubject,
@@ -44,6 +35,7 @@ fn compute_with_scan_limit(
     subject: TraceSubject,
     scan_limit: usize,
 ) -> Result<EventTraceReport, StorageError> {
+    let ledger_id = backing.ledger_identity();
     let store = backing.store();
     let tip_seq = store.tip_seq()?;
     let retained_from = store.retained_lower_boundary()?;
@@ -57,7 +49,7 @@ fn compute_with_scan_limit(
     let mut links: BTreeMap<u64, TraceLink> = BTreeMap::new();
     match &subject {
         TraceSubject::Object(object_ref) => {
-            collect_object_links(&records, object_ref, &mut links);
+            collect_object_links(&records, ledger_id, object_ref, &mut links);
         }
         TraceSubject::Stream {
             domain_id,
@@ -70,7 +62,7 @@ fn compute_with_scan_limit(
             }
         }
         TraceSubject::Record { seq } => {
-            collect_record_links(&records, *seq, &mut links);
+            collect_record_links(&records, ledger_id, *seq, &mut links);
         }
     }
 
@@ -93,6 +85,7 @@ fn compute_with_scan_limit(
         .collect();
 
     Ok(EventTraceReport {
+        ledger_id,
         subject,
         coverage,
         hops,
@@ -138,6 +131,7 @@ fn read_coverage(
 /// chains are traced by re-running on a hop.
 fn collect_object_links(
     records: &[EventRecord],
+    ledger_id: LedgerIdentity,
     object_ref: &DomainObjectRef,
     links: &mut BTreeMap<u64, TraceLink>,
 ) {
@@ -160,19 +154,27 @@ fn collect_object_links(
         }
     }
 
-    let provenance_targets: HashSet<String> =
-        links.keys().map(|seq| format!("spine::{seq}")).collect();
+    let provenance_targets: HashSet<u64> = links.keys().copied().collect();
     for record in records {
-        if let Some(fact_id) = find_provenance_ref(&record.data, &provenance_targets) {
-            upsert_link(links, record.seq, TraceLink::SourceFact { fact_id });
+        if let Some(source) = find_source_record(record, ledger_id, &provenance_targets) {
+            upsert_link(
+                links,
+                record.seq,
+                TraceLink::SourceRecord { record: source },
+            );
         }
     }
 }
 
 /// Links the subject record itself, records that share any of its object or
-/// relation-endpoint references, and records whose payload provenance names
-/// its sequence.
-fn collect_record_links(records: &[EventRecord], seq: u64, links: &mut BTreeMap<u64, TraceLink>) {
+/// relation-endpoint references, and records whose structural provenance
+/// names its identity-bearing sequence.
+fn collect_record_links(
+    records: &[EventRecord],
+    ledger_id: LedgerIdentity,
+    seq: u64,
+    links: &mut BTreeMap<u64, TraceLink>,
+) {
     let mut subject_objects = Vec::new();
     if let Some(subject) = records.iter().find(|record| record.seq == seq) {
         subject_objects.extend(subject.objects.iter().cloned());
@@ -181,7 +183,7 @@ fn collect_record_links(records: &[EventRecord], seq: u64, links: &mut BTreeMap<
             subject_objects.push(relation.dst.clone());
         }
     }
-    let provenance_targets: HashSet<String> = std::iter::once(format!("spine::{seq}")).collect();
+    let provenance_targets: HashSet<u64> = std::iter::once(seq).collect();
 
     for record in records {
         if record
@@ -202,8 +204,12 @@ fn collect_record_links(records: &[EventRecord], seq: u64, links: &mut BTreeMap<
                 },
             );
         }
-        if let Some(fact_id) = find_provenance_ref(&record.data, &provenance_targets) {
-            upsert_link(links, record.seq, TraceLink::SourceFact { fact_id });
+        if let Some(source) = find_source_record(record, ledger_id, &provenance_targets) {
+            upsert_link(
+                links,
+                record.seq,
+                TraceLink::SourceRecord { record: source },
+            );
         }
         if record.seq == seq {
             upsert_link(links, record.seq, TraceLink::Subject);
@@ -223,43 +229,32 @@ fn upsert_link(links: &mut BTreeMap<u64, TraceLink>, seq: u64, link: TraceLink) 
 }
 
 /// Link strength for deduplication, most specific reference first:
-/// Subject > SourceFact > Relation > ObjectRef > Stream. Being the subject
-/// beats referencing it; stored provenance beats a typed edge; a typed edge
-/// beats a bare object mention; sharing a stream is the weakest tie.
+/// Subject > SourceRecord > Relation > ObjectRef > Stream. Being the subject
+/// beats referencing it; structural provenance beats a typed edge; a typed
+/// edge beats a bare object mention; sharing a stream is the weakest tie.
 fn link_strength(link: &TraceLink) -> u8 {
     match link {
         TraceLink::Subject => 4,
-        TraceLink::SourceFact { .. } => 3,
+        TraceLink::SourceRecord { .. } => 3,
         TraceLink::Relation { .. } => 2,
         TraceLink::ObjectRef => 1,
         TraceLink::Stream => 0,
     }
 }
 
-/// Finds the first string in a payload equal to one of the provenance
-/// targets, walking arrays and objects down to the depth bound.
-///
-/// This is the generic provenance convention: any string value equal to
-/// `spine::{seq}` counts as a stored reference to that ledger record,
-/// wherever the producer nested it. Key names and payload meaning stay
-/// producer-owned.
-fn find_provenance_ref(value: &Value, targets: &HashSet<String>) -> Option<String> {
-    fn walk(value: &Value, targets: &HashSet<String>, depth: usize) -> Option<String> {
-        if depth == 0 {
-            return None;
-        }
-        match value {
-            Value::String(text) if targets.contains(text) => Some(text.clone()),
-            Value::Array(items) => items.iter().find_map(|item| walk(item, targets, depth - 1)),
-            Value::Object(map) => map.values().find_map(|item| walk(item, targets, depth - 1)),
-            _ => None,
-        }
-    }
-
-    if targets.is_empty() {
-        return None;
-    }
-    walk(value, targets, PROVENANCE_WALK_DEPTH)
+/// Returns the first same-ledger structural source reference whose sequence
+/// belongs to the trace seed set. Payload strings are deliberately ignored.
+fn find_source_record(
+    record: &EventRecord,
+    ledger_id: LedgerIdentity,
+    targets: &HashSet<u64>,
+) -> Option<EventRecordRef> {
+    record
+        .provenance
+        .source_records
+        .iter()
+        .copied()
+        .find(|source| source.ledger_id == ledger_id && targets.contains(&source.seq))
 }
 
 #[cfg(test)]
