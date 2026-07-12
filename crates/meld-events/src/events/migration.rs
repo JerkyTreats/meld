@@ -1165,8 +1165,8 @@ fn open_source_db(path: &Path) -> Result<sled::Db, EventAuthorityError> {
     for attempt in 0..SOURCE_OPEN_RETRY_ATTEMPTS {
         match sled::open(path) {
             Ok(db) => return Ok(db),
-            Err(sled::Error::Io(error))
-                if error.kind() == std::io::ErrorKind::WouldBlock
+            Err(error)
+                if error.to_string().contains("could not acquire lock")
                     && attempt + 1 < SOURCE_OPEN_RETRY_ATTEMPTS =>
             {
                 std::thread::sleep(SOURCE_OPEN_RETRY_DELAY);

@@ -658,10 +658,10 @@ fn equal_identities_and_identity_bypass_provenance_are_rejected() {
         Ok(_) => panic!("foreign target identity provenance bypassed source validation"),
         Err(error) => error,
     };
-    assert!(matches!(
-        bypass,
-        EventAuthorityError::MigrationConflict { .. }
-    ));
+    assert!(
+        matches!(bypass, EventAuthorityError::MigrationConflict { .. }),
+        "unexpected bypass error: {bypass:?}"
+    );
 }
 
 #[test]
