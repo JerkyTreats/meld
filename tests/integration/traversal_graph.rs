@@ -566,6 +566,9 @@ fn current_snapshot_matches_workspace_root_hash() {
         Some(&session_id),
     )
     .unwrap();
+    // `scan` publishes its events best effort, enqueueing without waiting
+    // for durability, so the log read must synchronize through the barrier.
+    progress.barrier().unwrap();
 
     let scan_state = read_workspace_scan_state(&api, &workspace_root).unwrap();
     let traversal =
