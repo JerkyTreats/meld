@@ -6,8 +6,10 @@
 //! Does not own: this module does not schedule background workers or map
 //! execution facts into world model evidence.
 
-use meld_events::events::store::EventStore;
-use meld_events::{DomainObjectRef, EventEnvelope, EventRelation};
+use meld_events::{
+    AppendMode, AppendReceipt, DomainObjectRef, EventAppendCapability, EventEnvelope,
+    EventRelation, LedgerIdentity,
+};
 use serde::Serialize;
 
 use crate::task_network::{
@@ -60,8 +62,8 @@ pub struct PublicationAppend {
     pub publication_id: String,
     /// Deterministic event ledger record id.
     pub event_record_id: String,
-    /// Event ledger sequence returned by append.
-    pub event_seq: u64,
+    /// Complete durable authority acknowledgement.
+    pub receipt: AppendReceipt,
 }
 
 /// Result for one attempted publication bridge item.
@@ -73,8 +75,8 @@ pub enum PublicationPublishResult {
         publication_id: String,
         /// Deterministic event ledger record id.
         event_record_id: String,
-        /// Event ledger sequence returned by append.
-        event_seq: u64,
+        /// Complete durable authority acknowledgement.
+        receipt: AppendReceipt,
         /// Task network revision that recorded the mark.
         marked_revision: u64,
     },
@@ -90,7 +92,8 @@ pub enum PublicationPublishResult {
         /// Rejection summary.
         reason: String,
     },
-    /// Event append failed and a retryable failure mark was attempted.
+    /// Event append failed and remains retryable. Pending attempts record a
+    /// failure mark; legacy published receipts retain their prior state.
     AppendFailed {
         /// Task network publication id.
         publication_id: String,
@@ -138,17 +141,38 @@ pub enum PublicationBridgeError {
     /// Task network store returned a storage error.
     #[error("task network command failed: {0}")]
     TaskNetworkStore(String),
+
+    /// Stored canonical receipt belongs to another event authority.
+    #[error(
+        "publication '{publication_id}' belongs to ledger {actual}, but sink is bound to {expected}"
+    )]
+    LedgerIdentityMismatch {
+        /// Publication carrying the foreign canonical receipt.
+        publication_id: String,
+        /// Ledger accepted by the supplied sink.
+        expected: LedgerIdentity,
+        /// Ledger named by the stored receipt.
+        actual: LedgerIdentity,
+    },
 }
 
 /// Event append capability used by the bridge and tests.
 pub trait EventAppendSink {
-    /// Appends an envelope idempotently and returns the event ledger sequence.
-    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, String>;
+    /// Returns the ledger accepted by this sink.
+    fn ledger_identity(&self) -> LedgerIdentity;
+
+    /// Appends an envelope idempotently and returns its durable authority receipt.
+    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<AppendReceipt, String>;
 }
 
-impl EventAppendSink for EventStore {
-    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, String> {
-        EventStore::append_envelope_idempotent(self, envelope).map_err(|error| error.to_string())
+impl EventAppendSink for EventAppendCapability {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        EventAppendCapability::ledger_identity(self)
+    }
+
+    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<AppendReceipt, String> {
+        self.append_durable(envelope, AppendMode::Idempotent)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -225,18 +249,84 @@ pub fn publish_publication<E: EventAppendSink>(
         });
     };
 
-    if matches!(publication.state, PublicationState::Published { .. }) {
-        return Ok(PublicationPublishResult::AlreadyPublished {
-            publication_id: publication.publication_id,
-        });
+    let upgrades_legacy_receipt = matches!(
+        publication.state,
+        PublicationState::Published { receipt: None, .. }
+    );
+    match &publication.state {
+        PublicationState::Published {
+            receipt: Some(receipt),
+            ..
+        } if receipt.ledger_id != events.ledger_identity() => {
+            return Ok(PublicationPublishResult::MarkRejected {
+                publication_id: publication.publication_id,
+                reason: format!(
+                    "publication receipt belongs to ledger {}, but sink is bound to {}",
+                    receipt.ledger_id,
+                    events.ledger_identity()
+                ),
+            });
+        }
+        PublicationState::Published {
+            receipt: Some(_), ..
+        } => {
+            return Ok(PublicationPublishResult::AlreadyPublished {
+                publication_id: publication.publication_id,
+            });
+        }
+        PublicationState::Published { receipt: None, .. } => {
+            // Legacy published receipts have no trustworthy sequence-space
+            // identity. Repeating the deterministic idempotent append obtains
+            // the original sequence and an identity-bearing receipt without
+            // duplicating the event.
+        }
+        PublicationState::Pending | PublicationState::Failed { .. } => {}
     }
 
     let event_record_id = publication_event_record_id(&publication.publication_id);
     let envelope = build_publication_envelope(&request.session_id, &publication)?;
     match events.append_envelope_idempotent(envelope) {
-        Ok(event_seq) => publish_marked_publication(store, publication, event_record_id, event_seq),
+        Ok(receipt) if receipt.ledger_id != events.ledger_identity() => {
+            Ok(PublicationPublishResult::MarkRejected {
+                publication_id: publication.publication_id,
+                reason: format!(
+                    "append receipt belongs to ledger {}, but sink is bound to {}",
+                    receipt.ledger_id,
+                    events.ledger_identity()
+                ),
+            })
+        }
+        Ok(receipt) => publish_marked_publication(store, publication, event_record_id, receipt),
+        Err(error) if upgrades_legacy_receipt => Ok(PublicationPublishResult::AppendFailed {
+            publication_id: publication.publication_id,
+            error,
+        }),
         Err(error) => record_append_failure(store, publication, error),
     }
+}
+
+fn preflight_publication_receipts<E: EventAppendSink>(
+    store: &SledTaskNetworkStore,
+    events: &E,
+) -> Result<(), PublicationBridgeError> {
+    let expected = events.ledger_identity();
+    for publication in store.state().publications.values() {
+        let PublicationState::Published {
+            receipt: Some(receipt),
+            ..
+        } = publication.state
+        else {
+            continue;
+        };
+        if receipt.ledger_id != expected {
+            return Err(PublicationBridgeError::LedgerIdentityMismatch {
+                publication_id: publication.publication_id.clone(),
+                expected,
+                actual: receipt.ledger_id,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Publishes retryable task network publications in deterministic id order.
@@ -246,6 +336,7 @@ pub fn publish_pending_publications<E: EventAppendSink>(
     request: PublishPendingPublicationsRequest,
 ) -> Result<PublicationBridgeReport, PublicationBridgeError> {
     validate_request(&request)?;
+    preflight_publication_receipts(store, events)?;
 
     let input_revision = store.state().revision;
     let scope = PublicationBridgeScope {
@@ -262,7 +353,9 @@ pub fn publish_pending_publications<E: EventAppendSink>(
         .filter(|(_, publication)| {
             matches!(
                 publication.state,
-                PublicationState::Pending | PublicationState::Failed { .. }
+                PublicationState::Pending
+                    | PublicationState::Failed { .. }
+                    | PublicationState::Published { receipt: None, .. }
             )
         })
         .map(|(publication_id, _)| publication_id.clone());
@@ -352,12 +445,13 @@ fn publish_marked_publication(
     store: &mut SledTaskNetworkStore,
     mut publication: Publication,
     event_record_id: String,
-    event_seq: u64,
+    receipt: AppendReceipt,
 ) -> Result<PublicationPublishResult, PublicationBridgeError> {
     let publication_id = publication.publication_id.clone();
     publication.state = PublicationState::Published {
         marked_revision: 0,
-        event_seq: Some(event_seq),
+        receipt: Some(receipt),
+        legacy_event_seq: None,
     };
     let base_revision = store.state().revision;
     let command_id = format!(
@@ -366,7 +460,7 @@ fn publish_marked_publication(
     match submit_mark_publication(store, command_id, publication)? {
         command::Response::Accepted { .. } | command::Response::Duplicate { .. } => {
             if let Some(result) =
-                published_result_from_state(store, &publication_id, event_record_id, event_seq)
+                published_result_from_state(store, &publication_id, event_record_id, receipt)
             {
                 Ok(result)
             } else {
@@ -435,20 +529,25 @@ fn published_result_from_state(
     store: &SledTaskNetworkStore,
     publication_id: &str,
     event_record_id: String,
-    event_seq: u64,
+    receipt: AppendReceipt,
 ) -> Option<PublicationPublishResult> {
     let publication = store.state().publications.get(publication_id)?;
     let PublicationState::Published {
         marked_revision,
-        event_seq: stored_event_seq,
+        receipt: stored_receipt,
+        legacy_event_seq: _,
     } = &publication.state
     else {
         return None;
     };
+    let stored_receipt = (*stored_receipt)?;
+    if stored_receipt != receipt {
+        return None;
+    }
     Some(PublicationPublishResult::Published {
         publication_id: publication_id.to_string(),
         event_record_id,
-        event_seq: (*stored_event_seq).unwrap_or(event_seq),
+        receipt: stored_receipt,
         marked_revision: *marked_revision,
     })
 }

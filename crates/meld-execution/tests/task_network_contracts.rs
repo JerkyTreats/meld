@@ -120,7 +120,8 @@ fn legacy_published_publication_decodes_without_event_seq() {
     let (_, mut expected) = expected_claim_and_publication();
     expected.state = PublicationState::Published {
         marked_revision: 4,
-        event_seq: None,
+        receipt: None,
+        legacy_event_seq: None,
     };
     let mut legacy = serde_json::to_value(&expected).unwrap();
     legacy["state"]["Published"]
@@ -133,6 +134,62 @@ fn legacy_published_publication_decodes_without_event_seq() {
     assert_eq!(decoded, expected);
     let encoded = serde_json::to_value(decoded).unwrap();
     assert_eq!(encoded, legacy);
+}
+
+#[test]
+fn legacy_published_event_seq_round_trips_without_fabricated_identity() {
+    let raw = serde_json::json!({
+        "Published": {
+            "marked_revision": 4,
+            "event_seq": 17
+        }
+    });
+
+    let decoded: PublicationState = serde_json::from_value(raw.clone()).unwrap();
+
+    assert!(matches!(
+        decoded,
+        PublicationState::Published {
+            receipt: None,
+            legacy_event_seq: Some(17),
+            ..
+        }
+    ));
+    assert_eq!(serde_json::to_value(decoded).unwrap(), raw);
+}
+
+#[test]
+fn canonical_publication_receipt_rejects_incomplete_or_mixed_wire_shapes() {
+    let null_receipt = serde_json::json!({
+        "Published": {
+            "marked_revision": 4,
+            "receipt": null
+        }
+    });
+    let incomplete_receipt = serde_json::json!({
+        "Published": {
+            "marked_revision": 4,
+            "receipt": {
+                "ledger_id": "00000000-0000-4000-8000-000000000001",
+                "seq": 17
+            }
+        }
+    });
+    let mixed = serde_json::json!({
+        "Published": {
+            "marked_revision": 4,
+            "receipt": {
+                "ledger_id": "00000000-0000-4000-8000-000000000001",
+                "seq": 17,
+                "disposition": "inserted"
+            },
+            "event_seq": 17
+        }
+    });
+
+    for invalid in [null_receipt, incomplete_receipt, mixed] {
+        assert!(serde_json::from_value::<PublicationState>(invalid).is_err());
+    }
 }
 
 #[test]

@@ -2,7 +2,7 @@
 mod task_network_support;
 
 use futures::executor::block_on;
-use meld_events::EventEnvelope;
+use meld_events::{AppendDisposition, AppendReceipt, EventEnvelope, LedgerIdentity};
 use meld_execution::capability::{
     BoundCapabilityInstance, CapabilityInvocationPayload, CapabilityInvocationResult,
 };
@@ -249,7 +249,12 @@ fn phase8_task_network_slice_runs_and_survives_reopen() {
         .clone();
     publication.state = PublicationState::Published {
         marked_revision: 0,
-        event_seq: None,
+        receipt: Some(AppendReceipt {
+            ledger_id: LedgerIdentity::new(),
+            seq: 1,
+            disposition: AppendDisposition::Inserted,
+        }),
+        legacy_event_seq: None,
     };
     let publication_id = publication.publication_id.clone();
     let mark_command = task_network_support::apply_sled_command(

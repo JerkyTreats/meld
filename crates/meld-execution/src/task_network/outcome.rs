@@ -15,6 +15,7 @@
 //! ```
 
 use crate::task_network::{contracts::stable_id, dispatch};
+use meld_events::AppendReceipt;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
@@ -136,7 +137,7 @@ fn event_type_for_status(status: &dispatch::OutcomeStatus) -> &'static str {
 }
 
 /// Durable publication lifecycle state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum PublicationState {
     /// Publication is waiting for an external append attempt.
     Pending,
@@ -144,13 +145,76 @@ pub enum PublicationState {
     Published {
         /// Revision that marked the publication as complete.
         marked_revision: u64,
-        /// Event ledger sequence returned by the successful append.
+        /// Complete identity-bearing authority acknowledgement.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        event_seq: Option<u64>,
+        receipt: Option<AppendReceipt>,
+        /// Pre-authority sequence retained only to replay historical state
+        /// hashes exactly until the receipt is upgraded.
+        // TODO compat-shim(E5): remove after
+        // task_network_publication_bridge::persisted_legacy_receipt_reopens_and_upgrades
+        // proves all stored event_seq-only publication states are rewritten.
+        #[serde(rename = "event_seq")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        legacy_event_seq: Option<u64>,
     },
     /// Last publication attempt failed and can be retried.
     Failed {
         /// Failure summary from the last publication attempt.
         error: String,
     },
+}
+
+impl<'de> Deserialize<'de> for PublicationState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        enum Wire {
+            Pending,
+            Published {
+                marked_revision: u64,
+                #[serde(default)]
+                receipt: Option<AppendReceipt>,
+                #[serde(default)]
+                event_seq: Option<u64>,
+            },
+            Failed {
+                error: String,
+            },
+        }
+
+        let value = Value::deserialize(deserializer)?;
+        let published_fields = value.get("Published").and_then(Value::as_object);
+        let receipt_field_present =
+            published_fields.is_some_and(|published| published.contains_key("receipt"));
+        let event_seq_field_present =
+            published_fields.is_some_and(|published| published.contains_key("event_seq"));
+        let wire: Wire = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        match wire {
+            Wire::Pending => Ok(Self::Pending),
+            Wire::Failed { error } => Ok(Self::Failed { error }),
+            Wire::Published {
+                marked_revision,
+                receipt,
+                event_seq,
+            } => {
+                if receipt_field_present && receipt.is_none() {
+                    return Err(serde::de::Error::custom(
+                        "canonical publication receipt must be complete",
+                    ));
+                }
+                if receipt.is_some() && event_seq_field_present {
+                    return Err(serde::de::Error::custom(
+                        "publication state cannot contain canonical receipt and legacy event_seq",
+                    ));
+                }
+                Ok(Self::Published {
+                    marked_revision,
+                    receipt,
+                    legacy_event_seq: event_seq,
+                })
+            }
+        }
+    }
 }

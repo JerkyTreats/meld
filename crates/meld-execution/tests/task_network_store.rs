@@ -1,6 +1,7 @@
 #[path = "support/task_network.rs"]
 mod task_network_support;
 
+use meld_events::{AppendDisposition, AppendReceipt, LedgerIdentity};
 use meld_execution::task_network::command::{Command, Response};
 use meld_execution::task_network::mutation::{Mutation, ReadPrecondition, Rejection, Set};
 use meld_execution::task_network::outcome::PublicationState;
@@ -256,7 +257,12 @@ fn marked_publication_survives_reopen() {
         let mut publication = store.state().publications.values().next().unwrap().clone();
         publication.state = PublicationState::Published {
             marked_revision: 0,
-            event_seq: None,
+            receipt: Some(AppendReceipt {
+                ledger_id: LedgerIdentity::new(),
+                seq: 1,
+                disposition: AppendDisposition::Inserted,
+            }),
+            legacy_event_seq: None,
         };
         publication_id = publication.publication_id.clone();
         let request = task_network_support::apply_sled_command(

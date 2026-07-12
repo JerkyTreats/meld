@@ -442,7 +442,34 @@ impl InMemoryTaskNetworkStore {
             );
         };
 
-        if matches!(current.state, PublicationState::Published { .. }) {
+        let upgrades_legacy_receipt = matches!(
+            (&current.state, &publication.state),
+            (
+                PublicationState::Published { receipt: None, .. },
+                PublicationState::Published {
+                    receipt: Some(_),
+                    legacy_event_seq: None,
+                    ..
+                }
+            )
+        );
+        if matches!(
+            (&current.state, &publication.state),
+            (
+                PublicationState::Pending | PublicationState::Failed { .. },
+                PublicationState::Published { receipt: None, .. }
+            )
+        ) {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::InvalidLifecycleTransition(format!(
+                    "publication '{}' requires a canonical append receipt",
+                    publication.publication_id
+                ))),
+            );
+        }
+        if matches!(current.state, PublicationState::Published { .. }) && !upgrades_legacy_receipt {
             return self.record_response(
                 command_id,
                 request_hash,
@@ -463,12 +490,35 @@ impl InMemoryTaskNetworkStore {
             );
         }
 
+        if matches!(
+            publication.state,
+            PublicationState::Published {
+                receipt: Some(_),
+                legacy_event_seq: Some(_),
+                ..
+            }
+        ) {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::InvalidLifecycleTransition(format!(
+                    "publication '{}' cannot mix canonical receipt with legacy event sequence",
+                    publication.publication_id
+                ))),
+            );
+        }
+
         let revision = self.state.revision + 1;
         let mut marked = current;
         marked.state = match publication.state {
-            PublicationState::Published { event_seq, .. } => PublicationState::Published {
+            PublicationState::Published {
+                receipt,
+                legacy_event_seq,
+                ..
+            } => PublicationState::Published {
                 marked_revision: revision,
-                event_seq,
+                receipt,
+                legacy_event_seq,
             },
             PublicationState::Failed { error } => PublicationState::Failed { error },
             PublicationState::Pending => {
@@ -548,7 +598,15 @@ impl InMemoryTaskNetworkStore {
                     .is_some_and(|publication| {
                         matches!(
                             publication.state,
-                            PublicationState::Pending | PublicationState::Failed { .. }
+                            PublicationState::Pending
+                                | PublicationState::Failed { .. }
+                                | PublicationState::Published {
+                                    // TODO compat-shim(E5): remove this arm
+                                    // after persisted_legacy_receipt_reopens_and_upgrades
+                                    // proves old receipt-less rows are rewritten.
+                                    receipt: None,
+                                    ..
+                                }
                         )
                     }),
             };
