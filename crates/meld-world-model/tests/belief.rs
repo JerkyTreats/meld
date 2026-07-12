@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use meld_world_model::belief::EvidenceRejection;
 use meld_world_model::belief::{
@@ -18,6 +20,24 @@ use meld_world_model::{
     AnchorSelectionRecord, BeliefStatus, EvidenceValue, PerspectiveKey, TraversalFactRecord,
 };
 use proptest::prelude::*;
+
+fn reopen_sled_after_close(path: &Path) -> sled::Result<sled::Db> {
+    const MAX_ATTEMPTS: usize = 50;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        match sled::open(path) {
+            Ok(db) => return Ok(db),
+            Err(sled::Error::Io(error))
+                if error.kind() == std::io::ErrorKind::WouldBlock && attempt + 1 < MAX_ATTEMPTS =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("the final open attempt returns its error")
+}
 
 fn assert_close(actual: f64, expected: f64) {
     assert!(
@@ -798,7 +818,9 @@ fn belief_store_reopens_current_view_and_revision_history() {
             .unwrap();
     }
 
-    let reopened = BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap();
+    let reopened =
+        BeliefStore::new(reopen_sled_after_close(&belief_dir.path().join("belief")).unwrap())
+            .unwrap();
     let query = BeliefQuery::new(&reopened);
     let views = query
         .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
@@ -1391,7 +1413,7 @@ fn belief_store_persists_runtime_meta() {
         belief_store.flush().unwrap();
     }
 
-    let reopened = BeliefStore::new(sled::open(&path).unwrap()).unwrap();
+    let reopened = BeliefStore::new(reopen_sled_after_close(&path).unwrap()).unwrap();
 
     assert_eq!(
         reopened.get_runtime_meta("last_seq").unwrap().as_deref(),
