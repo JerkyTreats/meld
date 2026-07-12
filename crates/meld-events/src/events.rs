@@ -96,6 +96,29 @@ pub struct EventRecord {
     pub envelope: EventEnvelope,
 }
 
+/// Identity-bearing reference to one canonical event record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EventRecordRef {
+    /// Ledger that owns the referenced sequence.
+    pub ledger_id: LedgerIdentity,
+    /// Canonical sequence within that ledger.
+    pub seq: u64,
+}
+
+/// Structural source-record provenance carried by a derived event.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventProvenance {
+    /// Canonical records used to derive this event.
+    pub source_records: Vec<EventRecordRef>,
+}
+
+impl EventProvenance {
+    /// Returns true when the envelope carries no source-record references.
+    pub fn is_empty(&self) -> bool {
+        self.source_records.is_empty()
+    }
+}
+
 /// Unsequenced event ready to be emitted or appended to the store.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventEnvelope {
@@ -122,6 +145,9 @@ pub struct EventEnvelope {
     pub objects: Vec<DomainObjectRef>,
     /// Directed relations between referenced objects.
     pub relations: Vec<EventRelation>,
+    /// Structural provenance linking derived events to canonical sources.
+    #[serde(default, skip_serializing_if = "EventProvenance::is_empty")]
+    pub provenance: EventProvenance,
     /// Domain payload owned by the event producer.
     pub data: Value,
 }
@@ -167,6 +193,7 @@ impl EventEnvelope {
             content_hash,
             objects: Vec::new(),
             relations: Vec::new(),
+            provenance: EventProvenance::default(),
             data,
         }
     }
@@ -210,6 +237,7 @@ impl EventEnvelope {
             content_hash,
             objects: Vec::new(),
             relations: Vec::new(),
+            provenance: EventProvenance::default(),
             data,
         }
     }
@@ -243,6 +271,12 @@ impl EventEnvelope {
     ) -> Self {
         self.objects = objects;
         self.relations = relations;
+        self
+    }
+
+    /// Attaches canonical source-record provenance to this envelope.
+    pub fn with_source_records(mut self, source_records: Vec<EventRecordRef>) -> Self {
+        self.provenance = EventProvenance { source_records };
         self
     }
 
@@ -355,6 +389,8 @@ struct LegacyEventRecord {
     objects: Vec<DomainObjectRef>,
     #[serde(default)]
     relations: Vec<EventRelation>,
+    #[serde(default)]
+    provenance: EventProvenance,
     data: Value,
 }
 
@@ -374,6 +410,7 @@ impl LegacyEventRecord {
                 content_hash: self.content_hash,
                 objects: self.objects,
                 relations: self.relations,
+                provenance: self.provenance,
                 data: self.data,
             },
         }

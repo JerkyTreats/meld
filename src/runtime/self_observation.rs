@@ -229,6 +229,7 @@ mod tests {
 
     fn health(lag: u64, dropped: u64, retained_from: u64) -> EventHealthReport {
         EventHealthReport {
+            ledger_id: meld_events::LedgerIdentity::new(),
             tip_seq: 10_000,
             committed_watermark: 10_000,
             retained_from,
@@ -239,6 +240,13 @@ mod tests {
                 lag,
             }],
             append_rates: Vec::new(),
+            append_rate_coverage: meld_events::EventReadCoverage {
+                retained_from,
+                tip_seq: 10_000,
+                scanned_from_seq: Some(retained_from),
+                scanned_through_seq: Some(10_000),
+                truncation: meld_events::CoverageTruncation::None,
+            },
         }
     }
 

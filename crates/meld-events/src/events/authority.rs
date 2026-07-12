@@ -7,6 +7,7 @@
 //! Does not own: product binding, daemon hosting, transport, or scheduling.
 
 use std::collections::HashSet;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -17,7 +18,7 @@ use crate::events::identity::LedgerIdentity;
 use crate::events::observability::{CoverageTruncation, EventReadCoverage};
 use crate::events::registry::{ConsumerCursor, EventCursorRegistry};
 use crate::events::store::EventStore;
-use crate::events::writer::EventWriter;
+use crate::events::writer::{CommitWatermark, EventWriter};
 use crate::events::{EventEnvelope, EventRecord};
 
 /// Largest replay page accepted by the authority.
@@ -477,6 +478,22 @@ impl EventObservabilityCapability {
     /// Returns the ledger accepted by this capability.
     pub fn ledger_identity(&self) -> LedgerIdentity {
         self.inner.ledger_id
+    }
+
+    pub(crate) fn store_handle(&self) -> Arc<EventStore> {
+        Arc::clone(&self.inner.store)
+    }
+
+    pub(crate) fn watermark_handle(&self) -> Arc<CommitWatermark> {
+        self.inner.writer.watermark()
+    }
+
+    pub(crate) fn registry_handle(&self) -> EventCursorRegistry {
+        self.inner.registry.clone()
+    }
+
+    pub(crate) fn dropped_handle(&self) -> Arc<AtomicU64> {
+        self.inner.writer.dropped_handle()
     }
 }
 

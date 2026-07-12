@@ -1661,6 +1661,7 @@ mod tests {
     #[test]
     fn ledger_summary_shape_and_mapping_are_pinned() {
         let report = meld_events::EventHealthReport {
+            ledger_id: meld_events::LedgerIdentity::new(),
             tip_seq: 12,
             committed_watermark: 10,
             retained_from: 1,
@@ -1671,6 +1672,13 @@ mod tests {
                 lag: 1,
             }],
             append_rates: Vec::new(),
+            append_rate_coverage: meld_events::EventReadCoverage {
+                retained_from: 1,
+                tip_seq: 12,
+                scanned_from_seq: Some(1),
+                scanned_through_seq: Some(12),
+                truncation: meld_events::CoverageTruncation::None,
+            },
         };
         let summary = RuntimeStatusLedgerSummary::from_health(&report);
         assert_eq!(

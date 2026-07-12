@@ -8,15 +8,32 @@ use meld_events::error::StorageError;
 use meld_events::events::observability::{
     ConsumerLagReport, CoverageTruncation, DomainAppendRate, DomainFlow, EventFlowReport,
     EventHealthReport, EventPageRequest, EventReadCoverage, EventTraceReport, FlowWindow,
-    LegacyEventPage, SessionStep, SessionTimelineReport, SilentDomain, TraceHop, TraceLink,
-    TraceSubject, TypeFlow,
+    SessionStep, SessionTimelineReport, SilentDomain, TraceHop, TraceLink, TraceSubject, TypeFlow,
 };
-use meld_events::{DomainObjectRef, EventEnvelope, EventRecord};
+use meld_events::{
+    DomainObjectRef, EventEnvelope, EventPage, EventRecord, EventRecordRef, LedgerCursor,
+    LedgerIdentity,
+};
 use serde_json::json;
+
+fn ledger_id() -> LedgerIdentity {
+    "00000000-0000-0000-0000-000000000001".parse().unwrap()
+}
+
+fn complete_coverage(tip_seq: u64) -> EventReadCoverage {
+    EventReadCoverage {
+        retained_from: 1,
+        tip_seq,
+        scanned_from_seq: (tip_seq > 0).then_some(1),
+        scanned_through_seq: (tip_seq > 0).then_some(tip_seq),
+        truncation: CoverageTruncation::None,
+    }
+}
 
 #[test]
 fn health_report_shape_is_pinned() {
     let report = EventHealthReport {
+        ledger_id: ledger_id(),
         tip_seq: 12,
         committed_watermark: 10,
         retained_from: 1,
@@ -31,11 +48,13 @@ fn health_report_shape_is_pinned() {
             events_in_window: 5,
             window_seconds: Some(60),
         }],
+        append_rate_coverage: complete_coverage(12),
     };
 
     assert_eq!(
         serde_json::to_value(&report).unwrap(),
         json!({
+            "ledger_id": "00000000-0000-0000-0000-000000000001",
             "tip_seq": 12,
             "committed_watermark": 10,
             "retained_from": 1,
@@ -45,7 +64,14 @@ fn health_report_shape_is_pinned() {
             ],
             "append_rates": [
                 { "domain_id": "execution", "events_in_window": 5, "window_seconds": 60 }
-            ]
+            ],
+            "append_rate_coverage": {
+                "retained_from": 1,
+                "tip_seq": 12,
+                "scanned_from_seq": 1,
+                "scanned_through_seq": 12,
+                "truncation": "none"
+            }
         })
     );
 }
@@ -53,6 +79,8 @@ fn health_report_shape_is_pinned() {
 #[test]
 fn flow_report_shape_is_pinned() {
     let report = EventFlowReport {
+        ledger_id: ledger_id(),
+        coverage: complete_coverage(40),
         window_events: 7,
         span_seconds: Some(30),
         by_domain: vec![DomainFlow {
@@ -69,11 +97,18 @@ fn flow_report_shape_is_pinned() {
             last_seq: 12,
             last_recorded_at: "2026-07-08T00:00:00Z".to_string(),
         }],
+        silent_domain_coverage: complete_coverage(40),
     };
 
     assert_eq!(
         serde_json::to_value(&report).unwrap(),
         json!({
+            "ledger_id": "00000000-0000-0000-0000-000000000001",
+            "coverage": {
+                "retained_from": 1, "tip_seq": 40,
+                "scanned_from_seq": 1, "scanned_through_seq": 40,
+                "truncation": "none"
+            },
             "window_events": 7,
             "span_seconds": 30,
             "by_domain": [
@@ -88,7 +123,12 @@ fn flow_report_shape_is_pinned() {
                     "last_seq": 12,
                     "last_recorded_at": "2026-07-08T00:00:00Z"
                 }
-            ]
+            ],
+            "silent_domain_coverage": {
+                "retained_from": 1, "tip_seq": 40,
+                "scanned_from_seq": 1, "scanned_through_seq": 40,
+                "truncation": "none"
+            }
         })
     );
 }
@@ -98,6 +138,7 @@ fn trace_report_shape_is_pinned() {
     let subject =
         TraceSubject::Object(DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap());
     let report = EventTraceReport {
+        ledger_id: ledger_id(),
         subject: subject.clone(),
         coverage: EventReadCoverage {
             retained_from: 1,
@@ -123,8 +164,11 @@ fn trace_report_shape_is_pinned() {
                 stream_id: "graph".to_string(),
                 event_type: "world_state.anchor_selected".to_string(),
                 session_id: "session-a".to_string(),
-                link: TraceLink::SourceFact {
-                    fact_id: "spine::3".to_string(),
+                link: TraceLink::SourceRecord {
+                    record: EventRecordRef {
+                        ledger_id: ledger_id(),
+                        seq: 3,
+                    },
                 },
             },
         ],
@@ -133,6 +177,7 @@ fn trace_report_shape_is_pinned() {
     assert_eq!(
         serde_json::to_value(&report).unwrap(),
         json!({
+            "ledger_id": "00000000-0000-0000-0000-000000000001",
             "subject": {
                 "object": {
                     "domain_id": "workspace_fs",
@@ -164,7 +209,10 @@ fn trace_report_shape_is_pinned() {
                     "stream_id": "graph",
                     "event_type": "world_state.anchor_selected",
                     "session_id": "session-a",
-                    "link": { "source_fact": { "fact_id": "spine::3" } }
+                    "link": { "source_record": { "record": {
+                        "ledger_id": "00000000-0000-0000-0000-000000000001",
+                        "seq": 3
+                    } } }
                 }
             ]
         })
@@ -213,11 +261,17 @@ fn trace_link_variants_are_pinned() {
         json!({ "relation": { "relation_type": "produced" } })
     );
     assert_eq!(
-        serde_json::to_value(TraceLink::SourceFact {
-            fact_id: "spine::3".to_string(),
+        serde_json::to_value(TraceLink::SourceRecord {
+            record: EventRecordRef {
+                ledger_id: ledger_id(),
+                seq: 3,
+            },
         })
         .unwrap(),
-        json!({ "source_fact": { "fact_id": "spine::3" } })
+        json!({ "source_record": { "record": {
+            "ledger_id": "00000000-0000-0000-0000-000000000001",
+            "seq": 3
+        } } })
     );
 }
 
@@ -240,6 +294,7 @@ fn trace_subject_variants_are_pinned() {
 #[test]
 fn session_timeline_shape_is_pinned() {
     let report = SessionTimelineReport {
+        ledger_id: ledger_id(),
         session_id: "session-a".to_string(),
         observed_started_at: Some("2026-07-08T00:00:00Z".to_string()),
         observed_ended_at: Some("2026-07-08T00:00:02Z".to_string()),
@@ -272,6 +327,7 @@ fn session_timeline_shape_is_pinned() {
     assert_eq!(
         serde_json::to_value(&report).unwrap(),
         json!({
+            "ledger_id": "00000000-0000-0000-0000-000000000001",
             "session_id": "session-a",
             "observed_started_at": "2026-07-08T00:00:00Z",
             "observed_ended_at": "2026-07-08T00:00:02Z",
@@ -317,13 +373,20 @@ fn event_page_shape_is_pinned_and_carries_records_intact() {
         ),
         4,
     );
-    let page = LegacyEventPage {
+    let page = EventPage {
+        ledger_id: ledger_id(),
         records: vec![record.clone()],
-        next_after_seq: 4,
+        next_cursor: LedgerCursor {
+            ledger_id: ledger_id(),
+            after_seq: 4,
+        },
+        coverage: complete_coverage(4),
     };
 
     let value = serde_json::to_value(&page).unwrap();
-    assert_eq!(value["next_after_seq"], json!(4));
+    assert_eq!(value["ledger_id"], json!(ledger_id()));
+    assert_eq!(value["next_cursor"]["after_seq"], json!(4));
+    assert_eq!(value["coverage"]["tip_seq"], json!(4));
     // The canonical record travels intact inside the page.
     assert_eq!(value["records"][0], serde_json::to_value(&record).unwrap());
 
@@ -382,17 +445,38 @@ fn page_stream_blocks_and_pages_through_the_port() {
         })
         .unwrap();
     assert_eq!(first.records.len(), 2);
-    assert_eq!(first.next_after_seq, 2);
+    assert_eq!(first.next_cursor.after_seq, 2);
+    assert_eq!(first.coverage.retained_from, 1);
+    assert_eq!(first.coverage.tip_seq, 3);
+    assert_eq!(first.coverage.scanned_from_seq, Some(1));
+    assert_eq!(first.coverage.scanned_through_seq, Some(2));
+    assert_eq!(first.coverage.truncation, CoverageTruncation::After);
 
     let second = port
         .next_page(EventPageRequest {
-            after_seq: first.next_after_seq,
+            after_seq: first.next_cursor.after_seq,
             limit: 2,
             timeout_ms: 10,
         })
         .unwrap();
     assert_eq!(second.records.len(), 1);
-    assert_eq!(second.next_after_seq, 3);
+    assert_eq!(second.next_cursor.after_seq, 3);
+    assert_eq!(second.coverage.tip_seq, 3);
+    assert_eq!(second.coverage.scanned_from_seq, Some(3));
+    assert_eq!(second.coverage.scanned_through_seq, Some(3));
+    assert_eq!(second.coverage.truncation, CoverageTruncation::Before);
+
+    let both = port
+        .next_page(EventPageRequest {
+            after_seq: 1,
+            limit: 1,
+            timeout_ms: 0,
+        })
+        .unwrap();
+    assert_eq!(both.records[0].seq, 2);
+    assert_eq!(both.coverage.scanned_from_seq, Some(2));
+    assert_eq!(both.coverage.scanned_through_seq, Some(2));
+    assert_eq!(both.coverage.truncation, CoverageTruncation::Both);
 
     let empty = port
         .next_page(EventPageRequest {
@@ -402,7 +486,7 @@ fn page_stream_blocks_and_pages_through_the_port() {
         })
         .unwrap();
     assert!(empty.records.is_empty());
-    assert_eq!(empty.next_after_seq, 3);
+    assert_eq!(empty.next_cursor.after_seq, 3);
 
     for (limit, expected) in [
         (0, "event page limit must be in 1..=1024, got 0".to_string()),
@@ -474,6 +558,87 @@ fn page_stream_blocks_and_pages_through_the_port() {
         })
         .unwrap();
     assert!(non_blocking.records.is_empty());
+
+    let newest = port.newest_page(2).unwrap();
+    assert_eq!(
+        newest
+            .records
+            .iter()
+            .map(|record| record.seq)
+            .collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+    assert_eq!(newest.coverage.scanned_from_seq, Some(2));
+    assert_eq!(newest.coverage.scanned_through_seq, Some(3));
+    assert_eq!(newest.coverage.truncation, CoverageTruncation::Before);
+
+    store.set_retained_lower_boundary(2).unwrap();
+    let retained = port
+        .next_page(EventPageRequest {
+            after_seq: 1,
+            limit: 2,
+            timeout_ms: 0,
+        })
+        .unwrap();
+    assert_eq!(retained.coverage.retained_from, 2);
+    assert_eq!(retained.coverage.scanned_from_seq, Some(2));
+    assert_eq!(retained.coverage.scanned_through_seq, Some(3));
+    assert_eq!(retained.coverage.truncation, CoverageTruncation::Before);
+}
+
+#[test]
+fn waiting_page_wakes_for_an_append_and_reports_the_post_wake_snapshot() {
+    use meld_events::events::observability::EventObservabilityPort;
+    use meld_events::events::registry::EventCursorRegistry;
+    use meld_events::{EventWriter, LedgerObservability};
+    use std::sync::mpsc;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let db = sled::open(dir.path()).unwrap();
+    let store = meld_events::events::store::EventStore::shared(db.clone()).unwrap();
+    let registry = EventCursorRegistry::open(&db).unwrap();
+    let writer = EventWriter::spawn(Arc::clone(&store));
+    let port = Arc::new(LedgerObservability::new(
+        Arc::clone(&store),
+        writer.watermark(),
+        registry,
+        writer.dropped_handle(),
+    ));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (result_tx, result_rx) = mpsc::channel();
+    let reader = Arc::clone(&port);
+    let join = std::thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        let page = reader
+            .next_page(EventPageRequest {
+                after_seq: 0,
+                limit: 4,
+                timeout_ms: 2_000,
+            })
+            .unwrap();
+        result_tx.send(page).unwrap();
+    });
+
+    started_rx.recv().unwrap();
+    assert!(result_rx.recv_timeout(Duration::from_millis(30)).is_err());
+    writer
+        .append_durable(
+            EventEnvelope::with_now("session-a", "session.tick", json!({ "i": 1 })),
+            false,
+        )
+        .unwrap();
+    let page = result_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    join.join().unwrap();
+
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].seq, 1);
+    assert_eq!(page.coverage.retained_from, 1);
+    assert_eq!(page.coverage.tip_seq, 1);
+    assert_eq!(page.coverage.scanned_from_seq, Some(1));
+    assert_eq!(page.coverage.scanned_through_seq, Some(1));
+    assert_eq!(page.coverage.truncation, CoverageTruncation::None);
 }
 
 #[test]

@@ -7,7 +7,7 @@
 
 use std::io::Write;
 
-use meld_events::{EventObservabilityPort, EventPageRequest, EventRecord, LegacyEventPage};
+use meld_events::{EventObservabilityPort, EventPage, EventPageRequest, EventRecord};
 
 use crate::error::ApiError;
 use crate::events::tooling::{render, surface_error};
@@ -26,12 +26,15 @@ pub(super) fn run(
     if follow {
         follow_forever(port, format, after, limit)
     } else {
-        // Tail semantics: without a cursor, show the most recent records.
-        let cursor = match after {
-            Some(seq) => seq,
-            None => default_cursor(port, limit as u64)?,
+        // Tail semantics: without a cursor, select the most recent records
+        // by count. Sequence subtraction is incorrect for sparse migrated
+        // ledgers whose adjacent records need not have adjacent numbers.
+        let page = match after {
+            Some(seq) => next_page(port, seq, limit, 0)?,
+            None => port
+                .newest_page(limit)
+                .map_err(|err| surface_error("tail", err))?,
         };
-        let page = next_page(port, cursor, limit, 0)?;
         render(format, &page, render_page_text)
     }
 }
@@ -79,23 +82,12 @@ fn follow_forever(
     }
 }
 
-/// Default one-shot cursor: the last `limit` records, never below the first
-/// readable cursor so the default can never trip a retention gap; explicit
-/// cursors keep their honest gap semantics.
-fn default_cursor(port: &impl EventObservabilityPort, limit: u64) -> Result<u64, ApiError> {
-    let health = port.health().map_err(|err| surface_error("tail", err))?;
-    Ok(health
-        .tip_seq
-        .saturating_sub(limit)
-        .max(health.retained_from.saturating_sub(1)))
-}
-
 fn next_page(
     port: &impl EventObservabilityPort,
     after_seq: u64,
     limit: usize,
     timeout_ms: u64,
-) -> Result<LegacyEventPage, ApiError> {
+) -> Result<EventPage, ApiError> {
     port.next_page(EventPageRequest {
         after_seq,
         limit,
@@ -106,17 +98,17 @@ fn next_page(
 
 /// Next cursor after a page: the page's cursor when it carried records, the
 /// current cursor unchanged when it was empty (a timeout, not a gap).
-fn advance_cursor(cursor: u64, page: &LegacyEventPage) -> u64 {
+fn advance_cursor(cursor: u64, page: &EventPage) -> u64 {
     if page.records.is_empty() {
         cursor
     } else {
-        page.next_after_seq
+        page.next_cursor.after_seq
     }
 }
 
 /// Renders one follow-mode page: text lines, or the whole page as a single
 /// JSON object line so `--format json --follow` streams one object per page.
-fn render_follow_page(format: &str, page: &LegacyEventPage) -> Result<String, ApiError> {
+fn render_follow_page(format: &str, page: &EventPage) -> Result<String, ApiError> {
     match format {
         "json" => serde_json::to_string(page)
             .map_err(|err| ApiError::ConfigError(format!("failed to render event page: {err}"))),
@@ -124,12 +116,21 @@ fn render_follow_page(format: &str, page: &LegacyEventPage) -> Result<String, Ap
     }
 }
 
-fn render_page_text(page: &LegacyEventPage) -> String {
-    page.records
-        .iter()
-        .map(render_record_line)
-        .collect::<Vec<_>>()
-        .join("\n")
+fn render_page_text(page: &EventPage) -> String {
+    let mut lines = vec![
+        format!("ledger_id: {}", page.ledger_id),
+        format!(
+            "coverage: {}",
+            crate::events::tooling::status::coverage_text(&page.coverage)
+        ),
+    ];
+    lines.extend(
+        page.records
+            .iter()
+            .map(render_record_line)
+            .collect::<Vec<_>>(),
+    );
+    lines.join("\n")
 }
 
 /// One text line per record; the stream is shown only when it differs from
@@ -152,8 +153,9 @@ mod tests {
 
     use meld_events::error::StorageError;
     use meld_events::{
-        EventEnvelope, EventFlowReport, EventHealthReport, EventTraceReport, FlowWindow,
-        SessionTimelineReport, TraceSubject,
+        CoverageTruncation, EventEnvelope, EventFlowReport, EventHealthReport, EventReadCoverage,
+        EventTraceReport, FlowWindow, LedgerCursor, LedgerIdentity, SessionTimelineReport,
+        TraceSubject,
     };
     use serde_json::json;
 
@@ -172,31 +174,53 @@ mod tests {
         EventRecord::from_envelope(envelope, seq)
     }
 
-    fn page(records: Vec<EventRecord>, next_after_seq: u64) -> LegacyEventPage {
-        LegacyEventPage {
+    fn ledger_id() -> LedgerIdentity {
+        "00000000-0000-0000-0000-000000000001".parse().unwrap()
+    }
+
+    fn coverage(records: &[EventRecord]) -> EventReadCoverage {
+        EventReadCoverage {
+            retained_from: 1,
+            tip_seq: records.last().map(|record| record.seq).unwrap_or(0),
+            scanned_from_seq: records.first().map(|record| record.seq),
+            scanned_through_seq: records.last().map(|record| record.seq),
+            truncation: CoverageTruncation::None,
+        }
+    }
+
+    fn page(records: Vec<EventRecord>, next_after_seq: u64) -> EventPage {
+        let coverage = coverage(&records);
+        EventPage {
+            ledger_id: ledger_id(),
             records,
-            next_after_seq,
+            next_cursor: LedgerCursor {
+                ledger_id: ledger_id(),
+                after_seq: next_after_seq,
+            },
+            coverage,
         }
     }
 
     /// Port fake serving scripted pages while recording every request, so
     /// cursor and timeout discipline are observable without a live ledger.
     struct ScriptedPort {
-        pages: RefCell<VecDeque<LegacyEventPage>>,
+        pages: RefCell<VecDeque<EventPage>>,
         requests: RefCell<Vec<EventPageRequest>>,
+        newest_limits: RefCell<Vec<usize>>,
         tip_seq: u64,
         retained_from: u64,
     }
 
     impl ScriptedPort {
-        fn new(pages: Vec<LegacyEventPage>) -> Self {
+        fn new(pages: Vec<EventPage>) -> Self {
             Self::with_health(pages, 0, 1)
         }
 
-        fn with_health(pages: Vec<LegacyEventPage>, tip_seq: u64, retained_from: u64) -> Self {
+        fn with_health(pages: Vec<EventPage>, tip_seq: u64, retained_from: u64) -> Self {
             Self {
                 pages: RefCell::new(pages.into()),
                 requests: RefCell::new(Vec::new()),
+                newest_limits: RefCell::new(Vec::new()),
                 tip_seq,
                 retained_from,
             }
@@ -206,12 +230,20 @@ mod tests {
     impl EventObservabilityPort for ScriptedPort {
         fn health(&self) -> Result<EventHealthReport, StorageError> {
             Ok(EventHealthReport {
+                ledger_id: ledger_id(),
                 tip_seq: self.tip_seq,
                 committed_watermark: self.tip_seq,
                 retained_from: self.retained_from,
                 dropped_events: 0,
                 consumers: Vec::new(),
                 append_rates: Vec::new(),
+                append_rate_coverage: EventReadCoverage {
+                    retained_from: self.retained_from,
+                    tip_seq: self.tip_seq,
+                    scanned_from_seq: None,
+                    scanned_through_seq: None,
+                    truncation: CoverageTruncation::None,
+                },
             })
         }
 
@@ -227,8 +259,17 @@ mod tests {
             unimplemented!("tail tests exercise next_page only")
         }
 
-        fn next_page(&self, request: EventPageRequest) -> Result<LegacyEventPage, StorageError> {
+        fn next_page(&self, request: EventPageRequest) -> Result<EventPage, StorageError> {
             self.requests.borrow_mut().push(request);
+            Ok(self
+                .pages
+                .borrow_mut()
+                .pop_front()
+                .expect("test script ran out of pages"))
+        }
+
+        fn newest_page(&self, limit: usize) -> Result<EventPage, StorageError> {
+            self.newest_limits.borrow_mut().push(limit);
             Ok(self
                 .pages
                 .borrow_mut()
@@ -260,14 +301,21 @@ mod tests {
             vec![record(1, "s", "s"), record(2, "s", "workflow-b")],
             2,
         ));
-        assert_eq!(text.lines().count(), 2);
-        assert!(text.lines().next().unwrap().starts_with("1  "));
-        assert!(text.lines().nth(1).unwrap().ends_with("stream=workflow-b"));
+        assert_eq!(text.lines().count(), 4);
+        assert!(text.lines().next().unwrap().starts_with("ledger_id: "));
+        assert!(text.lines().nth(2).unwrap().starts_with("1  "));
+        assert!(text.lines().nth(3).unwrap().ends_with("stream=workflow-b"));
     }
 
     #[test]
-    fn empty_page_text_is_empty() {
-        assert_eq!(render_page_text(&page(Vec::new(), 4)), "");
+    fn empty_page_text_carries_identity_and_coverage() {
+        let rendered = render_page_text(&page(Vec::new(), 4));
+        let lines: Vec<_> = rendered.lines().collect();
+        assert_eq!(lines[0], "ledger_id: 00000000-0000-0000-0000-000000000001");
+        assert_eq!(
+            lines[1],
+            "coverage: retained_from=1 tip=0 scanned=empty truncation=none"
+        );
     }
 
     #[test]
@@ -275,7 +323,7 @@ mod tests {
         let rendered = render_follow_page("json", &page(vec![record(3, "s", "s")], 3)).unwrap();
         assert!(!rendered.contains('\n'));
         let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
-        assert_eq!(value["next_after_seq"], 3);
+        assert_eq!(value["next_cursor"]["after_seq"], 3);
         assert_eq!(value["records"][0]["seq"], 3);
     }
 
@@ -302,20 +350,9 @@ mod tests {
     fn one_shot_defaults_to_the_most_recent_records() {
         let port = ScriptedPort::with_health(vec![page(vec![record(90, "s", "s")], 90)], 100, 1);
         let output = run(&port, "text", None, 16, false).unwrap();
-        assert!(output.starts_with("90  "));
-        let requests = port.requests.borrow();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].after_seq, 84);
-        assert_eq!(requests[0].limit, 16);
-        assert_eq!(requests[0].timeout_ms, 0);
-    }
-
-    #[test]
-    fn one_shot_default_cursor_never_falls_below_the_retention_boundary() {
-        let port = ScriptedPort::with_health(vec![page(Vec::new(), 0)], 100, 95);
-        run(&port, "text", None, 16, false).unwrap();
-        let requests = port.requests.borrow();
-        assert_eq!(requests[0].after_seq, 94);
+        assert!(output.contains("90  "));
+        assert!(port.requests.borrow().is_empty());
+        assert_eq!(&*port.newest_limits.borrow(), &[16]);
     }
 
     #[test]
@@ -323,19 +360,34 @@ mod tests {
         let port = ScriptedPort::new(vec![page(vec![record(1, "s", "s")], 1)]);
         let output = run(&port, "json", Some(0), 16, false).unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
-        assert_eq!(value["next_after_seq"], 1);
+        assert_eq!(value["next_cursor"]["after_seq"], 1);
         // Pretty rendering distinguishes the one-shot page from the
         // follow-mode single-line object.
         assert!(output.contains('\n'));
     }
 
     #[test]
-    fn default_cursor_is_tip_minus_limit_clamped_to_retention() {
-        let plenty = ScriptedPort::with_health(Vec::new(), 100, 1);
-        assert_eq!(default_cursor(&plenty, 16).unwrap(), 84);
-        let short = ScriptedPort::with_health(Vec::new(), 10, 1);
-        assert_eq!(default_cursor(&short, 16).unwrap(), 0);
-        let compacted = ScriptedPort::with_health(Vec::new(), 100, 95);
-        assert_eq!(default_cursor(&compacted, 16).unwrap(), 94);
+    fn one_shot_default_uses_record_count_on_a_real_sparse_ledger() {
+        use std::sync::Arc;
+
+        use meld_events::{EventCursorRegistry, EventWriter, LedgerObservability};
+
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let store = meld_events::events::store::EventStore::shared(db.clone()).unwrap();
+        store.append_event(&record(10, "s", "s")).unwrap();
+        store.append_event(&record(90, "s", "s")).unwrap();
+        let registry = EventCursorRegistry::open(&db).unwrap();
+        let writer = EventWriter::spawn(Arc::clone(&store));
+        let port = LedgerObservability::new(
+            Arc::clone(&store),
+            writer.watermark(),
+            registry,
+            writer.dropped_handle(),
+        );
+
+        let output = run(&port, "text", None, 1, false).unwrap();
+        assert!(output.lines().any(|line| line.starts_with("90  ")));
+        assert!(!output.lines().any(|line| line.starts_with("10  ")));
+        assert!(output.contains("scanned=90..=90 truncation=before"));
     }
 }

@@ -10,7 +10,9 @@ use meld_events::error::StorageError;
 use meld_events::events::observability::{EventObservabilityPort, FlowWindow};
 use meld_events::events::registry::EventCursorRegistry;
 use meld_events::events::store::EventStore;
-use meld_events::{EventEnvelope, EventRecord, EventWriter, LedgerObservability};
+use meld_events::{
+    CoverageTruncation, EventEnvelope, EventRecord, EventWriter, LedgerObservability,
+};
 use serde_json::json;
 
 struct Fixture {
@@ -241,6 +243,15 @@ fn flow_window_covers_only_trailing_events() {
         })
         .collect();
     assert_eq!(silent, vec![("alpha", 1, "2026-07-08T00:00:00Z")]);
+    assert_eq!(report.coverage.scanned_from_seq, Some(3));
+    assert_eq!(report.coverage.scanned_through_seq, Some(4));
+    assert_eq!(report.coverage.truncation, CoverageTruncation::Before);
+    assert_eq!(report.silent_domain_coverage.scanned_from_seq, Some(1));
+    assert_eq!(report.silent_domain_coverage.scanned_through_seq, Some(2));
+    assert_eq!(
+        report.silent_domain_coverage.truncation,
+        CoverageTruncation::After
+    );
 }
 
 #[test]
@@ -339,6 +350,9 @@ fn flow_window_clamps_to_the_retention_boundary() {
     assert_eq!(report.by_domain.len(), 1);
     assert_eq!(report.by_domain[0].last_seq, 10);
     assert!(report.silent_domains.is_empty());
+    assert_eq!(report.coverage.scanned_from_seq, Some(6));
+    assert_eq!(report.coverage.scanned_through_seq, Some(10));
+    assert_eq!(report.coverage.truncation, CoverageTruncation::Before);
 }
 
 #[test]

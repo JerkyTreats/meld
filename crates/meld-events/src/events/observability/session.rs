@@ -12,8 +12,8 @@ use chrono::{DateTime, FixedOffset};
 
 use crate::error::StorageError;
 use crate::events::observability::{
-    CoverageTruncation, DomainFlow, EventFlowReport, EventReadCoverage, FlowWindow,
-    LedgerObservability, SessionStep, SessionTimelineReport, SilentDomain, TypeFlow,
+    coverage_truncation, CoverageTruncation, DomainFlow, EventFlowReport, EventReadCoverage,
+    FlowWindow, LedgerObservability, SessionStep, SessionTimelineReport, SilentDomain, TypeFlow,
     MAX_SESSION_SCAN_EVENTS,
 };
 use crate::events::EventRecord;
@@ -84,6 +84,7 @@ fn compute_timeline_with_scan_limit(
     }
 
     Ok(SessionTimelineReport {
+        ledger_id: backing.ledger_identity(),
         session_id: session_id.to_string(),
         observed_started_at: records
             .first()
@@ -103,8 +104,19 @@ pub(super) fn compute_flow(
 ) -> Result<EventFlowReport, StorageError> {
     let store = backing.store();
     let tip = store.tip_seq()?;
-
-    let records = store.read_newest_events_through(tip, window.max_events)?;
+    let retained_from = store.retained_lower_boundary()?;
+    let mut records = store.read_newest_events_through(tip, window.max_events.saturating_add(1))?;
+    let truncated_by_limit = records.len() > window.max_events;
+    if truncated_by_limit {
+        records.remove(0);
+    }
+    let coverage = EventReadCoverage {
+        retained_from,
+        tip_seq: tip,
+        scanned_from_seq: records.first().map(|record| record.seq),
+        scanned_through_seq: records.last().map(|record| record.seq),
+        truncation: coverage_truncation(retained_from > 1 || truncated_by_limit, false),
+    };
 
     let span_seconds = match (records.first(), records.last()) {
         (Some(first), Some(last)) => match (parse_recorded_at(first), parse_recorded_at(last)) {
@@ -151,14 +163,18 @@ pub(super) fn compute_flow(
             .then_with(|| a.event_type.cmp(&b.event_type))
     });
 
-    let silent_domains = compute_silent_domains(backing, &records, &by_domain)?;
+    let (silent_domains, silent_domain_coverage) =
+        compute_silent_domains(backing, tip, retained_from, &records, &by_domain)?;
 
     Ok(EventFlowReport {
+        ledger_id: backing.ledger_identity(),
+        coverage,
         window_events: records.len() as u64,
         span_seconds,
         by_domain,
         by_type,
         silent_domains,
+        silent_domain_coverage,
     })
 }
 
@@ -170,18 +186,44 @@ pub(super) fn compute_flow(
 /// when volumes demand a per-domain index.
 fn compute_silent_domains(
     backing: &LedgerObservability,
+    tip_seq: u64,
+    retained_from: u64,
     window_records: &[EventRecord],
     by_domain: &[DomainFlow],
-) -> Result<Vec<SilentDomain>, StorageError> {
+) -> Result<(Vec<SilentDomain>, EventReadCoverage), StorageError> {
     let Some(window_start) = window_records.first().map(|record| record.seq) else {
         // An empty window means an empty (or fully compacted) ledger; there
         // is no "before the window" to census.
-        return Ok(Vec::new());
+        return Ok((
+            Vec::new(),
+            EventReadCoverage {
+                retained_from,
+                tip_seq,
+                scanned_from_seq: None,
+                scanned_through_seq: None,
+                truncation: coverage_truncation(retained_from > 1, false),
+            },
+        ));
     };
 
-    let preceding = backing
-        .store()
-        .read_newest_events_through(window_start.saturating_sub(1), SILENT_CENSUS_EVENTS)?;
+    let mut preceding = backing.store().read_newest_events_through(
+        window_start.saturating_sub(1),
+        SILENT_CENSUS_EVENTS.saturating_add(1),
+    )?;
+    let truncated_before = preceding.len() > SILENT_CENSUS_EVENTS;
+    if truncated_before {
+        preceding.remove(0);
+    }
+    let coverage = EventReadCoverage {
+        retained_from,
+        tip_seq,
+        scanned_from_seq: preceding.first().map(|record| record.seq),
+        scanned_through_seq: preceding.last().map(|record| record.seq),
+        truncation: coverage_truncation(
+            retained_from > 1 || truncated_before,
+            window_start <= tip_seq,
+        ),
+    };
 
     let mut last_seen: BTreeMap<String, (u64, String)> = BTreeMap::new();
     for record in &preceding {
@@ -196,7 +238,7 @@ fn compute_silent_domains(
         );
     }
 
-    Ok(last_seen
+    let silent_domains = last_seen
         .into_iter()
         .filter(|(domain_id, _)| !by_domain.iter().any(|flow| &flow.domain_id == domain_id))
         .map(|(domain_id, (last_seq, last_recorded_at))| SilentDomain {
@@ -204,7 +246,8 @@ fn compute_silent_domains(
             last_seq,
             last_recorded_at,
         })
-        .collect())
+        .collect();
+    Ok((silent_domains, coverage))
 }
 
 fn parse_recorded_at(record: &EventRecord) -> Option<DateTime<FixedOffset>> {

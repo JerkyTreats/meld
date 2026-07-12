@@ -26,12 +26,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::StorageError;
+use crate::error::{EventAuthorityError, StorageError};
+use crate::events::authority::{EventPage, LedgerCursor};
 use crate::events::registry::{ConsumerCursor, EventCursorRegistry};
 use crate::events::store::EventStore;
-use crate::events::subscription::EventSubscription;
 use crate::events::writer::CommitWatermark;
-use crate::events::{DomainObjectRef, EventRecord};
+use crate::events::{DomainObjectRef, EventRecord, EventRecordRef, LedgerIdentity};
 
 /// Largest page a caller may request from the streaming surface.
 pub const MAX_EVENT_PAGE_LIMIT: usize = 1_024;
@@ -65,7 +65,15 @@ pub trait EventObservabilityPort {
     /// Bounded page after a cursor, blocking until events commit or the
     /// timeout elapses; an empty page means the timeout expired. Zero
     /// limits are rejected rather than blocked on.
-    fn next_page(&self, request: EventPageRequest) -> Result<LegacyEventPage, StorageError>;
+    fn next_page(&self, request: EventPageRequest) -> Result<EventPage, StorageError>;
+
+    /// Newest bounded records selected by record count rather than sequence
+    /// distance. This compatibility surface keeps sparse imported ledgers
+    /// honest until direct CLI reads move to the product authority in E5.
+    /// TODO compat-shim: E5 removes this method after
+    /// `product_event_authority_cutover` proves direct CLI tailing through the
+    /// authority replay capability on sparse history.
+    fn newest_page(&self, limit: usize) -> Result<EventPage, StorageError>;
 }
 
 /// Trailing window selector for flow reports.
@@ -100,8 +108,11 @@ pub enum TraceSubject {
 
 /// Cursor-paged stream request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// TODO compat-shim: E5 replaces this identity-less request after
+// product_event_authority_cutover proves direct CLI paging passes a
+// LedgerCursor through the resolved authority.
 pub struct EventPageRequest {
-    /// Cursor: only events with higher sequences are returned.
+    /// Compatibility cursor: only events with higher sequences are returned.
     pub after_seq: u64,
     /// Maximum records in the page.
     pub limit: usize,
@@ -114,8 +125,9 @@ pub struct EventPageRequest {
 /// Records travel intact as canonical products; the page adds only the
 /// cursor operational metadata around them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-// TODO compat-shim: E3 removes this identity-less page after direct CLI and
-// observability paging parity tests consume authority::EventPage.
+// TODO compat-shim: E5 removes this identity-less wire type after
+// product_event_authority_cutover proves every direct CLI page uses
+// authority::EventPage. Canonical observability no longer constructs it.
 pub struct LegacyEventPage {
     /// Records in sequence order.
     pub records: Vec<EventRecord>,
@@ -155,10 +167,12 @@ pub struct EventReadCoverage {
 /// Ledger health snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventHealthReport {
+    /// Ledger summarized by this report.
+    pub ledger_id: LedgerIdentity,
     /// Highest persisted ledger sequence.
     pub tip_seq: u64,
-    /// Highest writer-committed sequence; direct consumer-side appends may
-    /// place the tip above it.
+    /// Highest writer-committed sequence inside this report's frozen tip;
+    /// direct consumer-side appends may place the tip above it.
     pub committed_watermark: u64,
     /// First retained sequence; one means full history.
     pub retained_from: u64,
@@ -168,6 +182,8 @@ pub struct EventHealthReport {
     pub consumers: Vec<ConsumerLagReport>,
     /// Trailing append rate per domain.
     pub append_rates: Vec<DomainAppendRate>,
+    /// Durable range inspected for append-rate calculation.
+    pub append_rate_coverage: EventReadCoverage,
 }
 
 /// One consumer's lag against the commit watermark.
@@ -196,6 +212,10 @@ pub struct DomainAppendRate {
 /// Event flow over a trailing window.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventFlowReport {
+    /// Ledger summarized by this report.
+    pub ledger_id: LedgerIdentity,
+    /// Durable trailing range inspected for flow counts.
+    pub coverage: EventReadCoverage,
     /// Events actually covered by the window.
     pub window_events: u64,
     /// Observed wall-clock span of the window in seconds, absent when
@@ -207,6 +227,8 @@ pub struct EventFlowReport {
     pub by_type: Vec<TypeFlow>,
     /// Domains with history that emitted nothing inside the window.
     pub silent_domains: Vec<SilentDomain>,
+    /// Durable range inspected to identify silent domains.
+    pub silent_domain_coverage: EventReadCoverage,
 }
 
 /// Window counts for one domain.
@@ -234,7 +256,7 @@ pub struct TypeFlow {
 pub struct SilentDomain {
     /// Domain that owns the events.
     pub domain_id: String,
-    /// The domain's last sequence anywhere in history.
+    /// The domain's last sequence within `silent_domain_coverage`.
     pub last_seq: u64,
     /// Recorded time of that last event.
     pub last_recorded_at: String,
@@ -243,6 +265,8 @@ pub struct SilentDomain {
 /// Causal chain for one trace subject.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventTraceReport {
+    /// Ledger summarized by this report.
+    pub ledger_id: LedgerIdentity,
     /// Subject the trace was computed for.
     pub subject: TraceSubject,
     /// Durable range inspected while computing the chain.
@@ -284,9 +308,9 @@ pub enum TraceLink {
         relation_type: String,
     },
     /// The hop's stored provenance references the subject record.
-    SourceFact {
-        /// Stored fact identifier carrying the reference.
-        fact_id: String,
+    SourceRecord {
+        /// Identity-bearing source record carrying the provenance edge.
+        record: EventRecordRef,
     },
     /// The hop shares the subject stream.
     Stream,
@@ -295,6 +319,8 @@ pub enum TraceLink {
 /// One session's ledger records in order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionTimelineReport {
+    /// Ledger summarized by this report.
+    pub ledger_id: LedgerIdentity,
     /// Session partition the timeline covers.
     pub session_id: String,
     /// Recorded time of the first returned event, absent for empty sessions.
@@ -331,10 +357,10 @@ pub struct SessionStep {
 /// that owns the ledger database. Out-of-process backings implement the same
 /// port over the daemon edge later; adapters never learn which they got.
 pub struct LedgerObservability {
+    ledger_id: LedgerIdentity,
     store: Arc<EventStore>,
     watermark: Arc<CommitWatermark>,
     registry: EventCursorRegistry,
-    subscription: EventSubscription,
     dropped: Arc<AtomicU64>,
 }
 
@@ -347,14 +373,49 @@ impl LedgerObservability {
         registry: EventCursorRegistry,
         dropped: Arc<AtomicU64>,
     ) -> Self {
-        let subscription = EventSubscription::new(Arc::clone(&store), Arc::clone(&watermark));
-        Self {
+        // TODO compat-shim: E5 removes this infallible raw construction after
+        // product_event_authority_cutover and observability_contracts cover
+        // typed identity corruption through `try_new` and EventAuthority.
+        Self::try_new(store, watermark, registry, dropped)
+            .expect("legacy observability backing requires a valid persisted ledger identity")
+    }
+
+    /// Compatibility constructor that establishes or validates the ledger's
+    /// persisted identity without inventing an identity per report.
+    pub fn try_new(
+        store: Arc<EventStore>,
+        watermark: Arc<CommitWatermark>,
+        registry: EventCursorRegistry,
+        dropped: Arc<AtomicU64>,
+    ) -> Result<Self, StorageError> {
+        let ledger_id = stable_ledger_identity(&store)?;
+        Ok(Self {
+            ledger_id,
             store,
             watermark,
             registry,
-            subscription,
+            dropped,
+        })
+    }
+
+    pub(crate) fn from_authority(
+        ledger_id: LedgerIdentity,
+        store: Arc<EventStore>,
+        watermark: Arc<CommitWatermark>,
+        registry: EventCursorRegistry,
+        dropped: Arc<AtomicU64>,
+    ) -> Self {
+        Self {
+            ledger_id,
+            store,
+            watermark,
+            registry,
             dropped,
         }
+    }
+
+    pub(crate) fn ledger_identity(&self) -> LedgerIdentity {
+        self.ledger_id
     }
 
     pub(crate) fn store(&self) -> &EventStore {
@@ -396,26 +457,191 @@ impl EventObservabilityPort for LedgerObservability {
         session::compute_timeline(self, session_id)
     }
 
-    fn next_page(&self, request: EventPageRequest) -> Result<LegacyEventPage, StorageError> {
+    fn next_page(&self, request: EventPageRequest) -> Result<EventPage, StorageError> {
         validate_nonzero_bound("event page limit", request.limit, MAX_EVENT_PAGE_LIMIT)?;
         validate_upper_bound(
             "event page timeout_ms",
             request.timeout_ms,
             MAX_EVENT_PAGE_TIMEOUT_MS,
         )?;
-        let records = self.subscription.next_batch(
-            request.after_seq,
-            request.limit,
-            Duration::from_millis(request.timeout_ms),
-        )?;
-        let next_after_seq = records
-            .last()
-            .map(|record| record.seq)
-            .unwrap_or(request.after_seq);
-        Ok(LegacyEventPage {
-            records,
-            next_after_seq,
-        })
+        let ledger_id = self.ledger_identity();
+        let cursor = LedgerCursor {
+            ledger_id,
+            after_seq: request.after_seq,
+        };
+        let mut page = read_page(self.store(), ledger_id, cursor, request.limit)?;
+        if page.records.is_empty() && request.timeout_ms > 0 {
+            self.watermark
+                .wait_past(request.after_seq, Duration::from_millis(request.timeout_ms));
+            page = read_page(self.store(), ledger_id, cursor, request.limit)?;
+        }
+        Ok(page)
+    }
+
+    fn newest_page(&self, limit: usize) -> Result<EventPage, StorageError> {
+        validate_nonzero_bound("event page limit", limit, MAX_EVENT_PAGE_LIMIT)?;
+        read_newest_page(self.store(), self.ledger_identity(), limit)
+    }
+}
+
+impl crate::events::authority::EventObservabilityCapability {
+    /// Computes health after validating the requested ledger identity.
+    pub fn health(
+        &self,
+        ledger_id: LedgerIdentity,
+    ) -> Result<EventHealthReport, EventAuthorityError> {
+        self.validate_observability_identity(ledger_id)?;
+        health::compute(&self.as_ledger_observability()).map_err(Into::into)
+    }
+
+    /// Computes one bounded flow report after validating identity.
+    pub fn flow(
+        &self,
+        ledger_id: LedgerIdentity,
+        window: FlowWindow,
+    ) -> Result<EventFlowReport, EventAuthorityError> {
+        self.validate_observability_identity(ledger_id)?;
+        validate_nonzero_bound(
+            "event flow window",
+            window.max_events,
+            MAX_FLOW_WINDOW_EVENTS,
+        )
+        .map_err(EventAuthorityError::from)?;
+        session::compute_flow(&self.as_ledger_observability(), window).map_err(Into::into)
+    }
+
+    /// Computes one bounded session report after validating identity.
+    pub fn session(
+        &self,
+        ledger_id: LedgerIdentity,
+        session_id: &str,
+    ) -> Result<SessionTimelineReport, EventAuthorityError> {
+        self.validate_observability_identity(ledger_id)?;
+        session::compute_timeline(&self.as_ledger_observability(), session_id).map_err(Into::into)
+    }
+
+    /// Computes one bounded structural trace after validating identity.
+    pub fn trace(
+        &self,
+        ledger_id: LedgerIdentity,
+        subject: TraceSubject,
+    ) -> Result<EventTraceReport, EventAuthorityError> {
+        self.validate_observability_identity(ledger_id)?;
+        trace::compute(&self.as_ledger_observability(), subject).map_err(Into::into)
+    }
+
+    fn validate_observability_identity(
+        &self,
+        actual: LedgerIdentity,
+    ) -> Result<(), EventAuthorityError> {
+        let expected = self.ledger_identity();
+        if expected == actual {
+            Ok(())
+        } else {
+            Err(EventAuthorityError::IdentityMismatch { expected, actual })
+        }
+    }
+
+    fn as_ledger_observability(&self) -> LedgerObservability {
+        LedgerObservability::from_authority(
+            self.ledger_identity(),
+            self.store_handle(),
+            self.watermark_handle(),
+            self.registry_handle(),
+            self.dropped_handle(),
+        )
+    }
+}
+
+fn stable_ledger_identity(store: &EventStore) -> Result<LedgerIdentity, StorageError> {
+    let bytes = match store.ledger_identity_bytes()? {
+        Some(raw) => raw,
+        None => {
+            let candidate = LedgerIdentity::new();
+            store.establish_ledger_identity_bytes(&candidate.encode())?
+        }
+    };
+    LedgerIdentity::decode(&bytes).map_err(|error| {
+        StorageError::InvalidPath(format!(
+            "ledger_identity must contain one 16-byte UUID: {error}"
+        ))
+    })
+}
+
+fn read_page(
+    store: &EventStore,
+    ledger_id: LedgerIdentity,
+    cursor: LedgerCursor,
+    limit: usize,
+) -> Result<EventPage, StorageError> {
+    let tip_seq = store.tip_seq()?;
+    let retained_from = store.retained_lower_boundary()?;
+    let mut records =
+        store.read_all_events_between_limit(cursor.after_seq, tip_seq, limit.saturating_add(1))?;
+    let truncated_after = records.len() > limit;
+    records.truncate(limit);
+    let scanned_from_seq = records.first().map(|record| record.seq);
+    let scanned_through_seq = records.last().map(|record| record.seq);
+    let truncated_before = retained_from > 1 || (tip_seq > 0 && cursor.after_seq >= retained_from);
+    let next_after_seq = scanned_through_seq.unwrap_or(cursor.after_seq);
+    Ok(EventPage {
+        ledger_id,
+        records,
+        next_cursor: LedgerCursor {
+            ledger_id,
+            after_seq: next_after_seq,
+        },
+        coverage: EventReadCoverage {
+            retained_from,
+            tip_seq,
+            scanned_from_seq,
+            scanned_through_seq,
+            truncation: coverage_truncation(truncated_before, truncated_after),
+        },
+    })
+}
+
+fn read_newest_page(
+    store: &EventStore,
+    ledger_id: LedgerIdentity,
+    limit: usize,
+) -> Result<EventPage, StorageError> {
+    let tip_seq = store.tip_seq()?;
+    let retained_from = store.retained_lower_boundary()?;
+    let mut records = store.read_newest_events_through(tip_seq, limit.saturating_add(1))?;
+    let truncated_before = retained_from > 1 || records.len() > limit;
+    if records.len() > limit {
+        records.remove(0);
+    }
+    let scanned_from_seq = records.first().map(|record| record.seq);
+    let scanned_through_seq = records.last().map(|record| record.seq);
+    let after_seq = scanned_through_seq.unwrap_or_else(|| retained_from.saturating_sub(1));
+    Ok(EventPage {
+        ledger_id,
+        records,
+        next_cursor: LedgerCursor {
+            ledger_id,
+            after_seq,
+        },
+        coverage: EventReadCoverage {
+            retained_from,
+            tip_seq,
+            scanned_from_seq,
+            scanned_through_seq,
+            truncation: coverage_truncation(truncated_before, false),
+        },
+    })
+}
+
+pub(super) fn coverage_truncation(
+    truncated_before: bool,
+    truncated_after: bool,
+) -> CoverageTruncation {
+    match (truncated_before, truncated_after) {
+        (false, false) => CoverageTruncation::None,
+        (true, false) => CoverageTruncation::Before,
+        (false, true) => CoverageTruncation::After,
+        (true, true) => CoverageTruncation::Both,
     }
 }
 

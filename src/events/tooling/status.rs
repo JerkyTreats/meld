@@ -13,10 +13,15 @@ pub(super) fn run(port: &LedgerObservability, format: &str) -> Result<String, Ap
 
 fn render_text(report: &EventHealthReport) -> String {
     let mut out = String::new();
+    out.push_str(&format!("ledger_id:           {}\n", report.ledger_id));
     scalar(&mut out, "tip_seq", report.tip_seq);
     scalar(&mut out, "committed_watermark", report.committed_watermark);
     scalar(&mut out, "retained_from", report.retained_from);
     scalar(&mut out, "dropped_events", report.dropped_events);
+    out.push_str(&format!(
+        "append_rate_coverage: {}\n",
+        coverage_text(&report.append_rate_coverage)
+    ));
 
     out.push_str("consumers:");
     if report.consumers.is_empty() {
@@ -63,7 +68,61 @@ fn render_text(report: &EventHealthReport) -> String {
     out
 }
 
+pub(super) fn coverage_text(coverage: &meld_events::EventReadCoverage) -> String {
+    let scanned = match (coverage.scanned_from_seq, coverage.scanned_through_seq) {
+        (Some(from), Some(through)) => format!("{from}..={through}"),
+        _ => "empty".to_string(),
+    };
+    format!(
+        "retained_from={} tip={} scanned={} truncation={}",
+        coverage.retained_from,
+        coverage.tip_seq,
+        scanned,
+        truncation_label(coverage.truncation)
+    )
+}
+
+pub(super) fn truncation_label(truncation: meld_events::CoverageTruncation) -> &'static str {
+    match truncation {
+        meld_events::CoverageTruncation::None => "none",
+        meld_events::CoverageTruncation::Before => "before",
+        meld_events::CoverageTruncation::After => "after",
+        meld_events::CoverageTruncation::Both => "both",
+    }
+}
+
 fn scalar(out: &mut String, key: &str, value: u64) {
     // Width fits the longest scalar key, "committed_watermark:".
     out.push_str(&format!("{:<20} {value}\n", format!("{key}:")));
+}
+
+#[cfg(test)]
+mod tests {
+    use meld_events::{CoverageTruncation, EventReadCoverage};
+
+    use super::*;
+
+    #[test]
+    fn coverage_text_is_stable_and_lowercase() {
+        assert_eq!(
+            coverage_text(&EventReadCoverage {
+                retained_from: 3,
+                tip_seq: 90,
+                scanned_from_seq: Some(10),
+                scanned_through_seq: Some(90),
+                truncation: CoverageTruncation::Both,
+            }),
+            "retained_from=3 tip=90 scanned=10..=90 truncation=both"
+        );
+        assert_eq!(
+            coverage_text(&EventReadCoverage {
+                retained_from: 1,
+                tip_seq: 0,
+                scanned_from_seq: None,
+                scanned_through_seq: None,
+                truncation: CoverageTruncation::None,
+            }),
+            "retained_from=1 tip=0 scanned=empty truncation=none"
+        );
+    }
 }

@@ -7,19 +7,24 @@ use chrono::DateTime;
 
 use crate::error::StorageError;
 use crate::events::observability::{
-    ConsumerLagReport, DomainAppendRate, EventHealthReport, LedgerObservability,
+    coverage_truncation, ConsumerLagReport, DomainAppendRate, EventHealthReport, EventReadCoverage,
+    LedgerObservability,
 };
 use crate::events::store::EventStore;
 
 /// Trailing event-count window for append rates. Sequence order is the
 /// ledger's native clock, so the window is bounded by events, not time; the
 /// observed wall-clock span travels alongside each rate.
-const APPEND_RATE_WINDOW_EVENTS: u64 = 512;
+const APPEND_RATE_WINDOW_EVENTS: usize = 512;
 
 pub(super) fn compute(backing: &LedgerObservability) -> Result<EventHealthReport, StorageError> {
     let store = backing.store();
+    let ledger_id = backing.ledger_identity();
     let tip_seq = store.tip_seq()?;
-    let committed_watermark = backing.watermark().committed_seq();
+    // The writer can advance between freezing the durable tip and sampling
+    // its watermark. Clamp that later observation to the report's frozen
+    // ledger snapshot so the report never claims a commit it did not scan.
+    let committed_watermark = backing.watermark().committed_seq().min(tip_seq);
     let retained_from = store.retained_lower_boundary()?;
     let dropped_events = backing.dropped_events();
 
@@ -33,15 +38,17 @@ pub(super) fn compute(backing: &LedgerObservability) -> Result<EventHealthReport
         })
         .collect();
 
-    let append_rates = compute_append_rates(store, tip_seq, retained_from)?;
+    let (append_rates, append_rate_coverage) = compute_append_rates(store, tip_seq, retained_from)?;
 
     Ok(EventHealthReport {
+        ledger_id,
         tip_seq,
         committed_watermark,
         retained_from,
         dropped_events,
         consumers,
         append_rates,
+        append_rate_coverage,
     })
 }
 
@@ -49,15 +56,20 @@ fn compute_append_rates(
     store: &EventStore,
     tip_seq: u64,
     retained_from: u64,
-) -> Result<Vec<DomainAppendRate>, StorageError> {
-    // The window cursor never dips below retained history, so a raised
-    // compaction boundary shortens the window instead of failing health
-    // with a retention gap.
-    let after_seq = tip_seq
-        .saturating_sub(APPEND_RATE_WINDOW_EVENTS)
-        .max(retained_from.saturating_sub(1));
-    let window =
-        store.read_all_events_after_limit(after_seq, APPEND_RATE_WINDOW_EVENTS as usize)?;
+) -> Result<(Vec<DomainAppendRate>, EventReadCoverage), StorageError> {
+    let mut window =
+        store.read_newest_events_through(tip_seq, APPEND_RATE_WINDOW_EVENTS.saturating_add(1))?;
+    let truncated_by_limit = window.len() > APPEND_RATE_WINDOW_EVENTS;
+    if truncated_by_limit {
+        window.remove(0);
+    }
+    let coverage = EventReadCoverage {
+        retained_from,
+        tip_seq,
+        scanned_from_seq: window.first().map(|record| record.seq),
+        scanned_through_seq: window.last().map(|record| record.seq),
+        truncation: coverage_truncation(retained_from > 1 || truncated_by_limit, false),
+    };
 
     let window_seconds = observed_window_seconds(
         window
@@ -85,7 +97,7 @@ fn compute_append_rates(
         (Reverse(a.events_in_window), &a.domain_id)
             .cmp(&(Reverse(b.events_in_window), &b.domain_id))
     });
-    Ok(rates)
+    Ok((rates, coverage))
 }
 
 fn observed_window_seconds(first: Option<&str>, last: Option<&str>) -> Option<u64> {

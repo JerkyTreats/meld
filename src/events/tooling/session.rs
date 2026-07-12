@@ -1,11 +1,10 @@
 //! Session subcommand: renders one session's timeline.
 
-use meld_events::events::observability::{
-    CoverageTruncation, EventObservabilityPort, SessionTimelineReport,
-};
+use meld_events::events::observability::{EventObservabilityPort, SessionTimelineReport};
 use meld_events::LedgerObservability;
 
 use crate::error::ApiError;
+use crate::events::tooling::status::coverage_text;
 use crate::events::tooling::{render, surface_error};
 use crate::telemetry::ProgressRuntime;
 
@@ -27,27 +26,17 @@ pub(super) fn run(
 }
 
 fn render_text(report: &SessionTimelineReport) -> String {
-    let mut lines = vec![format!(
-        "session {}: {} events, {} .. {}",
-        report.session_id,
-        report.events_returned,
-        report.observed_started_at.as_deref().unwrap_or("-"),
-        report.observed_ended_at.as_deref().unwrap_or("-"),
-    )];
-    let scanned = match (
-        report.coverage.scanned_from_seq,
-        report.coverage.scanned_through_seq,
-    ) {
-        (Some(from), Some(through)) => format!("{from}..={through}"),
-        _ => "empty".to_string(),
-    };
-    lines.push(format!(
-        "coverage retained_from={} tip={} scanned={} truncation={}",
-        report.coverage.retained_from,
-        report.coverage.tip_seq,
-        scanned,
-        truncation_label(report.coverage.truncation)
-    ));
+    let mut lines = vec![
+        format!("ledger_id: {}", report.ledger_id),
+        format!(
+            "session {}: {} events, {} .. {}",
+            report.session_id,
+            report.events_returned,
+            report.observed_started_at.as_deref().unwrap_or("-"),
+            report.observed_ended_at.as_deref().unwrap_or("-"),
+        ),
+    ];
+    lines.push(format!("coverage: {}", coverage_text(&report.coverage)));
     for step in &report.steps {
         let gap = step
             .gap_ms
@@ -59,15 +48,6 @@ fn render_text(report: &SessionTimelineReport) -> String {
         ));
     }
     lines.join("\n")
-}
-
-fn truncation_label(truncation: CoverageTruncation) -> &'static str {
-    match truncation {
-        CoverageTruncation::None => "none",
-        CoverageTruncation::Before => "before",
-        CoverageTruncation::After => "after",
-        CoverageTruncation::Both => "both",
-    }
 }
 
 #[cfg(test)]
@@ -113,5 +93,9 @@ mod tests {
         let output = run(&port, &progress, "text", &session_id).unwrap();
         assert!(output.contains("session_started"));
         assert!(output.contains("session_ended"));
+        assert_eq!(
+            output.lines().find(|line| line.starts_with("coverage:")),
+            Some("coverage: retained_from=1 tip=2 scanned=1..=2 truncation=none")
+        );
     }
 }
