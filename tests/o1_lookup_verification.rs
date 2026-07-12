@@ -8,6 +8,21 @@ use meld::store::{NodeRecord, NodeRecordStore, NodeType, SledNodeRecordStore};
 use std::time::Instant;
 use tempfile::TempDir;
 
+fn median_average_time_ns(iterations: u32, mut operation: impl FnMut()) -> u128 {
+    const SAMPLE_COUNT: usize = 5;
+    let mut samples = [0_u128; SAMPLE_COUNT];
+
+    for sample in &mut samples {
+        let start = Instant::now();
+        for _ in 0..iterations {
+            operation();
+        }
+        *sample = start.elapsed().as_nanos() / u128::from(iterations);
+    }
+    samples.sort_unstable();
+    samples[SAMPLE_COUNT / 2]
+}
+
 /// Test that NodeRecord Store lookups are O(1) by measuring time across different sizes
 #[test]
 fn test_node_record_store_o1_lookup() {
@@ -124,12 +139,9 @@ fn test_head_index_o1_lookup() {
             node_id
         };
 
-        let start = Instant::now();
-        for _ in 0..10000 {
-            let _ = head_index.get_head(&test_node_id, "test").unwrap();
-        }
-        let duration = start.elapsed();
-        let avg_time_per_lookup = duration.as_nanos() / 10000;
+        let avg_time_per_lookup = median_average_time_ns(10_000, || {
+            std::hint::black_box(head_index.get_head(&test_node_id, "test").unwrap());
+        });
 
         lookup_times.push((size, avg_time_per_lookup));
     }
@@ -194,14 +206,11 @@ fn test_head_index_o1_update() {
         };
         let test_frame_id = [255u8; 32];
 
-        let start = Instant::now();
-        for _ in 0..10000 {
+        let avg_time_per_update = median_average_time_ns(10_000, || {
             head_index
                 .update_head(&test_node_id, "test", &test_frame_id)
                 .unwrap();
-        }
-        let duration = start.elapsed();
-        let avg_time_per_update = duration.as_nanos() / 10000;
+        });
 
         update_times.push((size, avg_time_per_update));
     }
