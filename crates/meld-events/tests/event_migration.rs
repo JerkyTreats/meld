@@ -12,6 +12,22 @@ use meld_events::{
 };
 use serde_json::{json, Value};
 
+fn open_db(path: &Path) -> sled::Db {
+    for attempt in 0..100 {
+        match sled::open(path) {
+            Ok(db) => return db,
+            Err(error) if attempt == 99 => {
+                panic!(
+                    "open migration fixture database {}: {error}",
+                    path.display()
+                )
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    }
+    unreachable!("bounded database open loop must return or panic")
+}
+
 fn envelope(session: &str, event_type: &str, value: Value) -> EventEnvelope {
     EventEnvelope::new_domain(
         "2026-07-12T00:00:00Z".to_string(),
@@ -25,7 +41,7 @@ fn envelope(session: &str, event_type: &str, value: Value) -> EventEnvelope {
 }
 
 fn insert_spine(path: &Path, records: &[EventRecord]) {
-    let db = sled::open(path).unwrap();
+    let db = open_db(path);
     let events = db.open_tree("obs_spine_events").unwrap();
     for record in records {
         events
@@ -39,7 +55,7 @@ fn insert_spine(path: &Path, records: &[EventRecord]) {
 }
 
 fn insert_legacy(path: &Path, record: &EventRecord) {
-    let db = sled::open(path).unwrap();
+    let db = open_db(path);
     db.open_tree("obs_events")
         .unwrap()
         .insert(
@@ -51,15 +67,11 @@ fn insert_legacy(path: &Path, record: &EventRecord) {
 }
 
 fn authority(path: &Path) -> EventAuthority {
-    EventAuthority::open(
-        sled::open(path).unwrap(),
-        EventAuthorityOpenOptions::default(),
-    )
-    .unwrap()
+    EventAuthority::open(open_db(path), EventAuthorityOpenOptions::default()).unwrap()
 }
 
 fn persist_identity(path: &Path, identity: LedgerIdentity) {
-    let db = sled::open(path).unwrap();
+    let db = open_db(path);
     db.open_tree("obs_spine_meta")
         .unwrap()
         .insert(b"ledger_identity", identity.as_uuid().as_bytes())
@@ -86,7 +98,7 @@ fn empty_source_completes_with_identity_and_cutover_marker() {
     let temp = tempfile::tempdir().unwrap();
     let source_path = temp.path().join("source");
     let target_path = temp.path().join("target");
-    sled::open(&source_path).unwrap().flush().unwrap();
+    open_db(&source_path).flush().unwrap();
     let target = authority(&target_path);
 
     let source = LegacyEventMigrationSource::open(&source_path).unwrap();
@@ -279,7 +291,7 @@ fn malformed_source_fails_before_any_target_mutation() {
     let temp = tempfile::tempdir().unwrap();
     let source_path = temp.path().join("source");
     let target_path = temp.path().join("target");
-    let source_db = sled::open(&source_path).unwrap();
+    let source_db = open_db(&source_path);
     source_db
         .open_tree("obs_spine_events")
         .unwrap()
@@ -313,7 +325,7 @@ fn retention_boundary_excludes_pruned_canonical_prefix() {
             })
             .collect::<Vec<_>>(),
     );
-    let db = sled::open(&source_path).unwrap();
+    let db = open_db(&source_path);
     db.open_tree("obs_spine_meta")
         .unwrap()
         .insert(b"retained_from", &3_u64.to_be_bytes())
@@ -336,7 +348,7 @@ fn equal_resolved_paths_and_mismatched_rerun_are_rejected() {
     let temp = tempfile::tempdir().unwrap();
     let source_path = temp.path().join("source");
     let target_path = temp.path().join("target");
-    sled::open(&source_path).unwrap().flush().unwrap();
+    open_db(&source_path).flush().unwrap();
     let target = authority(&target_path);
     let source = LegacyEventMigrationSource::open(&source_path).unwrap();
 
@@ -380,7 +392,7 @@ fn source_semantic_appends_are_rejected_after_cutover_while_other_trees_work() {
         .unwrap();
     drop(source);
 
-    let db = sled::open(&source_path).unwrap();
+    let db = open_db(&source_path);
     let store = EventStore::new(db.clone()).unwrap();
     let error = store
         .append_envelope(envelope("s", "forbidden", json!({})))
@@ -581,7 +593,7 @@ fn missing_legacy_timestamps_are_stable_across_reopen_and_resume() {
     }
 
     let target = EventAuthority::open(
-        sled::open(&target_path).unwrap(),
+        open_db(&target_path),
         EventAuthorityOpenOptions {
             expected_ledger_id: Some(target_id),
         },
@@ -613,7 +625,7 @@ fn equal_identities_and_identity_bypass_provenance_are_rejected() {
         )],
     );
     let target = EventAuthority::open(
-        sled::open(&target_path).unwrap(),
+        open_db(&target_path),
         EventAuthorityOpenOptions {
             expected_ledger_id: Some(shared),
         },
@@ -676,7 +688,7 @@ fn inserted_mapping_with_missing_target_row_blocks_resume_before_copy() {
         assert_eq!(partial.mapped_record_count, 1);
     }
 
-    let db = sled::open(&target_path).unwrap();
+    let db = open_db(&target_path);
     db.open_tree("obs_spine_events")
         .unwrap()
         .remove(b"00000000000000000001")
@@ -685,7 +697,7 @@ fn inserted_mapping_with_missing_target_row_blocks_resume_before_copy() {
     drop(db);
 
     let target = EventAuthority::open(
-        sled::open(&target_path).unwrap(),
+        open_db(&target_path),
         EventAuthorityOpenOptions {
             expected_ledger_id: Some(target_id),
         },
@@ -727,7 +739,7 @@ fn dangling_target_record_index_blocks_migration_before_copy() {
             )
             .unwrap();
     }
-    let db = sled::open(&target_path).unwrap();
+    let db = open_db(&target_path);
     db.open_tree("obs_spine_events")
         .unwrap()
         .remove(b"00000000000000000001")
@@ -736,7 +748,7 @@ fn dangling_target_record_index_blocks_migration_before_copy() {
     drop(db);
 
     let target = EventAuthority::open(
-        sled::open(&target_path).unwrap(),
+        open_db(&target_path),
         EventAuthorityOpenOptions {
             expected_ledger_id: Some(target_id),
         },
