@@ -1,17 +1,17 @@
 # Event Observability Design
 
-Date: 2026-07-08
-Status: active
+Date: 2026-07-12
+Status: implemented; event foundation closed
 Scope: observability primitives over the event ledger, one port for every presentation adapter, and the retirement of spine naming from the code
 
 ## Intent
 
-The event ledger is the durable, totally ordered record of promoted semantic facts, with identity, timestamps, and causal references on every record. Observability of the cognitive layer is therefore mostly a read problem over data that already exists. Producer-owned concerns may also supply promoted runtime-health facts through the event append capability.
+The event ledger is the durable, totally ordered record of promoted semantic facts. The authority supplies ledger identity, while records carry sequence, timestamps, and optional structural references. Observability of the cognitive layer is therefore mostly a read problem over data that already exists. Producer-owned concerns may also supply promoted runtime-health facts through the event append capability.
 
 This design defines the read models, the single port they are served through, and the adapter rule that keeps a CLI, a TUI, and a browser dashboard equally thin. It answers three operator questions with different machinery:
 
 - is it alive and flowing — owned by the runtime operator visibility program's status cache and supervisor store; this design feeds it, never replaces it
-- is it making progress — owned here: watermark against consumer cursors, flow rates, stall detection
+- is it making progress — events owns watermark, consumer lag, flow rates, and coverage inputs; runtime or producer policy owns stall detection
 - why did something happen or fail to happen — owned here: causal traces over object references, relations, and record provenance
 
 ## Decision: event names, not spine names
@@ -28,7 +28,7 @@ Event is a hardened domain; spine was the design metaphor that named it during g
 
 ```mermaid
 flowchart LR
-    Authority[EventAuthority] --> Port[EventObservabilityPort]
+    Authority[EventAuthority] --> Port[EventObservabilityCapability]
     Port --> CLI[meld event commands]
     Port --> TUI[future TUI]
     Port --> Remote[transport-neutral remote contract]
@@ -38,19 +38,23 @@ flowchart LR
 
 ### The port
 
-`EventObservabilityPort` is one trait with point-in-time queries and one streaming primitive:
+`EventObservabilityCapability` is the production read surface for point-in-time queries. Replay and subscription capabilities provide the streaming primitives. `EventAuthorityContract` carries the same authority semantics across a future transport boundary.
 
 ```rust
-pub trait EventObservabilityPort {
-    fn health(&self) -> Result<EventHealthReport, StorageError>;
-    fn flow(&self, window: FlowWindow) -> Result<EventFlowReport, StorageError>;
-    fn trace(&self, subject: TraceSubject) -> Result<EventTraceReport, StorageError>;
-    fn session(&self, session_id: &str) -> Result<SessionTimelineReport, StorageError>;
-    fn next_page(&self, request: EventPageRequest) -> Result<EventPage, StorageError>;
+pub trait EventAuthorityContract {
+    fn durable_append(&self, request: DurableAppendRequest) -> Result<AppendReceipt, EventAuthorityError>;
+    fn best_effort_append(&self, request: BestEffortAppendRequest) -> Result<BestEffortAppendReceipt, EventAuthorityError>;
+    fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError>;
+    fn subscription_poll(&self, request: SubscriptionPollRequest) -> Result<EventPage, EventAuthorityError>;
+    fn watermark(&self, request: WatermarkRequest) -> Result<EventWatermark, EventAuthorityError>;
+    fn health(&self, request: HealthRequest) -> Result<EventHealthReport, EventAuthorityError>;
+    fn flow(&self, request: FlowRequest) -> Result<EventFlowReport, EventAuthorityError>;
+    fn trace(&self, request: TraceRequest) -> Result<EventTraceReport, EventAuthorityError>;
+    fn session(&self, request: SessionRequest) -> Result<SessionTimelineReport, EventAuthorityError>;
 }
 ```
 
-`next_page` is the universal stream shape: cursor in, bounded batch plus next cursor out, blocking until the watermark passes the cursor or the timeout elapses. A CLI tail loop, a TUI render loop, and a server-sent-events stream are the same pagination loop with different sinks. `EventSubscription::next_batch` already implements the blocking core.
+Replay and subscription polling share the universal stream shape: identity-bearing cursor in, bounded page plus next cursor and coverage out. Subscription polling blocks until the watermark passes the cursor or the timeout elapses. A CLI tail loop, a TUI render loop, and a server-sent-events stream are the same pagination loop with different sinks.
 
 ### The two-backing rule
 
@@ -73,21 +77,21 @@ Every bounded result carries its scanned range or an explicit truncation state.
 
 | Report | Contents |
 | --- | --- |
-| `EventHealthReport` | tip sequence, committed watermark, retained lower boundary, dropped event count, per-consumer name plus cursor plus lag, trailing append rate per domain |
-| `EventFlowReport` | event counts by domain and type over a window, silent domains with last-seen sequence and age |
-| `EventTraceReport` | ordered causal chain for one object, stream, or record id: each hop carries the record summary and the reference that linked it |
-| `SessionTimelineReport` | one session's records in order with duration between steps |
-| `EventPage` | bounded record batch plus the next cursor |
+| `EventHealthReport` | ledger identity, tip sequence, committed watermark, retained lower boundary, dropped event count, per-consumer lag, trailing append rate, and append-rate coverage |
+| `EventFlowReport` | ledger identity, event counts by domain and type, silent domains, flow coverage, and silent-domain coverage |
+| `EventTraceReport` | ledger identity, ordered structural causal chain, and trace coverage |
+| `SessionTimelineReport` | ledger identity, one session's bounded records, observed timestamps, returned count, and coverage |
+| `EventPage` | ledger identity, bounded record batch, identity-bearing next cursor, and coverage |
 
 Every CLI command renders text and `--format json` from day one, so the CLI is already the machine-readable API before any server exists.
 
 ### Consumer cursor registry
 
-Consumers register named `EventCursor`s in one well-known registry tree, giving lag enumerability: `lag = committed watermark - consumer cursor` per name. The registry serves observability and is the same consumer registration the compaction design requires for choosing a safe boundary; it is built once for both. Registration is convention for existing consumers — the graph reducer's `last_reduced_seq` gains a registry alias rather than moving.
+Consumers report named identity-bearing cursors through one authority-derived registry capability, giving lag enumerability: `lag = committed watermark - consumer cursor` per name. The registry serves observability and is the same consumer registration the compaction design requires for choosing a safe boundary. The graph reducer keeps its domain-owned durable cursor and reports the same progress through its root adapter.
 
 ### Boundaries
 
-- meld-events owns structure-level reads: health, paging, and trace walks over object references, relations, and record ids, all events-owned contracts. It never interprets `event_type` meaning or searches arbitrary payload strings for provenance.
+- meld-events owns structure-level reads: health, paging, and trace walks over object references, relation endpoints, and identity-bearing source-record provenance, all events-owned contracts. It never interprets `event_type` meaning or searches arbitrary payload strings for provenance.
 - telemetry owns semantic summaries that interpret event meaning, such as flywheel-stage rollups; it stays downstream.
 - views, CLI, TUI, and HTTP adapters own presentation only, per the thin adapter rule.
 - The status cache remains operational-only and never authoritative, per the operator visibility program.
@@ -112,7 +116,7 @@ It may be hardened while migration proceeds, but it is not canonical event behav
 - No second truth channel. Diagnostics that are semantic facts flow through the ledger; the status cache is the sanctioned non-authoritative exception.
 - No new persistence. Observability reads existing trees plus the one registry tree; it never becomes a store of record.
 
-## First Slice
+## Delivered Slices
 
 Delivered by the [Event Observability PLAN](event_observability_program.md):
 
@@ -123,7 +127,9 @@ Delivered by the [Event Observability PLAN](event_observability_program.md):
 5. `EventTraceReport` and `meld event trace`, structure-level only.
 6. `EventHealthReport` and stable status mapping inputs, with publisher invocation owned entirely by runtime visibility.
 
-Remaining correctness, identity, coverage, remote-contract, and product-routing work is active in the [Event Foundation Closeout Program](event_foundation_closeout_program.md).
+The completed [Event Foundation Closeout Program](event_foundation_closeout_program.md) added persisted ledger identity, one authority aggregate, explicit bounded-read coverage, structural record provenance, a transport-neutral authority contract with local and serde loopback conformance, recoverable compatibility migration, and direct product-authority routing.
+
+Runtime remains responsible for publisher cadence, status-cache persistence, daemon hosting, real transport, console and action publication, and the complete semantic flywheel proof.
 
 ## Read With
 

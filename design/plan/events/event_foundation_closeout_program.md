@@ -1,9 +1,9 @@
 # Event Foundation Closeout Program
 
-Date: 2026-07-10
-Status: active; E0 scope correction complete
+Date: 2026-07-12
+Status: closed 2026-07-12
 Scope: close event correctness, authority, observability, compatibility, and direct product routing before runtime hosting resumes
-Workflow: complex change workflow active per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
+Workflow: complex change workflow deactivated at close per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
 Branch: `event-foundation-closeout`
 
 ## Objective
@@ -30,7 +30,7 @@ Out-of-process access follows event closure because a real remote client needs a
 
 This program succeeds the completed [Event Spine Overhaul PLAN](event_spine_overhaul_program.md) and [Event Observability PLAN](event_observability_program.md).
 Those programs established the ledger mechanics and first observability surfaces.
-Their completion evidence remains valid, but their remaining gaps and ownership handoffs are governed here.
+Their completion evidence remains valid, and their remaining event-owned gaps were closed here.
 
 The [Product Event Authority Cutover](../integration/product_event_authority_cutover.md) is the detailed E5 migration and root composition plan.
 The [Product Event Authority Assessment](../integration/product_event_authority_domain_assessment.md) records the cross-domain integration gaps.
@@ -95,7 +95,7 @@ Exit criteria: no event phase or gate depends on supervisor scheduling, status c
 
 Evidence: branch `event-foundation-closeout` created from the local event-observability head with the existing design work preserved. Formatter, Markdown link, Markdown parentheses, and diff checks passed. The pre-closeout benchmark baseline recorded replay at tip at 0.61 microseconds for one hundred thousand events, idle catch-up at 0.72 microseconds, health at 0.66 milliseconds, page at tip at 1.48 microseconds, eight durable writers at 12.64 milliseconds per thousand, flywheel throughput at 37.63 milliseconds per two thousand events, flywheel latency at 54.68 microseconds, and storage at 1153 bytes per event.
 
-### E1 — Correctness Regressions
+### E1 — Correctness Regressions — complete 2026-07-12
 
 Repair and pin the remaining correctness defects before authority construction hides them behind a larger surface.
 
@@ -110,7 +110,9 @@ Tasks:
 
 Exit criteria: focused concurrency, reopen, malformed-limit, session-isolation, and trace suites pass without ignored known defects.
 
-### E2 — Authority Core
+Evidence: commits `b9ba7a3` and `c09c2ae` enforce exact session isolation, atomically advance durable cursors, bound every observability read, correct relation-only traces, and expose trace coverage. The cursor suite passed 25 consecutive normal runs and 25 consecutive serial runs as part of the closure reliability gate.
+
+### E2 — Authority Core — complete 2026-07-12
 
 Make identity and construction authority structural.
 
@@ -127,7 +129,9 @@ Tasks:
 
 Exit criteria: capability identity agrees across reopen, alternate writable construction is unavailable to production domains, and every append path advances one sequence and watermark.
 
-### E3 — Observability Hardening And Remote Contract
+Evidence: commits `a20390d` and `215ef32` persist and validate ledger identity, derive all capabilities from one authority, recover the durable watermark, reject mismatches and duplicate process-local bindings, and return identity-bearing append and replay results. The authority suite passed 25 consecutive normal runs and 25 consecutive serial runs with 16 tests per run. Production raw event constructors are sealed behind event-owned internals and explicit test support.
+
+### E3 — Observability Hardening And Remote Contract — complete 2026-07-12
 
 Make every event read honest about authority, durability, and coverage.
 
@@ -145,7 +149,9 @@ Tasks:
 
 Exit criteria: local and loopback implementations pass the same conformance suite, and every report names its ledger and coverage honestly.
 
-### E4 — Domain Port Migration
+Evidence: commits `303d9c1`, `d19d742`, and `01e4f59` add ledger identity and coverage to every report, replace payload-string inference with structural source-record provenance, and define the transport-neutral authority contract. The local and serde loopback clients passed the same reusable conformance suite. The feature-enabled event suite passed 172 tests and 3 doctests.
+
+### E4 — Domain Port Migration — complete 2026-07-12
 
 Move production callers onto authority capabilities without moving domain meaning into events.
 
@@ -159,7 +165,9 @@ Tasks:
 
 Exit criteria: execution and world model retain their domain contracts, all canonical production writes use the authority, and boundary checks find no cross-domain reach into event internals.
 
-### E5 — Product Cutover
+Evidence: commits `3c6b26d`, `e73dfa0`, and `b7781a2` bind execution publication receipts to ledger identity, move world model replay and derived publication behind domain-owned ports, and adapt root product ports to authority capabilities. Domain boundary checks reject production construction of raw event writers, stores, and graph runtimes.
+
+### E5 — Product Cutover — complete 2026-07-12
 
 Make the configured product authority the single-process product truth.
 
@@ -175,7 +183,9 @@ Tasks:
 
 Exit criteria: the [Product Event Authority Cutover](../integration/product_event_authority_cutover.md) gates pass for direct single-process product routing and no compatibility event tree receives new semantic writes.
 
-### E6 — Closure
+Evidence: commit `97cc225` delivers external product storage, recoverable legacy migration, durable product binding, injected telemetry capabilities, shared product assembly, direct CLI authority routing, and raw-constructor sealing. Commits `1d79028`, `9a18276`, `b6e4e55`, `f1021a2`, and `bdd5119` remove global XDG state from absolute-root resolution and harden bounded sled reopen behavior in world-model and migration verification. Commit `172166e` persists the inverse branch product claim in the target ledger and rejects two branch-local bindings that name one physical authority. Commit `95d917c` keeps the observability wire-contract suite valid with and without explicit test support. Commits `2a6243e` and `b86d26e` remove full-suite belief and agent store reopen races with narrowly bounded test-only lock-release retries. Commit `6f06d93` makes the task-network factory itself tolerate the same bounded lock-release window with deterministic retry classification tests. Commit `9350a90` preserves the head-index complexity threshold while using median samples to reject scheduler outliers. Migration stress passed 50 consecutive local runs and 25 consecutive independent runs. Fresh migration, routing, constructor-sealing, product-binding, reopen, and timing reviews found no remaining blocker or should-fix finding.
+
+### E6 — Closure — complete 2026-07-12
 
 Run the complete event gate ladder against the integrated authority and product cutover.
 
@@ -189,6 +199,27 @@ Tasks:
 - Reconcile event readiness and cross-domain assessments with the implemented state.
 
 Exit criteria: all E1 through E5 gates pass, no event closure gate names runtime scheduling or real daemon transport, and the events foundation is marked closed.
+
+Evidence: formatter, workspace build, warning-denying workspace clippy, domain boundaries, focused crate suites, route-level integration suites, and the full workspace all-targets suite passed. The full workspace suite passed three consecutive times. Authority, cursor, concurrency, and recovery suites passed 25 consecutive normal runs and 25 consecutive serial runs, with 16 authority integration tests, 3 cursor tests, 5 concurrency tests, and 9 recovery tests per run. Five authority unit tests additionally prove durable same-product reopen, cross-product rejection, and successful retry after an indeterminate first claim flush.
+
+An independent verifier reproduced the clean CI no-lock ladder at `9350a90` on its first final-checkpoint run, including the full workspace all-targets suite, static constructor and module audits, and 25-run task-network reopen and head-index timing stress.
+
+Fresh recovery, concurrency, architecture, compatibility, migration, routing, and constructor-sealing reviews found no unresolved blocker or should-fix finding. The reusable local and serde loopback conformance clients passed identical authority assertions.
+
+Benchmark comparison against the pre-closeout baseline:
+
+| Measurement | Baseline | Closing result | Change |
+| --- | ---: | ---: | ---: |
+| replay at tip | 0.610 µs | 0.625 µs | +2.5 percent |
+| idle catch-up | 0.720 µs | 0.603 µs | -16.3 percent |
+| health | 0.660 ms | 0.662 ms | +0.3 percent |
+| page at tip | 1.480 µs | 0.715 µs | -51.7 percent |
+| eight durable writers | 12.640 ms | 13.170 ms | +4.2 percent |
+| flywheel throughput | 37.630 ms | 37.349 ms | -0.7 percent |
+| flywheel latency | 54.680 µs | 52.701 µs | -3.6 percent |
+| storage per event | 1153 bytes | 1101 bytes | -4.5 percent |
+
+Every protected measurement remained within the ten percent closure threshold.
 
 ## Self-Observation Rule
 
@@ -207,7 +238,7 @@ The existing `SelfObservationWatcher` may be hardened as a compatibility bridge,
 
 ## Runtime Resumption
 
-After E6 closes, runtime work resumes in this order:
+With E6 closed, runtime work resumes in this order:
 
 - R1 — invoke the status publisher and persist the status cache
 - R2 — host the authority behind the daemon and implement real IPC
@@ -229,7 +260,7 @@ Runtime owns supervisor tick cadence, status staleness, `runtime status`, consol
 
 Compatibility work follows [Compatibility Policy](../../../governance/compatibility_policy.md) and [Compatibility Shim Policy](../../../governance/compatibility_shim_policy.md).
 Migration preserves semantic units under [Semantic Unit Preservation Policy](../../../governance/semantic_unit_preservation_policy.md).
-Every checkpoint runs the relevant focused tests before the full workspace gate and records exact evidence in this program.
+Every checkpoint ran the relevant focused tests before the full workspace gate. The phase evidence above records the final integrated result.
 
 ## Read With
 

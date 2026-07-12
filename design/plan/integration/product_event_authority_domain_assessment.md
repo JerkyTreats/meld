@@ -1,36 +1,45 @@
 # Product Event Authority Assessment By Domain
 
 Date: 2026-07-09
-Revised: 2026-07-10
-Status: assessed
-Evidence date: 2026-07-10
+Revised: 2026-07-12
+Status: complete
+Evidence date: 2026-07-12
+Evidence revision: `9350a90`
 Method: [Assessment By Domain Policy](../../../governance/assessment_by_domain_policy.md)
 
 ## Concern Definition
 
 The product event authority concern is whether every semantic producer, replay consumer, reducer, subscription, and observability surface for one product identity uses one canonical ledger identity and one sequence space.
 
-The current CLI compatibility assembly and product runtime assembly can create separate writable event histories during one `meld runtime run` command.
-The required integration replaces that state with one identity-bearing authority and treats the compatibility ledger as a migration source rather than a concurrent writer.
+That integration is complete.
+Root composition now binds the branch product identity to one external event authority before constructing CLI and product runtime adapters.
+The target ledger persists the inverse product claim, preventing separate branch-local bindings from aliasing one ledger path.
+Legacy event history is a recoverable migration source, not a concurrent writer.
+Direct CLI routes and `meld runtime run` consume the same authority and shared graph runtime.
+
+The main implementation is `97cc225`.
+Closure reliability corrections continue through `9350a90`.
 
 ## In Scope
 
 - event authority identity and capability contracts
 - root product and CLI composition
 - semantic producer and consumer injection
-- compatibility history migration and write cutover
+- recoverable compatibility history migration and write cutover
 - direct configured-authority observability routing
 - transport-neutral remote authority contract and loopback conformance
-- parity, reopen, and route-level proof
+- branch identity and storage isolation
+- parity, reopen, and real route proof
 
 ## Out Of Scope
 
 - product event payload meaning
-- projection database co-location
-- supervisor leases and heartbeat storage
-- sensory modality implementation
+- supervisor status publication cadence and cache persistence
+- runtime status staleness policy
 - daemon process management, IPC framing, reconnects, endpoint lifecycle, and authentication
+- console frames, runtime action publication, and promotion policy
 - real direct-versus-daemon process integration
+- the complete semantic flywheel and operator-visibility proof
 - compaction implementation
 
 ## Domain Snapshot
@@ -40,63 +49,75 @@ Generated with the policy command:
 ```text
 agent api branches capability cli compat concurrency config context control error
 events execution heads ignore init lib logging merkle_traversal metadata
-prompt_context provider runtime session store task telemetry types views
+prompt_context provider runtime session store task telemetry tree types views
 workflow workspace world_state
 ```
 
 ## Domain Assessment
 
-| Domain | Needed Integration | Current Integration | Completeness | Evidence | Non Integration Rationale | Follow Up |
-| --- | --- | --- | --- | --- | --- | --- |
-| `agent` | `none` | Agent facts publish through world model paths | `not needed` | [agent design](../../cognitive_architecture/world_model/agent/README.md) | Agent identity does not select event storage | none |
-| `api` | `adapter` | Root API receives the CLI `ProgressRuntime` | `partial` | [API runtime field](../../../src/api.rs) | | Consume injected event capabilities without selecting authority |
-| `branches` | `observe` | Branch commands observe graph state built from the CLI history | `partial` | [branch runtime](../../../src/branches/runtime.rs) | | Observe projections sourced from the product authority |
-| `capability` | `none` | Capability contracts do not select event storage | `not needed` | [capability root](../../../src/capability.rs) | Capability invocation is separate from event authority | none |
-| `cli` | `adapter` | Normal routing constructs CLI assembly before `runtime run` and binds `meld event` to CLI progress | `partial` | [CLI route](../../../src/cli/route.rs) | | Resolve and consume one product authority before command adapters |
-| `compat` | `adapter` | Compatibility reexports expose legacy construction paths | `partial` | [compat root](../../../src/compat.rs) | | Retire writable construction seams after cutover |
-| `concurrency` | `none` | Process coordination does not own ledger identity | `not needed` | [concurrency root](../../../src/concurrency.rs) | Authority identity is not a lock manager concern | none |
-| `config` | `adapter` | Config resolves separate CLI store and product root locations | `partial` | [storage paths](../../../src/config/workspace/storage_paths.rs) | | Resolve one product ledger binding and preserve external storage policy |
-| `context` | `publish` | Context publications use CLI `ProgressRuntime` | `partial` | [context tooling](../../../src/context/tooling.rs) | | Inject the product event appender |
-| `control` | `publish` | Control paths publish through existing root event facades | `partial` | [control orchestration](../../../src/control/orchestration.rs) | | Consume the product event appender |
-| `error` | `adapter` | Errors map storage failures without ledger identity mismatch | `partial` | [error root](../../../src/error.rs) | | Add stable authority and migration error mapping |
-| `events` | `own` | Events guarantees coherence inside one supplied database but accepts independent store construction | `partial` | [event store](../../../crates/meld-events/src/events/store.rs), [event runtime](../../../crates/meld-events/src/events/runtime.rs) | | Define identity-bearing authority and seal production construction paths |
-| `execution` | `publish` | Product publication can use product port while compatibility paths can use CLI history | `partial` | [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs), [runtime ports](../../../src/runtime/ports.rs) | | Consume the events-owned append capability |
-| `heads` | `none` | Legacy head history publication is owned by context | `not needed` | [head backfill](../../../src/context/head.rs) | Context owns the event handoff | none |
-| `ignore` | `none` | Ignore policy does not publish or consume semantic events | `not needed` | [ignore root](../../../src/ignore.rs) | File selection policy does not select ledger authority | none |
-| `init` | `none` | Initialization does not own semantic event authority | `not needed` | [init root](../../../src/init.rs) | Initialization assets are outside event history ownership | none |
-| `lib` | `adapter` | Root reexports event storage and runtime types broadly | `partial` | [events facade](../../../src/events.rs), [library root](../../../src/lib.rs) | | Reexport authority capabilities rather than raw production construction seams |
-| `logging` | `none` | Logging is non-authoritative | `not needed` | [logging root](../../../src/logging.rs) | Logs are not semantic event history | none |
-| `merkle_traversal` | `none` | Traversal mechanics do not select event authority | `not needed` | [traversal root](../../../src/merkle_traversal.rs) | Tree traversal is orthogonal | none |
-| `metadata` | `none` | Metadata policy does not select event storage | `not needed` | [metadata root](../../../src/metadata.rs) | Metadata changes publish through owning domains | none |
-| `prompt_context` | `none` | Prompt lineage publishes through context | `not needed` | [prompt context root](../../../src/prompt_context.rs) | Context owns the event handoff | none |
-| `provider` | `publish` | Provider progress uses CLI `ProgressRuntime` | `partial` | [provider tooling](../../../src/provider/tooling.rs) | | Inject the product event appender or keep nonsemantic progress outside the ledger |
-| `runtime` | `consume` | Product runtime opens its own ledger after CLI authority already exists | `partial` | [runtime tooling](../../../src/runtime/tooling.rs), [runtime storage](../../../src/runtime/storage.rs) | | Consume the root-resolved product authority |
-| `session` | `publish` | Session lifecycle facts emit through compatibility `ProgressRuntime` | `partial` | [session service](../../../src/telemetry/sessions/service.rs) | | Separate lifecycle storage from canonical event publication and inject authority |
-| `store` | `none` | Node persistence is separate from canonical event ownership | `not needed` | [store root](../../../src/store.rs) | Node stores remain domain storage | none |
-| `task` | `publish` | Task events can flow through compatibility and product execution paths | `partial` | [task events](../../../src/task/events.rs) | | Consume the product event appender through execution contracts |
-| `telemetry` | `adapter` | `ProgressRuntime` constructs an event runtime from the compatibility database | `partial` | [progress service](../../../src/telemetry/sessions/service.rs) | | Inject authority publication and stop constructing canonical event storage |
-| `types` | `none` | Shared root types do not own ledger identity | `not needed` | [types root](../../../src/types.rs) | Ledger identity belongs to events | none |
-| `views` | `none` | Views consume projections and presentation data | `not needed` | [views root](../../../src/views.rs) | Presentation must not select canonical storage | none |
-| `workflow` | `publish` | Workflow commands publish through CLI progress | `partial` | [workflow tooling](../../../src/workflow/tooling.rs) | | Inject the product event appender |
-| `workspace` | `publish` | Scan and watch facts publish through CLI progress | `partial` | [workspace tooling](../../../src/workspace/tooling.rs), [watch events](../../../src/workspace/watch/events.rs) | | Inject the product event appender and prove the product replay adapter sees the facts |
-| `world_state` | `consume` | CLI and product graph runtimes can consume different stores and append derived facts directly | `partial` | [graph runtime](../../../crates/meld-world-model/src/world_state/graph/runtime.rs) | | Consume authority replay and append capabilities with one ledger identity |
+| Domain | Needed Integration | Completed Integration | Completeness | Evidence | Follow Up |
+| --- | --- | --- | --- | --- | --- |
+| `agent` | `none` | Agent facts remain owned by world-model publication paths | `not needed` | [agent design](../../cognitive_architecture/world_model/agent/README.md) | none |
+| `api` | `adapter` | API receives a `ProgressRuntime` backed by the bound append capability and separate session compatibility runtime | `complete` | [API root](../../../src/api.rs), [session service](../../../src/telemetry/sessions/service.rs) | none |
+| `branches` | `observe` | Active graph queries reuse the shared product projection; dormant migration resolves each branch's configured source and authority | `complete` | [branch runtime](../../../src/branches/runtime.rs), `dormant_branch_migrations_keep_separate_product_authorities` | none |
+| `capability` | `none` | Capability invocation remains separate from event authority selection | `not needed` | [capability root](../../../src/capability.rs) | none |
+| `cli` | `adapter` | `RunContext` resolves authority before adapters; direct event and runtime routes reuse it | `complete` | [CLI route](../../../src/cli/route.rs), [cutover route tests](../../../tests/integration/product_event_authority_cutover.rs) | none |
+| `compat` | `adapter` | Production raw event construction is sealed; explicit test support contains compatibility construction | `complete` | [events facade](../../../src/events.rs), [boundary gate](../../../scripts/check_domain_boundaries.sh) | Remove deployed-data readers only after their documented compatibility horizon |
+| `concurrency` | `none` | Process coordination does not own ledger identity; binding cutover uses an external advisory lock | `not needed` | [binding resolver](../../../src/events/binding.rs) | Runtime process ownership remains R2 |
+| `config` | `adapter` | Relative roots resolve under workspace XDG data; workspace-contained roots and symlink escapes fail closed | `complete` | [storage paths](../../../src/config/workspace/storage_paths.rs) | none |
+| `context` | `publish` | Context publication uses the injected product appender while configured frame and prompt paths remain compatible | `complete` | [context tooling](../../../src/context/tooling.rs), [CLI assembly](../../../src/cli/runtime_assembly.rs) | none |
+| `control` | `publish` | Control publication consumes root event capability adapters | `complete` | [control orchestration](../../../src/control/orchestration.rs), [runtime ports](../../../src/runtime/ports.rs) | none |
+| `error` | `adapter` | Storage policy, binding, identity, migration, and fail-closed route errors map through stable root errors | `complete` | [root errors](../../../src/error.rs), [event errors](../../../crates/meld-events/src/error.rs) | none |
+| `events` | `own` | Persisted identity, one authority aggregate, unified writer and watermark, observability, migration, and remote conformance are complete; raw production construction is sealed | `complete` | [authority](../../../crates/meld-events/src/events/authority.rs), [migration](../../../crates/meld-events/src/events/migration.rs), [event tests](../../../crates/meld-events/tests) | Runtime hosts the remote edge in R2 |
+| `execution` | `publish` | Publication receipts carry ledger identity and root adapts the execution sink to the authority append capability | `complete` | [publication contract](../../../crates/meld-execution/src/task_network/publication.rs), [runtime ports](../../../src/runtime/ports.rs) | none |
+| `heads` | `none` | Context owns legacy head-history publication | `not needed` | [head backfill](../../../src/context/head.rs) | none |
+| `ignore` | `none` | File-selection policy does not select ledger authority | `not needed` | [ignore root](../../../src/ignore.rs) | none |
+| `init` | `none` | Initialization assets remain outside event-history ownership | `not needed` | [init root](../../../src/init.rs) | none |
+| `lib` | `adapter` | Public root composition exposes authority capabilities rather than writable raw store constructors | `complete` | [library root](../../../src/lib.rs), [events facade](../../../src/events.rs) | none |
+| `logging` | `none` | Logs remain non-authoritative | `not needed` | [logging root](../../../src/logging.rs) | none |
+| `merkle_traversal` | `none` | Traversal mechanics remain independent of authority selection | `not needed` | [traversal root](../../../src/merkle_traversal.rs) | none |
+| `metadata` | `none` | Metadata policy publishes through owning domains | `not needed` | [metadata root](../../../src/metadata.rs) | none |
+| `prompt_context` | `none` | Context owns prompt-lineage publication | `not needed` | [prompt context root](../../../src/prompt_context.rs) | none |
+| `provider` | `publish` | Provider progress uses the injected product-backed progress facade | `complete` | [provider tooling](../../../src/provider/tooling.rs), [session service](../../../src/telemetry/sessions/service.rs) | Runtime action mapping remains R3 |
+| `runtime` | `consume` | Product assembly consumes the root-resolved authority and shared graph runtime without opening event storage | `complete` | [runtime assembly](../../../src/runtime/assembly.rs), `supplied_authority_and_graph_runtime_are_shared_across_assembly` | Status, daemon, action, and flywheel work remains R1 through R4 |
+| `session` | `publish` | Compatibility session records stay in the legacy CLI database; promoted session facts publish through the product authority | `complete` | [session service](../../../src/telemetry/sessions/service.rs), `real_cli_migrates_and_reuses_one_authority_for_event_and_runtime_routes` | none |
+| `store` | `none` | Node persistence remains separate and its configured legacy CLI path is preserved | `not needed` | [store root](../../../src/store.rs), [CLI assembly](../../../src/cli/runtime_assembly.rs) | none |
+| `task` | `publish` | Task publication reaches authority through execution-owned contracts | `complete` | [task events](../../../src/task/events.rs), [publication contract](../../../crates/meld-execution/src/task_network/publication.rs) | none |
+| `telemetry` | `adapter` | `ProgressRuntime` receives append and session capabilities and cannot construct canonical event storage | `complete` | [session service](../../../src/telemetry/sessions/service.rs) | Threshold and promotion policy remain runtime-health owned |
+| `tree` | `none` | Merkle tree construction and hashing remain separate from event-authority selection | `not needed` | [tree root](../../../src/tree.rs) | none |
+| `types` | `none` | Ledger identity remains owned by events | `not needed` | [types root](../../../src/types.rs) | none |
+| `views` | `none` | Presentation does not select canonical storage | `not needed` | [views root](../../../src/views.rs) | none |
+| `workflow` | `publish` | Workflow publication uses the injected product-backed progress facade | `complete` | [workflow tooling](../../../src/workflow/tooling.rs) | none |
+| `workspace` | `publish` | Scan and watch facts use the product appender and are replayed by the shared graph adapter | `complete` | [workspace tooling](../../../src/workspace/tooling.rs), `real_cli_migrates_and_reuses_one_authority_for_event_and_runtime_routes` | none |
+| `world_state` | `consume` | Graph runtime consumes authority replay, append, and cursor ports; direct and supervised paths share one runtime | `complete` | [graph runtime](../../../crates/meld-world-model/src/world_state/graph/runtime.rs), [runtime assembly](../../../src/runtime/assembly.rs) | none |
 
-## Gaps And Follow Ups
+## Closure Evidence
 
-- No stable ledger identity connects CLI and product capabilities.
-- Root composition opens two event histories for `meld runtime run`.
-- Compatibility producers continue writing after the product ledger exists.
-- `meld event` reads the compatibility authority rather than resolving the product authority.
-- `EventStore`, `EventRuntime`, and writer construction remain available outside one authority aggregate.
-- Events lacks an identity-bearing canonical append capability that a root adapter can use to satisfy execution's publication sink contract.
-- World model appends directly to the store and bypasses the authority writer.
-- No migration and cutover proof preserves existing CLI history.
-- No transport-neutral authority conformance suite proves identity and durability semantics without a daemon.
+Binding and migration evidence includes `Preparing` resume, `Active` fail-closed validation, BLAKE3 source-to-target mappings, target-prefix preservation, malformed-source preflight, empty-source marker creation, semantic legacy-write rejection, and compatibility session-tree writes.
+The focused contracts are in [binding.rs](../../../src/events/binding.rs) and [event_migration.rs](../../../crates/meld-events/tests/event_migration.rs).
 
-The complete implementation sequence is recorded in the [Event Foundation Closeout Program](../events/event_foundation_closeout_program.md).
-The root composition and compatibility migration detail is recorded in [Product Event Authority Cutover](product_event_authority_cutover.md).
+Route evidence in [product_event_authority_cutover.rs](../../../tests/integration/product_event_authority_cutover.rs) proves:
 
-## Non Integration Notes
+- the real CLI migrates history and direct `meld event` reads the bound authority;
+- a workspace fact is replayed by the shared graph adapter in the same identity and sequence space;
+- the real `runtime run` route creates no second identity or legacy semantic writes;
+- separate binary invocations preserve the identity;
+- mismatch fails without fallback;
+- reopen restores identity, watermark, consumer cursor, and next sequence.
 
-Domains marked `not needed` neither select canonical event storage nor publish directly through an authority boundary.
-Their behavior remains unchanged as long as any semantic facts they cause are published by the owning integrated domain.
+Branch evidence in [branches_runtime.rs](../../../tests/integration/branches_runtime.rs) proves configured legacy-source selection, separate dormant branch authority identities and paths, and active graph route reuse.
+
+The external root policy is covered by tests in [storage_paths.rs](../../../src/config/workspace/storage_paths.rs), including relative XDG resolution, lexical and symlink workspace containment, parent escape rejection, and configured legacy-root diagnostics.
+Existing configured non-event CLI storage paths remain unchanged.
+
+## Remaining Runtime Integration
+
+The product event authority concern is closed, but the runtime program is not.
+The completed authority is an input to:
+
+- R1 status publisher cadence, status cache persistence, and staleness;
+- R2 daemon lifecycle and real IPC;
+- R3 console frames, runtime actions, and heartbeat mapping;
+- R4 the complete semantic flywheel and operator-visibility proof.
+
+These are runtime-owned consumers and do not reopen this domain assessment unless they violate the authority identity, capability, or route contracts.

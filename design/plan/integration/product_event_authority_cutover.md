@@ -1,17 +1,21 @@
 # Product Event Authority Cutover — E5 Detail
 
 Date: 2026-07-09
-Revised: 2026-07-10
-Status: pending E2 through E4 in the active event closeout
+Revised: 2026-07-12
+Status: complete
 Scope: E5 direct product and CLI cutover to one event authority
 
-## Requirement
+## Outcome
 
-One product identity must have exactly one canonical event ledger identity and one event sequence space.
+One product identity now resolves to one persisted ledger identity and one canonical sequence space.
+Direct CLI publication, `meld event` reads, graph replay, and `meld runtime run` consume capabilities derived from the same `EventAuthority`.
+Product runtime assembly no longer opens canonical event storage.
 
-Every semantic event producer, replay consumer, reducer, subscription, and observability surface must consume capabilities derived from that authority.
-One physical authority binding is selected for the product identity and remains stable across process shapes.
-Physical layout must not create another logical history for the same product.
+E5 is complete through `9350a90`.
+The main cutover is `97cc225`; closure reliability corrections continue through `9350a90`.
+
+This completion unblocks the runtime visibility workstream.
+It does not complete runtime status publication, cache persistence, daemon hosting, IPC, console or action publication, promotion policy, or the full semantic flywheel proof.
 
 Source intent:
 
@@ -20,136 +24,142 @@ Source intent:
 - [Product Event Authority Assessment](product_event_authority_domain_assessment.md)
 - [Event Foundation Closeout Program](../events/event_foundation_closeout_program.md)
 
-## Program Position
+## Authority Binding
 
-This document is the detailed E5 plan inside the active event foundation closeout.
-E2 establishes the authority core, E3 hardens observability and the transport-neutral remote contract, and E4 migrates domain ports.
-E5 then cuts CLI and product assembly over in direct single-process mode.
+Root composition resolves the product authority in [binding.rs](../../../src/events/binding.rs) before constructing CLI or product runtime adapters.
+The branch id is the product identity.
+The branch external data home contains `event_authority.json` with the branch id, canonical ledger path, ledger identity, generation, source description, and either `Preparing` or `Active` state.
+The target ledger atomically claims and then flushes the branch product identity before root writes a binding or migration batch. Reopen validates the same inverse claim. Separate branch-local binding homes therefore cannot alias one physical authority, even when both configurations name the same external path.
 
-Real daemon hosting and remote process integration start only after event closure.
+Cutover is serialized by an advisory exclusive lock on `event_authority.lock` through `fs2`.
+Binding updates use a temporary file, file sync, atomic rename, and parent directory sync.
+A crash can leave the lock file present, but the operating system releases the lock itself.
 
-## Current Problem
+Binding resolution fails closed when the active branch, ledger path, ledger identity, source marker, or source identity disagrees with the persisted binding.
+An `Active` binding does not select or seed another authority and does not fall back to legacy event trees.
+A deleted or substituted target ledger is rejected.
 
-Normal command dispatch constructs `RunContext` and `CliRuntimeAssembly` before selecting the command implementation.
-That assembly opens the current CLI database and constructs `ProgressRuntime`, event emission, and graph replay over its event trees.
+Evidence:
 
-`meld runtime run` then constructs `ProductRuntimeAssembly` and opens the product ledger at `product_root/ledger.sled`.
-Product append, replay, graph work, runtime health facts, and product observability use that second event history.
+- `empty_product_binding_is_active_and_stable_after_reopen`
+- `persisted_binding_rejects_another_branch_without_fallback`
+- `active_binding_rejects_a_deleted_ledger_instead_of_reseeding_identity`
+- `preparing_binding_resumes_a_partial_copy_and_promotes_active`
+- `active_binding_fails_closed_when_the_frozen_source_is_deleted`
+- `missing_binding_rejects_an_existing_cutover_marker`
+- `active_binding_rejects_ledger_identity_substitution`
+- `separate_branch_bindings_cannot_share_one_target_ledger`
 
-`meld event` commands remain bound to the CLI-owned `ProgressRuntime` history.
-There is no shared ledger identity, migration cursor, cutover marker, or rule preventing both histories from receiving semantic writes.
+Authority-owned tests also prove the product claim survives reopen, rejects a different product, and becomes durable when a caller retries after an indeterminate first flush.
 
-This is not a valid steady state.
-The CLI remains a permanent adapter.
-Its independent event-store construction and the legacy event trees are compatibility seams pending cutover to the product event authority.
+These tests are in [binding.rs](../../../src/events/binding.rs).
 
-## Ownership
+## Recoverable Legacy Migration
 
-| Concern | Owner | Rule |
-| --- | --- | --- |
-| Ledger identity and authority capabilities | `meld-events` | Define one identity-bearing append, replay, subscription, and observability authority |
-| Product identity to ledger identity binding | root `meld` with `config` | Persist and resolve one binding before CLI or product runtime adapters are assembled |
-| CLI command routing | `cli` | Consume injected authority capabilities and never select a canonical store |
-| Session compatibility | `telemetry` and `session` | Session lifecycle storage may remain separate, but promoted session facts publish through the product authority |
-| Product runtime assembly | root `meld` with `runtime` | Consume the resolved authority rather than open another event store |
-| Graph replay and derived facts | `world_state` | Consume replay and append capabilities without direct event store construction |
-| Legacy history migration | `events` with root `meld` | Characterize, migrate, verify parity, record cutover, and stop legacy writes |
-| Direct operator event reads | `events` with `cli` | Read the configured product authority |
-| Remote event contract | `meld-events` | Define transport-neutral requests, responses, identity checks, and conformance |
-| Remote process hosting | `runtime` | Own daemon lifecycle, IPC, reconnects, endpoints, and authentication after event closure |
+The event-owned migration seam in [migration.rs](../../../crates/meld-events/src/events/migration.rs) strictly validates the complete source and target before copying.
+It assigns normal target sequences, preserves a pre-existing target prefix, and records durable source-identity and source-sequence mappings to target sequence and a BLAKE3 canonical-envelope hash.
+Interrupted work resumes from those mappings.
+Completed work is idempotent.
 
-## Required Work
+Migration rejects malformed rows, non-monotonic mappings, divergent record-id collisions, dangling indexes, foreign provenance, equal source and target identities, and source-target path equality before copying a valid prefix.
+It preserves canonical envelope meaning, including object refs, relations, payloads, record ids, session and domain fields, and structural provenance.
 
-### 1. Required Inputs From E2 Through E4
+An empty source is still assigned an identity and receives a durable cutover marker.
+This closes the fresh-workspace downgrade hole: an older binary cannot create a new semantic history after product binding activation.
+After cutover, semantic appends to legacy event trees are rejected.
+Compatibility session trees remain writable, and session lifecycle facts publish through the product authority.
 
-- Persisted `LedgerIdentity` and one `EventAuthority` aggregate exist.
-- Append, replay, subscription, watermark, and observability capabilities carry and validate that identity.
-- Identity mismatch and split-brain writable opens fail without fallback.
-- Production domains cannot construct an alternate writable canonical store.
-- Execution publication and world model replay retain their domain contracts through thin root adapters.
-- Graph-derived and execution appends advance the same writer and notification source.
+The migration contract is exercised by [event_migration.rs](../../../crates/meld-events/tests/event_migration.rs), including:
 
-### 2. Root composition cutover
+- `empty_source_completes_with_identity_and_cutover_marker`
+- `migration_preserves_target_prefix_and_semantic_envelopes`
+- `mixed_trees_and_per_session_sequence_collisions_are_all_migrated`
+- `one_record_batches_resume_and_completed_migration_is_idempotent`
+- `identical_record_id_collision_reuses_prefix_but_divergent_collision_fails`
+- `malformed_source_fails_before_any_target_mutation`
+- `source_semantic_appends_are_rejected_after_cutover_while_other_trees_work`
+- `forward_and_backward_provenance_translate_through_the_complete_plan`
+- `inserted_mapping_with_missing_target_row_blocks_resume_before_copy`
+- `dangling_target_record_index_blocks_migration_before_copy`
 
-- Resolve the product event authority before constructing CLI or runtime adapters.
-- Inject the authority appender into `ProgressRuntime` and other compatibility facades.
-- Make `ProductRuntimeAssembly` consume the resolved authority.
-- Ensure `meld runtime run` does not create a compatibility event authority before opening the product runtime.
-- Resolve local authority capabilities for the direct single-process product route.
-- Never fall back to the CLI event trees when the configured authority is unavailable or identity validation fails.
-- Keep projection databases physically separate from the canonical ledger where product storage requires it.
+Transient sled lock-release variants are retried only at the legacy source open boundary.
+The retry behavior landed in `f1021a2` and `bdd5119`; its repeated fixture proof landed in `b6e4e55`.
 
-### 3. Producer and consumer cutover
+## Product And CLI Composition
 
-- Route workspace, context, execution, workflow, task, provider, control, and promoted session facts through the product authority.
-- Route graph replay and derived event append through authority capabilities.
-- Remove direct production use of writable `EventStore` values outside the events authority.
-- Prove every semantic cursor advances against the same ledger identity.
+`RunContext` resolves branch identity, external product storage, product binding, and event authority before assembling adapters.
+`ProgressRuntime` receives an append capability and compatibility session runtime.
+Direct event status, tail, trace, session, and flow commands receive event authority capabilities directly.
+They do not select event history through `ProgressRuntime`.
 
-### 4. Compatibility migration
+`ProductRuntimeAssembly` consumes the resolved authority and shared graph runtime.
+`OpenProductStores` owns projection and domain stores only; it neither owns nor flushes the event authority.
+The product ledger remains an external authority opened by the root resolver.
+The product flush boundary covers the projection and domain stores it owns.
 
-- Characterize event history in existing CLI stores.
-- Treat that history as the active ordinary-command writer until the exclusive cutover begins.
-- Define source and target ledger identities and a deterministic migration order.
-- Preserve envelopes, object refs, relations, record ids, and source ordering semantics.
-- Record a durable migration and cutover marker.
-- Make the compatibility event trees read-only after successful cutover.
-- Retain parity tests until the compatibility write path is removed.
+Session compatibility remains in the configured legacy CLI database.
+Existing configured non-event CLI storage paths for node, frame, prompt, belief, and session data are preserved.
+Only canonical semantic events move to the bound product authority.
 
-### 5. Direct Authority Client Routing
+Relative product roots resolve below the workspace-specific XDG data root.
+Absolute product roots are accepted only outside the target workspace.
+Lexical, normalized, and symlink-resolved containment checks reject roots inside the workspace and relative escapes outside the workspace XDG root.
+The storage policy is implemented in [storage_paths.rs](../../../src/config/workspace/storage_paths.rs).
 
-- Bind one-shot `meld event` commands to the configured product authority.
-- Bind semantic CLI publication to the same local append capability.
-- Reject unavailable or mismatched configured authority without compatibility-store fallback.
-- Keep status cache data non-authoritative.
+## Branch Isolation
 
-## Acceptance Gates
+Dormant branch migration resolves each registered branch's own configuration, legacy source, product root, binding, and authority.
+It does not merge dormant history into the active authority.
+Distinct branch identities retain distinct ledger identities and canonical paths.
 
-- One product identity resolves to one stable ledger identity.
-- One authoritative binding resolves that ledger identity to one direct local authority for E5.
-- Authority identity mismatch and split-brain configuration fail without fallback.
-- `meld runtime run` creates no second writable semantic event history.
-- A CLI-produced workspace fact is visible to the product replay adapter and product event observability in the same sequence space.
-- Command session facts either use the product authority or remain explicitly nonsemantic outside the canonical ledger.
-- Append, replay, reducer, cursor, and observability capabilities report the same ledger identity.
-- Existing compatibility history migrates without loss, duplication, or silent reinterpretation.
-- A completed cutover prevents new semantic writes to compatibility event trees.
-- Direct construction of an alternate writable event authority is unavailable to normal production domains.
-- Reopen tests recover the same authority and sequence space.
-- Direct `meld event` reads return data from the configured product authority.
-- The real `meld runtime run` route uses one authority for CLI and product assembly.
+Route evidence is in [branches_runtime.rs](../../../tests/integration/branches_runtime.rs):
 
-## Required Proof
+- `dormant_branch_migrations_keep_separate_product_authorities`
+- `dormant_branch_migration_uses_its_configured_legacy_store`
+- `active_branch_graph_status_reuses_the_open_product_projection`
+- `binary_active_graph_query_routes_through_run_context`
 
-The product integration proof must demonstrate this path:
+## Route-Level Proof
 
-```text
-CLI workspace fact
--> product event authority
--> product graph replay adapter
--> product event observability
-```
+[product_event_authority_cutover.rs](../../../tests/integration/product_event_authority_cutover.rs) proves the real product route:
 
-The proof must assert one ledger identity and one monotonic event sequence across every step.
+- `real_cli_migrates_and_reuses_one_authority_for_event_and_runtime_routes` migrates legacy history, publishes a workspace fact, replays it through the shared graph adapter, observes the same ledger identity and sequence, runs the real runtime route, verifies no second identity appears, verifies legacy event rows do not change, and proves reopen restores identity, watermark, consumer cursor, and next sequence.
+- `binary_direct_commands_preserve_one_identity_across_processes` proves direct event commands preserve one ledger identity across separate process invocations and that an empty-source cutover rejects later legacy semantic writes.
+- `real_route_rejects_a_mismatched_active_binding_without_fallback` proves a mismatched active binding fails through the real command route without legacy fallback.
 
-It must also start `meld runtime run` through the real command route and prove that no compatibility event stream receives concurrent semantic writes.
-The proof validates routing and sequence authority without requiring supervisor tick cadence or a complete semantic flywheel turn.
+The assembly-level test `event_append_and_replay_ports_are_wired_to_one_authority` in [assembly.rs](../../../src/runtime/assembly.rs) proves append and replay ports share the supplied authority.
+The test `supplied_authority_and_graph_runtime_are_shared_across_assembly` proves the direct and supervised paths reuse the same authority and graph runtime.
 
-## Dependencies And Handoffs
+## Gates And Review
 
-- E5 starts only after E2 authority core, E3 observability and remote-contract hardening, and E4 domain port migration pass.
-- E6 closes the event foundation after this cutover and its route-level proof pass.
-- Runtime visibility, daemon hosting, and semantic wiring resume after event closure.
-- The future daemon edge consumes the event-owned remote contract and must preserve the same ledger identity.
-- Compatibility removal follows the repository compatibility shim policy and requires characterization and parity proof.
+Repeated authority, cursor, concurrency, recovery, migration, and workspace runs also passed.
 
-## Non Goals
+Fresh migration review covered crash states, malformed rows, mapping idempotency, record-id conflicts, structural provenance, and semantic parity.
+Fresh routing review covered one identity across CLI and runtime, constructor sealing, branch isolation, external storage policy, compatibility path preservation, downgrade prevention, and route-test honesty.
+All blocker and should-fix findings were resolved and re-reviewed through `9350a90`.
 
-- Recombine product projection databases with the ledger.
-- Make supervisor heartbeats or leases canonical semantic events.
-- Move event payload meaning into `meld-events`.
-- Make the events domain resolve workspace configuration or XDG paths.
-- Require one operating system process for all event clients.
-- Invoke `RuntimeStatusPublisher` or persist the runtime status cache.
-- Build daemon lifecycle, IPC framing, reconnects, endpoint management, or authentication.
-- Require real direct-versus-daemon process tests for E5 closure.
+## Breaking And Rollout Notes
+
+- The first command after upgrade creates or resumes cutover under the external advisory lock.
+- Relative configured product roots now resolve under the workspace-specific XDG data root.
+- Absolute or resolved product roots inside the target workspace fail with a typed error.
+- Migration appends to the target and does not delete legacy history.
+- `Preparing` state resumes; `Active` state never falls back.
+- Malformed source data, divergent record ids, path or identity substitution, and inconsistent markers fail closed.
+- Compatibility session data remains in the legacy CLI database, but legacy event trees accept no new semantic appends after cutover.
+- Old binaries are not supported for semantic event writes once the cutover marker is active.
+- Production raw event store, writer, and graph-store construction seams are sealed; tests use explicit test-support fixtures.
+
+Post-cutover compatibility remains only for deployed persisted formats. Event store open still migrates legacy session rows, slims old full-value session indexes, and backfills the record index. Execution still decodes and upgrades publication state without an identity-bearing receipt. World model preserves a legacy graph cursor as evidence before rebuilding from sequence zero. Each local `TODO compat-shim` names its minimum supported schema removal condition and the exact parity tests that must remain green before deletion. The legacy authority migration adapter itself is a stable upgrade boundary rather than a temporary writable fallback.
+
+## Runtime Handoff
+
+The event foundation now supplies a stable identity-bearing authority, observable reports, direct local capabilities, and a transport-neutral remote contract.
+Runtime work can resume with R1 through R4:
+
+- R1 owns `RuntimeStatusPublisher` cadence, status cache persistence, and staleness.
+- R2 owns daemon lifecycle and real IPC framing, reconnects, endpoints, and authentication.
+- R3 owns console frames, runtime action records, and heartbeat or action mapping.
+- R4 owns the complete semantic flywheel and operator-visibility proof.
+
+Those runtime concerns are consumers of the completed event authority and were not E5 closure gates.

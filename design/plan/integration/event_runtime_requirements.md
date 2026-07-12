@@ -1,7 +1,7 @@
 # Event Runtime Requirements
 
-Date: 2026-06-17
-Status: proposed
+Date: 2026-07-12
+Status: event-owned foundation implemented; runtime hosting remains downstream
 Scope: event runtime actors for the first durable flywheel
 
 ## Purpose
@@ -64,11 +64,10 @@ The event runtime owns only event domain state.
 - session index used for compatibility and diagnostic reads
 - legacy event compatibility reads for existing telemetry records
 - in process bounded event queue state when the queue based ingress path is used
-- event runtime diagnostic counters and last observed append or replay summaries
+- event append drop count, durable watermark, and bounded read coverage inputs
 - retention floor metadata when retention is introduced
-- storage flush state exposed only as operational health
 
-The event runtime does not own consumer projection cursors. Graph, belief, planner, and agent cursors remain in world model stores. Publication retry state remains in execution task network stores. Lifecycle leases and heartbeats remain in the root supervisor store.
+The event runtime does not own consumer projection cursor truth. Graph, belief, planner, and agent cursors remain in their consumer domain stores. Consumers report identity-bearing progress through the authority registry capability for lag observation and future retention safety. Publication retry state remains in execution task network stores. Lifecycle leases and heartbeats remain in the root supervisor store.
 
 ## Required Inputs
 
@@ -82,7 +81,7 @@ Append inputs:
 
 Replay inputs:
 
-- caller supplied `after_seq` cursor boundary
+- caller supplied `LedgerCursor` carrying ledger identity and the exclusive sequence boundary
 - caller supplied batch limit
 - optional caller identity for diagnostics and future retention safety checks
 - optional filters only when the event runtime can apply them without interpreting payload meaning
@@ -106,7 +105,7 @@ Append outputs:
 - record id index entry for idempotent lookup when `record_id` is present
 - session index entry for session scoped compatibility reads
 - updated sequence metadata that never moves behind persisted records
-- append result containing the existing or newly assigned sequence
+- append receipt containing ledger identity, the existing or newly assigned sequence, and inserted or duplicate disposition
 
 Replay outputs:
 
@@ -129,7 +128,7 @@ The first durable flywheel needs narrow event ports.
 Append sink:
 
 - accepts one prepared envelope through an idempotent append operation
-- returns the existing or newly assigned event sequence
+- returns an identity-bearing receipt with the existing or newly assigned event sequence and disposition
 - rejects or diagnoses malformed durable flywheel publication envelopes before reporting semantic success
 - is callable directly by execution publication runtime
 - does not require root to inspect the publication payload
@@ -143,8 +142,8 @@ Batch append sink:
 
 Replay source:
 
-- accepts `after_seq` and `limit`
-- returns records with `seq` greater than `after_seq`
+- accepts an identity-bearing ledger cursor and bounded limit
+- returns records with `seq` greater than the cursor boundary
 - returns at most `limit` records
 - returns records in ascending runtime sequence order
 - is callable directly by world model graph, belief, and evidence ingestion runtimes
@@ -158,11 +157,12 @@ Subscription source:
 - uses the authority watermark only as a wakeup notification
 - never treats notification state as a replacement for durable replay truth
 
-Flush and health port:
+Durability and health inputs:
 
-- flushes event storage before shutdown is acknowledged
-- exposes last assigned sequence, last flush status, queue health, replay health, and retention floor
+- durable append returns only after event storage flush succeeds
+- exposes ledger identity, durable tip and watermark, retained lower boundary, drop count, consumer lag, append-rate coverage, and bounded read coverage
 - exposes no event payload interpretation
+- leaves status sampling, cache publication, queue-host health, and shutdown coordination to runtime
 
 Remote authority contract:
 
@@ -204,7 +204,7 @@ The event runtime must not reinterpret producer payloads while assigning sequenc
 The replay boundary is exclusive.
 
 - A request with `after_seq` equal to `N` returns only records with sequence greater than `N`.
-- A request with limit zero returns an empty batch.
+- A request with limit zero fails with a typed invalid-request error.
 - A successful bounded replay batch is deterministic for the same retained event spine state.
 - The returned records are already committed event facts.
 - The caller may advance its durable cursor only after caller owned derived state is durable.
@@ -229,7 +229,7 @@ Startup recovery:
 - scan canonical event records when metadata is missing or stale
 - repair sequence metadata so the next assigned sequence is greater than every persisted sequence
 - preserve legacy readable records without moving their meaning into new domain semantics
-- expose recovery diagnostics to the supervisor
+- return typed recovery failures for the runtime host to map into its own diagnostics
 
 Append recovery:
 
@@ -328,23 +328,22 @@ Retention requirements:
 - define a future retention floor before any event deletion feature is enabled
 - require every consumer domain to expose durable cursor checkpoints before retention can use consumer progress
 
-Diagnostics requirements:
+Event health-input requirements:
 
-- append diagnostics include attempted envelopes, committed records, duplicate idempotent hits, missing record id violations, retryable storage errors, fatal validation errors, and budget exhaustion
-- sequence diagnostics include last assigned sequence, highest persisted sequence, metadata repair count, and duplicate sequence detection
-- replay diagnostics include caller id when available, input cursor, output cursor, records returned, limit, retention floor, and retention gap errors
-- queue diagnostics include capacity, enqueue failures, drain count, and disconnected receiver state
-- flush diagnostics include last flush time, flush result, and storage error summary
-- diagnostics must be bounded and serializable for supervisor reports
-- diagnostics must not become product world facts by default
+- health reports include ledger identity, durable tip and watermark, retained lower boundary, drop count, consumer lag, append rates, and explicit append-rate coverage
+- replay, paging, flow, trace, and session reports expose the frozen scan range and truncation state
+- invalid limits, retention gaps, identity mismatches, backpressure, indeterminate durability, and persistence failures remain typed
+- report inputs are bounded and serializable for runtime-owned status mapping
+- event health inputs do not become product world facts by default
+- runtime owns queue-capacity telemetry, last-flush timing, replay-host health, status publication, and cache staleness
 
 ## Implementation Phases
 
-The active [Event Foundation Closeout Program](../events/event_foundation_closeout_program.md) supersedes this older phase order for current implementation.
-ER-0 through ER-4 remain requirement groupings.
-E1 through E6 control closure sequencing and keep runtime hosting downstream.
+The completed [Event Foundation Closeout Program](../events/event_foundation_closeout_program.md) superseded this older phase order for implementation.
+ER-0 through ER-5 remain requirement groupings and are complete for the event-owned foundation.
+Runtime hosting remains downstream.
 
-### Phase ER-0 Contract Alignment
+### Phase ER-0 Contract Alignment — complete 2026-07-12
 
 Clarify that `meld-events` is the owner of append, sequence, idempotency, replay, and subscription semantics.
 
@@ -355,7 +354,7 @@ Exit criteria:
 - execution publication still calls an event append sink directly
 - world model replay still calls an event replay source directly
 
-### Phase ER-1 Append Runtime
+### Phase ER-1 Append Runtime — complete 2026-07-12
 
 Harden the durable flywheel append path around idempotent envelopes.
 
@@ -363,7 +362,7 @@ Requirements:
 
 - expose one append sink for execution publication runtime
 - require stable record ids for execution publication events
-- return the event sequence from append
+- return an identity-bearing receipt from append
 - report duplicate record id hits as successful idempotent outcomes
 - report missing record id for durable publication as a producer contract violation
 
@@ -373,7 +372,7 @@ Exit criteria:
 - append success gives execution enough sequence identity to mark the publication published
 - append failure leaves execution publication retryable
 
-### Phase ER-2 Sequence Recovery
+### Phase ER-2 Sequence Recovery — complete 2026-07-12
 
 Make sequence assignment recovery explicit.
 
@@ -382,7 +381,7 @@ Requirements:
 - recover next sequence from metadata and canonical records
 - repair stale sequence metadata before accepting new appends
 - prevent duplicate persisted sequence keys
-- expose repair diagnostics
+- return typed failures when open-time repair cannot complete
 
 Exit criteria:
 
@@ -390,7 +389,7 @@ Exit criteria:
 - stale metadata cannot cause overwrite or duplicate sequence
 - idempotent duplicate after reopen returns the original sequence
 
-### Phase ER-3 Bounded Replay And Subscription
+### Phase ER-3 Bounded Replay And Subscription — complete 2026-07-12
 
 Define the first subscription contract as pull based bounded replay.
 
@@ -408,24 +407,24 @@ Exit criteria:
 - repeated replay from the same cursor returns the same batch when the spine is unchanged
 - cursor advancement remains in world model state
 
-### Phase ER-4 Retention And Diagnostics
+### Phase ER-4 Retention Truth And Health Inputs — complete 2026-07-12
 
-Add safe retention defaults and supervisor visible diagnostics.
+Add safe retention defaults and stable event-health mapping inputs.
 
 Requirements:
 
 - retain canonical spine records for the first durable flywheel
-- expose retention floor even when the floor is zero
-- expose bounded append, replay, sequence, queue, and flush diagnostics
+- expose the exact retained lower boundary for empty, populated, and compacted ledgers
+- expose bounded, identity-bearing health and read coverage inputs
 - keep supervisor lifecycle records outside the canonical event spine by default
 
 Exit criteria:
 
 - session pruning cannot remove canonical event records
-- operator status can explain append and replay health
-- diagnostics do not duplicate semantic domain state
+- runtime can map event health without reopening or interpreting event storage
+- health inputs do not duplicate semantic domain state
 
-### Phase ER-5 Product Assembly Cutover
+### Phase ER-5 Product Assembly Cutover — complete 2026-07-12
 
 Wire concrete authority capabilities through direct root and product assembly.
 
@@ -446,6 +445,14 @@ Exit criteria:
 
 Supervisor lifecycle, shutdown hosting, and real remote transport are runtime-owned work after event closure.
 
+## Closure Evidence
+
+The event-owned requirements landed through E1 to E5 of the closeout. Commits `b9ba7a3` and `c09c2ae` close correctness. Commits `a20390d` and `215ef32` establish identity and authority. Commits `303d9c1`, `d19d742`, and `01e4f59` close observability, provenance, and remote conformance. Commits `3c6b26d`, `e73dfa0`, and `b7781a2` migrate domain ports. Commit `97cc225` performs product binding and cutover, with repeated-gate hardening through `9350a90`.
+
+The feature-enabled event suite passed 174 tests and 3 doctests. Authority, cursor, concurrency, and recovery suites passed 25 consecutive normal runs and 25 consecutive serial runs. Local and serde loopback clients passed one reusable conformance suite. The full workspace all-targets suite passed three consecutive times.
+
+Fresh migration, routing, constructor-sealing, recovery, concurrency, architecture, and compatibility reviews were clean. All protected benchmark measurements remained inside the ten percent threshold.
+
 ## Verification Requirements
 
 Existing focused verification:
@@ -454,25 +461,24 @@ Existing focused verification:
 cargo test -p meld-events --test event_store_contracts
 cargo test --test integration_tests runtime_wide_sequence_is_monotonic
 cargo test --test integration_tests idempotent_append_reuses_existing_record_id
-cargo test --test integration_tests session_prune_does_not_delete_canonical_spine_history
+cargo test --test integration_tests session_prune_does_not_delete_canonical_ledger_history
 cargo test -p meld-execution --test task_network_publication_bridge publication_bridge_appends_pending_task_outcome_once
 ```
 
-New or strengthened verification:
+Event-foundation verification includes:
 
 ```text
-event_runtime_reopens_with_monotonic_sequence
-event_runtime_rejects_durable_publication_without_record_id
-event_runtime_repairs_stale_sequence_metadata
-event_runtime_replay_reports_retention_gap
-event_runtime_subscription_does_not_advance_consumer_cursor
-event_authority_reopens_with_same_ledger_identity
-event_authority_rejects_identity_mismatch
-event_authority_loopback_conformance
-event_product_route_uses_one_ledger_sequence
-minimal_runtime_flywheel_turn_persists_and_satisfies_goal
-failure_outcome_does_not_satisfy_goal
+first_open_persists_identity_and_reopen_is_stable
+corrupt_and_mismatched_identities_fail_closed
+store_open_repairs_missing_record_index_and_sequence_meta
+replay_below_retained_boundary_returns_typed_gap
+concurrent_maximum_survives_drop_and_reopen
+local_client_satisfies_authority_conformance
+serde_loopback_client_satisfies_authority_conformance
+real_cli_migrates_and_reuses_one_authority_for_event_and_runtime_routes
 ```
+
+The downstream `minimal_runtime_flywheel_turn_persists_and_satisfies_goal` proof belongs to R4 and is not an event-foundation closure gate.
 
 Static checks:
 
@@ -485,7 +491,7 @@ The implementation must preserve the modern Rust module layout and must not add 
 
 ## Acceptance Criteria
 
-The event runtime requirements are satisfied when these statements are true.
+The event-owned requirements are satisfied by these statements.
 
 - Execution publication appends through an event owned idempotent append sink.
 - Each execution publication event has a stable record id and appends at most one canonical event record.
@@ -498,8 +504,9 @@ The event runtime requirements are satisfied when these statements are true.
 - Local and loopback authority implementations pass the same transport-neutral conformance suite.
 - Canonical event history is retained for the first durable flywheel.
 - Retention gaps are explicit errors before any deletion based retention is enabled.
-- Diagnostics are bounded, operational, and not product world facts by default.
-- The minimal durable flywheel proof can reopen after event append and continue from stores.
+- Event health and read-coverage reports are bounded, operational, and not product world facts by default.
 - A failed execution outcome can publish a failure event without creating false goal satisfaction.
 
-After these event-owned criteria pass, root runtime may host the authority and manage lifecycle, leases, health, restart, flush, status publication, and remote transport without owning event meaning.
+These event-owned criteria passed. Root runtime may now host the authority and manage lifecycle, leases, health, restart, flush, status publication, and remote transport without owning event meaning.
+
+The complete semantic flywheel proof remains R4 runtime work. Status publisher invocation and cache persistence remain R1. Daemon lifecycle and real IPC remain R2. Console frames and runtime action publication remain R3. Thresholds, hysteresis, process epochs, retry and outbox state, and promotion decisions remain producer-owned policy.

@@ -1,7 +1,8 @@
 # Product Runtime Assembly Requirements
 
 Date: 2026-06-17
-Status: proposed
+Revised: 2026-07-12
+Status: E5 authority assembly complete; runtime continuation active
 Scope: Phase 1 requirements for root `ProductRuntimeAssembly`
 
 ## Purpose
@@ -30,6 +31,32 @@ These requirements refine Phase 1 from `design/plan/integration/durable_flywheel
 They preserve the shared boundary rules in `design/plan/integration/runtime_requirements.md`, the supervisor ownership split in `design/plan/integration/runtime_supervisor_domain_plan.md`, the detailed supervisor handoff rules in `design/plan/integration/supervisor_runtime_requirements.md`, the storage and first proof expectations in `design/plan/integration/durable_runtime_first_slice.md`, and the pre implementation gap outcomes in `design/plan/integration/durable_runtime_pre_implementation_gaps.md`.
 
 They are grounded in the current root storage and worker diagnostics surfaces in `src/runtime/storage.rs` and `src/runtime/contracts.rs`.
+
+## E5 Implementation Reconciliation
+
+The event-authority portion of these requirements is complete through `9350a90`.
+The main product cutover is `97cc225`; closure storage and reliability corrections continue through `9350a90`.
+
+Root composition resolves the branch product binding before assembly.
+The binding uses durable `event_authority.json` `Preparing` and `Active` states, an `fs2` advisory lock, recoverable BLAKE3 migration mappings, and fail-closed source, marker, path, and identity validation.
+The target ledger durably claims the branch product identity before binding or migration proceeds, so independent branch data homes cannot point at the same writable authority.
+An empty legacy source receives a cutover marker, so a later legacy writer cannot create a second semantic history.
+
+`ProductRuntimeAssembly::load_with_authority` consumes the resolved `EventAuthority` and builds append, replay, cursor, and shared graph adapters from its capabilities.
+`OpenProductStores` opens projection and domain storage only.
+It does not own, open, or flush canonical event storage.
+The authority resolver owns the external product ledger, and durable append owns its flush acknowledgement.
+
+Session compatibility remains in the configured legacy CLI database.
+Configured non-event CLI paths for node, frame, prompt, belief, and session storage are preserved.
+Semantic event publication uses only the bound product authority, and legacy semantic event appends are rejected after cutover.
+
+The external product root policy is implemented in [storage_paths.rs](../../../src/config/workspace/storage_paths.rs).
+Relative roots resolve below the workspace-specific XDG data root; absolute, normalized, or symlink-resolved roots inside the target workspace fail closed.
+Dormant branch migration resolves each branch's own configuration, legacy source, product path, and ledger identity.
+
+This reconciliation completes the E5 composition dependency.
+It does not implement `RuntimeStatusPublisher` cadence, status-cache persistence, daemon lifecycle, real IPC, console frames, runtime action mapping, promotion policy, or the complete flywheel proof.
 
 ## Authority
 
@@ -200,11 +227,11 @@ Steps one through eleven must not start domain work. Step twelve must hand resou
 
 Product storage paths must use `ProductStorageLayout`.
 The root authority resolver opens the ledger entry, and product assembly uses `OpenProductStores` for the remaining stores.
-E5 changes any current `OpenProductStores` ledger field into an authority capability or removes that field so opening product stores cannot construct a second canonical ledger.
+E5 removed canonical event storage from `OpenProductStores`, so opening product stores cannot construct a second ledger.
 
 Required product storage layout entries:
 
-- `ledger.sled` for the root-resolved event authority and session compatibility state
+- `ledger.sled` for the root-resolved event authority only
 - `workspace.sled` for workspace node records
 - `world_model.sled` for graph reducer state, belief state, agent state, and compatibility world state
 - `execution/goals.sled` for execution goals
@@ -217,9 +244,14 @@ Root authority resolution opens `ledger.sled` once.
 Product assembly opens the remaining always available product stores once and wraps them in typed store handles.
 It must not expose raw `sled::Db` handles through supervisor facing assembly fields.
 
+Session compatibility is not a product-ledger field.
+It remains in the configured legacy CLI database, while session semantic facts publish through the product authority.
+Configured non-event CLI node, frame, prompt, belief, and session paths remain unchanged by the authority cutover.
+
 The ledger storage entry must bind to one stable ledger identity for the product identity.
 Root composition resolves that authority before product assembly, and product assembly must consume it rather than open another event store.
 CLI compatibility storage must not remain a second writable canonical history.
+After cutover its semantic event trees reject appends, including for an initially empty source.
 
 Append, replay, subscription, watermark, and observability ports must derive from the same product event authority.
 Physical separation between `ledger.sled` and projection stores remains required and does not imply separate logical event histories.
@@ -234,9 +266,8 @@ Product storage open failure must return an assembly storage error before any ru
 
 `OpenProductStores::flush_boundary` is the product checkpoint boundary for always opened stores.
 
-It must flush or invoke the typed flush capability for:
+It must flush or invoke the typed flush capability for stores it owns:
 
-- event authority
 - workspace store
 - traversal store
 - belief store
@@ -244,6 +275,12 @@ It must flush or invoke the typed flush capability for:
 - legacy world state store
 - execution goal store
 - task artifact factory
+- frame storage
+- prompt artifact storage
+
+The event authority is not owned by `OpenProductStores` and is not part of this flush method.
+Durable authority append returns only after the event store flush contract completes.
+Any future explicit authority checkpoint must use an authority-owned capability rather than add raw event storage back to product stores.
 
 Task network stores are opened per network. Any task network store touched by a runtime must flush before `OpenProductStores::flush_boundary` is treated as a durable product checkpoint.
 
@@ -312,7 +349,8 @@ Requirements:
 - backed by the resolved event authority append capability
 - accepts an `EventEnvelope`
 - delegates idempotent append through the canonical event capability
-- returns the canonical event sequence assigned by the event authority
+- returns the identity-bearing `AppendReceipt` assigned by the event authority
+- preserves inserted or duplicate disposition without inventing publication state
 - preserves event authority errors as append port errors
 - does not inspect event payload meaning
 - does not choose publication readiness
@@ -328,8 +366,9 @@ The event replay port must implement the world model callable bounded replay con
 Requirements:
 
 - backed by the resolved event authority replay capability
-- accepts caller supplied `after_seq` and `limit`
-- returns ordered event records after the supplied sequence
+- accepts an identity-bearing ledger cursor and bounded limit
+- rejects a foreign ledger identity before reading
+- returns an identity-bearing page, next cursor, ordered records, and explicit coverage
 - enforces bounded limits required by the replay contract
 - maps storage and decode failures into replay errors
 - stores no replay cursor
@@ -661,6 +700,49 @@ Domain runtimes handle semantic resume:
 - publication runtime resumes from task network publication outbox and event append idempotency
 
 Assembly must not bridge crash windows with local memory. Crash after publication append but before satisfaction must recover through event, task network, world model, and execution stores. Crash after product store flush but before lease release must recover through supervisor lease expiry and domain idempotency. Crash before flush must recover from whatever each owning store durably contains.
+
+## Implemented Authority Evidence
+
+Assembly-focused tests in [assembly.rs](../../../src/runtime/assembly.rs) include:
+
+- `assembly_opens_product_and_supervisor_stores`
+- `assembly_can_be_reopened_from_same_product_root`
+- `event_append_and_replay_ports_are_wired_to_one_authority`
+- `supplied_authority_and_graph_runtime_are_shared_across_assembly`
+- `graph_replay_descriptor_declares_complete_authority_dependencies`
+- `startup_package_exposes_runtime_handle_factories`
+
+The real route proof is [product_event_authority_cutover.rs](../../../tests/integration/product_event_authority_cutover.rs):
+
+- `real_cli_migrates_and_reuses_one_authority_for_event_and_runtime_routes`
+- `binary_direct_commands_preserve_one_identity_across_processes`
+- `real_route_rejects_a_mismatched_active_binding_without_fallback`
+
+These tests prove the direct event CLI and `runtime run` share one authority and sequence, no second identity appears, legacy event rows remain unchanged, identity survives separate processes, and reopen restores identity, watermark, cursor, and next sequence.
+
+Branch routing evidence in [branches_runtime.rs](../../../tests/integration/branches_runtime.rs) includes:
+
+- `dormant_branch_migrations_keep_separate_product_authorities`
+- `dormant_branch_migration_uses_its_configured_legacy_store`
+- `active_branch_graph_status_reuses_the_open_product_projection`
+- `binary_active_graph_query_routes_through_run_context`
+
+Binding tests in [binding.rs](../../../src/events/binding.rs) cover `Preparing` resume, stable `Active` reopen, branch mismatch, deleted or substituted ledgers, source-marker validation, and no-fallback behavior.
+They also cover separate branch-local binding homes attempting to share one target ledger.
+Migration tests in [event_migration.rs](../../../crates/meld-events/tests/event_migration.rs) cover empty-source markers, target prefix preservation, BLAKE3 mappings, interruption and resume, malformed rows, record-id conflict parity, structural provenance, and post-cutover legacy append rejection while non-event compatibility trees remain usable.
+
+Fresh reviews passed for migration recovery, route identity, constructor sealing, branch isolation, external storage policy, compatibility path preservation, and test honesty.
+
+## E5 Breaking And Rollout Notes
+
+- The first command after upgrade creates or resumes the product binding under `event_authority.lock`.
+- Relative product roots now resolve under workspace-specific XDG data storage.
+- Absolute or resolved product roots inside the target workspace fail with a typed configuration error.
+- `Preparing` cutovers resume from durable mappings; `Active` bindings never fall back to legacy event trees.
+- Migration is append-only into the target and does not delete the source history.
+- Compatibility session storage and configured non-event CLI paths remain in place.
+- Semantic legacy event appends fail after the source marker is active, including for a source that was empty at cutover.
+- Production callers can no longer construct raw writable event or graph stores; explicit test-support fixtures replace those seams.
 
 ## Verification Requirements
 

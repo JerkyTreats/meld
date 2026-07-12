@@ -1,7 +1,7 @@
 # Event Observability PLAN
 
 Date: 2026-07-08
-Status: closed 2026-07-09; scope corrected 2026-07-10 with no runtime publication dependency
+Status: closed 2026-07-09; scope corrected 2026-07-10; foundation successor closed 2026-07-12
 Workflow: complex change workflow deactivated at close per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
 Design source: [Event Observability Design](event_observability_design.md)
 
@@ -13,7 +13,7 @@ Complete the first event observability workstream: every read model, port, and c
 
 ### Outcome
 
-`EventObservabilityPort` fully implemented over an in-process backing; `meld event status`, `tail`, `trace`, and `session` commands rendering text and JSON from serializable reports; a named consumer cursor registry shared with compaction; `EventHealthReport` plus stable status mapping inputs; and a provisional watcher demonstrating that promoted runtime-health facts can flow through the durable append capability.
+The first `EventObservabilityPort` was implemented over an in-process backing; `meld event status`, `tail`, `trace`, and `session` commands render text and JSON from serializable reports; a named consumer cursor registry is shared with compaction; `EventHealthReport` supplies stable status mapping inputs; and a provisional watcher demonstrates that promoted runtime-health facts can flow through the durable append capability. The successor closeout made the authority-derived observability capability the sealed production surface.
 
 ### In Scope
 
@@ -39,7 +39,7 @@ Complete the first event observability workstream: every read model, port, and c
 
 The design artifact and the rename sweep landed as the workstream's opening commits.
 
-### Phase 1: contracts foundation
+### Phase 1: contracts foundation — complete 2026-07-08
 
 Goal: freeze the contracts every parallel unit builds against.
 
@@ -49,7 +49,7 @@ Key seams: new `crates/meld-events/src/events/observability.rs` for port and DTO
 
 Exit criteria: contract tests pin every DTO's serialized shape; the CLI skeleton dispatches stubs; workspace green.
 
-### Phase 2: surface fan-out
+### Phase 2: surface fan-out — complete 2026-07-08
 
 Goal: build the four query surfaces in parallel against the frozen contracts.
 
@@ -62,7 +62,7 @@ Four builder units with strictly disjoint file ownership, each delivering the po
 
 Exit criteria: each unit's tests green; combined workspace green; every command renders text and JSON.
 
-### Phase 3: integration and end-to-end proof
+### Phase 3: integration and end-to-end proof — complete 2026-07-08
 
 Goal: the surfaces observe real flywheel activity, not fixtures.
 
@@ -120,7 +120,7 @@ Contracts foundation lands first and freezes the seams. The four surface units b
 
 - The `meld event` command family is workspace-scoped read-only diagnostics; no command takes `--path` targeting, called out per [CLI Targeting Policy](../../../governance/cli_targeting_policy.md).
 - `meld event tail` follow mode runs until interrupted or its output pipe closes; it is the one intentionally long-running command in the family. An interrupted follow leaves its command session without a session-ended record in the ledger, a recorded consequence of interruption-based exit; a closed pipe ends the command cleanly and completes the session. Follow holds the single-process database lock, so no concurrent meld command can produce events while it watches; the command says so on startup, and cross-process live following arrives with the daemon edge.
-- Observability reads may open the product database only when no runtime process holds it. Direct configured-authority routing is closed by the successor event program. Access while a daemon owns the ledger waits for runtime-owned remote hosting and does not block event closure.
+- Observability reads may open the configured product authority directly only when no runtime process holds it. Direct configured-authority routing is complete. Access while a daemon owns the ledger waits for runtime-owned remote hosting and does not block event closure.
 
 ## Phase Completion Notes
 
@@ -135,7 +135,15 @@ Events can durably append a promoted health fact supplied through the append cap
 The existing `SelfObservationWatcher` is a provisional bridge rather than canonical event behavior.
 Thresholds, hysteresis, process epochs, retries, outbox state, and promotion decisions belong to a producer-owned runtime-health or sensory concern.
 
-Remaining event correctness, authority, observability, remote-contract, domain-port, and product-cutover work moves to the active [Event Foundation Closeout Program](event_foundation_closeout_program.md).
+Remaining event correctness, authority, observability, remote-contract, domain-port, and product-cutover work moved to the now completed [Event Foundation Closeout Program](event_foundation_closeout_program.md).
+
+### Foundation successor closure — 2026-07-12
+
+The successor program closed the gaps intentionally left outside this first observability workstream. The authority-derived observability capability is now the sealed production surface, while the original trait remains explicit test support. Every report carries ledger identity and bounded-read coverage. Trace provenance uses explicit source-record references instead of payload strings. Direct commands resolve the product authority. Local and serde loopback clients pass one transport-neutral conformance suite.
+
+The feature-enabled event suite passed 174 tests and 3 doctests. Authority, cursor, concurrency, and recovery suites passed 25 consecutive normal runs and 25 consecutive serial runs. The full workspace all-targets suite passed three consecutive times.
+
+This successor evidence does not change the Phase 4 ownership correction. Runtime still owns `RuntimeStatusPublisher` invocation, cache persistence and staleness, daemon hosting, real IPC, console and action publication, heartbeat mapping, and the complete semantic flywheel proof.
 
 ### Final polish pass — closed 2026-07-09
 
@@ -154,7 +162,7 @@ Gate evidence: formatter clean; clippy zero warnings; boundary script passed; fu
 
 Program outcome against the corrected commitments: the port serves all five query surfaces over the in-process backing with every wire shape pinned; `meld event status`, `tail`, `trace`, `session`, and `flow` render text and JSON and were proven against real flywheel activity by an independent verification agent; the consumer cursor registry enumerates lag and doubles as compaction's consumer registration; the Wave 0 snapshot contract carries an optional ledger summary; and the provisional watcher proves promoted runtime facts can flow through durable append. The orchestration held: four concurrent builders with zero collisions, fresh reviews on every checkpoint, and an independent operator-perspective verification whose follow-mode finding shipped as an honest warning.
 
-Handoffs: runtime visibility owns the supervisor accepting an injected `RuntimeStatusPublisher`, choosing publication cadence, copying `RuntimeStatusLedgerSummary::from_health` into tick snapshots, and mapping the `event.append` heartbeat and runtime actions. Runtime also owns cache persistence, daemon hosting, and real remote transport. The event closeout owns the transport-neutral remote contract and loopback conformance without a daemon. The compaction workstream inherits the registry as its consumer registration.
+Handoffs: runtime visibility owns the supervisor accepting an injected `RuntimeStatusPublisher`, choosing publication cadence, copying `RuntimeStatusLedgerSummary::from_health` into tick snapshots, and mapping the `event.append` heartbeat and runtime actions. Runtime also owns cache persistence, daemon hosting, and real remote transport. The completed event closeout supplies the transport-neutral remote contract and loopback conformance without a daemon. The compaction workstream inherits the registry as its consumer registration.
 
 The complex change workflow deactivates for this program with no open event-owned phase.
 

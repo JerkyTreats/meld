@@ -1,6 +1,7 @@
 # Runtime Operator Visibility Program Ledger
 
 Date: 2026-07-04
+Revised: 2026-07-12
 Status: active
 Program branch: `runtime-operator-visibility`
 
@@ -45,11 +46,29 @@ Scope correction on 2026-07-10: events supplies `EventHealthReport` with stable 
 
 ### 2026-07-10 event foundation dependency correction
 
-The canonical event architecture requires one logical ledger authority per product identity. The CLI compatibility assembly and product runtime assembly currently create separate writable event histories when `meld runtime run` passes through normal `RunContext` dispatch.
+The canonical event architecture requires one logical ledger authority per product identity. Before E5, the CLI compatibility assembly and product runtime assembly could create separate writable event histories when `meld runtime run` passed through normal `RunContext` dispatch.
 
-The active [Event Foundation Closeout Program](../events/event_foundation_closeout_program.md) owns correctness repairs, identity-bearing authority, unified append and watermark truth, observability hardening, the remote contract seam, domain port migration, and direct product cutover. Its E5 [Product Event Authority Cutover](product_event_authority_cutover.md) owns CLI publication injection, product ledger selection, legacy history migration, and direct `meld event` routing.
+The [Event Foundation Closeout Program](../events/event_foundation_closeout_program.md) owned correctness repairs, identity-bearing authority, unified append and watermark truth, observability hardening, the remote contract seam, domain port migration, and direct product cutover. Its E5 [Product Event Authority Cutover](product_event_authority_cutover.md) owned CLI publication injection, product ledger selection, legacy history migration, and direct `meld event` routing.
 
 Runtime visibility resumes after E6 closes the events foundation. Runtime then owns status publisher invocation and cache, real daemon transport, console and action publishers, and the full flywheel proof. The provisional `SelfObservationWatcher` does not assign promotion policy to events; a producer-owned runtime-health or sensory concern owns thresholds, hysteresis, process epochs, retries, outbox state, and promotion decisions.
+
+### 2026-07-12 event foundation handoff
+
+E5 product cutover and E6 event closure passed their implementation gates and fresh reviews through `9350a90`.
+The main product cutover is `97cc225`; closure reliability corrections continue through `9350a90`.
+
+The branch product identity now binds through durable `event_authority.json` `Preparing` and `Active` states to one external ledger path and identity.
+The target ledger also persists the inverse branch claim, rejecting a second branch-local binding that names the same authority.
+Cutover uses an `fs2` advisory lock, recoverable BLAKE3 source-to-target mappings, fail-closed path, identity, source, and marker validation, and an empty-source marker that prevents a later legacy semantic history.
+Compatibility session data and configured non-event CLI storage paths remain in their existing locations, while semantic legacy event writes are rejected after cutover.
+Dormant branches resolve their own configuration, source, product path, and ledger identity.
+
+The real route tests in `tests/integration/product_event_authority_cutover.rs` prove that direct event commands and `runtime run` reuse one authority and sequence space, preserve identity across processes and reopen, leave legacy event rows unchanged, and reject a mismatched active binding without fallback.
+The branch tests in `tests/integration/branches_runtime.rs` prove configured-source selection and authority isolation for dormant branches.
+
+The event dependency is therefore satisfied and Wave 1 is ready to start.
+No runtime visibility wave became complete as a side effect of event closure.
+Runtime still owns R1 status publisher invocation, cache persistence and staleness; R2 daemon and real IPC; R3 console frames, runtime actions, and heartbeat mapping; and R4 the complete flywheel proof.
 
 ## Phase Inventory
 
@@ -105,7 +124,7 @@ Unresolved risks:
 
 ### wave-1-runtime-visibility-core
 
-Status: blocked
+Status: ready
 
 Summary:
 
@@ -116,7 +135,7 @@ Summary:
 Dependencies:
 
 - `wave-0-shared-contracts`
-- completed event foundation closeout E6
+- completed event foundation closeout E6 through `9350a90`
 
 Write scope:
 
@@ -145,6 +164,7 @@ Review status:
 Unresolved risks:
 
 - lock safety must be proven with an integration test
+- event closure proves one direct local authority, not status-cache lock isolation
 
 ### wave-2-run-console-and-lifecycle-events
 
@@ -309,13 +329,13 @@ Unresolved risks:
 ## Dependency Graph
 
 - `wave-1-runtime-visibility-core -> wave-0-shared-contracts` because cache persistence and route isolation consume shared snapshot and action shapes.
-- `wave-1-runtime-visibility-core -> event-foundation-closeout-E6` because runtime hosting resumes only after one direct product authority and event closure gates pass.
+- `wave-1-runtime-visibility-core -> event-foundation-closeout-E6` is satisfied through `9350a90`; runtime hosting now consumes the closed direct product authority.
 - `wave-2-run-console-and-lifecycle-events -> wave-1-runtime-visibility-core` because console frames should use the same cache and status row data.
 - `wave-3-domain-action-publishers -> wave-0-shared-contracts` because domains must emit shared action records.
 - `wave-3-domain-action-publishers -> wave-1-runtime-visibility-core` because domain actions need a cache writer and reader path.
 - `wave-4-process-control -> wave-1-runtime-visibility-core` because readiness and stop behavior should publish stable status.
 - `wave-5-end-to-end-proof -> wave-3-domain-action-publishers` because the proof needs domain action depth.
-- `wave-5-end-to-end-proof -> event-foundation-closeout-E6` because the proof must consume the closed event authority and observe one canonical sequence across CLI activation and supervised work.
+- `wave-5-end-to-end-proof -> event-foundation-closeout-E6` is satisfied through `9350a90`; Wave 5 must still prove the runtime-owned flywheel and operator surfaces.
 
 ## Wave Plan
 
@@ -431,6 +451,25 @@ Broader gates:
 - `cargo check --workspace` passed
 - `cargo clippy --workspace --all-targets -- -D warnings` passed
 
+Event foundation dependency gate through `9350a90`:
+
+- formatter, workspace build, workspace clippy with warnings denied, domain boundaries, and full workspace tests passed independently
+- `cargo test -p meld-events --features test-support` passed in the clean CI no-lock branch
+- execution and world-model package suites passed
+- `product_event_authority_cutover`, `branches_runtime`, `progress_observability`, and `runtime_cli` integration suites passed
+- repeated authority, cursor, concurrency, recovery, migration, and workspace reliability runs passed
+- fresh migration, routing, recovery and concurrency, architecture and compatibility, and independent verification reviews passed
+
+The repository intentionally ignores `Cargo.lock`. Clean-checkout verification therefore follows the same conditional branch as CI and omits `--locked`; the primary development worktree also passed the locked commands against its local ignored lockfile.
+
+Route contracts handed to runtime:
+
+- `real_cli_migrates_and_reuses_one_authority_for_event_and_runtime_routes`
+- `binary_direct_commands_preserve_one_identity_across_processes`
+- `real_route_rejects_a_mismatched_active_binding_without_fallback`
+- `dormant_branch_migrations_keep_separate_product_authorities`
+- `dormant_branch_migration_uses_its_configured_legacy_store`
+
 ## Review Findings
 
 Wave 0 first fresh review findings:
@@ -456,10 +495,11 @@ Wave 0:
 
 Wave 1:
 
-- status: blocked
+- status: ready
 - implementation evidence: none yet
 - test evidence: none yet
 - review status: not started
+- dependency evidence: event foundation handoff passed through `9350a90`
 
 Wave 2:
 
@@ -495,9 +535,12 @@ Wave 5:
 - The ledger is bootstrapped before Wave 1, so later workers must update evidence as they land work.
 - Wave 0 is complete, but later waves still need their own review lanes.
 - Runtime status still uses the old blocking route until Wave 1.
+- Event closure supplies reports and stable mapping inputs but does not invoke `RuntimeStatusPublisher`.
+- Direct local authority routing is proven; daemon process ownership and real IPC remain unimplemented.
 
 ## Final Reconciliation
 
 Program is active.
 
-No final reconciliation has been performed.
+The event foundation dependency is reconciled and Wave 1 is unblocked.
+No runtime visibility completion reconciliation has been performed because Waves 1 through 5 remain unimplemented.

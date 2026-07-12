@@ -3,7 +3,7 @@
 Date: 2026-07-08
 Status: complete
 Scope: make meld-events durable, fast, observable, and contract-stable without pre-extending past known requirements
-Workflow: complex change workflow active per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
+Workflow: complex change workflow deactivated at close per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
 
 ## Overview
 
@@ -11,8 +11,8 @@ Workflow: complex change workflow active per [Complex Change Workflow Governance
 
 The event spine is the shared clock and durable history for the cognitive flywheel.
 The runtime wiring workstream was paused on its ledger mechanics.
-The successor event foundation closeout now finishes authority and product cutover before full runtime wiring resumes.
-This program overhauls meld-events so that when the remaining runtimes come online, the spine is the strongest crate they touch.
+The successor event foundation closeout finished authority and product cutover so full runtime wiring can resume.
+This program overhauled meld-events so the remaining runtimes consume a strong ledger foundation.
 
 ### Outcome
 
@@ -189,9 +189,9 @@ Event trees may be colocated with node storage, beliefs, and traversal, or the c
 The physical distinction does not authorize two canonical histories for one product identity. The earlier interpretation that CLI and product event streams could remain independently writable is superseded. CLI and product adapters must consume one logical event authority and one sequence space.
 The selected storage binding is stable across CLI and supervised process shapes. Each process reaches it directly or through the owning process. The colocated and isolated layouts are alternative storage bindings, and moving a product between them requires an explicit migration and write cutover.
 
-The current CLI compatibility assembly and product runtime assembly do not yet satisfy this requirement when they are composed by `meld runtime run`.
-The active [Event Foundation Closeout Program](event_foundation_closeout_program.md) owns the remaining correctness, authority, observability, domain-port, and product-cutover work.
-Its E5 detail is the [Product Event Authority Cutover](../integration/product_event_authority_cutover.md).
+The CLI compatibility assembly and product runtime assembly now satisfy this requirement when composed by `meld runtime run`.
+The completed [Event Foundation Closeout Program](event_foundation_closeout_program.md) closed correctness, authority, observability, domain-port, and product-cutover work.
+Its E5 detail is the completed [Product Event Authority Cutover](../integration/product_event_authority_cutover.md).
 
 ## Verification Strategy And Gates
 
@@ -310,9 +310,19 @@ Gate evidence: formatter clean; clippy zero warnings; boundary script passed; fu
 
 Program outcome against the overview commitments: zero sequence collisions or lost events under storm, proven by un-ignored contract tests; kill-recovery proves acked durable events always survive; replay is deterministic, gap-typed below retention, and cost-independent of history size — roughly two hundred thousand times faster at tip on a 100k history; group commit reverses the old scaling direction, with eight durable producers sustaining about 1.8 times the single-producer fsync ceiling in aggregate while each still receives a per-event durable ack; drop counters, the watermark, and per-tick replay stats are exposed; envelope and port contracts unchanged for producers except the recorded breaking removals; consumer cursors remain consumer-owned; the harness stands as the regression sentinel with criterion baselines recorded here.
 
-Handoffs and known items: runtime owns the `event.append` supervisor diagnostic surface including any writer queue depth accessor it needs and the eleven inert runtime handles; the event foundation closeout precedes that runtime resumption; consumer registration carries into compaction; the compaction trigger doubles as the sled re-evaluation gate; one pre-existing flake in `current_snapshot_matches_workspace_root_hash` predates this program, reproduces only under full parallel workspace runs, touches workspace scan hashing rather than the spine, and is left recorded here for the workspace domain.
+Handoffs and known items: runtime owns the `event.append` supervisor diagnostic surface including any writer queue depth accessor it needs and the remaining runtime handles; the completed event foundation closeout now permits that runtime resumption; consumer registration carries into compaction; the compaction trigger doubles as the sled re-evaluation gate.
 
 The complex change workflow deactivates with this closeout: the scoped work is complete.
+
+### Successor foundation closure — complete 2026-07-12
+
+The [Event Foundation Closeout Program](event_foundation_closeout_program.md) resolved the historical exceptions recorded by this overhaul. One persisted `LedgerIdentity` and one `EventAuthority` now bind every production append, replay, subscription, watermark, cursor registry, and observability capability. Graph-derived and execution appends use authority capabilities, raw writable constructors are sealed from production domains, and direct CLI plus `meld runtime run` share the resolved product binding.
+
+Exact session isolation, cursor linearizability, bounded read coverage, structural provenance, remote conformance, recoverable compatibility migration, and legacy write fencing are now regression-tested. The authority, cursor, concurrency, and recovery suites passed 25 consecutive normal runs and 25 consecutive serial runs. The full workspace all-targets suite passed three consecutive times. Fresh migration, routing, constructor-sealing, recovery, concurrency, architecture, and compatibility reviews were clean.
+
+Closing benchmark deltas against the pre-closeout measurements remained within the ten percent threshold: replay at tip increased 2.5 percent, health increased 0.3 percent, eight durable writers increased 4.2 percent, and idle catch-up, paging, flywheel throughput, flywheel latency, and storage per event improved.
+
+Runtime-owned status publication, cache persistence, daemon hosting, real IPC, console and action publication, promotion policy, and the complete semantic flywheel remain downstream work.
 
 ### Phase 2 — complete 2026-07-08
 
