@@ -79,6 +79,14 @@ impl StorageConfig {
                 workspace_root.display()
             ))
         })?;
+        if let Some(configured) = &self.product_root {
+            if configured.is_absolute() {
+                let lexical = normalize_absolute(configured)?;
+                if !path_is_within(&lexical, &workspace) {
+                    return validate_external_product_root(lexical, &workspace, None, None);
+                }
+            }
+        }
         let xdg_root = normalize_absolute(&xdg::workspace_data_dir(&workspace)?)?;
         let external_default = xdg_root.join("runtime");
         let resolved_xdg_root = resolve_existing_ancestor(&xdg_root)?;
