@@ -1,8 +1,8 @@
 //! Runtime wrapper for graph event reduction.
 //!
-//! `GraphRuntime` owns the event ledger and traversal store that share one sled
-//! database. Reads call `catch_up` before querying so graph indexes observe all
-//! durable events seen by the runtime.
+//! `GraphRuntime` consumes event-authority ports and owns traversal projection
+//! coordination. Reads call `catch_up` before querying so graph indexes observe
+//! all durable events exposed by the supplied replay capability.
 //!
 //! # Example
 //!
@@ -14,14 +14,27 @@
 //! assert_eq!(runtime.catch_up().unwrap(), 0);
 //! ```
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
 
 use crate::error::StorageError;
+use meld_events::error::EventAuthorityError;
+
+use crate::events::observability::{CoverageTruncation, EventReadCoverage};
 use crate::events::registry::EventCursorRegistry;
 use crate::events::store::EventStore;
-use crate::events::{EventEnvelope, LedgerIdentity};
+use crate::events::{
+    AppendDisposition, AppendReceipt, EventEnvelope, EventPage, LedgerCursor, LedgerIdentity,
+    ReplayRequest, MAX_REPLAY_LIMIT,
+};
+use crate::world_state::graph::cursor::GraphProjectionCursor;
+use crate::world_state::graph::outbox::GraphDerivedOutbox;
+use crate::world_state::graph::ports::{
+    GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource,
+};
 use crate::world_state::graph::reducer::TraversalReducer;
 use crate::world_state::graph::store::TraversalStore;
 
@@ -70,65 +83,90 @@ pub struct GraphCatchUpReport {
 
 /// Event-backed graph projection runtime.
 pub struct GraphRuntime {
-    ledger: Arc<EventStore>,
+    replay: Arc<dyn GraphEventReplaySource>,
+    derived_sink: Arc<dyn GraphDerivedEventSink>,
+    cursor_reporter: Arc<dyn GraphConsumerCursorReporter>,
     ledger_id: LedgerIdentity,
     traversal: Arc<TraversalStore>,
+    cursor: GraphProjectionCursor,
+    derived_outbox: GraphDerivedOutbox,
     catch_up_lock: Mutex<()>,
-    // Observational mirror on the ledger database; the traversal store's
-    // last_reduced_seq stays the cursor of record.
-    cursor_registry: Option<EventCursorRegistry>,
+    compat_ledger: Option<Arc<EventStore>>,
 }
 
 impl GraphRuntime {
-    /// Open the event ledger and traversal store against one shared database.
+    /// Opens the legacy shared-database compatibility runtime.
     pub fn new(db: sled::Db) -> Result<Self, StorageError> {
-        // TODO compat-shim: E4 replaces raw database construction with graph
-        // ports that carry the authority identity. The GraphRuntime provenance
-        // parity test covers this bridge until removal.
-        let cursor_registry = EventCursorRegistry::open(&db).ok();
-        let ledger = EventStore::shared(db.clone())?;
-        let ledger_id = ledger.compatibility_ledger_identity()?;
-        Ok(Self {
-            ledger,
-            ledger_id,
-            traversal: TraversalStore::shared(db)?,
-            catch_up_lock: Mutex::new(()),
-            cursor_registry,
-        })
+        // TODO compat-shim: E5 removes raw database construction after
+        // product_event_authority_cutover proves GraphRuntime port parity.
+        let ledger = EventStore::shared(db.clone())?; // boundary-allow: event-compat
+        let traversal = TraversalStore::shared(db)?;
+        Self::from_stores(ledger, traversal)
     }
 
-    /// Build graph projection runtime from already opened product stores.
+    /// Builds the legacy graph runtime from already opened raw stores.
     ///
-    /// This is used when the product runtime keeps the event ledger and world
-    /// model graph stores in separate physical databases while graph replay
-    /// ownership remains inside the world model domain. The cursor registry
-    /// lives on the ledger database so observability enumerates it there.
+    /// Product composition uses [`Self::from_ports`]. This bridge remains only
+    /// for compatibility characterization while raw event constructors are
+    /// sealed during product cutover.
     pub fn from_stores(
         ledger: Arc<EventStore>,
         traversal: Arc<TraversalStore>,
     ) -> Result<Self, StorageError> {
-        // TODO compat-shim: E4 removes identity discovery through EventStore
-        // when from_ports becomes the sole production constructor.
+        // TODO compat-shim: E5 removes raw-store identity discovery after
+        // product_event_authority_cutover makes from_ports the sole route.
         let ledger_id = ledger.compatibility_ledger_identity()?;
-        let cursor_registry = EventCursorRegistry::open(ledger.db()).ok();
-        Ok(Self {
-            ledger,
+        let registry = EventCursorRegistry::open(ledger.db())?;
+        let ports = Arc::new(CompatibilityGraphEventPort {
+            ledger: Arc::clone(&ledger),
+            registry,
             ledger_id,
-            traversal,
-            catch_up_lock: Mutex::new(()),
-            cursor_registry,
-        })
+        });
+        Self::from_ports_internal(ports.clone(), ports.clone(), ports, traversal, Some(ledger))
     }
 
-    /// Mirrors the durable cursor into the observability registry after it
-    /// is already persisted; failures degrade to a missing lag row, never a
-    /// failed tick.
-    fn report_cursor(&self, seq: u64) {
-        if let Some(registry) = &self.cursor_registry {
-            // Best-effort mirror: the durable cursor is already persisted,
-            // so a failed report only costs a stale lag row.
-            let _ = registry.report(GRAPH_ACTOR_ID, seq);
+    /// Builds a graph projection from product-owned event authority ports.
+    pub fn from_ports(
+        replay: Arc<dyn GraphEventReplaySource>,
+        derived_sink: Arc<dyn GraphDerivedEventSink>,
+        cursor_reporter: Arc<dyn GraphConsumerCursorReporter>,
+        traversal: Arc<TraversalStore>,
+    ) -> Result<Self, StorageError> {
+        Self::from_ports_internal(replay, derived_sink, cursor_reporter, traversal, None)
+    }
+
+    fn from_ports_internal(
+        replay: Arc<dyn GraphEventReplaySource>,
+        derived_sink: Arc<dyn GraphDerivedEventSink>,
+        cursor_reporter: Arc<dyn GraphConsumerCursorReporter>,
+        traversal: Arc<TraversalStore>,
+        compat_ledger: Option<Arc<EventStore>>,
+    ) -> Result<Self, StorageError> {
+        let ledger_id = replay.ledger_identity();
+        for actual in [
+            derived_sink.ledger_identity(),
+            cursor_reporter.ledger_identity(),
+        ] {
+            if actual != ledger_id {
+                return Err(StorageError::IdentityMismatch {
+                    expected: ledger_id,
+                    actual,
+                });
+            }
         }
+        let cursor = GraphProjectionCursor::open(traversal.as_ref(), ledger_id)?;
+        let derived_outbox = GraphDerivedOutbox::open(traversal.db())?;
+        Ok(Self {
+            replay,
+            derived_sink,
+            cursor_reporter,
+            ledger_id,
+            traversal,
+            cursor,
+            derived_outbox,
+            catch_up_lock: Mutex::new(()),
+            compat_ledger,
+        })
     }
 
     /// Reduce new ledger events into traversal indexes.
@@ -142,10 +180,18 @@ impl GraphRuntime {
             .iter()
             .any(|issue| issue.code == "retention_gap")
         {
-            return Err(StorageError::RetentionGap {
-                after_seq: self.traversal.last_reduced_seq()?,
-                retained_from: self.ledger.retained_lower_boundary()?,
-            });
+            return match self.replay.replay(ReplayRequest {
+                cursor: LedgerCursor {
+                    ledger_id: self.ledger_id,
+                    after_seq: report.input_event_seq,
+                },
+                limit: 1,
+            }) {
+                Err(error) => Err(authority_error_to_storage(error)),
+                Ok(_) => Err(StorageError::InvalidPath(
+                    "graph replay retention gap changed while producing its report".to_string(),
+                )),
+            };
         }
         Ok(report.traversal_events_applied)
     }
@@ -160,43 +206,70 @@ impl GraphRuntime {
                 "graph catch-up budget must be greater than zero".to_string(),
             ));
         }
-        self.catch_up_with_limit(Some(budget.max_items))
+        if budget.max_items > MAX_REPLAY_LIMIT {
+            return Err(StorageError::InvalidPath(format!(
+                "graph catch-up budget must be in 1..={MAX_REPLAY_LIMIT}"
+            )));
+        }
+        self.catch_up_with_limit(budget.max_items)
     }
 
     fn catch_up_unbounded(&self) -> Result<GraphCatchUpReport, StorageError> {
-        self.catch_up_with_limit(None)
+        let mut combined = self.catch_up_with_limit(MAX_REPLAY_LIMIT)?;
+        while combined.budget_exhausted {
+            let next = self.catch_up_with_limit(MAX_REPLAY_LIMIT)?;
+            combined.output_event_seq = next.output_event_seq;
+            combined.events_attempted += next.events_attempted;
+            combined.traversal_events_applied += next.traversal_events_applied;
+            combined.derived_events_appended += next.derived_events_appended;
+            combined.retryable_errors.extend(next.retryable_errors);
+            combined.fatal_errors.extend(next.fatal_errors);
+            combined.budget_exhausted = next.budget_exhausted;
+            if !combined.fatal_errors.is_empty() {
+                break;
+            }
+        }
+        Ok(combined)
     }
 
-    fn catch_up_with_limit(
-        &self,
-        max_items: Option<usize>,
-    ) -> Result<GraphCatchUpReport, StorageError> {
+    fn catch_up_with_limit(&self, max_items: usize) -> Result<GraphCatchUpReport, StorageError> {
         let _guard = self.catch_up_lock.lock();
-        let after_seq = self.traversal.last_reduced_seq()?;
-        let read = match max_items {
-            Some(max_items) => self
-                .ledger
-                .read_all_events_after_limit(after_seq, max_items.saturating_add(1)),
-            None => self.ledger.read_all_events_after(after_seq),
-        };
+        let mut derived_events_appended = self.drain_derived_outbox()?;
+        let cursor = self.cursor.get()?;
+        let after_seq = cursor.after_seq;
+        let read = self.replay.replay(ReplayRequest {
+            cursor,
+            limit: max_items,
+        });
         let (events, budget_exhausted) = match read {
-            Ok(mut events) => match max_items {
-                Some(max_items) => {
-                    let budget_exhausted = events.len() > max_items;
-                    if budget_exhausted {
-                        events.truncate(max_items);
-                    }
-                    (events, budget_exhausted)
+            Ok(page) => {
+                if page.ledger_id != self.ledger_id {
+                    return Err(StorageError::IdentityMismatch {
+                        expected: self.ledger_id,
+                        actual: page.ledger_id,
+                    });
                 }
-                None => (events, false),
-            },
+                if page.next_cursor.ledger_id != self.ledger_id {
+                    return Err(StorageError::IdentityMismatch {
+                        expected: self.ledger_id,
+                        actual: page.next_cursor.ledger_id,
+                    });
+                }
+                validate_replay_page(after_seq, max_items, &page)?;
+                let budget_exhausted = matches!(
+                    page.coverage.truncation,
+                    CoverageTruncation::After | CoverageTruncation::Both
+                );
+                (page.records, budget_exhausted)
+            }
             // A retention gap means compaction pruned events this cursor has
             // not reduced. Replaying through the gap would corrupt the
             // projection, so the tick reports a fatal diagnostic without
             // moving the cursor; the operator rebuilds from a genesis fact.
-            Err(StorageError::RetentionGap {
+            Err(EventAuthorityError::RetentionGap {
                 after_seq: gap_cursor,
                 retained_from,
+                ..
             }) => {
                 return Ok(GraphCatchUpReport {
                     actor_id: GRAPH_ACTOR_ID.to_string(),
@@ -217,41 +290,66 @@ impl GraphRuntime {
                     budget_exhausted: false,
                 });
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(authority_error_to_storage(error)),
         };
         let events_attempted = events.len();
-        let reducer = TraversalReducer::replay_events(
-            self.traversal.as_ref(),
-            self.ledger_id,
-            after_seq,
-            events,
-        )?;
-        // The cursor never advances past the highest processed source event.
-        // Producers may append between this tick's read and its derived-event
-        // appends, so advancing to a derived sequence would skip those source
-        // events permanently. Re-reading own derived events next tick is safe:
-        // they are not traversal source events and their appends are
-        // idempotent.
-        let last_persisted_seq = reducer.last_seen_seq;
-        let derived_events_appended = reducer.emitted_envelopes.len();
-        for envelope in reducer.emitted_envelopes {
-            self.ledger.append_envelope_idempotent(envelope)?;
+        let mut traversal_events_applied = 0;
+        let mut durable_cursor = cursor;
+        // Apply one source record at a time. This makes a replay after a crash
+        // observe projection state from exactly that source record, allowing
+        // the reducer to reconstruct the same derived envelopes before the
+        // cursor advances. Processing a whole page before publication would
+        // let later projection mutations alter an earlier envelope's payload.
+        for event in events {
+            let event_seq = event.seq;
+            let reducer = TraversalReducer::replay_events(
+                self.traversal.as_ref(),
+                self.ledger_id,
+                durable_cursor.after_seq,
+                std::iter::once(event),
+            )?;
+            traversal_events_applied += reducer.applied_events;
+            fail_after_projection_before_outbox()?;
+            self.derived_outbox.replace(&reducer.emitted_envelopes)?;
+            derived_events_appended += self.drain_derived_outbox()?;
+            self.traversal.flush()?;
+            durable_cursor = self.cursor.advance(event_seq)?;
         }
-        self.ledger.flush()?;
-        self.traversal.set_last_reduced_seq(last_persisted_seq)?;
-        self.traversal.flush()?;
-        self.report_cursor(last_persisted_seq);
+        // Cursor registry publication follows the local durable cursor. If
+        // reporting fails, the next tick reports the same or a later cursor;
+        // replay never regresses to the registry's observational mirror.
+        self.cursor_reporter
+            .report_graph_cursor(durable_cursor)
+            .map_err(authority_error_to_storage)?;
         Ok(GraphCatchUpReport {
             actor_id: GRAPH_ACTOR_ID.to_string(),
             input_event_seq: after_seq,
-            output_event_seq: last_persisted_seq,
+            output_event_seq: durable_cursor.after_seq,
             events_attempted,
-            traversal_events_applied: reducer.applied_events,
+            traversal_events_applied,
             derived_events_appended,
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted,
         })
+    }
+
+    fn drain_derived_outbox(&self) -> Result<usize, StorageError> {
+        let mut pending = self.derived_outbox.pending()?;
+        let mut inserted = 0;
+        while let Some(envelope) = pending.first().cloned() {
+            let receipt = self
+                .derived_sink
+                .append_derived(envelope)
+                .map_err(authority_error_to_storage)?;
+            validate_receipt_identity(self.ledger_id, receipt)?;
+            if receipt.disposition == AppendDisposition::Inserted {
+                inserted += 1;
+            }
+            pending.remove(0);
+            self.derived_outbox.replace(&pending)?;
+        }
+        Ok(inserted)
     }
 
     /// Clone the shared traversal store.
@@ -264,10 +362,395 @@ impl GraphRuntime {
         self.ledger_id
     }
 
+    /// Returns the identity-bearing graph cursor durably persisted locally.
+    pub fn durable_event_cursor(&self) -> Result<LedgerCursor, StorageError> {
+        self.cursor.get()
+    }
+
     /// Append a source event to the ledger.
     pub fn append_envelope(&self, envelope: EventEnvelope) -> Result<u64, StorageError> {
-        let seq = self.ledger.append_envelope(envelope)?;
-        self.ledger.flush()?;
+        // TODO compat-shim: E5 removes source append through GraphRuntime after
+        // product command routing uses its event append capability directly;
+        // graph port and CLI one-sequence tests name the removal evidence.
+        let ledger = self.compat_ledger.as_ref().ok_or_else(|| {
+            StorageError::InvalidPath(
+                "source append is unavailable on a port-constructed graph runtime".to_string(),
+            )
+        })?;
+        let seq = ledger.append_envelope(envelope)?;
+        ledger.flush()?;
         Ok(seq)
+    }
+}
+
+struct CompatibilityGraphEventPort {
+    ledger: Arc<EventStore>,
+    registry: EventCursorRegistry,
+    ledger_id: LedgerIdentity,
+}
+
+impl GraphEventReplaySource for CompatibilityGraphEventPort {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.ledger_id
+    }
+
+    fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
+        if request.cursor.ledger_id != self.ledger_id {
+            return Err(EventAuthorityError::IdentityMismatch {
+                expected: self.ledger_id,
+                actual: request.cursor.ledger_id,
+            });
+        }
+        if !(1..=MAX_REPLAY_LIMIT).contains(&request.limit) {
+            return Err(EventAuthorityError::invalid_request(format!(
+                "replay limit must be in 1..={MAX_REPLAY_LIMIT}, got {}",
+                request.limit
+            )));
+        }
+        let tip_seq = self.ledger.tip_seq()?;
+        let retained_from = self.ledger.retained_lower_boundary()?;
+        let mut records = match self
+            .ledger
+            .read_all_events_after_limit(request.cursor.after_seq, request.limit + 1)
+        {
+            Ok(records) => records,
+            Err(StorageError::RetentionGap {
+                after_seq,
+                retained_from,
+            }) => {
+                return Err(EventAuthorityError::RetentionGap {
+                    ledger_id: self.ledger_id,
+                    after_seq,
+                    retained_from,
+                });
+            }
+            Err(error) => return Err(error.into()),
+        };
+        records.retain(|record| record.seq <= tip_seq);
+        let truncated_after = records.len() > request.limit;
+        records.truncate(request.limit);
+        let scanned_from_seq = records.first().map(|record| record.seq);
+        let scanned_through_seq = records.last().map(|record| record.seq);
+        let next_after_seq = scanned_through_seq.unwrap_or(request.cursor.after_seq);
+        Ok(EventPage {
+            ledger_id: self.ledger_id,
+            records,
+            next_cursor: LedgerCursor {
+                ledger_id: self.ledger_id,
+                after_seq: next_after_seq,
+            },
+            coverage: EventReadCoverage {
+                retained_from,
+                tip_seq,
+                scanned_from_seq,
+                scanned_through_seq,
+                truncation: match (
+                    retained_from > 1 || request.cursor.after_seq >= retained_from,
+                    truncated_after,
+                ) {
+                    (false, false) => CoverageTruncation::None,
+                    (true, false) => CoverageTruncation::Before,
+                    (false, true) => CoverageTruncation::After,
+                    (true, true) => CoverageTruncation::Both,
+                },
+            },
+        })
+    }
+}
+
+impl GraphDerivedEventSink for CompatibilityGraphEventPort {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.ledger_id
+    }
+
+    fn append_derived(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAuthorityError> {
+        let tip_before = self.ledger.tip_seq()?;
+        let seq = self.ledger.append_envelope_idempotent(envelope)?;
+        self.ledger.flush()?;
+        Ok(AppendReceipt {
+            ledger_id: self.ledger_id,
+            seq,
+            disposition: if seq <= tip_before {
+                AppendDisposition::Duplicate
+            } else {
+                AppendDisposition::Inserted
+            },
+        })
+    }
+}
+
+impl GraphConsumerCursorReporter for CompatibilityGraphEventPort {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.ledger_id
+    }
+
+    fn report_graph_cursor(&self, cursor: LedgerCursor) -> Result<(), EventAuthorityError> {
+        if cursor.ledger_id != self.ledger_id {
+            return Err(EventAuthorityError::IdentityMismatch {
+                expected: self.ledger_id,
+                actual: cursor.ledger_id,
+            });
+        }
+        self.registry.report(GRAPH_ACTOR_ID, cursor.after_seq)?;
+        Ok(())
+    }
+}
+
+fn validate_receipt_identity(
+    expected: LedgerIdentity,
+    receipt: AppendReceipt,
+) -> Result<(), StorageError> {
+    if receipt.ledger_id == expected {
+        Ok(())
+    } else {
+        Err(StorageError::IdentityMismatch {
+            expected,
+            actual: receipt.ledger_id,
+        })
+    }
+}
+
+fn validate_replay_page(
+    after_seq: u64,
+    max_items: usize,
+    page: &EventPage,
+) -> Result<(), StorageError> {
+    if page.records.len() > max_items {
+        return Err(StorageError::InvalidPath(format!(
+            "graph replay returned {} records for a {max_items}-record request",
+            page.records.len()
+        )));
+    }
+    let mut prior = after_seq;
+    for record in &page.records {
+        if record.seq <= prior || record.seq > page.coverage.tip_seq {
+            return Err(StorageError::InvalidPath(format!(
+                "graph replay returned out-of-order or out-of-coverage sequence {}",
+                record.seq
+            )));
+        }
+        prior = record.seq;
+    }
+    let expected_next = page.records.last().map_or(after_seq, |record| record.seq);
+    if page.next_cursor.after_seq != expected_next {
+        return Err(StorageError::InvalidPath(format!(
+            "graph replay next cursor {} does not match returned sequence {expected_next}",
+            page.next_cursor.after_seq
+        )));
+    }
+    Ok(())
+}
+
+fn authority_error_to_storage(error: EventAuthorityError) -> StorageError {
+    match error {
+        EventAuthorityError::InvalidRequest { message }
+        | EventAuthorityError::Internal { message }
+        | EventAuthorityError::CorruptPersistedIdentity { message }
+        | EventAuthorityError::MigrationConflict { message } => StorageError::InvalidPath(message),
+        EventAuthorityError::IdentityMismatch { expected, actual } => {
+            StorageError::IdentityMismatch { expected, actual }
+        }
+        EventAuthorityError::RetentionGap {
+            after_seq,
+            retained_from,
+            ..
+        } => StorageError::RetentionGap {
+            after_seq,
+            retained_from,
+        },
+        EventAuthorityError::Backpressure { message } => StorageError::Backpressure(message),
+        EventAuthorityError::DurabilityIndeterminate { message } => {
+            StorageError::DurabilityIndeterminate(message)
+        }
+        EventAuthorityError::Unavailable { message } => StorageError::Unavailable(message),
+        EventAuthorityError::Persistence { message } => {
+            StorageError::IoError(std::io::Error::other(message))
+        }
+        EventAuthorityError::DuplicateAuthorityBinding { ledger_id } => StorageError::IoError(
+            std::io::Error::other(format!("duplicate authority binding for {ledger_id}")),
+        ),
+    }
+}
+
+#[cfg(test)]
+static FAIL_AFTER_PROJECTION_BEFORE_OUTBOX: AtomicBool = AtomicBool::new(false);
+#[cfg(test)]
+static FAILPOINT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+fn fail_after_projection_before_outbox() -> Result<(), StorageError> {
+    if FAIL_AFTER_PROJECTION_BEFORE_OUTBOX.swap(false, Ordering::SeqCst) {
+        return Err(StorageError::Unavailable(
+            "injected crash after projection flush and before outbox persistence".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn fail_after_projection_before_outbox() -> Result<(), StorageError> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::events::DomainObjectRef;
+
+    #[test]
+    fn reopen_recovers_crash_between_projection_flush_and_outbox_persistence() {
+        let _failpoint_guard = FAILPOINT_TEST_LOCK.lock();
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("graph-runtime");
+        let db = sled::open(&path).unwrap();
+        let runtime = GraphRuntime::new(db.clone()).unwrap();
+        let head = DomainObjectRef::new("context", "head", "node-a::analysis").unwrap();
+        let node = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
+        let frame = DomainObjectRef::new("context", "frame", "frame-a").unwrap();
+        runtime
+            .append_envelope(
+                EventEnvelope::with_now_domain(
+                    "session-a",
+                    "context",
+                    "stream-a",
+                    "context.head_selected",
+                    None,
+                    json!({ "ok": true }),
+                )
+                .with_graph(vec![head, node, frame], Vec::new()),
+            )
+            .unwrap();
+        FAIL_AFTER_PROJECTION_BEFORE_OUTBOX.store(true, Ordering::SeqCst);
+
+        assert!(matches!(
+            runtime.catch_up(),
+            Err(StorageError::Unavailable(message))
+                if message.contains("before outbox persistence")
+        ));
+        assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 0);
+        drop(runtime);
+        drop(db);
+
+        let reopened_db = sled::open(&path).unwrap();
+        let reopened = GraphRuntime::new(reopened_db.clone()).unwrap();
+        reopened.catch_up().unwrap();
+        let ledger = EventStore::new(reopened_db).unwrap(); // boundary-allow: event-test
+        let derived: Vec<_> = ledger
+            .read_all_events_after(0)
+            .unwrap()
+            .into_iter()
+            .filter(|record| record.event_type == "world_state.anchor_selected")
+            .collect();
+
+        assert_eq!(derived.len(), 1);
+        assert!(reopened.durable_event_cursor().unwrap().after_seq >= 1);
+    }
+
+    #[test]
+    fn reopen_recovers_one_selected_and_one_superseded_fact_after_projection_crash() {
+        let _failpoint_guard = FAILPOINT_TEST_LOCK.lock();
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("graph-runtime-supersession");
+        let db = sled::open(&path).unwrap();
+        let runtime = GraphRuntime::new(db.clone()).unwrap();
+        let ledger_id = runtime.ledger_identity();
+        let head = DomainObjectRef::new("context", "head", "node-a::analysis").unwrap();
+        let node = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
+        let first_frame = DomainObjectRef::new("context", "frame", "frame-a").unwrap();
+        let second_frame = DomainObjectRef::new("context", "frame", "frame-b").unwrap();
+        runtime
+            .append_envelope(
+                EventEnvelope::with_now_domain(
+                    "session-a",
+                    "context",
+                    "stream-a",
+                    "context.head_selected",
+                    None,
+                    json!({ "generation": 1 }),
+                )
+                .with_graph(
+                    vec![head.clone(), node.clone(), first_frame.clone()],
+                    Vec::new(),
+                ),
+            )
+            .unwrap();
+        runtime.catch_up().unwrap();
+        let second_source_seq = runtime
+            .append_envelope(
+                EventEnvelope::with_now_domain(
+                    "session-a",
+                    "context",
+                    "stream-a",
+                    "context.head_selected",
+                    None,
+                    json!({ "generation": 2 }),
+                )
+                .with_graph(vec![head.clone(), node, second_frame.clone()], Vec::new()),
+            )
+            .unwrap();
+        FAIL_AFTER_PROJECTION_BEFORE_OUTBOX.store(true, Ordering::SeqCst);
+
+        assert!(matches!(
+            runtime.catch_up(),
+            Err(StorageError::Unavailable(message))
+                if message.contains("before outbox persistence")
+        ));
+        assert!(runtime.durable_event_cursor().unwrap().after_seq < second_source_seq);
+        drop(runtime);
+        drop(db);
+
+        let reopened_db = sled::open(&path).unwrap();
+        let reopened = GraphRuntime::new(reopened_db.clone()).unwrap();
+        reopened.catch_up().unwrap();
+        let ledger = EventStore::new(reopened_db).unwrap(); // boundary-allow: event-test
+        let recovered: Vec<_> = ledger
+            .read_all_events_after(0)
+            .unwrap()
+            .into_iter()
+            .filter(|record| {
+                record.envelope.provenance.source_records
+                    == vec![crate::events::EventRecordRef {
+                        ledger_id,
+                        seq: second_source_seq,
+                    }]
+            })
+            .collect();
+        let selected: Vec<_> = recovered
+            .iter()
+            .filter(|record| record.event_type == "world_state.anchor_selected")
+            .collect();
+        let superseded: Vec<_> = recovered
+            .iter()
+            .filter(|record| record.event_type == "world_state.anchor_superseded")
+            .collect();
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(superseded.len(), 1);
+        assert_eq!(
+            selected[0].data["anchor"]["target"]["object_id"],
+            second_frame.object_id
+        );
+        assert_eq!(
+            selected[0].data["anchor"]["selected_at_seq"],
+            second_source_seq
+        );
+        assert_eq!(
+            superseded[0].data["anchor"]["target"]["object_id"],
+            first_frame.object_id
+        );
+        assert_eq!(
+            superseded[0].data["anchor"]["ended_at_seq"],
+            second_source_seq
+        );
+        assert_eq!(
+            superseded[0].data["anchor"]["ended_by_anchor_id"],
+            format!("anchor::{}::{second_source_seq}", head.index_key())
+        );
+        assert!(reopened.durable_event_cursor().unwrap().after_seq >= second_source_seq);
     }
 }

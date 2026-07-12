@@ -1,8 +1,15 @@
-use meld_world_model::events::store::EventStore;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
+use meld_world_model::events::store::EventStore;
+
+use meld_world_model::events::error::EventAuthorityError;
 use meld_world_model::events::{
-    DomainObjectRef, EventEnvelope, EventRecord, EventRecordRef, EventRelation, LedgerIdentity,
+    AppendMode, AppendReceipt, DomainObjectRef, EventAppendCapability, EventAuthority,
+    EventAuthorityOpenOptions, EventConsumerRegistryCapability, EventEnvelope, EventPage,
+    EventRecord, EventRecordRef, EventRelation, EventReplayCapability, LedgerCursor,
+    LedgerIdentity, ReplayRequest,
 };
 use meld_world_model::world_state::graph::compat::LegacyClaimAdapter;
 use meld_world_model::world_state::graph::events::{
@@ -11,6 +18,9 @@ use meld_world_model::world_state::graph::events::{
 };
 use meld_world_model::world_state::graph::runtime::GraphRuntime;
 use meld_world_model::world_state::graph::store::TraversalStore;
+use meld_world_model::world_state::graph::{
+    GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource,
+};
 use meld_world_model::world_state::reducer::WorldStateReducer;
 use meld_world_model::world_state::store::{StoredWorldStateFact, WorldStateStore};
 use meld_world_model::{
@@ -48,6 +58,148 @@ fn event_record(
     objects: Vec<DomainObjectRef>,
 ) -> EventRecord {
     EventRecord::from_envelope(event(domain_id, event_type, objects, Vec::new()), seq)
+}
+
+#[derive(Clone)]
+struct AuthorityGraphPorts {
+    replay: EventReplayCapability,
+    append: EventAppendCapability,
+    registry: EventConsumerRegistryCapability,
+}
+
+impl AuthorityGraphPorts {
+    fn new(authority: &EventAuthority) -> Self {
+        Self {
+            replay: authority.replay_capability(),
+            append: authority.append_capability(),
+            registry: authority.consumer_registry_capability(),
+        }
+    }
+}
+
+impl GraphEventReplaySource for AuthorityGraphPorts {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.replay.ledger_identity()
+    }
+
+    fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
+        self.replay.replay(request)
+    }
+}
+
+impl GraphDerivedEventSink for AuthorityGraphPorts {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.append.ledger_identity()
+    }
+
+    fn append_derived(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAuthorityError> {
+        self.append.append_durable(envelope, AppendMode::Idempotent)
+    }
+}
+
+impl GraphConsumerCursorReporter for AuthorityGraphPorts {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.registry.ledger_identity()
+    }
+
+    fn report_graph_cursor(&self, cursor: LedgerCursor) -> Result<(), EventAuthorityError> {
+        self.registry.report("world_state.graph.reducer", cursor)?;
+        Ok(())
+    }
+}
+
+struct FailingDerivedSink {
+    ledger_id: LedgerIdentity,
+}
+
+struct ForeignReceiptSink {
+    inner: EventAppendCapability,
+    foreign_ledger_id: LedgerIdentity,
+}
+
+impl GraphDerivedEventSink for ForeignReceiptSink {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.inner.ledger_identity()
+    }
+
+    fn append_derived(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAuthorityError> {
+        let mut receipt = self
+            .inner
+            .append_durable(envelope, AppendMode::Idempotent)?;
+        receipt.ledger_id = self.foreign_ledger_id;
+        Ok(receipt)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ForeignPageField {
+    PageIdentity,
+    NextCursorIdentity,
+}
+
+struct ForeignPageReplay {
+    inner: EventReplayCapability,
+    foreign_ledger_id: LedgerIdentity,
+    field: ForeignPageField,
+}
+
+impl GraphEventReplaySource for ForeignPageReplay {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.inner.ledger_identity()
+    }
+
+    fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
+        let mut page = self.inner.replay(request)?;
+        match self.field {
+            ForeignPageField::PageIdentity => page.ledger_id = self.foreign_ledger_id,
+            ForeignPageField::NextCursorIdentity => {
+                page.next_cursor.ledger_id = self.foreign_ledger_id;
+            }
+        }
+        Ok(page)
+    }
+}
+
+struct FailOnceCursorReporter {
+    inner: EventConsumerRegistryCapability,
+    fail_next: AtomicBool,
+}
+
+impl GraphConsumerCursorReporter for FailOnceCursorReporter {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.inner.ledger_identity()
+    }
+
+    fn report_graph_cursor(&self, cursor: LedgerCursor) -> Result<(), EventAuthorityError> {
+        if self.fail_next.swap(false, Ordering::SeqCst) {
+            return Err(EventAuthorityError::Unavailable {
+                message: "injected registry failure".to_string(),
+            });
+        }
+        self.inner.report("world_state.graph.reducer", cursor)?;
+        Ok(())
+    }
+}
+
+impl GraphDerivedEventSink for FailingDerivedSink {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.ledger_id
+    }
+
+    fn append_derived(
+        &self,
+        _envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAuthorityError> {
+        Err(EventAuthorityError::Unavailable {
+            message: "injected derived append failure".to_string(),
+        })
+    }
 }
 
 fn traversal_store() -> (tempfile::TempDir, TraversalStore) {
@@ -535,6 +687,624 @@ fn graph_runtime_derived_events_carry_persisted_ledger_provenance() {
             seq: source_seq,
         }]
     );
+}
+
+#[test]
+fn graph_runtime_from_ports_replays_appends_and_reports_one_authority_cursor() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let authority = EventAuthority::open(
+        sled::open(temp_dir.path().join("events")).unwrap(),
+        EventAuthorityOpenOptions::default(),
+    )
+    .unwrap();
+    let ports = Arc::new(AuthorityGraphPorts::new(&authority));
+    let traversal =
+        TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
+    let runtime =
+        GraphRuntime::from_ports(ports.clone(), ports.clone(), ports.clone(), traversal).unwrap();
+    let ledger_id = authority.ledger_identity();
+    let node = object("workspace_fs", "node", "node-a");
+    let frame = object("context", "frame", "frame-a");
+    let head = object("context", "head", "node-a::analysis");
+    let source = authority
+        .append_capability()
+        .append_durable(
+            event(
+                "context",
+                "context.head_selected",
+                vec![head, node, frame],
+                Vec::new(),
+            ),
+            AppendMode::Plain,
+        )
+        .unwrap();
+
+    let report = runtime
+        .catch_up_bounded(
+            meld_world_model::world_state::graph::runtime::GraphCatchUpBudget { max_items: 10 },
+        )
+        .unwrap();
+
+    assert_eq!(report.input_event_seq, 0);
+    assert_eq!(report.output_event_seq, source.seq);
+    assert_eq!(report.derived_events_appended, 1);
+    assert_eq!(runtime.ledger_identity(), ledger_id);
+    assert_eq!(
+        authority
+            .consumer_registry_capability()
+            .get("world_state.graph.reducer")
+            .unwrap()
+            .unwrap()
+            .reported_seq,
+        source.seq
+    );
+    let page = authority
+        .replay_capability()
+        .replay(ReplayRequest {
+            cursor: LedgerCursor {
+                ledger_id,
+                after_seq: source.seq,
+            },
+            limit: 10,
+        })
+        .unwrap();
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(
+        page.records[0].provenance.source_records,
+        vec![EventRecordRef {
+            ledger_id,
+            seq: source.seq,
+        }]
+    );
+}
+
+#[test]
+fn graph_runtime_resets_legacy_cursor_and_preserves_migration_evidence() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let authority = EventAuthority::open(
+        sled::open(temp_dir.path().join("events")).unwrap(),
+        EventAuthorityOpenOptions::default(),
+    )
+    .unwrap();
+    let ports = Arc::new(AuthorityGraphPorts::new(&authority));
+    let traversal =
+        TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
+    traversal.set_last_reduced_seq(42).unwrap();
+    traversal.flush().unwrap();
+    let source = authority
+        .append_capability()
+        .append_durable(
+            event(
+                "context",
+                "context.head_tombstoned",
+                vec![object("context", "head", "node-a::analysis")],
+                Vec::new(),
+            ),
+            AppendMode::Plain,
+        )
+        .unwrap();
+
+    let runtime =
+        GraphRuntime::from_ports(ports.clone(), ports.clone(), ports, Arc::clone(&traversal))
+            .unwrap();
+    let report = runtime
+        .catch_up_bounded(
+            meld_world_model::world_state::graph::runtime::GraphCatchUpBudget { max_items: 10 },
+        )
+        .unwrap();
+
+    assert_eq!(report.input_event_seq, 0);
+    assert_eq!(report.output_event_seq, source.seq);
+    let meta = traversal.db().open_tree("traversal_runtime_meta").unwrap();
+    assert_eq!(
+        meta.get("legacy_last_reduced_seq_evidence")
+            .unwrap()
+            .unwrap(),
+        b"42".as_slice()
+    );
+    let cursor: serde_json::Value =
+        serde_json::from_slice(&meta.get("event_authority_cursor").unwrap().unwrap()).unwrap();
+    assert_eq!(cursor["ledger_id"], authority.ledger_identity().to_string());
+    assert_eq!(cursor["after_seq"], source.seq);
+}
+
+#[test]
+fn graph_runtime_legacy_cursor_reset_rebuilds_conflicting_projection_sequence_space() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let authority = EventAuthority::open(
+        sled::open(temp_dir.path().join("events")).unwrap(),
+        EventAuthorityOpenOptions::default(),
+    )
+    .unwrap();
+    let ports = Arc::new(AuthorityGraphPorts::new(&authority));
+    let traversal =
+        TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
+    let head = object("context", "head", "node-a::analysis");
+    let node = object("workspace_fs", "node", "node-a");
+    let legacy_frame = object("context", "frame", "legacy-frame");
+    let authority_frame = object("context", "frame", "authority-frame");
+    let conflicting_fact = TraversalFactRecord {
+        fact_id: "traversal::fact::1".to_string(),
+        source_spine_fact_id: "spine::1".to_string(),
+        seq: 1,
+        event_type: "legacy.conflicting_sequence".to_string(),
+        objects: vec![legacy_frame.clone()],
+        relations: Vec::new(),
+    };
+    traversal.put_fact(&conflicting_fact).unwrap();
+    let conflicting_anchor = AnchorSelectionRecord {
+        anchor_id: format!("anchor::{}::1", head.index_key()),
+        anchor_ref: head.clone(),
+        subject: node.clone(),
+        perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
+        target: legacy_frame,
+        source_fact_ids: vec!["spine::1".to_string()],
+        created_by_fact_id: "legacy::anchor_selected".to_string(),
+        selected_at_seq: 1,
+        ended_at_seq: None,
+        ended_by_anchor_id: None,
+        ended_by_fact_id: None,
+    };
+    traversal.put_anchor(&conflicting_anchor).unwrap();
+    traversal.set_current_anchor(&conflicting_anchor).unwrap();
+    traversal.set_last_reduced_seq(42).unwrap();
+    let meta = traversal.db().open_tree("traversal_runtime_meta").unwrap();
+    meta.insert(
+        "pending_derived_events",
+        serde_json::to_vec(&vec![EventEnvelope::with_now_domain(
+            "legacy-session",
+            "world_state",
+            "legacy-stream",
+            "world_state.legacy_derived",
+            Some("legacy-derived-record".to_string()),
+            json!({ "legacy": true }),
+        )])
+        .unwrap(),
+    )
+    .unwrap();
+    traversal.flush().unwrap();
+
+    let source = authority
+        .append_capability()
+        .append_durable(
+            event(
+                "context",
+                "context.head_selected",
+                vec![head.clone(), node, authority_frame.clone()],
+                Vec::new(),
+            ),
+            AppendMode::Plain,
+        )
+        .unwrap();
+    assert_eq!(source.seq, 1);
+
+    let runtime =
+        GraphRuntime::from_ports(ports.clone(), ports.clone(), ports, Arc::clone(&traversal))
+            .unwrap();
+    assert_eq!(traversal.last_reduced_seq().unwrap(), 0);
+    assert!(traversal.get_fact("traversal::fact::1").unwrap().is_none());
+    assert!(traversal.current_anchor(&head).unwrap().is_none());
+    assert!(meta.get("pending_derived_events").unwrap().is_none());
+
+    runtime.catch_up().unwrap();
+
+    let rebuilt = traversal
+        .get_fact("traversal::fact::1")
+        .unwrap()
+        .expect("authority event rebuilt the colliding fact id");
+    assert_eq!(rebuilt.event_type, "context.head_selected");
+    let current = traversal
+        .current_anchor(&head)
+        .unwrap()
+        .expect("authority event rebuilt the current anchor");
+    assert_eq!(current.target, authority_frame);
+    assert_eq!(
+        meta.get("legacy_last_reduced_seq_evidence")
+            .unwrap()
+            .unwrap(),
+        b"42".as_slice()
+    );
+    let records = authority
+        .replay_capability()
+        .replay(ReplayRequest {
+            cursor: LedgerCursor {
+                ledger_id: authority.ledger_identity(),
+                after_seq: 0,
+            },
+            limit: 10,
+        })
+        .unwrap()
+        .records;
+    assert!(records
+        .iter()
+        .all(|record| record.event_type != "world_state.legacy_derived"));
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record.event_type == "world_state.anchor_selected")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn graph_runtime_does_not_advance_cursor_before_derived_append_succeeds() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let event_path = temp_dir.path().join("events");
+    let traversal_path = temp_dir.path().join("traversal");
+    let authority = EventAuthority::open(
+        sled::open(&event_path).unwrap(),
+        EventAuthorityOpenOptions::default(),
+    )
+    .unwrap();
+    let ledger_id = authority.ledger_identity();
+    let ports = Arc::new(AuthorityGraphPorts::new(&authority));
+    let traversal = TraversalStore::shared(sled::open(&traversal_path).unwrap()).unwrap();
+    authority
+        .append_capability()
+        .append_durable(
+            event(
+                "context",
+                "context.head_selected",
+                vec![
+                    object("context", "head", "node-a::analysis"),
+                    object("workspace_fs", "node", "node-a"),
+                    object("context", "frame", "frame-a"),
+                ],
+                Vec::new(),
+            ),
+            AppendMode::Plain,
+        )
+        .unwrap();
+    let failing = GraphRuntime::from_ports(
+        ports.clone(),
+        Arc::new(FailingDerivedSink {
+            ledger_id: authority.ledger_identity(),
+        }),
+        ports.clone(),
+        Arc::clone(&traversal),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        failing.catch_up(),
+        Err(meld_world_model::error::StorageError::Unavailable(_))
+    ));
+    assert_eq!(failing.durable_event_cursor().unwrap().after_seq, 0);
+    assert!(authority
+        .consumer_registry_capability()
+        .get("world_state.graph.reducer")
+        .unwrap()
+        .is_none());
+    drop(failing);
+    drop(ports);
+    drop(traversal);
+    drop(authority);
+
+    let reopened_authority = EventAuthority::open(
+        sled::open(&event_path).unwrap(),
+        EventAuthorityOpenOptions {
+            expected_ledger_id: Some(ledger_id),
+        },
+    )
+    .unwrap();
+    let reopened_ports = Arc::new(AuthorityGraphPorts::new(&reopened_authority));
+    let reopened_traversal = TraversalStore::shared(sled::open(&traversal_path).unwrap()).unwrap();
+    let retry = GraphRuntime::from_ports(
+        reopened_ports.clone(),
+        reopened_ports.clone(),
+        reopened_ports,
+        reopened_traversal,
+    )
+    .unwrap();
+    let report = retry
+        .catch_up_bounded(
+            meld_world_model::world_state::graph::runtime::GraphCatchUpBudget { max_items: 10 },
+        )
+        .unwrap();
+    assert_eq!(report.input_event_seq, 0);
+    assert_eq!(report.derived_events_appended, 1);
+    let derived: Vec<_> = reopened_authority
+        .replay_capability()
+        .replay(ReplayRequest {
+            cursor: LedgerCursor {
+                ledger_id,
+                after_seq: 0,
+            },
+            limit: 10,
+        })
+        .unwrap()
+        .records
+        .into_iter()
+        .filter(|record| record.event_type == "world_state.anchor_selected")
+        .collect();
+    assert_eq!(derived.len(), 1);
+}
+
+#[test]
+fn graph_runtime_rejects_mismatched_port_identities_before_replay() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let first = EventAuthority::open(
+        sled::open(temp_dir.path().join("first-events")).unwrap(),
+        EventAuthorityOpenOptions::default(),
+    )
+    .unwrap();
+    let second = EventAuthority::open(
+        sled::open(temp_dir.path().join("second-events")).unwrap(),
+        EventAuthorityOpenOptions::default(),
+    )
+    .unwrap();
+    let first_ports = Arc::new(AuthorityGraphPorts::new(&first));
+    let second_ports = Arc::new(AuthorityGraphPorts::new(&second));
+    let traversal =
+        TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
+
+    let result =
+        GraphRuntime::from_ports(first_ports.clone(), second_ports, first_ports, traversal);
+
+    assert!(matches!(
+        result,
+        Err(meld_world_model::error::StorageError::IdentityMismatch {
+            expected,
+            actual,
+        }) if expected == first.ledger_identity() && actual == second.ledger_identity()
+    ));
+}
+
+#[test]
+fn graph_runtime_rejects_foreign_page_and_next_cursor_identities() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let authority = EventAuthority::open(
+        sled::open(temp_dir.path().join("events")).unwrap(),
+        EventAuthorityOpenOptions::default(),
+    )
+    .unwrap();
+    let foreign = EventAuthority::open(
+        sled::open(temp_dir.path().join("foreign-events")).unwrap(),
+        EventAuthorityOpenOptions::default(),
+    )
+    .unwrap();
+    let ports = Arc::new(AuthorityGraphPorts::new(&authority));
+
+    for (field, suffix) in [
+        (ForeignPageField::PageIdentity, "page"),
+        (ForeignPageField::NextCursorIdentity, "next"),
+    ] {
+        let replay = Arc::new(ForeignPageReplay {
+            inner: authority.replay_capability(),
+            foreign_ledger_id: foreign.ledger_identity(),
+            field,
+        });
+        let traversal = TraversalStore::shared(
+            sled::open(temp_dir.path().join(format!("traversal-{suffix}"))).unwrap(),
+        )
+        .unwrap();
+        let runtime =
+            GraphRuntime::from_ports(replay, ports.clone(), ports.clone(), traversal).unwrap();
+
+        assert!(matches!(
+            runtime.catch_up(),
+            Err(meld_world_model::error::StorageError::IdentityMismatch {
+                expected,
+                actual,
+            }) if expected == authority.ledger_identity() && actual == foreign.ledger_identity()
+        ));
+        assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 0);
+    }
+}
+
+#[test]
+fn graph_runtime_rejects_foreign_derived_receipt_without_advancing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let authority = EventAuthority::open(
+        sled::open(temp_dir.path().join("events")).unwrap(),
+        EventAuthorityOpenOptions::default(),
+    )
+    .unwrap();
+    let foreign = EventAuthority::open(
+        sled::open(temp_dir.path().join("foreign-events")).unwrap(),
+        EventAuthorityOpenOptions::default(),
+    )
+    .unwrap();
+    let ports = Arc::new(AuthorityGraphPorts::new(&authority));
+    authority
+        .append_capability()
+        .append_durable(
+            event(
+                "context",
+                "context.head_selected",
+                vec![
+                    object("context", "head", "node-a::analysis"),
+                    object("workspace_fs", "node", "node-a"),
+                    object("context", "frame", "frame-a"),
+                ],
+                Vec::new(),
+            ),
+            AppendMode::Plain,
+        )
+        .unwrap();
+    let runtime = GraphRuntime::from_ports(
+        ports.clone(),
+        Arc::new(ForeignReceiptSink {
+            inner: authority.append_capability(),
+            foreign_ledger_id: foreign.ledger_identity(),
+        }),
+        ports,
+        TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap(),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        runtime.catch_up(),
+        Err(meld_world_model::error::StorageError::IdentityMismatch {
+            expected,
+            actual,
+        }) if expected == authority.ledger_identity() && actual == foreign.ledger_identity()
+    ));
+    assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 0);
+}
+
+#[test]
+fn graph_runtime_from_ports_reports_retention_gap_without_cursor_movement() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let event_db = sled::open(temp_dir.path().join("events")).unwrap();
+    let authority =
+        EventAuthority::open(event_db.clone(), EventAuthorityOpenOptions::default()).unwrap();
+    let ports = Arc::new(AuthorityGraphPorts::new(&authority));
+    authority
+        .append_capability()
+        .append_durable(
+            event("context", "context.noop", Vec::new(), Vec::new()),
+            AppendMode::Plain,
+        )
+        .unwrap();
+    EventStore::new(event_db)
+        .unwrap()
+        .set_retained_lower_boundary(3)
+        .unwrap();
+    let traversal =
+        TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
+    let existing_fact = TraversalFactRecord {
+        fact_id: "pre-gap-fact".to_string(),
+        source_spine_fact_id: "spine::77".to_string(),
+        seq: 77,
+        event_type: "existing.projection".to_string(),
+        objects: vec![object("context", "frame", "existing")],
+        relations: Vec::new(),
+    };
+    traversal.put_fact(&existing_fact).unwrap();
+    traversal.flush().unwrap();
+    let runtime =
+        GraphRuntime::from_ports(ports.clone(), ports.clone(), ports, Arc::clone(&traversal))
+            .unwrap();
+
+    let report = runtime
+        .catch_up_bounded(
+            meld_world_model::world_state::graph::runtime::GraphCatchUpBudget { max_items: 10 },
+        )
+        .unwrap();
+    assert_eq!(report.fatal_errors[0].code, "retention_gap");
+    assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 0);
+    assert_eq!(
+        traversal.get_fact("pre-gap-fact").unwrap(),
+        Some(existing_fact.clone())
+    );
+    assert!(authority
+        .consumer_registry_capability()
+        .get("world_state.graph.reducer")
+        .unwrap()
+        .is_none());
+    assert!(traversal
+        .db()
+        .open_tree("traversal_runtime_meta")
+        .unwrap()
+        .get("pending_derived_events")
+        .unwrap()
+        .is_none());
+    assert!(matches!(
+        runtime.catch_up(),
+        Err(meld_world_model::error::StorageError::RetentionGap {
+            after_seq: 0,
+            retained_from: 3,
+        })
+    ));
+    assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 0);
+    assert_eq!(
+        traversal.get_fact("pre-gap-fact").unwrap(),
+        Some(existing_fact)
+    );
+    assert!(authority
+        .consumer_registry_capability()
+        .get("world_state.graph.reducer")
+        .unwrap()
+        .is_none());
+    assert!(traversal
+        .db()
+        .open_tree("traversal_runtime_meta")
+        .unwrap()
+        .get("pending_derived_events")
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn graph_runtime_retries_registry_report_after_local_cursor_is_durable() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let authority = EventAuthority::open(
+        sled::open(temp_dir.path().join("events")).unwrap(),
+        EventAuthorityOpenOptions::default(),
+    )
+    .unwrap();
+    let ports = Arc::new(AuthorityGraphPorts::new(&authority));
+    let source = authority
+        .append_capability()
+        .append_durable(
+            event(
+                "context",
+                "context.head_selected",
+                vec![
+                    object("context", "head", "node-a::analysis"),
+                    object("workspace_fs", "node", "node-a"),
+                    object("context", "frame", "frame-a"),
+                ],
+                Vec::new(),
+            ),
+            AppendMode::Plain,
+        )
+        .unwrap();
+    let reporter = Arc::new(FailOnceCursorReporter {
+        inner: authority.consumer_registry_capability(),
+        fail_next: AtomicBool::new(true),
+    });
+    let runtime = GraphRuntime::from_ports(
+        ports.clone(),
+        ports,
+        reporter,
+        TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap(),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        runtime.catch_up(),
+        Err(meld_world_model::error::StorageError::Unavailable(_))
+    ));
+    // The local cursor is the recovery source of truth. Registry publication
+    // follows it and is retried on the next tick when a report fails.
+    assert_eq!(
+        runtime.durable_event_cursor().unwrap().after_seq,
+        source.seq
+    );
+    assert!(authority
+        .consumer_registry_capability()
+        .get("world_state.graph.reducer")
+        .unwrap()
+        .is_none());
+
+    runtime.catch_up().unwrap();
+    assert!(
+        authority
+            .consumer_registry_capability()
+            .get("world_state.graph.reducer")
+            .unwrap()
+            .unwrap()
+            .reported_seq
+            >= source.seq
+    );
+    let derived = authority
+        .replay_capability()
+        .replay(ReplayRequest {
+            cursor: LedgerCursor {
+                ledger_id: authority.ledger_identity(),
+                after_seq: 0,
+            },
+            limit: 10,
+        })
+        .unwrap()
+        .records
+        .into_iter()
+        .filter(|record| record.event_type == "world_state.anchor_selected")
+        .count();
+    assert_eq!(derived, 1);
 }
 
 #[test]

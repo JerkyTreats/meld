@@ -43,6 +43,8 @@ const TREE_SEQ_INDEX: &str = "traversal_seq_index";
 const TREE_SUBJECT_PERSPECTIVE: &str = "traversal_subject_perspective_index";
 const TREE_RUNTIME_META: &str = "traversal_runtime_meta";
 const KEY_LAST_REDUCED_SEQ: &str = "last_reduced_seq";
+const KEY_AUTHORITY_CURSOR: &[u8] = b"event_authority_cursor";
+const KEY_PENDING_DERIVED_EVENTS: &[u8] = b"pending_derived_events";
 const KEY_PAD: usize = 20;
 
 /// Stored relation edge plus the fact that produced it.
@@ -458,6 +460,43 @@ impl TraversalStore {
         self.runtime_meta
             .insert(KEY_LAST_REDUCED_SEQ.as_bytes(), seq.to_string().as_bytes())
             .map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    /// Clear projection data whose identifiers were derived from a legacy
+    /// ledger sequence space before replaying a bound event authority.
+    ///
+    /// Cursor migration evidence and its recovery marker live in runtime
+    /// metadata and are deliberately preserved. The legacy cursor, any
+    /// identity-less derived-event retry state, and all sequence-derived
+    /// projection indexes are rebuilt from authority sequence zero.
+    pub(super) fn reset_for_event_authority_migration(&self) -> Result<(), StorageError> {
+        for tree in [
+            &self.facts,
+            &self.fact_objects,
+            &self.object_facts,
+            &self.outgoing_relations,
+            &self.incoming_relations,
+            &self.anchors,
+            &self.current_anchor,
+            &self.anchor_history,
+            &self.anchor_lineage,
+            &self.source_fact_index,
+            &self.seq_index,
+            &self.subject_perspective_index,
+        ] {
+            tree.clear().map_err(to_storage_io)?;
+        }
+        self.runtime_meta
+            .remove(KEY_LAST_REDUCED_SEQ.as_bytes())
+            .map_err(to_storage_io)?;
+        self.runtime_meta
+            .remove(KEY_AUTHORITY_CURSOR)
+            .map_err(to_storage_io)?;
+        self.runtime_meta
+            .remove(KEY_PENDING_DERIVED_EVENTS)
+            .map_err(to_storage_io)?;
+        self.db.flush().map_err(to_storage_io)?;
         Ok(())
     }
 

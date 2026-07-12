@@ -139,6 +139,39 @@ impl TraversalReducer {
         } = input;
         let anchor_id = format!("anchor::{}::{}", anchor_ref.index_key(), event.seq);
         if let Some(existing) = store.get_anchor(&anchor_id)? {
+            // Re-emit deterministic derived facts when replay resumes after a
+            // crash that persisted projection writes before publication. The
+            // authority sink is idempotent, so already published facts remain
+            // duplicates while a missing fact is recovered before the cursor
+            // advances.
+            for predecessor in store.anchor_history(&anchor_ref)? {
+                if predecessor.ended_at_seq == Some(event.seq)
+                    && predecessor.ended_by_anchor_id.as_deref() == Some(anchor_id.as_str())
+                {
+                    self.emitted_envelopes
+                        .push(anchor_superseded_envelope_from_record(
+                            &event.session,
+                            EventRecordRef {
+                                ledger_id,
+                                seq: event.seq,
+                            },
+                            AnchorSupersededEventData {
+                                anchor: predecessor,
+                            },
+                        ));
+                }
+            }
+            self.emitted_envelopes
+                .push(anchor_selected_envelope_from_record(
+                    &event.session,
+                    EventRecordRef {
+                        ledger_id,
+                        seq: event.seq,
+                    },
+                    AnchorSelectedEventData {
+                        anchor: existing.clone(),
+                    },
+                ));
             if let Some(current) = store.current_anchor(&anchor_ref)? {
                 if current.anchor_id == anchor_id {
                     self.current_anchors.select(current);
