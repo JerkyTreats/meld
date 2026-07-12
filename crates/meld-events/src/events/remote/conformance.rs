@@ -6,6 +6,7 @@
 //! assertions without sharing their transport or process-host machinery.
 
 use std::fmt::Debug;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 
@@ -152,6 +153,7 @@ pub fn assert_event_authority_conformance(harness: &mut impl EventAuthorityConfo
     assert_eq!(empty.next_cursor.after_seq, 3);
     assert_eq!(empty.coverage.tip_seq, 3);
 
+    await_committed_watermark(harness.contract(), ledger_id, 3);
     assert_observability(harness.contract(), ledger_id);
     assert_identity_validation(harness.contract(), ledger_id);
 
@@ -216,6 +218,34 @@ pub fn assert_event_authority_conformance(harness: &mut impl EventAuthorityConfo
             retained_from: 2,
         }
     );
+}
+
+fn await_committed_watermark(
+    contract: &dyn EventAuthorityContract,
+    ledger_id: LedgerIdentity,
+    expected_seq: u64,
+) {
+    // A best-effort append promises eventual durability only: its record is
+    // replayable before the background group flush advances the committed
+    // watermark, so the contract waits for advancement instead of asserting
+    // it immediately after acceptance.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let watermark = contract
+            .watermark(WatermarkRequest { ledger_id })
+            .expect("watermark must succeed");
+        if watermark.committed_seq >= expected_seq {
+            assert_eq!(watermark.committed_seq, expected_seq);
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "committed watermark must reach {expected_seq} after a best-effort append, \
+             still {} at the deadline",
+            watermark.committed_seq
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn assert_observability(contract: &dyn EventAuthorityContract, ledger_id: LedgerIdentity) {
