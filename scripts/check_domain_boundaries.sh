@@ -26,6 +26,34 @@ if grep -rq --include='*.rs' 'crate::tooling::' src/ 2>/dev/null; then
   VIOLATIONS=$((VIOLATIONS + 1))
 fi
 
+# Production domains must consume event authority capabilities instead of
+# opening canonical stores or spawning independent writers. Temporary E5
+# compatibility and in-file test fixtures carry an explicit boundary marker.
+RAW_EVENT_CONSTRUCTORS='EventStore::(new|shared)|EventRuntime::(new|from_store)|EventWriter::spawn'
+EVENT_CONSTRUCTOR_MATCHES="$(
+  rg -n "$RAW_EVENT_CONSTRUCTORS" src crates \
+    --glob '*.rs' \
+    --glob '!crates/meld-events/**' \
+    --glob '!**/tests/**' \
+    | while IFS= read -r match; do
+        case "$match" in
+          *'://!'*) ;;
+          crates/meld-world-model/src/world_state/graph/runtime.rs:*'boundary-allow: event-compat'*) ;;
+          crates/meld-world-model/src/world_state/graph/runtime.rs:*'boundary-allow: event-test'*) ;;
+          src/runtime/storage.rs:*'boundary-allow: event-compat'*) ;;
+          src/telemetry/sessions/service.rs:*'boundary-allow: event-compat'*) ;;
+          src/events/tooling/tail.rs:*'boundary-allow: event-test'*) ;;
+          *) echo "$match" ;;
+        esac
+      done \
+    || true
+)"
+if [ -n "$EVENT_CONSTRUCTOR_MATCHES" ]; then
+  echo "Boundary violation: production code must consume EventAuthority capabilities:"
+  echo "$EVENT_CONSTRUCTOR_MATCHES"
+  VIOLATIONS=$((VIOLATIONS + 1))
+fi
+
 if [ "$VIOLATIONS" -gt 0 ]; then
   echo "Total violations: $VIOLATIONS"
   exit 1

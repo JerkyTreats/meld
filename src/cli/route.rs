@@ -42,6 +42,14 @@ impl RunContext {
         Arc::clone(self.assembly.progress())
     }
 
+    /// Durable identity-bearing cursor of the shared graph runtime.
+    pub fn graph_event_cursor(&self) -> Result<meld_events::LedgerCursor, ApiError> {
+        self.assembly
+            .graph_runtime()
+            .durable_event_cursor()
+            .map_err(ApiError::from)
+    }
+
     /// Workflow profile registry.
     pub fn workflow_registry(&self) -> Arc<parking_lot::RwLock<crate::workflow::WorkflowRegistry>> {
         Arc::clone(self.assembly.workflow_registry())
@@ -66,12 +74,8 @@ impl RunContext {
 
         match assembly.graph_runtime().catch_up() {
             Ok(applied_events) => {
-                let last_reduced_seq = match assembly
-                    .graph_runtime()
-                    .traversal_store()
-                    .last_reduced_seq()
-                {
-                    Ok(seq) => seq,
+                let last_reduced_seq = match assembly.graph_runtime().durable_event_cursor() {
+                    Ok(cursor) => cursor.after_seq,
                     Err(err) => {
                         warn!(error = %err, "failed to read last reduced seq during startup");
                         0
@@ -132,13 +136,8 @@ impl RunContext {
         }
         match self.assembly.graph_runtime().catch_up() {
             Ok(applied_events) => {
-                let last_reduced_seq = match self
-                    .assembly
-                    .graph_runtime()
-                    .traversal_store()
-                    .last_reduced_seq()
-                {
-                    Ok(seq) => seq,
+                let last_reduced_seq = match self.assembly.graph_runtime().durable_event_cursor() {
+                    Ok(cursor) => cursor.after_seq,
                     Err(err) => {
                         warn!(error = %err, "failed to read last reduced seq after command execution");
                         0

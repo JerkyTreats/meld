@@ -159,7 +159,11 @@ impl OpenProductStores {
         let task_artifacts_db = open_db(&layout.task_artifacts_db)?;
 
         Ok(Self {
-            event_store: Arc::new(EventStore::new(ledger_db).map_err(to_events)?),
+            // TODO compat-shim: E5 removes raw canonical event storage from
+            // OpenProductStores after product_event_authority_cutover.
+            event_store: Arc::new(
+                EventStore::new(ledger_db).map_err(to_events)?, // boundary-allow: event-compat
+            ),
             node_store: Arc::new(SledNodeRecordStore::from_db(workspace_db)),
             traversal_store: Arc::new(
                 TraversalStore::new(world_model_db.clone()).map_err(to_world_model)?,

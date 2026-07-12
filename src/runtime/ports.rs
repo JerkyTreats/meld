@@ -2,8 +2,13 @@
 
 use std::sync::Arc;
 
-use meld_events::events::store::EventStore;
-use meld_events::{CommitWatermark, DomainObjectRef, EventEnvelope, EventRecord, EventWriter};
+use meld_events::error::EventAuthorityError;
+use meld_events::{
+    AppendMode, AppendReceipt, DomainObjectRef, EventAppendCapability, EventAuthority,
+    EventAuthorityOpenOptions, EventConsumerRegistryCapability, EventEnvelope,
+    EventObservabilityCapability, EventPage, EventRecord, EventReplayCapability, EventWatermark,
+    EventWatermarkCapability, LedgerCursor, LedgerIdentity, ReplayRequest,
+};
 use meld_execution::goals::{
     GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
     GoalSetApi, PersistentGoalSetStore,
@@ -16,7 +21,9 @@ use meld_world_model::belief::{
 };
 use meld_world_model::planner::{PlannerProjectionError, PlannerProjectionOutput, PlannerQuery};
 use meld_world_model::world_state::graph::store::TraversalStore;
-use meld_world_model::world_state::graph::PerspectiveKey;
+use meld_world_model::world_state::graph::{
+    GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource, PerspectiveKey,
+};
 use meld_world_model::{
     AgentGoalCommand, AgentGoalMutationCommand, BeliefQuery, BeliefRuntime, BeliefStore,
     PromotedEvidenceIngestionResult,
@@ -24,6 +31,7 @@ use meld_world_model::{
 use meld_world_model::{BranchScope, TraversalQuery};
 
 use crate::context::frame::FrameStorage;
+use crate::control::projection::ExecutionProjectionReplaySource;
 use crate::execution::goal_mutation::{satisfy_request_from_agent_mutation, GoalMutationRequest};
 use crate::execution::{build_docs_task_success_evidence, DocsTaskSuccessEvidenceRequest};
 use crate::prompt_context::PromptContextArtifactStorage;
@@ -39,6 +47,7 @@ pub const MAX_EVENT_REPLAY_LIMIT: usize = 1024;
 pub struct ProductRuntimePorts {
     event_append: ProductEventAppendPort,
     event_replay: ProductEventReplayPort,
+    graph_cursor: ProductGraphCursorPort,
     docs_task_evidence: DocsTaskEvidenceReplayPort,
     goal_command: ExecutionGoalCommandPort,
     goal_mutation: ExecutionGoalMutationPort,
@@ -110,7 +119,7 @@ pub struct DocsTaskEvidenceReplayReport {
     pub ingestions: Vec<PromotedEvidenceIngestionResult>,
 }
 
-/// Execution callable event append port backed by the ledger writer.
+/// Execution callable event append port backed by an authority capability.
 ///
 /// The port appends envelopes idempotently through the single-writer ingress
 /// so producer appends share group commits, and returns the event sequence.
@@ -118,16 +127,24 @@ pub struct DocsTaskEvidenceReplayReport {
 /// execution publication state.
 #[derive(Clone)]
 pub struct ProductEventAppendPort {
-    writer: Arc<EventWriter>,
+    append: EventAppendCapability,
+    watermark: EventWatermarkCapability,
+    observability: EventObservabilityCapability,
 }
 
-/// Bounded event replay source backed by the event store.
+/// Bounded event replay source backed by an authority capability.
 ///
 /// The port reads caller-supplied windows without storing replay cursors or
 /// deciding which world model reducer should run.
 #[derive(Clone)]
 pub struct ProductEventReplayPort {
-    store: Arc<EventStore>,
+    replay: EventReplayCapability,
+}
+
+/// Graph consumer cursor reporter backed by the authority registry.
+#[derive(Clone)]
+pub struct ProductGraphCursorPort {
+    registry: EventConsumerRegistryCapability,
 }
 
 /// Bounded docs task event to belief evidence replay port.
@@ -206,11 +223,30 @@ impl ProductRuntimePorts {
         stores: &OpenProductStores,
         provider: ProviderPortConfig,
     ) -> Result<Self, RuntimeAssemblyError> {
+        // TODO compat-shim: E5 removes authority construction from raw product
+        // stores after `product_event_authority_cutover` supplies the resolved
+        // product authority directly to `from_authority`.
+        let authority = EventAuthority::open(
+            stores.event_store.db().clone(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .map_err(|error| RuntimeAssemblyError::PortConstruction(error.to_string()))?;
+        Self::from_authority(stores, &authority, provider)
+    }
+
+    /// Build root adapters from one already-resolved event authority.
+    pub fn from_authority(
+        stores: &OpenProductStores,
+        authority: &EventAuthority,
+        provider: ProviderPortConfig,
+    ) -> Result<Self, RuntimeAssemblyError> {
         let provider_port = ProviderRuntimePort::new(provider)?;
-        let event_replay = ProductEventReplayPort::new(Arc::clone(&stores.event_store));
+        let event_append = ProductEventAppendPort::new(authority);
+        let event_replay = ProductEventReplayPort::new(authority.replay_capability());
         Ok(Self {
-            event_append: ProductEventAppendPort::new(Arc::clone(&stores.event_store)),
+            event_append,
             event_replay: event_replay.clone(),
+            graph_cursor: ProductGraphCursorPort::new(authority.consumer_registry_capability()),
             docs_task_evidence: DocsTaskEvidenceReplayPort::new(
                 event_replay,
                 Arc::clone(&stores.belief_store),
@@ -241,6 +277,11 @@ impl ProductRuntimePorts {
     /// Return the bounded event replay port.
     pub fn event_replay(&self) -> &ProductEventReplayPort {
         &self.event_replay
+    }
+
+    /// Return the graph consumer cursor reporter.
+    pub fn graph_cursor(&self) -> &ProductGraphCursorPort {
+        &self.graph_cursor
     }
 
     /// Return the docs task event to belief evidence replay port.
@@ -302,41 +343,62 @@ impl RuntimeAdapterPorts {
 }
 
 impl ProductEventAppendPort {
-    /// Bind the port to a ledger writer over the opened event store.
-    pub fn new(store: Arc<EventStore>) -> Self {
+    /// Bind the port to capabilities derived from one event authority.
+    pub fn new(authority: &EventAuthority) -> Self {
         Self {
-            writer: Arc::new(EventWriter::spawn(store)),
+            append: authority.append_capability(),
+            watermark: authority.watermark_capability(),
+            observability: authority.observability_capability(),
         }
     }
 
-    /// Return the writer's commit watermark for wake-on-commit consumers.
-    pub fn watermark(&self) -> Arc<CommitWatermark> {
-        self.writer.watermark()
+    /// Returns an identity-bearing recovered watermark snapshot.
+    pub fn watermark(&self) -> Result<EventWatermark, RuntimePortError> {
+        self.watermark
+            .snapshot()
+            .map_err(|error| RuntimePortError::EventAppend(error.to_string()))
     }
 
-    /// Return how many best-effort events backpressure has dropped.
-    pub fn dropped_events(&self) -> u64 {
-        self.writer.dropped_events()
+    /// Waits for a commit beyond the supplied identity-bearing cursor.
+    pub fn wait_past(
+        &self,
+        cursor: LedgerCursor,
+        timeout: std::time::Duration,
+    ) -> Result<EventWatermark, RuntimePortError> {
+        self.watermark
+            .wait_past(cursor, timeout)
+            .map_err(|error| RuntimePortError::EventAppend(error.to_string()))
     }
 
-    /// Return the writer's shared drop counter for observability backings.
-    pub fn dropped_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {
-        self.writer.dropped_handle()
+    /// Computes authority-bound event health for provisional runtime sensing.
+    pub fn health(&self) -> Result<meld_events::EventHealthReport, RuntimePortError> {
+        self.observability
+            .health(self.append.ledger_identity())
+            .map_err(|error| RuntimePortError::EventAppend(error.to_string()))
     }
 }
 
 impl EventAppendSink for ProductEventAppendPort {
-    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, String> {
-        self.writer
-            .append_durable(envelope, true)
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.append.ledger_identity()
+    }
+
+    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<AppendReceipt, String> {
+        self.append
+            .append_durable(envelope, AppendMode::Idempotent)
             .map_err(|error| error.to_string())
     }
 }
 
 impl ProductEventReplayPort {
-    /// Bind the port to an opened event store.
-    pub fn new(store: Arc<EventStore>) -> Self {
-        Self { store }
+    /// Bind the port to one authority replay capability.
+    pub fn new(replay: EventReplayCapability) -> Self {
+        Self { replay }
+    }
+
+    /// Returns the ledger replayed by this port.
+    pub fn ledger_identity(&self) -> LedgerIdentity {
+        self.replay.ledger_identity()
     }
 
     /// Read ordered event records after the caller supplied sequence.
@@ -345,14 +407,81 @@ impl ProductEventReplayPort {
         after_seq: u64,
         limit: usize,
     ) -> Result<Vec<EventRecord>, RuntimePortError> {
-        if limit > MAX_EVENT_REPLAY_LIMIT {
+        if !(1..=MAX_EVENT_REPLAY_LIMIT).contains(&limit) {
             return Err(RuntimePortError::InvalidRequest(format!(
-                "event replay limit {limit} exceeds maximum {MAX_EVENT_REPLAY_LIMIT}"
+                "event replay limit must be in 1..={MAX_EVENT_REPLAY_LIMIT}, got {limit}"
             )));
         }
-        self.store
-            .read_all_events_after_limit(after_seq, limit)
+        let page = self
+            .replay
+            .replay(ReplayRequest {
+                cursor: LedgerCursor {
+                    ledger_id: self.replay.ledger_identity(),
+                    after_seq,
+                },
+                limit,
+            })
+            .map_err(|error| RuntimePortError::EventReplay(error.to_string()))?;
+        Ok(page.records)
+    }
+}
+
+impl ProductGraphCursorPort {
+    /// Bind the reporter to one authority consumer registry.
+    pub fn new(registry: EventConsumerRegistryCapability) -> Self {
+        Self { registry }
+    }
+
+    /// Returns the durable graph consumer position for diagnostics and tests.
+    pub fn current(&self) -> Result<Option<meld_events::ConsumerCursorPosition>, RuntimePortError> {
+        self.registry
+            .get("world_state.graph.reducer")
             .map_err(|error| RuntimePortError::EventReplay(error.to_string()))
+    }
+}
+
+impl GraphEventReplaySource for ProductEventReplayPort {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.replay.ledger_identity()
+    }
+
+    fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
+        self.replay.replay(request)
+    }
+}
+
+impl ExecutionProjectionReplaySource for ProductEventReplayPort {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.replay.ledger_identity()
+    }
+
+    fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
+        self.replay.replay(request)
+    }
+}
+
+impl GraphDerivedEventSink for ProductEventAppendPort {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.append.ledger_identity()
+    }
+
+    fn append_derived(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAuthorityError> {
+        self.append.append_durable(envelope, AppendMode::Idempotent)
+    }
+}
+
+impl GraphConsumerCursorReporter for ProductGraphCursorPort {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.registry.ledger_identity()
+    }
+
+    fn report_graph_cursor(&self, cursor: LedgerCursor) -> Result<(), EventAuthorityError> {
+        self.registry
+            .report("world_state.graph.reducer", cursor)
+            .map(|_| ())
     }
 }
 

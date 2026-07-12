@@ -113,6 +113,8 @@ pub enum RuntimeResource {
     EventAppend,
     /// Event replay port.
     EventReplay,
+    /// Event authority durable consumer cursor registry.
+    EventConsumerRegistry,
     /// Execution goal command port.
     GoalCommand,
     /// Execution goal mutation port.
@@ -571,7 +573,10 @@ impl RuntimeFactoryRegistry {
         Self::from_descriptors([
             RuntimeFactoryDescriptor::new("event.append", vec![EventAppend])?,
             RuntimeFactoryDescriptor::new("event.replay", vec![EventReplay])?,
-            RuntimeFactoryDescriptor::new("world_model.graph_replay", vec![EventReplay])?,
+            RuntimeFactoryDescriptor::new(
+                "world_model.graph_replay",
+                vec![EventAppend, EventReplay, EventConsumerRegistry],
+            )?,
             RuntimeFactoryDescriptor::new("world_model.belief_assessment", vec![])?,
             RuntimeFactoryDescriptor::new(
                 "world_model.agent_goal_curation",
@@ -790,8 +795,10 @@ impl RuntimeSemanticHandleFactory {
         match descriptor.runtime_id.as_str() {
             "world_model.graph_replay" => Ok(Self::GraphReplay {
                 graph_runtime: Arc::new(
-                    GraphRuntime::from_stores(
-                        Arc::clone(&stores.event_store),
+                    GraphRuntime::from_ports(
+                        Arc::new(ports.event_replay().clone()),
+                        Arc::new(ports.event_append().clone()),
+                        Arc::new(ports.graph_cursor().clone()),
                         Arc::clone(&stores.traversal_store),
                     )
                     .map_err(|error| {
@@ -838,8 +845,13 @@ impl RuntimeSemanticHandle {
 
 impl EventAppendRuntimeHandle {
     fn tick(&mut self) -> WorkerTickReport {
-        let watermark = self.port.watermark().committed_seq();
-        let dropped = self.port.dropped_events();
+        let (watermark, dropped, health_error) = match self.port.health() {
+            Ok(health) => (health.committed_watermark, health.dropped_events, None),
+            Err(error) => {
+                let (watermark, dropped) = self.last.unwrap_or((0, 0));
+                (watermark, dropped, Some(error.to_string()))
+            }
+        };
         // The first tick only establishes the baseline: an existing ledger
         // is not fresh work and all-time drops are not a fresh burst.
         let (input_watermark, mut retryable_errors) = match self.last {
@@ -859,6 +871,13 @@ impl EventAppendRuntimeHandle {
                 (last_watermark, issues)
             }
         };
+        if let Some(error) = health_error {
+            retryable_errors.push(crate::runtime::contracts::WorkerTickIssue {
+                item_id: None,
+                code: "event_health_unavailable".to_string(),
+                message: error,
+            });
+        }
         retryable_errors.shrink_to_fit();
         // Items stay zero: the observer commits nothing itself, and the
         // checkpoint movement alone reports ledger progress.
@@ -1007,6 +1026,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+    use crate::runtime::error::RuntimePortError;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1182,7 +1202,7 @@ mod tests {
     }
 
     #[test]
-    fn event_append_and_replay_ports_are_wired_to_event_store() {
+    fn event_append_and_replay_ports_are_wired_to_one_authority() {
         let temp = tempfile::tempdir().unwrap();
         let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
         let envelope = EventEnvelope::with_now_domain(
@@ -1206,31 +1226,53 @@ mod tests {
             .read_after_limit(0, 10)
             .unwrap();
 
-        assert_eq!(seq, 1);
+        assert_eq!(seq.seq, 1);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].seq, 1);
         assert_eq!(records[0].record_id.as_deref(), Some("record-a"));
-        assert!(assembly
+        assert!(matches!(
+            assembly
             .ports()
             .event_replay()
-            .read_after_limit(0, 0)
-            .unwrap()
-            .is_empty());
+            .read_after_limit(0, 0),
+            Err(RuntimePortError::InvalidRequest(message))
+                if message == "event replay limit must be in 1..=1024, got 0"
+        ));
         assert!(assembly
             .ports()
             .event_replay()
             .read_after_limit(0, crate::runtime::ports::MAX_EVENT_REPLAY_LIMIT)
             .is_ok());
-        assert!(assembly
+        assert!(matches!(
+            assembly
             .ports()
             .event_replay()
-            .read_after_limit(0, crate::runtime::ports::MAX_EVENT_REPLAY_LIMIT + 1)
-            .is_err());
-        assert!(assembly
+            .read_after_limit(0, crate::runtime::ports::MAX_EVENT_REPLAY_LIMIT + 1),
+            Err(RuntimePortError::InvalidRequest(message))
+                if message == "event replay limit must be in 1..=1024, got 1025"
+        ));
+        assert!(matches!(
+            assembly
             .ports()
             .event_replay()
-            .read_after_limit(0, usize::MAX)
-            .is_err());
+            .read_after_limit(0, usize::MAX),
+            Err(RuntimePortError::InvalidRequest(message))
+                if message == format!("event replay limit must be in 1..=1024, got {}", usize::MAX)
+        ));
+    }
+
+    #[test]
+    fn graph_replay_descriptor_declares_complete_authority_dependencies() {
+        let registry = RuntimeFactoryRegistry::first_proof_registry().unwrap();
+        let descriptor = registry.get("world_model.graph_replay").unwrap();
+        assert_eq!(
+            descriptor.required_resources,
+            vec![
+                RuntimeResource::EventAppend,
+                RuntimeResource::EventReplay,
+                RuntimeResource::EventConsumerRegistry,
+            ]
+        );
     }
 
     #[test]

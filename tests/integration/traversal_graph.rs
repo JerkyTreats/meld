@@ -735,7 +735,7 @@ fn graph_runtime_repeated_catch_up_is_idempotent() {
             .len(),
         1
     );
-    assert_eq!(traversal.last_reduced_seq().unwrap(), 2);
+    assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 2);
 }
 
 // A retention gap below the traversal cursor must surface as a fatal
@@ -766,7 +766,7 @@ fn graph_catch_up_reports_retention_gap_without_moving_cursor() {
     assert_eq!(report.input_event_seq, 0);
     assert_eq!(report.output_event_seq, 0);
     assert!(!report.budget_exhausted);
-    assert_eq!(runtime.traversal_store().last_reduced_seq().unwrap(), 0);
+    assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 0);
 
     // The unbounded CLI path must propagate the gap as its typed error, not
     // report zero progress.
@@ -777,7 +777,7 @@ fn graph_catch_up_reports_retention_gap_without_moving_cursor() {
             retained_from: 3,
         })
     ));
-    assert_eq!(runtime.traversal_store().last_reduced_seq().unwrap(), 0);
+    assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 0);
 }
 
 // Runtime self-observation facts are not traversal source events: the
@@ -809,7 +809,7 @@ fn graph_reducer_ignores_runtime_domain_facts_and_advances_past_them() {
     assert_eq!(report.events_attempted, 1);
     assert_eq!(report.traversal_events_applied, 0);
     assert_eq!(report.derived_events_appended, 0);
-    assert_eq!(runtime.traversal_store().last_reduced_seq().unwrap(), 1);
+    assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 1);
 }
 
 #[test]
@@ -850,7 +850,7 @@ fn graph_runtime_bounded_report_resumes_without_skipping_source_events() {
     assert_eq!(first.traversal_events_applied, 1);
     assert_eq!(first.derived_events_appended, 1);
     assert!(first.budget_exhausted);
-    assert_eq!(runtime.traversal_store().last_reduced_seq().unwrap(), 1);
+    assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 1);
 
     drop(runtime);
     drop(progress);
@@ -978,6 +978,6 @@ fn run_context_scan_bootstraps_graph_runtime() {
             .unwrap();
 
         assert_eq!(current.subject, source);
-        assert!(traversal.last_reduced_seq().unwrap() > 0);
+        assert!(run_context.graph_event_cursor().unwrap().after_seq > 0);
     });
 }

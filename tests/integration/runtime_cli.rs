@@ -110,12 +110,12 @@ fn runtime_run_ticks_graph_replay_handle() {
         let assembly =
             ProductRuntimeAssembly::load_for_workspace(&workspace_root, &config).unwrap();
         assert_eq!(
-            assembly
-                .stores()
-                .traversal_store
-                .last_reduced_seq()
-                .unwrap(),
-            1
+            assembly.ports().graph_cursor().current().unwrap(),
+            Some(meld_events::ConsumerCursorPosition {
+                ledger_id: assembly.ports().event_replay().ledger_identity(),
+                name: "world_state.graph.reducer".to_string(),
+                reported_seq: 1,
+            })
         );
     });
 }

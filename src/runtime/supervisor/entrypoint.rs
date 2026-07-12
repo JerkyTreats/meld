@@ -1408,10 +1408,12 @@ mod tests {
             .unwrap()
             .unwrap();
         let reduced_seq = assembly
-            .stores()
-            .traversal_store
-            .last_reduced_seq()
-            .unwrap();
+            .ports()
+            .graph_cursor()
+            .current()
+            .unwrap()
+            .expect("graph cursor should be reported")
+            .reported_seq;
 
         assert_eq!(report.renewed_runtime_ids, vec!["world_model.graph_replay"]);
         assert_eq!(reduced_seq, 1);

@@ -2,10 +2,31 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::from_value;
 
+use meld_events::error::EventAuthorityError;
+
 use crate::error::StorageError;
 use crate::events::store::EventStore;
-use crate::events::EventRecord;
+use crate::events::{EventPage, EventRecord, LedgerCursor, LedgerIdentity, ReplayRequest};
 use crate::task::ExecutionTaskEventData;
+
+/// Identity-bearing bounded replay required by the execution projection.
+pub trait ExecutionProjectionReplaySource {
+    /// Ledger whose records the source returns.
+    fn ledger_identity(&self) -> LedgerIdentity;
+
+    /// Replays one bounded page after an identity-bearing cursor.
+    fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError>;
+}
+
+impl ExecutionProjectionReplaySource for meld_events::EventReplayCapability {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        meld_events::EventReplayCapability::ledger_identity(self)
+    }
+
+    fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
+        meld_events::EventReplayCapability::replay(self, request)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExecutionProjection {
@@ -18,6 +39,39 @@ pub struct ExecutionProjection {
 }
 
 impl ExecutionProjection {
+    /// Replays one identity-checked bounded authority page.
+    pub fn replay_from_source(
+        source: &impl ExecutionProjectionReplaySource,
+        cursor: LedgerCursor,
+        limit: usize,
+    ) -> Result<Self, EventAuthorityError> {
+        if cursor.ledger_id != source.ledger_identity() {
+            return Err(EventAuthorityError::IdentityMismatch {
+                expected: source.ledger_identity(),
+                actual: cursor.ledger_id,
+            });
+        }
+        let page = source.replay(ReplayRequest { cursor, limit })?;
+        if page.ledger_id != source.ledger_identity() {
+            return Err(EventAuthorityError::IdentityMismatch {
+                expected: source.ledger_identity(),
+                actual: page.ledger_id,
+            });
+        }
+        let mut projection = Self::default();
+        for event in page.records {
+            projection
+                .apply(&event)
+                .map_err(|error| EventAuthorityError::Internal {
+                    message: error.to_string(),
+                })?;
+        }
+        Ok(projection)
+    }
+
+    /// TODO compat-shim: E5 removes raw-store replay after
+    /// `product_event_authority_cutover` proves projection parity through
+    /// `replay_from_source`.
     pub fn replay_from_store(store: &EventStore, after_seq: u64) -> Result<Self, StorageError> {
         let mut projection = Self::default();
         for event in store.read_all_events_after(after_seq)? {
@@ -97,7 +151,7 @@ fn parse_task_event_data(event: &EventRecord) -> Result<ExecutionTaskEventData, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::EventEnvelope;
+    use crate::events::{AppendMode, EventAuthority, EventAuthorityOpenOptions, EventEnvelope};
     use serde_json::json;
 
     #[test]
@@ -139,5 +193,68 @@ mod tests {
         assert!(projection.active_tasks.is_empty());
         assert!(projection.completed_tasks.contains("run_a"));
         assert_eq!(projection.last_applied_seq, 2);
+    }
+
+    #[test]
+    fn authority_replay_binds_projection_to_one_ledger() {
+        let authority = EventAuthority::open(
+            sled::Config::new().temporary(true).open().unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        let ledger_id = authority.ledger_identity();
+        authority
+            .append_capability()
+            .append_durable(
+                EventEnvelope::new_domain(
+                    "2026-01-01T00:00:00.000Z".to_string(),
+                    "session",
+                    "execution",
+                    "run_a",
+                    "execution.task.started",
+                    None,
+                    json!({
+                        "task_id": "task_a",
+                        "task_run_id": "run_a",
+                        "capability_instance_id": null,
+                        "invocation_id": null,
+                        "artifact_id": null,
+                        "artifact_type_id": null,
+                        "attempt_index": null,
+                        "ready_count": null,
+                        "running_count": null,
+                        "blocked_reason": null,
+                        "error": null
+                    }),
+                ),
+                AppendMode::Plain,
+            )
+            .unwrap();
+        let source = authority.replay_capability();
+
+        let projection = ExecutionProjection::replay_from_source(
+            &source,
+            LedgerCursor {
+                ledger_id,
+                after_seq: 0,
+            },
+            16,
+        )
+        .unwrap();
+        assert!(projection.active_tasks.contains("run_a"));
+
+        let error = ExecutionProjection::replay_from_source(
+            &source,
+            LedgerCursor {
+                ledger_id: LedgerIdentity::new(),
+                after_seq: 0,
+            },
+            16,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            EventAuthorityError::IdentityMismatch { .. }
+        ));
     }
 }

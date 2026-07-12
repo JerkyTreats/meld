@@ -217,13 +217,25 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingSink {
+        ledger_id: meld_events::LedgerIdentity,
         envelopes: RefCell<Vec<EventEnvelope>>,
     }
 
     impl EventAppendSink for RecordingSink {
-        fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<u64, String> {
+        fn ledger_identity(&self) -> meld_events::LedgerIdentity {
+            self.ledger_id
+        }
+
+        fn append_envelope_idempotent(
+            &self,
+            envelope: EventEnvelope,
+        ) -> Result<meld_events::AppendReceipt, String> {
             self.envelopes.borrow_mut().push(envelope);
-            Ok(self.envelopes.borrow().len() as u64)
+            Ok(meld_events::AppendReceipt {
+                ledger_id: self.ledger_id,
+                seq: self.envelopes.borrow().len() as u64,
+                disposition: meld_events::AppendDisposition::Inserted,
+            })
         }
     }
 

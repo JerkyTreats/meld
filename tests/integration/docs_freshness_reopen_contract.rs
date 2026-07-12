@@ -134,7 +134,7 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
         .event_append()
         .append_envelope_idempotent(event.envelope.clone())
         .unwrap();
-    assert_eq!(duplicate_seq, event.seq);
+    assert_eq!(duplicate_seq.seq, event.seq);
 
     let network = stores.task_networks.open_network(TASK_NETWORK_ID).unwrap();
     let publication = network
@@ -144,11 +144,11 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
         .next()
         .expect("expected published publication");
     assert!(matches!(
-        publication.state,
+        &publication.state,
         PublicationState::Published {
-            event_seq: Some(seq),
+            receipt: Some(receipt),
             ..
-        } if seq == event.seq
+        } if receipt.seq == event.seq
     ));
     drop(network);
 
@@ -337,10 +337,11 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
     let mut stores = setup_reopened_pending_publication(&harness);
     let mut network = harness.open_network(&stores);
     seed_event_allocator_before_publication(&stores, &harness.fixture);
+    let publication_ports = harness.ports(&stores);
 
     let report = publish_pending_publications(
         &mut network,
-        stores.event_store.as_ref(),
+        publication_ports.event_append(),
         PublishPendingPublicationsRequest {
             session_id: SESSION_ID.to_string(),
             worker_id: WORKER_ID.to_string(),
@@ -361,6 +362,7 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
 
     network.flush().unwrap();
     drop(network);
+    drop(publication_ports);
     stores = harness.flush_and_reopen(stores);
     let network = harness.open_network(&stores);
     let ports = harness.ports(&stores);
@@ -387,11 +389,11 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
         )
     );
     assert!(matches!(
-        publication.state,
+        &publication.state,
         PublicationState::Published {
-            event_seq: Some(seq),
+            receipt: Some(receipt),
             ..
-        } if seq == event.seq
+        } if receipt.seq == event.seq
     ));
 
     let ingestion = ports

@@ -18,7 +18,9 @@ pub struct ProgressRuntime {
 
 impl ProgressRuntime {
     pub fn new(db: sled::Db) -> Result<Self, crate::error::StorageError> {
-        let events = Arc::new(EventRuntime::new(db.clone())?);
+        // TODO compat-shim: E5 injects EventAppendCapability after
+        // product_event_authority_cutover and removes this writable runtime.
+        let events = Arc::new(EventRuntime::new(db.clone())?); // boundary-allow: event-compat
         let session_store = Arc::new(lifecycle::SessionStore::new(db)?);
         let sessions = Arc::new(lifecycle::SessionRuntime::new(session_store));
         Ok(Self { events, sessions })

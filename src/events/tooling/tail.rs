@@ -373,11 +373,11 @@ mod tests {
         use meld_events::{EventCursorRegistry, EventWriter, LedgerObservability};
 
         let db = sled::Config::new().temporary(true).open().unwrap();
-        let store = meld_events::events::store::EventStore::shared(db.clone()).unwrap();
+        let store = meld_events::events::store::EventStore::shared(db.clone()).unwrap(); // boundary-allow: event-test
         store.append_event(&record(10, "s", "s")).unwrap();
         store.append_event(&record(90, "s", "s")).unwrap();
         let registry = EventCursorRegistry::open(&db).unwrap();
-        let writer = EventWriter::spawn(Arc::clone(&store));
+        let writer = EventWriter::spawn(Arc::clone(&store)); // boundary-allow: event-test
         let port = LedgerObservability::new(
             Arc::clone(&store),
             writer.watermark(),

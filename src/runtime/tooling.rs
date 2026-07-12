@@ -235,16 +235,6 @@ fn runtime_run(
     let started = Instant::now();
     let mut tick_count = 0;
     let mut last_supervisor_time_ms = started_at_ms;
-    let watermark = assembly.ports().event_append().watermark();
-    // Self-observation: the watcher promotes threshold crossings into the
-    // ledger as runtime facts; per-tick health reads never enter it.
-    let observability = meld_events::LedgerObservability::new(
-        std::sync::Arc::clone(&assembly.stores().event_store),
-        std::sync::Arc::clone(&watermark),
-        meld_events::EventCursorRegistry::open(assembly.stores().event_store.db())
-            .map_err(runtime_error)?,
-        assembly.ports().event_append().dropped_handle(),
-    );
     let mut watcher = crate::runtime::self_observation::SelfObservationWatcher::new(
         options.restart_attempt_limit,
     );
@@ -256,10 +246,8 @@ fn runtime_run(
         &mut tick_count,
         started,
         &mut last_supervisor_time_ms,
-        watermark.as_ref(),
-        &observability,
-        &mut watcher,
         assembly.ports().event_append(),
+        &mut watcher,
     );
     let shutdown_at_ms = shutdown_time_ms(started_at_ms, started).max(last_supervisor_time_ms);
     let shutdown_result = supervisor.request_shutdown(shutdown_at_ms);
@@ -303,12 +291,9 @@ fn run_tick_loop(
     tick_count: &mut u64,
     started: Instant,
     last_supervisor_time_ms: &mut u64,
-    watermark: &meld_events::CommitWatermark,
-    observability: &meld_events::LedgerObservability,
+    event_port: &crate::runtime::ports::ProductEventAppendPort,
     watcher: &mut crate::runtime::self_observation::SelfObservationWatcher,
-    fact_sink: &crate::runtime::ports::ProductEventAppendPort,
 ) -> Result<(), SupervisorRuntimeError> {
-    use meld_events::events::observability::EventObservabilityPort;
     loop {
         if cancelled.load(Ordering::SeqCst) || duration_elapsed(started, duration_ms) {
             break;
@@ -321,7 +306,7 @@ fn run_tick_loop(
 
         // Promote threshold crossings after the tick; a failed health read
         // skips the observation rather than failing the loop.
-        match observability.health() {
+        match event_port.health() {
             Ok(health) => {
                 let restart_counts: Vec<(String, u64)> = match supervisor.status_snapshot(now_ms) {
                     Ok(snapshot) => snapshot
@@ -338,7 +323,7 @@ fn run_tick_loop(
                     &health,
                     &restart_counts,
                     supervisor.instance_id(),
-                    fact_sink,
+                    event_port,
                 );
             }
             Err(error) => {
@@ -359,7 +344,7 @@ fn run_tick_loop(
         if sleep_ms == 0 {
             break;
         }
-        sleep_until_next_tick(cancelled, started, duration_ms, sleep_ms, watermark);
+        sleep_until_next_tick(cancelled, started, duration_ms, sleep_ms, event_port);
     }
     Ok(())
 }
@@ -376,13 +361,20 @@ fn sleep_until_next_tick(
     started: Instant,
     duration_ms: Option<u64>,
     sleep_ms: u64,
-    watermark: &meld_events::CommitWatermark,
+    event_port: &crate::runtime::ports::ProductEventAppendPort,
 ) {
     // The baseline is captured after the tick on purpose: events committed
     // during the tick wait for the fallback interval instead of waking
     // immediately, because ticks emit their own telemetry through the writer
     // and a pre-tick baseline would self-wake into a spin.
-    let baseline_seq = watermark.committed_seq();
+    let Ok(baseline) = event_port.watermark() else {
+        std::thread::sleep(Duration::from_millis(sleep_ms));
+        return;
+    };
+    let cursor = meld_events::LedgerCursor {
+        ledger_id: baseline.ledger_id,
+        after_seq: baseline.committed_seq,
+    };
     let mut remaining_ms = sleep_ms;
     while remaining_ms > 0
         && !cancelled.load(Ordering::SeqCst)
@@ -391,8 +383,10 @@ fn sleep_until_next_tick(
         // Short chunks keep cancellation responsive while the condvar wait
         // keeps idle chunks free of scans and writes.
         let chunk_ms = remaining_ms.min(50);
-        if watermark.wait_past(baseline_seq, Duration::from_millis(chunk_ms)) > baseline_seq {
-            return;
+        if let Ok(current) = event_port.wait_past(cursor, Duration::from_millis(chunk_ms)) {
+            if current.committed_seq > cursor.after_seq {
+                return;
+            }
         }
         remaining_ms -= chunk_ms;
     }
