@@ -1,5 +1,7 @@
 use std::cell::RefCell;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use meld_lang::{
     evaluate, Condition, Effect, EvalResult, Goal, GoalLifecycle, GoalPriority, GoalSource,
@@ -34,6 +36,25 @@ const PREDICATE_ID: &str = "confidence";
 const EVIDENCE_POLICY_ID: &str = "default_policy";
 const THRESHOLD: f64 = 0.7;
 const PRIORITY_URGENCY: u32 = 50;
+
+fn reopen_sled_after_close(path: &Path) -> sled::Result<sled::Db> {
+    const MAX_ATTEMPTS: usize = 50;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        match sled::open(path) {
+            Ok(db) => return Ok(db),
+            Err(error)
+                if error.to_string().contains("could not acquire lock")
+                    && attempt + 1 < MAX_ATTEMPTS =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("the final open attempt returns its error")
+}
 
 fn object(domain_id: &str, object_kind: &str, object_id: &str) -> DomainObjectRef {
     DomainObjectRef::new(domain_id, object_kind, object_id).unwrap()
@@ -784,7 +805,7 @@ fn agent_store_query_ordering_and_reopen() {
             vec![subscription]
         );
     }
-    let reopened = AgentStore::new(sled::open(&path).unwrap()).unwrap();
+    let reopened = AgentStore::new(reopen_sled_after_close(&path).unwrap()).unwrap();
     let query = AgentQuery::new(&reopened);
     assert!(query.agent(AGENT_ID).unwrap().is_some());
     assert_eq!(query.subscriptions(AGENT_ID).unwrap().len(), 1);
@@ -1275,7 +1296,9 @@ fn agent_satisfaction_review_persists_decision_before_returning_mutation() {
     agent_store.flush().unwrap();
     drop(agent_store);
 
-    let reopened = AgentStore::new(sled::open(agent_temp.path().join("agent")).unwrap()).unwrap();
+    let reopened =
+        AgentStore::new(reopen_sled_after_close(&agent_temp.path().join("agent")).unwrap())
+            .unwrap();
     assert_eq!(
         AgentQuery::new(&reopened)
             .decision_by_satisfaction_review(&review)
