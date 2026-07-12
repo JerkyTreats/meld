@@ -302,6 +302,15 @@ impl EventAuthority {
         self.inner.ledger_id
     }
 
+    /// Durably claims this ledger for one product identity or validates its
+    /// existing claim.
+    pub fn bind_product_identity(&self, product_identity: &str) -> Result<(), EventAuthorityError> {
+        self.inner
+            .store
+            .bind_product_identity(product_identity)
+            .map_err(EventAuthorityError::from)
+    }
+
     /// Derives the shared append capability.
     pub fn append_capability(&self) -> EventAppendCapability {
         EventAppendCapability {
@@ -788,6 +797,60 @@ mod tests {
         assert!(matches!(
             error,
             EventAuthorityError::CorruptPersistedIdentity { .. }
+        ));
+    }
+
+    #[test]
+    fn product_identity_claim_is_durable_and_rejects_another_product() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = sled::open(temp.path()).unwrap();
+        let authority = EventAuthority::open(db, EventAuthorityOpenOptions::default()).unwrap();
+        let ledger_id = authority.ledger_identity();
+
+        authority.bind_product_identity("branch-a").unwrap();
+        authority.bind_product_identity("branch-a").unwrap();
+        drop(authority);
+
+        let reopened =
+            EventAuthority::open_existing(sled::open(temp.path()).unwrap(), ledger_id).unwrap();
+        reopened.bind_product_identity("branch-a").unwrap();
+        let error = reopened
+            .bind_product_identity("branch-b")
+            .expect_err("another product must not claim this ledger");
+        assert!(matches!(
+            error,
+            EventAuthorityError::MigrationConflict { .. }
+        ));
+    }
+
+    #[test]
+    fn retrying_a_product_identity_claim_flushes_an_indeterminate_first_claim() {
+        let temp = tempfile::tempdir().unwrap();
+        let authority = EventAuthority::open(
+            sled::open(temp.path()).unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        let ledger_id = authority.ledger_identity();
+        authority.inner.store.fail_next_flush_for_test();
+
+        let error = authority
+            .bind_product_identity("branch-a")
+            .expect_err("the injected first flush must fail");
+        assert!(matches!(error, EventAuthorityError::Persistence { .. }));
+        authority
+            .bind_product_identity("branch-a")
+            .expect("retry must durably flush the existing claim");
+        drop(authority);
+
+        let reopened =
+            EventAuthority::open_existing(sled::open(temp.path()).unwrap(), ledger_id).unwrap();
+        let error = reopened
+            .bind_product_identity("branch-b")
+            .expect_err("the retried claim must survive reopen");
+        assert!(matches!(
+            error,
+            EventAuthorityError::MigrationConflict { .. }
         ));
     }
 }

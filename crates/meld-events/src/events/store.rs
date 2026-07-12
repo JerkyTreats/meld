@@ -44,6 +44,7 @@ const META_KEY_LEGACY_SESSIONS_MIGRATED: &[u8] = b"legacy_sessions_migrated";
 const META_KEY_SESSION_INDEX_SLIMMED: &[u8] = b"session_index_slimmed";
 const META_KEY_RETAINED_FROM: &[u8] = b"retained_from";
 pub(crate) const META_KEY_LEDGER_IDENTITY: &[u8] = b"ledger_identity";
+const META_KEY_PRODUCT_IDENTITY: &[u8] = b"product_identity";
 pub(crate) const META_KEY_AUTHORITY_CUTOVER: &[u8] = b"event_authority_cutover";
 const SESSION_INDEX_EMPTY_VALUE: &[u8] = &[];
 
@@ -543,6 +544,46 @@ impl EventStore {
                     })?;
                 self.flush()?;
                 Ok(current)
+            }
+        }
+    }
+
+    /// Atomically binds this ledger to one product identity.
+    pub(crate) fn bind_product_identity(&self, product_identity: &str) -> Result<(), StorageError> {
+        if product_identity.is_empty() {
+            return Err(StorageError::InvalidPath(
+                "product identity must not be empty".to_string(),
+            ));
+        }
+        let requested = product_identity.as_bytes();
+        match self
+            .spine_meta
+            .compare_and_swap(
+                META_KEY_PRODUCT_IDENTITY,
+                None as Option<&[u8]>,
+                Some(requested),
+            )
+            .map_err(to_storage_io)?
+        {
+            Ok(()) => self.flush(),
+            Err(conflict) => {
+                let current = conflict.current.ok_or_else(|| {
+                    StorageError::IoError(io::Error::other(
+                        "product identity compare-and-swap lost without a winner",
+                    ))
+                })?;
+                let current = std::str::from_utf8(&current).map_err(|error| {
+                    StorageError::MigrationConflict(format!(
+                        "persisted product identity is not UTF-8: {error}"
+                    ))
+                })?;
+                if current == product_identity {
+                    self.flush()
+                } else {
+                    Err(StorageError::MigrationConflict(format!(
+                        "event ledger is bound to product {current}, not {product_identity}"
+                    )))
+                }
             }
         }
     }

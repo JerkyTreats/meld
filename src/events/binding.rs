@@ -142,7 +142,8 @@ fn resolve_existing_binding(
     match binding.state {
         ProductEventBindingState::Active => {
             validate_active_source(&binding, legacy_path.as_deref())?;
-            let authority = open_bound_authority(&target_path, binding.ledger_identity)?;
+            let authority =
+                open_bound_authority(&target_path, binding.ledger_identity, &branch.branch_id)?;
             Ok(ResolvedProductEventAuthority { authority, binding })
         }
         ProductEventBindingState::Preparing => {
@@ -172,7 +173,8 @@ fn resolve_existing_binding(
                     source.ledger_identity()
                 )));
             }
-            let authority = open_bound_authority(&target_path, binding.ledger_identity)?;
+            let authority =
+                open_bound_authority(&target_path, binding.ledger_identity, &branch.branch_id)?;
             let report = source.migrate_all_into(
                 &target_path,
                 authority.as_ref(),
@@ -219,6 +221,7 @@ fn create_binding(
         sled::open(&target_path).map_err(authority_persistence)?,
         EventAuthorityOpenOptions::default(),
     )?);
+    authority.bind_product_identity(&branch.branch_id)?;
     let source_binding = source.as_ref().map(|source| LegacyEventSourceBinding {
         ledger_path: source.canonical_path().to_path_buf(),
         ledger_identity: source.ledger_identity(),
@@ -334,11 +337,14 @@ fn validate_binding(
 fn open_bound_authority(
     target_path: &Path,
     ledger_identity: LedgerIdentity,
+    product_identity: &str,
 ) -> Result<Arc<EventAuthority>, ProductEventBindingError> {
-    Ok(Arc::new(EventAuthority::open_existing(
+    let authority = Arc::new(EventAuthority::open_existing(
         sled::open(target_path).map_err(authority_persistence)?,
         ledger_identity,
-    )?))
+    )?);
+    authority.bind_product_identity(product_identity)?;
+    Ok(authority)
 }
 
 fn read_binding(path: &Path) -> Result<Option<ProductEventBinding>, ProductEventBindingError> {
@@ -486,6 +492,36 @@ mod tests {
             .err()
             .expect("mismatched branch must fail");
         assert!(error.to_string().contains("does not match resolved branch"));
+    }
+
+    #[test]
+    fn separate_branch_bindings_cannot_share_one_target_ledger() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("shared-product/ledger.sled");
+        let first_root = temp.path().join("first");
+        let second_root = temp.path().join("second");
+        let first_branch = branch(&first_root, "branch-a");
+        let second_branch = branch(&second_root, "branch-b");
+        let first_legacy = first_root.join("legacy.sled");
+        let second_legacy = second_root.join("legacy.sled");
+
+        let resolved =
+            resolve_product_event_authority(&first_branch, &target, &first_legacy).unwrap();
+        let ledger_id = resolved.authority.ledger_identity();
+        drop(resolved);
+
+        let error = resolve_product_event_authority(&second_branch, &target, &second_legacy)
+            .err()
+            .expect("another branch must not claim a shared target ledger");
+        assert!(error.to_string().contains("bound to product branch-a"));
+        assert!(
+            !second_branch.data_home_path.join(BINDING_FILE).exists(),
+            "a rejected branch must not persist a local binding"
+        );
+
+        let reopened = resolve_product_event_authority(&first_branch, &target, &first_legacy)
+            .expect("the original product binding must remain valid");
+        assert_eq!(reopened.authority.ledger_identity(), ledger_id);
     }
 
     #[test]
