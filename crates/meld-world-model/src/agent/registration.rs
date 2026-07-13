@@ -63,6 +63,11 @@ impl<'a> AgentRegistration<'a> {
                 "unknown agent '{agent_id}'"
             )));
         };
+        if updated_at_seq < record.created_at_seq || updated_at_seq < record.updated_at_seq {
+            return Err(StorageError::InvalidPath(format!(
+                "agent '{agent_id}' operational sequence would regress"
+            )));
+        }
         if self.store.pending_subscriptions(agent_id)?.is_empty() {
             return Err(StorageError::InvalidPath(format!(
                 "agent '{agent_id}' has no active subscriptions"

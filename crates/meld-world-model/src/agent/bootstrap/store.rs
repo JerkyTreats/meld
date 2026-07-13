@@ -18,18 +18,13 @@ use crate::activation::{
     LEGACY_DIRECTIVE_MIGRATION_SCHEMA_VERSION,
 };
 use crate::agent::contracts::deterministic_id;
-use crate::agent::{
-    AgentActivationRecord, AgentActivationStatus, AgentRecord, AgentStatus,
-    AgentSubscriptionRecord, AgentSubscriptionStatus,
-};
+use crate::agent::{AgentRecord, AgentStatus, AgentSubscriptionRecord, AgentSubscriptionStatus};
 
 const TREE_AGENT_RECORDS: &str = "agent_records";
 const TREE_AGENT_BY_STATUS: &str = "agent_by_status";
 const TREE_SUBSCRIPTIONS: &str = "agent_subscriptions";
 const TREE_SUBSCRIPTIONS_BY_AGENT: &str = "agent_subscriptions_by_agent";
 const TREE_SUBSCRIPTIONS_BY_KEY: &str = "agent_subscriptions_by_key";
-const TREE_ACTIVATIONS: &str = "agent_activations";
-const TREE_ACTIVATIONS_BY_AGENT: &str = "agent_activations_by_agent";
 const TREE_DIRECTIVES: &str = "agent_directives";
 const TREE_CURATION_RULES: &str = "agent_curation_rules";
 const TREE_BOOTSTRAP_PROGRESS: &str = "agent_bootstrap_progress";
@@ -46,8 +41,6 @@ pub(super) struct BootstrapStore {
     subscriptions: Tree,
     subscriptions_by_agent: Tree,
     subscriptions_by_key: Tree,
-    activations: Tree,
-    activations_by_agent: Tree,
     directives: Tree,
     curation_rules: Tree,
     progress: Tree,
@@ -64,8 +57,6 @@ impl BootstrapStore {
             subscriptions: open(&db, TREE_SUBSCRIPTIONS)?,
             subscriptions_by_agent: open(&db, TREE_SUBSCRIPTIONS_BY_AGENT)?,
             subscriptions_by_key: open(&db, TREE_SUBSCRIPTIONS_BY_KEY)?,
-            activations: open(&db, TREE_ACTIVATIONS)?,
-            activations_by_agent: open(&db, TREE_ACTIVATIONS_BY_AGENT)?,
             directives: open(&db, TREE_DIRECTIVES)?,
             curation_rules: open(&db, TREE_CURATION_RULES)?,
             progress: open(&db, TREE_BOOTSTRAP_PROGRESS)?,
@@ -87,6 +78,18 @@ impl BootstrapStore {
         )
     }
 
+    pub(super) fn validated_progress(
+        &self,
+        identity: &WorldModelActivationIdentity,
+    ) -> Result<Option<AgentBootstrapProgress>, AgentBootstrapError> {
+        let Some(progress) = self.progress(&identity.bootstrap_id)? else {
+            return Ok(None);
+        };
+        require_progress_identity_read(&progress, identity)?;
+        require_progress_shape(&progress)?;
+        Ok(Some(progress))
+    }
+
     pub(super) fn receipt(
         &self,
         bootstrap_id: &str,
@@ -98,27 +101,132 @@ impl BootstrapStore {
         )
     }
 
+    pub(super) fn confirm_products(
+        &self,
+        input: &WorldModelActivationInput,
+        identity: &WorldModelActivationIdentity,
+        observed_progress: &AgentBootstrapProgress,
+        belief: Option<&BeliefActivationReceipt>,
+    ) -> Result<Option<AgentBootstrapReceipt>, AgentBootstrapError> {
+        require_progress_identity_read(observed_progress, identity)?;
+        let progress =
+            self.validated_progress(identity)?
+                .ok_or_else(|| AgentBootstrapError::Storage {
+                    message: "bootstrap progress disappeared during confirmation".to_string(),
+                })?;
+        require_progress_shape(&progress)?;
+        if !stage_at_least(progress.stage, observed_progress.stage) {
+            return Err(AgentBootstrapError::Storage {
+                message: "bootstrap progress regressed during confirmation".to_string(),
+            });
+        }
+
+        if stage_at_least(progress.stage, AgentBootstrapStage::AgentRegistered) {
+            let directive: DirectiveRecord =
+                required_record(&self.directives, &input.directive.directive_id, "directive")?;
+            require_exact_read("directive.text", &input.directive, &directive)?;
+            let agent: AgentRecord =
+                required_record(&self.agents, &input.seed_agent.agent_id, "agent")?;
+            require_canonical_agent_matches_read(&agent, input)?;
+            agent
+                .validate()
+                .map_err(|error| AgentBootstrapError::Storage {
+                    message: error.to_string(),
+                })?;
+        }
+        if stage_at_least(progress.stage, AgentBootstrapStage::RuleRegistered) {
+            let rule: AgentCurationRuleRecord = required_record(
+                &self.curation_rules,
+                &input.curation_rule.rule_id,
+                "curation rule",
+            )?;
+            require_exact_read("curation_rule", &input.curation_rule, &rule)?;
+        }
+        if stage_at_least(progress.stage, AgentBootstrapStage::SubscriptionBound) {
+            let subscription_id = deterministic_subscription_id(input);
+            let subscription: AgentSubscriptionRecord =
+                required_record(&self.subscriptions, &subscription_id, "agent subscription")?;
+            require_subscription_matches_read(&subscription, input, &subscription_id)?;
+            subscription
+                .validate()
+                .map_err(|error| AgentBootstrapError::Storage {
+                    message: error.to_string(),
+                })?;
+            let natural_key =
+                AgentSubscriptionRecord::natural_key(&input.seed_agent.agent_id, &input.belief_key);
+            let indexed = self
+                .subscriptions_by_key
+                .get(natural_key.as_bytes())
+                .map_err(storage)?
+                .ok_or_else(|| AgentBootstrapError::Storage {
+                    message: "subscription natural-key index is missing".to_string(),
+                })?;
+            if indexed.as_ref() != subscription_id.as_bytes() {
+                return Err(conflict_bytes(
+                    "agent_subscription.natural_key",
+                    subscription_id.as_bytes(),
+                    indexed.as_ref(),
+                ));
+            }
+        }
+        if stage_at_least(progress.stage, AgentBootstrapStage::Completed) {
+            let belief = belief.ok_or_else(|| AgentBootstrapError::Storage {
+                message: "completed bootstrap confirmation requires belief receipt".to_string(),
+            })?;
+            let receipt: AgentBootstrapReceipt =
+                required_record(&self.receipts, &identity.bootstrap_id, "bootstrap receipt")?;
+            require_receipt_identity_read(&receipt, input, identity, belief)?;
+            Ok(Some(receipt))
+        } else if let Some(receipt) = self.receipt(&identity.bootstrap_id)? {
+            let current =
+                self.validated_progress(identity)?
+                    .ok_or_else(|| AgentBootstrapError::Storage {
+                        message: "bootstrap progress disappeared while confirming receipt"
+                            .to_string(),
+                    })?;
+            if current.stage != AgentBootstrapStage::Completed {
+                return Err(AgentBootstrapError::Storage {
+                    message: "bootstrap receipt exists before completed progress".to_string(),
+                });
+            }
+            if let Some(belief) = belief {
+                require_receipt_identity_read(&receipt, input, identity, belief)?;
+                Ok(Some(receipt))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
     pub(super) fn start(
         &self,
         input: &WorldModelActivationInput,
         identity: &WorldModelActivationIdentity,
     ) -> Result<AgentBootstrapProgress, AgentBootstrapError> {
-        let activation_id = agent_activation_id(&identity.bootstrap_id);
         let bootstrap_id = identity.bootstrap_id.as_bytes();
+        let subscription_id = deterministic_subscription_id(input);
 
         (
             &self.sequence,
             &self.progress,
-            &self.activations,
-            &self.activations_by_agent,
+            &self.agents,
+            &self.subscriptions,
         )
-            .transaction(|(sequence, progress, activations, activation_index)| {
+            .transaction(|(sequence, progress, agents, subscriptions)| {
                 if let Some(raw) = progress.get(bootstrap_id)? {
                     let durable: AgentBootstrapProgress = decode_tx(&raw)?;
                     require_progress_identity(&durable, identity)?;
                     return Ok(durable);
                 }
-                let seq = allocate_sequence(sequence)?;
+                let floor = existing_sequence_floor_tx(
+                    agents,
+                    subscriptions,
+                    &input.seed_agent.agent_id,
+                    &subscription_id,
+                )?;
+                let seq = allocate_sequence_after(sequence, floor)?;
                 let durable = AgentBootstrapProgress {
                     bootstrap_id: identity.bootstrap_id.clone(),
                     activation_id: identity.activation_id.clone(),
@@ -128,27 +236,7 @@ impl BootstrapStore {
                     status: AgentBootstrapProgressStatus::Started,
                     updated_at_seq: seq,
                 };
-                let activation = AgentActivationRecord {
-                    activation_id: activation_id.clone(),
-                    agent_id: input.seed_agent.agent_id.clone(),
-                    started_at_seq: seq,
-                    status: AgentActivationStatus::Started,
-                    last_error: None,
-                    lease_id: None,
-                };
-                if let Some(raw) = activations.get(activation_id.as_bytes())? {
-                    let existing: AgentActivationRecord = decode_tx(&raw)?;
-                    if existing != activation {
-                        return Err(abort_conflict("agent_activation", &activation, &existing));
-                    }
-                }
                 progress.insert(bootstrap_id, encode_tx(&durable)?.as_slice())?;
-                activations.insert(activation_id.as_bytes(), encode_tx(&activation)?.as_slice())?;
-                activation_index.insert(
-                    activation_agent_key(&input.seed_agent.agent_id, seq, &activation_id)
-                        .as_bytes(),
-                    activation_id.as_bytes(),
-                )?;
                 Ok(durable)
             })
             .map_err(map_transaction)
@@ -298,79 +386,73 @@ impl BootstrapStore {
             .map_err(map_transaction)
     }
 
-    pub(super) fn activate_agent(
+    pub(super) fn confirm_seed_products(
         &self,
         input: &WorldModelActivationInput,
         identity: &WorldModelActivationIdentity,
     ) -> Result<AgentBootstrapProgress, AgentBootstrapError> {
         let bootstrap_id = identity.bootstrap_id.as_bytes();
-        let activation_id = agent_activation_id(&identity.bootstrap_id);
         let subscription_id = deterministic_subscription_id(input);
+        let natural_key =
+            AgentSubscriptionRecord::natural_key(&input.seed_agent.agent_id, &input.belief_key);
         (
             &self.sequence,
             &self.progress,
+            &self.directives,
             &self.agents,
-            &self.agent_by_status,
-            &self.activations,
-            &self.activations_by_agent,
+            &self.curation_rules,
             &self.subscriptions,
+            &self.subscriptions_by_key,
         )
             .transaction(
                 |(
                     sequence,
                     progress,
+                    directives,
                     agents,
-                    status_index,
-                    activations,
-                    activation_index,
+                    rules,
                     subscriptions,
+                    subscriptions_by_key,
                 )| {
                     let current = load_progress_tx(progress, bootstrap_id, identity)?;
-                    if stage_at_least(current.stage, AgentBootstrapStage::Activated) {
+                    let raw = directives
+                        .get(input.directive.directive_id.as_bytes())?
+                        .ok_or_else(|| abort_storage("configured directive is missing"))?;
+                    let directive: DirectiveRecord = decode_tx(&raw)?;
+                    require_field("directive.text", &input.directive, &directive)?;
+                    let raw = agents
+                        .get(input.seed_agent.agent_id.as_bytes())?
+                        .ok_or_else(|| abort_storage("configured agent is missing"))?;
+                    let agent: AgentRecord = decode_tx(&raw)?;
+                    require_canonical_agent_matches(&agent, input)?;
+                    require_agent_sequence_shape_tx(&agent)?;
+                    let raw = rules
+                        .get(input.curation_rule.rule_id.as_bytes())?
+                        .ok_or_else(|| abort_storage("configured curation rule is missing"))?;
+                    let rule: AgentCurationRuleRecord = decode_tx(&raw)?;
+                    require_field("curation_rule", &input.curation_rule, &rule)?;
+                    let raw = subscriptions
+                        .get(subscription_id.as_bytes())?
+                        .ok_or_else(|| abort_storage("configured subscription is missing"))?;
+                    let subscription: AgentSubscriptionRecord = decode_tx(&raw)?;
+                    require_subscription_matches(&subscription, input, &subscription_id)?;
+                    let indexed = subscriptions_by_key
+                        .get(natural_key.as_bytes())?
+                        .ok_or_else(|| {
+                            abort_storage("subscription natural-key index is missing")
+                        })?;
+                    if indexed.as_ref() != subscription_id.as_bytes() {
+                        return Err(abort_conflict_bytes(
+                            "agent_subscription.natural_key",
+                            subscription_id.as_bytes(),
+                            indexed.as_ref(),
+                        ));
+                    }
+                    if stage_at_least(current.stage, AgentBootstrapStage::ProductsConfirmed) {
                         return Ok(current);
                     }
                     let seq = allocate_sequence(sequence)?;
-                    let raw = subscriptions
-                        .get(subscription_id.as_bytes())?
-                        .ok_or_else(|| {
-                            abort_storage("agent activation requires an active subscription")
-                        })?;
-                    let subscription: AgentSubscriptionRecord = decode_tx(&raw)?;
-                    require_subscription_matches(&subscription, input, &subscription_id)?;
-                    let raw = agents
-                        .get(input.seed_agent.agent_id.as_bytes())?
-                        .ok_or_else(|| {
-                            abort_storage("agent activation requires an agent record")
-                        })?;
-                    let mut agent: AgentRecord = decode_tx(&raw)?;
-                    agent.status = AgentStatus::Operational;
-                    agent.updated_at_seq = seq;
-                    agents.insert(agent.agent_id.as_bytes(), encode_tx(&agent)?.as_slice())?;
-                    status_index.insert(
-                        agent_status_key(agent.status.index_key(), seq, &agent.agent_id).as_bytes(),
-                        agent.agent_id.as_bytes(),
-                    )?;
-
-                    let raw = activations
-                        .get(activation_id.as_bytes())?
-                        .ok_or_else(|| abort_storage("activation start record is missing"))?;
-                    let mut activation: AgentActivationRecord = decode_tx(&raw)?;
-                    activation.status = AgentActivationStatus::Activated;
-                    activation.last_error = None;
-                    activation.lease_id = None;
-                    activations
-                        .insert(activation_id.as_bytes(), encode_tx(&activation)?.as_slice())?;
-                    activation_index.insert(
-                        activation_agent_key(
-                            &activation.agent_id,
-                            activation.started_at_seq,
-                            &activation.activation_id,
-                        )
-                        .as_bytes(),
-                        activation.activation_id.as_bytes(),
-                    )?;
-                    let mut next = next_progress(&current, AgentBootstrapStage::Activated, seq);
-                    next.status = AgentBootstrapProgressStatus::Activated;
+                    let next = next_progress(&current, AgentBootstrapStage::ProductsConfirmed, seq);
                     progress.insert(bootstrap_id, encode_tx(&next)?.as_slice())?;
                     Ok(next)
                 },
@@ -394,9 +476,9 @@ impl BootstrapStore {
                     require_receipt_identity(&receipt, input, identity, &belief, &subscription_id)?;
                     return Ok((current, receipt));
                 }
-                if !stage_at_least(current.stage, AgentBootstrapStage::Activated) {
+                if !stage_at_least(current.stage, AgentBootstrapStage::ProductsConfirmed) {
                     return Err(abort_storage(
-                        "bootstrap receipt requires activated progress",
+                        "bootstrap receipt requires confirmed seed products",
                     ));
                 }
                 let seq = allocate_sequence(sequence)?;
@@ -411,7 +493,6 @@ impl BootstrapStore {
                     agent_id: input.seed_agent.agent_id.clone(),
                     rule_id: input.curation_rule.rule_id.clone(),
                     subscription_id: subscription_id.clone(),
-                    agent_activation_id: agent_activation_id(&identity.bootstrap_id),
                     completed_at_seq: seq,
                 };
                 let next = next_progress(&current, AgentBootstrapStage::Completed, seq);
@@ -475,6 +556,7 @@ fn confirm_or_migrate_agent_tx(
     };
     if let Ok(agent) = serde_json::from_slice::<AgentRecord>(&raw) {
         require_canonical_agent_matches(&agent, input)?;
+        require_agent_sequence_shape_tx(&agent)?;
         return Ok(agent);
     }
 
@@ -564,6 +646,18 @@ fn require_canonical_agent_matches(
     )
 }
 
+fn require_agent_sequence_shape_tx(
+    agent: &AgentRecord,
+) -> Result<(), ConflictableTransactionError<BootstrapAbort>> {
+    if agent.updated_at_seq < agent.created_at_seq {
+        Err(abort_storage(
+            "agent updated sequence precedes creation sequence",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn require_subscription_matches(
     subscription: &AgentSubscriptionRecord,
     input: &WorldModelActivationInput,
@@ -584,10 +678,70 @@ fn require_subscription_matches(
         &input.belief_key,
         &subscription.belief_key,
     )?;
-    require_field(
-        "agent_subscription.status",
-        &AgentSubscriptionStatus::Active,
-        &subscription.status,
+    if subscription.updated_at_seq < subscription.created_at_seq {
+        return Err(abort_storage(
+            "subscription updated sequence precedes creation sequence",
+        ));
+    }
+    Ok(())
+}
+
+fn require_canonical_agent_matches_read(
+    agent: &AgentRecord,
+    input: &WorldModelActivationInput,
+) -> Result<(), AgentBootstrapError> {
+    require_exact_read(
+        "agent.agent_id",
+        input.seed_agent.agent_id.as_str(),
+        agent.agent_id.as_str(),
+    )?;
+    require_exact_read(
+        "agent.perspective_key",
+        &input.seed_agent.perspective_key,
+        &agent.perspective_key,
+    )?;
+    require_exact_read("agent.subject", &input.seed_agent.subject, &agent.subject)?;
+    require_exact_read(
+        "agent.branch_scope",
+        &input.seed_agent.branch_scope,
+        &agent.branch_scope,
+    )?;
+    require_exact_read(
+        "agent.observation_scope",
+        input.seed_agent.observation_scope.as_str(),
+        agent.observation_scope.as_str(),
+    )?;
+    require_exact_read(
+        "agent.directive_id",
+        input.seed_agent.directive_id.as_str(),
+        agent.directive_id.as_str(),
+    )?;
+    require_exact_read(
+        "agent.seed_provenance",
+        input.seed_agent.seed_provenance.as_str(),
+        agent.seed_provenance.as_str(),
+    )
+}
+
+fn require_subscription_matches_read(
+    subscription: &AgentSubscriptionRecord,
+    input: &WorldModelActivationInput,
+    subscription_id: &str,
+) -> Result<(), AgentBootstrapError> {
+    require_exact_read(
+        "agent_subscription.subscription_id",
+        subscription_id,
+        subscription.subscription_id.as_str(),
+    )?;
+    require_exact_read(
+        "agent_subscription.agent_id",
+        input.seed_agent.agent_id.as_str(),
+        subscription.agent_id.as_str(),
+    )?;
+    require_exact_read(
+        "agent_subscription.belief_key",
+        &input.belief_key,
+        &subscription.belief_key,
     )
 }
 
@@ -693,6 +847,11 @@ fn require_progress_identity(
     identity: &WorldModelActivationIdentity,
 ) -> Result<(), ConflictableTransactionError<BootstrapAbort>> {
     require_field(
+        "bootstrap.bootstrap_id",
+        &identity.bootstrap_id,
+        &progress.bootstrap_id,
+    )?;
+    require_field(
         "bootstrap.activation_id",
         &identity.activation_id,
         &progress.activation_id,
@@ -707,6 +866,51 @@ fn require_progress_identity(
         &identity.input_hash,
         &progress.input_hash,
     )
+}
+
+fn require_progress_identity_read(
+    progress: &AgentBootstrapProgress,
+    identity: &WorldModelActivationIdentity,
+) -> Result<(), AgentBootstrapError> {
+    require_exact_read(
+        "bootstrap.bootstrap_id",
+        identity.bootstrap_id.as_str(),
+        progress.bootstrap_id.as_str(),
+    )?;
+    require_exact_read(
+        "bootstrap.activation_id",
+        identity.activation_id.as_str(),
+        progress.activation_id.as_str(),
+    )?;
+    require_exact_read(
+        "bootstrap.activation_hash",
+        identity.activation_hash.as_str(),
+        progress.activation_hash.as_str(),
+    )?;
+    require_exact_read(
+        "bootstrap.input_hash",
+        identity.input_hash.as_str(),
+        progress.input_hash.as_str(),
+    )
+}
+
+fn require_progress_shape(progress: &AgentBootstrapProgress) -> Result<(), AgentBootstrapError> {
+    let expected_status = if progress.stage == AgentBootstrapStage::Completed {
+        AgentBootstrapProgressStatus::Completed
+    } else {
+        AgentBootstrapProgressStatus::Started
+    };
+    require_exact_read(
+        "bootstrap.progress_status",
+        &expected_status,
+        &progress.status,
+    )?;
+    if progress.updated_at_seq == 0 {
+        return Err(AgentBootstrapError::Storage {
+            message: "bootstrap progress sequence must be positive".to_string(),
+        });
+    }
+    Ok(())
 }
 
 fn require_receipt_identity(
@@ -727,7 +931,6 @@ fn require_receipt_identity(
         agent_id: input.seed_agent.agent_id.clone(),
         rule_id: input.curation_rule.rule_id.clone(),
         subscription_id: subscription_id.to_string(),
-        agent_activation_id: agent_activation_id(&identity.bootstrap_id),
         completed_at_seq: receipt.completed_at_seq,
     };
     if *receipt == expected {
@@ -735,6 +938,28 @@ fn require_receipt_identity(
     } else {
         Err(abort_conflict("bootstrap_receipt", &expected, receipt))
     }
+}
+
+fn require_receipt_identity_read(
+    receipt: &AgentBootstrapReceipt,
+    input: &WorldModelActivationInput,
+    identity: &WorldModelActivationIdentity,
+    belief: &BeliefActivationReceipt,
+) -> Result<(), AgentBootstrapError> {
+    let expected = AgentBootstrapReceipt {
+        receipt_id: deterministic_id("agent-bootstrap-receipt", &identity.bootstrap_id),
+        bootstrap_id: identity.bootstrap_id.clone(),
+        activation_hash: identity.activation_hash.clone(),
+        activation_id: identity.activation_id.clone(),
+        input_hash: identity.input_hash.clone(),
+        belief: belief.clone(),
+        directive_id: input.directive.directive_id.clone(),
+        agent_id: input.seed_agent.agent_id.clone(),
+        rule_id: input.curation_rule.rule_id.clone(),
+        subscription_id: deterministic_subscription_id(input),
+        completed_at_seq: receipt.completed_at_seq,
+    };
+    require_exact_read("bootstrap_receipt", &expected, receipt)
 }
 
 fn migration_identity(
@@ -770,8 +995,8 @@ fn next_progress(
 ) -> AgentBootstrapProgress {
     AgentBootstrapProgress {
         stage,
-        status: if stage_at_least(stage, AgentBootstrapStage::Activated) {
-            AgentBootstrapProgressStatus::Activated
+        status: if stage_at_least(stage, AgentBootstrapStage::Completed) {
+            AgentBootstrapProgressStatus::Completed
         } else {
             AgentBootstrapProgressStatus::Started
         },
@@ -791,13 +1016,55 @@ fn stage_rank(stage: AgentBootstrapStage) -> u8 {
         AgentBootstrapStage::AgentRegistered => 2,
         AgentBootstrapStage::RuleRegistered => 3,
         AgentBootstrapStage::SubscriptionBound => 4,
-        AgentBootstrapStage::Activated => 5,
+        AgentBootstrapStage::ProductsConfirmed => 5,
         AgentBootstrapStage::Completed => 6,
     }
 }
 
+fn existing_sequence_floor_tx(
+    agents: &TransactionalTree,
+    subscriptions: &TransactionalTree,
+    agent_id: &str,
+    subscription_id: &str,
+) -> Result<u64, ConflictableTransactionError<BootstrapAbort>> {
+    let mut floor = 0;
+    if let Some(raw) = agents.get(agent_id.as_bytes())? {
+        if let Ok(agent) = serde_json::from_slice::<AgentRecord>(&raw) {
+            if agent.updated_at_seq < agent.created_at_seq {
+                return Err(abort_storage(
+                    "agent updated sequence precedes creation sequence",
+                ));
+            }
+            floor = floor.max(agent.updated_at_seq);
+        } else {
+            let legacy = decode_legacy_agent_record(&raw).map_err(abort_storage)?;
+            floor = floor.max(legacy.sequence_floor().map_err(abort_storage)?);
+        }
+    }
+    if let Some(raw) = subscriptions.get(subscription_id.as_bytes())? {
+        let subscription: AgentSubscriptionRecord = decode_tx(&raw)?;
+        if subscription.updated_at_seq < subscription.created_at_seq {
+            return Err(abort_storage(
+                "subscription updated sequence precedes creation sequence",
+            ));
+        }
+        floor = floor
+            .max(subscription.created_at_seq)
+            .max(subscription.updated_at_seq)
+            .max(subscription.last_delivered_seq);
+    }
+    Ok(floor)
+}
+
 fn allocate_sequence(
     tree: &TransactionalTree,
+) -> Result<u64, ConflictableTransactionError<BootstrapAbort>> {
+    allocate_sequence_after(tree, 0)
+}
+
+fn allocate_sequence_after(
+    tree: &TransactionalTree,
+    floor: u64,
 ) -> Result<u64, ConflictableTransactionError<BootstrapAbort>> {
     let current = match tree.get(KEY_NEXT_SEQUENCE)? {
         Some(raw) => u64::from_be_bytes(
@@ -808,6 +1075,7 @@ fn allocate_sequence(
         None => 0,
     };
     let next = current
+        .max(floor)
         .checked_add(1)
         .ok_or_else(|| abort_storage("bootstrap sequence exhausted"))?;
     tree.insert(KEY_NEXT_SEQUENCE, &next.to_be_bytes())?;
@@ -909,15 +1177,64 @@ fn decode_optional<T: serde::de::DeserializeOwned>(
     .transpose()
 }
 
+fn required_record<T: serde::de::DeserializeOwned>(
+    tree: &Tree,
+    key: &str,
+    record_name: &str,
+) -> Result<T, AgentBootstrapError> {
+    let raw =
+        tree.get(key.as_bytes())
+            .map_err(storage)?
+            .ok_or_else(|| AgentBootstrapError::Storage {
+                message: format!("{record_name} record is missing"),
+            })?;
+    serde_json::from_slice(&raw).map_err(|error| AgentBootstrapError::Storage {
+        message: format!("cannot decode {record_name} record: {error}"),
+    })
+}
+
+fn require_exact_read<T: Serialize + PartialEq + ?Sized>(
+    field: &str,
+    configured: &T,
+    durable: &T,
+) -> Result<(), AgentBootstrapError> {
+    if configured == durable {
+        Ok(())
+    } else {
+        Err(conflict(field, configured, durable))
+    }
+}
+
+fn conflict<T: Serialize + ?Sized>(
+    field: &str,
+    configured: &T,
+    durable: &T,
+) -> AgentBootstrapError {
+    AgentBootstrapError::Conflict {
+        field: field.to_string(),
+        configured_value_hash: semantic_hash_read(configured),
+        durable_value_hash: semantic_hash_read(durable),
+    }
+}
+
+fn conflict_bytes(field: &str, configured: &[u8], durable: &[u8]) -> AgentBootstrapError {
+    AgentBootstrapError::Conflict {
+        field: field.to_string(),
+        configured_value_hash: blake3::hash(configured).to_hex().to_string(),
+        durable_value_hash: blake3::hash(durable).to_hex().to_string(),
+    }
+}
+
+fn semantic_hash_read<T: Serialize + ?Sized>(value: &T) -> String {
+    let bytes = serde_json::to_vec(value).unwrap_or_else(|error| error.to_string().into_bytes());
+    blake3::hash(&bytes).to_hex().to_string()
+}
+
 pub(super) fn deterministic_subscription_id(input: &WorldModelActivationInput) -> String {
     deterministic_id(
         "subscription",
         &AgentSubscriptionRecord::natural_key(&input.seed_agent.agent_id, &input.belief_key),
     )
-}
-
-fn agent_activation_id(bootstrap_id: &str) -> String {
-    deterministic_id("agent-activation", bootstrap_id)
 }
 
 fn agent_status_key(status: &str, seq: u64, agent_id: &str) -> String {
@@ -926,10 +1243,6 @@ fn agent_status_key(status: &str, seq: u64, agent_id: &str) -> String {
 
 fn subscription_agent_key(agent_id: &str, seq: u64, subscription_id: &str) -> String {
     format!("{agent_id}::{seq:0KEY_PAD$}::{subscription_id}")
-}
-
-fn activation_agent_key(agent_id: &str, seq: u64, activation_id: &str) -> String {
-    format!("{agent_id}::{seq:0KEY_PAD$}::{activation_id}")
 }
 
 fn open(db: &Db, name: &str) -> Result<Tree, AgentBootstrapError> {

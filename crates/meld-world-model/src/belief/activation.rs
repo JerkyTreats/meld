@@ -162,24 +162,75 @@ impl BeliefActivation {
         Ok(receipt)
     }
 
-    /// Read one activation receipt by logical activation and family identity.
-    pub(crate) fn receipt(
+    /// Reconfirm every immutable belief activation product without writing.
+    pub(crate) fn confirm(
         &self,
-        activation_id: &str,
-        family_id: &str,
-    ) -> Result<Option<BeliefActivationReceipt>, BeliefActivationError> {
-        let Some(raw) = self
-            .activation_receipts
-            .get(receipt_key(activation_id, family_id).as_bytes())
-            .map_err(storage_error)?
-        else {
-            return Ok(None);
+        input: &WorldModelActivationInput,
+        identity: &WorldModelActivationIdentity,
+    ) -> Result<BeliefActivationReceipt, BeliefActivationError> {
+        let snapshot =
+            BeliefConfigLoader::snapshot(input.belief_family.clone()).map_err(|error| {
+                BeliefActivationError::Storage {
+                    message: error.to_string(),
+                }
+            })?;
+        if snapshot.hash != identity.belief_config_hash {
+            return Err(conflict(
+                "belief_config_hash",
+                identity.belief_config_hash.as_bytes(),
+                snapshot.hash.as_bytes(),
+            ));
+        }
+        let expected_binding = BeliefFamilyBinding {
+            family_id: snapshot.config.family_id.clone(),
+            config_snapshot_hash: snapshot.hash.clone(),
         };
-        serde_json::from_slice(&raw)
-            .map(Some)
-            .map_err(|error| BeliefActivationError::Storage {
-                message: error.to_string(),
-            })
+        let durable_binding: BeliefFamilyBinding = required_record(
+            &self.config_by_family,
+            &snapshot.config.family_id,
+            "belief family binding",
+        )?;
+        if durable_binding != expected_binding {
+            return Err(conflict_serialized(
+                "belief_family.config_snapshot_hash",
+                &expected_binding,
+                &durable_binding,
+            ));
+        }
+        let expected_snapshot = serde_json::to_vec(&snapshot.config).map_err(encode_error)?;
+        let durable_snapshot = self
+            .config_snapshots
+            .get(snapshot.hash.as_bytes())
+            .map_err(storage_error)?
+            .ok_or_else(|| BeliefActivationError::Storage {
+                message: "belief config snapshot is missing".to_string(),
+            })?;
+        if durable_snapshot.as_ref() != expected_snapshot.as_slice() {
+            return Err(conflict(
+                "belief_config_snapshot.content",
+                &expected_snapshot,
+                durable_snapshot.as_ref(),
+            ));
+        }
+        let expected_receipt = BeliefActivationReceipt {
+            family_id: snapshot.config.family_id.clone(),
+            config_snapshot_hash: snapshot.hash,
+            activation_hash: identity.activation_hash.clone(),
+            activation_id: identity.activation_id.clone(),
+        };
+        let durable_receipt: BeliefActivationReceipt = required_record(
+            &self.activation_receipts,
+            &receipt_key(&identity.activation_id, &snapshot.config.family_id),
+            "belief activation receipt",
+        )?;
+        if durable_receipt != expected_receipt {
+            return Err(conflict_serialized(
+                "belief_activation_receipt",
+                &expected_receipt,
+                &durable_receipt,
+            ));
+        }
+        Ok(durable_receipt)
     }
 
     /// Flush all belief activation writes.
@@ -243,6 +294,42 @@ fn map_transaction_error(error: TransactionError<ActivationAbort>) -> BeliefActi
 
 fn hash(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
+}
+
+fn required_record<T: serde::de::DeserializeOwned>(
+    tree: &Tree,
+    key: &str,
+    record_name: &str,
+) -> Result<T, BeliefActivationError> {
+    let raw = tree
+        .get(key.as_bytes())
+        .map_err(storage_error)?
+        .ok_or_else(|| BeliefActivationError::Storage {
+            message: format!("{record_name} is missing"),
+        })?;
+    serde_json::from_slice(&raw).map_err(|error| BeliefActivationError::Storage {
+        message: format!("cannot decode {record_name}: {error}"),
+    })
+}
+
+fn conflict(field: &str, configured: &[u8], durable: &[u8]) -> BeliefActivationError {
+    BeliefActivationError::Conflict {
+        field: field.to_string(),
+        configured_value_hash: hash(configured),
+        durable_value_hash: hash(durable),
+    }
+}
+
+fn conflict_serialized<T: Serialize>(
+    field: &str,
+    configured: &T,
+    durable: &T,
+) -> BeliefActivationError {
+    let configured =
+        serde_json::to_vec(configured).unwrap_or_else(|error| error.to_string().into_bytes());
+    let durable =
+        serde_json::to_vec(durable).unwrap_or_else(|error| error.to_string().into_bytes());
+    conflict(field, &configured, &durable)
 }
 
 fn encode_error(error: serde_json::Error) -> BeliefActivationError {

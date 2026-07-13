@@ -450,7 +450,15 @@ fn agent_contract_validation_rejects_invalid_public_shapes() {
     let (mut agent, mut subscription) = setup_agent(&store);
     agent.directive_id.clear();
     assert!(agent.validate().is_err());
+    agent.directive_id = "directive.docs_freshness".to_string();
+    agent.created_at_seq = 10;
+    agent.updated_at_seq = 9;
+    assert!(agent.validate().is_err());
     subscription.subscription_id.clear();
+    assert!(subscription.validate().is_err());
+    subscription.subscription_id = "subscription-a".to_string();
+    subscription.created_at_seq = 10;
+    subscription.updated_at_seq = 9;
     assert!(subscription.validate().is_err());
 
     let mut activation = AgentActivationRecord {
@@ -786,6 +794,31 @@ fn agent_seed_registration_rejects_divergent_replay() {
     assert_eq!(
         store.get_agent(AGENT_ID).unwrap().unwrap().directive_id,
         "directive.docs_freshness"
+    );
+}
+
+#[test]
+fn agent_operational_transition_rejects_sequence_regression() {
+    let (_temp_dir, store) = agent_store();
+    let registration = AgentRegistration::new(&store);
+    let mut request = seed_agent_registration();
+    request.created_at_seq = 5;
+    registration.register_seed_agent(request).unwrap();
+    AgentSubscription::new(&store)
+        .subscribe(SubscribeAgentCommand {
+            agent_id: AGENT_ID.to_string(),
+            belief_key: belief_key(),
+            created_at_seq: 6,
+        })
+        .unwrap();
+
+    assert!(registration.mark_operational(AGENT_ID, 4).is_err());
+    let operational = registration.mark_operational(AGENT_ID, 7).unwrap();
+    assert_eq!(operational.updated_at_seq, 7);
+    assert!(registration.mark_operational(AGENT_ID, 6).is_err());
+    assert_eq!(
+        store.get_agent(AGENT_ID).unwrap().unwrap().updated_at_seq,
+        7
     );
 }
 

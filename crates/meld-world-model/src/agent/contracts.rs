@@ -133,6 +133,11 @@ impl AgentRecord {
         require_non_empty("observation scope", &self.observation_scope)?;
         require_non_empty("directive id", &self.directive_id)?;
         require_non_empty("seed provenance", &self.seed_provenance)?;
+        if self.updated_at_seq < self.created_at_seq {
+            return Err(StorageError::InvalidPath(
+                "agent updated sequence cannot precede creation sequence".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -164,6 +169,11 @@ impl AgentSubscriptionRecord {
         require_non_empty("subscription id", &self.subscription_id)?;
         require_non_empty("agent id", &self.agent_id)?;
         self.belief_key.validate()?;
+        if self.updated_at_seq < self.created_at_seq {
+            return Err(StorageError::InvalidPath(
+                "subscription updated sequence cannot precede creation sequence".to_string(),
+            ));
+        }
         Ok(())
     }
 

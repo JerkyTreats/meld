@@ -63,28 +63,41 @@ impl AgentBootstrapRuntime {
                 message: error.message,
             }
         })?;
-        let existing_progress = self.store.progress(&identity.bootstrap_id)?;
+        let existing_progress = self.store.validated_progress(&identity)?;
         let resumed_from = existing_progress.as_ref().map(|progress| progress.stage);
         let mut diagnostics = Vec::with_capacity(MAX_BOOTSTRAP_DIAGNOSTICS);
 
-        if self.store.receipt(&identity.bootstrap_id)?.is_some() {
-            let belief = expected_belief_receipt(input, &identity);
-            let subscription_id = deterministic_subscription_id(input);
-            let (progress, receipt) =
-                self.store
-                    .complete(input, &identity, belief, subscription_id)?;
-            push_diagnostic(
-                &mut diagnostics,
-                AgentBootstrapStage::Completed,
-                "confirmed_no_work",
-            );
-            return Ok(AgentBootstrapReport {
-                receipt,
+        let mut confirmed_belief = None;
+        if let Some(progress) = existing_progress.as_ref() {
+            if stage_at_least(progress.stage, AgentBootstrapStage::BeliefConfigured) {
+                confirmed_belief = Some(
+                    self.belief
+                        .confirm(input, &identity)
+                        .map_err(map_belief_error)?,
+                );
+            }
+            let confirmed_receipt = self.store.confirm_products(
+                input,
+                &identity,
                 progress,
-                work_performed: false,
-                resumed_from,
-                diagnostics,
-            });
+                confirmed_belief.as_ref(),
+            )?;
+            if progress.stage == AgentBootstrapStage::Completed {
+                push_diagnostic(
+                    &mut diagnostics,
+                    AgentBootstrapStage::Completed,
+                    "confirmed_no_work",
+                );
+                return Ok(AgentBootstrapReport {
+                    receipt: confirmed_receipt.ok_or_else(|| AgentBootstrapError::Storage {
+                        message: "completed bootstrap receipt is missing".to_string(),
+                    })?,
+                    progress: progress.clone(),
+                    work_performed: false,
+                    resumed_from,
+                    diagnostics,
+                });
+            }
         }
 
         let mut progress = match existing_progress {
@@ -98,13 +111,8 @@ impl AgentBootstrapRuntime {
             }
         };
 
-        let belief = if stage_at_least(progress.stage, AgentBootstrapStage::BeliefConfigured) {
-            self.belief
-                .receipt(&identity.activation_id, &input.belief_family.family_id)
-                .map_err(map_belief_error)?
-                .ok_or_else(|| AgentBootstrapError::Storage {
-                    message: "belief-configured progress exists without receipt".to_string(),
-                })?
+        let belief = if let Some(receipt) = confirmed_belief {
+            receipt
         } else {
             let receipt = self
                 .belief
@@ -164,17 +172,38 @@ impl AgentBootstrapRuntime {
             after_stage(AgentBootstrapStage::SubscriptionBound)?;
         }
 
-        if !stage_at_least(progress.stage, AgentBootstrapStage::Activated) {
-            self.store.activate_agent(input, &identity)?;
+        if !stage_at_least(progress.stage, AgentBootstrapStage::ProductsConfirmed) {
+            progress = self.store.confirm_seed_products(input, &identity)?;
             self.store.flush()?;
-            push_diagnostic(&mut diagnostics, AgentBootstrapStage::Activated, "advanced");
-            after_stage(AgentBootstrapStage::Activated)?;
+            push_diagnostic(
+                &mut diagnostics,
+                AgentBootstrapStage::ProductsConfirmed,
+                "advanced",
+            );
+            after_stage(AgentBootstrapStage::ProductsConfirmed)?;
         }
 
+        self.store
+            .confirm_products(input, &identity, &progress, Some(&belief))?;
         let (progress, receipt) = self
             .store
             .complete(input, &identity, belief, subscription_id)?;
         self.store.flush()?;
+        let confirmed = self
+            .belief
+            .confirm(input, &identity)
+            .map_err(map_belief_error)?;
+        let durable_receipt = self
+            .store
+            .confirm_products(input, &identity, &progress, Some(&confirmed))?
+            .ok_or_else(|| AgentBootstrapError::Storage {
+                message: "completed bootstrap receipt is missing".to_string(),
+            })?;
+        if durable_receipt != receipt {
+            return Err(AgentBootstrapError::Storage {
+                message: "bootstrap receipt changed during completion".to_string(),
+            });
+        }
         push_diagnostic(&mut diagnostics, AgentBootstrapStage::Completed, "advanced");
         after_stage(AgentBootstrapStage::Completed)?;
 
@@ -259,6 +288,7 @@ fn hash(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::Path;
 
     use super::*;
@@ -268,12 +298,14 @@ mod tests {
     };
     use crate::agent::bootstrap::compat::encode_legacy_agent_record;
     use crate::agent::{
-        AgentActivationStatus, AgentCurationRuleConfig, AgentRecord, AgentStatus, AgentStore,
-        AgentSubscription, AgentSubscriptionRecord, AgentSubscriptionStatus, SubscribeAgentCommand,
+        AgentCurationRuleConfig, AgentRecord, AgentStatus, AgentStore, AgentSubscription,
+        AgentSubscriptionRecord, AgentSubscriptionStatus, SubscribeAgentCommand,
     };
     use crate::belief::{BeliefFamilyConfig, BeliefKey, BranchScope};
     use crate::events::DomainObjectRef;
     use crate::world_state::graph::PerspectiveKey;
+
+    type DbSnapshot = BTreeMap<Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>>;
 
     fn input() -> WorldModelActivationInput {
         let belief_family: BeliefFamilyConfig = serde_json::from_str(
@@ -338,6 +370,23 @@ mod tests {
         AgentBootstrapRuntime::new(sled::open(path).unwrap()).unwrap()
     }
 
+    fn snapshot_db(path: &Path) -> DbSnapshot {
+        let db = sled::open(path).unwrap();
+        let mut snapshot = BTreeMap::new();
+        for tree_name in db.tree_names() {
+            let tree = db.open_tree(tree_name.clone()).unwrap();
+            let records = tree
+                .iter()
+                .map(|entry| {
+                    let (key, value) = entry.unwrap();
+                    (key.to_vec(), value.to_vec())
+                })
+                .collect();
+            snapshot.insert(tree_name.to_vec(), records);
+        }
+        snapshot
+    }
+
     #[test]
     fn bootstrap_is_staged_durable_and_exact_replay_is_no_work() {
         let temp = tempfile::tempdir().unwrap();
@@ -361,7 +410,7 @@ mod tests {
         let store = AgentStore::new(db.clone()).unwrap();
         let agent = store.get_agent("seed-a").unwrap().unwrap();
         assert_eq!(agent.directive_id, "directive-a");
-        assert_eq!(agent.status, AgentStatus::Operational);
+        assert_eq!(agent.status, AgentStatus::Registered);
         assert_eq!(
             store.get_directive("directive-a").unwrap().unwrap(),
             input().directive
@@ -381,9 +430,7 @@ mod tests {
             store.get_bootstrap_receipt("bootstrap-a").unwrap().unwrap(),
             first.receipt
         );
-        let activations = store.activations_for_agent("seed-a").unwrap();
-        assert_eq!(activations.len(), 1);
-        assert_eq!(activations[0].status, AgentActivationStatus::Activated);
+        assert!(store.activations_for_agent("seed-a").unwrap().is_empty());
         let subscription = store
             .subscription_by_agent_and_key("seed-a", &input().belief_key)
             .unwrap()
@@ -404,7 +451,7 @@ mod tests {
             AgentBootstrapStage::AgentRegistered,
             AgentBootstrapStage::RuleRegistered,
             AgentBootstrapStage::SubscriptionBound,
-            AgentBootstrapStage::Activated,
+            AgentBootstrapStage::ProductsConfirmed,
             AgentBootstrapStage::Completed,
         ];
         for fault_stage in stages {
@@ -451,6 +498,143 @@ mod tests {
             AgentBootstrapError::Conflict { ref field, .. }
                 if field == "bootstrap.input_hash"
         ));
+    }
+
+    #[test]
+    fn divergent_started_retry_writes_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        {
+            let runtime = open(temp.path());
+            let result = runtime.bootstrap_inner(&input(), |stage| {
+                if stage == AgentBootstrapStage::Started {
+                    Err(AgentBootstrapError::Storage {
+                        message: "injected after progress start".to_string(),
+                    })
+                } else {
+                    Ok(())
+                }
+            });
+            assert!(result.is_err());
+        }
+        let before = snapshot_db(temp.path());
+
+        let mut divergent = input();
+        divergent.directive.text = "different intent".to_string();
+        {
+            let runtime = open(temp.path());
+            let error = runtime.bootstrap(&divergent).unwrap_err();
+            assert!(matches!(
+                error,
+                AgentBootstrapError::Conflict { ref field, .. }
+                    if field == "bootstrap.input_hash"
+            ));
+        }
+
+        assert_eq!(snapshot_db(temp.path()), before);
+    }
+
+    #[test]
+    fn resumed_bootstrap_reconfirms_intermediate_belief_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let configured = input();
+        {
+            let runtime = open(temp.path());
+            let result = runtime.bootstrap_inner(&configured, |stage| {
+                if stage == AgentBootstrapStage::BeliefConfigured {
+                    Err(AgentBootstrapError::Storage {
+                        message: "injected after belief configuration".to_string(),
+                    })
+                } else {
+                    Ok(())
+                }
+            });
+            assert!(result.is_err());
+        }
+        let identity = validate_world_model_activation(&configured).unwrap();
+        {
+            let db = sled::open(temp.path()).unwrap();
+            let store = crate::belief::BeliefStore::new(db).unwrap();
+            store
+                .put_config_snapshot(&identity.belief_config_hash, r#"{"drift":true}"#)
+                .unwrap();
+            store.flush().unwrap();
+        }
+
+        let runtime = open(temp.path());
+        let error = runtime.bootstrap(&configured).unwrap_err();
+        assert!(matches!(
+            error,
+            AgentBootstrapError::Conflict { ref field, .. }
+                if field == "belief_config_snapshot.content"
+        ));
+        drop(runtime);
+        let store = AgentStore::new(sled::open(temp.path()).unwrap()).unwrap();
+        assert!(store.get_agent("seed-a").unwrap().is_none());
+    }
+
+    #[test]
+    fn completed_replay_reconfirms_immutable_agent_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        {
+            let runtime = open(temp.path());
+            runtime.bootstrap(&input()).unwrap();
+        }
+        {
+            let db = sled::open(temp.path()).unwrap();
+            let store = AgentStore::new(db).unwrap();
+            let mut agent = store.get_agent("seed-a").unwrap().unwrap();
+            agent.observation_scope = "drifted-family".to_string();
+            store.put_agent(&agent).unwrap();
+            store.flush().unwrap();
+        }
+
+        let runtime = open(temp.path());
+        let error = runtime.bootstrap(&input()).unwrap_err();
+        assert!(matches!(
+            error,
+            AgentBootstrapError::Conflict { ref field, .. }
+                if field == "agent.observation_scope"
+        ));
+    }
+
+    #[test]
+    fn completed_replay_preserves_mutable_lifecycle_and_cursor_without_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let completed_at_seq = {
+            let runtime = open(temp.path());
+            runtime
+                .bootstrap(&input())
+                .unwrap()
+                .receipt
+                .completed_at_seq
+        };
+        {
+            let db = sled::open(temp.path()).unwrap();
+            let store = AgentStore::new(db).unwrap();
+            let mut agent = store.get_agent("seed-a").unwrap().unwrap();
+            agent.status = AgentStatus::Operational;
+            agent.updated_at_seq = completed_at_seq + 1;
+            store.put_agent(&agent).unwrap();
+            let mut subscription = store
+                .subscription_by_agent_and_key("seed-a", &input().belief_key)
+                .unwrap()
+                .unwrap();
+            subscription.status = AgentSubscriptionStatus::Suspended;
+            subscription.last_delivered_revision_id = Some("revision-after-ready".to_string());
+            subscription.last_delivered_seq = completed_at_seq + 1;
+            subscription.updated_at_seq = completed_at_seq + 2;
+            store.put_subscription(&subscription).unwrap();
+            store.flush().unwrap();
+        }
+        let before = snapshot_db(temp.path());
+
+        {
+            let runtime = open(temp.path());
+            let replay = runtime.bootstrap(&input()).unwrap();
+            assert!(!replay.work_performed);
+        }
+
+        assert_eq!(snapshot_db(temp.path()), before);
     }
 
     #[test]
@@ -558,7 +742,7 @@ mod tests {
         drop(db);
 
         let runtime = open(temp.path());
-        runtime.bootstrap(&configured).unwrap();
+        let report = runtime.bootstrap(&configured).unwrap();
         drop(runtime);
         let db = sled::open(temp.path()).unwrap();
         let agent = AgentStore::new(db.clone())
@@ -568,7 +752,9 @@ mod tests {
             .unwrap();
         assert_eq!(agent.directive_id, configured.directive.directive_id);
         assert_eq!(agent.created_at_seq, 41);
-        assert_eq!(agent.status, AgentStatus::Operational);
+        assert_eq!(agent.updated_at_seq, 41);
+        assert_eq!(agent.status, AgentStatus::Registered);
+        assert!(report.receipt.completed_at_seq > 41);
 
         let migrations = db
             .open_tree("agent_legacy_directive_migration_receipts")
@@ -577,6 +763,7 @@ mod tests {
         let receipt: crate::activation::LegacyDirectiveMigrationReceipt =
             serde_json::from_slice(&migrations.iter().next().unwrap().unwrap().1).unwrap();
         assert_eq!(receipt.identity.schema_version, 1);
+        assert!(receipt.completed_at_seq > 41);
         assert_eq!(
             receipt.identity.directive_id,
             configured.directive.directive_id
@@ -709,8 +896,16 @@ mod tests {
         let runtime = AgentBootstrapRuntime::new(db).unwrap();
         let report = runtime.bootstrap(&configured).unwrap();
         assert_eq!(report.receipt.subscription_id, existing.subscription_id);
+        assert!(report.receipt.completed_at_seq > 78);
         drop(runtime);
         let store = AgentStore::new(sled::open(temp.path()).unwrap()).unwrap();
+        let agent = store
+            .get_agent(&configured.seed_agent.agent_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(agent.status, AgentStatus::Registered);
+        assert_eq!(agent.created_at_seq, 77);
+        assert_eq!(agent.updated_at_seq, 77);
         let durable = store
             .get_subscription(&existing.subscription_id)
             .unwrap()
@@ -742,7 +937,7 @@ mod tests {
     }
 
     #[test]
-    fn activation_requires_the_configured_subscription_to_remain_active() {
+    fn resume_preserves_mutable_subscription_lifecycle_and_cursor() {
         let temp = tempfile::tempdir().unwrap();
         {
             let runtime = open(temp.path());
@@ -765,26 +960,33 @@ mod tests {
                 .unwrap()
                 .unwrap();
             subscription.status = AgentSubscriptionStatus::Suspended;
+            subscription.last_delivered_revision_id = Some("revision-before-resume".to_string());
+            subscription.last_delivered_seq = 91;
+            subscription.updated_at_seq = 92;
             store.put_subscription(&subscription).unwrap();
             store.flush().unwrap();
         }
 
         let runtime = open(temp.path());
-        let error = runtime.bootstrap(&input()).unwrap_err();
-        assert!(matches!(
-            error,
-            AgentBootstrapError::Conflict { ref field, .. }
-                if field == "agent_subscription.status"
-        ));
+        let report = runtime.bootstrap(&input()).unwrap();
+        assert_eq!(report.progress.stage, AgentBootstrapStage::Completed);
         drop(runtime);
         let store = AgentStore::new(sled::open(temp.path()).unwrap()).unwrap();
         assert_eq!(
             store.get_agent("seed-a").unwrap().unwrap().status,
             AgentStatus::Registered
         );
+        assert!(store.activations_for_agent("seed-a").unwrap().is_empty());
+        let subscription = store
+            .subscription_by_agent_and_key("seed-a", &input().belief_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(subscription.status, AgentSubscriptionStatus::Suspended);
         assert_eq!(
-            store.activations_for_agent("seed-a").unwrap()[0].status,
-            AgentActivationStatus::Started
+            subscription.last_delivered_revision_id.as_deref(),
+            Some("revision-before-resume")
         );
+        assert_eq!(subscription.last_delivered_seq, 91);
+        assert_eq!(subscription.updated_at_seq, 92);
     }
 }

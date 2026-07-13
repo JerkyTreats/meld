@@ -24,8 +24,8 @@ pub enum AgentBootstrapStage {
     RuleRegistered,
     /// Deterministic belief subscription is durable.
     SubscriptionBound,
-    /// Agent and activation are operational.
-    Activated,
+    /// Every configured seed product has been durably confirmed.
+    ProductsConfirmed,
     /// Final bootstrap receipt is durable.
     Completed,
 }
@@ -36,8 +36,8 @@ pub enum AgentBootstrapStage {
 pub enum AgentBootstrapProgressStatus {
     /// At least the bootstrap identity and activation start are durable.
     Started,
-    /// Every semantic bootstrap product is durable and operational.
-    Activated,
+    /// Every semantic bootstrap product and final receipt are durable.
+    Completed,
 }
 
 /// Durable progress recovered exclusively from the world-model store.

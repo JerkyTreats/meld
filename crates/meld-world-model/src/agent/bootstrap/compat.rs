@@ -80,6 +80,13 @@ impl DecodedLegacyAgent {
         &self.raw_hash
     }
 
+    pub(super) fn sequence_floor(&self) -> Result<u64, String> {
+        if self.record.updated_at_seq < self.record.created_at_seq {
+            return Err("legacy agent updated sequence precedes creation".to_string());
+        }
+        Ok(self.record.updated_at_seq)
+    }
+
     pub(super) fn canonical(&self, directive_id: String) -> AgentRecord {
         self.record.canonical(directive_id)
     }

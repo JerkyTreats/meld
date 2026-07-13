@@ -207,8 +207,6 @@ pub struct AgentBootstrapReceipt {
     pub rule_id: String,
     /// Deterministic subscription confirmed by bootstrap.
     pub subscription_id: String,
-    /// Agent activation attempt completed by bootstrap.
-    pub agent_activation_id: String,
     /// Sequence at which bootstrap completed.
     pub completed_at_seq: u64,
 }
