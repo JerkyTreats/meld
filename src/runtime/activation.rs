@@ -4,6 +4,7 @@ mod contracts;
 mod loader;
 mod normalization;
 mod packages;
+mod preflight;
 mod service;
 
 pub use contracts::{
@@ -13,9 +14,10 @@ pub use contracts::{
     DocsFreshnessBranchScopeConfig, DocsFreshnessCurationRuleConfig, DocsFreshnessDirectiveConfig,
     DocsFreshnessExecutionConfig, DocsFreshnessPerspectiveConfig, DocsFreshnessPublicationConfig,
     DocsFreshnessRuntimeConfig, DocsFreshnessSeedAgentConfig, DocsFreshnessSubjectConfig,
-    PassiveActivationDescription, StrictComparatorConfig, StrictComparatorFactorConfig,
-    StrictEvidenceSchemaConfig, StrictEvidenceSourceMapping, StrictPlannerProjectionConfig,
-    ValidatedDocsFreshnessActivation, DOCS_FRESHNESS_ACTIVATION_SCHEMA_VERSION,
+    ExecutionActivationPreflight, PassiveActivationDescription, StrictComparatorConfig,
+    StrictComparatorFactorConfig, StrictEvidenceSchemaConfig, StrictEvidenceSourceMapping,
+    StrictPlannerProjectionConfig, ValidatedDocsFreshnessActivation,
+    ValidatedProductActivationPreflight, DOCS_FRESHNESS_ACTIVATION_SCHEMA_VERSION,
     MAX_ACTIVATION_SOURCE_BYTES,
 };
 pub use meld_execution::activation::{
@@ -23,7 +25,10 @@ pub use meld_execution::activation::{
     ExecutionTargetSelector,
 };
 pub use packages::{ProductActivationRuntimeInputs, RuntimeActivationInput};
-pub use service::load_and_validate_activation;
+pub use preflight::{
+    preflight_execution_activation, preflight_validated_activation, ActivationPreflightError,
+};
+pub use service::{load_and_preflight_activation, load_and_validate_activation};
 
 #[cfg(test)]
 mod tests {

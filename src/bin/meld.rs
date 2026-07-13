@@ -124,6 +124,7 @@ fn try_execute_runtime_activation(cli: &Cli) -> Option<Result<String, meld::erro
                 },
         } => Some(meld::runtime::tooling::handle_cli_activation(
             &cli.workspace,
+            cli.config.as_deref(),
             activation,
             *dry_run,
             format,
@@ -322,12 +323,25 @@ mod tests {
     #[test]
     fn runtime_activation_is_routed_before_product_stores_open() {
         let workspace = tempfile::tempdir().unwrap();
+        let config_dir = tempfile::tempdir().unwrap();
+        let config_path = config_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[providers.docs-writer]
+provider_type = "ollama"
+model = "test-model"
+"#,
+        )
+        .unwrap();
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/runtime/docs_freshness_activation.toml");
         let cli = Cli::try_parse_from([
             "meld",
             "--workspace",
             workspace.path().to_str().unwrap(),
+            "--config",
+            config_path.to_str().unwrap(),
             "runtime",
             "activate",
             "--activation",
@@ -340,8 +354,67 @@ mod tests {
             .expect("activate must use the early route")
             .unwrap();
 
-        assert!(output.contains("Activation source and owner packages validated"));
-        assert!(output.contains("Application ready: no"));
+        assert!(
+            output.contains("Activation source, owner packages, and execution assets validated")
+        );
+        assert!(output.contains("Application ready: yes"));
+        assert!(workspace.path().read_dir().unwrap().next().is_none());
+    }
+
+    #[test]
+    fn explicit_activation_config_provider_keys_are_honored_without_store_creation() {
+        let workspace = tempfile::tempdir().unwrap();
+        let source = tempfile::tempdir().unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/runtime/docs_freshness_activation.toml");
+        let config_path = source.path().join("config.toml");
+        let product_root = source.path().join("product-runtime");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[system.storage]
+product_root = "{}"
+
+[providers.not-docs-writer]
+provider_name = "docs-writer"
+provider_type = "ollama"
+model = "test-model"
+"#,
+                product_root.display()
+            ),
+        )
+        .unwrap();
+        let cli = Cli::try_parse_from([
+            "meld",
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+            "--config",
+            config_path.to_str().unwrap(),
+            "runtime",
+            "activate",
+            "--activation",
+            fixture.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .unwrap();
+
+        let error = try_execute_runtime_activation(&cli)
+            .expect("activate must use the early route")
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("must identify a configured repository provider binding"));
+        for path in [
+            product_root.clone(),
+            product_root.join("world_model.sled"),
+            product_root.join("execution/goals.sled"),
+            product_root.join("execution/task_artifacts.sled"),
+            product_root.join("execution/task_networks"),
+        ] {
+            assert!(!path.exists(), "preflight created {}", path.display());
+        }
         assert!(workspace.path().read_dir().unwrap().next().is_none());
     }
 

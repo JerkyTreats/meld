@@ -18,7 +18,11 @@ pub fn format_runtime_activation_description(
             ))
         }),
         "text" => Ok([
-            "Activation source and owner packages validated".to_string(),
+            if description.application_ready {
+                "Activation source, owner packages, and execution assets validated".to_string()
+            } else {
+                "Activation source and owner packages validated".to_string()
+            },
             format!("Activation: {}", description.activation_id),
             format!("Hash: {}", description.activation_hash.as_str()),
             format!("Source: {}", description.source_path.display()),

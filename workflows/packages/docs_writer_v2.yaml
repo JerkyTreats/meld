@@ -96,3 +96,7 @@ expansions:
       consumer_turn_id: evidence_gather
       consumer_stage_id: prepare
       consumer_input_slot_id: upstream_artifact
+output_artifacts:
+  - source_output_type: readme_final
+    artifact_type_id: docs_patch
+    schema_version: 1

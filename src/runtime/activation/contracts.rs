@@ -8,6 +8,8 @@ use meld_world_model::belief::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use meld_execution::activation::{ExecutionActivationInput, ExecutionActivationValidationReceipt};
+
 use super::packages::ProductActivationRuntimeInputs;
 
 /// Supported product activation schema version.
@@ -343,6 +345,42 @@ pub struct ValidatedDocsFreshnessActivation {
     pub activation_hash: ActivationHash,
     /// Independent owner-scoped runtime packages.
     pub runtime_inputs: ProductActivationRuntimeInputs,
+}
+
+/// Source-neutral execution result produced before semantic stores open.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExecutionActivationPreflight {
+    /// Canonical execution-owned input retained for later runtime assembly.
+    pub execution_input: ExecutionActivationInput,
+    /// Deterministic receipt from pure execution activation validation.
+    pub execution_receipt: ExecutionActivationValidationReceipt,
+}
+
+/// Store-free product activation result ready for root runtime integration.
+///
+/// The source and world-model owner package have passed root loading and
+/// validation. Execution has resolved its canonical built-in assets, bound
+/// them against repository provider configuration, and returned a pure
+/// deterministic validation receipt. No semantic store is opened by this
+/// contract or by the preflight service that constructs it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ValidatedProductActivationPreflight {
+    /// Validated source plus independent owner-scoped runtime packages.
+    pub activation: ValidatedDocsFreshnessActivation,
+    /// Canonical execution-owned input retained for later runtime assembly.
+    pub execution_input: ExecutionActivationInput,
+    /// Deterministic receipt from pure execution activation validation.
+    pub execution_receipt: ExecutionActivationValidationReceipt,
+}
+
+impl ValidatedProductActivationPreflight {
+    /// Create the application-ready description used by early CLI routing.
+    pub fn passive_description(&self) -> PassiveActivationDescription {
+        let mut description = self.activation.passive_description();
+        description.validation_scope = "source_owner_packages_and_execution_assets".to_string();
+        description.application_ready = true;
+        description
+    }
 }
 
 impl ValidatedDocsFreshnessActivation {

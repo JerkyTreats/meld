@@ -37,6 +37,7 @@ static CTRL_C_HANDLER_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 /// Validate one explicit activation before product stores or `RunContext` open.
 pub fn handle_cli_activation(
     workspace_root: &std::path::Path,
+    config_path: Option<&std::path::Path>,
     activation_path: &std::path::Path,
     dry_run: bool,
     format: &str,
@@ -47,10 +48,13 @@ pub fn handle_cli_activation(
                 .to_string(),
         ));
     }
-    let validated =
-        crate::runtime::activation::load_and_validate_activation(workspace_root, activation_path)
-            .map_err(|error| ApiError::ConfigError(error.to_string()))?;
-    format_runtime_activation_description(&validated.passive_description(), format)
+    let preflight = crate::runtime::activation::load_and_preflight_activation(
+        workspace_root,
+        activation_path,
+        config_path,
+    )
+    .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+    format_runtime_activation_description(&preflight.passive_description(), format)
 }
 
 /// CLI status DTO for runtime supervisor commands.
@@ -1028,5 +1032,42 @@ impl From<RuntimeInstance> for RuntimeCliInstanceStatus {
             stopped_at_ms: instance.stopped_at_ms,
             status: instance.status,
         }
+    }
+}
+
+#[cfg(test)]
+mod activation_tests {
+    use std::path::PathBuf;
+
+    use super::handle_cli_activation;
+
+    #[test]
+    fn public_cli_activation_boundary_honors_explicit_config_path() {
+        let workspace = tempfile::tempdir().unwrap();
+        let config_dir = tempfile::tempdir().unwrap();
+        let config_path = config_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[providers.docs-writer]
+provider_type = "ollama"
+model = "test-model"
+"#,
+        )
+        .unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/runtime/docs_freshness_activation.toml");
+
+        let output =
+            handle_cli_activation(workspace.path(), Some(&config_path), &fixture, true, "json")
+                .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(value["application_ready"], true);
+        assert_eq!(
+            value["validation_scope"],
+            "source_owner_packages_and_execution_assets"
+        );
+        assert!(workspace.path().read_dir().unwrap().next().is_none());
     }
 }
