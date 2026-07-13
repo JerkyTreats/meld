@@ -27,6 +27,15 @@ pub struct TaskPackageSpec {
     pub expansions: Vec<PackageExpansionSpec>,
 }
 
+impl TaskPackageSpec {
+    /// Derive a source-format-neutral digest from the typed package semantics.
+    pub fn semantic_digest(&self) -> String {
+        let encoded = serde_json::to_vec(self)
+            .expect("task package must remain serializable for activation identity");
+        blake3::hash(&encoded).to_hex().to_string()
+    }
+}
+
 /// Package-authored traversal prerequisite expansion entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraversalPrerequisitePackageExpansionSpec {

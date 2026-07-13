@@ -95,6 +95,72 @@ impl MethodLibrary {
             .expect("method library must remain serializable for planning identity");
         blake3::hash(&encoded).to_hex().to_string()
     }
+
+    /// Derive a source-format-neutral digest from verified method semantics.
+    ///
+    /// Activation identity must not change when the same typed methods were
+    /// loaded from a different path or source representation. Invalid entries
+    /// are rejected by activation validation and therefore are not part of the
+    /// accepted semantic projection. Verification diagnostics and source
+    /// references are excluded, while normalized operator resolution outcomes
+    /// remain bound to the digest.
+    pub fn semantic_digest(&self) -> String {
+        #[derive(Serialize)]
+        struct SemanticOperatorResolution<'a> {
+            operator_id: &'a str,
+            status: &'a OperatorResolutionStatus,
+            capability_type_id: Option<&'a str>,
+            capability_version: Option<u32>,
+        }
+
+        #[derive(Serialize)]
+        struct SemanticVerifiedMethod<'a> {
+            method: &'a Method,
+            operator_resolutions: Vec<SemanticOperatorResolution<'a>>,
+        }
+
+        let methods = self
+            .sorted_verified_entries()
+            .into_iter()
+            .map(|entry| {
+                let mut operator_resolutions = entry
+                    .verification
+                    .operator_resolutions
+                    .iter()
+                    .map(|resolution| SemanticOperatorResolution {
+                        operator_id: &resolution.operator_id,
+                        status: &resolution.status,
+                        capability_type_id: resolution.capability_type_id.as_deref(),
+                        capability_version: resolution.capability_version,
+                    })
+                    .collect::<Vec<_>>();
+                operator_resolutions.sort_by(|left, right| {
+                    left.operator_id
+                        .cmp(right.operator_id)
+                        .then_with(|| {
+                            resolution_status_order(left.status)
+                                .cmp(&resolution_status_order(right.status))
+                        })
+                        .then_with(|| left.capability_type_id.cmp(&right.capability_type_id))
+                        .then_with(|| left.capability_version.cmp(&right.capability_version))
+                });
+                SemanticVerifiedMethod {
+                    method: &entry.method,
+                    operator_resolutions,
+                }
+            })
+            .collect::<Vec<_>>();
+        let encoded = serde_json::to_vec(&methods)
+            .expect("verified methods must remain serializable for activation identity");
+        blake3::hash(&encoded).to_hex().to_string()
+    }
+}
+
+fn resolution_status_order(status: &OperatorResolutionStatus) -> u8 {
+    match status {
+        OperatorResolutionStatus::Resolved => 0,
+        OperatorResolutionStatus::Unresolved => 1,
+    }
 }
 
 /// A method that passed reusable template verification.

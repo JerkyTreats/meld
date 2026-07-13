@@ -56,6 +56,21 @@ fn main() {
         return;
     }
 
+    if let Some(result) = try_execute_runtime_activation(&cli) {
+        match result {
+            Ok(output) => {
+                info!("Runtime activation source validated successfully");
+                println!("{}", output);
+            }
+            Err(e) => {
+                error!("Command failed: {}", e);
+                eprintln!("{}", meld::cli::map_error(&e));
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
     if let Some(result) = try_execute_runtime_status(&cli) {
         match result {
             Ok(output) => {
@@ -95,6 +110,25 @@ fn main() {
             eprintln!("{}", meld::cli::map_error(&e));
             process::exit(1);
         }
+    }
+}
+
+fn try_execute_runtime_activation(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
+    match &cli.command {
+        Commands::Runtime {
+            command:
+                meld::cli::RuntimeCommands::Activate {
+                    activation,
+                    dry_run,
+                    format,
+                },
+        } => Some(meld::runtime::tooling::handle_cli_activation(
+            &cli.workspace,
+            activation,
+            *dry_run,
+            format,
+        )),
+        _ => None,
     }
 }
 
@@ -283,5 +317,55 @@ mod tests {
             config.output, "stderr",
             "explicit --log-output should win over verbose defaults"
         );
+    }
+
+    #[test]
+    fn runtime_activation_is_routed_before_product_stores_open() {
+        let workspace = tempfile::tempdir().unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/runtime/docs_freshness_activation.toml");
+        let cli = Cli::try_parse_from([
+            "meld",
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+            "runtime",
+            "activate",
+            "--activation",
+            fixture.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .unwrap();
+
+        let output = try_execute_runtime_activation(&cli)
+            .expect("activate must use the early route")
+            .unwrap();
+
+        assert!(output.contains("Activation source and owner packages validated"));
+        assert!(output.contains("Application ready: no"));
+        assert!(workspace.path().read_dir().unwrap().next().is_none());
+    }
+
+    #[test]
+    fn invalid_runtime_activation_leaves_workspace_store_free() {
+        let workspace = tempfile::tempdir().unwrap();
+        let source = tempfile::tempdir().unwrap();
+        let activation_path = source.path().join("invalid.toml");
+        std::fs::write(&activation_path, "schema_version = 1\nunknown = true\n").unwrap();
+        let cli = Cli::try_parse_from([
+            "meld",
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+            "runtime",
+            "activate",
+            "--activation",
+            activation_path.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .unwrap();
+
+        assert!(try_execute_runtime_activation(&cli)
+            .expect("activate must use the early route")
+            .is_err());
+        assert!(workspace.path().read_dir().unwrap().next().is_none());
     }
 }

@@ -1,0 +1,145 @@
+schema_version = 1
+
+[flywheel.docs_freshness]
+activation_id = "docs_freshness"
+
+[flywheel.docs_freshness.subject]
+domain_id = "workspace_fs"
+object_kind = "node"
+object_id = "node-a"
+
+[flywheel.docs_freshness.branch_scope]
+branch_id = "main"
+
+[flywheel.docs_freshness.perspective]
+perspective_kind = "default"
+perspective_id = "default"
+
+[flywheel.docs_freshness.belief_family]
+config_ref = "docs_freshness"
+family_id = "docs_freshness"
+dimension_id = "docs_freshness"
+predicate_id = "confidence"
+evidence_policy_id = "default_policy"
+default_prior = 0.8
+config_version = "1"
+
+[[flywheel.docs_freshness.belief_family.evidence_schemas]]
+schema_id = "graph_anchor_signal"
+required = true
+role = "Support"
+reliability = 1.0
+precision = 1.0
+
+[[flywheel.docs_freshness.belief_family.evidence_schemas]]
+schema_id = "content_written_signal"
+required = false
+role = "Support"
+reliability = 1.0
+precision = 1.0
+
+[[flywheel.docs_freshness.belief_family.evidence_schemas]]
+schema_id = "content_review_signal"
+required = false
+role = "Support"
+reliability = 1.0
+precision = 1.0
+
+[[flywheel.docs_freshness.belief_family.source_mappings]]
+mapping_id = "anchor_to_signal"
+source_kind = "graph_anchor"
+evidence_schema_id = "graph_anchor_signal"
+subject_from = "anchor.subject"
+value_field = "ended"
+factor_id = "freshness_signal"
+
+[[flywheel.docs_freshness.belief_family.source_mappings]]
+mapping_id = "content_written_to_signal"
+source_kind = "content_written"
+evidence_schema_id = "content_written_signal"
+subject_from = "record.subject"
+value_field = "stale_probability"
+factor_id = "content_written_signal"
+
+[[flywheel.docs_freshness.belief_family.source_mappings]]
+mapping_id = "content_written_to_review"
+source_kind = "content_written"
+evidence_schema_id = "content_review_signal"
+subject_from = "record.subject"
+value_field = "review_probability"
+factor_id = "content_review_signal"
+
+[flywheel.docs_freshness.belief_family.comparator]
+engine_id = "weighted_bayesian"
+engine_version = "1"
+missing_evidence_uncertainty = 0.9
+
+[[flywheel.docs_freshness.belief_family.comparator.factors]]
+factor_id = "freshness_signal"
+evidence_schema_id = "graph_anchor_signal"
+weight = 1.0
+polarity = "Supports"
+
+[[flywheel.docs_freshness.belief_family.comparator.factors]]
+factor_id = "content_written_signal"
+evidence_schema_id = "content_written_signal"
+weight = 1.0
+polarity = "Supports"
+
+[[flywheel.docs_freshness.belief_family.comparator.factors]]
+factor_id = "content_review_signal"
+evidence_schema_id = "content_review_signal"
+weight = 1.0
+polarity = "Supports"
+
+[flywheel.docs_freshness.belief_family.planner_projection]
+confidence_field = "confidence"
+threshold = 0.7
+posterior_meaning = "stale_probability"
+
+[flywheel.docs_freshness.directive]
+directive_id = "directive.docs_freshness"
+text = "curate docs freshness goals"
+
+[flywheel.docs_freshness.seed_agent]
+agent_id = "seed.docs_freshness"
+directive_id = "directive.docs_freshness"
+observation_scope = "docs_freshness"
+seed_provenance = "trusted init"
+
+[flywheel.docs_freshness.curation_rule]
+rule_id = "curation.docs_freshness.threshold"
+dimension_id = "docs_freshness"
+threshold = 0.7
+priority_urgency = 50
+desired_summary = "confidence above 0.7"
+source_kind = "belief_divergence"
+
+[flywheel.docs_freshness.execution]
+method_id = "refresh_docs_v1"
+workspace_scan_step_id = "scan_workspace"
+task_package_id = "docs_writer"
+workflow_id = "docs_writer_thread_v1"
+task_network_id = "network-docs"
+required_artifact_type_id = "docs_patch"
+provider_binding_ref = "docs-writer"
+frame_type = "docs"
+force_policy = "reuse_existing"
+workspace_scan_capability_type_id = "workspace_scan"
+workspace_scan_capability_version = 1
+
+[flywheel.docs_freshness.execution.target]
+kind = "path"
+value = "."
+
+[flywheel.docs_freshness.publication]
+success_event_type = "execution.task.succeeded"
+failure_event_type = "execution.task.failed"
+content_source_kind = "content_written"
+
+[flywheel.docs_freshness.runtime]
+enabled_runtime_ids = [
+  "world_model.graph_replay",
+  "world_model.agent.bootstrap.docs_freshness",
+]
+bootstrap_runtime_id = "world_model.agent.bootstrap.docs_freshness"

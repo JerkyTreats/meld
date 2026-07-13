@@ -4,6 +4,7 @@ pub mod error {
 
 pub use meld_events as events;
 
+pub mod activation;
 pub mod agent;
 pub mod belief;
 pub mod planner;

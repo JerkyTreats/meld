@@ -1,5 +1,7 @@
 //! Runtime assembly diagnostics and supervisor-facing contracts.
 
+/// Product activation loading and owner-scoped input contracts.
+pub mod activation;
 /// Product runtime assembly entrypoint.
 pub mod assembly;
 /// Supervisor-facing worker report contracts.

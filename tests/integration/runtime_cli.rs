@@ -161,7 +161,7 @@ fn runtime_status_after_run_reports_stopped_instance() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         let workspace_root = workspace(&temp_dir);
-        let run_context = RunContext::new(workspace_root, None).unwrap();
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
         run_context
             .execute(&runtime_run_json(
                 Some("runtime-cli-test-b"),
@@ -171,9 +171,9 @@ fn runtime_status_after_run_reports_stopped_instance() {
             ))
             .unwrap();
 
-        let output = run_context
-            .execute(&runtime_status_json(Vec::new()))
-            .unwrap();
+        let output =
+            meld::runtime::passive_status::handle_cli_status(&workspace_root, None, "json", &[])
+                .unwrap();
         let parsed: Value = serde_json::from_str(&output).unwrap();
 
         assert_eq!(parsed["instance"]["status"], "stopped");

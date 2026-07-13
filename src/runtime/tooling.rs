@@ -20,7 +20,9 @@ use crate::runtime::contracts::{
     RuntimeStatusShutdownSummary, RuntimeStatusSnapshot, RuntimeStatusWriterIdentity,
     RUNTIME_STATUS_RECENT_ACTION_MAX_COUNT,
 };
-use crate::runtime::presentation::{format_runtime_run_result, format_runtime_status};
+use crate::runtime::presentation::{
+    format_runtime_activation_description, format_runtime_run_result, format_runtime_status,
+};
 use crate::runtime::status_cache::FilesystemRuntimeStatusPublisher;
 use crate::runtime::supervisor::{
     RestartCause, RestartPolicy, RuntimeHealthStatus, RuntimeId, RuntimeInstance,
@@ -31,6 +33,25 @@ use crate::runtime::supervisor::{
 
 static CTRL_C_TARGET: OnceLock<Mutex<Option<Weak<AtomicBool>>>> = OnceLock::new();
 static CTRL_C_HANDLER_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// Validate one explicit activation before product stores or `RunContext` open.
+pub fn handle_cli_activation(
+    workspace_root: &std::path::Path,
+    activation_path: &std::path::Path,
+    dry_run: bool,
+    format: &str,
+) -> Result<String, ApiError> {
+    if !dry_run {
+        return Err(ApiError::ConfigError(
+            "runtime activation apply is unavailable until the bootstrap runtime is installed; use --dry-run"
+                .to_string(),
+        ));
+    }
+    let validated =
+        crate::runtime::activation::load_and_validate_activation(workspace_root, activation_path)
+            .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+    format_runtime_activation_description(&validated.passive_description(), format)
+}
 
 /// CLI status DTO for runtime supervisor commands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -136,6 +157,9 @@ pub fn handle_cli_command(
             format,
             runtime_ids,
         } => runtime_status(assembly, format, runtime_ids),
+        RuntimeCommands::Activate { .. } => Err(ApiError::ConfigError(
+            "runtime activate must be routed before product stores open".to_string(),
+        )),
         RuntimeCommands::Run {
             instance_id,
             tick_ms,

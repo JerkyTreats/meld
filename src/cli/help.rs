@@ -40,6 +40,7 @@ pub fn event_command_name(command: &EventCommands) -> &'static str {
 pub fn runtime_command_name(command: &RuntimeCommands) -> &'static str {
     match command {
         RuntimeCommands::Status { .. } => "status",
+        RuntimeCommands::Activate { .. } => "activate",
         RuntimeCommands::Run { .. } => "run",
     }
 }
@@ -340,6 +341,17 @@ mod tests {
         assert_eq!(
             command_name(&Commands::Runtime { command: run }),
             "runtime.run".to_string()
+        );
+
+        let activate = RuntimeCommands::Activate {
+            activation: "activation.toml".into(),
+            dry_run: true,
+            format: "text".to_string(),
+        };
+        assert_eq!(runtime_command_name(&activate), "activate");
+        assert_eq!(
+            command_name(&Commands::Runtime { command: activate }),
+            "runtime.activate".to_string()
         );
     }
 }

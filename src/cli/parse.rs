@@ -355,6 +355,20 @@ pub enum RuntimeCommands {
         #[arg(long = "runtime-id")]
         runtime_ids: Vec<String>,
     },
+    /// Validate and describe one product activation without opening stores
+    Activate {
+        /// Explicit product activation TOML path
+        #[arg(long)]
+        activation: PathBuf,
+
+        /// Validate and describe without opening product stores
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Run the foreground runtime supervisor
     Run {
         /// Supervisor instance id
@@ -1009,6 +1023,48 @@ mod tests {
             }
             _ => panic!("expected runtime run command"),
         }
+    }
+
+    #[test]
+    fn parses_runtime_activate_with_required_explicit_path() {
+        let cli = Cli::try_parse_from([
+            "meld",
+            "runtime",
+            "activate",
+            "--activation",
+            "config/docs-freshness.toml",
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Runtime {
+                command:
+                    RuntimeCommands::Activate {
+                        activation,
+                        dry_run,
+                        format,
+                    },
+            } => {
+                assert_eq!(activation, PathBuf::from("config/docs-freshness.toml"));
+                assert!(dry_run);
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected runtime activate command"),
+        }
+    }
+
+    #[test]
+    fn runtime_activate_requires_activation_path() {
+        let error = match Cli::try_parse_from(["meld", "runtime", "activate", "--dry-run"]) {
+            Ok(_) => panic!("activation path must remain explicit"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
     }
 
     #[test]

@@ -1,9 +1,53 @@
 //! Runtime CLI presentation.
 
 use crate::error::ApiError;
+use crate::runtime::activation::PassiveActivationDescription;
 use crate::runtime::contracts::{RuntimeImplementationState, RuntimeRoleClass};
 use crate::runtime::supervisor::{RuntimeHealthStatus, RuntimeInstanceStatus};
 use crate::runtime::tooling::{RuntimeCliRunResult, RuntimeCliStatus};
+
+/// Format a passively validated product activation for CLI output.
+pub fn format_runtime_activation_description(
+    description: &PassiveActivationDescription,
+    format: &str,
+) -> Result<String, ApiError> {
+    match format {
+        "json" => serde_json::to_string_pretty(description).map_err(|error| {
+            ApiError::ConfigError(format!(
+                "Runtime activation failed: failed to encode JSON: {error}"
+            ))
+        }),
+        "text" => Ok([
+            "Activation source and owner packages validated".to_string(),
+            format!("Activation: {}", description.activation_id),
+            format!("Hash: {}", description.activation_hash.as_str()),
+            format!("Source: {}", description.source_path.display()),
+            format!("Source bytes: {}", description.source_bytes),
+            format!(
+                "Workspace: {}",
+                description.canonical_workspace_root.display()
+            ),
+            format!("Target: {}", description.resolved_target.display()),
+            format!(
+                "Enabled runtimes: {}",
+                description.enabled_runtime_ids.join(", ")
+            ),
+            format!("Validation scope: {}", description.validation_scope),
+            format!(
+                "Application ready: {}",
+                if description.application_ready {
+                    "yes"
+                } else {
+                    "no"
+                }
+            ),
+        ]
+        .join("\n")),
+        other => Err(ApiError::ConfigError(format!(
+            "Runtime activation failed: invalid format '{other}', expected 'text' or 'json'"
+        ))),
+    }
+}
 
 /// Format runtime status for CLI output.
 pub fn format_runtime_status(status: &RuntimeCliStatus, format: &str) -> Result<String, ApiError> {

@@ -34,6 +34,8 @@
 
 #![deny(missing_docs)]
 
+/// Source-format-neutral execution activation contracts and validation.
+pub mod activation;
 /// Capability publication, binding, invocation, and runtime contracts.
 pub mod capability;
 /// Execution-domain error types shared by public contracts.
