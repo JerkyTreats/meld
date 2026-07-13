@@ -199,15 +199,15 @@ fn acceptance_request_from_agent_command(
 }
 
 fn planning_request(goal: meld_lang::Goal, world_state: WorldState) -> PlanningRequest {
-    let world_state_request = PlanningWorldStateRequest {
-        goal_id: goal.goal_id.clone(),
-        agent_id: goal.agent_id.clone(),
-        target: goal.target.clone(),
-        perspective: PlanningPerspectiveRef::new("default", "default").unwrap(),
-        branch_id: "main".to_string(),
-        requested_dimensions: vec![DIMENSION_ID.to_string()],
-        required_preconditions: vec![],
-    };
+    let world_state_request = PlanningWorldStateRequest::for_goal(
+        &goal,
+        1,
+        PlanningPerspectiveRef::new("default", "default").unwrap(),
+        "main",
+        vec![DIMENSION_ID.to_string()],
+        Vec::new(),
+    )
+    .unwrap();
     let world_state_frame = PlanningWorldStateFrameRef::from_authority(
         "frame-1",
         "projection-request-1",

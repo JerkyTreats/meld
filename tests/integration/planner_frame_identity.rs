@@ -52,6 +52,8 @@ fn durable_world_model_frame_identity_requires_the_exact_execution_projection() 
     let world_state_request = PlanningWorldStateRequest {
         goal_id: "goal-docs-freshness".to_string(),
         agent_id: "agent-docs".to_string(),
+        subject: subject.clone(),
+        source_seq: 7,
         target: Proposition::Accessible {
             scope: Term::Object(subject.clone()),
         },
