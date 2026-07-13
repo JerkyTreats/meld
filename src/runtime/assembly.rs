@@ -182,6 +182,10 @@ pub struct InertRuntimeHandle {
     required_resources: Vec<RuntimeResource>,
     started: bool,
     semantic: RuntimeSemanticHandle,
+    #[cfg(test)]
+    fail_safe_point: bool,
+    #[cfg(test)]
+    fail_flush: bool,
 }
 
 #[derive(Clone)]
@@ -909,6 +913,10 @@ impl RuntimeHandleFactory {
             required_resources: self.descriptor.required_resources.clone(),
             started: false,
             semantic: self.semantic.build_handle(),
+            #[cfg(test)]
+            fail_safe_point: false,
+            #[cfg(test)]
+            fail_flush: false,
         }
     }
 }
@@ -948,6 +956,13 @@ impl InertRuntimeHandle {
 
     /// Flush per-handle resources when a concrete handle owns any.
     pub fn flush_resources(&self) -> Result<RuntimeHandleFlushReport, RuntimeAssemblyError> {
+        #[cfg(test)]
+        if self.fail_flush {
+            return Err(RuntimeAssemblyError::SupervisorHandoff(format!(
+                "runtime '{}' injected flush failure",
+                self.runtime_id
+            )));
+        }
         Ok(RuntimeHandleFlushReport {
             runtime_id: self.runtime_id.clone(),
             flushed_resource: false,
@@ -969,8 +984,23 @@ impl InertRuntimeHandle {
     pub fn wait_for_safe_point(&self) -> RuntimeHandleSafePointReport {
         RuntimeHandleSafePointReport {
             runtime_id: self.runtime_id.clone(),
-            safe_for_flush: !self.started,
+            safe_for_flush: !self.started && {
+                #[cfg(test)]
+                {
+                    !self.fail_safe_point
+                }
+                #[cfg(not(test))]
+                {
+                    true
+                }
+            },
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_test_lifecycle_failures(&mut self, fail_safe_point: bool, fail_flush: bool) {
+        self.fail_safe_point = fail_safe_point;
+        self.fail_flush = fail_flush;
     }
 
     /// Start only after the supervisor supplies a matching non-empty lease.

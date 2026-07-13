@@ -761,6 +761,61 @@ impl SupervisorStore {
         self.flush()
     }
 
+    /// Durably create one restart audit, schedule, and initial replacement checkpoint.
+    ///
+    /// This is the orchestration entrypoint for new replacements. Historical
+    /// compatibility audit rows intentionally remain schedule-only so startup
+    /// never mistakes completed legacy history for interrupted replacement.
+    pub fn persist_restart_replacement(
+        &self,
+        schedule: &RuntimeRestartSchedule,
+    ) -> Result<RuntimeReplacementCheckpoint, SupervisorStoreError> {
+        let restart = schedule.restart();
+        require_non_empty("restart_id", &restart.restart_id)?;
+        require_non_empty("instance_id", &restart.instance_id)?;
+        let key = restart_product_key(restart);
+        let audit_encoded = encode(restart)?;
+        let schedule_encoded = encode(schedule)?;
+        let initial = RuntimeReplacementCheckpoint::new(schedule.clone());
+        let initial_encoded = encode(&initial)?;
+        let checkpoint = (
+            &self.restarts,
+            &self.restart_schedules,
+            &self.replacement_checkpoints,
+        )
+            .transaction(|(restarts, schedules, checkpoints)| {
+                insert_exact_encoded_in_transaction(
+                    restarts,
+                    &key,
+                    &audit_encoded,
+                    "restart audit",
+                )?;
+                insert_exact_encoded_in_transaction(
+                    schedules,
+                    &key,
+                    &schedule_encoded,
+                    "restart schedule",
+                )?;
+                if let Some(raw) = checkpoints.get(key.clone())? {
+                    let current: RuntimeReplacementCheckpoint = decode_transaction(&raw)?;
+                    if current.schedule() != schedule {
+                        return Err(ConflictableTransactionError::Abort(
+                            SupervisorStoreError::ConflictingRecord {
+                                record_type: "replacement checkpoint",
+                                key: key_debug(&key),
+                            },
+                        ));
+                    }
+                    return Ok(current);
+                }
+                checkpoints.insert(key.clone(), initial_encoded.clone())?;
+                Ok(initial.clone())
+            })
+            .map_err(to_transaction)?;
+        self.flush()?;
+        Ok(checkpoint)
+    }
+
     /// Read one checked restart schedule.
     pub fn get_restart_schedule(
         &self,
@@ -940,6 +995,17 @@ impl SupervisorStore {
         shutdown_id: &str,
     ) -> Result<Option<RuntimeShutdownState>, SupervisorStoreError> {
         read_optional(&self.shutdowns, shutdown_id.as_bytes())
+    }
+
+    /// List shutdown state records in stable request order.
+    pub fn list_shutdown_states(&self) -> Result<Vec<RuntimeShutdownState>, SupervisorStoreError> {
+        let mut states: Vec<RuntimeShutdownState> = read_all(&self.shutdowns)?;
+        states.sort_by(|left, right| {
+            left.requested_at_ms
+                .cmp(&right.requested_at_ms)
+                .then_with(|| left.shutdown_id.cmp(&right.shutdown_id))
+        });
+        Ok(states)
     }
 
     /// Durably persist one checked immutable shutdown completion.
@@ -1617,11 +1683,44 @@ mod tests {
                 .unwrap(),
             Some(expected.clone())
         );
+        assert!(store
+            .get_replacement_checkpoint(&restart.runtime_id, &restart.restart_id)
+            .unwrap()
+            .is_none());
         assert_eq!(
             store
                 .load_or_initialize_replacement_checkpoint(&expected)
                 .unwrap(),
             RuntimeReplacementCheckpoint::new(expected)
+        );
+    }
+
+    #[test]
+    fn new_restart_replacement_persists_schedule_and_checkpoint_atomically() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("supervisor.sled");
+        let schedule = restart_schedule("event.append", "restart-a", 100, 50);
+        let store = SupervisorStore::open(&path).unwrap();
+
+        let initial = store.persist_restart_replacement(&schedule).unwrap();
+        assert_eq!(
+            store.persist_restart_replacement(&schedule).unwrap(),
+            initial
+        );
+        drop(store);
+
+        let reopened = SupervisorStore::open(&path).unwrap();
+        assert_eq!(
+            reopened
+                .get_restart_schedule(&schedule.restart().runtime_id, "restart-a")
+                .unwrap(),
+            Some(schedule.clone())
+        );
+        assert_eq!(
+            reopened
+                .get_replacement_checkpoint(&schedule.restart().runtime_id, "restart-a")
+                .unwrap(),
+            Some(RuntimeReplacementCheckpoint::new(schedule))
         );
     }
 

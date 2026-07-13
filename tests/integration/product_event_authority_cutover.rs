@@ -95,6 +95,9 @@ fn real_cli_migrates_and_reuses_one_authority_for_event_and_runtime_routes() {
         context
             .execute(&runtime_run_json())
             .expect("runtime run must reuse the RunContext authority");
+        drop(context);
+        let context = RunContext::new(workspace.clone(), None)
+            .expect("runtime shutdown requires a fresh command authority handle");
         let after_runtime: Value = serde_json::from_str(
             &context
                 .execute(&event_status_json())

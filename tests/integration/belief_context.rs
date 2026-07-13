@@ -8,6 +8,7 @@ use crate::integration::{
 use meld::agent::profile::prompt_contract::PromptContract;
 use meld::capability::{CapabilityCatalog, CapabilityExecutorRegistry};
 use meld::cli::{Commands, RunContext};
+use meld::config::ConfigLoader;
 use meld::context::belief_context::{
     hydrate_belief_context_bundle, BeliefContextBundle, BELIEF_CONTEXT_FAMILY_ID,
 };
@@ -22,6 +23,7 @@ use meld::metadata::frame_write_contract::{
 };
 use meld::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
 use meld::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
+use meld::runtime::storage::ProductStorageLayout;
 use meld::task::{
     execute_task_to_completion, prepare_registered_workflow_task_run, TaskExecutor,
     WorkflowPackageTriggerRequest,
@@ -116,15 +118,20 @@ fn belief_view(subject: NodeID, seed: SeededBelief) -> BeliefView {
     }
 }
 
-/// Seeds docs_freshness belief views by opening the workspace belief store
+/// Seeds docs_freshness belief views by opening the product belief store
 /// directly, staying on the world-model side of the read-only belief
 /// boundary: `ContextApi` exposes no belief write surface. Callers must not
 /// hold an open `RunContext` on the same workspace while this runs, because
 /// the sled store takes an exclusive lock; the handle drops before returning
 /// so the next `RunContext` can open the store.
 fn seed_belief_views(workspace_root: &Path, seeds: Vec<(NodeID, SeededBelief)>) {
-    let store_path = meld::config::xdg::workspace_data_dir(workspace_root).unwrap();
-    let store_path = store_path.join("store");
+    let config = ConfigLoader::load(workspace_root).unwrap();
+    let product_root = config
+        .system
+        .storage
+        .resolve_product_root(workspace_root)
+        .unwrap();
+    let store_path = ProductStorageLayout::from_root(product_root).world_model_db;
     let db = sled::open(&store_path).unwrap();
     let store = BeliefStore::new(db).unwrap();
     for (subject, seed) in seeds {

@@ -360,6 +360,20 @@ impl ProductEventAppendPort {
             .health(self.append.ledger_identity())
             .map_err(|error| RuntimePortError::EventAppend(error.to_string()))
     }
+
+    /// Fence shared append ingress, drain accepted work, and return the final durable barrier.
+    pub(crate) fn close_and_drain(
+        &self,
+    ) -> Result<meld_events::EventFinalBarrier, RuntimePortError> {
+        self.append
+            .close_and_drain()
+            .map_err(|error| RuntimePortError::EventAppend(error.to_string()))
+    }
+
+    /// Return the current shared append-ingress fence for root lifecycle routing.
+    pub(crate) fn ingress_fence(&self) -> meld_events::EventIngressFenceSnapshot {
+        self.append.ingress_fence()
+    }
 }
 
 impl EventAppendSink for ProductEventAppendPort {

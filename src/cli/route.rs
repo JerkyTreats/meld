@@ -1,7 +1,7 @@
 //! CLI route: shared runtime context and top-level command dispatch only.
 
 use crate::branches::{BranchHandle, BranchRuntime};
-use crate::cli::parse::Commands;
+use crate::cli::parse::{Commands, RuntimeCommands};
 use crate::cli::progress::LiveProgressHandle;
 use crate::cli::runtime_assembly::CliRuntimeAssembly;
 use crate::cli::session::{finish_command_session, start_command_session};
@@ -155,6 +155,21 @@ impl RunContext {
             command,
         );
         let result = self.execute_inner(command, &session_id);
+        let terminal_event_shutdown = matches!(
+            command,
+            Commands::Runtime {
+                command: RuntimeCommands::Run { .. }
+            }
+        ) && matches!(
+            self.assembly
+                .product_runtime()
+                .ports()
+                .event_append()
+                .ingress_fence()
+                .state,
+            meld_events::EventIngressFenceState::Draining
+                | meld_events::EventIngressFenceState::Closed
+        );
         // Best-effort emissions from the command are still queued on the
         // ledger writer; the barrier makes this command's own events visible
         // to the catch-up below instead of the next command's startup pass.
@@ -210,7 +225,21 @@ impl RunContext {
         // The durable session_ended emit must stay the last emission of the
         // command: queue order means its ack proves every earlier
         // best-effort event survived, even when exit paths skip Drop.
-        finish_command_session(self.assembly.progress().as_ref(), &session_id, ok, err)?;
+        if let Err(error) =
+            finish_command_session(self.assembly.progress().as_ref(), &session_id, ok, err)
+        {
+            match error {
+                ApiError::StorageError(crate::error::StorageError::EventAuthorityUnavailable(
+                    message,
+                )) if terminal_event_shutdown => {
+                    warn!(
+                        message,
+                        "command session ended at the runtime final event barrier"
+                    );
+                }
+                error => return Err(error),
+            }
+        }
         self.assembly.api().clear_progress_context();
         if let Some(handle) = live_progress.as_mut() {
             handle.stop();
