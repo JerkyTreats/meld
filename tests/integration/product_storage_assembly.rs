@@ -11,7 +11,9 @@ use meld_events::{
 use meld_execution::goals::{AddGoalCommand, GoalCommandMetadata};
 use meld_execution::task::{ArtifactProducerRef, ArtifactRecord};
 use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
-use meld_world_model::{AgentRecord, AgentStatus, BranchScope, PerspectiveKey};
+use meld_world_model::{
+    AgentRegistration, AgentStatus, BranchScope, PerspectiveKey, SeedAgentRegistration,
+};
 use serde_json::json;
 
 #[test]
@@ -106,9 +108,8 @@ fn product_storage_persists_and_reopens_runtime_stores() {
             .belief_store
             .put_config_snapshot("config-a", "{\"ok\":true}")
             .unwrap();
-        stores
-            .agent_store
-            .put_agent(&agent_record(&subject))
+        AgentRegistration::new(&stores.agent_store)
+            .register_seed_agent(agent_registration(&subject))
             .unwrap();
         stores
             .goal_store
@@ -179,7 +180,15 @@ fn product_storage_persists_and_reopens_runtime_stores() {
             .as_deref(),
         Some("{\"ok\":true}")
     );
-    assert!(reopened.agent_store.get_agent("agent-a").unwrap().is_some());
+    assert_eq!(
+        reopened
+            .agent_store
+            .get_agent("agent-a")
+            .unwrap()
+            .unwrap()
+            .status,
+        AgentStatus::Registered
+    );
     assert!(reopened.goal_store.get_goal("goal-a").unwrap().is_some());
     assert!(reopened
         .task_artifacts
@@ -232,8 +241,8 @@ fn product_storage_rejects_invalid_task_network_storage_key() {
         .exists());
 }
 
-fn agent_record(subject: &DomainObjectRef) -> AgentRecord {
-    AgentRecord {
+fn agent_registration(subject: &DomainObjectRef) -> SeedAgentRegistration {
+    SeedAgentRegistration {
         agent_id: "agent-a".to_string(),
         perspective_key: PerspectiveKey::new("agent", "agent-a").unwrap(),
         subject: subject.clone(),
@@ -241,9 +250,7 @@ fn agent_record(subject: &DomainObjectRef) -> AgentRecord {
         observation_scope: "workspace".to_string(),
         directive_id: "directive.watch_docs".to_string(),
         seed_provenance: "test".to_string(),
-        status: AgentStatus::Operational,
         created_at_seq: 1,
-        updated_at_seq: 1,
     }
 }
 

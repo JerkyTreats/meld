@@ -24,9 +24,7 @@ use crate::agent::hydration::{
     AgentProcessHydrationRecord, AgentProcessHydrationStatus, AgentReadinessProof,
     FailAgentHydrationCommand, MarkAgentOperationalCommand, StartAgentHydrationCommand,
 };
-use crate::belief::store::TREE_READINESS_ATTESTATIONS;
 use crate::error::StorageError;
-use crate::planner::store::{TREE_PROJECTION_FRAMES, TREE_PROJECTION_REQUESTS};
 
 const TREE_AGENT_RECORDS: &str = "agent_records";
 const TREE_AGENT_BY_STATUS: &str = "agent_by_status";
@@ -88,9 +86,6 @@ pub struct AgentStore {
     hydration_epochs: Tree,
     current_hydrations: Tree,
     readiness_proofs: Tree,
-    belief_readiness_attestations: Tree,
-    planner_projection_requests: Tree,
-    planner_projection_frames: Tree,
     #[cfg(test)]
     flush_probe: Arc<Mutex<FlushProbe>>,
 }
@@ -151,15 +146,6 @@ impl AgentStore {
                 .open_tree(TREE_CURRENT_HYDRATIONS)
                 .map_err(to_storage_io)?,
             readiness_proofs: db.open_tree(TREE_READINESS_PROOFS).map_err(to_storage_io)?,
-            belief_readiness_attestations: db
-                .open_tree(TREE_READINESS_ATTESTATIONS)
-                .map_err(to_storage_io)?,
-            planner_projection_requests: db
-                .open_tree(TREE_PROJECTION_REQUESTS)
-                .map_err(to_storage_io)?,
-            planner_projection_frames: db
-                .open_tree(TREE_PROJECTION_FRAMES)
-                .map_err(to_storage_io)?,
             #[cfg(test)]
             flush_probe: Arc::new(Mutex::new(FlushProbe::default())),
             db,
@@ -175,8 +161,8 @@ impl AgentStore {
         self.db.clone()
     }
 
-    /// Write an agent record and its status index.
-    pub fn put_agent(&self, record: &AgentRecord) -> Result<(), StorageError> {
+    /// Write an agent record and its status index within the agent domain.
+    pub(super) fn put_agent(&self, record: &AgentRecord) -> Result<(), StorageError> {
         record.validate()?;
         self.agents
             .insert(
@@ -304,7 +290,10 @@ impl AgentStore {
     }
 
     /// Write a subscription record and its lookup indexes.
-    pub fn put_subscription(&self, record: &AgentSubscriptionRecord) -> Result<(), StorageError> {
+    pub(super) fn put_subscription(
+        &self,
+        record: &AgentSubscriptionRecord,
+    ) -> Result<(), StorageError> {
         record.validate()?;
         self.subscriptions
             .insert(
@@ -486,7 +475,7 @@ impl AgentStore {
     }
 
     /// Atomically begin one fenced hydration attempt and its activation diagnostic.
-    pub fn start_process_hydration(
+    pub(super) fn start_process_hydration(
         &self,
         command: &StartAgentHydrationCommand,
     ) -> Result<AgentProcessHydrationRecord, StorageError> {
@@ -496,9 +485,12 @@ impl AgentStore {
         let agent = self.get_agent(&command.agent_id)?.ok_or_else(|| {
             StorageError::InvalidPath(format!("unknown agent '{}'", command.agent_id))
         })?;
-        if agent.status != AgentStatus::Registered {
+        if !matches!(
+            agent.status,
+            AgentStatus::Registered | AgentStatus::Operational
+        ) {
             return Err(StorageError::Backpressure(format!(
-                "agent '{}' is not registered for hydration",
+                "agent '{}' is not eligible for hydration",
                 command.agent_id
             )));
         }
@@ -729,7 +721,7 @@ impl AgentStore {
     }
 
     /// Atomically fail one exact current hydration attempt.
-    pub fn fail_process_hydration(
+    pub(super) fn fail_process_hydration(
         &self,
         command: &FailAgentHydrationCommand,
     ) -> Result<AgentProcessHydrationRecord, StorageError> {
@@ -889,7 +881,7 @@ impl AgentStore {
     }
 
     /// Atomically accept one exact readiness proof and mark its agent operational.
-    pub fn mark_agent_operational(
+    pub(super) fn mark_agent_operational(
         &self,
         command: &MarkAgentOperationalCommand,
     ) -> Result<AgentRecord, StorageError> {
@@ -903,17 +895,23 @@ impl AgentStore {
                 "unknown agent '{agent_id}'"
             )));
         };
-        if agent.status == AgentStatus::Operational {
+        if agent.status == AgentStatus::Operational
+            && self
+                .get_process_hydration(&command.hydration_id)?
+                .is_some_and(|hydration| hydration.status == AgentProcessHydrationStatus::Ready)
+        {
             return self.validate_operational_replay(command, agent);
         }
-        if agent.status != AgentStatus::Registered
-            || agent.updated_at_seq != command.readiness.expected_agent_updated_at_seq
+        if !matches!(
+            agent.status,
+            AgentStatus::Registered | AgentStatus::Operational
+        ) || agent.updated_at_seq != command.readiness.expected_agent_updated_at_seq
             || agent.subject != attestation.belief_key.subject
             || agent.perspective_key != attestation.belief_key.perspective
             || agent.branch_scope != attestation.belief_key.branch_scope
         {
             return Err(StorageError::Backpressure(format!(
-                "registered agent scope or sequence fence changed for '{agent_id}'"
+                "agent lifecycle, scope, or sequence fence changed for '{agent_id}'"
             )));
         }
 
@@ -967,57 +965,6 @@ impl AgentStore {
             )));
         }
 
-        let attestation_bytes = serde_json::to_vec(attestation).map_err(to_storage_data)?;
-        let durable_attestation = self
-            .belief_readiness_attestations
-            .get(attestation.attestation_id.as_bytes())
-            .map_err(to_storage_io)?
-            .ok_or_else(|| {
-                StorageError::InvalidPath(format!(
-                    "belief readiness attestation '{}' is not durable",
-                    attestation.attestation_id
-                ))
-            })?;
-        if durable_attestation.as_ref() != attestation_bytes.as_slice() {
-            return Err(StorageError::Backpressure(
-                "belief readiness attestation changed before activation".to_string(),
-            ));
-        }
-        let planner_request = &command.readiness.planner_request;
-        let planner_request_bytes = serde_json::to_vec(planner_request).map_err(to_storage_data)?;
-        let durable_planner_request = self
-            .planner_projection_requests
-            .get(planner_request.request.request_id.as_bytes())
-            .map_err(to_storage_io)?
-            .ok_or_else(|| {
-                StorageError::InvalidPath(format!(
-                    "planner request '{}' is not durable",
-                    planner_request.request.request_id
-                ))
-            })?;
-        if durable_planner_request.as_ref() != planner_request_bytes.as_slice() {
-            return Err(StorageError::Backpressure(
-                "planner request changed before activation".to_string(),
-            ));
-        }
-        let planner_frame = &command.readiness.planner_frame;
-        let planner_frame_bytes = serde_json::to_vec(planner_frame).map_err(to_storage_data)?;
-        let durable_planner_frame = self
-            .planner_projection_frames
-            .get(planner_frame.identity.frame_id.as_bytes())
-            .map_err(to_storage_io)?
-            .ok_or_else(|| {
-                StorageError::InvalidPath(format!(
-                    "planner frame '{}' is not durable",
-                    planner_frame.identity.frame_id
-                ))
-            })?;
-        if durable_planner_frame.as_ref() != planner_frame_bytes.as_slice() {
-            return Err(StorageError::Backpressure(
-                "planner frame changed before activation".to_string(),
-            ));
-        }
-
         let mut operational = agent.clone();
         operational.status = AgentStatus::Operational;
         operational.updated_at_seq = command.updated_at_seq;
@@ -1054,9 +1001,6 @@ impl AgentStore {
             &self.readiness_proofs,
             &self.hydration_epochs,
             &self.current_hydrations,
-            &self.belief_readiness_attestations,
-            &self.planner_projection_requests,
-            &self.planner_projection_frames,
         )
             .transaction(
                 |(
@@ -1068,9 +1012,6 @@ impl AgentStore {
                     proofs,
                     epochs,
                     current,
-                    attestations,
-                    planner_requests,
-                    planner_frames,
                 )| {
                     require_transaction_value(
                         agents,
@@ -1107,24 +1048,6 @@ impl AgentStore {
                         agent_id.as_bytes(),
                         command.hydration_id.as_bytes(),
                         "current hydration",
-                    )?;
-                    require_transaction_value(
-                        attestations,
-                        attestation.attestation_id.as_bytes(),
-                        durable_attestation.as_ref(),
-                        "belief readiness attestation",
-                    )?;
-                    require_transaction_value(
-                        planner_requests,
-                        planner_request.request.request_id.as_bytes(),
-                        durable_planner_request.as_ref(),
-                        "planner request",
-                    )?;
-                    require_transaction_value(
-                        planner_frames,
-                        planner_frame.identity.frame_id.as_bytes(),
-                        durable_planner_frame.as_ref(),
-                        "planner frame",
                     )?;
                     if let Some(existing) = proofs.get(command.readiness.proof_id.as_bytes())? {
                         if existing.as_ref() != proof_bytes.as_slice() {
@@ -1178,35 +1101,6 @@ impl AgentStore {
             && self.current_hydration_id(&agent.agent_id)?.as_deref()
                 == Some(command.hydration_id.as_str())
         {
-            let attestation = &command.readiness.signal.attestation;
-            let request = &command.readiness.planner_request;
-            let frame = &command.readiness.planner_frame;
-            let attestation_bytes = serde_json::to_vec(attestation).map_err(to_storage_data)?;
-            let request_bytes = serde_json::to_vec(request).map_err(to_storage_data)?;
-            let frame_bytes = serde_json::to_vec(frame).map_err(to_storage_data)?;
-            if self
-                .belief_readiness_attestations
-                .get(attestation.attestation_id.as_bytes())
-                .map_err(to_storage_io)?
-                .as_deref()
-                != Some(attestation_bytes.as_slice())
-                || self
-                    .planner_projection_requests
-                    .get(request.request.request_id.as_bytes())
-                    .map_err(to_storage_io)?
-                    .as_deref()
-                    != Some(request_bytes.as_slice())
-                || self
-                    .planner_projection_frames
-                    .get(frame.identity.frame_id.as_bytes())
-                    .map_err(to_storage_io)?
-                    .as_deref()
-                    != Some(frame_bytes.as_slice())
-            {
-                return Err(StorageError::Backpressure(
-                    "operational replay readiness products changed".to_string(),
-                ));
-            }
             self.flush_durable("operational transition replay")?;
             return Ok(agent);
         }

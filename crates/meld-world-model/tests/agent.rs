@@ -540,6 +540,11 @@ fn agent_source_scans_reject_execution_internals_and_private_store_imports() {
         let source = std::fs::read_to_string(manifest_dir.join(path)).unwrap();
         assert!(!source.contains("agent::store"));
     }
+    let store_source = std::fs::read_to_string(manifest_dir.join("src/agent/store.rs")).unwrap();
+    assert!(!store_source.contains("crate::belief::store"));
+    assert!(!store_source.contains("crate::planner::store"));
+    assert!(!store_source.contains("pub fn put_agent"));
+    assert!(!store_source.contains("pub fn put_subscription"));
 }
 
 #[test]
@@ -1059,6 +1064,112 @@ fn operational_transition_is_atomic_idempotent_and_durable() {
             .unwrap(),
         Some(command.readiness)
     );
+}
+
+#[test]
+fn operational_agent_rehydrates_under_a_new_epoch_and_lease() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let path = temp_dir.path().join("agent-rehydrate");
+    let second_command;
+    {
+        let db = sled::open(&path).unwrap();
+        let store = AgentStore::new(db.clone()).unwrap();
+        let registration = AgentRegistration::new(&store);
+        let mut request = seed_agent_registration();
+        request.created_at_seq = 5;
+        registration.register_seed_agent(request).unwrap();
+        let subscription = AgentSubscription::new(&store)
+            .subscribe(SubscribeAgentCommand {
+                agent_id: AGENT_ID.to_string(),
+                belief_key: belief_key(),
+                created_at_seq: 6,
+            })
+            .unwrap();
+        AgentSubscription::new(&store)
+            .advance_subscription(meld_world_model::AdvanceSubscriptionCommand {
+                agent_id: AGENT_ID.to_string(),
+                subscription_id: subscription.subscription_id.clone(),
+                delivered_revision_id: "revision-ready".to_string(),
+                delivered_seq: 8,
+            })
+            .unwrap();
+
+        let first_start = StartAgentHydrationCommand {
+            hydration_id: "hydration-docs-first".to_string(),
+            agent_id: AGENT_ID.to_string(),
+            expected_prior_attempt_epoch: 0,
+            attempt_epoch: 1,
+            lease_id: "lease-docs-first".to_string(),
+            started_at_seq: 7,
+        };
+        registration.start_hydration(&first_start).unwrap();
+        let first_command = MarkAgentOperationalCommand {
+            hydration_id: first_start.hydration_id.clone(),
+            attempt_epoch: first_start.attempt_epoch,
+            lease_id: first_start.lease_id.clone(),
+            expected_hydration_updated_at_seq: first_start.started_at_seq,
+            readiness: persist_readiness_proof(&db, &subscription.subscription_id, 5),
+            updated_at_seq: 10,
+        };
+        registration.mark_operational(&first_command).unwrap();
+
+        let second_start = StartAgentHydrationCommand {
+            hydration_id: "hydration-docs-second".to_string(),
+            agent_id: AGENT_ID.to_string(),
+            expected_prior_attempt_epoch: 1,
+            attempt_epoch: 2,
+            lease_id: "lease-docs-second".to_string(),
+            started_at_seq: 11,
+        };
+        registration.start_hydration(&second_start).unwrap();
+        second_command = MarkAgentOperationalCommand {
+            hydration_id: second_start.hydration_id.clone(),
+            attempt_epoch: second_start.attempt_epoch,
+            lease_id: second_start.lease_id.clone(),
+            expected_hydration_updated_at_seq: second_start.started_at_seq,
+            readiness: AgentReadinessProof::identified(
+                10,
+                first_command.readiness.signal.clone(),
+                first_command.readiness.planner_request.clone(),
+                first_command.readiness.planner_frame.clone(),
+                readiness_goal(),
+            )
+            .unwrap(),
+            updated_at_seq: 12,
+        };
+        let rehydrated = registration.mark_operational(&second_command).unwrap();
+
+        assert_eq!(rehydrated.status, AgentStatus::Operational);
+        assert_eq!(rehydrated.updated_at_seq, 12);
+        assert_eq!(
+            store
+                .get_process_hydration(&first_start.hydration_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            AgentProcessHydrationStatus::Ready
+        );
+        assert_eq!(
+            store
+                .get_process_hydration(&second_start.hydration_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            AgentProcessHydrationStatus::Ready
+        );
+        assert_eq!(
+            registration.mark_operational(&second_command).unwrap(),
+            rehydrated
+        );
+        store.flush().unwrap();
+    }
+
+    let store = AgentStore::new(reopen_sled_after_close(&path).unwrap()).unwrap();
+    let replayed = AgentRegistration::new(&store)
+        .mark_operational(&second_command)
+        .unwrap();
+    assert_eq!(replayed.status, AgentStatus::Operational);
+    assert_eq!(replayed.updated_at_seq, 12);
 }
 
 #[test]

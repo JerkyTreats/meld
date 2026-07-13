@@ -6,7 +6,9 @@ use crate::agent::hydration::{
     StartAgentHydrationCommand,
 };
 use crate::agent::store::AgentStore;
+use crate::belief::BeliefStore;
 use crate::error::StorageError;
+use crate::planner::PlannerProjectionStore;
 
 /// Write facade for seed agent registration and readiness transitions.
 pub struct AgentRegistration<'a> {
@@ -61,6 +63,13 @@ impl<'a> AgentRegistration<'a> {
         &self,
         command: &MarkAgentOperationalCommand,
     ) -> Result<AgentRecord, StorageError> {
+        let db = self.store.shared_database();
+        BeliefStore::new(db.clone())?
+            .verify_readiness_attestation(&command.readiness.signal.attestation)?;
+        PlannerProjectionStore::new(db)?.verify_completed_projection(
+            &command.readiness.planner_request,
+            &command.readiness.planner_frame,
+        )?;
         self.store.mark_agent_operational(command)
     }
 

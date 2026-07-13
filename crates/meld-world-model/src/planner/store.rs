@@ -14,8 +14,8 @@ use crate::planner::{
     PlannerProjectionRequestStatus,
 };
 
-pub(crate) const TREE_PROJECTION_REQUESTS: &str = "planner_projection_requests";
-pub(crate) const TREE_PROJECTION_FRAMES: &str = "planner_projection_frames";
+const TREE_PROJECTION_REQUESTS: &str = "planner_projection_requests";
+const TREE_PROJECTION_FRAMES: &str = "planner_projection_frames";
 
 #[cfg(test)]
 #[derive(Default)]
@@ -255,6 +255,36 @@ impl PlannerProjectionStore {
         )
     }
 
+    /// Verify one exact immutable completed request and frame pair is durable.
+    pub fn verify_completed_projection(
+        &self,
+        expected_request: &PlannerProjectionRequestRecord,
+        expected_frame: &PlannerProjectionFrame,
+    ) -> Result<(), StorageError> {
+        expected_request.validate().map_err(to_contract_error)?;
+        expected_frame.validate().map_err(to_contract_error)?;
+        if expected_request.status != PlannerProjectionRequestStatus::Completed
+            || expected_request.frame_id.as_deref()
+                != Some(expected_frame.identity.frame_id.as_str())
+            || expected_request.request.request_id != expected_frame.identity.request_id
+        {
+            return Err(StorageError::InvalidPath(
+                "planner readiness products do not form one completed projection".to_string(),
+            ));
+        }
+        if self
+            .get_request(&expected_request.request.request_id)?
+            .as_ref()
+            != Some(expected_request)
+            || self.get_frame(&expected_frame.identity.frame_id)?.as_ref() != Some(expected_frame)
+        {
+            return Err(StorageError::Backpressure(
+                "planner readiness products changed or are missing".to_string(),
+            ));
+        }
+        self.flush_durable("planner readiness verification")
+    }
+
     /// Flush pending planner projection writes.
     pub fn flush(&self) -> Result<(), StorageError> {
         #[cfg(test)]
@@ -374,18 +404,19 @@ mod tests {
         let path = temp.path().join("planner");
         let request = request();
         let completed;
+        let durable_frame;
         {
             let store = PlannerProjectionStore::new(sled::open(&path).unwrap()).unwrap();
             let pending = store.put_pending(request.clone(), 3).unwrap();
             assert_eq!(pending.status, PlannerProjectionRequestStatus::Pending);
-            let durable_frame = frame(&request, 4);
+            durable_frame = frame(&request, 4);
             completed = store
                 .complete(&request.request_id, 3, durable_frame.clone(), 4)
                 .unwrap();
             assert_eq!(completed.status, PlannerProjectionRequestStatus::Completed);
             assert_eq!(
                 store
-                    .complete(&request.request_id, 3, durable_frame, 4)
+                    .complete(&request.request_id, 3, durable_frame.clone(), 4)
                     .unwrap(),
                 completed
             );
@@ -393,8 +424,17 @@ mod tests {
         let store = PlannerProjectionStore::new(sled::open(&path).unwrap()).unwrap();
         assert_eq!(
             store.get_request(&request.request_id).unwrap(),
-            Some(completed)
+            Some(completed.clone())
         );
+        store
+            .verify_completed_projection(&completed, &durable_frame)
+            .unwrap();
+
+        let mut missing_frame = durable_frame;
+        missing_frame.identity.frame_id = "missing-frame".to_string();
+        assert!(store
+            .verify_completed_projection(&completed, &missing_frame)
+            .is_err());
     }
 
     #[test]

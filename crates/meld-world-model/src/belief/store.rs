@@ -56,7 +56,7 @@ const TREE_EVIDENCE_INGESTION_RECEIPTS: &str = "belief_evidence_ingestion_receip
 const TREE_AUTHORITY_META: &str = "belief_authority_meta";
 const TREE_AUTHORITY_MIGRATION: &str = "belief_authority_migration";
 const TREE_COMMIT_INTENTS: &str = "belief_commit_intents";
-pub(crate) const TREE_READINESS_ATTESTATIONS: &str = "belief_readiness_attestations";
+const TREE_READINESS_ATTESTATIONS: &str = "belief_readiness_attestations";
 const KEY_PRODUCT_AUTHORITY_ID: &[u8] = b"product_authority_id";
 const KEY_AUTHORITY_MIGRATION_MARKER: &[u8] = b"marker";
 const KEY_LEGACY_WRITE_FENCE: &[u8] = b"legacy_write_fence";
@@ -1455,6 +1455,29 @@ impl BeliefStore {
         )
     }
 
+    /// Verify that one exact immutable readiness attestation is durable.
+    pub fn verify_readiness_attestation(
+        &self,
+        expected: &BeliefReadinessAttestation,
+    ) -> Result<(), StorageError> {
+        expected.validate()?;
+        if self
+            .get_readiness_attestation(&expected.attestation_id)?
+            .as_ref()
+            != Some(expected)
+        {
+            return Err(StorageError::Backpressure(format!(
+                "belief readiness attestation '{}' changed or is missing",
+                expected.attestation_id
+            )));
+        }
+        self.flush().map_err(|error| {
+            StorageError::DurabilityIndeterminate(format!(
+                "belief readiness verification flush failed: {error}"
+            ))
+        })
+    }
+
     /// Read current views for a subject and perspective.
     pub fn views_for_subject(
         &self,
@@ -2240,8 +2263,18 @@ mod tests {
             reopened
                 .get_readiness_attestation(&attestation.attestation_id)
                 .unwrap(),
-            Some(attestation)
+            Some(attestation.clone())
         );
+        reopened.verify_readiness_attestation(&attestation).unwrap();
+
+        let mut missing_request = request;
+        missing_request.subscription_id = "subscription-missing".to_string();
+        let view = reopened
+            .current_view(&missing_request.belief_key)
+            .unwrap()
+            .unwrap();
+        let missing = BeliefReadinessAttestation::identified(&missing_request, &view).unwrap();
+        assert!(reopened.verify_readiness_attestation(&missing).is_err());
     }
 
     fn revision(key: &BeliefKey, revision_id: &str, end: u64) -> BeliefRevision {
