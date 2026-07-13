@@ -22,21 +22,20 @@ use meld_world_model::{
 use proptest::prelude::*;
 
 fn reopen_sled_after_close(path: &Path) -> sled::Result<sled::Db> {
-    const MAX_ATTEMPTS: usize = 50;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
 
-    for attempt in 0..MAX_ATTEMPTS {
+    loop {
         match sled::open(path) {
             Ok(db) => return Ok(db),
             Err(sled::Error::Io(error))
-                if error.kind() == std::io::ErrorKind::WouldBlock && attempt + 1 < MAX_ATTEMPTS =>
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    && std::time::Instant::now() < deadline =>
             {
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(error) => return Err(error),
         }
     }
-
-    unreachable!("the final open attempt returns its error")
 }
 
 fn assert_close(actual: f64, expected: f64) {

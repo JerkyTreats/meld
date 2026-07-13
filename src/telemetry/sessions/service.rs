@@ -250,6 +250,23 @@ mod tests {
     use crate::session::SessionStatus;
     use serde_json::json;
 
+    fn reopen_after_lock_release(path: &std::path::Path) -> sled::Db {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match sled::open(path) {
+                Ok(db) => return db,
+                Err(sled::Error::Io(error))
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && std::time::Instant::now() < deadline =>
+                {
+                    // The final sled handle can release its file lock just after Drop returns.
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(error) => panic!("failed to reopen session storage: {error}"),
+            }
+        }
+    }
+
     #[test]
     fn injected_capability_owns_canonical_event_emission() {
         let event_db = sled::Config::new().temporary(true).open().unwrap();
@@ -319,7 +336,8 @@ mod tests {
         drop(session_store);
         drop(session_db);
 
-        let reopened = lifecycle::SessionStore::new(sled::open(&session_path).unwrap()).unwrap();
+        let reopened =
+            lifecycle::SessionStore::new(reopen_after_lock_release(&session_path)).unwrap();
         assert_eq!(
             reopened.get_session(&session_id).unwrap().unwrap().status,
             SessionStatus::Interrupted
