@@ -2,7 +2,9 @@
 
 use meld_lang::Method;
 
-use super::binding::{invalid, ExecutionActivationAssets, ExecutionActivationBindingError};
+use super::binding::{
+    invalid, ExecutionActivationAssets, ExecutionActivationBindingError, ExecutionRuntimeAssets,
+};
 use super::{
     bind_execution_activation, ExecutionActivationInput, ExecutionActivationSelection,
     ExecutionActivationValidationContext, MethodTaskPackageBinding,
@@ -38,6 +40,20 @@ impl BuiltInExecutionActivationRegistry {
         &self,
         selection: &ExecutionActivationSelection,
     ) -> Result<ExecutionActivationAssets, ExecutionActivationBindingError> {
+        self.resolve_runtime_assets(selection)
+            .map(ExecutionRuntimeAssets::into_activation_assets)
+    }
+
+    /// Resolve activation assets and the exact catalog for runtime construction.
+    ///
+    /// This is the execution-owned bridge from immutable built-ins to later
+    /// planning runtimes. Callers receive the catalog used for method
+    /// verification rather than reconstructing equivalent contracts outside
+    /// execution.
+    pub fn resolve_runtime_assets(
+        &self,
+        selection: &ExecutionActivationSelection,
+    ) -> Result<ExecutionRuntimeAssets, ExecutionActivationBindingError> {
         require_supported(
             "selection.method_id",
             &selection.method_id,
@@ -83,16 +99,19 @@ impl BuiltInExecutionActivationRegistry {
                 )
             })?;
 
-        Ok(ExecutionActivationAssets {
-            method_library,
-            method_binding: MethodTaskPackageBinding {
-                binding_id: DOCS_WRITER_BINDING_ID.to_string(),
-                method_id: REFRESH_DOCS_METHOD_ID.to_string(),
-                package_step_id: DOCS_WRITER_STEP_ID.to_string(),
-                package_id: DOCS_WRITER_PACKAGE_ID.to_string(),
-                workflow_id: DOCS_WRITER_WORKFLOW_ID.to_string(),
+        Ok(ExecutionRuntimeAssets {
+            activation: ExecutionActivationAssets {
+                method_library,
+                method_binding: MethodTaskPackageBinding {
+                    binding_id: DOCS_WRITER_BINDING_ID.to_string(),
+                    method_id: REFRESH_DOCS_METHOD_ID.to_string(),
+                    package_step_id: DOCS_WRITER_STEP_ID.to_string(),
+                    package_id: DOCS_WRITER_PACKAGE_ID.to_string(),
+                    workflow_id: DOCS_WRITER_WORKFLOW_ID.to_string(),
+                },
+                task_package,
             },
-            task_package,
+            capability_catalog: catalog,
         })
     }
 }

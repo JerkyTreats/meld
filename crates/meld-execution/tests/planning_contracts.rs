@@ -53,10 +53,13 @@ fn frame() -> PlanningWorldStateFrameRef {
 }
 
 fn world_state_request() -> PlanningWorldStateRequest {
+    let goal = goal();
     PlanningWorldStateRequest {
         goal_id: "goal-1".to_string(),
         agent_id: "agent".to_string(),
-        target: goal().target,
+        subject: DomainObjectRef::new("workspace", "node", "readme").unwrap(),
+        source_seq: 1,
+        target: goal.target,
         perspective: PlanningPerspectiveRef::new("agent", "default").unwrap(),
         branch_id: "main".to_string(),
         requested_dimensions: vec!["docs_freshness".to_string()],

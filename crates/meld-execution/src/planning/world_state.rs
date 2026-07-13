@@ -1,5 +1,7 @@
 //! Execution side contracts for goal scoped world state projection.
 
+use meld_events::DomainObjectRef;
+use meld_lang::{Goal, Proposition, Term};
 use serde::{Deserialize, Serialize};
 
 const WORLD_STATE_HASH_DOMAIN: &[u8] = b"meld.planner-world-state.v1";
@@ -200,8 +202,12 @@ pub struct PlanningWorldStateRequest {
     pub goal_id: String,
     /// Agent perspective requesting the projection.
     pub agent_id: String,
+    /// Explicit world-model subject selected from the ground goal target.
+    pub subject: DomainObjectRef,
+    /// Durable execution goal sequence that orders request persistence.
+    pub source_seq: u64,
     /// Target proposition that planning will evaluate.
-    pub target: meld_lang::Proposition,
+    pub target: Proposition,
     /// Complete world-model perspective identity.
     pub perspective: PlanningPerspectiveRef,
     /// World model branch identifier.
@@ -209,18 +215,126 @@ pub struct PlanningWorldStateRequest {
     /// Dimensions execution expects to evaluate.
     pub requested_dimensions: Vec<String>,
     /// Method preconditions that can be projected with the goal target.
-    pub required_preconditions: Vec<meld_lang::Proposition>,
+    pub required_preconditions: Vec<Proposition>,
 }
 
 impl PlanningWorldStateRequest {
+    /// Build one durable projection request from an execution-owned goal record.
+    ///
+    /// The goal target must be ground and identify exactly one subject so root
+    /// integration never has to infer world-model scope. The source sequence is
+    /// the durable goal-record sequence and becomes part of request identity.
+    pub fn for_goal(
+        goal: &Goal,
+        source_seq: u64,
+        perspective: PlanningPerspectiveRef,
+        branch_id: impl Into<String>,
+        requested_dimensions: Vec<String>,
+        required_preconditions: Vec<Proposition>,
+    ) -> Result<Self, String> {
+        let subject = unique_projection_subject(&goal.target)?;
+        let request = Self {
+            goal_id: goal.goal_id.clone(),
+            agent_id: goal.agent_id.clone(),
+            subject,
+            source_seq,
+            target: goal.target.clone(),
+            perspective,
+            branch_id: branch_id.into(),
+            requested_dimensions,
+            required_preconditions,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// Validate durable identity, scope agreement, and target grounding.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.goal_id.trim().is_empty() || self.agent_id.trim().is_empty() {
+            return Err("projection request goal and agent ids must be non-empty".to_string());
+        }
+        self.subject.validate().map_err(|error| error.to_string())?;
+        if self.source_seq == 0 {
+            return Err("projection request source sequence must be greater than zero".to_string());
+        }
+        if let Some(issue) = self.target.grounding_issue() {
+            return Err(format!(
+                "projection request target must be ground before persistence: {issue}"
+            ));
+        }
+        if !proposition_references_subject(&self.target, &self.subject) {
+            return Err(
+                "projection request subject must be referenced by the ground goal target"
+                    .to_string(),
+            );
+        }
+        self.perspective.validate()?;
+        if self.branch_id.trim().is_empty() {
+            return Err("projection request branch id must be non-empty".to_string());
+        }
+        Ok(())
+    }
+
     /// Derive a canonical digest from every projection request field.
     pub fn canonical_hash(&self) -> Result<String, String> {
+        self.validate()?;
         let mut canonical = self.clone();
         canonical.requested_dimensions.sort();
         canonical.requested_dimensions.dedup();
         canonicalize_propositions(&mut canonical.required_preconditions)?;
         let encoded = serde_json::to_vec(&canonical).map_err(|error| error.to_string())?;
         Ok(blake3::hash(&encoded).to_hex().to_string())
+    }
+}
+
+fn unique_projection_subject(target: &Proposition) -> Result<DomainObjectRef, String> {
+    if let Some(issue) = target.grounding_issue() {
+        return Err(format!(
+            "projection request target must be ground before persistence: {issue}"
+        ));
+    }
+    let mut subjects = Vec::new();
+    collect_projection_subjects(target, &mut subjects);
+    subjects.sort();
+    subjects.dedup();
+    match subjects.as_slice() {
+        [subject] => Ok(subject.clone()),
+        [] => Err("projection request target must reference one domain object subject".to_string()),
+        _ => Err(
+            "projection request target is ambiguous across multiple domain object subjects"
+                .to_string(),
+        ),
+    }
+}
+
+fn proposition_references_subject(target: &Proposition, subject: &DomainObjectRef) -> bool {
+    let mut subjects = Vec::new();
+    collect_projection_subjects(target, &mut subjects);
+    subjects.iter().any(|candidate| candidate == subject)
+}
+
+fn collect_projection_subjects(target: &Proposition, subjects: &mut Vec<DomainObjectRef>) {
+    match target {
+        Proposition::Holds { subject, .. } => collect_object_term(subject, subjects),
+        Proposition::Exists { scope, .. } | Proposition::Accessible { scope } => {
+            collect_object_term(scope, subjects);
+        }
+        Proposition::Related { src, dst, .. } => {
+            collect_object_term(src, subjects);
+            collect_object_term(dst, subjects);
+        }
+        Proposition::All(children) | Proposition::Any(children) => {
+            for child in children {
+                collect_projection_subjects(child, subjects);
+            }
+        }
+        Proposition::Not(child) => collect_projection_subjects(child, subjects),
+    }
+}
+
+fn collect_object_term(term: &Term, subjects: &mut Vec<DomainObjectRef>) {
+    if let Term::Object(subject) = term {
+        subjects.push(subject.clone());
     }
 }
 
@@ -302,10 +416,15 @@ mod contract_freeze_tests {
 
     #[test]
     fn projection_identity_preserves_authoritative_frame_and_binds_world_state() {
+        let subject = DomainObjectRef::new("workspace", "node", "readme").unwrap();
         let request = PlanningWorldStateRequest {
             goal_id: "goal-a".to_string(),
             agent_id: "agent-a".to_string(),
-            target: meld_lang::Proposition::Not(Box::new(meld_lang::Proposition::All(vec![]))),
+            subject: subject.clone(),
+            source_seq: 7,
+            target: Proposition::Not(Box::new(Proposition::Accessible {
+                scope: Term::Object(subject),
+            })),
             perspective: PlanningPerspectiveRef::new("agent", "agent-a").unwrap(),
             branch_id: "main".to_string(),
             requested_dimensions: vec!["docs_freshness".to_string()],
@@ -351,10 +470,15 @@ mod contract_freeze_tests {
 
     #[test]
     fn source_request_hash_canonicalizes_semantic_set_order() {
+        let subject = DomainObjectRef::new("workspace", "node", "readme").unwrap();
         let mut first = PlanningWorldStateRequest {
             goal_id: "goal-a".to_string(),
             agent_id: "agent-a".to_string(),
-            target: meld_lang::Proposition::All(Vec::new()),
+            subject: subject.clone(),
+            source_seq: 7,
+            target: Proposition::Accessible {
+                scope: Term::Object(subject),
+            },
             perspective: PlanningPerspectiveRef::new("agent", "agent-a").unwrap(),
             branch_id: "main".to_string(),
             requested_dimensions: vec!["freshness".to_string(), "docs".to_string()],
@@ -372,5 +496,94 @@ mod contract_freeze_tests {
             first.canonical_hash().unwrap(),
             second.canonical_hash().unwrap()
         );
+    }
+
+    #[test]
+    fn durable_request_identity_binds_subject_and_source_sequence() {
+        let subject = DomainObjectRef::new("workspace", "node", "readme").unwrap();
+        let goal = Goal {
+            goal_id: "goal-a".to_string(),
+            agent_id: "agent-a".to_string(),
+            target: Proposition::Accessible {
+                scope: Term::Object(subject.clone()),
+            },
+            priority: meld_lang::GoalPriority {
+                urgency: 1,
+                cost_ceiling: None,
+            },
+            source: meld_lang::GoalSource::UserDirected {
+                directive: "refresh docs".to_string(),
+            },
+            lifecycle: meld_lang::GoalLifecycle::Active,
+        };
+        let request = PlanningWorldStateRequest::for_goal(
+            &goal,
+            7,
+            PlanningPerspectiveRef::new("agent", "agent-a").unwrap(),
+            "main",
+            vec!["docs_freshness".to_string()],
+            Vec::new(),
+        )
+        .unwrap();
+        let mut different_subject = request.clone();
+        different_subject.subject = DomainObjectRef::new("workspace", "node", "other").unwrap();
+        let mut different_sequence = request.clone();
+        different_sequence.source_seq += 1;
+
+        assert_eq!(request.subject, subject);
+        assert!(different_subject.validate().is_err());
+        assert_ne!(
+            request.canonical_hash().unwrap(),
+            different_sequence.canonical_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn durable_request_rejects_zero_sequence_and_ambiguous_goal_subject() {
+        let first = DomainObjectRef::new("workspace", "node", "first").unwrap();
+        let second = DomainObjectRef::new("workspace", "node", "second").unwrap();
+        let goal = Goal {
+            goal_id: "goal-a".to_string(),
+            agent_id: "agent-a".to_string(),
+            target: Proposition::Related {
+                src: Term::Object(first),
+                relation: Term::Literal(meld_lang::Literal::Text("depends_on".to_string())),
+                dst: Term::Object(second),
+            },
+            priority: meld_lang::GoalPriority {
+                urgency: 1,
+                cost_ceiling: None,
+            },
+            source: meld_lang::GoalSource::UserDirected {
+                directive: "test".to_string(),
+            },
+            lifecycle: meld_lang::GoalLifecycle::Active,
+        };
+
+        let error = PlanningWorldStateRequest::for_goal(
+            &goal,
+            1,
+            PlanningPerspectiveRef::new("agent", "agent-a").unwrap(),
+            "main",
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap_err();
+        assert!(error.contains("ambiguous"));
+
+        let mut single = goal;
+        single.target = Proposition::Accessible {
+            scope: Term::Object(DomainObjectRef::new("workspace", "node", "single").unwrap()),
+        };
+        let error = PlanningWorldStateRequest::for_goal(
+            &single,
+            0,
+            PlanningPerspectiveRef::new("agent", "agent-a").unwrap(),
+            "main",
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap_err();
+        assert!(error.contains("greater than zero"));
     }
 }

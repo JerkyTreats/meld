@@ -362,10 +362,15 @@ mod contract_freeze_tests {
 
     #[test]
     fn planning_request_identity_retains_every_replay_input() {
+        let subject = meld_events::DomainObjectRef::new("workspace", "node", "readme").unwrap();
         let projection_request = PlanningWorldStateRequest {
             goal_id: "goal-a".to_string(),
             agent_id: "agent-a".to_string(),
-            target: meld_lang::Proposition::All(Vec::new()),
+            subject: subject.clone(),
+            source_seq: 9,
+            target: meld_lang::Proposition::Accessible {
+                scope: meld_lang::Term::Object(subject),
+            },
             perspective: crate::planning::world_state::PlanningPerspectiveRef::new(
                 "agent", "agent-a",
             )
@@ -412,10 +417,13 @@ mod contract_freeze_tests {
 
     #[test]
     fn identified_request_rejects_projection_identity_from_another_request() {
+        let subject = meld_events::DomainObjectRef::new("workspace", "node", "readme").unwrap();
         let goal = meld_lang::Goal {
             goal_id: "goal-a".to_string(),
             agent_id: "agent-a".to_string(),
-            target: meld_lang::Proposition::All(Vec::new()),
+            target: meld_lang::Proposition::Accessible {
+                scope: meld_lang::Term::Object(subject.clone()),
+            },
             priority: meld_lang::GoalPriority {
                 urgency: 1,
                 cost_ceiling: None,
@@ -428,6 +436,8 @@ mod contract_freeze_tests {
         let request = PlanningWorldStateRequest {
             goal_id: goal.goal_id.clone(),
             agent_id: goal.agent_id.clone(),
+            subject,
+            source_seq: 9,
             target: goal.target.clone(),
             perspective: crate::planning::world_state::PlanningPerspectiveRef::new(
                 "agent", "agent-a",

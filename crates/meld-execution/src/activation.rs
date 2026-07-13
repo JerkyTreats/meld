@@ -11,7 +11,7 @@ mod validation;
 
 pub use binding::{
     bind_execution_activation, ExecutionActivationAssetDigests, ExecutionActivationAssets,
-    ExecutionActivationBindingError,
+    ExecutionActivationBindingError, ExecutionRuntimeAssets,
 };
 pub use contracts::{
     CapabilityContractRef, ExecutionActivationInput, ExecutionActivationSelection,

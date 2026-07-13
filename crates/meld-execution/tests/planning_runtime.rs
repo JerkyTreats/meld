@@ -70,9 +70,18 @@ fn derived_frame(
 }
 
 fn request(goal: Goal, world_state: WorldState) -> PlanningRequest {
+    let subject = match &goal.target {
+        Proposition::Holds {
+            subject: Term::Object(subject),
+            ..
+        } => subject.clone(),
+        _ => panic!("planning fixture goal must carry one object subject"),
+    };
     let world_state_request = PlanningWorldStateRequest {
         goal_id: goal.goal_id.clone(),
         agent_id: goal.agent_id.clone(),
+        subject,
+        source_seq: 1,
         target: goal.target.clone(),
         perspective: PlanningPerspectiveRef::new("agent", "default").unwrap(),
         branch_id: "main".to_string(),
@@ -444,10 +453,10 @@ fn invalid_request_shape_returns_input_errors() {
     nonground_goal.target = Proposition::Accessible {
         scope: Term::Variable("?node".to_string()),
     };
+    let mut nonground_request = request(goal_with_ceiling(None), unsatisfied_state());
+    nonground_request.goal = nonground_goal;
     assert!(matches!(
-        runtime
-            .plan_goal(request(nonground_goal, unsatisfied_state()))
-            .unwrap_err(),
+        runtime.plan_goal(nonground_request).unwrap_err(),
         PlanningInputError::NonGroundGoal { .. }
     ));
 }
@@ -455,6 +464,7 @@ fn invalid_request_shape_returns_input_errors() {
 #[test]
 fn planning_actor_reads_active_goals_and_submits_lowered_composition() {
     let goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
+    let expected_goal_sequence = goal_store.goal_records().unwrap()[0].updated_at_seq;
     let mut task_network = open_task_network_store();
     let actor = planning_actor();
     let mut projection_requests = Vec::new();
@@ -478,6 +488,11 @@ fn planning_actor_reads_active_goals_and_submits_lowered_composition() {
 
     assert_eq!(projection_requests.len(), 1);
     assert_eq!(projection_requests[0].goal_id, "goal-docs");
+    assert_eq!(projection_requests[0].source_seq, expected_goal_sequence);
+    assert_eq!(
+        projection_requests[0].subject,
+        DomainObjectRef::new("workspace", "node", "readme").unwrap()
+    );
     assert_eq!(report.actor_id, "execution.planning.runtime");
     assert_eq!(report.active_goal_count, 1);
     assert_eq!(report.attempted, 1);
@@ -631,4 +646,51 @@ fn planning_actor_projection_failure_does_not_mutate_task_network_state() {
             ..
         }
     ));
+}
+
+#[test]
+fn planning_actor_rejects_ambiguous_projection_subject_before_port_handoff() {
+    let first = DomainObjectRef::new("workspace", "node", "first").unwrap();
+    let second = DomainObjectRef::new("workspace", "node", "second").unwrap();
+    let mut goal = goal_with_ceiling(None);
+    goal.target = Proposition::Related {
+        src: Term::Object(first),
+        relation: Term::Literal(Literal::Text("depends_on".to_string())),
+        dst: Term::Object(second),
+    };
+    let goal_store = open_goal_store_with_active_goal(goal);
+    let mut task_network = open_task_network_store();
+    let actor = planning_actor();
+    let mut projection_called = false;
+    let mut projection = |_request: PlanningWorldStateRequest| {
+        projection_called = true;
+        Err(PlanningProjectionError::fatal("must not be called"))
+    };
+
+    let report = actor
+        .run_once(
+            &goal_store,
+            &mut task_network,
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap();
+
+    assert!(!projection_called);
+    assert_eq!(report.committed, 0);
+    assert!(report.retryable_errors.is_empty());
+    assert_eq!(report.fatal_errors.len(), 1);
+    assert_eq!(
+        report.fatal_errors[0].code,
+        "planning_projection_request_invalid"
+    );
+    assert!(report.fatal_errors[0].message.contains("ambiguous"));
+    assert!(matches!(
+        &report.results[0],
+        PlanningRuntimeActorGoalResult::PlanningFailed {
+            error: PlanningInputError::IdentityMismatch { .. },
+            ..
+        }
+    ));
+    assert_eq!(task_network.state().revision, 0);
 }

@@ -7,6 +7,7 @@ use super::{
     ExecutionActivationInput, ExecutionActivationSelection, ExecutionActivationValidationContext,
     MethodTaskPackageBinding,
 };
+use crate::capability::CapabilityCatalog;
 use crate::planning::MethodLibrary;
 use crate::task::package::TaskPackageSpec;
 
@@ -19,6 +20,27 @@ pub struct ExecutionActivationAssets {
     pub method_binding: MethodTaskPackageBinding,
     /// Typed authored task package selected by the binding.
     pub task_package: TaskPackageSpec,
+}
+
+/// Execution-owned runtime assets resolved from the same verified registry.
+///
+/// Activation identity continues to cover [`ExecutionActivationAssets`]
+/// exactly as before. The additional catalog is the in-memory semantic input
+/// used to verify the method library and later construct planning and lowering
+/// runtimes without root rebuilding execution policy.
+#[derive(Debug, Clone)]
+pub struct ExecutionRuntimeAssets {
+    /// Durable activation assets whose existing digests remain authoritative.
+    pub activation: ExecutionActivationAssets,
+    /// Exact capability catalog used to verify the selected method library.
+    pub capability_catalog: CapabilityCatalog,
+}
+
+impl ExecutionRuntimeAssets {
+    /// Consume runtime assets and retain the unchanged activation product.
+    pub fn into_activation_assets(self) -> ExecutionActivationAssets {
+        self.activation
+    }
 }
 
 impl ExecutionActivationAssets {

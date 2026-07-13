@@ -305,7 +305,24 @@ where
     ) where
         P: PlanningProjectionPort,
     {
-        let projection_request = projection_request_for_goal(request, &goal);
+        let projection_request =
+            match projection_request_for_goal(request, &goal, goal_updated_at_seq) {
+                Ok(projection_request) => projection_request,
+                Err(error) => {
+                    report.fatal_errors.push(PlanningRuntimeActorIssue {
+                        goal_id: Some(goal.goal_id.clone()),
+                        code: "planning_projection_request_invalid".to_string(),
+                        message: error.clone(),
+                    });
+                    report
+                        .results
+                        .push(PlanningRuntimeActorGoalResult::PlanningFailed {
+                            goal_id: goal.goal_id,
+                            error: PlanningInputError::IdentityMismatch { message: error },
+                        });
+                    return;
+                }
+            };
         let projected = match projection.project(projection_request.clone()) {
             Ok(projected) => projected,
             Err(error) => {
@@ -544,16 +561,16 @@ fn validate_actor_request(
 fn projection_request_for_goal(
     request: &PlanningRuntimeActorRequest,
     goal: &meld_lang::Goal,
-) -> PlanningWorldStateRequest {
-    PlanningWorldStateRequest {
-        goal_id: goal.goal_id.clone(),
-        agent_id: goal.agent_id.clone(),
-        target: goal.target.clone(),
-        perspective: request.perspective.clone(),
-        branch_id: request.branch_id.clone(),
-        requested_dimensions: request.requested_dimensions.clone(),
-        required_preconditions: request.required_preconditions.clone(),
-    }
+    goal_updated_at_seq: u64,
+) -> Result<PlanningWorldStateRequest, String> {
+    PlanningWorldStateRequest::for_goal(
+        goal,
+        goal_updated_at_seq,
+        request.perspective.clone(),
+        request.branch_id.clone(),
+        request.requested_dimensions.clone(),
+        request.required_preconditions.clone(),
+    )
 }
 
 fn lowering_request_id(composition: &ExecutionComposition) -> String {

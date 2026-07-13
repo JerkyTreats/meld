@@ -7,7 +7,7 @@ use meld_execution::activation::{
     ExecutionActivationSelection, ExecutionActivationValidationContext, ExecutionForcePolicy,
     ExecutionTargetKind, ExecutionTargetSelector, PublicationMapping, RequiredArtifactContract,
 };
-use meld_execution::planning::MethodSourceRef;
+use meld_execution::planning::{MethodLibrary, MethodSourceRef};
 use meld_execution::task::package::{
     map_task_package_output_artifact, resolve_task_package_output_mapping, PackageExpansionSpec,
 };
@@ -88,6 +88,55 @@ fn real_builtin_assets_bind_and_validate_without_store_side_effects() {
     assert_eq!(receipt.method_binding_id, input.method_binding.binding_id);
     assert_eq!(receipt.workspace_scan_contract_digest.len(), 64);
     assert_eq!(receipt.execution_coordinates_digest.len(), 64);
+}
+
+#[test]
+fn runtime_assets_retain_exact_activation_digests_and_verification_catalog() {
+    let temp = TempDir::new().unwrap();
+    let target = temp.path().canonicalize().unwrap().display().to_string();
+    let selection = selection(target);
+    let registry = BuiltInExecutionActivationRegistry::new();
+    let runtime_assets = registry.resolve_runtime_assets(&selection).unwrap();
+    let activation_assets = registry.resolve(&selection).unwrap();
+
+    assert_eq!(
+        runtime_assets.activation.semantic_digests(),
+        activation_assets.semantic_digests()
+    );
+    assert!(runtime_assets
+        .capability_catalog
+        .contains("workspace_scan", 1));
+    assert!(runtime_assets
+        .capability_catalog
+        .contains("task_package.docs_writer", 1));
+    let rebuilt = MethodLibrary::from_methods(
+        runtime_assets
+            .activation
+            .method_library
+            .entries
+            .iter()
+            .map(|entry| entry.method.clone())
+            .collect(),
+        &runtime_assets.capability_catalog,
+    );
+    assert!(rebuilt.invalid.is_empty());
+    assert_eq!(
+        rebuilt.semantic_digest(),
+        runtime_assets.activation.method_library.semantic_digest()
+    );
+
+    let runtime_input = bind_execution_activation(
+        selection.clone(),
+        runtime_assets.activation,
+        validation_context(),
+    )
+    .unwrap();
+    let legacy_input =
+        bind_execution_activation(selection, activation_assets, validation_context()).unwrap();
+    assert_eq!(
+        validate_execution_activation(&runtime_input).unwrap(),
+        validate_execution_activation(&legacy_input).unwrap()
+    );
 }
 
 #[test]
