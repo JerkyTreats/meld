@@ -372,7 +372,7 @@ The final reviewer approved W1A with no remaining critical or high blockers.
 | W1B1 | active | isolated belief authority lane | pending | pending |
 | W1B2 | active | isolated goal durability lane | pending | pending |
 | W1B3 | accepted | deterministic planning identity, typed subject lowering, and attributed outcome publication | full execution all-target tests and clippy | passed after urgency fix loop |
-| W1B4 | ready | event validation packet may start | pending | pending |
+| W1B4 | accepted | typed append validation, shared ingress fence, retryable drain, and final durable barrier | all-feature event matrix and workspace static ladder | passed after drain-retry fix loop |
 | W1B5 through W6G | blocked | none | none | none |
 
 ## Risks And Exceptions
@@ -486,6 +486,21 @@ W1B3 gate evidence:
 - focused planning, lowering, task-network store, execution bridge, and publication bridge suites passed
 - all-target clippy with warnings denied passed
 - fresh review approved after one urgency-order fix loop
+
+W1B4 accepted commit: `9a425f4`
+
+W1B4 gate evidence:
+
+- idempotent append rejects missing record identity before admission
+- malformed envelope identifiers, duplicate objects, and undeclared relation endpoints return typed validation errors
+- every append capability clone shares one generation-bearing ingress fence
+- final drain rejects new admission, flushes accepted work, and binds the closed fence to the durable watermark
+- transient flush failure retains Draining and a later close retries writer-owned pending durability
+- raw store activity cannot advance the writer watermark or satisfy the final barrier
+- all-feature event library, authority, recovery, migration, remote, observability, and benchmark targets passed
+- locked workspace check and clippy with warnings denied passed
+- full workspace testing exposed and corrected one malformed workspace snapshot relation and one stale idempotent test
+- fresh review approved after one drain failure-state fix loop
 
 ### W1C Supervisor And Root Cutover
 
