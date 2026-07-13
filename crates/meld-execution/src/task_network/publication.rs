@@ -198,9 +198,32 @@ pub fn build_publication_envelope(
     ];
     let mut relations = vec![
         relation("published_from", publication_object, outcome.clone())?,
-        relation("produced_by", outcome, task_run.clone())?,
+        relation("produced_by", outcome.clone(), task_run.clone())?,
         relation("member_of", task_run.clone(), network)?,
     ];
+
+    if let Some(lineage) = &publication.semantic_lineage {
+        objects.push(lineage.goal.clone());
+        objects.push(lineage.method.clone());
+        objects.push(lineage.projection_frame.clone());
+        objects.push(lineage.subject.clone());
+        relations.push(relation(
+            "authorized_by",
+            outcome.clone(),
+            lineage.goal.clone(),
+        )?);
+        relations.push(relation(
+            "selected_method",
+            outcome.clone(),
+            lineage.method.clone(),
+        )?);
+        relations.push(relation(
+            "projected_from",
+            outcome.clone(),
+            lineage.projection_frame.clone(),
+        )?);
+        relations.push(relation("about", outcome.clone(), lineage.subject.clone())?);
+    }
 
     for artifact in &publication.outcome.artifact_records {
         require_text("artifact_id", &artifact.artifact_id)?;

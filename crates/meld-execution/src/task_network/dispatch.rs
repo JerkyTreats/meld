@@ -135,6 +135,82 @@ pub struct AttributedOutcome {
     pub semantic_lineage: OutcomeSemanticLineage,
 }
 
+impl AttributedOutcome {
+    /// Bind a canonical outcome to the complete lineage of its lowered task.
+    pub fn for_task(outcome: Outcome, node: &TaskNode) -> Result<Self, ApiError> {
+        if outcome.task_instance_id != node.task_instance_id {
+            return Err(ApiError::ConfigError(
+                "attributed outcome task identity does not match its task node".to_string(),
+            ));
+        }
+        let subject = node.lineage.subject.clone().ok_or_else(|| {
+            ApiError::ConfigError(
+                "attributed outcome requires a full typed subject from lowering".to_string(),
+            )
+        })?;
+        let attributed = Self {
+            outcome,
+            semantic_lineage: OutcomeSemanticLineage {
+                goal: execution_ref("goal", &node.lineage.goal_id)?,
+                method: execution_ref("method", &node.lineage.method_id)?,
+                projection_frame: DomainObjectRef::new(
+                    "world_model",
+                    "projection_frame",
+                    &node.lineage.world_state_frame_id,
+                )
+                .map_err(|error| ApiError::ConfigError(error.to_string()))?,
+                subject,
+            },
+        };
+        attributed.validate_for_task(node)?;
+        Ok(attributed)
+    }
+
+    /// Validate semantic lineage against the owning lowered task node.
+    pub fn validate_for_task(&self, node: &TaskNode) -> Result<(), ApiError> {
+        let expected = Self::for_task_unchecked(self.outcome.clone(), node)?;
+        if *self == expected {
+            Ok(())
+        } else {
+            Err(ApiError::ConfigError(
+                "attributed outcome semantic lineage does not match its task node".to_string(),
+            ))
+        }
+    }
+
+    fn for_task_unchecked(outcome: Outcome, node: &TaskNode) -> Result<Self, ApiError> {
+        if outcome.task_instance_id != node.task_instance_id {
+            return Err(ApiError::ConfigError(
+                "attributed outcome task identity does not match its task node".to_string(),
+            ));
+        }
+        let subject = node.lineage.subject.clone().ok_or_else(|| {
+            ApiError::ConfigError(
+                "attributed outcome requires a full typed subject from lowering".to_string(),
+            )
+        })?;
+        Ok(Self {
+            outcome,
+            semantic_lineage: OutcomeSemanticLineage {
+                goal: execution_ref("goal", &node.lineage.goal_id)?,
+                method: execution_ref("method", &node.lineage.method_id)?,
+                projection_frame: DomainObjectRef::new(
+                    "world_model",
+                    "projection_frame",
+                    &node.lineage.world_state_frame_id,
+                )
+                .map_err(|error| ApiError::ConfigError(error.to_string()))?,
+                subject,
+            },
+        })
+    }
+}
+
+fn execution_ref(kind: &str, id: &str) -> Result<DomainObjectRef, ApiError> {
+    DomainObjectRef::new("execution", kind, id)
+        .map_err(|error| ApiError::ConfigError(error.to_string()))
+}
+
 /// Creates a task executor for a fenced claim.
 ///
 /// The caller still owns capability invocation through the existing task

@@ -7,9 +7,10 @@ use meld_execution::goals::{AddGoalCommand, GoalCommandMetadata, PersistentGoalS
 use meld_execution::planning::{
     CandidateStatus, ExecutionCompositionLowerer, MethodLibrary, MethodSourceRef,
     MethodVerification, PlanningDiagnosticCode, PlanningInputError, PlanningProjectionError,
-    PlanningRequest, PlanningResult, PlanningRuntime, PlanningRuntimeActor,
-    PlanningRuntimeActorGoalResult, PlanningRuntimeActorRequest, PlanningWorldStateFrameRef,
-    PlanningWorldStateProjection, PlanningWorldStateRequest, VerifiedMethodEntry,
+    PlanningProjectionIdentityInputs, PlanningRequest, PlanningResult, PlanningRuntime,
+    PlanningRuntimeActor, PlanningRuntimeActorGoalResult, PlanningRuntimeActorRequest,
+    PlanningWorldStateFrameRef, PlanningWorldStateProjection, PlanningWorldStateRequest,
+    VerifiedMethodEntry,
 };
 use meld_execution::task::TaskCompiler;
 use meld_execution::task_network::{Response, SledTaskNetworkStore};
@@ -58,6 +59,17 @@ fn frame() -> PlanningWorldStateFrameRef {
         source_refs: vec!["source".to_string()],
         warnings: vec![],
     }
+}
+
+fn derived_frame(request: &PlanningWorldStateRequest) -> PlanningWorldStateFrameRef {
+    PlanningProjectionIdentityInputs::for_request(
+        request,
+        "world_model.planner.v1",
+        vec!["source".to_string()],
+    )
+    .unwrap()
+    .frame_ref(Vec::new())
+    .unwrap()
 }
 
 fn request(goal: Goal, world_state: WorldState) -> PlanningRequest {
@@ -451,7 +463,7 @@ fn planning_actor_reads_active_goals_and_submits_lowered_composition() {
         projection_requests.push(request.clone());
         Ok(PlanningWorldStateProjection {
             world_state: unsatisfied_state(),
-            frame: frame(),
+            frame: derived_frame(&request),
         })
     };
 
@@ -490,10 +502,10 @@ fn planning_actor_repeated_tick_skips_already_materialized_plan() {
     let goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
     let mut task_network = open_task_network_store();
     let actor = planning_actor();
-    let mut projection = |_request: PlanningWorldStateRequest| {
+    let mut projection = |request: PlanningWorldStateRequest| {
         Ok(PlanningWorldStateProjection {
             world_state: unsatisfied_state(),
-            frame: frame(),
+            frame: derived_frame(&request),
         })
     };
 
@@ -526,6 +538,54 @@ fn planning_actor_repeated_tick_skips_already_materialized_plan() {
         &second.results[0],
         PlanningRuntimeActorGoalResult::Lowered { .. }
     ));
+}
+
+#[test]
+fn planning_actor_bounded_selection_uses_urgency_then_stable_goal_id() {
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let goal_store = PersistentGoalSetStore::new(db).unwrap();
+    for (seq, goal_id, urgency) in [
+        (1, "goal-later", 5),
+        (2, "goal-urgent-b", 1),
+        (3, "goal-urgent-a", 1),
+    ] {
+        let mut goal = goal_with_ceiling(None);
+        goal.goal_id = goal_id.to_string();
+        goal.priority.urgency = urgency;
+        goal_store
+            .add_goal(AddGoalCommand {
+                metadata: GoalCommandMetadata {
+                    command_id: format!("command-add-{goal_id}"),
+                    source_identity: None,
+                    seq,
+                },
+                goal,
+            })
+            .unwrap();
+    }
+    let mut task_network = open_task_network_store();
+    let actor = planning_actor();
+    let mut selected_goal_ids = Vec::new();
+    let mut projection = |request: PlanningWorldStateRequest| {
+        selected_goal_ids.push(request.goal_id.clone());
+        Ok(PlanningWorldStateProjection {
+            world_state: unsatisfied_state(),
+            frame: derived_frame(&request),
+        })
+    };
+
+    let report = actor
+        .run_once(
+            &goal_store,
+            &mut task_network,
+            &mut projection,
+            actor_request(Some(2)),
+        )
+        .unwrap();
+
+    assert_eq!(selected_goal_ids, vec!["goal-urgent-a", "goal-urgent-b"]);
+    assert_eq!(report.attempted, 2);
+    assert!(report.budget_exhausted);
 }
 
 #[test]

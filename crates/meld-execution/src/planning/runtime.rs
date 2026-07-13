@@ -3,27 +3,31 @@
 use crate::capability::CapabilityCatalog;
 use crate::goals::PersistentGoalSetStore;
 use crate::planning::contracts::{
-    CandidateStatus, ExecutionComposition, InvalidMethodReport, MethodCandidateReport,
-    NoApplicableMethod, PlanningDiagnostic, PlanningDiagnosticCode, PlanningIndeterminate,
-    PlanningInputError, PlanningRequest, PlanningResult, PlanningSatisfied,
+    CandidateStatus, ExecutionComposition, IdentifiedPlanningRequest, InvalidMethodReport,
+    MethodCandidateReport, NoApplicableMethod, PlanningDiagnostic, PlanningDiagnosticCode,
+    PlanningIndeterminate, PlanningInputError, PlanningRequest, PlanningRequestIdentityInputs,
+    PlanningResult, PlanningSatisfied,
 };
 use crate::planning::lowering::{
     Lowerer as ExecutionCompositionLowerer, Plan as CompositionLoweringPlan,
     Request as CompositionLoweringRequest,
 };
 use crate::planning::method_library::{operator_resolutions, MethodLibrary, VerifiedMethodEntry};
-use crate::planning::world_state::{PlanningWorldStateFrameRef, PlanningWorldStateRequest};
+use crate::planning::world_state::{
+    PlanningProjectionIdentityInputs, PlanningWorldStateFrameRef, PlanningWorldStateRequest,
+};
 use crate::task::TaskDefinitionCompiler;
 use crate::task_network::{
     command, mutation::ReadPrecondition, store::SledTaskNetworkStore, Command as TaskNetworkCommand,
 };
 use meld_lang::{
     evaluate, substitute, validate, Bindings, Composition, CostEstimate, Effect, EvalResult,
-    Operator, Proposition, Resolution, Step, StepKind, WorldState,
+    GoalLifecycle, Operator, Proposition, Resolution, Step, StepKind, WorldState,
 };
 use serde::Serialize;
 
 const PLANNING_ACTOR_ID: &str = "execution.planning.runtime";
+const PLANNING_IDENTITY_VERSION: &str = "execution.planning.v1";
 
 /// Request for one bounded execution planning actor pass.
 #[derive(Debug, Clone, PartialEq)]
@@ -242,10 +246,18 @@ where
     {
         validate_actor_request(&request)?;
 
-        let active_goals = goals
-            .active_goals()
+        let mut active_goal_records = goals
+            .goal_records()
             .map_err(|error| PlanningRuntimeActorError::GoalStore(error.to_string()))?;
-        let active_goal_count = active_goals.len();
+        active_goal_records.retain(|record| matches!(record.goal.lifecycle, GoalLifecycle::Active));
+        active_goal_records.sort_by(|left, right| {
+            left.goal
+                .priority
+                .urgency
+                .cmp(&right.goal.priority.urgency)
+                .then_with(|| left.goal.goal_id.cmp(&right.goal.goal_id))
+        });
+        let active_goal_count = active_goal_records.len();
         let budget_exhausted = request
             .limit
             .map(|limit| active_goal_count > limit)
@@ -265,9 +277,16 @@ where
             results: Vec::new(),
         };
 
-        for goal in active_goals.into_iter().take(goal_limit) {
+        for record in active_goal_records.into_iter().take(goal_limit) {
             report.attempted += 1;
-            self.process_goal(task_network, projection, &request, goal, &mut report);
+            self.process_goal(
+                task_network,
+                projection,
+                &request,
+                record.goal,
+                record.updated_at_seq,
+                &mut report,
+            );
         }
 
         report.output_revision = task_network.state().revision;
@@ -280,6 +299,7 @@ where
         projection: &mut P,
         request: &PlanningRuntimeActorRequest,
         goal: meld_lang::Goal,
+        goal_updated_at_seq: u64,
         report: &mut PlanningRuntimeActorReport,
     ) where
         P: PlanningProjectionPort,
@@ -309,14 +329,62 @@ where
             }
         };
 
+        let projection_identity = match PlanningProjectionIdentityInputs::for_request(
+            &projection_request,
+            projected.frame.projection_version.clone(),
+            projected.frame.source_refs.clone(),
+        ) {
+            Ok(identity) => identity,
+            Err(error) => {
+                report.fatal_errors.push(PlanningRuntimeActorIssue {
+                    goal_id: Some(goal.goal_id.clone()),
+                    code: "planning_projection_identity_failed".to_string(),
+                    message: error.clone(),
+                });
+                report
+                    .results
+                    .push(PlanningRuntimeActorGoalResult::PlanningFailed {
+                        goal_id: goal.goal_id,
+                        error: PlanningInputError::IdentityMismatch { message: error },
+                    });
+                return;
+            }
+        };
         let planning_request = PlanningRequest {
-            request_id: planning_request_id(&goal, &projected.frame),
+            request_id: String::new(),
             goal: goal.clone(),
             world_state: projected.world_state,
             world_state_frame: projected.frame,
             world_state_request: projection_request,
         };
-        let planning_result = match self.runtime.plan_goal(planning_request) {
+        let identified_request = match IdentifiedPlanningRequest::bind(
+            planning_request,
+            PlanningRequestIdentityInputs {
+                goal_id: goal.goal_id.clone(),
+                goal_updated_at_seq,
+                projection_identity,
+                method_library_digest: self.runtime.method_library.digest(),
+                capability_catalog_digest: self.runtime.capability_catalog.digest(),
+                planning_version: PLANNING_IDENTITY_VERSION.to_string(),
+            },
+        ) {
+            Ok(request) => request,
+            Err(error) => {
+                report.fatal_errors.push(PlanningRuntimeActorIssue {
+                    goal_id: Some(goal.goal_id.clone()),
+                    code: "planning_identity_mismatch".to_string(),
+                    message: error.clone(),
+                });
+                report
+                    .results
+                    .push(PlanningRuntimeActorGoalResult::PlanningFailed {
+                        goal_id: goal.goal_id,
+                        error: PlanningInputError::IdentityMismatch { message: error },
+                    });
+                return;
+            }
+        };
+        let planning_result = match self.runtime.plan_goal(identified_request.request().clone()) {
             Ok(result) => result,
             Err(error) => {
                 report.fatal_errors.push(PlanningRuntimeActorIssue {
@@ -486,24 +554,6 @@ fn projection_request_for_goal(
         requested_dimensions: request.requested_dimensions.clone(),
         required_preconditions: request.required_preconditions.clone(),
     }
-}
-
-fn planning_request_id(goal: &meld_lang::Goal, frame: &PlanningWorldStateFrameRef) -> String {
-    #[derive(Serialize)]
-    struct Identity<'a> {
-        goal_id: &'a str,
-        updated_frame_id: &'a str,
-        projection_version: &'a str,
-    }
-
-    stable_runtime_id(
-        "execution-planning-request",
-        &Identity {
-            goal_id: &goal.goal_id,
-            updated_frame_id: &frame.frame_id,
-            projection_version: &frame.projection_version,
-        },
-    )
 }
 
 fn lowering_request_id(composition: &ExecutionComposition) -> String {

@@ -420,6 +420,10 @@ where
                 value: binding_value(&request.composition.bindings, &binding.binding_id),
             })
             .collect::<Vec<_>>();
+        let scope = scope_binding(
+            &request.composition.bindings,
+            &request.composition.goal.goal_id,
+        );
         let definition = TaskDefinition {
             task_id: task_instance_id.clone(),
             task_version: 1,
@@ -428,10 +432,7 @@ where
                 capability_instance_id: resolved.step_id.clone(),
                 capability_type_id: resolved.capability_type_id.clone(),
                 capability_version: resolved.capability_version,
-                scope_ref: scope_ref(
-                    &request.composition.bindings,
-                    &request.composition.goal.goal_id,
-                ),
+                scope_ref: scope.legacy_ref.clone(),
                 scope_kind: resolved.contract.scope_contract.scope_kind.clone(),
                 binding_values,
                 input_wiring,
@@ -456,6 +457,7 @@ where
             step_id: resolved.step_id.clone(),
             operator_id: resolved.operator_id.clone(),
             world_state_frame_id: request.composition.world_state_frame.frame_id.clone(),
+            subject: scope.object_ref,
             capability_type_id: resolved.capability_type_id.clone(),
             capability_version: resolved.capability_version,
         };
@@ -934,34 +936,56 @@ fn binding_value(bindings: &Bindings, binding_id: &str) -> serde_json::Value {
     })
 }
 
-fn scope_ref(bindings: &Bindings, fallback_goal_id: &str) -> String {
+struct ScopeBinding {
+    legacy_ref: String,
+    object_ref: Option<meld_events::DomainObjectRef>,
+}
+
+fn scope_binding(bindings: &Bindings, fallback_goal_id: &str) -> ScopeBinding {
     for candidate in ["?node", "node", "?scope", "scope"] {
         if let Some(term) = bindings.get(candidate) {
-            return term_to_scope_ref(term);
+            return term_to_scope_binding(term);
         }
     }
 
     bindings
         .iter()
         .next()
-        .map(|(_, term)| term_to_scope_ref(term))
-        .unwrap_or_else(|| fallback_goal_id.to_string())
+        .map(|(_, term)| term_to_scope_binding(term))
+        .unwrap_or_else(|| ScopeBinding {
+            legacy_ref: fallback_goal_id.to_string(),
+            object_ref: None,
+        })
 }
 
-fn term_to_scope_ref(term: &Term) -> String {
+fn term_to_scope_binding(term: &Term) -> ScopeBinding {
     match term {
-        // TODO: Preserve full DomainObjectRef scope identity here. Collapsing
-        // Term::Object to object_id drops domain_id and object_kind, which
-        // violates the cross-domain object-carrying invariant once
-        // capabilities need more than node-local scope strings.
-        Term::Object(object) => object.object_id.clone(),
-        Term::ArtifactType(artifact_type) => artifact_type.clone(),
-        Term::Dimension(dimension) => dimension.clone(),
-        Term::Variable(variable) => variable.clone(),
-        Term::Literal(literal) => serde_json::to_string(literal).expect("literal is serializable"),
+        Term::Object(object) => ScopeBinding {
+            legacy_ref: object.object_id.clone(),
+            object_ref: Some(object.clone()),
+        },
+        Term::ArtifactType(artifact_type) => ScopeBinding {
+            legacy_ref: artifact_type.clone(),
+            object_ref: None,
+        },
+        Term::Dimension(dimension) => ScopeBinding {
+            legacy_ref: dimension.clone(),
+            object_ref: None,
+        },
+        Term::Variable(variable) => ScopeBinding {
+            legacy_ref: variable.clone(),
+            object_ref: None,
+        },
+        Term::Literal(literal) => ScopeBinding {
+            legacy_ref: serde_json::to_string(literal).expect("literal is serializable"),
+            object_ref: None,
+        },
         Term::Derived {
             source_step,
             field_path,
-        } => format!("{source_step}.{field_path}"),
+        } => ScopeBinding {
+            legacy_ref: format!("{source_step}.{field_path}"),
+            object_ref: None,
+        },
     }
 }

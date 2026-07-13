@@ -528,4 +528,9 @@ pub enum PlanningInputError {
         /// Goal identifier supplied to planning.
         goal_id: String,
     },
+    /// Deterministic projection or planning identity did not match its inputs.
+    IdentityMismatch {
+        /// Stable validation detail for diagnostics.
+        message: String,
+    },
 }

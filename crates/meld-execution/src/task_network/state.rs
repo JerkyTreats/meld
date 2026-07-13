@@ -18,6 +18,7 @@
 
 use crate::task::{CompiledTaskRecord, TaskRunContext};
 use crate::task_network::{contracts::stable_hash, dispatch, outcome};
+use meld_events::DomainObjectRef;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -201,6 +202,9 @@ pub struct TaskLineage {
     pub operator_id: String,
     /// World state frame used during method selection.
     pub world_state_frame_id: String,
+    /// Full typed goal subject preserved when lowering an object term.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<DomainObjectRef>,
     /// Capability type selected for the operator.
     pub capability_type_id: String,
     /// Capability version selected for the operator.

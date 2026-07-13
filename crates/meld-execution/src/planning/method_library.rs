@@ -88,6 +88,13 @@ impl MethodLibrary {
         entries.sort_by(|left, right| method_order(&left.method, &right.method));
         entries
     }
+
+    /// Derive a deterministic digest from verified and rejected method inputs.
+    pub fn digest(&self) -> String {
+        let encoded = serde_json::to_vec(self)
+            .expect("method library must remain serializable for planning identity");
+        blake3::hash(&encoded).to_hex().to_string()
+    }
 }
 
 /// A method that passed reusable template verification.

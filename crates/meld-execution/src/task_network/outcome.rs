@@ -28,6 +28,9 @@ pub struct Publication {
     pub network_id: String,
     /// Task outcome represented by this publication.
     pub outcome: dispatch::Outcome,
+    /// Semantic lineage for canonical attributed outcomes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_lineage: Option<dispatch::OutcomeSemanticLineage>,
     /// Current publication state.
     pub state: PublicationState,
 }
@@ -53,8 +56,19 @@ impl Publication {
             ),
             network_id: network_id.to_string(),
             outcome: outcome.clone(),
+            semantic_lineage: None,
             state: PublicationState::Pending,
         }
+    }
+
+    /// Creates a pending publication with complete semantic attribution.
+    pub fn pending_for_attributed_outcome(
+        network_id: &str,
+        attributed: &dispatch::AttributedOutcome,
+    ) -> Self {
+        let mut publication = Self::pending_for_outcome(network_id, &attributed.outcome);
+        publication.semantic_lineage = Some(attributed.semantic_lineage.clone());
+        publication
     }
 
     /// Returns the execution event type represented by this publication.
@@ -64,7 +78,19 @@ impl Publication {
 
     /// Returns the execution event payload represented by this publication.
     pub fn event_payload(&self) -> Value {
-        serde_json::to_value(&self.outcome).expect("task network outcome is serializable")
+        let mut payload = serde_json::to_value(&self.outcome)
+            .expect("task network outcome is serializable for publication");
+        if let Some(lineage) = &self.semantic_lineage {
+            payload
+                .as_object_mut()
+                .expect("task network outcome serializes as an object")
+                .insert(
+                    "semantic_lineage".to_string(),
+                    serde_json::to_value(lineage)
+                        .expect("task outcome lineage is serializable for publication"),
+                );
+        }
+        payload
     }
 }
 
@@ -80,6 +106,8 @@ impl<'de> Deserialize<'de> for Publication {
                 publication_id: String,
                 network_id: String,
                 outcome: dispatch::Outcome,
+                #[serde(default)]
+                semantic_lineage: Option<dispatch::OutcomeSemanticLineage>,
                 state: PublicationState,
             }
 
@@ -88,6 +116,7 @@ impl<'de> Deserialize<'de> for Publication {
                 publication_id: wire.publication_id,
                 network_id: wire.network_id,
                 outcome: wire.outcome,
+                semantic_lineage: wire.semantic_lineage,
                 state: wire.state,
             });
         }
@@ -124,6 +153,7 @@ impl<'de> Deserialize<'de> for Publication {
             publication_id: wire.publication_id,
             network_id: wire.network_id,
             outcome: wire.event_payload,
+            semantic_lineage: None,
             state: wire.state,
         })
     }

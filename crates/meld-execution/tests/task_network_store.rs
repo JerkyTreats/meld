@@ -1,7 +1,7 @@
 #[path = "support/task_network.rs"]
 mod task_network_support;
 
-use meld_events::{AppendDisposition, AppendReceipt, LedgerIdentity};
+use meld_events::{AppendDisposition, AppendReceipt, DomainObjectRef, LedgerIdentity};
 use meld_execution::task_network::command::{Command, Response};
 use meld_execution::task_network::mutation::{Mutation, ReadPrecondition, Rejection, Set};
 use meld_execution::task_network::outcome::PublicationState;
@@ -10,6 +10,7 @@ use meld_execution::task_network::store::{
     network_storage_key, InMemoryTaskNetworkStore, SledTaskNetworkStore, TaskNetworkStoreError,
     TaskNetworkStoreFactory,
 };
+use meld_execution::task_network::AttributedOutcome;
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -200,6 +201,71 @@ fn outcome_survives_reopen() {
         Some(TaskStatus::Succeeded { outcome_id }) if outcome_id == "outcome-alpha"
     ));
     assert!(store.state().outcomes.contains_key("outcome-alpha"));
+}
+
+#[test]
+fn attributed_outcome_preserves_semantic_lineage_across_reopen() {
+    let db = open_db();
+    let publication_id;
+    {
+        let mut store = open_store(&db);
+        let mut node = task_network_support::single_task_node("task-alpha");
+        node.lineage.subject = Some(
+            DomainObjectRef::new("workspace_fs", "node", "readme")
+                .expect("subject identity is valid"),
+        );
+        let set = Set::new(
+            "network-docs",
+            "composition-fixture",
+            "inject-attributed",
+            vec![Mutation::Inject(task_network_support::inject_for_node(
+                node.clone(),
+                vec![],
+            ))],
+            vec![],
+        );
+        let request = task_network_support::apply_sled_command(
+            &store,
+            "command-inject-attributed",
+            Command::ApplyMutationSet(set),
+        );
+        store.submit(request).unwrap();
+        let task_instance_id =
+            task_network_support::claim_ready_sled(&mut store, "command-claim", "claim-alpha");
+        let claim = store.state().claims.get("claim-alpha").unwrap().clone();
+        let outcome =
+            task_network_support::outcome_for_claim("outcome-alpha", &task_instance_id, &claim);
+        let legacy_request = task_network_support::apply_sled_command(
+            &store,
+            "command-outcome-legacy",
+            Command::RecordTaskOutcome(outcome.clone()),
+        );
+        assert!(matches!(
+            store.submit(legacy_request).unwrap(),
+            Response::Rejected(_)
+        ));
+        let attributed = AttributedOutcome::for_task(outcome, &node).unwrap();
+        let request = task_network_support::apply_sled_command(
+            &store,
+            "command-outcome",
+            Command::RecordAttributedTaskOutcome(attributed),
+        );
+        assert!(matches!(
+            store.submit(request).unwrap(),
+            Response::Accepted { .. }
+        ));
+        publication_id = store.state().publications.keys().next().unwrap().clone();
+    }
+
+    let store = open_store(&db);
+    let publication = store.state().publications.get(&publication_id).unwrap();
+    let lineage = publication.semantic_lineage.as_ref().unwrap();
+    assert_eq!(lineage.goal.object_id, "goal-fixture");
+    assert_eq!(lineage.method.object_id, "method-fixture");
+    assert_eq!(lineage.projection_frame.object_id, "frame-fixture");
+    assert_eq!(lineage.subject.domain_id, "workspace_fs");
+    assert_eq!(lineage.subject.object_kind, "node");
+    assert_eq!(lineage.subject.object_id, "readme");
 }
 
 #[test]

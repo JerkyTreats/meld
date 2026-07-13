@@ -617,6 +617,7 @@ pub fn single_task_node(task_instance_id: &str) -> TaskNode {
             step_id: format!("step-{task_instance_id}"),
             operator_id: format!("operator-{task_instance_id}"),
             world_state_frame_id: "frame-fixture".to_string(),
+            subject: None,
             capability_type_id: "docs.write".to_string(),
             capability_version: 1,
         },

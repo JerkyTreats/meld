@@ -55,6 +55,14 @@ impl CapabilityCatalog {
     pub fn iter(&self) -> impl Iterator<Item = &CapabilityTypeContract> {
         self.contracts.values()
     }
+
+    /// Derive a deterministic digest from all published contracts.
+    pub fn digest(&self) -> String {
+        let contracts = self.contracts.values().collect::<Vec<_>>();
+        let encoded = serde_json::to_vec(&contracts)
+            .expect("capability contracts must remain serializable for identity");
+        blake3::hash(&encoded).to_hex().to_string()
+    }
 }
 
 #[cfg(test)]

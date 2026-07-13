@@ -71,6 +71,13 @@ fn composition_lowering_preserves_required_binding_values() {
         inject.task_node.compiled_task.capability_instances[0].scope_ref,
         "readme"
     );
+    assert_eq!(
+        inject.task_node.lineage.subject.as_ref(),
+        match &expected_term {
+            Term::Object(object) => Some(object),
+            _ => None,
+        }
+    );
     assert_ne!(
         inject.task_node.compiled_task.capability_instances[0].scope_ref,
         "xyzzy"

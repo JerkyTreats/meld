@@ -59,6 +59,8 @@ pub enum Command {
     ClaimReadyTask(dispatch::Request),
     /// Records a fenced task runtime outcome.
     RecordTaskOutcome(dispatch::Outcome),
+    /// Records a fenced task outcome with complete semantic lineage.
+    RecordAttributedTaskOutcome(dispatch::AttributedOutcome),
     /// Marks one publication outbox record.
     MarkPublication(outcome::Publication),
 }

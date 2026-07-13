@@ -32,6 +32,7 @@ fn task_node(id: &str) -> TaskNode {
             step_id: format!("step-{id}"),
             operator_id: format!("operator-{id}"),
             world_state_frame_id: "frame-fuzz".to_string(),
+            subject: None,
             capability_type_id: "docs.write".to_string(),
             capability_version: 1,
         },

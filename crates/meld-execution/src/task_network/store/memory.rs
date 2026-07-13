@@ -114,8 +114,14 @@ impl InMemoryTaskNetworkStore {
                 self.claim_ready_task(request.command_id, request_hash, claim_request)
             }
             command::Command::RecordTaskOutcome(outcome) => {
-                self.record_task_outcome(request.command_id, request_hash, outcome)
+                self.record_task_outcome(request.command_id, request_hash, outcome, None)
             }
+            command::Command::RecordAttributedTaskOutcome(attributed) => self.record_task_outcome(
+                request.command_id,
+                request_hash,
+                attributed.outcome,
+                Some(attributed.semantic_lineage),
+            ),
             command::Command::MarkPublication(publication) => {
                 self.mark_publication(request.command_id, request_hash, publication)
             }
@@ -336,7 +342,41 @@ impl InMemoryTaskNetworkStore {
         command_id: String,
         request_hash: String,
         outcome: dispatch::Outcome,
+        semantic_lineage: Option<dispatch::OutcomeSemanticLineage>,
     ) -> command::Response {
+        let Some(node) = self.state.tasks.get(&outcome.task_instance_id) else {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::FailedPrecondition(
+                    mutation::ReadPrecondition::NodeExists(outcome.task_instance_id),
+                )),
+            );
+        };
+        if semantic_lineage.is_none() && node.lineage.subject.is_some() {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::InvalidLifecycleTransition(
+                    "canonical lowered tasks require attributed task outcomes".to_string(),
+                )),
+            );
+        }
+        if let Some(lineage) = &semantic_lineage {
+            let attributed = dispatch::AttributedOutcome {
+                outcome: outcome.clone(),
+                semantic_lineage: lineage.clone(),
+            };
+            if let Err(error) = attributed.validate_for_task(node) {
+                return self.record_response(
+                    command_id,
+                    request_hash,
+                    command::Response::Rejected(Rejection::InvalidLifecycleTransition(
+                        error.to_string(),
+                    )),
+                );
+            }
+        }
         let Some(claim) = self.state.claims.get(&outcome.claim_id) else {
             return self.record_response(
                 command_id,
@@ -403,7 +443,16 @@ impl InMemoryTaskNetworkStore {
         self.state
             .outcomes
             .insert(outcome.outcome_id.clone(), outcome.clone());
-        let publication = Publication::pending_for_outcome(&self.state.network_id, &outcome);
+        let publication = match semantic_lineage {
+            Some(semantic_lineage) => Publication::pending_for_attributed_outcome(
+                &self.state.network_id,
+                &dispatch::AttributedOutcome {
+                    outcome: outcome.clone(),
+                    semantic_lineage,
+                },
+            ),
+            None => Publication::pending_for_outcome(&self.state.network_id, &outcome),
+        };
         self.state
             .publications
             .insert(publication.publication_id.clone(), publication.clone());
