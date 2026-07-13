@@ -11,12 +11,13 @@ use crate::error::{ApiError, StorageError};
 use crate::events::binding::{resolve_product_event_authority, ProductEventBindingError};
 use crate::heads::HeadIndex;
 use crate::runtime::assembly::ProductRuntimeAssembly;
-use crate::runtime::storage::ProductStorageLayout;
+use crate::runtime::storage::{
+    migrate_legacy_belief_authority, ProductStorageError, ProductStorageLayout,
+};
 use crate::session::{SessionRuntime, SessionStore};
 use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::ProgressRuntime;
 use crate::workflow::WorkflowRegistry;
-use crate::world_state::belief::BeliefStore;
 
 #[derive(Clone)]
 pub struct CliRuntimeAssembly {
@@ -45,6 +46,8 @@ impl CliRuntimeAssembly {
             &legacy_store_path,
         )
         .map_err(binding_error)?;
+        migrate_legacy_belief_authority(&product_layout, &legacy_store_path, &resolved.binding)
+            .map_err(belief_migration_error)?;
         let product_runtime = Arc::new(
             ProductRuntimeAssembly::load_for_workspace_with_authority(
                 workspace_root,
@@ -58,9 +61,9 @@ impl CliRuntimeAssembly {
             &config.workflows,
         )?));
 
-        // Existing CLI-owned node, frame, prompt, belief, and session state
-        // stays on its characterized compatibility paths. Only canonical
-        // events and the graph projection move to the product authority in E5.
+        // Legacy node and session state stays on its characterized path. The
+        // legacy belief trees were fenced and migrated before product runtime
+        // construction, so every belief reader now shares the product store.
         std::fs::create_dir_all(&legacy_store_path)
             .map_err(|error| ApiError::StorageError(StorageError::IoError(error)))?;
         let compatibility_db = sled::open(&legacy_store_path).map_err(|error| {
@@ -69,7 +72,6 @@ impl CliRuntimeAssembly {
             ))))
         })?;
         let node_store = Arc::new(SledNodeRecordStore::from_db(compatibility_db.clone()));
-        let belief_store = BeliefStore::shared(compatibility_db.clone()).map_err(ApiError::from)?;
         let session_store = SessionStore::shared(compatibility_db).map_err(ApiError::from)?;
         let session_runtime = Arc::new(SessionRuntime::new(session_store));
         std::fs::create_dir_all(&frame_storage_path)
@@ -141,8 +143,12 @@ impl CliRuntimeAssembly {
             workspace_root.to_path_buf(),
         );
         api.set_world_model_queries(world_model_queries);
-        api.set_belief_store(belief_store);
+        api.set_belief_store(Arc::clone(&product_runtime.stores().belief_store));
         api.set_workflow_registry(Arc::clone(&workflow_registry));
+        product_runtime
+            .stores()
+            .flush_boundary()
+            .map_err(product_flush_error)?;
 
         Ok(Self {
             api: Arc::new(api),
@@ -186,6 +192,14 @@ impl CliRuntimeAssembly {
     pub fn graph_runtime(&self) -> Arc<crate::world_state::graph::runtime::GraphRuntime> {
         self.product_runtime.graph_runtime()
     }
+}
+
+fn belief_migration_error(error: ProductStorageError) -> ApiError {
+    ApiError::StorageError(StorageError::MigrationConflict(error.to_string()))
+}
+
+fn product_flush_error(error: ProductStorageError) -> ApiError {
+    ApiError::StorageError(StorageError::DurabilityIndeterminate(error.to_string()))
 }
 
 fn binding_error(error: ProductEventBindingError) -> ApiError {
