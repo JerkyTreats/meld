@@ -1,14 +1,16 @@
 # Docs Freshness Flywheel Domain Spec Skeleton
 
-Date: 2026-06-22
-Status: proposed
-Scope: build-facing domain skeleton for one executable `docs_freshness` flywheel
+Date: 2026-07-12
+Status: partially applicable predecessor specification
+Scope: dated domain skeleton for one executable `docs_freshness` flywheel
 
 ## Purpose
 
-This document decomposes the next `docs_freshness` flywheel iteration into domain-owned spec skeletons. It is intended as the handoff plan for implementation orchestration.
+This document decomposes the original `docs_freshness` flywheel iteration into domain-owned spec skeletons. It was prepared as a handoff plan for implementation orchestration.
 
 The source report describes the goal and scope. This document turns that scope into buildable contracts, ordered dependencies, and verification targets.
+
+The production cognitive runtime closure program and delivery ledger control current sequencing, evidence, and readiness. Wave 2 is accepted through `de1d54c` with strict activation, pure execution binding, registered seed genesis, and one supervised bootstrap with bounded retry. W3A semantic contract and authority freeze is ready. Recurring semantic work and the complete flywheel remain later waves.
 
 ## Build Principle
 
@@ -24,7 +26,7 @@ Planning owns decomposition into task network structure. It may emit one ordered
 
 This slice follows the current codebase shape: world model agents curate goals, execution planning proposes task network graph commands, task network state is the executable plan, dispatch owns side effects, and publication feeds the event spine back into belief.
 
-## Delivery Waves
+## Predecessor Slicing
 
 Wave zero defines shared contracts that later domains consume.
 
@@ -65,7 +67,7 @@ Contract skeleton:
 
 - `DocsFreshnessActivationConfig`
 - source format is parsed only by product assembly
-- supported initial format is chosen by implementation and maps into this DTO
+- schema one source format is strict TOML
 - `subject_ref` as full `DomainObjectRef`
 - `workspace_root`
 - `target_selector`
@@ -93,16 +95,15 @@ Inputs:
 - workspace root
 - repository config
 - activation config file
-- CLI overrides applied before validation
 - provider availability config
 
 Outputs:
 
 - validated activation DTO
 - runtime factory inputs for owning domains
-- owner-scoped input package for world model belief
-- owner-scoped input package for world model agent bootstrap and curation
-- owner-scoped input package for execution planning, task package, task network, and publication
+- source-neutral runtime input package
+- source-neutral world-model input package for belief configuration and registered seed genesis
+- source-neutral execution selection with publication mapping
 - diagnostics for invalid configuration
 
 Durable records:
@@ -113,7 +114,7 @@ Idempotency:
 
 - loading the same config is pure
 - validation must not query semantic stores
-- parsing the same activation file and overrides yields the same validated DTO
+- parsing the same activation file yields the same validated DTO
 - downstream runtimes receive typed input values, not the raw activation document
 - config drift is detected by owning domains when durable records already exist
 
@@ -231,8 +232,8 @@ Contract skeleton:
 - `SeedAgentRegistration` with `directive_id`
 - `AgentCurationRuleRecord`
 - `AgentSubscriptionRecord`
-- `AgentActivationRecord`
-- bootstrap command
+- `AgentBootstrapProgress`
+- `AgentBootstrapReceipt`
 - bootstrap report
 
 Inputs:
@@ -241,26 +242,29 @@ Inputs:
 - subject ref
 - branch scope
 - perspective
+- belief family configuration
 - belief key derivation inputs
 - bootstrap sequence
 
 Outputs:
 
 - directive record
+- belief activation receipt
 - seed agent record
 - curation rule record
 - belief subscription record
-- activation record
-- operational agent status update
+- registered seed agent record
+- staged bootstrap progress
 - bootstrap report
 
 Durable records:
 
 - directive record
+- belief configuration snapshot and activation receipt through the belief domain contract
 - seed agent record
 - curation rule record
 - subscription record
-- activation record
+- bootstrap progress
 - bootstrap receipt
 
 Idempotency:
@@ -277,7 +281,10 @@ Acceptance tests:
 - second bootstrap with same config writes nothing new
 - bootstrap conflict is fatal and names the conflicting field
 - agent references directive id rather than embedding directive text as authority
-- operational `AgentRecord.status` requires an active subscription and an activation record
+- bootstrap stages advance through `ProductsConfirmed` and `Completed`
+- bootstrap leaves `AgentRecord.status` registered
+- bootstrap writes no `AgentActivationRecord`
+- mutable lifecycle and subscription cursor state survive exact replay
 
 Non goals:
 
@@ -285,6 +292,7 @@ Non goals:
 - no goal command submission
 - no satisfaction decision
 - no event append
+- no process activation or operational readiness decision
 
 Dependencies:
 
@@ -732,6 +740,8 @@ Runtime handles:
 - execution publication
 - world model satisfaction curation
 
+Wave 2 enables only graph replay and the one-shot world-model bootstrap. The recurring handles in this list remain Wave 3 targets.
+
 Durable records:
 
 - supervisor lease
@@ -776,22 +786,18 @@ Contract skeleton:
 
 - activation command
 - config file path option
-- target selector option
 - dry run option
-- runtime run handoff option
 - output format
 
 Inputs:
 
 - folder path
 - optional config path
-- optional provider selection
-- optional runtime duration
 
 Outputs:
 
-- activation config written or validated
-- runtime status summary
+- activation config validated
+- activation status summary
 - diagnostics for missing provider or invalid target
 
 Durable records:
@@ -808,7 +814,7 @@ Acceptance tests:
 
 - command validates folder path
 - dry run shows planned domain records without writing
-- activation followed by runtime run reaches bootstrap complete
+- non-dry activation reaches bootstrap complete
 - invalid provider binding fails with actionable diagnostic
 
 Non goals:
@@ -816,6 +822,7 @@ Non goals:
 - no direct agent store writes from CLI
 - no direct goal writes from CLI
 - no direct event append from CLI
+- no activation source authoring or semantic DTO override layer
 
 Dependencies:
 
@@ -828,6 +835,8 @@ Dependencies:
 Owner: integration test suite
 
 Build item: end to end durable reopen proof
+
+Wave 2 covers only the activation and supervised bootstrap portion of this proof. Goal, planning, task, provider, publication, belief revision, satisfaction, and complete flywheel checkpoints remain later program work.
 
 Contract skeleton:
 
@@ -918,7 +927,7 @@ Expected outcomes:
 
 ## Orchestration Notes
 
-Shared contract work should stay central before parallel implementation begins.
+The production cognitive runtime closure delivery ledger controls active orchestration. The notes below preserve predecessor dependency intent only.
 
 Parallel-safe areas after shared contracts are stable:
 

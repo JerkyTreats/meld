@@ -406,6 +406,59 @@ No world-model bootstrap writes, real execution asset binding, non-dry activatio
 Next ready set: W2B1 world model bootstrap and W2B2 execution validation
 Blocked set: W2B3 activation proof until W2B1 and W2B2 are accepted
 
+### 2026-07-12 Wave 2 Domain Activation And Supervised Closeout
+
+Ready items: W2B1, W2B2, and W2B3 in dependency order
+Parallelization: isolated world-model and execution owner lanes followed by root preflight and supervised integration
+Integrated commits: `49fdce3`, `82dc94a`, `f549c50`, `9b82984`, `82f0e5a`, `c40e2ec`, `7fbee49`, `37cf617`, `09f9747`, `de1d54c`
+
+Implementation evidence:
+
+- execution binds one sealed authored method and the real docs writer package, requires the workspace snapshot DataFlow edge, validates configured repository provider identities, and resolves the typed `docs_patch` output mapping without opening execution stores
+- root preflight loads repository configuration, binds execution assets, validates owner packages, and rejects invalid source or provider input before product stores open
+- world-model bootstrap durably confirms belief configuration, directive, registered seed agent, curation rule, subscription, staged progress, compatibility migration, and final receipt
+- bootstrap stages are `Started`, `BeliefConfigured`, `AgentRegistered`, `RuleRegistered`, `SubscriptionBound`, `ProductsConfirmed`, and `Completed`
+- exact replay reconfirms immutable genesis products while preserving mutable agent lifecycle and subscription cursor state
+- bootstrap leaves the agent registered, writes no `AgentActivationRecord`, and defers process hydration and operational readiness to Wave 3
+- the concrete runtime `world_model.agent.bootstrap.docs_freshness` runs under supervisor lifecycle, recovers from world-model state, reaches durable no-work after completion, and shuts down cleanly
+- world-model bootstrap failures carry typed fatal or retryable classification while retaining stable issue codes and messages through CLI apply verification
+- supervised non-dry activation permits at most three total attempts for retryable storage failures, requires replacement before another attempt, preserves the exhaustion diagnostic, and always completes clean shutdown
+- application readiness is false during passive preflight and becomes true only after supervised durable bootstrap and clean shutdown
+
+Focused evidence:
+
+- 19 world-model bootstrap tests
+- full execution activation and package validation suites
+- 6 product activation integration tests
+- 32 runtime assembly tests
+- 4 tooling activation tests
+- 3 binary activation tests
+- 9 activated branch runtime tests
+- 1 world-model bootstrap classification correction test
+- 5 focused bootstrap correction tests
+- retry exhaustion proof with exactly two restart schedules, a stopped instance, and no active leases
+
+Integrated gate evidence:
+
+- `cargo fmt --all -- --check`
+- `git diff --check`
+- `cargo check --locked --workspace --all-targets`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo test --locked --workspace --lib --bins --tests --examples -- --test-threads=1`
+- domain boundary check
+- no `mod.rs` check
+
+Criterion benchmark targets compile and lint under the all-target check and clippy gates. The combined all-target test command is not the canonical serial proof because Criterion rejects the unit-test-only `--test-threads` argument.
+The canonical locked serial suite includes 470 root library tests, 425 root integration tests, and every selected workspace target.
+
+Fresh W2B3 review and targeted rereview found no critical, high, or medium findings after the activated branch registration correction. The later integrated Wave 2 review found two medium runtime issues: retryable bootstrap failures lacked typed bounded retry classification, and CLI apply verification did not preserve the bootstrap issue code and message.
+
+Commit `de1d54c` closes both findings with typed domain classification, stable diagnostics, bounded supervised retry, required replacement, diagnostic-preserving exhaustion, and unconditional clean shutdown. Focused correction suites, the locked serial workspace suite, strict all-target clippy, formatting, diff, domain boundary, and module layout gates pass. The final integrated rereview found no critical, high, or medium findings and validated typed classification, same-tick required replacement, two restart schedules for three total attempts, preservation of the first domain diagnostic, unconditional shutdown, receipt and readiness truth, and UTF-8 bounds.
+
+Wave 2 does not claim recurring semantic actors, task-network mutation, task work, provider calls, artifact persistence, publication, belief revision, goal curation, satisfaction, agent operational readiness, full agent initialization, or a complete flywheel turn.
+Closeout state: accepted
+Next ready set: W3A semantic contract and authority freeze
+
 ## Gate Evidence
 
 | Wave | Gate | Result | Commit | Notes |
@@ -429,6 +482,11 @@ Blocked set: W2B3 activation proof until W2B1 and W2B2 are accepted
 | W1C integrated entrypoint | passed | `eec0181` | restart ordering, abrupt recovery, final barrier, checked shutdown completion, formatting, and durability rereview passed |
 | W1 integrated closeout | passed | `6ce4a8a`, `8fa37b9`, `eec0181` | full locked workspace serial ladder, repeated concurrency suites, architecture hygiene, and final durability rereview passed |
 | W2A | passed | `0bb34ee` | strict source, owner contracts, early dry-run route, full locked workspace serial ladder, and final rereview passed |
+| W2B1 | passed | `82f0e5a`, `c40e2ec`, `7fbee49`, `37cf617` | staged genesis bootstrap, compatibility parity, exact replay, sequence safety, and fixture cutover passed |
+| W2B2 | passed | `49fdce3`, `82dc94a` | sealed authored assets, configured provider validation, required DataFlow path, and typed output mapping passed |
+| W2B3 preflight | passed | `f549c50`, `9b82984` | store-free provider and asset preflight with truthful not-ready presentation passed |
+| W2B3 supervised proof | passed | `09f9747`, `de1d54c` | focused proof, correction gates, and final integrated rereview passed |
+| W2 integrated closeout | passed | `09f9747`, `de1d54c` | all gates passed with no critical, high, or medium review findings |
 
 ## Review Findings
 
@@ -466,6 +524,21 @@ The final durability rereview found no critical, high, or medium findings.
 W2A review verified that commit `0bb34ee` binds canonical BLAKE3 identity to normalized typed content and resolved deployment coordinates, validates a real scan dependency path, limits the network receipt to configured identity and derived storage key, freezes versioned migration products, and routes explicit activation validation before product stores open.
 The final rereview found no critical, high, or medium findings.
 
+W2B2 review found that caller-supplied assets could drift from the built-in method and package, provider identity was not tied to repository configuration, dependency validation admitted the wrong edge kind, and output mapping was declarative only.
+Commit `82dc94a` sealed complete semantic assets, required configured provider identities and the exact DataFlow artifact path, and made output mapping an execution-owned resolver.
+
+Root preflight review found that application readiness was reported before a bootstrap factory existed.
+Commit `9b82984` kept passive preflight not ready until supervised bootstrap was installed.
+
+W2B1 review found that bootstrap crossed the canonical genesis boundary by creating activation state and marking the seed operational.
+Commits `c40e2ec` and `7fbee49` left the seed registered, removed activation from the receipt, reconfirmed immutable products without rewriting mutable lifecycle state, and allocated completion after current durable product sequences.
+
+W2B3 fresh review found an activated branch registration gap.
+Commit `09f9747` includes the correction, and targeted rereview found no remaining critical, high, or medium findings.
+The later integrated review found missing typed bounded retry treatment for retryable bootstrap failures and loss of bootstrap issue code and message during CLI apply verification.
+Commit `de1d54c` closes both findings through typed fatal and retryable classification, stable issue codes and messages, three total supervised attempts, required replacement, diagnostic-preserving exhaustion, and unconditional clean shutdown.
+Focused correction suites and the complete locked gate ladder pass. The final integrated rereview found no critical, high, or medium findings. It validated typed classification, same-tick required replacement, two restart schedules for three total attempts, preservation of the first domain diagnostic, unconditional shutdown, receipt and readiness truth, and UTF-8 bounds.
+
 ## Phase Completion Matrix
 
 | Packet | Status | Implementation Evidence | Test Evidence | Review |
@@ -485,15 +558,20 @@ The final rereview found no critical, high, or medium findings.
 | W1B5 | accepted | integrated subprocess fault, parity, concurrency, and reopen harness | focused cross-domain fault suites | passed with Wave 1 closeout |
 | W1C | accepted | canonical belief cutover, checked restart ordering, durable shutdown recovery, and final event barrier | focused cutover and store suites plus entrypoint recovery gates | final durability rereview passed |
 | W2A | accepted | strict TOML loader, deployment-bound identity, owner packages, migration contracts, and execution validation contracts | 459 root library tests, 419 root integration tests, all workspace targets, full check, and strict clippy | final rereview passed |
-| W2B1 | ready | W2A accepted through `0bb34ee` | W2A gate evidence complete | not started |
-| W2B2 | ready | W2A accepted through `0bb34ee` | W2A gate evidence complete | not started |
-| W2B3 | blocked | awaits world model bootstrap and execution validation | none | blocked by W2B1 and W2B2 |
-| W3A through W6G | blocked | none | none | blocked by prior wave closeout |
+| W2B1 | accepted | staged registered-agent genesis bootstrap and compatibility migration | 19 bootstrap tests, full world-model suites, and integrated serial gate | passed after genesis and sequence fix loops |
+| W2B2 | accepted | sealed method and package binding with store-free deterministic validation | full execution activation and package suites plus strict clippy | passed after asset-sealing fix loop |
+| W2B3 | accepted | repository preflight, supervised durable bootstrap, and bounded retry correction | focused product activation, assembly, tooling, binary, branch runtime, correction, and locked serial gates | final integrated rereview passed |
+| W2 closeout | accepted | owner packages, pure execution binding, registered genesis, supervised one-shot runtime, truthful readiness, and bounded retry | locked all-target check and clippy plus locked serial workspace tests | no critical, high, or medium findings |
+| W3A | ready | accepted Wave 2 registered seed genesis and bootstrap receipt | Wave 2 gates complete | ready for semantic contract and authority freeze |
+| W3B through W6G | blocked | none | none | blocked by prior packet closeout |
 
 ## Risks And Exceptions
 
 - The orchestration surface does not expose model selection, so relative strength is enforced through packet scope and review depth.
 - A separate dirty T3 worktree remains outside this program and must not be reused or modified.
+- Wave 2 closes registered seed genesis only. W3A owns process hydration, readiness, activation record authority, and the transition to operational status.
+- W3A must implement or explicitly defer the remaining canonical agent fields for trust policy, evidence policy, responsibility summary, subscription references, and activation policy.
+- The private embedded-directive compatibility decoder remains until supported stores carry migration receipts and no embedded directive records remain.
 
 ### W0B Runtime Contract Freeze
 
@@ -732,8 +810,7 @@ Next ready set: W2B1 and W2B2
 ### W2B Domain Activation Batch
 
 Initial state: blocked by W2A
-Current state: W2B1 and W2B2 ready after accepted W2A
-Blocked state: W2B3 awaits accepted W2B1 and W2B2
+Current state: accepted through `de1d54c`
 
 | Packet | Thread | Strength | Exclusive Builder Scope | Expected Commit |
 | --- | ---: | --- | --- | --- |
@@ -746,14 +823,29 @@ Thread zero integrates reviewed owner implementations with the assembly factory 
 
 Gate: reopen after every bootstrap stage, divergent-config proof, compatibility parity, two fresh reviews, and W3A ready.
 
+Accepted W2B1 commits: `82f0e5a`, `c40e2ec`, `7fbee49`, `37cf617`
+Accepted W2B2 commits: `49fdce3`, `82dc94a`
+Accepted W2B3 preflight commits: `f549c50`, `9b82984`
+Integrated W2B3 supervised proof: `09f9747`
+Integrated Wave 2 correction: `de1d54c`
+
+Closeout boundary:
+
+- bootstrap confirms registered genesis products and does not perform process activation
+- no recurring semantic role is enabled
+- no task, provider, artifact, publication, belief revision, curation, satisfaction, or full flywheel completion is claimed
+
 ## Wave 3 Delivery
 
 ### W3A Semantic Contract And Authority Freeze
 
 Initial state: blocked by Wave 2 closeout
+Current state: ready
 Threads: zero and one
 Strength: highest available
 Expected commits: shared semantic lifecycle contracts, then execution task-network authority
+
+W3A starts from a registered seed and completed genesis receipt. Before recurring curation is enabled it must freeze process-hydration ownership, readiness checks, agent activation records, the transition to operational status, and the disposition of remaining canonical agent fields for trust policy, evidence policy, responsibility summary, subscription references, and activation policy.
 
 Thread one owns new execution authority child modules and focused authority tests.
 Thread zero owns public exports, root lifecycle contracts, and assembly registry integration.

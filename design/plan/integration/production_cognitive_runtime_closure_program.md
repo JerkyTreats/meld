@@ -1,7 +1,7 @@
 # Production Cognitive Runtime Closure Program
 
 Date: 2026-07-12
-Status: design ready for phased delivery
+Status: active, Wave 2 accepted and W3A ready
 Scope: turn the completed event foundation and library-level cognitive flywheel into one honest, restart-safe, operator-visible product runtime
 Base branch: `event-foundation-closeout`
 Recommended program branch: `production-cognitive-runtime-closure`
@@ -40,15 +40,25 @@ Implementation requirements:
 Current implementation evidence:
 
 - `src/runtime`
+- `src/runtime/activation`
 - `crates/meld-events`
 - `crates/meld-world-model`
 - `crates/meld-execution`
 - `crates/meld-lang`
+- `tests/integration/product_activation.rs`
 - `tests/integration/docs_freshness_reopen_contract.rs`
 - `tests/integration/runtime_cli.rs`
 - `tests/integration/workspace_scan_capability.rs`
 
 When an older assessment conflicts with current code, this program requires reconciliation before implementation uses the old claim.
+
+Current delivery state:
+
+- Waves 0 and 1 are accepted.
+- Wave 2 is accepted through `de1d54c`.
+- The final integrated rereview found no critical, high, or medium findings.
+- W3A semantic contract and authority freeze is ready.
+- The active delivery ledger owns exact commit, gate, review, and next-ready evidence.
 
 ## Program Boundary
 
@@ -551,7 +561,7 @@ Create one deterministic product configuration path that supplies owner-scoped i
 - strict unknown-field rejection and a one MiB source limit
 - canonical activation hash derived from normalized typed content
 - passive root loader and validator
-- owner-scoped world model, execution, publication, and runtime input packages
+- owner-scoped runtime, world model, and execution input packages
 - durable directive record
 - seed agent reference by `directive_id`
 - characterization and world-model-owned migration for legacy embedded directive text
@@ -569,7 +579,15 @@ Create one deterministic product configuration path that supplies owner-scoped i
 - multi-agent directives
 - general method synthesis
 - recurring semantic supervisor scheduling
+- task-network mutation or task execution
 - provider execution
+- artifact persistence
+- outcome publication or event append
+- belief revision
+- goal curation or satisfaction
+- a complete flywheel turn
+- agent operational readiness
+- full agent initialization workflow
 
 ### Lanes
 
@@ -577,27 +595,28 @@ Create one deterministic product configuration path that supplies owner-scoped i
 | --- | --- | --- | --- | --- |
 | activation DTO and package split | root integrator | highest | config and runtime input contracts | central first |
 | world model activation | world model | highest | directive, agent, subscription, belief config, stores, one-shot bootstrap runtime | one worktree after DTO freeze |
-| method and package binding | execution | strong | method loading, package registry, runtime input | parallel with world model |
+| method and package binding | execution | highest | method loading, package registry, runtime input | parallel with world model |
 | CLI and assembly adapter | root | strong | config load, assembly, CLI surface | follows domain inputs |
 | activation proof | integration | strong | config fixtures and reopen tests | follows all lanes |
 
 TOML is selected because it matches the existing root product configuration surface and is already a root dependency.
-The downstream packages remain source-format neutral, and the YAML-backed docs writer package remains unchanged.
+The downstream packages remain source-format neutral. The YAML-backed docs writer package now carries the typed `readme_final` to `docs_patch` schema one output mapping required by execution activation validation.
 
 The world model one-shot bootstrap is the only Wave 2 actor that writes semantic state.
 Execution owns a pure activation validator that checks its typed package and returns a deterministic validation receipt without opening or mutating execution semantic stores.
 The receipt binds activation hash, method library, task package, configured network, artifact contract, and publication mapping.
 Root may correlate typed world model and execution receipts for startup reporting but cannot author either result.
+Bootstrap confirms belief configuration, directive, registered seed agent, curation rule, subscription, durable progress, and final receipt. It creates no `AgentActivationRecord` and does not mark the agent operational. Process hydration and operational readiness remain Wave 3 work.
 
 ### Integration Order
 
 1. Freeze activation schema and owner input packages.
-2. Land directive, agent, belief, and execution consumers in parallel.
-3. Land root loader and adapter wiring.
-4. Land the one concrete supervisor-hosted bootstrap runtime and divergent-config rejection.
-5. Bind real docs writer package and workspace scan capability.
-6. Add reopen and compatibility tests.
-7. Run full gates and fresh reviews.
+2. Bind and seal the real docs writer package, authored method, and workspace scan contract.
+3. Land store-free repository provider preflight and truthful passive readiness.
+4. Land staged world-model genesis bootstrap with compatibility migration.
+5. Integrate the one concrete supervisor-hosted bootstrap runtime.
+6. Add durable replay, reopen, conflict, compatibility, and clean-shutdown proof.
+7. Run full gates, fresh reviews, and documentation reconciliation.
 
 ### Completion Gates
 
@@ -615,6 +634,8 @@ Root may correlate typed world model and execution receipts for startup reportin
 - Legacy embedded directive records pass characterization and migration parity before the old field stops being authoritative.
 - Bootstrap result is recovered from world model state, not supervisor state.
 - The bootstrap runtime becomes a durable no-work actor after its receipt exists.
+- Bootstrap leaves the seed agent registered and creates no agent activation record.
+- Application readiness becomes true only after supervised durable bootstrap and clean shutdown complete.
 - No recurring belief, curation, planning, publication, or dispatch actor is enabled in this wave.
 - The authored docs freshness method resolves the real workspace scan and docs writer package contracts.
 - Execution activation validation is deterministic and source-format neutral, does not read or mutate execution semantic state, and no execution actor performs semantic work before Wave 3.
@@ -623,11 +644,14 @@ Root may correlate typed world model and execution receipts for startup reportin
 ### Focused Verification
 
 ```sh
+cargo test -p meld-world-model --lib agent::bootstrap
+cargo test -p meld-world-model --lib belief::activation
 cargo test -p meld-world-model --test agent
-cargo test -p meld-world-model --test belief
-cargo test -p meld-execution --test method_library
-cargo test --test integration_tests workspace_scan_capability
-cargo test --test integration_tests docs_freshness_fixture_contract
+cargo test -p meld-execution --test activation
+cargo test --lib runtime::activation
+cargo test --lib runtime::assembly
+cargo test --bin meld runtime_activation
+cargo test --test integration_tests product_activation
 ```
 
 ## Wave 3 — Semantic Runtime Activation
@@ -635,6 +659,8 @@ cargo test --test integration_tests docs_freshness_fixture_contract
 ### Outcome
 
 Replace inert runtime descriptors with bounded domain actors while keeping every semantic cursor, decision, and recovery rule inside the owning domain.
+
+W3A begins from a registered seed and a completed genesis receipt. It must freeze the separate process-hydration contract, readiness checks, activation record ownership, and transition to operational status before curation can be enabled. It must also reconcile the remaining canonical agent fields or record an explicit later-program deferral.
 
 ### Scope
 

@@ -1,8 +1,8 @@
 # Docs Freshness Flywheel Implementation Guide
 
-Date: 2026-06-22
-Status: proposed build guide
-Scope: reviewed implementation handoff for one executable `docs_freshness` flywheel
+Date: 2026-07-12
+Status: partially applicable predecessor guide
+Scope: dated domain guidance for one executable `docs_freshness` flywheel
 
 ## Purpose
 
@@ -35,7 +35,18 @@ activation config
 
 ## Review Status
 
-This guide is ready for independent design review. Review lanes should check spec coverage, domain ownership, clean boundaries, durability, idempotency, test sufficiency, and orchestration readiness before buildout starts.
+This guide is a predecessor input. The production cognitive runtime closure program and delivery ledger control current scope, sequencing, evidence, and readiness. Dated code anchors and gap inventories below remain historical context unless the active program adopts them.
+
+Wave 2 accepted state through `de1d54c`:
+
+- strict TOML activation and source-neutral owner packages are integrated
+- execution binds sealed built-in method and package assets through store-free validation
+- repository provider keys are validated before product stores open
+- world-model bootstrap confirms belief configuration, directive, registered seed agent, rule, subscription, progress, migration, and receipt state
+- bootstrap creates no agent activation record and leaves operational readiness to Wave 3
+- one supervised bootstrap reaches durable completion and exact replay through the canonical runtime lifecycle
+- storage failures retain typed bounded diagnostics and receive at most three supervised activation attempts
+- recurring semantic work and the full flywheel proof remain later waves
 
 ## Architecture Alignment
 
@@ -92,7 +103,7 @@ These gates are sequential:
 | --- | --- | --- | --- |
 | Product assembly and activation | root runtime assembly | config validation only | provider config and runtime registry |
 | Workspace scan | workspace plus execution catalog | workspace node store and scan receipts | activation target selector and task dispatch |
-| Agent bootstrap | `meld-world-model` agent | directives, agents, rules, subscriptions, activations, receipts | activation config |
+| Agent bootstrap | `meld-world-model` agent | belief config, directives, registered agents, rules, subscriptions, progress, receipts | activation config |
 | Belief runtime | `meld-world-model` belief | config snapshots, evidence, revisions, views, cursors | publication event contract |
 | Agent curation and satisfaction | `meld-world-model` agent | decisions, sink receipts, satisfaction records | belief query and execution goal ports |
 | Execution goals | `meld-execution` goals | goals, lifecycle, receipts | agent command shape |
@@ -107,7 +118,7 @@ These gates are sequential:
 
 Owner: root product assembly.
 
-### Current Code Anchors
+### 2026-06-22 Code Anchors
 
 - Spec skeleton defines this domain at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:52`.
 - Generic runtime config lives at `src/runtime/assembly.rs:57`.
@@ -118,65 +129,30 @@ Owner: root product assembly.
 - Repository config has providers and storage but no activation block at `src/config.rs:40`.
 - Runtime CLI delegates through `src/runtime/tooling.rs:159`, `src/runtime/tooling.rs:198`, and `src/runtime/tooling.rs:496`.
 
-### Current State
+### Accepted Wave 2 State
 
-The product runtime assembly shell can resolve a product root, describe runtime state without opening stores, open product stores for runtime handoff, build ports, and fail before supervisor start when an enabled runtime requires unavailable provider access.
+Root owns a strict schema-one TOML loader, explicit path resolution, deployment-bound activation identity, and source-neutral package split. Repository configuration supplies provider identities to store-free execution binding. Dry run validates without opening product stores. Non-dry activation runs only the one-shot world-model bootstrap through supervisor lifecycle and reports application readiness after durable completion and clean shutdown.
 
-It does not carry a docs freshness activation file, activation DTO validation, provider binding refs, target selector validation, directive identity validation, branch scope, perspective policy, belief family config ref, curation threshold rule config, required artifact type, publication event mapping config, task network id, frame type, or owner-scoped domain factory inputs.
+### Accepted Contracts
 
-### Spec Gaps
-
-- Missing `DocsFreshnessActivationConfig`.
-- Missing activation file loader.
-- Missing validated activation DTO and diagnostics.
-- Missing provider binding resolution from repository provider config.
-- Missing branch scope, perspective policy, belief family config ref, curation threshold rule config, required artifact type, publication event mapping config ref, task network id, and frame type validation.
-- Missing activation runtime id selection.
-- Missing dry-run activation path that validates without opening stores.
-- Assembly diagnostics exist, but activation validation is not populating them.
-
-### Implementation Guide
-
-1. Add `DocsFreshnessActivationConfig` and `ValidatedDocsFreshnessActivation` in the root runtime assembly boundary.
-2. Add an activation file loader owned by product assembly. The loader may support TOML, YAML, or JSON, but it must parse into the same DTO.
-3. Accept workspace root, repository config, activation file path, and CLI overrides. CLI overrides patch the DTO before validation.
-4. Resolve relative paths in assembly only.
-5. Validate `subject_ref`, `branch_scope`, `perspective_policy`, `belief_family_config_ref`, `directive_id`, `seed_agent_id`, `curation_rule_id`, curation threshold rule config or ref, required artifact type, publication event mapping config ref, `method_id`, `task_package_id`, `task_network_id`, `provider_binding_ref`, `frame_type`, target selector, force policy, and enabled runtime ids before stores open.
-6. Convert validated activation into `ProductRuntimeConfig` without using `for_product_root` as the activated path.
-7. Build `ProductActivationRuntimeInputs` as owner-scoped packages. Include no raw activation document and no durable writes.
-8. Hand only the relevant typed package to each runtime factory.
-9. Preserve `describe` as the dry-run path.
-10. Add assembly tests for valid activation file, missing activation fields, invalid provider binding, required provider config absence, unsupported file format, owner-scoped input separation, and no semantic store writes.
-
-### Contracts To Add Or Change
-
+- `DocsFreshnessActivationDocument`
 - `DocsFreshnessActivationConfig`
-- `DocsFreshnessActivationFile`
 - `ValidatedDocsFreshnessActivation`
-- `ActivationDiagnostics`
-- `ProviderBindingRef`
-- `BranchScope`
-- `PerspectivePolicy`
-- `BeliefFamilyConfigRef`
-- `CurationRuleConfigRef`
-- `RequiredArtifactType`
-- `PublicationEventMappingConfigRef`
-- `TaskNetworkId`
-- `FrameType`
-- `TargetSelector`
-- `ForcePolicy`
+- `ValidatedProductActivationPreflight`
 - `ProductActivationRuntimeInputs`
-- owner-scoped world model belief runtime input
-- owner-scoped world model agent runtime input
-- owner-scoped execution runtime input
-- owner-scoped publication runtime input
-- activated runtime config builder
+- `RuntimeActivationInput`
+- `WorldModelActivationInput`
+- `ExecutionActivationSelection`
+- `ExecutionActivationInput`
+- `ExecutionActivationValidationReceipt`
+
+Schema one has no DTO override layer, implicit activation path, alternate source format, or separate publication owner package. Publication mapping is part of the execution package.
 
 ### Durability And Idempotency
 
 Activation file load and validation are pure. Assembly must not write directive, agent, goal, belief, task, publication, or event records.
 
-Duplicate load of the same activation file and overrides must produce the same validated DTO and the same runtime factory input packages.
+Duplicate load of the same activation file must produce the same validated DTO and the same runtime factory input packages.
 
 Config drift is detected by owning domains during bootstrap and replay. Assembly can carry hashes and ids, but it does not decide semantic conflicts.
 
@@ -205,7 +181,7 @@ The main risk is letting activation become shortcut bootstrap logic. Keep activa
 
 Owner: workspace domain plus execution capability catalog.
 
-### Current Code Anchors
+### 2026-06-22 Code Anchors
 
 - Spec skeleton defines the capability at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:122`.
 - Scan state exists at `src/workspace/types.rs:37`.
@@ -220,7 +196,7 @@ Owner: workspace domain plus execution capability catalog.
 - Execution class lacks `local_io` at `crates/meld-execution/src/capability/contracts.rs:128`.
 - Execution context has read node methods but no scan write port at `src/execution/ports.rs:328`.
 
-### Current State
+### 2026-06-22 Snapshot
 
 Workspace scan is a CLI service. It computes a Merkle tree, writes `NodeRecord` values, flushes the store, optionally syncs ignore state, emits progress and workspace fact envelopes, and returns a human string.
 
@@ -307,7 +283,7 @@ Changing execution class serialization may affect fixtures. Root adapter expansi
 
 Owner: `meld-world-model` agent domain.
 
-### Current Code Anchors
+### 2026-06-22 Code Anchors
 
 - Spec skeleton defines bootstrap at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:187`.
 - `AgentRecord` embeds directive text at `crates/meld-world-model/src/agent/contracts.rs:101`.
@@ -318,39 +294,34 @@ Owner: `meld-world-model` agent domain.
 - Docs freshness fixture keeps seed and rule config in memory at `tests/integration/docs_freshness_fixture.rs:95`.
 - Reopen setup manually registers agent and subscription at `tests/integration/docs_freshness_reopen_contract.rs:508`.
 
-### Current State
+### Accepted Wave 2 State
 
-Seed agent and subscription persistence exist. Directive identity and curation rule identity are not durable first-class records. `AgentActivationRecord` and operational marking exist, but docs freshness bootstrap does not use them as its durable activation and operational status contract yet.
+World-model bootstrap owns staged, source-neutral persistence for belief configuration, directive, registered seed agent, curation rule, subscription, progress, compatibility migration, and final receipt. It recovers exclusively from world-model state and reconfirms immutable genesis products on replay while preserving mutable lifecycle and subscription cursor state.
 
-### Spec Gaps
+### Remaining Gaps
 
-- Missing `DirectiveRecord`.
-- Missing `AgentCurationRuleRecord`.
-- Missing bootstrap command, report, and receipt.
-- Missing directive id on seed registration.
-- Existing `AgentActivationRecord` is not wired into bootstrap operational status.
-- Existing replay does not detect same id with changed subject, directive, scope, or perspective.
+- supervisor-hosted process activation and operational readiness are Wave 3 work
+- canonical trust policy, evidence policy, responsibility summary, subscription reference, and activation policy fields need implementation or explicit later-program deferral
+- recurring curation remains disabled
 
-### Implementation Guide
+### Accepted Implementation
 
-1. Add directive, curation rule, bootstrap command, bootstrap report, and bootstrap receipt contracts in `agent/contracts.rs`.
-2. Add `directive_id` to seed registration and agent record.
-3. Preserve a compatibility read path for existing embedded directive text.
-4. Extend `AgentStore` with directive, rule, and bootstrap receipt trees.
-5. Add conflict-aware put methods.
-6. Change seed registration replay to compare durable fields.
-7. Add `AgentBootstrapRuntime` facade that writes directive, agent, rule, subscription, `AgentActivationRecord`, bootstrap receipt, marks `AgentRecord.status` operational after active subscription confirmation, and flushes.
-8. Replace fixture manual registration with the bootstrap facade.
-9. Wire activation config into bootstrap before curation runtimes run.
+1. Validate the source-neutral world-model package before writes.
+2. Advance durable stages from `Started` through `ProductsConfirmed` and `Completed`.
+3. Flush every stage and recover after reopen from world-model progress.
+4. Write or confirm belief configuration, directive, registered seed agent, rule, subscription, and receipt products.
+5. Migrate compatible embedded directive records transactionally with a parity receipt.
+6. Reject divergent identities and semantic content with field-specific conflicts.
+7. Preserve mutable agent lifecycle and subscription cursor values during recovery and exact replay.
+8. Allocate product confirmation and completion after current durable product sequences.
+9. Run the bootstrap through the supervisor without transferring semantic decisions to root.
 
-### Contracts To Add Or Change
+### Accepted Contracts
 
 - `DirectiveRecord`
 - `AgentCurationRuleRecord`
-- `AgentBootstrapCommand`
 - `AgentBootstrapReport`
 - `AgentBootstrapReceipt`
-- `AgentActivationRecord`
 - `SeedAgentRegistration.directive_id`
 - conflict errors that name the field
 
@@ -358,11 +329,11 @@ Seed agent and subscription persistence exist. Directive identity and curation r
 
 Same directive id and same text replays. Same directive id and different text fails. Same seed agent id with changed subject or directive fails. Same rule id with changed threshold fails. Same subscription natural key replays.
 
-Bootstrap receipt turns repeated activation into confirmation, not rewrite. `AgentActivationRecord` records the activation attempt, while `AgentRecord.status` records the current operational state.
+Bootstrap receipt turns repeated genesis materialization into confirmation, not rewrite. The seed remains registered. Bootstrap writes no `AgentActivationRecord` and does not claim operational readiness.
 
 ### Boundary Rules
 
-Bootstrap may write only agent-owned records. It must not evaluate belief confidence, submit goal commands, decide satisfaction, write task networks, call providers, or append events.
+Bootstrap may invoke the public belief activation contract and write agent-owned genesis records. It must not reach into belief internals, evaluate belief confidence, submit goal commands, decide satisfaction, write task networks, call providers, or append events.
 
 ### Verification
 
@@ -371,12 +342,15 @@ Bootstrap may write only agent-owned records. It must not evaluate belief confid
 - directive text conflict
 - seed subject conflict
 - rule threshold conflict
-- operational status requires active subscription
+- registered status is preserved through bootstrap
+- no agent activation record is written
+- reopen after every durable stage
+- mutable lifecycle and cursor state survive exact replay
 - docs freshness setup uses bootstrap facade
 
 ### Risks
 
-Migrating from embedded directive text to directive id needs compatibility handling for stored agents.
+The compatibility decoder remains private and removable only after supported stores carry migration receipts and embedded directive records are absent.
 
 ## World Model Belief Runtime
 
@@ -394,7 +368,7 @@ Owner: `meld-world-model` belief domain.
 - Root runtime currently maps task success events into promoted evidence at `src/runtime/ports.rs:71`.
 - Reopen proof still injects synthetic belief view near `tests/integration/docs_freshness_reopen_contract.rs:788`.
 
-### Current State
+### 2026-06-22 Snapshot
 
 The belief runtime is mostly present. It loads config, normalizes graph anchors and promoted records, computes revisions, writes views, and exposes planner-safe reads.
 
@@ -475,7 +449,7 @@ Owner: `meld-world-model` agent domain.
 - Goal command and mutation ports exist at `src/runtime/ports.rs:447` and `src/runtime/ports.rs:474`.
 - Integration tests prove goal acceptance and satisfaction at `tests/integration/goal_acceptance.rs:334` and `tests/integration/goal_acceptance.rs:386`.
 
-### Current State
+### 2026-06-22 Snapshot
 
 This area is substantially implemented. Decisions, mutation commands, sink receipts, cursor advancement, and reopen proof exist. Integration setup still builds active goal and mutation sink closures from raw stores.
 
@@ -542,7 +516,7 @@ Owner: `meld-execution` goals domain.
 - Goal acceptance tests are at `tests/integration/goal_acceptance.rs:334`.
 - Product storage reopen proof is at `tests/integration/product_storage_assembly.rs:75`.
 
-### Current State
+### 2026-06-22 Snapshot
 
 The goals domain is separated and persistent. It supports add, lifecycle mutation, durable storage, source identity dedupe, and active goal reads.
 
@@ -614,16 +588,16 @@ Owner: `meld-execution` planning and task package adapter.
 - Fixture defines generic `refresh_docs_v1` at `tests/integration/docs_freshness_fixture.rs:292`.
 - Reopen proof bypasses lowering at `tests/integration/docs_freshness_reopen_contract.rs:599`.
 
-### Current State
+### Accepted Wave 2 State
 
-Planning can select a method, produce `ExecutionComposition`, lower operator steps into task nodes, and submit task network commands. Package code can load and validate the built-in docs writer package.
+Execution owns a source-neutral built-in registry and binder for `refresh_docs_v1` and the real docs writer package. Pure validation seals complete method, binding, package, provider, network, artifact, target, and publication semantics. The authored method requires the exact workspace snapshot DataFlow path, and the package output resolver maps `readme_final` to schema-one `docs_patch`.
 
-The paths are not bridged. Docs freshness planning emits generic capability work while integration injects a fixture task network mutation.
+This is activation validation only. Goal-driven planning still must lower the validated method and package into execution-owned task-network commands in Wave 3. No task network or task artifact is persisted by Wave 2 activation.
 
 ### Spec Gaps
 
 - Planning request lacks workspace readiness, latest scan receipt, workspace snapshot ref, task network completion state, and an execution-owned package bridge request carrying task package id, provider binding, frame type, force, and target selector.
-- No bridge converts `refresh_docs_v1` plus bindings into `WorkflowPackageTriggerRequest`.
+- No planning bridge converts the validated activation products into `WorkflowPackageTriggerRequest`.
 - Missing provider binding cannot produce a planning diagnostic.
 - Full `DomainObjectRef` is not preserved.
 - Existing materialization check can skip changed package trigger fields if task id is unchanged.
@@ -701,7 +675,7 @@ Owner: `meld-execution` task network and task runtime domains.
 - Package task execution calls `execute_task_to_completion` at `tests/integration/docs_writer_task.rs:413`.
 - Idempotent package expansion is covered at `tests/integration/docs_writer_task.rs:541`.
 
-### Current State
+### 2026-06-22 Snapshot
 
 Docs writer task execution can run to completion when the package trigger is manually prepared. It requires scan state, test agent, provider config, registered workflow, catalog and registry setup, and package trigger input.
 
@@ -782,7 +756,7 @@ Owner: `meld-execution` publication runtime plus events domain.
 - Pending publications are processed at `crates/meld-execution/src/task_network/publication.rs:243`.
 - Publication event record id helper is at `crates/meld-execution/src/task_network/publication.rs:494`.
 
-### Current State
+### 2026-06-22 Snapshot
 
 Publication runtime is close to the target shape. It can publish pending publications through an event append sink, use deterministic event record ids, and mark publications after append.
 
@@ -845,16 +819,15 @@ Owner: runtime supervisor and domain runtime handles.
 - Runtime start occurs at `src/runtime/supervisor/entrypoint.rs:676`.
 - Existing tests cover heartbeat and restart policy at `src/runtime/supervisor/entrypoint.rs:1285` and `src/runtime/supervisor/entrypoint.rs:1363`.
 
-### Current State
+### Accepted Wave 2 State
 
-Supervisor owns lifecycle, leases, heartbeat, health snapshots, restart policy, shutdown, safe points, and flush. It starts inert handles. Tick renews leases and writes heartbeat and health only.
+Supervisor owns lifecycle, leases, heartbeat, health snapshots, restart policy, shutdown, safe points, and flush. It hosts the concrete graph replay actor and the one-shot docs freshness bootstrap. The bootstrap handle delegates one bounded semantic operation to world-model ownership, reports durable progress, becomes no-work after its receipt exists, and participates in clean shutdown.
 
 ### Spec Gaps
 
-- No concrete bounded semantic runtime handles.
-- No semantic tick request or report in supervisor status.
-- No domain handle registry carrying activation inputs.
-- No provider-dependent dispatch enablement beyond generic preflight.
+- Recurring belief, evidence, curation, planning, dispatch, publication, and satisfaction handles remain disabled.
+- Process activation and operational agent readiness remain undefined.
+- Provider-dependent dispatch remains disabled.
 - Shutdown safe point is lifecycle-only, not tied to domain cursor flush reports.
 - Scan execution route must be explicit. This guide uses task dispatch for `workspace_scan`, not a separate supervisor scan handle.
 
@@ -913,34 +886,31 @@ Owner: CLI adapter.
 - Workflow execute already has provider, frame type, and force fields at `src/cli/parse.rs:793`.
 - Context commands expose provider, frame type, and force fields at `src/cli/parse.rs:608`.
 
-### Current State
+### Accepted Wave 2 State
 
-CLI exposes runtime status and runtime run. It exposes workflow and context commands with provider and frame options, but there is no docs freshness activation command.
+CLI exposes explicit runtime activation with workspace, activation path, optional repository configuration path, dry-run selection, and text or JSON output. The route executes before `RunContext` or product stores open. Dry run reports validation with application readiness false. Non-dry activation runs the supervised bootstrap and reports readiness only after durable completion and clean shutdown.
 
 ### Spec Gaps
 
-- Missing activation command.
-- Missing config file path option.
-- Missing target selector option.
-- Missing dry-run activation.
-- Missing runtime run handoff option.
-- Missing output format for diagnostics.
+- No implicit activation source or source authoring command.
+- No CLI DTO overrides for semantic activation fields.
+- No recurring runtime handoff is enabled by activation.
 
 ### Implementation Guide
 
-1. Add parse shape for docs freshness activation.
-2. Accept folder path, optional config path, provider selection, target selector, dry run, output format, and runtime handoff duration.
-3. Keep parse module declarative.
-4. Add tooling function that builds activation loader inputs and calls product activation service.
-5. Dry run uses describe and validation only.
-6. Non-dry run delegates to activation bootstrap through runtime service, not direct domain writes.
-7. Runtime handoff starts supervisor only after activation validation passes.
+1. Keep the parse module declarative.
+2. Keep activation source explicit and resolve paths before stores open.
+3. Derive provider identity from repository configuration keys.
+4. Keep dry run pure and not application ready.
+5. Delegate non-dry writes through the supervisor-hosted world-model bootstrap.
+6. Report application readiness only after durable bootstrap and clean shutdown.
 
-### Contracts To Add Or Change
+### Integrated Contracts
 
-- activation CLI command DTO
-- CLI diagnostics output DTO
-- runtime handoff options
+- `RuntimeCommands::Activate`
+- `handle_cli_activation`
+- `PassiveActivationDescription`
+- `ActivationDiagnostics`
 
 ### Durability And Idempotency
 
@@ -954,8 +924,9 @@ CLI parses and delegates. It must not write agent, goal, belief, task, publicati
 
 - command validates folder path
 - dry run shows planned domain records without writes
-- activation followed by runtime run reaches bootstrap complete
+- non-dry activation reaches bootstrap complete
 - invalid provider binding fails with actionable diagnostic
+- apply verification preserves typed bootstrap issue code and message
 
 ### Risks
 
@@ -976,14 +947,14 @@ Owner: integration test suite.
 - Active goal setup manually accepts curation command at `tests/integration/docs_freshness_reopen_contract.rs:527`.
 - Synthetic belief view construction begins at `tests/integration/docs_freshness_reopen_contract.rs:788`.
 
-### Current State
+### Accepted Wave 2 State
 
-The current reopen test proves many mechanics, including active goal reopen, pending publication reopen, publication append before satisfaction, evidence ingestion, and satisfaction closure. It still uses fixture shortcuts and direct cross-domain writes after setup.
+The product activation proof begins with the checked-in TOML source, completes store-free owner and execution validation, runs bootstrap under supervisor lifecycle, reopens durable world-model state, proves exact replay, rejects divergence, and observes clean shutdown. It confirms directive, registered agent, belief configuration, rule, subscription, method binding, network, artifact, and publication identities without executing task work.
+
+The older full-loop reopen test still proves useful mechanics with fixture shortcuts. Replacing those shortcuts remains Wave 3 through Wave 5 work.
 
 ### Spec Gaps
 
-- No proof starts from activation config and folder path.
-- Bootstrap is not the source of directive, agent, rule, and subscription records.
 - Planning proof bypasses package bridge output.
 - Evidence replay cursor is supplied by test.
 - Satisfaction is manually invoked through test closures.
@@ -1073,7 +1044,7 @@ Expected outcomes:
 
 ## Buildout Handoff
 
-Use this guide as the input to phased implementation orchestration.
+Use the production cognitive runtime closure program and delivery ledger as the controlling input to phased implementation orchestration. This guide remains a partially applicable predecessor reference for domain intent and later-wave proof hazards.
 
 Source plan path: `design/plan/integration/docs_freshness_flywheel_next_iteration_report.md`
 
