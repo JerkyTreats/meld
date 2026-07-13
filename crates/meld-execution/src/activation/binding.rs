@@ -3,7 +3,10 @@
 use std::error::Error;
 use std::fmt;
 
-use super::{ExecutionActivationInput, ExecutionActivationSelection, MethodTaskPackageBinding};
+use super::{
+    ExecutionActivationInput, ExecutionActivationSelection, ExecutionActivationValidationContext,
+    MethodTaskPackageBinding,
+};
 use crate::planning::MethodLibrary;
 use crate::task::package::TaskPackageSpec;
 
@@ -16,6 +19,30 @@ pub struct ExecutionActivationAssets {
     pub method_binding: MethodTaskPackageBinding,
     /// Typed authored task package selected by the binding.
     pub task_package: TaskPackageSpec,
+}
+
+impl ExecutionActivationAssets {
+    /// Derive the source-neutral semantic seal for all registry-owned assets.
+    pub fn semantic_digests(&self) -> ExecutionActivationAssetDigests {
+        let encoded_binding = serde_json::to_vec(&self.method_binding)
+            .expect("method binding must remain serializable for activation identity");
+        ExecutionActivationAssetDigests {
+            method_library_digest: self.method_library.semantic_digest(),
+            method_binding_digest: blake3::hash(&encoded_binding).to_hex().to_string(),
+            task_package_digest: self.task_package.semantic_digest(),
+        }
+    }
+}
+
+/// Canonical source-neutral semantic seal for registry-owned activation assets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionActivationAssetDigests {
+    /// Complete authored method semantics plus normalized verification.
+    pub method_library_digest: String,
+    /// Complete explicit method-to-package binding semantics.
+    pub method_binding_digest: String,
+    /// Complete typed package semantics including seed and expansion authoring.
+    pub task_package_digest: String,
 }
 
 /// Fail-closed error returned while resolving or binding execution assets.
@@ -43,7 +70,14 @@ impl Error for ExecutionActivationBindingError {}
 pub fn bind_execution_activation(
     selection: ExecutionActivationSelection,
     assets: ExecutionActivationAssets,
+    validation_context: ExecutionActivationValidationContext,
 ) -> Result<ExecutionActivationInput, ExecutionActivationBindingError> {
+    if !validation_context.contains_provider_binding(&selection.provider_binding_ref) {
+        return Err(invalid(
+            "selection.provider_binding_ref",
+            "must identify a configured repository provider binding",
+        ));
+    }
     if !assets.method_library.invalid.is_empty() {
         return Err(invalid(
             "assets.method_library.invalid",
@@ -130,6 +164,7 @@ pub fn bind_execution_activation(
         method_library: assets.method_library,
         method_binding: assets.method_binding,
         task_package: assets.task_package,
+        validation_context,
     })
 }
 

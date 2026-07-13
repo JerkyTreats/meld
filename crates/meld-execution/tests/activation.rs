@@ -1,12 +1,17 @@
+use std::collections::BTreeMap;
 use std::fs;
 
 use meld_execution::activation::{
     bind_builtin_execution_activation, bind_execution_activation, validate_execution_activation,
     BuiltInExecutionActivationRegistry, CapabilityContractRef, ExecutionActivationInput,
-    ExecutionActivationSelection, ExecutionForcePolicy, ExecutionTargetKind,
-    ExecutionTargetSelector, PublicationMapping, RequiredArtifactContract,
+    ExecutionActivationSelection, ExecutionActivationValidationContext, ExecutionForcePolicy,
+    ExecutionTargetKind, ExecutionTargetSelector, PublicationMapping, RequiredArtifactContract,
 };
 use meld_execution::planning::MethodSourceRef;
+use meld_execution::task::package::{
+    map_task_package_output_artifact, resolve_task_package_output_mapping, PackageExpansionSpec,
+};
+use meld_lang::{Condition, EdgeKind, Literal, Proposition, Term};
 use tempfile::TempDir;
 
 fn selection(target: String) -> ExecutionActivationSelection {
@@ -43,7 +48,14 @@ fn selection(target: String) -> ExecutionActivationSelection {
 }
 
 fn input(target: String) -> ExecutionActivationInput {
-    bind_builtin_execution_activation(selection(target)).unwrap()
+    bind_builtin_execution_activation(selection(target), validation_context()).unwrap()
+}
+
+fn validation_context() -> ExecutionActivationValidationContext {
+    ExecutionActivationValidationContext::from_provider_binding_refs([
+        "docs-writer".to_string(),
+        "review-provider".to_string(),
+    ])
 }
 
 #[test]
@@ -108,7 +120,7 @@ fn divergent_selection_and_resolved_asset_identity_fail_closed() {
     let mut method_drift = selection(target.clone());
     method_drift.method_id = "refresh_docs_v2".to_string();
     assert_eq!(
-        bind_builtin_execution_activation(method_drift)
+        bind_builtin_execution_activation(method_drift, validation_context())
             .unwrap_err()
             .field,
         "selection.method_id"
@@ -117,7 +129,7 @@ fn divergent_selection_and_resolved_asset_identity_fail_closed() {
     let mut package_drift = selection(target.clone());
     package_drift.task_package_id = "docs_writer_other".to_string();
     assert_eq!(
-        bind_builtin_execution_activation(package_drift)
+        bind_builtin_execution_activation(package_drift, validation_context())
             .unwrap_err()
             .field,
         "selection.task_package_id"
@@ -126,7 +138,7 @@ fn divergent_selection_and_resolved_asset_identity_fail_closed() {
     let mut scan_drift = selection(target.clone());
     scan_drift.workspace_scan_step_id = "decoy_scan".to_string();
     assert_eq!(
-        bind_builtin_execution_activation(scan_drift)
+        bind_builtin_execution_activation(scan_drift, validation_context())
             .unwrap_err()
             .field,
         "selection.workspace_scan_step_id"
@@ -138,7 +150,7 @@ fn divergent_selection_and_resolved_asset_identity_fail_closed() {
         .unwrap();
     assets.method_binding.package_step_id = "drifted_package_step".to_string();
     assert_eq!(
-        bind_execution_activation(selected, assets)
+        bind_execution_activation(selected, assets, validation_context())
             .unwrap_err()
             .field,
         "assets.method_binding.package_step_id"
@@ -260,4 +272,146 @@ fn disconnected_and_decoy_scan_steps_fail_closed() {
         validate_execution_activation(&decoy).unwrap_err().field,
         "selection.workspace_scan_step_id"
     );
+}
+
+#[test]
+fn canonical_method_semantics_reject_trigger_effect_and_cost_drift() {
+    let temp = TempDir::new().unwrap();
+    let target = temp.path().canonicalize().unwrap().display().to_string();
+
+    let mut trigger_drift = input(target.clone());
+    trigger_drift.method_library.entries[0].method.trigger = Proposition::Holds {
+        subject: Term::Variable("?node".to_string()),
+        dimension: Term::Dimension("docs_freshness".to_string()),
+        condition: Condition::Above(Term::Literal(Literal::Number(0.8))),
+    };
+    assert_eq!(
+        validate_execution_activation(&trigger_drift)
+            .unwrap_err()
+            .field,
+        "method_library"
+    );
+
+    let mut effect_drift = input(target.clone());
+    effect_drift.method_library.entries[0]
+        .method
+        .net_effects
+        .clear();
+    assert_eq!(
+        validate_execution_activation(&effect_drift)
+            .unwrap_err()
+            .field,
+        "method_library"
+    );
+
+    let mut cost_drift = input(target);
+    cost_drift.method_library.entries[0].method.cost.time_ms += 1;
+    assert_eq!(
+        validate_execution_activation(&cost_drift)
+            .unwrap_err()
+            .field,
+        "method_library"
+    );
+}
+
+#[test]
+fn canonical_package_semantics_reject_seed_and_expansion_drift() {
+    let temp = TempDir::new().unwrap();
+    let target = temp.path().canonicalize().unwrap().display().to_string();
+
+    let mut seed_drift = input(target.clone());
+    seed_drift.task_package.seed.artifacts[0].schema_version += 1;
+    assert_eq!(
+        validate_execution_activation(&seed_drift)
+            .unwrap_err()
+            .field,
+        "task_package"
+    );
+
+    let mut expansion_drift = input(target);
+    let PackageExpansionSpec::TraversalPrerequisite(expansion) =
+        &mut expansion_drift.task_package.expansions[0];
+    expansion.traversal_strategy = "directories_top_down".to_string();
+    assert_eq!(
+        validate_execution_activation(&expansion_drift)
+            .unwrap_err()
+            .field,
+        "task_package"
+    );
+}
+
+#[test]
+fn valid_looking_unknown_provider_fails_binding_and_validation() {
+    let temp = TempDir::new().unwrap();
+    let target = temp.path().canonicalize().unwrap().display().to_string();
+
+    let mut unknown_selection = selection(target.clone());
+    unknown_selection.provider_binding_ref = "unknown-provider".to_string();
+    assert_eq!(
+        bind_builtin_execution_activation(unknown_selection, validation_context())
+            .unwrap_err()
+            .field,
+        "selection.provider_binding_ref"
+    );
+
+    let mut unknown_bound_input = input(target);
+    unknown_bound_input.selection.provider_binding_ref = "unknown-provider".to_string();
+    assert_eq!(
+        validate_execution_activation(&unknown_bound_input)
+            .unwrap_err()
+            .field,
+        "selection.provider_binding_ref"
+    );
+}
+
+#[test]
+fn scan_to_writer_path_requires_workspace_snapshot_data_flow() {
+    let temp = TempDir::new().unwrap();
+    let target = temp.path().canonicalize().unwrap().display().to_string();
+
+    let mut ordering = input(target.clone());
+    ordering.method_library.entries[0].method.composition.edges[0].kind = EdgeKind::Ordering;
+    let ordering_error = validate_execution_activation(&ordering).unwrap_err();
+    assert_eq!(ordering_error.field, "selection.workspace_scan_step_id");
+    assert!(ordering_error.message.contains("data-flow path"));
+
+    let mut wrong_artifact = input(target);
+    wrong_artifact.method_library.entries[0]
+        .method
+        .composition
+        .edges[0]
+        .kind = EdgeKind::DataFlow {
+        artifact_type: Term::ArtifactType("unrelated_snapshot".to_string()),
+    };
+    let wrong_artifact_error = validate_execution_activation(&wrong_artifact).unwrap_err();
+    assert_eq!(
+        wrong_artifact_error.field,
+        "selection.workspace_scan_step_id"
+    );
+    assert!(wrong_artifact_error.message.contains("data-flow path"));
+}
+
+#[test]
+fn pure_output_mapper_resolves_docs_patch_and_rejects_missing_output() {
+    let temp = TempDir::new().unwrap();
+    let target = temp.path().canonicalize().unwrap().display().to_string();
+    let package = input(target).task_package;
+
+    let mapping = resolve_task_package_output_mapping(&package, "docs_patch", 1).unwrap();
+    assert_eq!(mapping.source_output_type, "readme_final");
+
+    let completed_outputs = BTreeMap::from([(
+        "readme_final".to_string(),
+        "# Refreshed documentation".to_string(),
+    )]);
+    let artifact =
+        map_task_package_output_artifact(&package, "docs_patch", 1, &completed_outputs).unwrap();
+    assert_eq!(artifact.artifact_type_id, "docs_patch");
+    assert_eq!(artifact.schema_version, 1);
+    assert_eq!(artifact.source_output_type, "readme_final");
+    assert_eq!(artifact.content, "# Refreshed documentation");
+
+    let error =
+        map_task_package_output_artifact(&package, "docs_patch", 1, &BTreeMap::new()).unwrap_err();
+    assert_eq!(error.field, "completed_outputs");
 }

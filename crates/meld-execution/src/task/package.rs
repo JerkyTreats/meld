@@ -25,7 +25,10 @@ pub use contracts::{
     TraversalPublishSpec, WorkflowPackageTriggerRequest,
 };
 pub use lower::{lower_traversal_prerequisite_expansion_template, lower_workflow_region_template};
-pub use output::TurnOutputPolicySpec;
+pub use output::{
+    map_task_package_output_artifact, resolve_task_package_output_mapping,
+    MappedTaskPackageOutputArtifact, TaskPackageOutputMappingError, TurnOutputPolicySpec,
+};
 pub use prepare::{
     build_initial_task_definition, build_task_initialization_payload,
     find_traversal_prerequisite_expansion, gate_map, prepare_workflow_package_context,

@@ -5,7 +5,7 @@ use meld_lang::Method;
 use super::binding::{invalid, ExecutionActivationAssets, ExecutionActivationBindingError};
 use super::{
     bind_execution_activation, ExecutionActivationInput, ExecutionActivationSelection,
-    MethodTaskPackageBinding,
+    ExecutionActivationValidationContext, MethodTaskPackageBinding,
 };
 use crate::capability::{
     ArtifactSchemaVersionRange, BindingSpec, BindingValueKind, CapabilityCatalog,
@@ -100,9 +100,10 @@ impl BuiltInExecutionActivationRegistry {
 /// Resolve built-in assets and bind them into a typed activation input.
 pub fn bind_builtin_execution_activation(
     selection: ExecutionActivationSelection,
+    validation_context: ExecutionActivationValidationContext,
 ) -> Result<ExecutionActivationInput, ExecutionActivationBindingError> {
     let assets = BuiltInExecutionActivationRegistry::new().resolve(&selection)?;
-    bind_execution_activation(selection, assets)
+    bind_execution_activation(selection, assets, validation_context)
 }
 
 fn require_supported(

@@ -1,5 +1,7 @@
 //! Canonical execution activation inputs and validation receipts.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::planning::MethodLibrary;
@@ -85,6 +87,31 @@ pub struct ExecutionTargetSelector {
     pub canonical_value: String,
 }
 
+/// Source-neutral repository configuration visible to activation validation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionActivationValidationContext {
+    /// Configured provider binding identities available to execution.
+    pub configured_provider_binding_refs: BTreeSet<String>,
+}
+
+impl ExecutionActivationValidationContext {
+    /// Build validation context from repository-owned provider identities.
+    pub fn from_provider_binding_refs(
+        provider_binding_refs: impl IntoIterator<Item = String>,
+    ) -> Self {
+        Self {
+            configured_provider_binding_refs: provider_binding_refs.into_iter().collect(),
+        }
+    }
+
+    /// Return true when the repository configuration contains this provider.
+    pub fn contains_provider_binding(&self, provider_binding_ref: &str) -> bool {
+        self.configured_provider_binding_refs
+            .contains(provider_binding_ref)
+    }
+}
+
 /// Source-neutral activation selection that root assembly may construct.
 ///
 /// This value names execution products but does not contain loaded assets or
@@ -135,6 +162,8 @@ pub struct ExecutionActivationInput {
     pub method_binding: MethodTaskPackageBinding,
     /// Typed authored task package selected by the binding.
     pub task_package: TaskPackageSpec,
+    /// Repository-owned identities used for source-neutral validation.
+    pub validation_context: ExecutionActivationValidationContext,
 }
 
 /// Deterministic pure-validation acknowledgement for execution activation.

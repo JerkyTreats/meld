@@ -10,13 +10,14 @@ mod registry;
 mod validation;
 
 pub use binding::{
-    bind_execution_activation, ExecutionActivationAssets, ExecutionActivationBindingError,
+    bind_execution_activation, ExecutionActivationAssetDigests, ExecutionActivationAssets,
+    ExecutionActivationBindingError,
 };
 pub use contracts::{
     CapabilityContractRef, ExecutionActivationInput, ExecutionActivationSelection,
-    ExecutionActivationValidationReceipt, ExecutionForcePolicy, ExecutionTargetKind,
-    ExecutionTargetSelector, MethodTaskPackageBinding, PublicationMapping,
-    RequiredArtifactContract,
+    ExecutionActivationValidationContext, ExecutionActivationValidationReceipt,
+    ExecutionForcePolicy, ExecutionTargetKind, ExecutionTargetSelector, MethodTaskPackageBinding,
+    PublicationMapping, RequiredArtifactContract,
 };
 pub use registry::{bind_builtin_execution_activation, BuiltInExecutionActivationRegistry};
 pub use validation::{validate_execution_activation, ExecutionActivationValidationError};

@@ -5,12 +5,15 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Component, Path};
 
-use meld_lang::{Composition, StepKind, Term};
+use meld_lang::{Composition, EdgeKind, StepKind, Term};
 use serde::Serialize;
 
-use super::{ExecutionActivationInput, ExecutionActivationValidationReceipt};
+use super::{
+    BuiltInExecutionActivationRegistry, ExecutionActivationInput,
+    ExecutionActivationValidationReceipt,
+};
 use crate::planning::OperatorResolutionStatus;
-use crate::task::package::{PackageExpansionSpec, TargetSelectorKind};
+use crate::task::package::{resolve_task_package_output_mapping, TargetSelectorKind};
 use crate::task_network::store::network_storage_key;
 
 const SUCCESS_EVENT_TYPE: &str = "execution.task.succeeded";
@@ -81,6 +84,7 @@ pub fn validate_execution_activation(
         "selection.provider_binding_ref",
         &input.selection.provider_binding_ref,
     )?;
+    validate_provider_bindings(input)?;
     require_structural_id("selection.frame_type", &input.selection.frame_type)?;
     validate_target(input)?;
     require_text(
@@ -121,6 +125,7 @@ pub fn validate_execution_activation(
     validate_publication_mapping(input)?;
     validate_package(input)?;
     validate_method(input)?;
+    validate_canonical_assets(input)?;
 
     let task_network_storage_key = network_storage_key(&input.selection.task_network_id)
         .map_err(|error| invalid("selection.task_network_id", error.to_string()))?;
@@ -297,37 +302,18 @@ fn validate_package(
         ));
     }
 
-    let output_mappings = input
-        .task_package
-        .output_artifacts
-        .iter()
-        .filter(|mapping| {
-            mapping.artifact_type_id == input.selection.required_artifact.artifact_type_id
-                && mapping.schema_version == input.selection.required_artifact.schema_version
-        })
-        .collect::<Vec<_>>();
-    if input.task_package.output_artifacts.len() != 1 || output_mappings.len() != 1 {
+    if input.task_package.output_artifacts.len() != 1 {
         return Err(invalid(
             "task_package.output_artifacts",
-            "must contain exactly one mapping for the required artifact and schema",
+            "must contain exactly one canonical docs-writer output mapping",
         ));
     }
-    let source_output_type = output_mappings[0].source_output_type.as_str();
-    let source_turns = input
-        .task_package
-        .expansions
-        .iter()
-        .flat_map(|expansion| match expansion {
-            PackageExpansionSpec::TraversalPrerequisite(spec) => spec.repeated_region.turns.iter(),
-        })
-        .filter(|turn| turn.output_type == source_output_type && turn.output_policy.persist_frame)
-        .count();
-    if source_turns != 1 {
-        return Err(invalid(
-            "task_package.output_artifacts.source_output_type",
-            "must identify exactly one persisted authored workflow output",
-        ));
-    }
+    resolve_task_package_output_mapping(
+        &input.task_package,
+        &input.selection.required_artifact.artifact_type_id,
+        input.selection.required_artifact.schema_version,
+    )
+    .map_err(|error| invalid(error.field, error.message))?;
     Ok(())
 }
 
@@ -551,14 +537,14 @@ fn validate_method(
             "selected step must resolve the configured workspace scan contract",
         ));
     }
-    if !has_dependency_path(
+    if !has_snapshot_dataflow_path(
         &entry.method.composition,
         &input.selection.workspace_scan_step_id,
         &input.method_binding.package_step_id,
     ) {
         return Err(invalid(
             "selection.workspace_scan_step_id",
-            "selected scan step must have a dependency path to the package-bound step",
+            "selected scan step must have a workspace_snapshot_ref data-flow path to the package-bound step",
         ));
     }
     Ok(())
@@ -589,15 +575,22 @@ fn validate_target(
     Ok(())
 }
 
-fn has_dependency_path(composition: &Composition, from: &str, to: &str) -> bool {
+fn has_snapshot_dataflow_path(composition: &Composition, from: &str, to: &str) -> bool {
     let mut pending = VecDeque::from([from]);
     let mut visited = BTreeSet::new();
+    let required_artifact = Term::ArtifactType(WORKSPACE_SNAPSHOT_ARTIFACT_TYPE_ID.to_string());
 
     while let Some(step_id) = pending.pop_front() {
         if !visited.insert(step_id) {
             continue;
         }
-        for edge in composition.edges.iter().filter(|edge| edge.from == step_id) {
+        for edge in composition.edges.iter().filter(|edge| {
+            edge.from == step_id
+                && matches!(
+                    &edge.kind,
+                    EdgeKind::DataFlow { artifact_type } if artifact_type == &required_artifact
+                )
+        }) {
             if edge.to == to {
                 return true;
             }
@@ -605,6 +598,69 @@ fn has_dependency_path(composition: &Composition, from: &str, to: &str) -> bool 
         }
     }
     false
+}
+
+fn validate_provider_bindings(
+    input: &ExecutionActivationInput,
+) -> Result<(), ExecutionActivationValidationError> {
+    if input
+        .validation_context
+        .configured_provider_binding_refs
+        .is_empty()
+    {
+        return Err(invalid(
+            "validation_context.configured_provider_binding_refs",
+            "must contain at least one configured provider binding",
+        ));
+    }
+    for provider_binding_ref in &input.validation_context.configured_provider_binding_refs {
+        require_structural_id(
+            "validation_context.configured_provider_binding_refs",
+            provider_binding_ref,
+        )?;
+    }
+    if !input
+        .validation_context
+        .contains_provider_binding(&input.selection.provider_binding_ref)
+    {
+        return Err(invalid(
+            "selection.provider_binding_ref",
+            "must identify a configured repository provider binding",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_canonical_assets(
+    input: &ExecutionActivationInput,
+) -> Result<(), ExecutionActivationValidationError> {
+    let canonical_assets = BuiltInExecutionActivationRegistry::new()
+        .resolve(&input.selection)
+        .map_err(|error| invalid(error.field, error.message))?;
+    let canonical = canonical_assets.semantic_digests();
+
+    let method_library_digest = input.method_library.semantic_digest();
+    if method_library_digest != canonical.method_library_digest {
+        return Err(invalid(
+            "method_library",
+            "semantic digest must equal the registry-owned canonical method and normalized verification",
+        ));
+    }
+    let method_binding_digest = semantic_digest(&input.method_binding)?;
+    if method_binding_digest != canonical.method_binding_digest {
+        return Err(invalid(
+            "method_binding",
+            "semantic digest must equal the registry-owned canonical method binding",
+        ));
+    }
+    let task_package_digest = input.task_package.semantic_digest();
+    if task_package_digest != canonical.task_package_digest {
+        return Err(invalid(
+            "task_package",
+            "semantic digest must equal the registry-owned canonical task package",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_publication_mapping(
@@ -711,8 +767,8 @@ mod tests {
     use super::*;
     use crate::activation::{
         bind_builtin_execution_activation, CapabilityContractRef, ExecutionActivationSelection,
-        ExecutionForcePolicy, ExecutionTargetKind, ExecutionTargetSelector, PublicationMapping,
-        RequiredArtifactContract,
+        ExecutionActivationValidationContext, ExecutionForcePolicy, ExecutionTargetKind,
+        ExecutionTargetSelector, PublicationMapping, RequiredArtifactContract,
     };
     use crate::planning::MethodSourceRef;
 
@@ -750,7 +806,13 @@ mod tests {
     }
 
     fn input() -> ExecutionActivationInput {
-        bind_builtin_execution_activation(selection()).unwrap()
+        bind_builtin_execution_activation(
+            selection(),
+            ExecutionActivationValidationContext::from_provider_binding_refs([
+                "provider.docs".to_string()
+            ]),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -879,7 +941,7 @@ mod tests {
 
         let error = validate_execution_activation(&value).unwrap_err();
         assert_eq!(error.field, "selection.workspace_scan_step_id");
-        assert!(error.message.contains("dependency path"));
+        assert!(error.message.contains("data-flow path"));
     }
 
     #[test]
