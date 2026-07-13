@@ -211,8 +211,10 @@ fn planning_request(goal: meld_lang::Goal, world_state: WorldState) -> PlanningR
     let world_state_frame = PlanningWorldStateFrameRef::from_authority(
         "frame-1",
         "projection-request-1",
+        world_state_request.canonical_hash().unwrap(),
         PLANNER_PROJECTION_VERSION,
         "projection-hash-1",
+        meld_execution::planning::world_state::canonical_world_state_hash(&world_state).unwrap(),
         &world_state_request,
         &world_state,
         vec!["source".to_string()],

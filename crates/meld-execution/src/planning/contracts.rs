@@ -378,8 +378,10 @@ mod contract_freeze_tests {
         let frame = PlanningWorldStateFrameRef::from_authority(
             "frame-a",
             "projection-request-a",
+            projection_request.canonical_hash().unwrap(),
             "projection-v1",
             "projection-hash-a",
+            crate::planning::world_state::canonical_world_state_hash(&world_state).unwrap(),
             &projection_request,
             &world_state,
             vec!["source-a".to_string()],
@@ -441,8 +443,10 @@ mod contract_freeze_tests {
         let frame = PlanningWorldStateFrameRef::from_authority(
             "frame-other",
             "projection-request-other",
+            other_request.canonical_hash().unwrap(),
             "projection-v1",
             "projection-hash-other",
+            crate::planning::world_state::canonical_world_state_hash(&world_state).unwrap(),
             &other_request,
             &world_state,
             vec!["source-a".to_string()],

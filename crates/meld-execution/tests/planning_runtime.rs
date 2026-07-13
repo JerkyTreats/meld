@@ -57,8 +57,10 @@ fn derived_frame(
     PlanningWorldStateFrameRef::from_authority(
         format!("frame-{}", request.goal_id),
         format!("projection-request-{}", request.goal_id),
+        request.canonical_hash().unwrap(),
         "world_model.planner.v1",
         format!("projection-hash-{}", request.goal_id),
+        meld_execution::planning::world_state::canonical_world_state_hash(world_state).unwrap(),
         request,
         world_state,
         vec!["source".to_string()],
