@@ -22,7 +22,19 @@ impl<'a> AgentRegistration<'a> {
     ) -> Result<AgentRecord, StorageError> {
         request.validate()?;
         if let Some(existing) = self.store.get_agent(&request.agent_id)? {
-            return Ok(existing);
+            let matches = existing.perspective_key == request.perspective_key
+                && existing.subject == request.subject
+                && existing.branch_scope == request.branch_scope
+                && existing.observation_scope == request.observation_scope
+                && existing.directive_id == request.directive_id
+                && existing.seed_provenance == request.seed_provenance;
+            if matches {
+                return Ok(existing);
+            }
+            return Err(StorageError::InvalidPath(format!(
+                "seed agent '{}' registration conflict",
+                request.agent_id
+            )));
         }
         let record = AgentRecord {
             agent_id: request.agent_id,
@@ -30,7 +42,7 @@ impl<'a> AgentRegistration<'a> {
             subject: request.subject,
             branch_scope: request.branch_scope,
             observation_scope: request.observation_scope,
-            directive: request.directive,
+            directive_id: request.directive_id,
             seed_provenance: request.seed_provenance,
             status: AgentStatus::Registered,
             created_at_seq: request.created_at_seq,

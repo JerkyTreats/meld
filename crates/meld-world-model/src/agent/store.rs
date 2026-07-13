@@ -5,6 +5,11 @@ use std::sync::Arc;
 
 use sled::{Db, Tree};
 
+use crate::activation::{
+    AgentBootstrapReceipt, AgentCurationRuleRecord, DirectiveRecord,
+    LegacyDirectiveMigrationReceipt,
+};
+use crate::agent::bootstrap::AgentBootstrapProgress;
 use crate::agent::contracts::{
     AgentActivationRecord, AgentCurationDecision, AgentCurationDedupeKey, AgentRecord,
     AgentSatisfactionReview, AgentSinkReceipt, AgentStatus, AgentSubscriptionCursorCasIntent,
@@ -26,6 +31,11 @@ const TREE_DECISIONS_BY_REVISION: &str = "agent_decisions_by_revision";
 const TREE_SATISFACTION_DECISIONS_BY_REVIEW: &str = "agent_satisfaction_decisions_by_review";
 const TREE_SINK_RECEIPTS: &str = "agent_sink_receipts";
 const TREE_SINK_RECEIPTS_BY_COMMAND: &str = "agent_sink_receipts_by_command";
+const TREE_DIRECTIVES: &str = "agent_directives";
+const TREE_CURATION_RULES: &str = "agent_curation_rules";
+const TREE_BOOTSTRAP_PROGRESS: &str = "agent_bootstrap_progress";
+const TREE_BOOTSTRAP_RECEIPTS: &str = "agent_bootstrap_receipts";
+const TREE_LEGACY_MIGRATION_RECEIPTS: &str = "agent_legacy_directive_migration_receipts";
 const KEY_PAD: usize = 20;
 
 /// Sled backed storage for durable agent records and indexes.
@@ -46,6 +56,11 @@ pub struct AgentStore {
     satisfaction_decisions_by_review: Tree,
     sink_receipts: Tree,
     sink_receipts_by_command: Tree,
+    directives: Tree,
+    curation_rules: Tree,
+    bootstrap_progress: Tree,
+    bootstrap_receipts: Tree,
+    legacy_migration_receipts: Tree,
 }
 
 impl AgentStore {
@@ -82,6 +97,17 @@ impl AgentStore {
             sink_receipts_by_command: db
                 .open_tree(TREE_SINK_RECEIPTS_BY_COMMAND)
                 .map_err(to_storage_io)?,
+            directives: db.open_tree(TREE_DIRECTIVES).map_err(to_storage_io)?,
+            curation_rules: db.open_tree(TREE_CURATION_RULES).map_err(to_storage_io)?,
+            bootstrap_progress: db
+                .open_tree(TREE_BOOTSTRAP_PROGRESS)
+                .map_err(to_storage_io)?,
+            bootstrap_receipts: db
+                .open_tree(TREE_BOOTSTRAP_RECEIPTS)
+                .map_err(to_storage_io)?,
+            legacy_migration_receipts: db
+                .open_tree(TREE_LEGACY_MIGRATION_RECEIPTS)
+                .map_err(to_storage_io)?,
             db,
         })
     }
@@ -116,9 +142,84 @@ impl AgentStore {
 
     /// Read one agent record by id.
     pub fn get_agent(&self, agent_id: &str) -> Result<Option<AgentRecord>, StorageError> {
+        let Some(raw) = self
+            .agents
+            .get(agent_id.as_bytes())
+            .map_err(to_storage_io)?
+        else {
+            return Ok(None);
+        };
+        match serde_json::from_slice(&raw) {
+            Ok(record) => Ok(Some(record)),
+            Err(canonical_error) => crate::agent::bootstrap::decode_legacy_agent_for_read(&raw)
+                .map(Some)
+                .map_err(|legacy_error| {
+                    StorageError::IoError(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "cannot decode canonical agent: {canonical_error}; cannot decode legacy agent: {legacy_error}"
+                        ),
+                    ))
+                }),
+        }
+    }
+
+    /// Read one durable directive by id.
+    pub fn get_directive(
+        &self,
+        directive_id: &str,
+    ) -> Result<Option<DirectiveRecord>, StorageError> {
         decode_optional(
-            self.agents
-                .get(agent_id.as_bytes())
+            self.directives
+                .get(directive_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
+    /// Read one configured curation rule by id.
+    pub fn get_curation_rule(
+        &self,
+        rule_id: &str,
+    ) -> Result<Option<AgentCurationRuleRecord>, StorageError> {
+        decode_optional(
+            self.curation_rules
+                .get(rule_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
+    /// Read durable progress for one logical bootstrap.
+    pub fn get_bootstrap_progress(
+        &self,
+        bootstrap_id: &str,
+    ) -> Result<Option<AgentBootstrapProgress>, StorageError> {
+        decode_optional(
+            self.bootstrap_progress
+                .get(bootstrap_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
+    /// Read the final durable receipt for one logical bootstrap.
+    pub fn get_bootstrap_receipt(
+        &self,
+        bootstrap_id: &str,
+    ) -> Result<Option<AgentBootstrapReceipt>, StorageError> {
+        decode_optional(
+            self.bootstrap_receipts
+                .get(bootstrap_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
+    /// Read one completed embedded-directive migration receipt.
+    pub fn get_legacy_directive_migration_receipt(
+        &self,
+        receipt_id: &str,
+    ) -> Result<Option<LegacyDirectiveMigrationReceipt>, StorageError> {
+        decode_optional(
+            self.legacy_migration_receipts
+                .get(receipt_id.as_bytes())
                 .map_err(to_storage_io)?,
         )
     }

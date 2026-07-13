@@ -77,7 +77,7 @@ fn seed_agent_registration() -> SeedAgentRegistration {
         subject: subject(),
         branch_scope: BranchScope::main(),
         observation_scope: DIMENSION_ID.to_string(),
-        directive: "curate docs freshness goals".to_string(),
+        directive_id: "directive.docs_freshness".to_string(),
         seed_provenance: "trusted init".to_string(),
         created_at_seq: 0,
     }
@@ -371,6 +371,11 @@ fn agent_source_scans_reject_execution_internals_and_private_store_imports() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     for path in [
         "src/agent.rs",
+        "src/agent/bootstrap.rs",
+        "src/agent/bootstrap/compat.rs",
+        "src/agent/bootstrap/contracts.rs",
+        "src/agent/bootstrap/runtime.rs",
+        "src/agent/bootstrap/store.rs",
         "src/agent/contracts.rs",
         "src/agent/curation.rs",
         "src/agent/query.rs",
@@ -443,7 +448,7 @@ fn agent_contract_index_keys_are_stable() {
 fn agent_contract_validation_rejects_invalid_public_shapes() {
     let (_temp_dir, store) = agent_store();
     let (mut agent, mut subscription) = setup_agent(&store);
-    agent.directive.clear();
+    agent.directive_id.clear();
     assert!(agent.validate().is_err());
     subscription.subscription_id.clear();
     assert!(subscription.validate().is_err());
@@ -764,6 +769,23 @@ fn agent_seed_registration_and_subscription_are_idempotent() {
             .unwrap()
             .len(),
         1
+    );
+}
+
+#[test]
+fn agent_seed_registration_rejects_divergent_replay() {
+    let (_temp_dir, store) = agent_store();
+    let registration = AgentRegistration::new(&store);
+    registration
+        .register_seed_agent(seed_agent_registration())
+        .unwrap();
+    let mut divergent = seed_agent_registration();
+    divergent.directive_id = "directive.other".to_string();
+
+    assert!(registration.register_seed_agent(divergent).is_err());
+    assert_eq!(
+        store.get_agent(AGENT_ID).unwrap().unwrap().directive_id,
+        "directive.docs_freshness"
     );
 }
 

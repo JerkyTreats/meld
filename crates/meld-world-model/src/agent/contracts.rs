@@ -111,8 +111,8 @@ pub struct AgentRecord {
     pub branch_scope: BranchScope,
     /// Named scope used by the seed or runtime binder.
     pub observation_scope: String,
-    /// Human or system directive that explains agent intent.
-    pub directive: String,
+    /// Durable directive that explains agent intent.
+    pub directive_id: String,
     /// Provenance string for seed created agents.
     pub seed_provenance: String,
     /// Current agent lifecycle status.
@@ -131,7 +131,7 @@ impl AgentRecord {
         self.subject.validate()?;
         require_non_empty("branch scope", &self.branch_scope.branch_id)?;
         require_non_empty("observation scope", &self.observation_scope)?;
-        require_non_empty("directive", &self.directive)?;
+        require_non_empty("directive id", &self.directive_id)?;
         require_non_empty("seed provenance", &self.seed_provenance)?;
         Ok(())
     }
@@ -461,8 +461,8 @@ pub struct SeedAgentRegistration {
     pub branch_scope: BranchScope,
     /// Named observation scope for the seed.
     pub observation_scope: String,
-    /// Directive stored on the agent record.
-    pub directive: String,
+    /// Durable directive referenced by the agent record.
+    pub directive_id: String,
     /// Provenance stored on the agent record.
     pub seed_provenance: String,
     /// Sequence used for create and update timestamps.
@@ -477,7 +477,7 @@ impl SeedAgentRegistration {
         self.subject.validate()?;
         require_non_empty("branch scope", &self.branch_scope.branch_id)?;
         require_non_empty("observation scope", &self.observation_scope)?;
-        require_non_empty("directive", &self.directive)?;
+        require_non_empty("directive id", &self.directive_id)?;
         require_non_empty("seed provenance", &self.seed_provenance)?;
         Ok(())
     }

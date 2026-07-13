@@ -1,9 +1,13 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use meld_world_model::activation::{
+    AgentBootstrapReceipt, AgentCurationRuleRecord, DirectiveRecord,
+    LegacyDirectiveMigrationReceipt,
+};
 use meld_world_model::agent::{
-    AgentActivationRecord, AgentCurationDecision, AgentCurationDedupeKey, AgentRecord,
-    AgentSubscriptionRecord, AgentCurationRuleConfig,
+    AgentActivationRecord, AgentBootstrapProgress, AgentBootstrapReport, AgentCurationDecision,
+    AgentCurationDedupeKey, AgentCurationRuleConfig, AgentRecord, AgentSubscriptionRecord,
 };
 
 fuzz_target!(|data: &[u8]| {
@@ -27,4 +31,10 @@ fuzz_target!(|data: &[u8]| {
         let _ = rule.validate();
         let _ = rule.target_condition_key();
     }
+    let _ = serde_json::from_slice::<DirectiveRecord>(data);
+    let _ = serde_json::from_slice::<AgentCurationRuleRecord>(data);
+    let _ = serde_json::from_slice::<LegacyDirectiveMigrationReceipt>(data);
+    let _ = serde_json::from_slice::<AgentBootstrapProgress>(data);
+    let _ = serde_json::from_slice::<AgentBootstrapReceipt>(data);
+    let _ = serde_json::from_slice::<AgentBootstrapReport>(data);
 });

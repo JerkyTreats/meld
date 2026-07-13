@@ -59,6 +59,7 @@
 //! assert_eq!(snapshot.config.family_id, "docs_freshness");
 //! ```
 
+mod activation;
 pub mod comparator;
 pub mod config;
 pub mod contracts;
@@ -68,6 +69,7 @@ pub mod query;
 pub mod runtime;
 pub mod store;
 
+pub(crate) use activation::{BeliefActivation, BeliefActivationError};
 pub use comparator::{BayesianComparator, ComparatorInput, ComparatorOutput};
 pub use config::{BeliefConfigLoader, ConfigSnapshot};
 pub use contracts::{
