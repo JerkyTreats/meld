@@ -1,5 +1,6 @@
 //! Durable agent storage.
 
+use std::collections::BTreeSet;
 use std::io;
 use std::sync::Arc;
 
@@ -272,10 +273,14 @@ impl AgentStore {
     pub fn agents_by_status(&self, status: AgentStatus) -> Result<Vec<AgentRecord>, StorageError> {
         let prefix = format!("{}::", status.index_key());
         let mut out = Vec::new();
+        let mut seen = BTreeSet::new();
         for item in self.agent_by_status.scan_prefix(prefix.as_bytes()) {
             let (_, value) = item.map_err(to_storage_io)?;
             let agent_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
-            if let Some(agent) = self.get_agent(&agent_id)? {
+            if seen.insert(agent_id.clone()) {
+                let Some(agent) = self.get_agent(&agent_id)? else {
+                    continue;
+                };
                 if agent.status == status {
                     out.push(agent);
                 }
@@ -991,6 +996,11 @@ impl AgentStore {
             operational.updated_at_seq,
             &operational.agent_id,
         );
+        let prior_status_key = agent_status_key(
+            agent.status.index_key(),
+            agent.updated_at_seq,
+            &agent.agent_id,
+        );
 
         (
             &self.agents,
@@ -1049,6 +1059,12 @@ impl AgentStore {
                         command.hydration_id.as_bytes(),
                         "current hydration",
                     )?;
+                    require_transaction_value(
+                        status,
+                        prior_status_key.as_bytes(),
+                        agent_id.as_bytes(),
+                        "prior agent status index",
+                    )?;
                     if let Some(existing) = proofs.get(command.readiness.proof_id.as_bytes())? {
                         if existing.as_ref() != proof_bytes.as_slice() {
                             return Err(ConflictableTransactionError::Abort(format!(
@@ -1058,6 +1074,7 @@ impl AgentStore {
                         }
                     }
                     agents.insert(agent_id.as_bytes(), operational_bytes.clone())?;
+                    status.remove(prior_status_key.as_bytes())?;
                     status.insert(status_key.as_bytes(), agent_id.as_bytes())?;
                     hydrations.insert(command.hydration_id.as_bytes(), hydration_bytes.clone())?;
                     activations

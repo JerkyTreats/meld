@@ -1158,6 +1158,10 @@ fn operational_agent_rehydrates_under_a_new_epoch_and_lease() {
             AgentProcessHydrationStatus::Ready
         );
         assert_eq!(
+            store.agents_by_status(AgentStatus::Operational).unwrap(),
+            vec![rehydrated.clone()]
+        );
+        assert_eq!(
             registration.mark_operational(&second_command).unwrap(),
             rehydrated
         );
@@ -1170,6 +1174,10 @@ fn operational_agent_rehydrates_under_a_new_epoch_and_lease() {
         .unwrap();
     assert_eq!(replayed.status, AgentStatus::Operational);
     assert_eq!(replayed.updated_at_seq, 12);
+    assert_eq!(
+        store.agents_by_status(AgentStatus::Operational).unwrap(),
+        vec![replayed]
+    );
 }
 
 #[test]
