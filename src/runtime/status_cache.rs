@@ -10,10 +10,12 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::runtime::contracts::{
-    RuntimeActionRecord, RuntimeStatusActionEnvelope, RuntimeStatusActionsRead,
+    RuntimeActionIssueSeverity, RuntimeActionRecord, RuntimeActionTruncation,
+    RuntimeStatusActionEnvelope, RuntimeStatusActionsRead,
     RuntimeStatusCacheCompatibility, RuntimeStatusCacheLayout, RuntimeStatusCacheLimits,
     RuntimeStatusCacheRecord, RuntimeStatusCacheWarning, RuntimeStatusPublisher,
     RuntimeStatusReader, RuntimeStatusSnapshotRead, RUNTIME_STATUS_CACHE_SCHEMA_VERSION,
+    RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT, RUNTIME_STATUS_ISSUE_MESSAGE_MAX_BYTES,
     RUNTIME_STATUS_WARNING_OLDER_SCHEMA, RUNTIME_STATUS_WARNING_TRUNCATED,
     RUNTIME_STATUS_WARNING_UNREADABLE,
 };
@@ -59,19 +61,25 @@ pub struct FilesystemRuntimeStatusPublisher {
     layout: RuntimeStatusCacheLayout,
     limits: RuntimeStatusCacheLimits,
     actions: Vec<RuntimeActionRecord>,
+    pending_action_omission_count: u64,
     writer_lock: File,
 }
 
 impl FilesystemRuntimeStatusPublisher {
     /// Acquire the product writer lock with the frozen production limits.
     pub fn acquire(product_root: impl AsRef<Path>) -> Result<Self, RuntimeStatusCacheError> {
-        Self::acquire_with_limits(product_root, RuntimeStatusCacheLimits::default())
+        Self::acquire_inner(product_root, RuntimeStatusCacheLimits::default())
     }
 
-    /// Acquire the product writer lock with caller supplied limits.
-    ///
-    /// Custom limits support focused verification and controlled future migrations.
-    pub fn acquire_with_limits(
+    #[cfg(test)]
+    fn acquire_with_limits(
+        product_root: impl AsRef<Path>,
+        limits: RuntimeStatusCacheLimits,
+    ) -> Result<Self, RuntimeStatusCacheError> {
+        Self::acquire_inner(product_root, limits)
+    }
+
+    fn acquire_inner(
         product_root: impl AsRef<Path>,
         limits: RuntimeStatusCacheLimits,
     ) -> Result<Self, RuntimeStatusCacheError> {
@@ -98,12 +106,16 @@ impl FilesystemRuntimeStatusPublisher {
         let reader = FilesystemRuntimeStatusReader::from_layout(layout.clone(), limits);
         let actions = reader
             .read_recent_actions(limits.recent_action_max_count)?
-            .actions;
+            .actions
+            .into_iter()
+            .map(normalize_action)
+            .collect();
 
         Ok(Self {
             layout,
             limits,
             actions,
+            pending_action_omission_count: 0,
             writer_lock,
         })
     }
@@ -118,6 +130,14 @@ impl FilesystemRuntimeStatusPublisher {
         record: &RuntimeStatusCacheRecord,
     ) -> Result<(), RuntimeStatusCacheError> {
         let mut bounded = record.clone();
+        for runtime in &mut bounded.snapshot.runtimes {
+            runtime.last_action = runtime.last_action.take().map(normalize_action);
+        }
+        bounded.recent_actions = bounded
+            .recent_actions
+            .into_iter()
+            .map(normalize_action)
+            .collect();
         let original_action_count = bounded.recent_actions.len();
         retain_newest(&mut bounded.recent_actions, self.limits.recent_action_max_count);
         let mut omitted_action_count = original_action_count - bounded.recent_actions.len();
@@ -126,6 +146,12 @@ impl FilesystemRuntimeStatusPublisher {
             if omitted_action_count != 0 {
                 candidate.snapshot.warnings.push(truncated_warning(format!(
                     "latest.json omitted {omitted_action_count} oldest recent actions to satisfy cache bounds"
+                )));
+            }
+            if self.pending_action_omission_count != 0 {
+                let omitted = self.pending_action_omission_count;
+                candidate.snapshot.warnings.push(truncated_warning(format!(
+                    "actions.jsonl omitted {omitted} oldest actions to satisfy count or byte bounds since the prior snapshot"
                 )));
             }
             let encoded = serde_json::to_vec(&candidate)?;
@@ -142,7 +168,9 @@ impl FilesystemRuntimeStatusPublisher {
             bounded.recent_actions.remove(0);
             omitted_action_count += 1;
         };
-        atomic_replace(&self.layout.latest, &encoded)
+        atomic_replace(&self.layout.latest, &encoded)?;
+        self.pending_action_omission_count = 0;
+        Ok(())
     }
 
     fn encode_actions(
@@ -180,12 +208,15 @@ impl RuntimeStatusPublisher for FilesystemRuntimeStatusPublisher {
 
     fn publish_action(&mut self, action: &RuntimeActionRecord) -> Result<(), Self::Error> {
         let mut next = self.actions.clone();
-        next.push(action.clone());
+        next.push(normalize_action(action.clone()));
+        let unbounded_count = next.len();
         retain_newest(&mut next, self.limits.recent_action_max_count);
+        let mut omitted_action_count = unbounded_count - next.len();
 
         let mut encoded = self.encode_actions(&next)?;
         while encoded.len() > self.limits.actions_max_bytes && next.len() > 1 {
             next.remove(0);
+            omitted_action_count += 1;
             encoded = self.encode_actions(&next)?;
         }
         enforce_bound(
@@ -195,6 +226,9 @@ impl RuntimeStatusPublisher for FilesystemRuntimeStatusPublisher {
         )?;
         atomic_replace(&self.layout.actions, &encoded)?;
         self.actions = next;
+        self.pending_action_omission_count = self
+            .pending_action_omission_count
+            .saturating_add(omitted_action_count as u64);
         Ok(())
     }
 
@@ -227,11 +261,14 @@ pub struct FilesystemRuntimeStatusReader {
 impl FilesystemRuntimeStatusReader {
     /// Build a reader with the frozen production limits.
     pub fn new(product_root: impl AsRef<Path>) -> Self {
-        Self::with_limits(product_root, RuntimeStatusCacheLimits::default())
+        Self::from_layout(
+            RuntimeStatusCacheLayout::from_product_root(product_root),
+            RuntimeStatusCacheLimits::default(),
+        )
     }
 
-    /// Build a reader with caller supplied limits.
-    pub fn with_limits(
+    #[cfg(test)]
+    fn with_limits(
         product_root: impl AsRef<Path>,
         limits: RuntimeStatusCacheLimits,
     ) -> Self {
@@ -355,7 +392,7 @@ impl RuntimeStatusReader for FilesystemRuntimeStatusReader {
                     if compatibility == RuntimeStatusCacheCompatibility::Older {
                         older_line_count += 1;
                     }
-                    actions.push(envelope.action);
+                    actions.push(normalize_action(envelope.action));
                     retain_newest(&mut actions, retained_limit);
                 }
                 Err(_) => malformed_line_count += 1,
@@ -526,6 +563,52 @@ fn retain_newest<T>(values: &mut Vec<T>, limit: usize) {
     }
 }
 
+fn normalize_action(mut action: RuntimeActionRecord) -> RuntimeActionRecord {
+    let original_issue_count = action.issues.len();
+    let prior_omitted_issue_count = action.truncation.omitted_issue_count;
+    let mut fatal = Vec::new();
+    let mut retryable = Vec::new();
+    for issue in std::mem::take(&mut action.issues) {
+        match issue.severity {
+            RuntimeActionIssueSeverity::Fatal => fatal.push(issue),
+            RuntimeActionIssueSeverity::Retryable => retryable.push(issue),
+        }
+    }
+    fatal.extend(retryable);
+    fatal.truncate(RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT);
+
+    let mut truncated_message_count = 0u64;
+    for issue in &mut fatal {
+        let was_truncated = issue.truncated;
+        let bounded = bounded_utf8(&issue.message, RUNTIME_STATUS_ISSUE_MESSAGE_MAX_BYTES);
+        issue.message = bounded.0;
+        issue.truncated = was_truncated || bounded.1;
+        truncated_message_count += u64::from(issue.truncated);
+    }
+    action.truncation = RuntimeActionTruncation {
+        omitted_issue_count: prior_omitted_issue_count.saturating_add(
+            original_issue_count
+                .saturating_sub(fatal.len())
+                .try_into()
+                .unwrap_or(u64::MAX),
+        ),
+        truncated_message_count,
+    };
+    action.issues = fatal;
+    action
+}
+
+fn bounded_utf8(value: &str, max_bytes: usize) -> (String, bool) {
+    if value.len() <= max_bytes {
+        return (value.to_string(), false);
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    (value[..end].to_string(), true)
+}
+
 fn enforce_bound(
     projection: &'static str,
     actual_bytes: usize,
@@ -637,6 +720,28 @@ mod tests {
         }
     }
 
+    fn unbounded_action(index: usize) -> RuntimeActionRecord {
+        let mut action = action(index);
+        action.issues = (0..20)
+            .map(|issue_index| RuntimeActionIssueSummary {
+                severity: RuntimeActionIssueSeverity::Retryable,
+                item_id: Some(format!("retryable-{issue_index}")),
+                code: "retryable".to_string(),
+                message: "é".repeat(600),
+                truncated: false,
+            })
+            .chain((0..2).map(|issue_index| RuntimeActionIssueSummary {
+                severity: RuntimeActionIssueSeverity::Fatal,
+                item_id: Some(format!("fatal-{issue_index}")),
+                code: "fatal".to_string(),
+                message: "é".repeat(600),
+                truncated: false,
+            }))
+            .collect();
+        action.truncation.omitted_issue_count = 3;
+        action
+    }
+
     fn record(root: &Path, written_at_ms: u64) -> RuntimeStatusCacheRecord {
         let layout = RuntimeStatusCacheLayout::from_product_root(root);
         RuntimeStatusCacheRecord::new(
@@ -739,6 +844,97 @@ mod tests {
         );
         assert!(fs::metadata(&publisher.layout().actions).unwrap().len()
             <= limits.actions_max_bytes as u64);
+    }
+
+    #[test]
+    fn publisher_normalizes_arbitrary_action_issues_with_fatal_priority() {
+        let temp = TempDir::new().unwrap();
+        let mut publisher = FilesystemRuntimeStatusPublisher::acquire(temp.path()).unwrap();
+        publisher.publish_action(&unbounded_action(1)).unwrap();
+
+        let read = FilesystemRuntimeStatusReader::new(temp.path())
+            .read_recent_actions(10)
+            .unwrap();
+        let action = &read.actions[0];
+        assert_eq!(action.issues.len(), RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT);
+        assert_eq!(action.issues[0].severity, RuntimeActionIssueSeverity::Fatal);
+        assert_eq!(action.issues[1].severity, RuntimeActionIssueSeverity::Fatal);
+        assert!(action
+            .issues
+            .iter()
+            .all(|issue| issue.message.len() <= RUNTIME_STATUS_ISSUE_MESSAGE_MAX_BYTES));
+        assert!(action.issues.iter().all(|issue| issue.truncated));
+        assert_eq!(action.truncation.omitted_issue_count, 9);
+        assert_eq!(action.truncation.truncated_message_count, 16);
+    }
+
+    #[test]
+    fn snapshot_normalizes_embedded_recent_actions() {
+        let temp = TempDir::new().unwrap();
+        let mut publisher = FilesystemRuntimeStatusPublisher::acquire(temp.path()).unwrap();
+        let mut snapshot = record(temp.path(), 10);
+        snapshot.recent_actions = vec![unbounded_action(1)];
+        publisher.publish_tick_snapshot(&snapshot).unwrap();
+
+        let RuntimeStatusSnapshotRead::Decoded { record, .. } =
+            FilesystemRuntimeStatusReader::new(temp.path())
+                .read_latest_snapshot()
+                .unwrap()
+        else {
+            panic!("snapshot should decode");
+        };
+        let action = &record.recent_actions[0];
+        assert_eq!(action.issues.len(), RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT);
+        assert_eq!(action.issues[0].severity, RuntimeActionIssueSeverity::Fatal);
+        assert_eq!(action.truncation.omitted_issue_count, 9);
+        assert_eq!(action.truncation.truncated_message_count, 16);
+    }
+
+    #[test]
+    fn action_count_retention_is_reported_by_the_next_snapshot() {
+        let temp = TempDir::new().unwrap();
+        let limits = RuntimeStatusCacheLimits {
+            recent_action_max_count: 2,
+            ..RuntimeStatusCacheLimits::default()
+        };
+        let mut publisher =
+            FilesystemRuntimeStatusPublisher::acquire_with_limits(temp.path(), limits).unwrap();
+        for index in 0..3 {
+            publisher.publish_action(&action(index)).unwrap();
+        }
+        publisher
+            .publish_tick_snapshot(&record(temp.path(), 10))
+            .unwrap();
+
+        let RuntimeStatusSnapshotRead::Decoded {
+            record: decoded, ..
+        } =
+            FilesystemRuntimeStatusReader::with_limits(temp.path(), limits)
+                .read_latest_snapshot()
+                .unwrap()
+        else {
+            panic!("snapshot should decode");
+        };
+        assert!(decoded.snapshot.warnings.iter().any(|warning| {
+            warning.code == RUNTIME_STATUS_WARNING_TRUNCATED
+                && warning.message.contains("actions.jsonl omitted 1 oldest actions")
+        }));
+
+        publisher
+            .publish_tick_snapshot(&record(temp.path(), 20))
+            .unwrap();
+        let RuntimeStatusSnapshotRead::Decoded {
+            record: decoded, ..
+        } =
+            FilesystemRuntimeStatusReader::with_limits(temp.path(), limits)
+                .read_latest_snapshot()
+                .unwrap()
+        else {
+            panic!("snapshot should decode");
+        };
+        assert!(!decoded.snapshot.warnings.iter().any(|warning| {
+            warning.message.contains("since the prior snapshot")
+        }));
     }
 
     #[test]
@@ -906,6 +1102,22 @@ mod tests {
         assert!(!read.actions.is_empty());
         assert_eq!(read.actions.last().unwrap().action_id, "action-003");
         assert!(fs::metadata(&publisher.layout().actions).unwrap().len() <= 1_050);
+
+        publisher
+            .publish_tick_snapshot(&record(temp.path(), 10))
+            .unwrap();
+        let RuntimeStatusSnapshotRead::Decoded {
+            record: decoded, ..
+        } = FilesystemRuntimeStatusReader::with_limits(temp.path(), limits)
+            .read_latest_snapshot()
+            .unwrap()
+        else {
+            panic!("snapshot should decode");
+        };
+        assert!(decoded.snapshot.warnings.iter().any(|warning| {
+            warning.code == RUNTIME_STATUS_WARNING_TRUNCATED
+                && warning.message.contains("actions.jsonl omitted")
+        }));
     }
 
     #[test]
