@@ -891,7 +891,17 @@ Next ready set: W3B semantic actor batch
 ### W3B Semantic Actor Batch
 
 Initial state: blocked by W3A
-Current state: ready after accepted W3A
+Current state: implementation in progress after accepted W3A
+
+Accepted shared prework:
+
+| Commit | Evidence | Unblocks |
+| --- | --- | --- |
+| `376714a` | operational readiness preserves the first pending belief delivery while fencing equal, ahead, and divergent cursors | recurring agent delivery selection |
+| `8d5e391` | semantic handles receive the exact supervisor lease context | actor-owned lease fencing |
+| `4532c55` | root opens and flushes the world-model planner authority, with durable pending-request reopen proof | planner projection actor and durable execution bridge |
+
+The active dependency is the execution planning request and runtime asset freeze. It adds explicit subject and durable source sequence identity to execution projection requests and exposes the exact execution-owned capability catalog used during activation verification. After that freeze, durable planner projection, authority-backed execution planning, and authority-backed publication are parallel-safe.
 
 | Packet | Thread | Strength | Exclusive Builder Scope | Expected Commit |
 | --- | ---: | --- | --- | --- |
