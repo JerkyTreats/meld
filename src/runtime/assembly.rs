@@ -1447,7 +1447,7 @@ impl RuntimeHandle {
                 "lease id must be non-empty".to_string(),
             ));
         }
-        self.semantic.start_after_lease()?;
+        self.semantic.start_after_lease(&lease)?;
         self.started = true;
         Ok(RuntimeHandleStartReport {
             runtime_id: self.runtime_id.clone(),
@@ -1556,9 +1556,12 @@ impl RuntimeSemanticHandle {
         }
     }
 
-    fn start_after_lease(&mut self) -> Result<(), RuntimeAssemblyError> {
+    fn start_after_lease(
+        &mut self,
+        lease: &RuntimeLeaseContext,
+    ) -> Result<(), RuntimeAssemblyError> {
         match self {
-            Self::TaskNetworkAuthority(handle) => handle.start_after_lease(),
+            Self::TaskNetworkAuthority(handle) => handle.start_after_lease(lease),
             _ => Ok(()),
         }
     }
@@ -1585,7 +1588,10 @@ impl RuntimeSemanticHandle {
 }
 
 impl TaskNetworkAuthorityRuntimeHandle {
-    fn start_after_lease(&mut self) -> Result<(), RuntimeAssemblyError> {
+    fn start_after_lease(
+        &mut self,
+        _lease: &RuntimeLeaseContext,
+    ) -> Result<(), RuntimeAssemblyError> {
         if matches!(self.state, TaskNetworkAuthorityRuntimeState::Hosted) {
             return Err(RuntimeAssemblyError::SupervisorHandoff(format!(
                 "task-network authority '{}' is already hosted",
