@@ -370,7 +370,7 @@ The final reviewer approved W1A with no remaining critical or high blockers.
 | W0D | accepted | restart publication, alias migration, and integrated closeout | full locked workspace ladder | passed after fix loop |
 | W1A | accepted | authority, replay, identity, validation, restart, and shutdown contracts | focused contract suites and full workspace static ladder | passed after three fix loops |
 | W1B1 | active | isolated belief authority lane | pending | pending |
-| W1B2 | active | isolated goal durability lane | pending | pending |
+| W1B2 | accepted | payload-derived goal identity, durable receipt visibility, monotonic updates, and lifecycle guards | 53 goal tests, 17 doc tests, full execution suite, and strict clippy | passed after two review loops |
 | W1B3 | accepted | deterministic planning identity, typed subject lowering, and attributed outcome publication | full execution all-target tests and clippy | passed after urgency fix loop |
 | W1B4 | accepted | typed append validation, shared ingress fence, retryable drain, and final durable barrier | all-feature event matrix and workspace static ladder | passed after drain-retry fix loop |
 | W1B5 through W6G | blocked | none | none | none |
@@ -501,6 +501,22 @@ W1B4 gate evidence:
 - locked workspace check and clippy with warnings denied passed
 - full workspace testing exposed and corrected one malformed workspace snapshot relation and one stale idempotent test
 - fresh review approved after one drain failure-state fix loop
+
+W1B2 accepted commit: `fffdb9a`
+
+W1B2 gate evidence:
+
+- complete canonical command payload derives request identity and divergent command reuse rejects
+- low-level mutation methods are sealed behind the durable goal API
+- every public persistent receipt observation flushes before return
+- unique mutations require a strictly newer update sequence
+- modify commands preserve lifecycle and lifecycle commands enforce legal transitions
+- active goal ordering uses ascending numeric urgency and stable goal id
+- in-memory and persistent stores pass collision, stale sequence, lifecycle, concurrency, and reopen parity
+- conservative legacy reconstruction rejects intent that old durable data cannot prove
+- 53 focused goal tests and 17 documentation tests passed
+- full `meld-execution` all-target tests and strict clippy passed
+- fresh review approved after boundary, lifecycle, parity-order, and receipt-visibility fixes
 
 ### W1C Supervisor And Root Cutover
 
