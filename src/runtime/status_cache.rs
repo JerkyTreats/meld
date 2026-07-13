@@ -11,11 +11,11 @@ use thiserror::Error;
 
 use crate::runtime::contracts::{
     RuntimeActionIssueSeverity, RuntimeActionRecord, RuntimeActionTruncation,
-    RuntimeStatusActionEnvelope, RuntimeStatusActionsRead,
-    RuntimeStatusCacheCompatibility, RuntimeStatusCacheLayout, RuntimeStatusCacheLimits,
-    RuntimeStatusCacheRecord, RuntimeStatusCacheWarning, RuntimeStatusPublisher,
-    RuntimeStatusReader, RuntimeStatusSnapshotRead, RUNTIME_STATUS_CACHE_SCHEMA_VERSION,
-    RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT, RUNTIME_STATUS_ISSUE_MESSAGE_MAX_BYTES,
+    RuntimeStatusActionEnvelope, RuntimeStatusActionsRead, RuntimeStatusCacheCompatibility,
+    RuntimeStatusCacheLayout, RuntimeStatusCacheLimits, RuntimeStatusCacheRecord,
+    RuntimeStatusCacheWarning, RuntimeStatusPublisher, RuntimeStatusReader,
+    RuntimeStatusSnapshotRead, RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT,
+    RUNTIME_STATUS_CACHE_SCHEMA_VERSION, RUNTIME_STATUS_ISSUE_MESSAGE_MAX_BYTES,
     RUNTIME_STATUS_WARNING_OLDER_SCHEMA, RUNTIME_STATUS_WARNING_TRUNCATED,
     RUNTIME_STATUS_WARNING_UNREADABLE,
 };
@@ -139,7 +139,10 @@ impl FilesystemRuntimeStatusPublisher {
             .map(normalize_action)
             .collect();
         let original_action_count = bounded.recent_actions.len();
-        retain_newest(&mut bounded.recent_actions, self.limits.recent_action_max_count);
+        retain_newest(
+            &mut bounded.recent_actions,
+            self.limits.recent_action_max_count,
+        );
         let mut omitted_action_count = original_action_count - bounded.recent_actions.len();
         let encoded = loop {
             let mut candidate = bounded.clone();
@@ -268,10 +271,7 @@ impl FilesystemRuntimeStatusReader {
     }
 
     #[cfg(test)]
-    fn with_limits(
-        product_root: impl AsRef<Path>,
-        limits: RuntimeStatusCacheLimits,
-    ) -> Self {
+    fn with_limits(product_root: impl AsRef<Path>, limits: RuntimeStatusCacheLimits) -> Self {
         Self::from_layout(
             RuntimeStatusCacheLayout::from_product_root(product_root),
             limits,
@@ -540,8 +540,8 @@ fn cleanup_temporary_files(
         let entry = entry.map_err(|source| io_error(&layout.root, source))?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        let owned_temporary = name.starts_with("latest.json.")
-            || name.starts_with("actions.jsonl.");
+        let owned_temporary =
+            name.starts_with("latest.json.") || name.starts_with("actions.jsonl.");
         if owned_temporary && name.ends_with(".tmp") {
             fs::remove_file(entry.path()).map_err(|source| io_error(&entry.path(), source))?;
         }
@@ -678,8 +678,8 @@ mod tests {
         RuntimeActionCause, RuntimeActionIssueSeverity, RuntimeActionIssueSummary,
         RuntimeActionKind, RuntimeActionMetrics, RuntimeActionOutcome, RuntimeActionTruncation,
         RuntimeCheckpointObservation, RuntimeLaunchStatus, RuntimeObjectRef, RuntimeRedactionState,
-        RuntimeRunMode, RuntimeStatusCacheState, RuntimeStatusHealthCounts, RuntimeStatusReadRequest,
-        RuntimeStatusSnapshot, RuntimeStatusWriterIdentity,
+        RuntimeRunMode, RuntimeStatusCacheState, RuntimeStatusHealthCounts,
+        RuntimeStatusReadRequest, RuntimeStatusSnapshot, RuntimeStatusWriterIdentity,
     };
 
     fn action(index: usize) -> RuntimeActionRecord {
@@ -842,8 +842,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["action-002", "action-003", "action-004"]
         );
-        assert!(fs::metadata(&publisher.layout().actions).unwrap().len()
-            <= limits.actions_max_bytes as u64);
+        assert!(
+            fs::metadata(&publisher.layout().actions).unwrap().len()
+                <= limits.actions_max_bytes as u64
+        );
     }
 
     #[test]
@@ -908,16 +910,17 @@ mod tests {
 
         let RuntimeStatusSnapshotRead::Decoded {
             record: decoded, ..
-        } =
-            FilesystemRuntimeStatusReader::with_limits(temp.path(), limits)
-                .read_latest_snapshot()
-                .unwrap()
+        } = FilesystemRuntimeStatusReader::with_limits(temp.path(), limits)
+            .read_latest_snapshot()
+            .unwrap()
         else {
             panic!("snapshot should decode");
         };
         assert!(decoded.snapshot.warnings.iter().any(|warning| {
             warning.code == RUNTIME_STATUS_WARNING_TRUNCATED
-                && warning.message.contains("actions.jsonl omitted 1 oldest actions")
+                && warning
+                    .message
+                    .contains("actions.jsonl omitted 1 oldest actions")
         }));
 
         publisher
@@ -925,16 +928,17 @@ mod tests {
             .unwrap();
         let RuntimeStatusSnapshotRead::Decoded {
             record: decoded, ..
-        } =
-            FilesystemRuntimeStatusReader::with_limits(temp.path(), limits)
-                .read_latest_snapshot()
-                .unwrap()
+        } = FilesystemRuntimeStatusReader::with_limits(temp.path(), limits)
+            .read_latest_snapshot()
+            .unwrap()
         else {
             panic!("snapshot should decode");
         };
-        assert!(!decoded.snapshot.warnings.iter().any(|warning| {
-            warning.message.contains("since the prior snapshot")
-        }));
+        assert!(!decoded
+            .snapshot
+            .warnings
+            .iter()
+            .any(|warning| { warning.message.contains("since the prior snapshot") }));
     }
 
     #[test]
@@ -942,13 +946,13 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let layout = RuntimeStatusCacheLayout::from_product_root(temp.path());
         fs::create_dir_all(&layout.root).unwrap();
-        let current = serde_json::to_string(&RuntimeStatusActionEnvelope::current(action(1)))
-            .unwrap();
-        let mut older = serde_json::to_value(RuntimeStatusActionEnvelope::current(action(2)))
-            .unwrap();
+        let current =
+            serde_json::to_string(&RuntimeStatusActionEnvelope::current(action(1))).unwrap();
+        let mut older =
+            serde_json::to_value(RuntimeStatusActionEnvelope::current(action(2))).unwrap();
         older.as_object_mut().unwrap().remove("schema_version");
-        let mut future = serde_json::to_value(RuntimeStatusActionEnvelope::current(action(3)))
-            .unwrap();
+        let mut future =
+            serde_json::to_value(RuntimeStatusActionEnvelope::current(action(3))).unwrap();
         future["schema_version"] = Value::from(99);
         fs::write(
             &layout.actions,
@@ -1051,7 +1055,10 @@ mod tests {
         };
         assert!(!record.recent_actions.is_empty());
         assert!(record.recent_actions.len() < 8);
-        assert_eq!(record.recent_actions.last().unwrap().action_id, "action-007");
+        assert_eq!(
+            record.recent_actions.last().unwrap().action_id,
+            "action-007"
+        );
         assert!(record
             .snapshot
             .warnings
@@ -1125,8 +1132,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let layout = RuntimeStatusCacheLayout::from_product_root(temp.path());
         fs::create_dir_all(&layout.root).unwrap();
-        let mut older = serde_json::to_value(RuntimeStatusActionEnvelope::current(action(7)))
-            .unwrap();
+        let mut older =
+            serde_json::to_value(RuntimeStatusActionEnvelope::current(action(7))).unwrap();
         older.as_object_mut().unwrap().remove("schema_version");
         let older = serde_json::to_vec(&older).unwrap();
         let mut bytes = vec![b'x'; 2_000];

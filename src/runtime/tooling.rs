@@ -11,12 +11,22 @@ use serde::Serialize;
 use crate::cli::RuntimeCommands;
 use crate::error::ApiError;
 use crate::runtime::assembly::{DesiredRuntimeState, ProductRuntimeAssembly};
-use crate::runtime::contracts::{RuntimeImplementationState, RuntimeRoleClass};
+use crate::runtime::contracts::{
+    RuntimeActionRecord, RuntimeHandleKind, RuntimeImplementationState, RuntimeLaunchStatus,
+    RuntimeRoleClass, RuntimeRunMode, RuntimeStatusCacheLayout, RuntimeStatusCacheRecord,
+    RuntimeStatusHealthCounts, RuntimeStatusHealthSummary, RuntimeStatusHeartbeatSummary,
+    RuntimeStatusInstanceSummary, RuntimeStatusLeaseSummary, RuntimeStatusLedgerSummary,
+    RuntimeStatusProcessSummary, RuntimeStatusPublisher, RuntimeStatusRuntimeRow,
+    RuntimeStatusShutdownSummary, RuntimeStatusSnapshot, RuntimeStatusWriterIdentity,
+    RUNTIME_STATUS_RECENT_ACTION_MAX_COUNT,
+};
 use crate::runtime::presentation::{format_runtime_run_result, format_runtime_status};
+use crate::runtime::status_cache::FilesystemRuntimeStatusPublisher;
 use crate::runtime::supervisor::{
     RestartCause, RestartPolicy, RuntimeHealthStatus, RuntimeId, RuntimeInstance,
     RuntimeInstanceStatus, RuntimeLeaseStatus, RuntimeSupervisor, SupervisorLifecycleEventType,
-    SupervisorRuntimeError, SupervisorStartCommand, SupervisorStore,
+    SupervisorRuntimeError, SupervisorRuntimeStatus, SupervisorStartCommand,
+    SupervisorStatusSnapshot, SupervisorStore,
 };
 
 static CTRL_C_TARGET: OnceLock<Mutex<Option<Weak<AtomicBool>>>> = OnceLock::new();
@@ -159,6 +169,269 @@ struct RuntimeRunOptions<'a> {
     restart_backoff_ms: u64,
 }
 
+struct RuntimeStatusCacheSession<'a> {
+    assembly: &'a ProductRuntimeAssembly,
+    publisher: FilesystemRuntimeStatusPublisher,
+    recent_actions: Vec<RuntimeActionRecord>,
+    started_at_ms: u64,
+}
+
+impl<'a> RuntimeStatusCacheSession<'a> {
+    fn acquire(assembly: &'a ProductRuntimeAssembly, started_at_ms: u64) -> Result<Self, ApiError> {
+        Ok(Self {
+            publisher: FilesystemRuntimeStatusPublisher::acquire(assembly.product_root())
+                .map_err(runtime_error)?,
+            assembly,
+            recent_actions: Vec::new(),
+            started_at_ms,
+        })
+    }
+
+    fn publish_startup(
+        &mut self,
+        status: &SupervisorStatusSnapshot,
+        now_ms: u64,
+    ) -> Result<(), ApiError> {
+        let record = self.record(status, now_ms, RuntimeLaunchStatus::Ready, None)?;
+        self.publisher
+            .publish_startup_snapshot(&record)
+            .map_err(runtime_error)
+    }
+
+    fn publish_tick(
+        &mut self,
+        status: &SupervisorStatusSnapshot,
+        actions: &[RuntimeActionRecord],
+        now_ms: u64,
+    ) -> Result<(), ApiError> {
+        for action in actions {
+            self.publisher
+                .publish_action(action)
+                .map_err(runtime_error)?;
+            self.recent_actions.push(action.clone());
+        }
+        if self.recent_actions.len() > RUNTIME_STATUS_RECENT_ACTION_MAX_COUNT {
+            let remove = self.recent_actions.len() - RUNTIME_STATUS_RECENT_ACTION_MAX_COUNT;
+            self.recent_actions.drain(..remove);
+        }
+        let record = self.record(status, now_ms, RuntimeLaunchStatus::Ready, None)?;
+        self.publisher
+            .publish_tick_snapshot(&record)
+            .map_err(runtime_error)
+    }
+
+    fn publish_shutdown(
+        &mut self,
+        status: &SupervisorStatusSnapshot,
+        shutdown_id: &str,
+        now_ms: u64,
+    ) -> Result<(), ApiError> {
+        let record = self.record(
+            status,
+            now_ms,
+            RuntimeLaunchStatus::Stopped,
+            Some(shutdown_id),
+        )?;
+        self.publisher
+            .publish_shutdown_snapshot(&record)
+            .map_err(runtime_error)?;
+        self.publisher.flush_cache().map_err(runtime_error)
+    }
+
+    fn record(
+        &self,
+        status: &SupervisorStatusSnapshot,
+        now_ms: u64,
+        launch_status: RuntimeLaunchStatus,
+        shutdown_id: Option<&str>,
+    ) -> Result<RuntimeStatusCacheRecord, ApiError> {
+        let snapshot = status_cache_snapshot(
+            self.assembly,
+            status,
+            &self.recent_actions,
+            self.started_at_ms,
+            launch_status,
+            shutdown_id,
+            now_ms,
+        )?;
+        let layout = RuntimeStatusCacheLayout::from_product_root(self.assembly.product_root());
+        Ok(RuntimeStatusCacheRecord::new(
+            self.assembly.product_root(),
+            self.assembly.supervisor_store().path(),
+            layout.root,
+            RuntimeStatusWriterIdentity {
+                instance_id: Some(status.instance_id.clone()),
+                process_id: Some(std::process::id()),
+                parent_process_id: None,
+                run_mode: RuntimeRunMode::Foreground,
+                launch_status,
+            },
+            snapshot,
+            self.recent_actions.clone(),
+            now_ms,
+        ))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn status_cache_snapshot(
+    assembly: &ProductRuntimeAssembly,
+    status: &SupervisorStatusSnapshot,
+    recent_actions: &[RuntimeActionRecord],
+    started_at_ms: u64,
+    launch_status: RuntimeLaunchStatus,
+    shutdown_id: Option<&str>,
+    now_ms: u64,
+) -> Result<RuntimeStatusSnapshot, ApiError> {
+    let runtimes = status
+        .runtimes
+        .iter()
+        .map(|runtime| status_cache_runtime_row(runtime, recent_actions))
+        .collect::<Vec<_>>();
+    let health_counts = status_cache_health_counts(&runtimes);
+    let shutdown = shutdown_id
+        .map(|shutdown_id| {
+            assembly
+                .supervisor_store()
+                .get_shutdown_state(shutdown_id)
+                .map_err(runtime_error)
+                .map(|record| {
+                    record.map(|record| RuntimeStatusShutdownSummary {
+                        shutdown_id: Some(record.shutdown_id),
+                        status: enum_name(record.status),
+                        requested_at_ms: Some(record.requested_at_ms),
+                        completed_at_ms: record.completed_at_ms,
+                    })
+                })
+        })
+        .transpose()?
+        .flatten();
+    let ledger = assembly
+        .ports()
+        .event_append()
+        .health()
+        .map(|report| RuntimeStatusLedgerSummary::from_health(&report))
+        .map_err(runtime_error)?;
+
+    Ok(RuntimeStatusSnapshot {
+        instance: Some(RuntimeStatusInstanceSummary {
+            instance_id: status.instance_id.clone(),
+            status: enum_name(status.instance_status),
+            started_at_ms,
+            stopped_at_ms: if status.instance_status == RuntimeInstanceStatus::Stopped {
+                Some(now_ms)
+            } else {
+                None
+            },
+        }),
+        process: Some(RuntimeStatusProcessSummary {
+            process_id: Some(std::process::id()),
+            parent_process_id: None,
+            run_mode: RuntimeRunMode::Foreground,
+            launch_status,
+            started_at_ms: Some(started_at_ms),
+            ready_at_ms: Some(started_at_ms),
+            log_path: None,
+        }),
+        shutdown,
+        runtimes,
+        health_counts,
+        ledger: Some(ledger),
+        warnings: Vec::new(),
+    })
+}
+
+fn status_cache_runtime_row(
+    runtime: &SupervisorRuntimeStatus,
+    recent_actions: &[RuntimeActionRecord],
+) -> RuntimeStatusRuntimeRow {
+    let last_action = recent_actions
+        .iter()
+        .rev()
+        .find(|action| action.runtime_id == runtime.runtime_id)
+        .cloned();
+    let last_progress = last_action
+        .as_ref()
+        .and_then(|action| action.checkpoints.last().cloned());
+    RuntimeStatusRuntimeRow {
+        runtime_id: runtime.runtime_id.clone(),
+        desired_enabled: runtime.desired_enabled,
+        factory_available: runtime.factory_available,
+        role_class: runtime.role_class,
+        implementation_state: runtime.implementation_state,
+        handle_kind: match runtime.implementation_state {
+            RuntimeImplementationState::Concrete if runtime.factory_available => {
+                RuntimeHandleKind::Concrete
+            }
+            RuntimeImplementationState::Inert => RuntimeHandleKind::Inert,
+            RuntimeImplementationState::Unknown => RuntimeHandleKind::Unknown,
+            RuntimeImplementationState::Unavailable | RuntimeImplementationState::Concrete => {
+                RuntimeHandleKind::Unavailable
+            }
+        },
+        lease: runtime
+            .active_lease_id
+            .as_ref()
+            .zip(runtime.lease_status)
+            .zip(runtime.lease_expires_at_ms)
+            .map(
+                |((lease_id, status), expires_at_ms)| RuntimeStatusLeaseSummary {
+                    lease_id: lease_id.clone(),
+                    owner_instance_id: runtime.active_owner_instance_id.clone(),
+                    status: enum_name(status),
+                    expires_at_ms,
+                },
+            ),
+        heartbeat: runtime
+            .last_heartbeat_at_ms
+            .zip(runtime.heartbeat_age_ms)
+            .map(|(observed_at_ms, age_ms)| RuntimeStatusHeartbeatSummary {
+                observed_at_ms,
+                age_ms,
+            }),
+        health: RuntimeStatusHealthSummary {
+            status: enum_name(runtime.health_status),
+            retryable_error_count: runtime.retryable_error_count,
+            fatal_error_count: runtime.fatal_error_count,
+            budget_exhausted: runtime.budget_exhausted,
+        },
+        restart_count: runtime.restart_count,
+        last_restart_cause: runtime.last_restart_cause.as_ref().map(enum_name),
+        last_lifecycle_event: runtime.last_lifecycle_event.as_ref().map(enum_name),
+        last_action,
+        last_progress,
+    }
+}
+
+fn status_cache_health_counts(rows: &[RuntimeStatusRuntimeRow]) -> RuntimeStatusHealthCounts {
+    let mut counts = RuntimeStatusHealthCounts {
+        unknown: 0,
+        starting: 0,
+        healthy: 0,
+        degraded: 0,
+        unhealthy: 0,
+        stopped: 0,
+    };
+    for row in rows {
+        match row.health.status.as_str() {
+            "starting" => counts.starting += 1,
+            "healthy" => counts.healthy += 1,
+            "degraded" => counts.degraded += 1,
+            "unhealthy" => counts.unhealthy += 1,
+            "stopped" => counts.stopped += 1,
+            _ => counts.unknown += 1,
+        }
+    }
+    counts
+}
+
+fn enum_name(value: impl Serialize) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 fn runtime_status(
     assembly: &ProductRuntimeAssembly,
     format: &str,
@@ -257,10 +530,17 @@ fn runtime_run(
     command.restart_attempt_limit = options.restart_attempt_limit;
     command.restart_backoff_ms = options.restart_backoff_ms;
 
+    let mut cache_session = RuntimeStatusCacheSession::acquire(assembly, started_at_ms)?;
     let mut supervisor = RuntimeSupervisor::start(assembly.supervisor_startup_package(), command)
         .map_err(runtime_error)?;
-    let startup_status = supervisor.status_snapshot(started_at_ms);
-    let started_runtime_count = startup_status
+    let startup_result = supervisor
+        .status_snapshot(started_at_ms)
+        .map_err(runtime_error)
+        .and_then(|status| {
+            cache_session.publish_startup(&status, started_at_ms)?;
+            Ok(status)
+        });
+    let started_runtime_count = startup_result
         .as_ref()
         .map(|status| {
             status
@@ -276,23 +556,37 @@ fn runtime_run(
     let mut watcher = crate::runtime::self_observation::SelfObservationWatcher::new(
         options.restart_attempt_limit,
     );
-    let tick_result = run_tick_loop(
-        &mut supervisor,
-        &cancelled,
-        options.tick_ms,
-        options.duration_ms,
-        &mut tick_count,
-        started,
-        &mut last_supervisor_time_ms,
-        assembly.ports().event_append(),
-        &mut watcher,
-    );
+    let tick_result = if startup_result.is_ok() {
+        run_tick_loop(
+            &mut supervisor,
+            &cancelled,
+            options.tick_ms,
+            options.duration_ms,
+            &mut tick_count,
+            started,
+            &mut last_supervisor_time_ms,
+            assembly.ports().event_append(),
+            &mut watcher,
+            &mut cache_session,
+        )
+    } else {
+        Ok(())
+    };
     let shutdown_at_ms = shutdown_time_ms(started_at_ms, started).max(last_supervisor_time_ms);
     let shutdown_result = supervisor.request_shutdown(shutdown_at_ms);
+    let cache_shutdown_result = shutdown_result
+        .as_ref()
+        .map_err(|error| runtime_error(error.to_string()))
+        .and_then(|shutdown| {
+            let status = supervisor
+                .status_snapshot(shutdown_at_ms)
+                .map_err(runtime_error)?;
+            cache_session.publish_shutdown(&status, &shutdown.shutdown_id, shutdown_at_ms)
+        });
     clear_ctrl_c_target(&cancelled);
 
     if let Err(shutdown_error) = shutdown_result.as_ref() {
-        let prior_error = startup_status
+        let prior_error = startup_result
             .as_ref()
             .err()
             .map(ToString::to_string)
@@ -304,9 +598,10 @@ fn runtime_run(
             None => format!("shutdown failed after startup: {shutdown_error}"),
         }));
     }
-    startup_status.map_err(runtime_error)?;
-    tick_result.map_err(runtime_error)?;
+    startup_result?;
+    tick_result?;
     let shutdown = shutdown_result.map_err(runtime_error)?;
+    cache_shutdown_result?;
     let run_result = RuntimeCliRunResult {
         instance_id,
         product_root: assembly.product_root().to_path_buf(),
@@ -331,15 +626,18 @@ fn run_tick_loop(
     last_supervisor_time_ms: &mut u64,
     event_port: &crate::runtime::ports::ProductEventAppendPort,
     watcher: &mut crate::runtime::self_observation::SelfObservationWatcher,
-) -> Result<(), SupervisorRuntimeError> {
+    cache_session: &mut RuntimeStatusCacheSession<'_>,
+) -> Result<(), ApiError> {
     loop {
         if cancelled.load(Ordering::SeqCst) || duration_elapsed(started, duration_ms) {
             break;
         }
 
-        let now_ms = current_time_ms_for_supervisor()?;
+        let now_ms = current_time_ms_for_supervisor().map_err(runtime_error)?;
         *last_supervisor_time_ms = (*last_supervisor_time_ms).max(now_ms);
-        supervisor.tick(now_ms)?;
+        let report = supervisor.tick(now_ms).map_err(runtime_error)?;
+        let status = supervisor.status_snapshot(now_ms).map_err(runtime_error)?;
+        cache_session.publish_tick(&status, &report.actions, now_ms)?;
         *tick_count += 1;
 
         // Promote threshold crossings after the tick; a failed health read

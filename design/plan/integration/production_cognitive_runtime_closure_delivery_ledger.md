@@ -238,6 +238,35 @@ Focused evidence:
 Commit state: accepted as `0819dbf`
 Next ready set: W0C1 through W0C4
 
+### 2026-07-12 W0C Runtime Visibility Core
+
+Ready items: W0C1 through W0C4
+Parallelization: isolated cache-host worktree beside root-owned passive route and lifecycle integration
+Cache commits: `4823303`, `b6dd724`
+Integrated state: review passed, root commit pending
+Implementation evidence:
+
+- exclusive bounded cache writer with atomic full-file replacement
+- tolerant bounded reader for missing, partial, old, malformed, oversized, and future data
+- normalized action bounds and visible retention truncation
+- passive status description and truthful desired-state fallback
+- early binary route before `RunContext`
+- startup, tick action, and shutdown cache publication
+- monotonic per-instance action identities
+- real separate-process status read while the foreground host owns product databases
+
+Focused evidence:
+
+- `cargo test --locked runtime::status_cache --lib`
+- `cargo test --locked runtime::passive_status --lib`
+- `cargo test --locked runtime::supervisor --lib`
+- `cargo test --locked --test integration_tests runtime_cli`
+- `cargo test --locked --test integration_tests runtime_status_process_isolation`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+
+Review state: cache host and root integration approved after fix loops with no remaining high or critical findings
+Next ready set: W0C4 documentation evidence, then W0D closeout
+
 ## Gate Evidence
 
 | Wave | Gate | Result | Commit | Notes |
@@ -245,6 +274,9 @@ Next ready set: W0C1 through W0C4
 | baseline | full locked workspace ladder | passed | `1f6dc1d` | implementation-ready checkpoint before program branch |
 | W0A | source truth and documentation checks | passed | `642af1c` | fresh reviewer withdrew all findings |
 | W0B | runtime contract focused ladder and workspace clippy | passed | `0819dbf` | fresh review passed after two fix loops |
+| W0C1 | bounded cache host | passed | `4823303`, `b6dd724` | fresh review passed after ingress-bound fix loop |
+| W0C2 | passive route and lifecycle publication | passed | pending | fresh review passed after action identity fix |
+| W0C3 | separate-process lock isolation | passed | pending | foreground host remained active while status succeeded |
 
 ## Review Findings
 
@@ -254,15 +286,23 @@ W0B fresh review found false worker eligibility for passive and port-only roles,
 Both fix loops closed every high finding.
 The final reviewer approved W0B for commit and W0C fanout with no remaining high or critical findings.
 
+W0C1 fresh review found arbitrary action ingress could bypass bounds, custom test limits were public, and action retention was silent.
+The cache fix commit normalized every ingress, made custom limits test-only, and carried retention warnings into the next atomic snapshot.
+Final cache review passed.
+
+W0C2 fresh review found same-millisecond action identity collisions.
+A supervisor-owned monotonic action sequence and focused regression closed the finding.
+Final route and lifecycle review passed.
+
 ## Phase Completion Matrix
 
 | Packet | Status | Implementation Evidence | Test Evidence | Review |
 | --- | --- | --- | --- | --- |
 | W0A | complete | source classification and reconciled docs | Markdown, links, diff, boundaries | passed after fix loop |
 | W0B | accepted | canonical identity, truthful roles, cache freeze, contender safety | focused runtime suites and workspace clippy | passed after two fix loops |
-| W0C1 | active | cache host | pending | pending |
-| W0C2 | active | passive status route helper | pending | pending |
-| W0C3 | blocked by W0C1 and W0C2 | process isolation proof | none | none |
+| W0C1 | accepted | cache host | 15 focused tests | passed after fix loop |
+| W0C2 | review | passive status route and lifecycle publisher | focused passive and runtime CLI suites | passed after fix loop |
+| W0C3 | review | process isolation proof | separate-process test | passed |
 | W0C4 | ready | documentation truth evidence | none | none |
 | W0D through W6G | blocked | none | none | none |
 

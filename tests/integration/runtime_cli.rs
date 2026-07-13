@@ -188,6 +188,51 @@ fn runtime_status_after_run_reports_stopped_instance() {
 }
 
 #[test]
+fn passive_runtime_status_reads_shutdown_cache_without_run_context() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = workspace(&temp_dir);
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&runtime_run_json(
+                Some("runtime-cli-cache"),
+                1,
+                Some(5),
+                "on-heartbeat-expiry",
+            ))
+            .unwrap();
+        drop(run_context);
+
+        let output =
+            meld::runtime::passive_status::handle_cli_status(&workspace_root, None, "json", &[])
+                .unwrap();
+        let parsed: Value = serde_json::from_str(&output).unwrap();
+        let graph = parsed["runtimes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["runtime_id"] == "world_model.graph_replay")
+            .unwrap();
+
+        assert!(parsed["cache_state"].get("fresh").is_some());
+        assert_eq!(parsed["instance"]["instance_id"], "runtime-cli-cache");
+        assert_eq!(parsed["instance"]["status"], "stopped");
+        assert_eq!(graph["health"]["status"], "stopped");
+        assert!(parsed["recent_actions"]
+            .as_array()
+            .is_some_and(|actions| !actions.is_empty()));
+        assert_eq!(
+            parsed["recent_actions"][0]["runtime_id"],
+            "world_model.graph_replay"
+        );
+        assert!(parsed["status_cache_path"]
+            .as_str()
+            .unwrap()
+            .ends_with("runtime/status"));
+    });
+}
+
+#[test]
 fn runtime_status_filters_runtime_ids() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {

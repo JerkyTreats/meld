@@ -10,7 +10,7 @@ use crate::runtime::assembly::{
     RuntimeLeaseContext, SupervisorStartupPackage,
 };
 use crate::runtime::contracts::{
-    RuntimeImplementationState, RuntimeRoleClass, WorkBudget, WorkerTickReport,
+    RuntimeActionRecord, RuntimeImplementationState, RuntimeRoleClass, WorkBudget, WorkerTickReport,
 };
 use crate::runtime::error::RuntimeAssemblyError;
 
@@ -92,6 +92,10 @@ pub struct SupervisorRuntimeStatus {
     pub desired_enabled: bool,
     /// Whether assembly provided a factory for the runtime.
     pub factory_available: bool,
+    /// Canonical lifecycle shape for this role.
+    pub role_class: RuntimeRoleClass,
+    /// Hosted implementation posture for this role.
+    pub implementation_state: RuntimeImplementationState,
     /// Whether this process currently has a local started handle.
     pub handle_started: bool,
     /// Active lease id when present.
@@ -153,6 +157,8 @@ pub struct SupervisorTickReport {
     pub renewed_runtime_ids: Vec<String>,
     /// Runtime ids whose healthy heartbeat was accepted.
     pub heartbeat_runtime_ids: Vec<String>,
+    /// Bounded semantic actions observed during this tick.
+    pub actions: Vec<RuntimeActionRecord>,
     /// Restart policy evaluation result for this tick.
     pub restart_evaluation: SupervisorRestartEvaluation,
 }
@@ -173,6 +179,7 @@ pub struct RuntimeSupervisor<'a> {
     desired: BTreeMap<String, SupervisorRuntimeDesired>,
     handles: BTreeMap<String, SupervisedRuntimeHandle>,
     event_sequence: u64,
+    action_sequence: u64,
     restart_attempt_limit: u64,
     restart_backoff_ms: u64,
     shutdown_completed: bool,
@@ -243,6 +250,7 @@ impl<'a> RuntimeSupervisor<'a> {
             desired,
             handles: BTreeMap::new(),
             event_sequence: INITIAL_EVENT_SEQUENCE,
+            action_sequence: 0,
             restart_attempt_limit: command.restart_attempt_limit,
             restart_backoff_ms: command.restart_backoff_ms,
             shutdown_completed: false,
@@ -394,6 +402,8 @@ impl<'a> RuntimeSupervisor<'a> {
                 runtime_id: desired.runtime_id.to_string(),
                 desired_enabled: desired.enabled,
                 factory_available: desired.factory_available,
+                role_class: desired.role_class,
+                implementation_state: desired.implementation_state,
                 handle_started: self
                     .handles
                     .get(desired.runtime_id.as_str())
@@ -518,6 +528,7 @@ impl<'a> RuntimeSupervisor<'a> {
             .collect::<Vec<_>>();
         let mut renewed_runtime_ids = Vec::new();
         let mut heartbeat_runtime_ids = Vec::new();
+        let mut actions = Vec::new();
 
         for owner in owners {
             let active_lease = self
@@ -541,6 +552,18 @@ impl<'a> RuntimeSupervisor<'a> {
                 .get_mut(owner.runtime_id.as_str())
                 .and_then(|runtime| runtime.handle.tick(self.default_work_budget.clone()));
             let health_status = health_status_from_tick_report(semantic_report.as_ref());
+            let action = semantic_report.clone().map(|report| {
+                self.action_sequence = self.action_sequence.saturating_add(1);
+                RuntimeActionRecord::from_worker_tick(
+                    format!(
+                        "action:{}:{}:{}",
+                        self.instance_id, owner.runtime_id, self.action_sequence
+                    ),
+                    owner.runtime_id.to_string(),
+                    now_ms,
+                    report,
+                )
+            });
 
             self.write_runtime_heartbeat(&owner, health_status, now_ms, semantic_report.as_ref())?;
             self.write_lifecycle_event(
@@ -566,6 +589,9 @@ impl<'a> RuntimeSupervisor<'a> {
                     .unwrap_or(0),
                 existing_health.and_then(|snapshot| snapshot.last_restart_cause),
             )?;
+            if let Some(action) = action {
+                actions.push(action);
+            }
         }
 
         let restart_evaluation = self.evaluate_restart_policies(now_ms)?;
@@ -573,6 +599,7 @@ impl<'a> RuntimeSupervisor<'a> {
         Ok(SupervisorTickReport {
             renewed_runtime_ids,
             heartbeat_runtime_ids,
+            actions,
             restart_evaluation,
         })
     }
@@ -1855,6 +1882,26 @@ mod tests {
             event.event_type,
             SupervisorLifecycleEventType::HeartbeatAccepted
         );
+    }
+
+    #[test]
+    fn same_timestamp_ticks_receive_distinct_action_ids() {
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let mut supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+
+        let first = supervisor.tick(120).unwrap();
+        let second = supervisor.tick(120).unwrap();
+
+        assert_eq!(first.actions.len(), 1);
+        assert_eq!(second.actions.len(), 1);
+        assert_ne!(first.actions[0].action_id, second.actions[0].action_id);
+        assert_eq!(first.actions[0].runtime_id, "world_model.graph_replay");
+        assert_eq!(second.actions[0].runtime_id, "world_model.graph_replay");
     }
 
     #[test]
