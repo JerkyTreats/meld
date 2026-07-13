@@ -334,7 +334,11 @@ pub fn goal() -> Goal {
 pub fn frame() -> PlanningWorldStateFrameRef {
     PlanningWorldStateFrameRef {
         frame_id: "frame-docs".to_string(),
+        request_id: "projection-request-docs".to_string(),
+        source_request_hash: "source-request-hash-docs".to_string(),
         projection_version: "world_model.planner.v1".to_string(),
+        projection_hash: "projection-hash-docs".to_string(),
+        world_state_hash: "world-state-hash-docs".to_string(),
         perspective_kind: "default".to_string(),
         perspective_id: "default".to_string(),
         branch_id: "main".to_string(),

@@ -36,7 +36,11 @@
 //!     goal,
 //!     world_state_frame: PlanningWorldStateFrameRef {
 //!         frame_id: "frame-a".to_string(),
+//!         request_id: "projection-request-a".to_string(),
+//!         source_request_hash: "source-request-hash-a".to_string(),
 //!         projection_version: "world_model.planner.v1".to_string(),
+//!         projection_hash: "projection-hash-a".to_string(),
+//!         world_state_hash: "world-state-hash-a".to_string(),
 //!         perspective_kind: "default".to_string(),
 //!         perspective_id: "default".to_string(),
 //!         branch_id: "main".to_string(),

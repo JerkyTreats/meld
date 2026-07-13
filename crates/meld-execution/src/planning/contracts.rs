@@ -157,7 +157,7 @@ fn validate_request_projection_binding(
     }
     inputs
         .projection_identity
-        .validate_for_request(&request.world_state_request)?;
+        .validate_for_projection(&request.world_state_request, &request.world_state)?;
     let expected_frame = inputs
         .projection_identity
         .frame_ref(request.world_state_frame.warnings.clone())?;
@@ -374,13 +374,25 @@ mod contract_freeze_tests {
             requested_dimensions: vec!["docs_freshness".to_string()],
             required_preconditions: Vec::new(),
         };
+        let world_state = meld_lang::WorldState::empty();
+        let frame = PlanningWorldStateFrameRef::from_authority(
+            "frame-a",
+            "projection-request-a",
+            "projection-v1",
+            "projection-hash-a",
+            &projection_request,
+            &world_state,
+            vec!["source-a".to_string()],
+            Vec::new(),
+        )
+        .unwrap();
         let inputs = PlanningRequestIdentityInputs {
             goal_id: "goal-a".to_string(),
             goal_updated_at_seq: 9,
-            projection_identity: PlanningProjectionIdentityInputs::for_request(
+            projection_identity: PlanningProjectionIdentityInputs::from_projection(
                 &projection_request,
-                "projection-v1",
-                vec!["source-a".to_string()],
+                &world_state,
+                &frame,
             )
             .unwrap(),
             method_library_digest: "method-a".to_string(),
@@ -425,17 +437,25 @@ mod contract_freeze_tests {
         };
         let mut other_request = request.clone();
         other_request.branch_id = "other".to_string();
-        let projection_identity = PlanningProjectionIdentityInputs::for_request(
-            &other_request,
+        let world_state = meld_lang::WorldState::empty();
+        let frame = PlanningWorldStateFrameRef::from_authority(
+            "frame-other",
+            "projection-request-other",
             "projection-v1",
+            "projection-hash-other",
+            &other_request,
+            &world_state,
             vec!["source-a".to_string()],
+            Vec::new(),
         )
         .unwrap();
-        let frame = projection_identity.frame_ref(Vec::new()).unwrap();
+        let projection_identity =
+            PlanningProjectionIdentityInputs::from_projection(&other_request, &world_state, &frame)
+                .unwrap();
         let planning_request = PlanningRequest {
             request_id: String::new(),
             goal,
-            world_state: meld_lang::WorldState::empty(),
+            world_state,
             world_state_frame: frame,
             world_state_request: request,
         };

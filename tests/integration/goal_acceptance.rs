@@ -199,28 +199,32 @@ fn acceptance_request_from_agent_command(
 }
 
 fn planning_request(goal: meld_lang::Goal, world_state: WorldState) -> PlanningRequest {
+    let world_state_request = PlanningWorldStateRequest {
+        goal_id: goal.goal_id.clone(),
+        agent_id: goal.agent_id.clone(),
+        target: goal.target.clone(),
+        perspective: PlanningPerspectiveRef::new("default", "default").unwrap(),
+        branch_id: "main".to_string(),
+        requested_dimensions: vec![DIMENSION_ID.to_string()],
+        required_preconditions: vec![],
+    };
+    let world_state_frame = PlanningWorldStateFrameRef::from_authority(
+        "frame-1",
+        "projection-request-1",
+        PLANNER_PROJECTION_VERSION,
+        "projection-hash-1",
+        &world_state_request,
+        &world_state,
+        vec!["source".to_string()],
+        Vec::new(),
+    )
+    .unwrap();
     PlanningRequest {
         request_id: "request-1".to_string(),
-        world_state_request: PlanningWorldStateRequest {
-            goal_id: goal.goal_id.clone(),
-            agent_id: goal.agent_id.clone(),
-            target: goal.target.clone(),
-            perspective: PlanningPerspectiveRef::new("default", "default").unwrap(),
-            branch_id: "main".to_string(),
-            requested_dimensions: vec![DIMENSION_ID.to_string()],
-            required_preconditions: vec![],
-        },
+        world_state_request,
         goal,
         world_state,
-        world_state_frame: PlanningWorldStateFrameRef {
-            frame_id: "frame-1".to_string(),
-            projection_version: PLANNER_PROJECTION_VERSION.to_string(),
-            perspective_kind: "default".to_string(),
-            perspective_id: "default".to_string(),
-            branch_id: "main".to_string(),
-            source_refs: vec!["source".to_string()],
-            warnings: vec![],
-        },
+        world_state_frame,
     }
 }
 

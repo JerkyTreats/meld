@@ -7,10 +7,10 @@ use meld_execution::goals::{AddGoalCommand, GoalCommandMetadata, PersistentGoalS
 use meld_execution::planning::{
     CandidateStatus, ExecutionCompositionLowerer, MethodLibrary, MethodSourceRef,
     MethodVerification, PlanningDiagnosticCode, PlanningInputError, PlanningPerspectiveRef,
-    PlanningProjectionError, PlanningProjectionIdentityInputs, PlanningRequest, PlanningResult,
-    PlanningRuntime, PlanningRuntimeActor, PlanningRuntimeActorGoalResult,
-    PlanningRuntimeActorRequest, PlanningWorldStateFrameRef, PlanningWorldStateProjection,
-    PlanningWorldStateRequest, VerifiedMethodEntry,
+    PlanningProjectionError, PlanningRequest, PlanningResult, PlanningRuntime,
+    PlanningRuntimeActor, PlanningRuntimeActorGoalResult, PlanningRuntimeActorRequest,
+    PlanningWorldStateFrameRef, PlanningWorldStateProjection, PlanningWorldStateRequest,
+    VerifiedMethodEntry,
 };
 use meld_execution::task::TaskCompiler;
 use meld_execution::task_network::{Response, SledTaskNetworkStore};
@@ -50,44 +50,40 @@ fn goal_with_ceiling(ceiling: Option<CostEstimate>) -> Goal {
     }
 }
 
-fn frame() -> PlanningWorldStateFrameRef {
-    PlanningWorldStateFrameRef {
-        frame_id: "frame-1".to_string(),
-        projection_version: "world_model.planner.v1".to_string(),
-        perspective_kind: "agent".to_string(),
-        perspective_id: "default".to_string(),
-        branch_id: "main".to_string(),
-        source_refs: vec!["source".to_string()],
-        warnings: vec![],
-    }
-}
-
-fn derived_frame(request: &PlanningWorldStateRequest) -> PlanningWorldStateFrameRef {
-    PlanningProjectionIdentityInputs::for_request(
-        request,
+fn derived_frame(
+    request: &PlanningWorldStateRequest,
+    world_state: &WorldState,
+) -> PlanningWorldStateFrameRef {
+    PlanningWorldStateFrameRef::from_authority(
+        format!("frame-{}", request.goal_id),
+        format!("projection-request-{}", request.goal_id),
         "world_model.planner.v1",
+        format!("projection-hash-{}", request.goal_id),
+        request,
+        world_state,
         vec!["source".to_string()],
+        Vec::new(),
     )
-    .unwrap()
-    .frame_ref(Vec::new())
     .unwrap()
 }
 
 fn request(goal: Goal, world_state: WorldState) -> PlanningRequest {
+    let world_state_request = PlanningWorldStateRequest {
+        goal_id: goal.goal_id.clone(),
+        agent_id: goal.agent_id.clone(),
+        target: goal.target.clone(),
+        perspective: PlanningPerspectiveRef::new("agent", "default").unwrap(),
+        branch_id: "main".to_string(),
+        requested_dimensions: vec!["docs_freshness".to_string()],
+        required_preconditions: vec![],
+    };
+    let world_state_frame = derived_frame(&world_state_request, &world_state);
     PlanningRequest {
         request_id: "request-1".to_string(),
-        world_state_request: PlanningWorldStateRequest {
-            goal_id: goal.goal_id.clone(),
-            agent_id: goal.agent_id.clone(),
-            target: goal.target.clone(),
-            perspective: PlanningPerspectiveRef::new("agent", "default").unwrap(),
-            branch_id: "main".to_string(),
-            requested_dimensions: vec!["docs_freshness".to_string()],
-            required_preconditions: vec![],
-        },
+        world_state_request,
         goal,
         world_state,
-        world_state_frame: frame(),
+        world_state_frame,
     }
 }
 
@@ -462,9 +458,10 @@ fn planning_actor_reads_active_goals_and_submits_lowered_composition() {
     let mut projection_requests = Vec::new();
     let mut projection = |request: PlanningWorldStateRequest| {
         projection_requests.push(request.clone());
+        let world_state = unsatisfied_state();
         Ok(PlanningWorldStateProjection {
-            world_state: unsatisfied_state(),
-            frame: derived_frame(&request),
+            frame: derived_frame(&request, &world_state),
+            world_state,
         })
     };
 
@@ -504,9 +501,10 @@ fn planning_actor_repeated_tick_skips_already_materialized_plan() {
     let mut task_network = open_task_network_store();
     let actor = planning_actor();
     let mut projection = |request: PlanningWorldStateRequest| {
+        let world_state = unsatisfied_state();
         Ok(PlanningWorldStateProjection {
-            world_state: unsatisfied_state(),
-            frame: derived_frame(&request),
+            frame: derived_frame(&request, &world_state),
+            world_state,
         })
     };
 
@@ -569,9 +567,10 @@ fn planning_actor_bounded_selection_uses_urgency_then_stable_goal_id() {
     let mut selected_goal_ids = Vec::new();
     let mut projection = |request: PlanningWorldStateRequest| {
         selected_goal_ids.push(request.goal_id.clone());
+        let world_state = unsatisfied_state();
         Ok(PlanningWorldStateProjection {
-            world_state: unsatisfied_state(),
-            frame: derived_frame(&request),
+            frame: derived_frame(&request, &world_state),
+            world_state,
         })
     };
 

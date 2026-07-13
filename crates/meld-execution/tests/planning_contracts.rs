@@ -39,7 +39,11 @@ fn goal() -> Goal {
 fn frame() -> PlanningWorldStateFrameRef {
     PlanningWorldStateFrameRef {
         frame_id: "frame-1".to_string(),
+        request_id: "projection-request-1".to_string(),
+        source_request_hash: "source-request-hash-1".to_string(),
         projection_version: "world_model.planner.v1".to_string(),
+        projection_hash: "projection-hash-1".to_string(),
+        world_state_hash: "world-state-hash-1".to_string(),
         perspective_kind: "agent".to_string(),
         perspective_id: "default".to_string(),
         branch_id: "main".to_string(),

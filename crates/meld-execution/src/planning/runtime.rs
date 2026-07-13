@@ -330,10 +330,10 @@ where
             }
         };
 
-        let projection_identity = match PlanningProjectionIdentityInputs::for_request(
+        let projection_identity = match PlanningProjectionIdentityInputs::from_projection(
             &projection_request,
-            projected.frame.projection_version.clone(),
-            projected.frame.source_refs.clone(),
+            &projected.world_state,
+            &projected.frame,
         ) {
             Ok(identity) => identity,
             Err(error) => {
@@ -749,6 +749,12 @@ fn validate_request(request: &PlanningRequest) -> Result<(), PlanningInputError>
             goal_id: request.goal.goal_id.clone(),
         });
     }
+    PlanningProjectionIdentityInputs::from_projection(
+        &request.world_state_request,
+        &request.world_state,
+        &request.world_state_frame,
+    )
+    .map_err(|message| PlanningInputError::IdentityMismatch { message })?;
     Ok(())
 }
 
