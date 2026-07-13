@@ -7,17 +7,18 @@ use crate::task_network::{
     state::NetworkState,
     store::{
         codec::{decode_error, decode_optional, to_decode, to_storage},
-        error::TaskNetworkStoreError,
+        error::{AuthorityStoreError, TaskNetworkStoreError},
         memory::{command_request_hash, duplicate_or_replay, InMemoryTaskNetworkStore},
         records::{
             revision_key, StoredCommandRequest, StoredCommandResponse, StoredJournalRecord,
-            StoredStateSnapshot, KEY_LATEST_STATE, TREE_COMMAND_REQUESTS, TREE_COMMAND_RESPONSES,
-            TREE_JOURNAL_BY_REVISION, TREE_LATEST_STATE,
+            StoredStateSnapshot, KEY_AUTHORITY_EPOCH, KEY_LATEST_STATE, TREE_AUTHORITY_LIFECYCLE,
+            TREE_COMMAND_REQUESTS, TREE_COMMAND_RESPONSES, TREE_JOURNAL_BY_REVISION,
+            TREE_LATEST_STATE,
         },
     },
 };
 use sled::{
-    transaction::{TransactionError, Transactional},
+    transaction::{ConflictableTransactionError, TransactionError, Transactional},
     Tree,
 };
 use std::collections::BTreeMap;
@@ -30,7 +31,11 @@ pub struct SledTaskNetworkStore {
     command_requests: Tree,
     command_responses: Tree,
     latest_state: Tree,
+    authority_lifecycle: Tree,
     inner: InMemoryTaskNetworkStore,
+    durability_indeterminate: bool,
+    #[cfg(test)]
+    fail_next_flush: bool,
 }
 
 impl SledTaskNetworkStore {
@@ -44,6 +49,7 @@ impl SledTaskNetworkStore {
         let command_requests = db.open_tree(TREE_COMMAND_REQUESTS).map_err(to_storage)?;
         let command_responses = db.open_tree(TREE_COMMAND_RESPONSES).map_err(to_storage)?;
         let latest_state = db.open_tree(TREE_LATEST_STATE).map_err(to_storage)?;
+        let authority_lifecycle = db.open_tree(TREE_AUTHORITY_LIFECYCLE).map_err(to_storage)?;
         let mut inner = InMemoryTaskNetworkStore::new(network_id.clone());
 
         for item in journal_by_revision.iter() {
@@ -67,7 +73,11 @@ impl SledTaskNetworkStore {
             command_requests,
             command_responses,
             latest_state,
+            authority_lifecycle,
             inner,
+            durability_indeterminate: false,
+            #[cfg(test)]
+            fail_next_flush: false,
         })
     }
 
@@ -88,10 +98,80 @@ impl SledTaskNetworkStore {
     }
 
     /// Submits one command and persists accepted records through the journal.
+    // TODO compat-shim: remove unfenced direct submission after every runtime
+    // caller uses task network authority ports and store parity tests continue
+    // to prove replay compatibility for the persisted command products.
     pub fn submit(
         &mut self,
         request: command::Request,
     ) -> Result<command::Response, TaskNetworkStoreError> {
+        self.submit_inner(request, None)
+            .map_err(AuthorityStoreError::into_store_error)
+    }
+
+    pub(crate) fn acquire_authority_epoch(&mut self) -> Result<u64, TaskNetworkStoreError> {
+        if self.durability_indeterminate {
+            return Err(durability_indeterminate());
+        }
+        loop {
+            let current = self
+                .authority_lifecycle
+                .get(KEY_AUTHORITY_EPOCH)
+                .map_err(to_storage)?;
+            let current_epoch = decode_authority_epoch(current.as_deref())?;
+            let next_epoch = current_epoch.checked_add(1).ok_or_else(|| {
+                TaskNetworkStoreError::Storage("task network authority epoch exhausted".to_string())
+            })?;
+            let next = next_epoch.to_be_bytes();
+            match self
+                .authority_lifecycle
+                .compare_and_swap(
+                    KEY_AUTHORITY_EPOCH,
+                    current.as_deref(),
+                    Some(next.as_slice()),
+                )
+                .map_err(to_storage)?
+            {
+                Ok(()) => {
+                    self.flush_after_semantic_write()?;
+                    return Ok(next_epoch);
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+
+    pub(crate) fn submit_at_authority_epoch(
+        &mut self,
+        epoch: u64,
+        request: command::Request,
+    ) -> Result<command::Response, AuthorityStoreError> {
+        self.submit_inner(request, Some(epoch))
+    }
+
+    pub(crate) fn validate_authority_epoch(
+        &self,
+        expected: u64,
+    ) -> Result<(), AuthorityStoreError> {
+        let current = self
+            .authority_lifecycle
+            .get(KEY_AUTHORITY_EPOCH)
+            .map_err(to_storage)?;
+        let actual = decode_authority_epoch(current.as_deref())?;
+        if actual != expected {
+            return Err(AuthorityStoreError::StaleEpoch { expected, actual });
+        }
+        Ok(())
+    }
+
+    fn submit_inner(
+        &mut self,
+        request: command::Request,
+        authority_epoch: Option<u64>,
+    ) -> Result<command::Response, AuthorityStoreError> {
+        if self.durability_indeterminate {
+            return Err(durability_indeterminate().into());
+        }
         let command_id = request.command_id.clone();
         let request_hash = command_request_hash(&request);
 
@@ -105,21 +185,25 @@ impl SledTaskNetworkStore {
                 return Err(decode_error(format!(
                     "command '{}' has request but no response",
                     command_id
-                )));
+                ))
+                .into());
             };
             return Ok(duplicate_or_replay(&stored_response.response));
         }
 
-        let response = self.inner.submit(request.clone());
+        // Reduce into a candidate so queries never observe a state that has
+        // not crossed the durable acknowledgement barrier.
+        let mut candidate = self.inner.clone();
+        let response = candidate.submit(request.clone());
         match &response {
             command::Response::Accepted {
                 revision,
                 state_hash: _,
             } => {
-                let Some(record) = self.inner.journal().last().cloned() else {
-                    return Err(decode_error(
-                        "accepted command did not append journal record",
-                    ));
+                let Some(record) = candidate.journal().last().cloned() else {
+                    return Err(
+                        decode_error("accepted command did not append journal record").into(),
+                    );
                 };
                 let stored_request = StoredCommandRequest::new(request_hash.clone(), request);
                 let stored_journal = StoredJournalRecord::new(record);
@@ -128,19 +212,18 @@ impl SledTaskNetworkStore {
                     request_hash,
                     response: response.clone(),
                 };
-                let snapshot = StoredStateSnapshot::new(self.inner.state().clone());
+                let snapshot = StoredStateSnapshot::new(candidate.state().clone());
                 self.persist_accepted_command(
                     stored_request,
                     *revision,
                     stored_journal,
                     stored_response,
                     snapshot,
+                    authority_epoch,
                 )?;
             }
             command::Response::Duplicate { .. } => {
-                return Err(decode_error(
-                    "new durable command returned duplicate response",
-                ));
+                return Err(decode_error("new durable command returned duplicate response").into());
             }
             command::Response::Rejected(_) => {
                 let stored_request = StoredCommandRequest::new(request_hash.clone(), request);
@@ -149,11 +232,29 @@ impl SledTaskNetworkStore {
                     request_hash,
                     response: response.clone(),
                 };
-                self.persist_rejected_command(stored_request, stored_response)?;
+                self.persist_rejected_command(stored_request, stored_response, authority_epoch)?;
             }
         }
-        self.flush()?;
+        self.flush_after_semantic_write()?;
+        self.inner = candidate;
         Ok(response)
+    }
+
+    fn flush_after_semantic_write(&mut self) -> Result<(), TaskNetworkStoreError> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_flush) {
+            self.durability_indeterminate = true;
+            return Err(TaskNetworkStoreError::Storage(
+                "task network durability is indeterminate: injected flush failure".to_string(),
+            ));
+        }
+        if let Err(error) = self.db.flush() {
+            self.durability_indeterminate = true;
+            return Err(TaskNetworkStoreError::Storage(format!(
+                "task network durability is indeterminate: {error}"
+            )));
+        }
+        Ok(())
     }
 
     fn stored_command_request(
@@ -177,7 +278,8 @@ impl SledTaskNetworkStore {
         journal: StoredJournalRecord,
         response: StoredCommandResponse,
         snapshot: StoredStateSnapshot,
-    ) -> Result<(), TaskNetworkStoreError> {
+        authority_epoch: Option<u64>,
+    ) -> Result<(), AuthorityStoreError> {
         let command_key = request.request.command_id.as_bytes().to_vec();
         let request_value = serde_json::to_vec(&request).map_err(to_decode)?;
         let journal_key = revision_key(revision).to_vec();
@@ -186,22 +288,45 @@ impl SledTaskNetworkStore {
         let snapshot_value = serde_json::to_vec(&snapshot).map_err(to_decode)?;
         let snapshot_key = KEY_LATEST_STATE.to_vec();
 
-        // These trees must move together so command replay never observes a
-        // request without its response or a response without its journal.
-        (
-            &self.command_requests,
-            &self.journal_by_revision,
-            &self.command_responses,
-            &self.latest_state,
-        )
-            .transaction(|(requests, journal_tree, responses, snapshots)| {
-                requests.insert(command_key.clone(), request_value.clone())?;
-                journal_tree.insert(journal_key.clone(), journal_value.clone())?;
-                responses.insert(command_key.clone(), response_value.clone())?;
-                snapshots.insert(snapshot_key.clone(), snapshot_value.clone())?;
-                Ok(())
-            })
-            .map_err(to_transaction)?;
+        if let Some(expected_epoch) = authority_epoch {
+            // The durable epoch participates in the same serializable
+            // transaction as the semantic commit, fencing stale writers at
+            // the last possible boundary before persistence.
+            (
+                &self.authority_lifecycle,
+                &self.command_requests,
+                &self.journal_by_revision,
+                &self.command_responses,
+                &self.latest_state,
+            )
+                .transaction(
+                    |(lifecycle, requests, journal_tree, responses, snapshots)| {
+                        validate_transaction_epoch(lifecycle, expected_epoch)?;
+                        requests.insert(command_key.clone(), request_value.clone())?;
+                        journal_tree.insert(journal_key.clone(), journal_value.clone())?;
+                        responses.insert(command_key.clone(), response_value.clone())?;
+                        snapshots.insert(snapshot_key.clone(), snapshot_value.clone())?;
+                        Ok(())
+                    },
+                )
+                .map_err(to_authority_transaction)?;
+        } else {
+            // Compatibility callers retain the original atomic store API.
+            (
+                &self.command_requests,
+                &self.journal_by_revision,
+                &self.command_responses,
+                &self.latest_state,
+            )
+                .transaction(|(requests, journal_tree, responses, snapshots)| {
+                    requests.insert(command_key.clone(), request_value.clone())?;
+                    journal_tree.insert(journal_key.clone(), journal_value.clone())?;
+                    responses.insert(command_key.clone(), response_value.clone())?;
+                    snapshots.insert(snapshot_key.clone(), snapshot_value.clone())?;
+                    Ok(())
+                })
+                .map_err(to_transaction)?;
+        }
         Ok(())
     }
 
@@ -209,22 +334,79 @@ impl SledTaskNetworkStore {
         &self,
         request: StoredCommandRequest,
         response: StoredCommandResponse,
-    ) -> Result<(), TaskNetworkStoreError> {
+        authority_epoch: Option<u64>,
+    ) -> Result<(), AuthorityStoreError> {
         let command_key = request.request.command_id.as_bytes().to_vec();
         let request_value = serde_json::to_vec(&request).map_err(to_decode)?;
         let response_value = serde_json::to_vec(&response).map_err(to_decode)?;
 
-        // Rejected commands still need atomic idempotency records so replay is
-        // stable after restart.
-        (&self.command_requests, &self.command_responses)
-            .transaction(|(requests, responses)| {
-                requests.insert(command_key.clone(), request_value.clone())?;
-                responses.insert(command_key.clone(), response_value.clone())?;
-                Ok(())
-            })
-            .map_err(to_transaction)?;
+        if let Some(expected_epoch) = authority_epoch {
+            (
+                &self.authority_lifecycle,
+                &self.command_requests,
+                &self.command_responses,
+            )
+                .transaction(|(lifecycle, requests, responses)| {
+                    validate_transaction_epoch(lifecycle, expected_epoch)?;
+                    requests.insert(command_key.clone(), request_value.clone())?;
+                    responses.insert(command_key.clone(), response_value.clone())?;
+                    Ok(())
+                })
+                .map_err(to_authority_transaction)?;
+        } else {
+            // Rejected commands still need atomic idempotency records so
+            // replay is stable after restart.
+            (&self.command_requests, &self.command_responses)
+                .transaction(|(requests, responses)| {
+                    requests.insert(command_key.clone(), request_value.clone())?;
+                    responses.insert(command_key.clone(), response_value.clone())?;
+                    Ok(())
+                })
+                .map_err(to_transaction)?;
+        }
         Ok(())
     }
+}
+
+#[derive(Debug)]
+enum AuthorityTransactionAbort {
+    InvalidEpoch(String),
+    Stale { expected: u64, actual: u64 },
+}
+
+fn validate_transaction_epoch(
+    lifecycle: &sled::transaction::TransactionalTree,
+    expected: u64,
+) -> Result<(), ConflictableTransactionError<AuthorityTransactionAbort>> {
+    let bytes = lifecycle.get(KEY_AUTHORITY_EPOCH)?;
+    let actual = decode_authority_epoch(bytes.as_deref()).map_err(|error| {
+        ConflictableTransactionError::Abort(AuthorityTransactionAbort::InvalidEpoch(
+            error.to_string(),
+        ))
+    })?;
+    if actual != expected {
+        return Err(ConflictableTransactionError::Abort(
+            AuthorityTransactionAbort::Stale { expected, actual },
+        ));
+    }
+    Ok(())
+}
+
+fn decode_authority_epoch(bytes: Option<&[u8]>) -> Result<u64, TaskNetworkStoreError> {
+    let Some(bytes) = bytes else {
+        return Ok(0);
+    };
+    let bytes: [u8; 8] = bytes
+        .try_into()
+        .map_err(|_| decode_error("task network authority epoch length mismatch"))?;
+    Ok(u64::from_be_bytes(bytes))
+}
+
+fn durability_indeterminate() -> TaskNetworkStoreError {
+    TaskNetworkStoreError::Storage(
+        "task network durability is indeterminate because the store was retained after a failed durability barrier"
+            .to_string(),
+    )
 }
 
 fn load_command_identity(
@@ -361,5 +543,69 @@ fn to_transaction(error: TransactionError) -> TaskNetworkStoreError {
             TaskNetworkStoreError::Storage(format!("task network transaction aborted: {error:?}"))
         }
         TransactionError::Storage(error) => TaskNetworkStoreError::Storage(error.to_string()),
+    }
+}
+
+fn to_authority_transaction(
+    error: TransactionError<AuthorityTransactionAbort>,
+) -> AuthorityStoreError {
+    match error {
+        TransactionError::Abort(AuthorityTransactionAbort::InvalidEpoch(message)) => {
+            TaskNetworkStoreError::Decode(message).into()
+        }
+        TransactionError::Abort(AuthorityTransactionAbort::Stale { expected, actual }) => {
+            AuthorityStoreError::StaleEpoch { expected, actual }
+        }
+        TransactionError::Storage(error) => {
+            TaskNetworkStoreError::Storage(error.to_string()).into()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task_network::mutation::Set;
+
+    fn empty_command(state: &NetworkState, command_id: &str) -> command::Request {
+        command::Request {
+            command_id: command_id.to_string(),
+            network_id: state.network_id.clone(),
+            base_revision: state.revision,
+            base_state_hash: state.state_hash.clone(),
+            read_preconditions: Vec::new(),
+            command: command::Command::ApplyMutationSet(Set::empty(
+                state.network_id.clone(),
+                "composition-docs",
+                "once",
+            )),
+        }
+    }
+
+    #[test]
+    fn failed_flush_never_advances_live_state_and_fences_reuse() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let mut store = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+        let request = empty_command(store.state(), "command-docs");
+        store.fail_next_flush = true;
+
+        let error = store.submit(request.clone()).unwrap_err();
+
+        assert!(
+            matches!(error, TaskNetworkStoreError::Storage(message) if message.contains("indeterminate"))
+        );
+        assert_eq!(store.state().revision, 0);
+        assert!(store.journal().is_empty());
+        assert!(matches!(
+            store.submit(request),
+            Err(TaskNetworkStoreError::Storage(message)) if message.contains("indeterminate")
+        ));
+        assert_eq!(store.state().revision, 0);
+
+        drop(store);
+        db.flush().unwrap();
+        let reopened = SledTaskNetworkStore::open(db, "network-docs").unwrap();
+        assert_eq!(reopened.state().revision, 1);
+        assert_eq!(reopened.journal().len(), 1);
     }
 }

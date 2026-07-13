@@ -12,3 +12,26 @@ pub enum TaskNetworkStoreError {
     #[error("task network decode error: {0}")]
     Decode(String),
 }
+
+#[derive(Debug)]
+pub(crate) enum AuthorityStoreError {
+    StaleEpoch { expected: u64, actual: u64 },
+    Store(TaskNetworkStoreError),
+}
+
+impl AuthorityStoreError {
+    pub(crate) fn into_store_error(self) -> TaskNetworkStoreError {
+        match self {
+            Self::StaleEpoch { expected, actual } => TaskNetworkStoreError::Storage(format!(
+                "task network authority epoch is stale: expected {expected}, actual {actual}"
+            )),
+            Self::Store(error) => error,
+        }
+    }
+}
+
+impl From<TaskNetworkStoreError> for AuthorityStoreError {
+    fn from(error: TaskNetworkStoreError) -> Self {
+        Self::Store(error)
+    }
+}

@@ -23,6 +23,7 @@ mod records;
 mod sled;
 
 pub use crate::task_network::journal::JournalRecord;
+pub(crate) use error::AuthorityStoreError;
 pub use error::TaskNetworkStoreError;
 pub use factory::{network_storage_key, TaskNetworkStoreFactory};
 pub use memory::InMemoryTaskNetworkStore;

@@ -7,7 +7,9 @@ pub(super) const TREE_JOURNAL_BY_REVISION: &str = "task_network_journal_by_revis
 pub(super) const TREE_COMMAND_REQUESTS: &str = "task_network_command_requests";
 pub(super) const TREE_COMMAND_RESPONSES: &str = "task_network_command_responses";
 pub(super) const TREE_LATEST_STATE: &str = "task_network_latest_state";
+pub(super) const TREE_AUTHORITY_LIFECYCLE: &str = "task_network_authority_lifecycle";
 pub(super) const KEY_LATEST_STATE: &[u8] = b"latest";
+pub(super) const KEY_AUTHORITY_EPOCH: &[u8] = b"epoch";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct StoredCommandRequest {

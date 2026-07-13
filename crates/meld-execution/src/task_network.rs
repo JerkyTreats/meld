@@ -12,6 +12,8 @@
 //! provider transport, goal lifecycle mutation, or world model belief revision.
 //! Those domains adapt through explicit contracts.
 
+/// Single-owner durable task network authority and bounded ports.
+pub mod authority;
 /// Serialized command boundary for task network writers.
 pub mod command;
 /// Shared identity and hashing helpers for task network records.
@@ -37,6 +39,11 @@ pub mod state;
 /// In memory and sled-backed command stores.
 pub mod store;
 
+pub use authority::{
+    TaskNetworkAuthorities, TaskNetworkAuthority, TaskNetworkAuthorityError,
+    TaskNetworkAuthorityLifecycle, TaskNetworkAuthorityLifecycleSnapshot,
+    TaskNetworkAuthorityShutdownReceipt, TaskNetworkCommandPort, TaskNetworkQueryPort,
+};
 pub use command::{Command, Request as CommandRequest, Response};
 pub use dispatch::{
     AttributedOutcome, Claim, Outcome, OutcomeSemanticLineage, OutcomeStatus,
