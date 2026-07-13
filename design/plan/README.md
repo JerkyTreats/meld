@@ -21,7 +21,7 @@ The first vertical slice threads the thinnest possible path through every layer 
 
 The typed loop has already proven the full contract chain through `meld-lang` pure types and operations. The vertical slice now makes each layer real with runtime code that materializes state, projects belief, curates goals, and dispatches work.
 
-Production runtime truth is narrower than domain-library completeness. Wave 0 registers twelve canonical runtime roles, but only `world_model.graph_replay` is a concrete default-enabled actor. Seven semantic actors remain inert and default disabled. Three concrete ports and the concrete `event.append` passive service are not supervisor workers. Wave 1 closes authority and recovery safety without activating those roles. W2A is the next ready packet and owns the product activation contract freeze.
+Production runtime truth is narrower than domain-library completeness. Wave 0 registers twelve canonical runtime roles, but only `world_model.graph_replay` is a concrete default-enabled actor. Seven semantic actors remain inert and default disabled. Three concrete ports and the concrete `event.append` passive service are not supervisor workers. Wave 1 closes authority and recovery safety without activating those roles. W2A is accepted at `0bb34ee` with the product activation contract freeze. W2B1 world model bootstrap and W2B2 execution validation are ready in parallel. W2B3 activation proof remains blocked on both owner lanes.
 
 The focused runtime wiring template is [Minimal Runtime Flywheel](integration/minimal_runtime_flywheel.md). Use it after Assessment By Domain work identifies the exact requirements for each participating domain.
 
@@ -109,7 +109,7 @@ These components predate the vertical slice and support all phases.
 | `events` ledger mechanics | complete | `meld-events` |
 | event foundation closeout | closed 2026-07-12 | `meld-events` with root `meld` |
 | product event authority cutover | complete, E5 closed 2026-07-12 | `events` with root `meld` |
-| production cognitive runtime closure | active, Wave 1 accepted and W2A ready | root `meld` with domain crates |
+| production cognitive runtime closure | active, W2A accepted and W2B1 plus W2B2 ready | root `meld` with domain crates |
 | `integration/typed_loop` | complete | `meld-lang` integration tests |
 
 Foundation work follows this order:
@@ -130,7 +130,7 @@ event authority and observability hardening
 2. event authority and observability hardening — complete, E1 through E4
 3. product event authority cutover — complete, E5 closed 2026-07-12
 4. event foundation closure — closed 2026-07-12, E6
-5. production cognitive runtime closure — active, Wave 1 accepted through `eec0181` and W2A ready
+5. production cognitive runtime closure — active, W2A accepted through `0bb34ee`, W2B1 and W2B2 ready, W2B3 blocked on both
 6. `meld-lang` — complete, Phase 1
 7. `world_model/graph` — complete, Phase 2
 8. `world_model/belief` — complete, Phase 3
@@ -160,7 +160,7 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
 - [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - closed event foundation closeout
 - [integration/production_cognitive_runtime_closure_program.md](integration/production_cognitive_runtime_closure_program.md) - active production runtime implementation and buildout orchestration
-- [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - current executable ledger with Wave 1 accepted and W2A ready
+- [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - current executable ledger with W2A accepted and both owner activation lanes ready
 - [integration/runtime_operator_visibility_program_ledger.md](integration/runtime_operator_visibility_program_ledger.md) - active child ledger with the runtime visibility core complete under parent Wave 0
 - [integration/runtime_assembly_program_ledger.md](integration/runtime_assembly_program_ledger.md) - historical runtime assembly evidence
 - [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — template

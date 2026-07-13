@@ -374,6 +374,38 @@ Final gate evidence:
 
 The serial workspace run includes 443 root library tests, 419 root integration tests, the dedicated CLI belief cutover target, every extracted crate target, and the subprocess restart and shutdown crash matrices.
 
+### 2026-07-12 W2A Activation Contract Freeze
+
+Ready items: W2A only
+Parallelization: root-owned source loading and package split with world model and execution contract review
+Accepted commit: `0bb34ee`
+Contract evidence:
+
+- versioned strict TOML source with unknown-field rejection
+- explicit `--activation` path and early dry-run routing before product stores open
+- one MiB source limit enforced while reading at most one extra byte
+- relative source resolution against the workspace root and canonicalization before store access
+- deployment-bound canonical BLAKE3 identity derived from normalized typed content and resolved deployment coordinates
+- source-neutral runtime, world model, and execution owner packages with source metadata excluded
+- versioned legacy embedded-directive migration identity, receipt, and conflict contracts
+- deterministic world model identity and bootstrap receipt contracts without bootstrap persistence
+- execution-owned scan-flow validation and deterministic method, package, network, artifact, and publication receipt contracts
+- schema one restricts enabled runtimes to graph replay and the one-shot docs freshness bootstrap identity
+
+Gate evidence:
+
+- `cargo fmt --all -- --check`
+- `git diff --check`
+- `cargo check --locked --workspace --all-targets`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo test --locked --workspace --all-targets -- --test-threads=1`
+
+The serial workspace run includes 459 root library tests, 419 root integration tests, and every workspace test target.
+The final fresh rereview found no critical, high, or medium findings.
+No world-model bootstrap writes, real execution asset binding, non-dry activation, recurring semantic actor activation, or Wave 2 completion are claimed.
+Next ready set: W2B1 world model bootstrap and W2B2 execution validation
+Blocked set: W2B3 activation proof until W2B1 and W2B2 are accepted
+
 ## Gate Evidence
 
 | Wave | Gate | Result | Commit | Notes |
@@ -396,6 +428,7 @@ The serial workspace run includes 443 root library tests, 419 root integration t
 | W1C supervisor store | passed | `c131ca8` | checked restart, replacement, shutdown, reopen, replay, and concurrency products landed |
 | W1C integrated entrypoint | passed | `eec0181` | restart ordering, abrupt recovery, final barrier, checked shutdown completion, formatting, and durability rereview passed |
 | W1 integrated closeout | passed | `6ce4a8a`, `8fa37b9`, `eec0181` | full locked workspace serial ladder, repeated concurrency suites, architecture hygiene, and final durability rereview passed |
+| W2A | passed | `0bb34ee` | strict source, owner contracts, early dry-run route, full locked workspace serial ladder, and final rereview passed |
 
 ## Review Findings
 
@@ -430,6 +463,9 @@ W1C integration first exposed restart and shutdown recovery work that could not 
 Commit `eec0181` wired checked restart schedules, ordered replacement checkpoints, append close and drain, final barrier reporting, and checked shutdown completion into the entrypoint.
 The final durability rereview found no critical, high, or medium findings.
 
+W2A review verified that commit `0bb34ee` binds canonical BLAKE3 identity to normalized typed content and resolved deployment coordinates, validates a real scan dependency path, limits the network receipt to configured identity and derived storage key, freezes versioned migration products, and routes explicit activation validation before product stores open.
+The final rereview found no critical, high, or medium findings.
+
 ## Phase Completion Matrix
 
 | Packet | Status | Implementation Evidence | Test Evidence | Review |
@@ -448,8 +484,11 @@ The final durability rereview found no critical, high, or medium findings.
 | W1B4 | accepted | typed append validation, shared ingress fence, retryable drain, and final durable barrier | all-feature event matrix and workspace static ladder | passed after drain-retry fix loop |
 | W1B5 | accepted | integrated subprocess fault, parity, concurrency, and reopen harness | focused cross-domain fault suites | passed with Wave 1 closeout |
 | W1C | accepted | canonical belief cutover, checked restart ordering, durable shutdown recovery, and final event barrier | focused cutover and store suites plus entrypoint recovery gates | final durability rereview passed |
-| W2A | ready | Wave 1 accepted through `eec0181` | Wave 1 gate evidence complete | not started |
-| W2B through W6G | blocked | none | none | none |
+| W2A | accepted | strict TOML loader, deployment-bound identity, owner packages, migration contracts, and execution validation contracts | 459 root library tests, 419 root integration tests, all workspace targets, full check, and strict clippy | final rereview passed |
+| W2B1 | ready | W2A accepted through `0bb34ee` | W2A gate evidence complete | not started |
+| W2B2 | ready | W2A accepted through `0bb34ee` | W2A gate evidence complete | not started |
+| W2B3 | blocked | awaits world model bootstrap and execution validation | none | blocked by W2B1 and W2B2 |
+| W3A through W6G | blocked | none | none | blocked by prior wave closeout |
 
 ## Risks And Exceptions
 
@@ -663,16 +702,38 @@ Gate result: passed
 ### W2A Activation Contract Freeze
 
 Initial state: blocked by Wave 1 closeout
-Current state: ready after accepted Wave 1 closure `eec0181`
+Current state: accepted
 Thread: zero
 Strength: highest available
 Expected commit: `feat(runtime): define typed product activation packages`
 
 Freeze TOML schema, explicit path policy, normalized hash, size and field validation, owner packages, bootstrap identity, execution validation receipt, and legacy directive migration.
 
+Accepted commit: `0bb34ee`
+
+Accepted contract scope:
+
+- strict versioned TOML source and explicit activation path
+- passive early dry-run loader before product stores open
+- one MiB source gate and strict unknown-field rejection
+- deployment-bound canonical BLAKE3 identity over normalized typed content
+- independent source-neutral runtime, world model, and execution packages
+- durable directive and seed-agent reference contracts
+- versioned legacy embedded-directive migration identity, receipt, and conflict products
+- deterministic belief, bootstrap, and execution receipt identities
+- real workspace scan dependency-flow validation contract
+- task network identity and storage-key receipt without claiming authored topology
+- artifact and publication mapping receipt contracts
+
+Acceptance does not include world-model bootstrap writes, real execution asset binding, non-dry activation, recurring semantic work, or Wave 2 completion.
+Gate result: passed
+Next ready set: W2B1 and W2B2
+
 ### W2B Domain Activation Batch
 
 Initial state: blocked by W2A
+Current state: W2B1 and W2B2 ready after accepted W2A
+Blocked state: W2B3 awaits accepted W2B1 and W2B2
 
 | Packet | Thread | Strength | Exclusive Builder Scope | Expected Commit |
 | --- | ---: | --- | --- | --- |
@@ -680,7 +741,8 @@ Initial state: blocked by W2A
 | W2B2 execution validation | 2 | highest available | method, package, artifact, network, and publication validation modules | `feat(execution): validate docs freshness activation` |
 | W2B3 activation proof | 3 | strong | checked-in activation fixture and new activation integration test | `test(runtime): prove activation replay and conflict handling` |
 
-Thread zero lands the loader, central schemas, CLI adapter, assembly factory, exports, and test registration.
+The root-owned loader, central schemas, early CLI dry-run adapter, and exports landed in W2A.
+Thread zero integrates reviewed owner implementations with the assembly factory and test registration after W2B1 and W2B2.
 
 Gate: reopen after every bootstrap stage, divergent-config proof, compatibility parity, two fresh reviews, and W3A ready.
 
