@@ -64,11 +64,51 @@ pub struct BeliefAuthoritySnapshot {
 
 /// Durable proof that source and target authority snapshots are equal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "BeliefAuthorityParityReceiptWire")]
 pub struct BeliefAuthorityParityReceipt {
     /// Frozen legacy source snapshot.
-    pub source: BeliefAuthoritySnapshot,
+    source: BeliefAuthoritySnapshot,
     /// Product target snapshot verified against the source.
-    pub target: BeliefAuthoritySnapshot,
+    target: BeliefAuthoritySnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct BeliefAuthorityParityReceiptWire {
+    source: BeliefAuthoritySnapshot,
+    target: BeliefAuthoritySnapshot,
+}
+
+impl BeliefAuthorityParityReceipt {
+    /// Bind equal source and target authority snapshots as durable parity proof.
+    pub fn try_new(
+        source: BeliefAuthoritySnapshot,
+        target: BeliefAuthoritySnapshot,
+    ) -> Result<Self, StorageError> {
+        if source != target {
+            return Err(StorageError::InvalidPath(
+                "belief authority parity requires equal source and target snapshots".to_string(),
+            ));
+        }
+        Ok(Self { source, target })
+    }
+
+    /// Borrow the frozen source snapshot.
+    pub fn source(&self) -> &BeliefAuthoritySnapshot {
+        &self.source
+    }
+
+    /// Borrow the verified product target snapshot.
+    pub fn target(&self) -> &BeliefAuthoritySnapshot {
+        &self.target
+    }
+}
+
+impl TryFrom<BeliefAuthorityParityReceiptWire> for BeliefAuthorityParityReceipt {
+    type Error = StorageError;
+
+    fn try_from(value: BeliefAuthorityParityReceiptWire) -> Result<Self, Self::Error> {
+        Self::try_new(value.source, value.target)
+    }
 }
 
 /// State-specific durable progress for belief authority migration.
@@ -600,7 +640,11 @@ pub enum LeaseStatus {
 /// callers from validating only a lease id while changing ownership, epoch,
 /// cursor, configuration, or lifecycle state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "action", rename_all = "snake_case")]
+#[serde(
+    tag = "action",
+    rename_all = "snake_case",
+    try_from = "AssessmentLeaseCasIntentWire"
+)]
 pub enum AssessmentLeaseCasIntent {
     /// Install the proposed leased product only when no active lease exists.
     Acquire {
@@ -621,6 +665,103 @@ pub enum AssessmentLeaseCasIntent {
         /// Complete terminal product with `LeaseStatus::Abandoned`.
         abandoned_lease: AssessmentLease,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum AssessmentLeaseCasIntentWire {
+    Acquire {
+        proposed_active_lease: AssessmentLease,
+    },
+    Complete {
+        expected_active_lease: AssessmentLease,
+        completed_lease: AssessmentLease,
+    },
+    AbandonExpired {
+        expected_active_lease: AssessmentLease,
+        abandoned_lease: AssessmentLease,
+    },
+}
+
+impl AssessmentLeaseCasIntent {
+    /// Validate the complete legal lease transition carried by this intent.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        match self {
+            Self::Acquire {
+                proposed_active_lease,
+            } if proposed_active_lease.status == LeaseStatus::Leased => Ok(()),
+            Self::Complete {
+                expected_active_lease,
+                completed_lease,
+            } => validate_terminal_lease_transition(
+                expected_active_lease,
+                completed_lease,
+                LeaseStatus::Completed,
+            ),
+            Self::AbandonExpired {
+                expected_active_lease,
+                abandoned_lease,
+            } => validate_terminal_lease_transition(
+                expected_active_lease,
+                abandoned_lease,
+                LeaseStatus::Abandoned,
+            ),
+            Self::Acquire { .. } => Err(StorageError::InvalidPath(
+                "assessment lease acquire requires leased status".to_string(),
+            )),
+        }
+    }
+}
+
+impl TryFrom<AssessmentLeaseCasIntentWire> for AssessmentLeaseCasIntent {
+    type Error = StorageError;
+
+    fn try_from(value: AssessmentLeaseCasIntentWire) -> Result<Self, Self::Error> {
+        let intent = match value {
+            AssessmentLeaseCasIntentWire::Acquire {
+                proposed_active_lease,
+            } => Self::Acquire {
+                proposed_active_lease,
+            },
+            AssessmentLeaseCasIntentWire::Complete {
+                expected_active_lease,
+                completed_lease,
+            } => Self::Complete {
+                expected_active_lease,
+                completed_lease,
+            },
+            AssessmentLeaseCasIntentWire::AbandonExpired {
+                expected_active_lease,
+                abandoned_lease,
+            } => Self::AbandonExpired {
+                expected_active_lease,
+                abandoned_lease,
+            },
+        };
+        intent.validate()?;
+        Ok(intent)
+    }
+}
+
+fn validate_terminal_lease_transition(
+    expected: &AssessmentLease,
+    terminal: &AssessmentLease,
+    terminal_status: LeaseStatus,
+) -> Result<(), StorageError> {
+    if expected.status != LeaseStatus::Leased {
+        return Err(StorageError::InvalidPath(
+            "assessment lease terminal transition requires leased active status".to_string(),
+        ));
+    }
+    let mut expected_terminal = expected.clone();
+    expected_terminal.status = terminal_status;
+    if terminal == &expected_terminal {
+        Ok(())
+    } else {
+        Err(StorageError::InvalidPath(
+            "assessment lease terminal product changed immutable lease identity".to_string(),
+        ))
+    }
 }
 
 /// Recovery result after reconciling an interrupted atomic belief commit.
@@ -683,19 +824,107 @@ pub struct BeliefView {
 
 /// Durable intent binding every product in one atomic belief commit.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "BeliefCommitIntentWire")]
 pub struct BeliefCommitIntent {
     /// Stable id reused while recovering the same commit attempt.
-    pub intent_id: String,
+    intent_id: String,
     /// Exact active lease required before commit.
-    pub expected_active_lease: AssessmentLease,
+    expected_active_lease: AssessmentLease,
     /// Complete terminal lease persisted by commit.
-    pub completed_lease: AssessmentLease,
+    completed_lease: AssessmentLease,
     /// Exact dirty-key state consumed by commit.
-    pub expected_dirty_state: DirtyKeyState,
+    expected_dirty_state: DirtyKeyState,
     /// Canonical append-only revision product.
-    pub revision: BeliefRevision,
+    revision: BeliefRevision,
     /// Receiver-owned public view projected from the revision.
-    pub public_view: BeliefView,
+    public_view: BeliefView,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct BeliefCommitIntentWire {
+    intent_id: String,
+    expected_active_lease: AssessmentLease,
+    completed_lease: AssessmentLease,
+    expected_dirty_state: DirtyKeyState,
+    revision: BeliefRevision,
+    public_view: BeliefView,
+}
+
+impl BeliefCommitIntent {
+    /// Bind every product in one legal leased-to-completed belief commit.
+    pub fn try_new(
+        intent_id: impl Into<String>,
+        expected_active_lease: AssessmentLease,
+        completed_lease: AssessmentLease,
+        expected_dirty_state: DirtyKeyState,
+        revision: BeliefRevision,
+        public_view: BeliefView,
+    ) -> Result<Self, StorageError> {
+        let intent_id = intent_id.into();
+        require_non_empty("belief commit intent id", &intent_id)?;
+        if expected_active_lease.status != LeaseStatus::Leased {
+            return Err(StorageError::InvalidPath(
+                "belief commit requires a leased active product".to_string(),
+            ));
+        }
+        let mut expected_completion = expected_active_lease.clone();
+        expected_completion.status = LeaseStatus::Completed;
+        if completed_lease != expected_completion {
+            return Err(StorageError::InvalidPath(
+                "belief commit completed lease must preserve the active lease identity".to_string(),
+            ));
+        }
+        let key = &expected_active_lease.belief_key;
+        if expected_dirty_state.belief_key != *key
+            || expected_dirty_state.active_lease_id.as_deref()
+                != Some(expected_active_lease.lease_id.as_str())
+            || revision.belief_key != *key
+            || public_view.key != *key
+            || public_view.current_revision_id.as_deref() != Some(revision.revision_id.as_str())
+        {
+            return Err(StorageError::InvalidPath(
+                "belief commit products must share one key, active lease, and revision".to_string(),
+            ));
+        }
+        Ok(Self {
+            intent_id,
+            expected_active_lease,
+            completed_lease,
+            expected_dirty_state,
+            revision,
+            public_view,
+        })
+    }
+
+    /// Borrow the stable commit intent id.
+    pub fn intent_id(&self) -> &str {
+        &self.intent_id
+    }
+
+    /// Borrow the canonical revision product.
+    pub fn revision(&self) -> &BeliefRevision {
+        &self.revision
+    }
+
+    /// Borrow the receiver-owned public view.
+    pub fn public_view(&self) -> &BeliefView {
+        &self.public_view
+    }
+}
+
+impl TryFrom<BeliefCommitIntentWire> for BeliefCommitIntent {
+    type Error = StorageError;
+
+    fn try_from(value: BeliefCommitIntentWire) -> Result<Self, Self::Error> {
+        Self::try_new(
+            value.intent_id,
+            value.expected_active_lease,
+            value.completed_lease,
+            value.expected_dirty_state,
+            value.revision,
+            value.public_view,
+        )
+    }
 }
 
 /// Compact provenance and hydration summary for belief records.
@@ -795,16 +1024,17 @@ mod tests {
                 generation: 3,
             },
             progress: BeliefAuthorityMigrationProgress::Verified {
-                parity: BeliefAuthorityParityReceipt {
-                    source: BeliefAuthoritySnapshot {
+                parity: BeliefAuthorityParityReceipt::try_new(
+                    BeliefAuthoritySnapshot {
                         snapshot_hash: "a".repeat(64),
                         record_count: 12,
                     },
-                    target: BeliefAuthoritySnapshot {
+                    BeliefAuthoritySnapshot {
                         snapshot_hash: "a".repeat(64),
                         record_count: 12,
                     },
-                },
+                )
+                .unwrap(),
             },
         };
 
@@ -814,6 +1044,11 @@ mod tests {
             serde_json::from_value::<BeliefAuthorityMigrationMarker>(value).unwrap(),
             marker
         );
+        let invalid = serde_json::json!({
+            "source": {"snapshot_hash": "a", "record_count": 1},
+            "target": {"snapshot_hash": "b", "record_count": 1}
+        });
+        assert!(serde_json::from_value::<BeliefAuthorityParityReceipt>(invalid).is_err());
     }
 
     #[test]

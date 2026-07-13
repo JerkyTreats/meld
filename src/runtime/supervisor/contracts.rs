@@ -343,6 +343,15 @@ pub enum RuntimeReplacementStage {
     Completed,
 }
 
+/// Durable evidence that one ordered replacement stage completed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeReplacementStageReceipt {
+    /// Ordered replacement stage.
+    pub stage: RuntimeReplacementStage,
+    /// Supervisor time when the stage completed.
+    pub observed_at_ms: u64,
+}
+
 /// Persistable replacement checkpoint used for restart recovery.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RuntimeReplacementCheckpointWire")]
@@ -350,13 +359,13 @@ pub struct RuntimeReplacementCheckpoint {
     /// Enforced schedule and canonical restart audit product.
     schedule: RuntimeRestartSchedule,
     /// Exact ordered prefix of completed replacement stages.
-    completed_stages: Vec<RuntimeReplacementStage>,
+    completed_stages: Vec<RuntimeReplacementStageReceipt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct RuntimeReplacementCheckpointWire {
     schedule: RuntimeRestartSchedule,
-    completed_stages: Vec<RuntimeReplacementStage>,
+    completed_stages: Vec<RuntimeReplacementStageReceipt>,
 }
 
 impl RuntimeReplacementCheckpoint {
@@ -372,6 +381,7 @@ impl RuntimeReplacementCheckpoint {
     pub fn advance(
         mut self,
         stage: RuntimeReplacementStage,
+        observed_at_ms: u64,
     ) -> Result<Self, SupervisorContractError> {
         let expected = replacement_stage_order()
             .get(self.completed_stages.len())
@@ -381,7 +391,30 @@ impl RuntimeReplacementCheckpoint {
                 "replacement stage does not follow the required stop and flush order".to_string(),
             ));
         }
-        self.completed_stages.push(stage);
+        if self
+            .completed_stages
+            .last()
+            .is_some_and(|receipt| receipt.observed_at_ms > observed_at_ms)
+        {
+            return Err(SupervisorContractError::InvalidReplacementCheckpoint(
+                "replacement stage time moved backwards".to_string(),
+            ));
+        }
+        if matches!(
+            stage,
+            RuntimeReplacementStage::AcquireReplacementLease
+                | RuntimeReplacementStage::StartReplacementHandle
+                | RuntimeReplacementStage::Completed
+        ) && observed_at_ms < self.schedule.next_eligible_at_ms()
+        {
+            return Err(SupervisorContractError::InvalidReplacementCheckpoint(
+                "replacement lease cannot be acquired before restart eligibility".to_string(),
+            ));
+        }
+        self.completed_stages.push(RuntimeReplacementStageReceipt {
+            stage,
+            observed_at_ms,
+        });
         Ok(self)
     }
 
@@ -391,18 +424,41 @@ impl RuntimeReplacementCheckpoint {
     }
 
     /// Borrow the exact ordered prefix of completed stages.
-    pub fn completed_stages(&self) -> &[RuntimeReplacementStage] {
+    pub fn completed_stages(&self) -> &[RuntimeReplacementStageReceipt] {
         &self.completed_stages
     }
 
     fn validate(&self) -> Result<(), SupervisorContractError> {
         let required = replacement_stage_order();
-        if self.completed_stages.len() > required.len()
-            || self.completed_stages.as_slice() != &required[..self.completed_stages.len()]
-        {
+        let stages = self
+            .completed_stages
+            .iter()
+            .map(|receipt| receipt.stage)
+            .collect::<Vec<_>>();
+        if stages.len() > required.len() || stages.as_slice() != &required[..stages.len()] {
             return Err(SupervisorContractError::InvalidReplacementCheckpoint(
                 "persisted replacement stages are not an ordered prefix".to_string(),
             ));
+        }
+        let mut last_time = None;
+        for receipt in &self.completed_stages {
+            if last_time.is_some_and(|prior| prior > receipt.observed_at_ms) {
+                return Err(SupervisorContractError::InvalidReplacementCheckpoint(
+                    "persisted replacement stage time moved backwards".to_string(),
+                ));
+            }
+            if matches!(
+                receipt.stage,
+                RuntimeReplacementStage::AcquireReplacementLease
+                    | RuntimeReplacementStage::StartReplacementHandle
+                    | RuntimeReplacementStage::Completed
+            ) && receipt.observed_at_ms < self.schedule.next_eligible_at_ms()
+            {
+                return Err(SupervisorContractError::InvalidReplacementCheckpoint(
+                    "persisted replacement acquisition predates restart eligibility".to_string(),
+                ));
+            }
+            last_time = Some(receipt.observed_at_ms);
         }
         Ok(())
     }
@@ -742,9 +798,9 @@ mod tests {
         })
         .unwrap();
         let checkpoint = RuntimeReplacementCheckpoint::new(schedule)
-            .advance(RuntimeReplacementStage::StopOldHandle)
+            .advance(RuntimeReplacementStage::StopOldHandle, 110)
             .unwrap()
-            .advance(RuntimeReplacementStage::AwaitOldSafePoint)
+            .advance(RuntimeReplacementStage::AwaitOldSafePoint, 120)
             .unwrap();
 
         let encoded = serde_json::to_vec(&checkpoint).unwrap();
@@ -754,7 +810,7 @@ mod tests {
         assert_eq!(decoded.schedule().next_eligible_at_ms(), 150);
         assert!(
             RuntimeReplacementCheckpoint::new(decoded.schedule().clone())
-                .advance(RuntimeReplacementStage::AcquireReplacementLease)
+                .advance(RuntimeReplacementStage::AcquireReplacementLease, 149)
                 .is_err()
         );
         let mut invalid_schedule = serde_json::to_value(decoded.schedule()).unwrap();
@@ -762,7 +818,10 @@ mod tests {
         assert!(serde_json::from_value::<RuntimeRestartSchedule>(invalid_schedule).is_err());
         let invalid_checkpoint = serde_json::json!({
             "schedule": decoded.schedule(),
-            "completed_stages": ["acquire_replacement_lease"]
+            "completed_stages": [{
+                "stage": "acquire_replacement_lease",
+                "observed_at_ms": 149
+            }]
         });
         assert!(
             serde_json::from_value::<RuntimeReplacementCheckpoint>(invalid_checkpoint).is_err()

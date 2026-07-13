@@ -18,7 +18,9 @@
 //! assert_eq!(diagnostic.step_id.as_deref(), Some("check-current-state"));
 //! ```
 
-use crate::planning::world_state::{PlanningWorldStateFrameRef, PlanningWorldStateRequest};
+use crate::planning::world_state::{
+    PlanningProjectionIdentityInputs, PlanningWorldStateFrameRef, PlanningWorldStateRequest,
+};
 use serde::{Deserialize, Serialize};
 
 /// Complete immutable inputs for deterministic planning request identity.
@@ -28,8 +30,8 @@ pub struct PlanningRequestIdentityInputs {
     pub goal_id: String,
     /// Goal update sequence observed by planning.
     pub goal_updated_at_seq: u64,
-    /// Durable world-state projection frame id.
-    pub projection_frame_id: String,
+    /// Canonical inputs that derive the durable projection frame id.
+    pub projection_identity: PlanningProjectionIdentityInputs,
     /// Digest of the verified method library.
     pub method_library_digest: String,
     /// Digest of the capability catalog visible to lowering.
@@ -95,6 +97,7 @@ pub struct PlanningRequest {
 
 /// Planning request bound to complete deterministic replay identity.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "IdentifiedPlanningRequestWire")]
 pub struct IdentifiedPlanningRequest {
     /// Canonical planning request product.
     request: PlanningRequest,
@@ -102,24 +105,32 @@ pub struct IdentifiedPlanningRequest {
     identity: PlanningRequestIdentity,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct IdentifiedPlanningRequestWire {
+    request: PlanningRequest,
+    identity: PlanningRequestIdentity,
+}
+
 impl IdentifiedPlanningRequest {
     /// Bind a canonical planning request to complete immutable identity inputs.
     pub fn bind(
-        request: PlanningRequest,
+        mut request: PlanningRequest,
         inputs: PlanningRequestIdentityInputs,
     ) -> Result<Self, String> {
         if inputs.goal_id != request.goal.goal_id {
             return Err("planning identity goal does not match request goal".to_string());
         }
-        if inputs.projection_frame_id != request.world_state_frame.frame_id {
+        let expected_frame = inputs
+            .projection_identity
+            .frame_ref(request.world_state_frame.warnings.clone())?;
+        if expected_frame != request.world_state_frame {
             return Err(
                 "planning identity projection does not match request projection".to_string(),
             );
         }
-        Ok(Self {
-            request,
-            identity: PlanningRequestIdentity::derive(inputs)?,
-        })
+        let identity = PlanningRequestIdentity::derive(inputs)?;
+        request.request_id = identity.request_id().to_string();
+        Ok(Self { request, identity })
     }
 
     /// Validate the attached identity against the canonical request.
@@ -128,10 +139,18 @@ impl IdentifiedPlanningRequest {
         if self.identity.inputs.goal_id != self.request.goal.goal_id {
             return Err("planning identity goal does not match request goal".to_string());
         }
-        if self.identity.inputs.projection_frame_id != self.request.world_state_frame.frame_id {
+        let expected_frame = self
+            .identity
+            .inputs
+            .projection_identity
+            .frame_ref(self.request.world_state_frame.warnings.clone())?;
+        if expected_frame != self.request.world_state_frame {
             return Err(
                 "planning identity projection does not match request projection".to_string(),
             );
+        }
+        if self.request.request_id != self.identity.request_id {
+            return Err("planning request tracing id does not match derived identity".to_string());
         }
         Ok(())
     }
@@ -144,6 +163,19 @@ impl IdentifiedPlanningRequest {
     /// Borrow the attached deterministic identity.
     pub fn identity(&self) -> &PlanningRequestIdentity {
         &self.identity
+    }
+}
+
+impl TryFrom<IdentifiedPlanningRequestWire> for IdentifiedPlanningRequest {
+    type Error = String;
+
+    fn try_from(value: IdentifiedPlanningRequestWire) -> Result<Self, Self::Error> {
+        let identified = Self {
+            request: value.request,
+            identity: value.identity,
+        };
+        identified.validate()?;
+        Ok(identified)
     }
 }
 
@@ -332,7 +364,13 @@ mod contract_freeze_tests {
         let inputs = PlanningRequestIdentityInputs {
             goal_id: "goal-a".to_string(),
             goal_updated_at_seq: 9,
-            projection_frame_id: "projection-a".to_string(),
+            projection_identity: PlanningProjectionIdentityInputs::new(
+                "projection-request-a",
+                "projection-v1",
+                "agent-a",
+                "main",
+                vec!["source-a".to_string()],
+            ),
             method_library_digest: "method-a".to_string(),
             capability_catalog_digest: "catalog-a".to_string(),
             planning_version: "planning-v1".to_string(),

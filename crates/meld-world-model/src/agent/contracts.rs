@@ -532,13 +532,89 @@ impl AdvanceSubscriptionCommand {
 /// fields are operational fencing metadata that prevent concurrent deliveries
 /// from overwriting a newer durable position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "AgentSubscriptionCursorCasIntentWire")]
 pub struct AgentSubscriptionCursorCasIntent {
     /// Revision id observed before the attempted advancement.
-    pub expected_delivered_revision_id: Option<String>,
+    expected_delivered_revision_id: Option<String>,
     /// Sequence observed before the attempted advancement.
-    pub expected_delivered_seq: u64,
+    expected_delivered_seq: u64,
     /// Complete canonical cursor advancement command.
-    pub command: AdvanceSubscriptionCommand,
+    command: AdvanceSubscriptionCommand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct AgentSubscriptionCursorCasIntentWire {
+    expected_delivered_revision_id: Option<String>,
+    expected_delivered_seq: u64,
+    command: AdvanceSubscriptionCommand,
+}
+
+impl AgentSubscriptionCursorCasIntent {
+    /// Bind a strictly advancing command to the exact expected cursor.
+    pub fn try_new(
+        expected_delivered_revision_id: Option<String>,
+        expected_delivered_seq: u64,
+        command: AdvanceSubscriptionCommand,
+    ) -> Result<Self, StorageError> {
+        command.validate()?;
+        match expected_delivered_revision_id.as_deref() {
+            None if expected_delivered_seq != 0 => {
+                return Err(StorageError::InvalidPath(
+                    "empty subscription cursor must have sequence zero".to_string(),
+                ));
+            }
+            Some(revision_id) => require_non_empty("expected delivered revision id", revision_id)?,
+            None => {}
+        }
+        if expected_delivered_revision_id.is_some() && expected_delivered_seq == 0 {
+            return Err(StorageError::InvalidPath(
+                "non-empty subscription cursor must have a positive sequence".to_string(),
+            ));
+        }
+        if command.delivered_seq <= expected_delivered_seq {
+            return Err(StorageError::InvalidPath(
+                "subscription cursor advancement must increase sequence".to_string(),
+            ));
+        }
+        if expected_delivered_revision_id.as_deref() == Some(command.delivered_revision_id.as_str())
+        {
+            return Err(StorageError::InvalidPath(
+                "subscription cursor advancement must name a newer revision".to_string(),
+            ));
+        }
+        Ok(Self {
+            expected_delivered_revision_id,
+            expected_delivered_seq,
+            command,
+        })
+    }
+
+    /// Borrow the expected revision id.
+    pub fn expected_delivered_revision_id(&self) -> Option<&str> {
+        self.expected_delivered_revision_id.as_deref()
+    }
+
+    /// Return the expected durable sequence.
+    pub fn expected_delivered_seq(&self) -> u64 {
+        self.expected_delivered_seq
+    }
+
+    /// Borrow the canonical advancement command.
+    pub fn command(&self) -> &AdvanceSubscriptionCommand {
+        &self.command
+    }
+}
+
+impl TryFrom<AgentSubscriptionCursorCasIntentWire> for AgentSubscriptionCursorCasIntent {
+    type Error = StorageError;
+
+    fn try_from(value: AgentSubscriptionCursorCasIntentWire) -> Result<Self, Self::Error> {
+        Self::try_new(
+            value.expected_delivered_revision_id,
+            value.expected_delivered_seq,
+            value.command,
+        )
+    }
 }
 
 /// Command wrapper for persisting a curation decision.
@@ -905,11 +981,12 @@ mod tests {
 
     #[test]
     fn subscription_cursor_cas_intent_round_trips_canonical_command() {
-        let intent = AgentSubscriptionCursorCasIntent {
-            expected_delivered_revision_id: Some("revision-a".to_string()),
-            expected_delivered_seq: 11,
-            command: advance_command(),
-        };
+        let intent = AgentSubscriptionCursorCasIntent::try_new(
+            Some("revision-a".to_string()),
+            11,
+            advance_command(),
+        )
+        .unwrap();
 
         let value = serde_json::to_value(&intent).unwrap();
         assert_eq!(value["expected_delivered_seq"], 11);
@@ -918,6 +995,12 @@ mod tests {
             serde_json::from_value::<AgentSubscriptionCursorCasIntent>(value).unwrap(),
             intent
         );
+        assert!(AgentSubscriptionCursorCasIntent::try_new(
+            Some("revision-b".to_string()),
+            12,
+            advance_command(),
+        )
+        .is_err());
     }
 
     #[test]

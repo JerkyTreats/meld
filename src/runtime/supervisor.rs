@@ -11,9 +11,10 @@ pub use contracts::{
     RestartCause, RestartPolicy, RuntimeDesiredState, RuntimeDiagnosticSummary, RuntimeHealth,
     RuntimeHealthSnapshot, RuntimeHealthStatus, RuntimeHeartbeat, RuntimeId, RuntimeInstance,
     RuntimeInstanceStatus, RuntimeLease, RuntimeLeaseOwner, RuntimeLeaseStatus,
-    RuntimeReplacementCheckpoint, RuntimeReplacementStage, RuntimeRestartRecord,
-    RuntimeRestartSchedule, RuntimeShutdownCompletion, RuntimeShutdownState, RuntimeShutdownStatus,
-    SupervisorContractError, SupervisorLifecycleEvent, SupervisorLifecycleEventType,
+    RuntimeReplacementCheckpoint, RuntimeReplacementStage, RuntimeReplacementStageReceipt,
+    RuntimeRestartRecord, RuntimeRestartSchedule, RuntimeShutdownCompletion, RuntimeShutdownState,
+    RuntimeShutdownStatus, SupervisorContractError, SupervisorLifecycleEvent,
+    SupervisorLifecycleEventType,
 };
 pub use entrypoint::{
     RuntimeSupervisor, SupervisorRestartEvaluation, SupervisorRuntimeError,

@@ -36,6 +36,43 @@ impl PlanningProjectionIdentityInputs {
             source_refs,
         }
     }
+
+    /// Validate canonical ordering and required identity components.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut canonical_sources = self.source_refs.clone();
+        canonical_sources.sort();
+        canonical_sources.dedup();
+        if canonical_sources != self.source_refs {
+            return Err("projection identity source refs must be sorted and unique".to_string());
+        }
+        if self.request_hash.trim().is_empty()
+            || self.projection_version.trim().is_empty()
+            || self.perspective_id.trim().is_empty()
+            || self.branch_id.trim().is_empty()
+        {
+            return Err("projection identity components must be non-empty".to_string());
+        }
+        Ok(())
+    }
+
+    /// Derive the durable projection frame id from canonical inputs.
+    pub fn derive_frame_id(&self) -> Result<String, String> {
+        self.validate()?;
+        let encoded = serde_json::to_vec(self).map_err(|error| error.to_string())?;
+        Ok(blake3::hash(&encoded).to_hex().to_string())
+    }
+
+    /// Build the only frame reference valid for these identity inputs.
+    pub fn frame_ref(&self, warnings: Vec<String>) -> Result<PlanningWorldStateFrameRef, String> {
+        Ok(PlanningWorldStateFrameRef {
+            frame_id: self.derive_frame_id()?,
+            projection_version: self.projection_version.clone(),
+            perspective_id: self.perspective_id.clone(),
+            branch_id: self.branch_id.clone(),
+            source_refs: self.source_refs.clone(),
+            warnings,
+        })
+    }
 }
 
 /// Request shape execution sends to a world-model projection boundary.
@@ -93,6 +130,10 @@ mod contract_freeze_tests {
         );
 
         assert_eq!(inputs.source_refs, vec!["source-a", "source-b"]);
+        let first = inputs.frame_ref(Vec::new()).unwrap();
+        let second = inputs.frame_ref(Vec::new()).unwrap();
+        assert_eq!(first.frame_id, second.frame_id);
+        assert_eq!(first.source_refs, inputs.source_refs);
         let encoded = serde_json::to_vec(&inputs).unwrap();
         let decoded: PlanningProjectionIdentityInputs = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(decoded, inputs);
