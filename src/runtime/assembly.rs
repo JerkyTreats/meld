@@ -11,6 +11,7 @@ use meld_execution::activation::{
     validate_execution_activation, ExecutionActivationInput, ExecutionActivationValidationReceipt,
 };
 use meld_execution::task_network::store::network_storage_key;
+use meld_execution::task_network::{TaskNetworkAuthorityError, TaskNetworkAuthorityLifecycle};
 use meld_world_model::activation::{validate_world_model_activation, WorldModelActivationInput};
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
 use meld_world_model::AgentBootstrapRuntime;
@@ -1599,12 +1600,32 @@ impl TaskNetworkAuthorityRuntimeHandle {
     }
 
     fn request_stop(&mut self) {
-        if !matches!(self.state, TaskNetworkAuthorityRuntimeState::Hosted) {
-            return;
-        }
-        self.state = match self.host.shutdown_authority(self.identity.network_id()) {
-            Ok(_) => TaskNetworkAuthorityRuntimeState::Stopped,
-            Err(error) => TaskNetworkAuthorityRuntimeState::Failed(error.to_string()),
+        self.state = match &self.state {
+            TaskNetworkAuthorityRuntimeState::Dormant
+            | TaskNetworkAuthorityRuntimeState::Stopped => return,
+            TaskNetworkAuthorityRuntimeState::Hosted => {
+                match self.host.shutdown_authority(self.identity.network_id()) {
+                    Ok(_) => TaskNetworkAuthorityRuntimeState::Stopped,
+                    Err(shutdown_error) => match self
+                        .host
+                        .reconcile_stopped_authority(self.identity.network_id())
+                    {
+                        Ok(()) => TaskNetworkAuthorityRuntimeState::Stopped,
+                        Err(reconcile_error) => TaskNetworkAuthorityRuntimeState::Failed(format!(
+                            "{shutdown_error}; shutdown reconciliation failed: {reconcile_error}"
+                        )),
+                    },
+                }
+            }
+            TaskNetworkAuthorityRuntimeState::Failed(previous_error) => match self
+                .host
+                .reconcile_stopped_authority(self.identity.network_id())
+            {
+                Ok(()) => TaskNetworkAuthorityRuntimeState::Stopped,
+                Err(error) => TaskNetworkAuthorityRuntimeState::Failed(format!(
+                    "{previous_error}; shutdown reconciliation retry failed: {error}"
+                )),
+            },
         };
     }
 
@@ -1645,7 +1666,25 @@ impl TaskNetworkAuthorityRuntimeHandle {
             .host
             .query_port(self.identity.network_id())
             .map_err(|error| error.to_string())?;
-        query.state().map(|_| ()).map_err(|error| error.to_string())
+        let lifecycle = query.lifecycle();
+        if lifecycle.lifecycle != TaskNetworkAuthorityLifecycle::Open {
+            return Err(format!(
+                "task-network authority '{}' lifecycle is {state:?}",
+                lifecycle.network_id,
+                state = lifecycle.lifecycle
+            ));
+        }
+        match query.state() {
+            Ok(_) => Ok(()),
+            Err(error) => classify_task_network_health_error(error),
+        }
+    }
+}
+
+fn classify_task_network_health_error(error: TaskNetworkAuthorityError) -> Result<(), String> {
+    match error {
+        TaskNetworkAuthorityError::Full { .. } => Ok(()),
+        error => Err(error.to_string()),
     }
 }
 
@@ -2651,8 +2690,25 @@ mod tests {
             .unwrap()
             .contains("no hosted process authority"));
         assert!(handle.request_stop().was_started);
-        assert!(!handle.wait_for_safe_point().safe_for_flush);
-        assert!(handle.flush_resources().is_err());
+        assert!(handle.wait_for_safe_point().safe_for_flush);
+        assert!(handle.flush_resources().unwrap().flushed_resource);
+    }
+
+    #[test]
+    fn task_network_mailbox_saturation_is_healthy_backpressure() {
+        assert!(
+            classify_task_network_health_error(TaskNetworkAuthorityError::Full {
+                network_id: "network-docs".to_string(),
+                capacity: 1,
+            })
+            .is_ok()
+        );
+        assert!(
+            classify_task_network_health_error(TaskNetworkAuthorityError::Closed {
+                network_id: "network-docs".to_string(),
+            })
+            .is_err()
+        );
     }
 
     #[test]

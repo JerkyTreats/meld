@@ -1557,12 +1557,13 @@ impl<'a> RuntimeSupervisor<'a> {
                     )?;
                 }
                 1 => {
-                    let runtime = self.handles.get(&runtime_id).ok_or_else(|| {
+                    let runtime = self.handles.get_mut(&runtime_id).ok_or_else(|| {
                         SupervisorRuntimeError::InvalidCommand(format!(
                             "runtime '{}' lost its old handle before safe point",
                             runtime_id
                         ))
                     })?;
+                    runtime.handle.request_stop();
                     let safe_point = runtime.handle.wait_for_safe_point();
                     if !safe_point.safe_for_flush {
                         return Err(SupervisorRuntimeError::InvalidCommand(format!(

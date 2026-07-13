@@ -667,6 +667,28 @@ impl TaskNetworkAuthorityHostPort {
         shutdown
     }
 
+    /// Reopen and flush one authority store after an indeterminate stop.
+    pub(crate) fn reconcile_stopped_authority(
+        &self,
+        network_id: &str,
+    ) -> Result<(), RuntimePortError> {
+        {
+            let mut authorities = self.lock_authorities()?;
+            if let Some(authority) = authorities.get_mut(network_id) {
+                let _ = authority.shutdown();
+                authorities.remove(network_id);
+            }
+        }
+        self.factory
+            .open_network(network_id.to_string())
+            .and_then(|store| store.flush())
+            .map_err(|error| {
+                RuntimePortError::TaskNetworkAuthority(format!(
+                    "network '{network_id}' stopped authority could not be reflushed: {error}"
+                ))
+            })
+    }
+
     fn with_authority<T>(
         &self,
         network_id: &str,
