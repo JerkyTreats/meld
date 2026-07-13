@@ -300,6 +300,7 @@ fn hash(bytes: &[u8]) -> String {
 mod tests {
     use std::collections::BTreeMap;
     use std::path::Path;
+    use std::time::Duration;
 
     use super::*;
     use crate::activation::{
@@ -316,6 +317,25 @@ mod tests {
     use crate::world_state::graph::PerspectiveKey;
 
     type DbSnapshot = BTreeMap<Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>>;
+
+    fn reopen_sled_after_close(path: &Path) -> sled::Result<sled::Db> {
+        const MAX_ATTEMPTS: usize = 50;
+
+        for attempt in 0..MAX_ATTEMPTS {
+            match sled::open(path) {
+                Ok(db) => return Ok(db),
+                Err(error)
+                    if error.to_string().contains("could not acquire lock")
+                        && attempt + 1 < MAX_ATTEMPTS =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        unreachable!("the final open attempt returns its error")
+    }
 
     fn input() -> WorldModelActivationInput {
         let belief_family: BeliefFamilyConfig = serde_json::from_str(
@@ -377,11 +397,11 @@ mod tests {
     }
 
     fn open(path: &Path) -> AgentBootstrapRuntime {
-        AgentBootstrapRuntime::new(sled::open(path).unwrap()).unwrap()
+        AgentBootstrapRuntime::new(reopen_sled_after_close(path).unwrap()).unwrap()
     }
 
     fn snapshot_db(path: &Path) -> DbSnapshot {
-        let db = sled::open(path).unwrap();
+        let db = reopen_sled_after_close(path).unwrap();
         let mut snapshot = BTreeMap::new();
         for tree_name in db.tree_names() {
             let tree = db.open_tree(tree_name.clone()).unwrap();
