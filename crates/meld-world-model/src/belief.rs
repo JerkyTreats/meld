@@ -60,10 +60,12 @@
 //! ```
 
 mod activation;
+mod assessment_actor;
 pub mod comparator;
 pub mod config;
 pub mod contracts;
 pub mod evidence;
+mod evidence_actor;
 pub mod ingestion;
 pub mod query;
 pub mod readiness;
@@ -72,6 +74,10 @@ pub mod store;
 mod task_evidence;
 
 pub(crate) use activation::{BeliefActivation, BeliefActivationError};
+pub use assessment_actor::{
+    BeliefAssessmentActor, BeliefAssessmentRequest, BeliefDirtyKeyTickRequest, BeliefRuntimeIssue,
+    BeliefRuntimeTickReport, BELIEF_ASSESSMENT_ACTOR_ID, MAX_BELIEF_ASSESSMENT_ITEMS,
+};
 pub use comparator::{BayesianComparator, ComparatorInput, ComparatorOutput};
 pub use config::{BeliefConfigLoader, ConfigSnapshot};
 pub use contracts::{
@@ -89,6 +95,11 @@ pub use contracts::{
     PosteriorSummary, PromotedEvidenceRecord, BELIEF_AUTHORITY_MIGRATION_SCHEMA_VERSION,
 };
 pub use evidence::BeliefEvidenceNormalizer;
+pub use evidence_actor::{
+    EvidenceIngestionActor, EvidenceIngestionActorReport, EvidenceIngestionActorRequest,
+    EvidenceIngestionIssue, EvidenceReceiptReport, EVIDENCE_INGESTION_ACTOR_ID,
+    MAX_EVIDENCE_INGESTION_ITEMS,
+};
 pub use ingestion::{
     ingest_promoted_evidence, PromotedEvidenceIngestionRequest, PromotedEvidenceIngestionResult,
 };

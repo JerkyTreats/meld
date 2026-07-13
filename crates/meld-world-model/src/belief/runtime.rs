@@ -41,6 +41,8 @@ pub struct RuntimeAssessmentResult {
     pub revision_id: String,
     /// Planner-facing confidence from the resulting view.
     pub confidence: f64,
+    /// Highest source cursor included in the committed revision.
+    pub source_cursor_end: u64,
 }
 
 /// Orchestrates the first graph-to-belief runtime slice.
@@ -97,17 +99,7 @@ impl BeliefRuntime {
         anchor_perspective_id: &str,
         owner_id: &str,
     ) -> Result<RuntimeAssessmentResult, StorageError> {
-        let config_json = serde_json::to_string(&self.config.config).map_err(to_storage_data)?;
-        self.belief_store
-            .put_config_snapshot(&self.config.hash, &config_json)?;
-        self.belief_store.put_runtime_meta(
-            &format!("active_config_hash::{}", self.config.config.family_id),
-            &self.config.hash,
-        )?;
-        self.belief_store.put_runtime_meta(
-            &format!("active_policy_id::{}", self.config.config.family_id),
-            &self.config.config.evidence_policy_id,
-        )?;
+        self.persist_config()?;
         let query = TraversalQuery::new(self.traversal_store.as_ref());
         let anchor = query
             .current_anchor_for_subject(subject, anchor_perspective_kind, anchor_perspective_id)?
@@ -126,9 +118,9 @@ impl BeliefRuntime {
             }
         };
         for item in &evidence {
-            self.belief_store.put_evidence(item)?;
+            self.belief_store.put_evidence_once(item)?;
             self.belief_store
-                .put_assignment(&normalizer.assign(item)?)?;
+                .put_assignment_once(&normalizer.assign(item)?)?;
         }
         let key = evidence
             .first()
@@ -191,6 +183,7 @@ impl BeliefRuntime {
             evidence_count: evidence.len(),
             revision_id: output.revision.revision_id,
             confidence: view.planner_projection.confidence,
+            source_cursor_end,
         })
     }
 
@@ -270,7 +263,24 @@ impl BeliefRuntime {
             evidence_count: evidence.len(),
             revision_id: output.revision.revision_id,
             confidence: view.planner_projection.confidence,
+            source_cursor_end,
         }))
+    }
+
+    /// Persist and activate the immutable configuration used by this runtime.
+    pub fn persist_config(&self) -> Result<(), StorageError> {
+        let config_json = serde_json::to_string(&self.config.config).map_err(to_storage_data)?;
+        self.belief_store
+            .put_config_snapshot_once(&self.config.hash, &config_json)?;
+        self.belief_store.put_runtime_meta(
+            &format!("active_config_hash::{}", self.config.config.family_id),
+            &self.config.hash,
+        )?;
+        self.belief_store.put_runtime_meta(
+            &format!("active_policy_id::{}", self.config.config.family_id),
+            &self.config.config.evidence_policy_id,
+        )?;
+        self.belief_store.flush()
     }
 
     /// Recover expired work and assess every available dirty key once.

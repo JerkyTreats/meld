@@ -139,6 +139,8 @@ pub struct PromotedEvidenceIngestionRequest<'a> {
 /// Result of one promoted evidence ingestion attempt.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromotedEvidenceIngestionResult {
+    /// Sorted deterministic evidence ids produced by normalization.
+    pub evidence_ids: Vec<String>,
     /// Count of evidence items produced by normalization.
     pub normalized_evidence_count: usize,
     /// Count of assignment edges newly inserted.
@@ -165,6 +167,7 @@ pub fn ingest_promoted_evidence(
         Err(rejection) => {
             store.put_rejection(&rejection)?;
             return Ok(PromotedEvidenceIngestionResult {
+                evidence_ids: Vec::new(),
                 normalized_evidence_count: 0,
                 new_assignment_count: 0,
                 committed: Vec::new(),
@@ -173,6 +176,12 @@ pub fn ingest_promoted_evidence(
         }
     };
 
+    let mut evidence_ids = evidence
+        .iter()
+        .map(|item| item.evidence_id.clone())
+        .collect::<Vec<_>>();
+    evidence_ids.sort();
+    evidence_ids.dedup();
     let mut affected_keys = Vec::new();
     let mut new_assignment_count = 0;
     for item in &evidence {
@@ -193,6 +202,7 @@ pub fn ingest_promoted_evidence(
     }
 
     Ok(PromotedEvidenceIngestionResult {
+        evidence_ids,
         normalized_evidence_count: evidence.len(),
         new_assignment_count,
         committed,

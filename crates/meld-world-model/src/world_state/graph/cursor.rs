@@ -131,13 +131,53 @@ impl GraphProjectionCursor {
         })
     }
 
-    pub(super) fn advance(&self, after_seq: u64) -> Result<LedgerCursor, StorageError> {
-        let current = self.get()?.after_seq;
-        let durable = current.max(after_seq);
-        self.persist(durable)?;
+    pub(super) fn advance(
+        &self,
+        expected_after_seq: u64,
+        after_seq: u64,
+    ) -> Result<LedgerCursor, StorageError> {
+        if after_seq <= expected_after_seq {
+            return Err(StorageError::InvalidPath(
+                "graph cursor must advance to a newer sequence".to_string(),
+            ));
+        }
+        let current = self.tree.get(KEY_AUTHORITY_CURSOR).map_err(to_storage_io)?;
+        let current_after_seq = current
+            .as_deref()
+            .map(|raw| self.decode(raw))
+            .transpose()?
+            .unwrap_or(0);
+        if current_after_seq != expected_after_seq {
+            return Err(StorageError::Backpressure(format!(
+                "graph cursor changed from expected sequence {expected_after_seq} to {current_after_seq}"
+            )));
+        }
+        let next = serde_json::to_vec(&PersistedGraphCursor {
+            ledger_id: self.ledger_id,
+            after_seq,
+        })
+        .map_err(to_storage_data)?;
+        match self
+            .tree
+            .compare_and_swap(
+                KEY_AUTHORITY_CURSOR,
+                current.as_deref(),
+                Some(next.as_slice()),
+            )
+            .map_err(to_storage_io)?
+        {
+            Ok(()) => {
+                self.tree.flush().map_err(to_storage_io)?;
+            }
+            Err(_) => {
+                return Err(StorageError::Backpressure(
+                    "graph cursor changed concurrently".to_string(),
+                ));
+            }
+        }
         Ok(LedgerCursor {
             ledger_id: self.ledger_id,
-            after_seq: durable,
+            after_seq,
         })
     }
 
@@ -270,6 +310,23 @@ mod tests {
     use super::*;
 
     static FAILPOINT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn stale_writer_cannot_advance_over_a_newer_graph_cursor() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let traversal = TraversalStore::new(db).unwrap();
+        let ledger_id = "00000000-0000-0000-0000-000000000123".parse().unwrap();
+        let first = GraphProjectionCursor::open(&traversal, ledger_id).unwrap();
+        let stale = GraphProjectionCursor::open(&traversal, ledger_id).unwrap();
+
+        assert_eq!(first.advance(0, 1).unwrap().after_seq, 1);
+        assert!(matches!(
+            stale.advance(0, 2),
+            Err(StorageError::Backpressure(message))
+                if message.contains("expected sequence 0")
+        ));
+        assert_eq!(stale.get().unwrap().after_seq, 1);
+    }
 
     fn leave_pending_reset(
         traversal: &TraversalStore,

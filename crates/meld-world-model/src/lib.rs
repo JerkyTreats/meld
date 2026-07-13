@@ -30,15 +30,18 @@ pub use agent::{
     SubscribeAgentCommand,
 };
 pub use belief::{
-    ingest_promoted_evidence, AssessmentLease, BayesianComparator, BeliefConfigLoader,
+    ingest_promoted_evidence, AssessmentLease, BayesianComparator, BeliefAssessmentActor,
+    BeliefAssessmentRequest, BeliefConfigLoader, BeliefDirtyKeyTickRequest,
     BeliefEvidenceNormalizer, BeliefKey, BeliefQuery, BeliefReadinessAttestation,
-    BeliefReadinessAttestationRequest, BeliefRuntime, BeliefStatus, BeliefStore, BeliefView,
-    BranchScope, ComparatorInput, ComparatorOutput, ConfigSnapshot, ContradictionReason,
-    DirtyKeyState, DirtyReason, DocsTaskEvidenceError, DocsTaskEvidenceIngestionRuntime,
-    DocsTaskEvidenceReplayReport, DocsTaskEvidenceReplayRequest, DocsTaskSuccessEvidenceRequest,
-    EvidenceEventReplaySource, EvidenceItem, EvidenceRole, EvidenceValue, FreshnessReason,
-    LeaseStatus, ObservationReason, PromotedEvidenceIngestionRequest,
-    PromotedEvidenceIngestionResult, PromotedEvidenceRecord, RuntimeAssessmentResult,
+    BeliefReadinessAttestationRequest, BeliefRuntime, BeliefRuntimeIssue, BeliefRuntimeTickReport,
+    BeliefStatus, BeliefStore, BeliefView, BranchScope, ComparatorInput, ComparatorOutput,
+    ConfigSnapshot, ContradictionReason, DirtyKeyState, DirtyReason, DocsTaskEvidenceError,
+    DocsTaskEvidenceIngestionRuntime, DocsTaskEvidenceReplayReport, DocsTaskEvidenceReplayRequest,
+    DocsTaskSuccessEvidenceRequest, EvidenceEventReplaySource, EvidenceIngestionActor,
+    EvidenceIngestionActorReport, EvidenceIngestionActorRequest, EvidenceIngestionIssue,
+    EvidenceItem, EvidenceReceiptReport, EvidenceRole, EvidenceValue, FreshnessReason, LeaseStatus,
+    ObservationReason, PromotedEvidenceIngestionRequest, PromotedEvidenceIngestionResult,
+    PromotedEvidenceRecord, RuntimeAssessmentResult,
 };
 pub use planner::{
     project_world_state, PlannerFieldProjectionConfig, PlannerGraphScope, PlannerHydrationRefs,

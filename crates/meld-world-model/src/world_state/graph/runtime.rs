@@ -262,7 +262,7 @@ impl GraphRuntime {
             self.derived_outbox.replace(&reducer.emitted_envelopes)?;
             derived_events_appended += self.drain_derived_outbox()?;
             self.traversal.flush()?;
-            durable_cursor = self.cursor.advance(event_seq)?;
+            durable_cursor = self.cursor.advance(durable_cursor.after_seq, event_seq)?;
         }
         // Cursor registry publication follows the local durable cursor. If
         // reporting fails, the next tick reports the same or a later cursor;

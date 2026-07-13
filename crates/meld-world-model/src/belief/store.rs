@@ -747,6 +747,11 @@ impl BeliefStore {
                 Ok(EvidenceIngestionReceiptWriteDisposition::Inserted)
             })
             .map_err(|error| match error {
+                TransactionError::Abort(message)
+                    if message == "evidence consumer cursor changed" =>
+                {
+                    StorageError::Backpressure(message)
+                }
                 TransactionError::Abort(message) => StorageError::InvalidPath(message),
                 TransactionError::Storage(error) => to_storage_io(error),
             })?;
@@ -761,6 +766,26 @@ impl BeliefStore {
             .insert(hash.as_bytes(), json.as_bytes())
             .map_err(to_storage_io)?;
         Ok(())
+    }
+
+    /// Store an immutable config snapshot or accept an exact replay.
+    pub fn put_config_snapshot_once(&self, hash: &str, json: &str) -> Result<bool, StorageError> {
+        let _write = self.writable_guard()?;
+        match self
+            .config_snapshots
+            .compare_and_swap(
+                hash.as_bytes(),
+                None as Option<&[u8]>,
+                Some(json.as_bytes()),
+            )
+            .map_err(to_storage_io)?
+        {
+            Ok(()) => Ok(true),
+            Err(error) if error.current.as_deref() == Some(json.as_bytes()) => Ok(false),
+            Err(_) => Err(StorageError::InvalidPath(format!(
+                "belief config snapshot conflict for '{hash}'"
+            ))),
+        }
     }
 
     /// Read a serialized config snapshot by hash.
