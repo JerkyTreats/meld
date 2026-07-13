@@ -75,3 +75,10 @@ path = "fuzz_targets/fuzz_task_network_readiness.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_goal_command_replay"
+path = "fuzz_targets/fuzz_goal_command_replay.rs"
+test = false
+doc = false
+bench = false

@@ -2,44 +2,70 @@
 
 use crate::error::ExecutionInvariantError;
 use crate::goals::contracts::{
-    AddGoalCommand, ExecutionGoalRecord, GoalCommandMetadata, GoalCommandOutcome,
-    ModifyGoalCommand, RemoveGoalCommand, ResumeGoalCommand, SatisfyGoalCommand,
-    SuspendGoalCommand,
+    AddGoalCommand, ExecutionGoalRecord, GoalCommandCommitReceipt, GoalCommandKind,
+    GoalCommandMetadata, GoalCommandOutcome, GoalCommandRequestIdentity,
+    LegacyGoalCommandReplayPolicy, ModifyGoalCommand, RemoveGoalCommand, ResumeGoalCommand,
+    SatisfyGoalCommand, SuspendGoalCommand,
 };
-use crate::goals::store::{validate_goal, validate_metadata, validate_non_empty};
+use crate::goals::store::{
+    commit_receipt, replay_conflict, request_identity, validate_goal,
+    validate_lifecycle_transition, validate_metadata, validate_modify_lifecycle,
+    validate_newer_sequence, validate_non_empty, validate_request_identity,
+};
 use meld_lang::{Goal, GoalLifecycle};
 use sled::{
-    transaction::{ConflictableTransactionError, TransactionError, Transactional},
+    transaction::{
+        ConflictableTransactionError, TransactionError, Transactional, TransactionalTree,
+    },
     Db, Tree,
 };
 use std::io;
 use std::sync::Arc;
 
 const TREE_RECORDS: &str = "execution_goal_records";
+const TREE_COMMAND_IDENTITIES: &str = "execution_goal_command_identities";
 const TREE_COMMAND_OUTCOMES: &str = "execution_goal_command_outcomes";
+const TREE_COMMAND_RECEIPTS: &str = "execution_goal_command_receipts";
 const TREE_SOURCE_IDENTITY: &str = "execution_goal_source_identity";
+
+type GoalCommandCommit = (GoalCommandOutcome, GoalCommandCommitReceipt);
+type GoalTransactionError = ConflictableTransactionError<ExecutionInvariantError>;
 
 /// Sled-backed goal set used when execution lifecycle state must survive restart.
 ///
-/// The caller owns database path selection so runtime assembly can enforce the
-/// repository storage policy and keep execution state outside the target
-/// workspace.
+/// Every mutating command stores its request identity, goal mutation, source
+/// index changes, outcome, and commit receipt in one sled transaction. Public
+/// commit methods flush that transaction before returning the receipt.
 #[derive(Clone)]
 pub struct PersistentGoalSetStore {
     db: Db,
     records: Tree,
+    command_identities: Tree,
     command_outcomes: Tree,
+    command_receipts: Tree,
     source_identity_index: Tree,
+    legacy_replay_policy: LegacyGoalCommandReplayPolicy,
 }
 
 impl PersistentGoalSetStore {
-    /// Open goal trees from a caller-provided database.
+    /// Open goal trees with verified reconstruction for compatible legacy outcomes.
     pub fn new(db: Db) -> Result<Self, ExecutionInvariantError> {
+        Self::with_legacy_replay_policy(db, LegacyGoalCommandReplayPolicy::ReconstructAndVerify)
+    }
+
+    /// Open goal trees with an explicit legacy replay posture.
+    pub fn with_legacy_replay_policy(
+        db: Db,
+        legacy_replay_policy: LegacyGoalCommandReplayPolicy,
+    ) -> Result<Self, ExecutionInvariantError> {
         Ok(Self {
             records: db.open_tree(TREE_RECORDS).map_err(to_store_io)?,
+            command_identities: db.open_tree(TREE_COMMAND_IDENTITIES).map_err(to_store_io)?,
             command_outcomes: db.open_tree(TREE_COMMAND_OUTCOMES).map_err(to_store_io)?,
+            command_receipts: db.open_tree(TREE_COMMAND_RECEIPTS).map_err(to_store_io)?,
             source_identity_index: db.open_tree(TREE_SOURCE_IDENTITY).map_err(to_store_io)?,
             db,
+            legacy_replay_policy,
         })
     }
 
@@ -48,70 +74,96 @@ impl PersistentGoalSetStore {
         Ok(Arc::new(Self::new(db)?))
     }
 
-    /// Validate and durably store a new goal, replaying or deduping by command metadata.
+    /// Validate and durably store a new goal.
     pub fn add_goal(
         &self,
         command: AddGoalCommand,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        if let Some(outcome) = self.replayed_outcome(&command.metadata)? {
-            return Ok(outcome);
-        }
+        self.commit_add_goal(command).map(|(outcome, _)| outcome)
+    }
+
+    /// Atomically commit, flush, and acknowledge a new goal command.
+    pub fn commit_add_goal(
+        &self,
+        command: AddGoalCommand,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
+        let identity = request_identity(&command)?;
+        let commit = self.commit_add_goal_with_identity(command, identity)?;
+        self.flush()?;
+        Ok(commit)
+    }
+
+    pub(crate) fn commit_add_goal_with_identity(
+        &self,
+        command: AddGoalCommand,
+        identity: GoalCommandRequestIdentity,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
         validate_metadata(&command.metadata)?;
         validate_goal(&command.goal)?;
+        validate_request_identity(&command.metadata, GoalCommandKind::Add, &identity)?;
+        let legacy_identity_verifiable = request_identity(&command)? == identity;
 
-        let record = ExecutionGoalRecord {
+        let expected_record = ExecutionGoalRecord {
             goal: command.goal.clone(),
             source_command_id: Some(command.metadata.command_id.clone()),
             source_identity: command.metadata.source_identity.clone(),
             created_at_seq: command.metadata.seq,
             updated_at_seq: command.metadata.seq,
         };
-        let outcome = GoalCommandOutcome::Applied(Box::new(record));
-        self.persist_add_goal(&command.metadata, &command.goal, &outcome)
-    }
-
-    fn persist_add_goal(
-        &self,
-        metadata: &GoalCommandMetadata,
-        goal: &Goal,
-        applied_outcome: &GoalCommandOutcome,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        let command_key = metadata.command_id.as_bytes().to_vec();
-        let goal_key = goal.goal_id.as_bytes().to_vec();
-        let goal_id = goal.goal_id.clone();
-        let command_id = metadata.command_id.clone();
-        let source_identity_key = metadata
+        let legacy_expected = expected_record.clone();
+        let command_key = command.metadata.command_id.as_bytes().to_vec();
+        let goal_key = command.goal.goal_id.as_bytes().to_vec();
+        let goal_id = command.goal.goal_id.clone();
+        let source_identity_key = command
+            .metadata
             .source_identity
             .as_ref()
             .map(|source_identity| source_identity.as_bytes().to_vec());
-        let source_identity_value = goal.goal_id.as_bytes().to_vec();
-        let record = match applied_outcome {
-            GoalCommandOutcome::Applied(record) => record,
-            _ => {
-                return Err(ExecutionInvariantError::ConfigError(
-                    "add goal transaction requires applied outcome".to_string(),
-                ));
-            }
-        };
-        let record_value = serde_json::to_vec(record).map_err(to_store_data)?;
-        let applied_value = serde_json::to_vec(applied_outcome).map_err(to_store_data)?;
-        let applied_outcome = applied_outcome.clone();
+        let source_identity_value = goal_id.as_bytes().to_vec();
 
-        (
+        let commit = (
             &self.records,
             &self.source_identity_index,
+            &self.command_identities,
             &self.command_outcomes,
+            &self.command_receipts,
         )
-            .transaction(|(records, source_identity_index, command_outcomes)| {
-                if let Some(raw) = command_outcomes.get(command_key.clone())? {
-                    return serde_json::from_slice(&raw).map_err(to_transaction_data);
-                }
+            .transaction(
+                |(
+                    records,
+                    source_identity_index,
+                    command_identities,
+                    command_outcomes,
+                    command_receipts,
+                )| {
+                    if let Some(commit) = replay_or_upgrade(
+                        command_identities,
+                        command_outcomes,
+                        command_receipts,
+                        &identity,
+                        self.legacy_replay_policy,
+                        |outcome| {
+                            legacy_identity_verifiable
+                                && matches!(
+                                outcome,
+                                GoalCommandOutcome::Applied(record)
+                                    if record.as_ref() == &legacy_expected
+                                )
+                        },
+                    )? {
+                        return Ok(commit);
+                    }
 
-                if let Some(raw) = records.get(goal_key.clone())? {
-                    let existing: ExecutionGoalRecord =
-                        serde_json::from_slice(&raw).map_err(to_transaction_data)?;
-                    let outcome =
-                        if existing.source_command_id.as_deref() == Some(command_id.as_str()) {
+                    let outcome = if let Some(raw) = records.get(goal_key.clone())? {
+                        let existing: ExecutionGoalRecord = decode_transaction(&raw)?;
+                        if existing.source_command_id.as_deref()
+                            == Some(command.metadata.command_id.as_str())
+                        {
+                            if existing != expected_record {
+                                return Err(ConflictableTransactionError::Abort(replay_conflict(
+                                    &command.metadata.command_id,
+                                )));
+                            }
                             if let Some(source_identity_key) = source_identity_key.clone() {
                                 source_identity_index
                                     .insert(source_identity_key, source_identity_value.clone())?;
@@ -121,36 +173,37 @@ impl PersistentGoalSetStore {
                             GoalCommandOutcome::Duplicate {
                                 existing_goal_id: goal_id.clone(),
                             }
-                        };
-                    command_outcomes.insert(
+                        }
+                    } else if let Some(source_identity_key) = source_identity_key.clone() {
+                        if let Some(raw) = source_identity_index.get(source_identity_key.clone())? {
+                            GoalCommandOutcome::Duplicate {
+                                existing_goal_id: String::from_utf8(raw.to_vec())
+                                    .map_err(to_transaction_utf8)?,
+                            }
+                        } else {
+                            records
+                                .insert(goal_key.clone(), encode_transaction(&expected_record)?)?;
+                            source_identity_index
+                                .insert(source_identity_key, source_identity_value.clone())?;
+                            GoalCommandOutcome::Applied(Box::new(expected_record.clone()))
+                        }
+                    } else {
+                        records.insert(goal_key.clone(), encode_transaction(&expected_record)?)?;
+                        GoalCommandOutcome::Applied(Box::new(expected_record.clone()))
+                    };
+
+                    persist_commit(
+                        command_identities,
+                        command_outcomes,
+                        command_receipts,
                         command_key.clone(),
-                        serde_json::to_vec(&outcome).map_err(to_transaction_data)?,
-                    )?;
-                    return Ok(outcome);
-                }
-
-                if let Some(source_identity_key) = source_identity_key.clone() {
-                    if let Some(raw) = source_identity_index.get(source_identity_key)? {
-                        let existing_goal_id =
-                            String::from_utf8(raw.to_vec()).map_err(to_transaction_utf8)?;
-                        let outcome = GoalCommandOutcome::Duplicate { existing_goal_id };
-                        command_outcomes.insert(
-                            command_key.clone(),
-                            serde_json::to_vec(&outcome).map_err(to_transaction_data)?,
-                        )?;
-                        return Ok(outcome);
-                    }
-                }
-
-                records.insert(goal_key.clone(), record_value.clone())?;
-                if let Some(source_identity_key) = source_identity_key.clone() {
-                    source_identity_index
-                        .insert(source_identity_key, source_identity_value.clone())?;
-                }
-                command_outcomes.insert(command_key.clone(), applied_value.clone())?;
-                Ok(applied_outcome.clone())
-            })
-            .map_err(to_goal_transaction)
+                        identity.clone(),
+                        outcome,
+                    )
+                },
+            )
+            .map_err(to_goal_transaction)?;
+        Ok(commit)
     }
 
     /// Replace an existing goal while preserving creation sequence and dedupe state.
@@ -158,49 +211,128 @@ impl PersistentGoalSetStore {
         &self,
         command: ModifyGoalCommand,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        if let Some(outcome) = self.replayed_outcome(&command.metadata)? {
-            return Ok(outcome);
-        }
+        self.commit_modify_goal(command).map(|(outcome, _)| outcome)
+    }
+
+    /// Atomically commit, flush, and acknowledge a goal replacement.
+    pub fn commit_modify_goal(
+        &self,
+        command: ModifyGoalCommand,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
+        let identity = request_identity(&command)?;
+        let commit = self.commit_modify_goal_with_identity(command, identity)?;
+        self.flush()?;
+        Ok(commit)
+    }
+
+    pub(crate) fn commit_modify_goal_with_identity(
+        &self,
+        command: ModifyGoalCommand,
+        identity: GoalCommandRequestIdentity,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
         validate_metadata(&command.metadata)?;
         validate_goal(&command.goal)?;
+        validate_request_identity(&command.metadata, GoalCommandKind::Modify, &identity)?;
 
-        let Some(existing) = self.record(&command.goal.goal_id)? else {
-            let outcome = GoalCommandOutcome::NotFound {
-                goal_id: command.goal.goal_id.clone(),
-            };
-            self.record_outcome(&command.metadata, &outcome)?;
-            return Ok(outcome);
-        };
-        if let Some(existing_goal_id) =
-            self.duplicate_source_identity_for_other_goal(&command.metadata, &command.goal.goal_id)?
-        {
-            let outcome = GoalCommandOutcome::Duplicate { existing_goal_id };
-            self.record_outcome(&command.metadata, &outcome)?;
-            return Ok(outcome);
-        }
+        let command_key = command.metadata.command_id.as_bytes().to_vec();
+        let goal_key = command.goal.goal_id.as_bytes().to_vec();
+        let goal_id = command.goal.goal_id.clone();
+        let legacy_goal = command.goal.clone();
+        let legacy_metadata = command.metadata.clone();
 
-        let previous_source_identity = existing.source_identity.clone();
-        let source_identity = command
-            .metadata
-            .source_identity
-            .clone()
-            .or_else(|| existing.source_identity.clone());
-        let record = ExecutionGoalRecord {
-            goal: command.goal.clone(),
-            source_command_id: Some(command.metadata.command_id.clone()),
-            source_identity: source_identity.clone(),
-            created_at_seq: existing.created_at_seq,
-            updated_at_seq: command.metadata.seq,
-        };
-        self.put_record(&record)?;
-        self.reindex_source_identity(
-            previous_source_identity,
-            source_identity,
-            &command.goal.goal_id,
-        )?;
-        let outcome = GoalCommandOutcome::Applied(Box::new(record));
-        self.record_outcome(&command.metadata, &outcome)?;
-        Ok(outcome)
+        let commit = (
+            &self.records,
+            &self.source_identity_index,
+            &self.command_identities,
+            &self.command_outcomes,
+            &self.command_receipts,
+        )
+            .transaction(
+                |(
+                    records,
+                    source_identity_index,
+                    command_identities,
+                    command_outcomes,
+                    command_receipts,
+                )| {
+                    if let Some(commit) = replay_or_upgrade(
+                        command_identities,
+                        command_outcomes,
+                        command_receipts,
+                        &identity,
+                        self.legacy_replay_policy,
+                        |outcome| legacy_modify_matches(outcome, &legacy_metadata, &legacy_goal),
+                    )? {
+                        return Ok(commit);
+                    }
+
+                    let Some(raw) = records.get(goal_key.clone())? else {
+                        return persist_commit(
+                            command_identities,
+                            command_outcomes,
+                            command_receipts,
+                            command_key.clone(),
+                            identity.clone(),
+                            GoalCommandOutcome::NotFound {
+                                goal_id: goal_id.clone(),
+                            },
+                        );
+                    };
+                    let existing: ExecutionGoalRecord = decode_transaction(&raw)?;
+                    validate_newer_sequence(&command.metadata, &existing)
+                        .map_err(ConflictableTransactionError::Abort)?;
+                    validate_modify_lifecycle(&command.goal.lifecycle, &existing.goal.lifecycle)
+                        .map_err(ConflictableTransactionError::Abort)?;
+
+                    if let Some(source_identity) = command.metadata.source_identity.as_ref() {
+                        if let Some(raw) = source_identity_index.get(source_identity.as_bytes())? {
+                            let existing_goal_id =
+                                String::from_utf8(raw.to_vec()).map_err(to_transaction_utf8)?;
+                            if existing_goal_id != goal_id {
+                                return persist_commit(
+                                    command_identities,
+                                    command_outcomes,
+                                    command_receipts,
+                                    command_key.clone(),
+                                    identity.clone(),
+                                    GoalCommandOutcome::Duplicate { existing_goal_id },
+                                );
+                            }
+                        }
+                    }
+
+                    let previous_source_identity = existing.source_identity.clone();
+                    let source_identity = command
+                        .metadata
+                        .source_identity
+                        .clone()
+                        .or_else(|| existing.source_identity.clone());
+                    let record = ExecutionGoalRecord {
+                        goal: command.goal.clone(),
+                        source_command_id: Some(command.metadata.command_id.clone()),
+                        source_identity: source_identity.clone(),
+                        created_at_seq: existing.created_at_seq,
+                        updated_at_seq: command.metadata.seq,
+                    };
+                    records.insert(goal_key.clone(), encode_transaction(&record)?)?;
+                    reindex_source_identity_transaction(
+                        source_identity_index,
+                        previous_source_identity,
+                        source_identity,
+                        &goal_id,
+                    )?;
+                    persist_commit(
+                        command_identities,
+                        command_outcomes,
+                        command_receipts,
+                        command_key.clone(),
+                        identity.clone(),
+                        GoalCommandOutcome::Applied(Box::new(record)),
+                    )
+                },
+            )
+            .map_err(to_goal_transaction)?;
+        Ok(commit)
     }
 
     /// Apply an idempotent transition to abandoned.
@@ -208,17 +340,35 @@ impl PersistentGoalSetStore {
         &self,
         command: RemoveGoalCommand,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        if let Some(outcome) = self.replayed_outcome(&command.metadata)? {
-            return Ok(outcome);
-        }
+        self.commit_remove_goal(command).map(|(outcome, _)| outcome)
+    }
+
+    /// Atomically commit, flush, and acknowledge abandonment.
+    pub fn commit_remove_goal(
+        &self,
+        command: RemoveGoalCommand,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
+        let identity = request_identity(&command)?;
+        let commit = self.commit_remove_goal_with_identity(command, identity)?;
+        self.flush()?;
+        Ok(commit)
+    }
+
+    pub(crate) fn commit_remove_goal_with_identity(
+        &self,
+        command: RemoveGoalCommand,
+        identity: GoalCommandRequestIdentity,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
         validate_metadata(&command.metadata)?;
         validate_non_empty("remove reason", &command.reason)?;
-        self.update_lifecycle(
-            &command.metadata,
-            &command.goal_id,
+        self.commit_lifecycle(
+            command.metadata,
+            command.goal_id,
             GoalLifecycle::Abandoned {
                 reason: command.reason,
             },
+            GoalCommandKind::Remove,
+            identity,
         )
     }
 
@@ -227,16 +377,35 @@ impl PersistentGoalSetStore {
         &self,
         command: SatisfyGoalCommand,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        if let Some(outcome) = self.replayed_outcome(&command.metadata)? {
-            return Ok(outcome);
-        }
+        self.commit_satisfy_goal(command)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Atomically commit, flush, and acknowledge satisfaction.
+    pub fn commit_satisfy_goal(
+        &self,
+        command: SatisfyGoalCommand,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
+        let identity = request_identity(&command)?;
+        let commit = self.commit_satisfy_goal_with_identity(command, identity)?;
+        self.flush()?;
+        Ok(commit)
+    }
+
+    pub(crate) fn commit_satisfy_goal_with_identity(
+        &self,
+        command: SatisfyGoalCommand,
+        identity: GoalCommandRequestIdentity,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
         validate_metadata(&command.metadata)?;
-        self.update_lifecycle(
-            &command.metadata,
-            &command.goal_id,
+        self.commit_lifecycle(
+            command.metadata,
+            command.goal_id,
             GoalLifecycle::Satisfied {
                 at_seq: command.at_seq,
             },
+            GoalCommandKind::Satisfy,
+            identity,
         )
     }
 
@@ -245,17 +414,36 @@ impl PersistentGoalSetStore {
         &self,
         command: SuspendGoalCommand,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        if let Some(outcome) = self.replayed_outcome(&command.metadata)? {
-            return Ok(outcome);
-        }
+        self.commit_suspend_goal(command)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Atomically commit, flush, and acknowledge suspension.
+    pub fn commit_suspend_goal(
+        &self,
+        command: SuspendGoalCommand,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
+        let identity = request_identity(&command)?;
+        let commit = self.commit_suspend_goal_with_identity(command, identity)?;
+        self.flush()?;
+        Ok(commit)
+    }
+
+    pub(crate) fn commit_suspend_goal_with_identity(
+        &self,
+        command: SuspendGoalCommand,
+        identity: GoalCommandRequestIdentity,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
         validate_metadata(&command.metadata)?;
         validate_non_empty("suspend reason", &command.reason)?;
-        self.update_lifecycle(
-            &command.metadata,
-            &command.goal_id,
+        self.commit_lifecycle(
+            command.metadata,
+            command.goal_id,
             GoalLifecycle::Suspended {
                 reason: command.reason,
             },
+            GoalCommandKind::Suspend,
+            identity,
         )
     }
 
@@ -264,21 +452,50 @@ impl PersistentGoalSetStore {
         &self,
         command: ResumeGoalCommand,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        if let Some(outcome) = self.replayed_outcome(&command.metadata)? {
-            return Ok(outcome);
-        }
-        validate_metadata(&command.metadata)?;
-        self.update_lifecycle(&command.metadata, &command.goal_id, GoalLifecycle::Active)
+        self.commit_resume_goal(command).map(|(outcome, _)| outcome)
     }
 
-    /// Return active goals in deterministic goal id order.
+    /// Atomically commit, flush, and acknowledge resume.
+    pub fn commit_resume_goal(
+        &self,
+        command: ResumeGoalCommand,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
+        let identity = request_identity(&command)?;
+        let commit = self.commit_resume_goal_with_identity(command, identity)?;
+        self.flush()?;
+        Ok(commit)
+    }
+
+    pub(crate) fn commit_resume_goal_with_identity(
+        &self,
+        command: ResumeGoalCommand,
+        identity: GoalCommandRequestIdentity,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
+        validate_metadata(&command.metadata)?;
+        self.commit_lifecycle(
+            command.metadata,
+            command.goal_id,
+            GoalLifecycle::Active,
+            GoalCommandKind::Resume,
+            identity,
+        )
+    }
+
+    /// Return active goals ordered by urgency, then stable goal id.
     pub fn active_goals(&self) -> Result<Vec<Goal>, ExecutionInvariantError> {
-        Ok(self
+        let mut goals = self
             .records()?
             .into_iter()
             .filter(|record| matches!(record.goal.lifecycle, GoalLifecycle::Active))
             .map(|record| record.goal)
-            .collect())
+            .collect::<Vec<_>>();
+        goals.sort_by(|left, right| {
+            left.priority
+                .urgency
+                .cmp(&right.priority.urgency)
+                .then_with(|| left.goal_id.cmp(&right.goal_id))
+        });
+        Ok(goals)
     }
 
     /// Return one active goal when it exists.
@@ -302,34 +519,102 @@ impl PersistentGoalSetStore {
         self.records()
     }
 
+    /// Return the verified request identity for one command.
+    pub fn command_identity(
+        &self,
+        command_id: &str,
+    ) -> Result<Option<GoalCommandRequestIdentity>, ExecutionInvariantError> {
+        decode_optional(
+            self.command_identities
+                .get(command_id.as_bytes())
+                .map_err(to_store_io)?,
+        )
+    }
+
+    /// Return the durable commit receipt for one command.
+    pub fn command_receipt(
+        &self,
+        command_id: &str,
+    ) -> Result<Option<GoalCommandCommitReceipt>, ExecutionInvariantError> {
+        self.flush()?;
+        decode_optional(
+            self.command_receipts
+                .get(command_id.as_bytes())
+                .map_err(to_store_io)?,
+        )
+    }
+
     /// Flush durable writes to the backing database.
     pub fn flush(&self) -> Result<(), ExecutionInvariantError> {
         self.db.flush().map_err(to_store_io)?;
         Ok(())
     }
 
-    fn update_lifecycle(
+    fn commit_lifecycle(
         &self,
-        metadata: &GoalCommandMetadata,
-        goal_id: &str,
+        metadata: GoalCommandMetadata,
+        goal_id: String,
         lifecycle: GoalLifecycle,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        validate_non_empty("goal id", goal_id)?;
-        let Some(existing) = self.record(goal_id)? else {
-            let outcome = GoalCommandOutcome::NotFound {
-                goal_id: goal_id.to_string(),
-            };
-            self.record_outcome(metadata, &outcome)?;
-            return Ok(outcome);
-        };
-        let mut record = existing;
-        record.goal.lifecycle = lifecycle;
-        record.source_command_id = Some(metadata.command_id.clone());
-        record.updated_at_seq = metadata.seq;
-        self.put_record(&record)?;
-        let outcome = GoalCommandOutcome::Applied(Box::new(record));
-        self.record_outcome(metadata, &outcome)?;
-        Ok(outcome)
+        command_kind: GoalCommandKind,
+        identity: GoalCommandRequestIdentity,
+    ) -> Result<GoalCommandCommit, ExecutionInvariantError> {
+        validate_request_identity(&metadata, command_kind, &identity)?;
+        validate_non_empty("goal id", &goal_id)?;
+
+        let command_key = metadata.command_id.as_bytes().to_vec();
+        let goal_key = goal_id.as_bytes().to_vec();
+        let commit = (
+            &self.records,
+            &self.command_identities,
+            &self.command_outcomes,
+            &self.command_receipts,
+        )
+            .transaction(
+                |(records, command_identities, command_outcomes, command_receipts)| {
+                    if let Some(commit) = replay_or_upgrade(
+                        command_identities,
+                        command_outcomes,
+                        command_receipts,
+                        &identity,
+                        self.legacy_replay_policy,
+                        legacy_lifecycle_matches,
+                    )? {
+                        return Ok(commit);
+                    }
+
+                    let outcome = match records.get(goal_key.clone())? {
+                        Some(raw) => {
+                            let mut record: ExecutionGoalRecord = decode_transaction(&raw)?;
+                            validate_newer_sequence(&metadata, &record)
+                                .map_err(ConflictableTransactionError::Abort)?;
+                            validate_lifecycle_transition(
+                                &record.goal.lifecycle,
+                                &lifecycle,
+                                command_kind,
+                            )
+                            .map_err(ConflictableTransactionError::Abort)?;
+                            record.goal.lifecycle = lifecycle.clone();
+                            record.source_command_id = Some(metadata.command_id.clone());
+                            record.updated_at_seq = metadata.seq;
+                            records.insert(goal_key.clone(), encode_transaction(&record)?)?;
+                            GoalCommandOutcome::Applied(Box::new(record))
+                        }
+                        None => GoalCommandOutcome::NotFound {
+                            goal_id: goal_id.clone(),
+                        },
+                    };
+                    persist_commit(
+                        command_identities,
+                        command_outcomes,
+                        command_receipts,
+                        command_key.clone(),
+                        identity.clone(),
+                        outcome,
+                    )
+                },
+            )
+            .map_err(to_goal_transaction)?;
+        Ok(commit)
     }
 
     fn record(
@@ -350,92 +635,145 @@ impl PersistentGoalSetStore {
         });
         Ok(out)
     }
+}
 
-    fn put_record(&self, record: &ExecutionGoalRecord) -> Result<(), ExecutionInvariantError> {
-        self.records
-            .insert(
-                record.goal.goal_id.as_bytes(),
-                serde_json::to_vec(record).map_err(to_store_data)?,
-            )
-            .map_err(to_store_io)?;
-        Ok(())
+fn replay_or_upgrade<F>(
+    identities: &TransactionalTree,
+    outcomes: &TransactionalTree,
+    receipts: &TransactionalTree,
+    identity: &GoalCommandRequestIdentity,
+    legacy_policy: LegacyGoalCommandReplayPolicy,
+    legacy_matches: F,
+) -> Result<Option<GoalCommandCommit>, GoalTransactionError>
+where
+    F: Fn(&GoalCommandOutcome) -> bool,
+{
+    let key = identity.command_id.as_bytes().to_vec();
+    if let Some(raw) = identities.get(key.clone())? {
+        let existing: GoalCommandRequestIdentity = decode_transaction(&raw)?;
+        if existing != *identity {
+            return Err(ConflictableTransactionError::Abort(replay_conflict(
+                &identity.command_id,
+            )));
+        }
+        let outcome: GoalCommandOutcome =
+            required_transaction_value(outcomes, &key, &identity.command_id, "outcome")?;
+        let receipt: GoalCommandCommitReceipt =
+            required_transaction_value(receipts, &key, &identity.command_id, "receipt")?;
+        let expected_receipt =
+            commit_receipt(existing, &outcome).map_err(ConflictableTransactionError::Abort)?;
+        if receipt != expected_receipt {
+            return Err(ConflictableTransactionError::Abort(incomplete_commit(
+                &identity.command_id,
+                "valid receipt",
+            )));
+        }
+        return Ok(Some((outcome, receipt)));
     }
 
-    fn replayed_outcome(
-        &self,
-        metadata: &GoalCommandMetadata,
-    ) -> Result<Option<GoalCommandOutcome>, ExecutionInvariantError> {
-        decode_optional(
-            self.command_outcomes
-                .get(metadata.command_id.as_bytes())
-                .map_err(to_store_io)?,
-        )
+    if receipts.get(key.clone())?.is_some() {
+        return Err(ConflictableTransactionError::Abort(incomplete_commit(
+            &identity.command_id,
+            "request identity",
+        )));
     }
 
-    fn record_outcome(
-        &self,
-        metadata: &GoalCommandMetadata,
-        outcome: &GoalCommandOutcome,
-    ) -> Result<(), ExecutionInvariantError> {
-        self.command_outcomes
-            .insert(
-                metadata.command_id.as_bytes(),
-                serde_json::to_vec(outcome).map_err(to_store_data)?,
-            )
-            .map_err(to_store_io)?;
-        Ok(())
+    let Some(raw_outcome) = outcomes.get(key.clone())? else {
+        return Ok(None);
+    };
+    if legacy_policy == LegacyGoalCommandReplayPolicy::RejectUnverified {
+        return Err(ConflictableTransactionError::Abort(legacy_replay_rejected(
+            &identity.command_id,
+        )));
     }
-
-    fn duplicate_source_identity_for_other_goal(
-        &self,
-        metadata: &GoalCommandMetadata,
-        goal_id: &str,
-    ) -> Result<Option<String>, ExecutionInvariantError> {
-        Ok(metadata
-            .source_identity
-            .as_ref()
-            .map(|source_identity| self.source_identity_goal_id(source_identity))
-            .transpose()?
-            .flatten()
-            .filter(|existing_goal_id| existing_goal_id.as_str() != goal_id))
+    let outcome: GoalCommandOutcome = decode_transaction(&raw_outcome)?;
+    if !legacy_matches(&outcome) {
+        return Err(ConflictableTransactionError::Abort(replay_conflict(
+            &identity.command_id,
+        )));
     }
+    let receipt =
+        commit_receipt(identity.clone(), &outcome).map_err(ConflictableTransactionError::Abort)?;
+    identities.insert(key.clone(), encode_transaction(identity)?)?;
+    receipts.insert(key, encode_transaction(&receipt)?)?;
+    Ok(Some((outcome, receipt)))
+}
 
-    fn source_identity_goal_id(
-        &self,
-        source_identity: &str,
-    ) -> Result<Option<String>, ExecutionInvariantError> {
-        let Some(raw) = self
-            .source_identity_index
-            .get(source_identity.as_bytes())
-            .map_err(to_store_io)?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(
-            String::from_utf8(raw.to_vec()).map_err(to_store_utf8)?,
-        ))
-    }
+fn persist_commit(
+    identities: &TransactionalTree,
+    outcomes: &TransactionalTree,
+    receipts: &TransactionalTree,
+    key: Vec<u8>,
+    identity: GoalCommandRequestIdentity,
+    outcome: GoalCommandOutcome,
+) -> Result<GoalCommandCommit, GoalTransactionError> {
+    let receipt =
+        commit_receipt(identity.clone(), &outcome).map_err(ConflictableTransactionError::Abort)?;
+    identities.insert(key.clone(), encode_transaction(&identity)?)?;
+    outcomes.insert(key.clone(), encode_transaction(&outcome)?)?;
+    receipts.insert(key, encode_transaction(&receipt)?)?;
+    Ok((outcome, receipt))
+}
 
-    fn reindex_source_identity(
-        &self,
-        previous: Option<String>,
-        current: Option<String>,
-        goal_id: &str,
-    ) -> Result<(), ExecutionInvariantError> {
-        if previous != current {
-            if let Some(previous) = previous {
-                self.source_identity_index
-                    .remove(previous.as_bytes())
-                    .map_err(to_store_io)?;
+fn reindex_source_identity_transaction(
+    index: &TransactionalTree,
+    previous: Option<String>,
+    current: Option<String>,
+    goal_id: &str,
+) -> Result<(), GoalTransactionError> {
+    if previous != current {
+        if let Some(previous) = previous {
+            if let Some(raw) = index.get(previous.as_bytes())? {
+                let indexed_goal = String::from_utf8(raw.to_vec()).map_err(to_transaction_utf8)?;
+                if indexed_goal != goal_id {
+                    return Err(ConflictableTransactionError::Abort(
+                        ExecutionInvariantError::ConfigError(format!(
+                            "goal source identity '{previous}' points to unexpected goal '{indexed_goal}'"
+                        )),
+                    ));
+                }
+                index.remove(previous.as_bytes())?;
             }
         }
-        if let Some(current) = current {
-            self.source_identity_index
-                .insert(current.as_bytes(), goal_id.as_bytes())
-                .map_err(to_store_io)?;
-        }
-        Ok(())
     }
+    if let Some(current) = current {
+        index.insert(current.as_bytes(), goal_id.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn legacy_modify_matches(
+    outcome: &GoalCommandOutcome,
+    metadata: &GoalCommandMetadata,
+    goal: &Goal,
+) -> bool {
+    matches!(
+        outcome,
+        GoalCommandOutcome::Applied(record)
+            if record.goal == *goal
+                && record.source_command_id.as_deref() == Some(metadata.command_id.as_str())
+                && record.updated_at_seq == metadata.seq
+                && metadata.source_identity.is_none()
+                && record.source_identity.is_none()
+    )
+}
+
+fn legacy_lifecycle_matches(_outcome: &GoalCommandOutcome) -> bool {
+    // Legacy lifecycle outcomes never retained command source identity, so no
+    // complete lifecycle request can be reconstructed without ambiguity.
+    false
+}
+
+fn required_transaction_value<T: serde::de::DeserializeOwned>(
+    tree: &TransactionalTree,
+    key: &[u8],
+    command_id: &str,
+    name: &str,
+) -> Result<T, GoalTransactionError> {
+    let raw = tree
+        .get(key)?
+        .ok_or_else(|| ConflictableTransactionError::Abort(incomplete_commit(command_id, name)))?;
+    decode_transaction(&raw)
 }
 
 fn decode_optional<T: serde::de::DeserializeOwned>(
@@ -445,6 +783,28 @@ fn decode_optional<T: serde::de::DeserializeOwned>(
         return Ok(None);
     };
     Ok(Some(serde_json::from_slice(&raw).map_err(to_store_data)?))
+}
+
+fn decode_transaction<T: serde::de::DeserializeOwned>(
+    raw: &[u8],
+) -> Result<T, GoalTransactionError> {
+    serde_json::from_slice(raw).map_err(to_transaction_data)
+}
+
+fn encode_transaction<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, GoalTransactionError> {
+    serde_json::to_vec(value).map_err(to_transaction_data)
+}
+
+fn incomplete_commit(command_id: &str, missing: &str) -> ExecutionInvariantError {
+    ExecutionInvariantError::ConfigError(format!(
+        "goal command '{command_id}' is missing durable {missing}"
+    ))
+}
+
+fn legacy_replay_rejected(command_id: &str) -> ExecutionInvariantError {
+    ExecutionInvariantError::ConfigError(format!(
+        "legacy goal command '{command_id}' has no verified request identity"
+    ))
 }
 
 fn to_store_io(err: sled::Error) -> ExecutionInvariantError {
@@ -462,15 +822,11 @@ fn to_store_utf8(err: std::string::FromUtf8Error) -> ExecutionInvariantError {
     ))
 }
 
-fn to_transaction_data(
-    err: serde_json::Error,
-) -> ConflictableTransactionError<ExecutionInvariantError> {
+fn to_transaction_data(err: serde_json::Error) -> GoalTransactionError {
     ConflictableTransactionError::Abort(to_store_data(err))
 }
 
-fn to_transaction_utf8(
-    err: std::string::FromUtf8Error,
-) -> ConflictableTransactionError<ExecutionInvariantError> {
+fn to_transaction_utf8(err: std::string::FromUtf8Error) -> GoalTransactionError {
     ConflictableTransactionError::Abort(to_store_utf8(err))
 }
 

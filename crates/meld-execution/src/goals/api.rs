@@ -6,11 +6,12 @@
 
 use crate::error::ExecutionInvariantError;
 use crate::goals::contracts::{
-    AddGoalCommand, GoalCommandMetadata, GoalCommandOutcome, ModifyGoalCommand, RemoveGoalCommand,
-    ResumeGoalCommand, SatisfyGoalCommand, SuspendGoalCommand,
+    AddGoalCommand, GoalCommandCommitReceipt, GoalCommandKind, GoalCommandMetadata,
+    GoalCommandOutcome, GoalCommandRequestContract, GoalCommandRequestIdentity, ModifyGoalCommand,
+    RemoveGoalCommand, ResumeGoalCommand, SatisfyGoalCommand, SuspendGoalCommand,
 };
 use crate::goals::persistent_store::PersistentGoalSetStore;
-use crate::goals::store::GoalSetStore;
+use crate::goals::store::{request_identity, GoalSetStore};
 use meld_lang::GoalLifecycle;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -46,135 +47,204 @@ pub enum GoalSetApiError {
     Store(String),
 }
 
-/// Minimal mutating goal-store surface required by `GoalSetApi`.
+impl GoalCommandRequestContract for GoalAcceptanceRequest {
+    fn metadata(&self) -> &GoalCommandMetadata {
+        &self.metadata
+    }
+
+    fn command_kind(&self) -> GoalCommandKind {
+        GoalCommandKind::Add
+    }
+}
+
+mod private {
+    use super::*;
+
+    pub trait GoalSetCommandStore {
+        /// Atomically persist or replay an add-goal command and its request identity.
+        fn commit_add_goal_command(
+            &mut self,
+            command: AddGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>;
+
+        /// Atomically persist or replay a complete goal replacement.
+        fn commit_modify_goal_command(
+            &mut self,
+            command: ModifyGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>;
+
+        /// Atomically persist or replay an abandonment transition.
+        fn commit_remove_goal_command(
+            &mut self,
+            command: RemoveGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>;
+
+        /// Atomically persist or replay a satisfaction transition.
+        fn commit_satisfy_goal_command(
+            &mut self,
+            command: SatisfyGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>;
+
+        /// Atomically persist or replay a suspension transition.
+        fn commit_suspend_goal_command(
+            &mut self,
+            command: SuspendGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>;
+
+        /// Atomically persist or replay a transition back to active.
+        fn commit_resume_goal_command(
+            &mut self,
+            command: ResumeGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>;
+
+        /// Flush every goal command tree before a durable commit is reported.
+        fn flush_goal_commands(&mut self) -> Result<(), ExecutionInvariantError>;
+    }
+
+    impl GoalSetCommandStore for GoalSetStore {
+        fn commit_add_goal_command(
+            &mut self,
+            command: AddGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_add_goal_with_identity(command, identity)
+        }
+
+        fn commit_modify_goal_command(
+            &mut self,
+            command: ModifyGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_modify_goal_with_identity(command, identity)
+        }
+
+        fn commit_remove_goal_command(
+            &mut self,
+            command: RemoveGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_remove_goal_with_identity(command, identity)
+        }
+
+        fn commit_satisfy_goal_command(
+            &mut self,
+            command: SatisfyGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_satisfy_goal_with_identity(command, identity)
+        }
+
+        fn commit_suspend_goal_command(
+            &mut self,
+            command: SuspendGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_suspend_goal_with_identity(command, identity)
+        }
+
+        fn commit_resume_goal_command(
+            &mut self,
+            command: ResumeGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_resume_goal_with_identity(command, identity)
+        }
+
+        fn flush_goal_commands(&mut self) -> Result<(), ExecutionInvariantError> {
+            Ok(())
+        }
+    }
+
+    impl GoalSetCommandStore for PersistentGoalSetStore {
+        fn commit_add_goal_command(
+            &mut self,
+            command: AddGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_add_goal_with_identity(command, identity)
+        }
+
+        fn commit_modify_goal_command(
+            &mut self,
+            command: ModifyGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_modify_goal_with_identity(command, identity)
+        }
+
+        fn commit_remove_goal_command(
+            &mut self,
+            command: RemoveGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_remove_goal_with_identity(command, identity)
+        }
+
+        fn commit_satisfy_goal_command(
+            &mut self,
+            command: SatisfyGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_satisfy_goal_with_identity(command, identity)
+        }
+
+        fn commit_suspend_goal_command(
+            &mut self,
+            command: SuspendGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_suspend_goal_with_identity(command, identity)
+        }
+
+        fn commit_resume_goal_command(
+            &mut self,
+            command: ResumeGoalCommand,
+            identity: GoalCommandRequestIdentity,
+        ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError>
+        {
+            self.commit_resume_goal_with_identity(command, identity)
+        }
+
+        fn flush_goal_commands(&mut self) -> Result<(), ExecutionInvariantError> {
+            self.flush()
+        }
+    }
+}
+
+/// Sealed store capability accepted by `GoalSetApi`.
 ///
-/// The facade uses this trait to apply the same boundary validation to both
-/// in-memory tests and durable execution state.
-pub trait GoalSetCommandStore {
-    /// Persist or replay an add-goal command.
-    fn add_goal_command(
-        &mut self,
-        command: AddGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError>;
+/// Command identity and pre-flush receipt methods remain private to the
+/// facade, so callers can submit only complete canonical requests.
+///
+/// ```compile_fail
+/// use meld_execution::goals::api::GoalSetApiStore;
+/// use meld_execution::goals::{AddGoalCommand, GoalCommandRequestIdentity, GoalSetStore};
+/// let mut store = GoalSetStore::new();
+/// let command: AddGoalCommand = todo!();
+/// let forged_identity: GoalCommandRequestIdentity = todo!();
+/// store.commit_add_goal_command(command, forged_identity);
+/// ```
+pub trait GoalSetApiStore: private::GoalSetCommandStore {}
 
-    /// Persist or replay a complete goal replacement.
-    fn modify_goal_command(
-        &mut self,
-        command: ModifyGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError>;
-
-    /// Persist or replay an abandonment transition.
-    fn remove_goal_command(
-        &mut self,
-        command: RemoveGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError>;
-
-    /// Persist or replay a satisfaction transition.
-    fn satisfy_goal_command(
-        &mut self,
-        command: SatisfyGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError>;
-
-    /// Persist or replay a suspension transition.
-    fn suspend_goal_command(
-        &mut self,
-        command: SuspendGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError>;
-
-    /// Persist or replay a transition back to active.
-    fn resume_goal_command(
-        &mut self,
-        command: ResumeGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError>;
-}
-
-impl GoalSetCommandStore for GoalSetStore {
-    fn add_goal_command(
-        &mut self,
-        command: AddGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.add_goal(command)
-    }
-
-    fn modify_goal_command(
-        &mut self,
-        command: ModifyGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.modify_goal(command)
-    }
-
-    fn remove_goal_command(
-        &mut self,
-        command: RemoveGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.remove_goal(command)
-    }
-
-    fn satisfy_goal_command(
-        &mut self,
-        command: SatisfyGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.satisfy_goal(command)
-    }
-
-    fn suspend_goal_command(
-        &mut self,
-        command: SuspendGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.suspend_goal(command)
-    }
-
-    fn resume_goal_command(
-        &mut self,
-        command: ResumeGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.resume_goal(command)
-    }
-}
-
-impl GoalSetCommandStore for PersistentGoalSetStore {
-    fn add_goal_command(
-        &mut self,
-        command: AddGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.add_goal(command)
-    }
-
-    fn modify_goal_command(
-        &mut self,
-        command: ModifyGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.modify_goal(command)
-    }
-
-    fn remove_goal_command(
-        &mut self,
-        command: RemoveGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.remove_goal(command)
-    }
-
-    fn satisfy_goal_command(
-        &mut self,
-        command: SatisfyGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.satisfy_goal(command)
-    }
-
-    fn suspend_goal_command(
-        &mut self,
-        command: SuspendGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.suspend_goal(command)
-    }
-
-    fn resume_goal_command(
-        &mut self,
-        command: ResumeGoalCommand,
-    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
-        self.resume_goal(command)
-    }
-}
+impl GoalSetApiStore for GoalSetStore {}
+impl GoalSetApiStore for PersistentGoalSetStore {}
 
 /// Execution-owned facade for accepted goals and lifecycle commands.
 pub struct GoalSetApi<'a, S> {
@@ -183,7 +253,7 @@ pub struct GoalSetApi<'a, S> {
 
 impl<'a, S> GoalSetApi<'a, S>
 where
-    S: GoalSetCommandStore,
+    S: GoalSetApiStore,
 {
     /// Bind the facade to one mutable command store.
     pub fn new(store: &'a mut S) -> Self {
@@ -195,8 +265,22 @@ where
         &mut self,
         request: GoalAcceptanceRequest,
     ) -> Result<GoalCommandOutcome, GoalSetApiError> {
+        self.accept_goal_durable(request)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Validate, commit, flush, and acknowledge one producer-neutral goal request.
+    pub fn accept_goal_durable(
+        &mut self,
+        request: GoalAcceptanceRequest,
+    ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), GoalSetApiError> {
+        let identity = request_identity(&request).map_err(map_store_error)?;
         let command = build_acceptance_add_goal_command(request)?;
-        self.add_goal(command)
+        let commit = self
+            .store
+            .commit_add_goal_command(command, identity)
+            .map_err(map_store_error)?;
+        self.flush_and_return(commit)
     }
 
     /// Apply an execution-native add-goal command through the same error surface.
@@ -204,9 +288,20 @@ where
         &mut self,
         command: AddGoalCommand,
     ) -> Result<GoalCommandOutcome, GoalSetApiError> {
-        self.store
-            .add_goal_command(command)
-            .map_err(map_store_error)
+        self.add_goal_durable(command).map(|(outcome, _)| outcome)
+    }
+
+    /// Commit, flush, and acknowledge one execution-native add command.
+    pub fn add_goal_durable(
+        &mut self,
+        command: AddGoalCommand,
+    ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), GoalSetApiError> {
+        let identity = request_identity(&command).map_err(map_store_error)?;
+        let commit = self
+            .store
+            .commit_add_goal_command(command, identity)
+            .map_err(map_store_error)?;
+        self.flush_and_return(commit)
     }
 
     /// Apply an execution-native goal replacement through the facade.
@@ -214,9 +309,21 @@ where
         &mut self,
         command: ModifyGoalCommand,
     ) -> Result<GoalCommandOutcome, GoalSetApiError> {
-        self.store
-            .modify_goal_command(command)
-            .map_err(map_store_error)
+        self.modify_goal_durable(command)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Commit, flush, and acknowledge one goal replacement.
+    pub fn modify_goal_durable(
+        &mut self,
+        command: ModifyGoalCommand,
+    ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), GoalSetApiError> {
+        let identity = request_identity(&command).map_err(map_store_error)?;
+        let commit = self
+            .store
+            .commit_modify_goal_command(command, identity)
+            .map_err(map_store_error)?;
+        self.flush_and_return(commit)
     }
 
     /// Apply an execution-native abandonment command through the facade.
@@ -224,9 +331,21 @@ where
         &mut self,
         command: RemoveGoalCommand,
     ) -> Result<GoalCommandOutcome, GoalSetApiError> {
-        self.store
-            .remove_goal_command(command)
-            .map_err(map_store_error)
+        self.remove_goal_durable(command)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Commit, flush, and acknowledge one abandonment command.
+    pub fn remove_goal_durable(
+        &mut self,
+        command: RemoveGoalCommand,
+    ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), GoalSetApiError> {
+        let identity = request_identity(&command).map_err(map_store_error)?;
+        let commit = self
+            .store
+            .commit_remove_goal_command(command, identity)
+            .map_err(map_store_error)?;
+        self.flush_and_return(commit)
     }
 
     /// Apply an execution-native satisfaction command through the facade.
@@ -234,9 +353,21 @@ where
         &mut self,
         command: SatisfyGoalCommand,
     ) -> Result<GoalCommandOutcome, GoalSetApiError> {
-        self.store
-            .satisfy_goal_command(command)
-            .map_err(map_store_error)
+        self.satisfy_goal_durable(command)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Commit, flush, and acknowledge one satisfaction command.
+    pub fn satisfy_goal_durable(
+        &mut self,
+        command: SatisfyGoalCommand,
+    ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), GoalSetApiError> {
+        let identity = request_identity(&command).map_err(map_store_error)?;
+        let commit = self
+            .store
+            .commit_satisfy_goal_command(command, identity)
+            .map_err(map_store_error)?;
+        self.flush_and_return(commit)
     }
 
     /// Apply an execution-native suspension command through the facade.
@@ -244,9 +375,21 @@ where
         &mut self,
         command: SuspendGoalCommand,
     ) -> Result<GoalCommandOutcome, GoalSetApiError> {
-        self.store
-            .suspend_goal_command(command)
-            .map_err(map_store_error)
+        self.suspend_goal_durable(command)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Commit, flush, and acknowledge one suspension command.
+    pub fn suspend_goal_durable(
+        &mut self,
+        command: SuspendGoalCommand,
+    ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), GoalSetApiError> {
+        let identity = request_identity(&command).map_err(map_store_error)?;
+        let commit = self
+            .store
+            .commit_suspend_goal_command(command, identity)
+            .map_err(map_store_error)?;
+        self.flush_and_return(commit)
     }
 
     /// Apply an execution-native resume command through the facade.
@@ -254,9 +397,29 @@ where
         &mut self,
         command: ResumeGoalCommand,
     ) -> Result<GoalCommandOutcome, GoalSetApiError> {
-        self.store
-            .resume_goal_command(command)
-            .map_err(map_store_error)
+        self.resume_goal_durable(command)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Commit, flush, and acknowledge one resume command.
+    pub fn resume_goal_durable(
+        &mut self,
+        command: ResumeGoalCommand,
+    ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), GoalSetApiError> {
+        let identity = request_identity(&command).map_err(map_store_error)?;
+        let commit = self
+            .store
+            .commit_resume_goal_command(command, identity)
+            .map_err(map_store_error)?;
+        self.flush_and_return(commit)
+    }
+
+    fn flush_and_return(
+        &mut self,
+        commit: (GoalCommandOutcome, GoalCommandCommitReceipt),
+    ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), GoalSetApiError> {
+        self.store.flush_goal_commands().map_err(map_store_error)?;
+        Ok(commit)
     }
 }
 

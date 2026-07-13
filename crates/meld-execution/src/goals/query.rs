@@ -14,13 +14,21 @@ impl<'a> GoalSetQuery<'a> {
         Self { store }
     }
 
-    /// Return active goals in deterministic goal id order.
+    /// Return active goals by urgency, then stable goal id.
     pub fn active_goals(&self) -> Vec<Goal> {
-        self.store
+        let mut goals = self
+            .store
             .records()
             .filter(|record| matches!(record.goal.lifecycle, GoalLifecycle::Active))
             .map(|record| record.goal.clone())
-            .collect()
+            .collect::<Vec<_>>();
+        goals.sort_by(|left, right| {
+            left.priority
+                .urgency
+                .cmp(&right.priority.urgency)
+                .then_with(|| left.goal_id.cmp(&right.goal_id))
+        });
+        goals
     }
 
     /// Return one active goal when it exists.
