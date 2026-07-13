@@ -526,6 +526,21 @@ impl AdvanceSubscriptionCommand {
     }
 }
 
+/// Compare-and-swap intent for one agent subscription cursor advancement.
+///
+/// The command remains the canonical requested transition. Expected cursor
+/// fields are operational fencing metadata that prevent concurrent deliveries
+/// from overwriting a newer durable position.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSubscriptionCursorCasIntent {
+    /// Revision id observed before the attempted advancement.
+    pub expected_delivered_revision_id: Option<String>,
+    /// Sequence observed before the attempted advancement.
+    pub expected_delivered_seq: u64,
+    /// Complete canonical cursor advancement command.
+    pub command: AdvanceSubscriptionCommand,
+}
+
 /// Command wrapper for persisting a curation decision.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordCurationDecisionCommand {
@@ -873,4 +888,51 @@ fn dedupe_mismatch(field: &str) -> Result<(), StorageError> {
     Err(StorageError::InvalidPath(format!(
         "agent goal command dedupe key does not match {field}"
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn advance_command() -> AdvanceSubscriptionCommand {
+        AdvanceSubscriptionCommand {
+            agent_id: "agent-a".to_string(),
+            subscription_id: "subscription-a".to_string(),
+            delivered_revision_id: "revision-b".to_string(),
+            delivered_seq: 12,
+        }
+    }
+
+    #[test]
+    fn subscription_cursor_cas_intent_round_trips_canonical_command() {
+        let intent = AgentSubscriptionCursorCasIntent {
+            expected_delivered_revision_id: Some("revision-a".to_string()),
+            expected_delivered_seq: 11,
+            command: advance_command(),
+        };
+
+        let value = serde_json::to_value(&intent).unwrap();
+        assert_eq!(value["expected_delivered_seq"], 11);
+        assert_eq!(value["command"]["delivered_revision_id"], "revision-b");
+        assert_eq!(
+            serde_json::from_value::<AgentSubscriptionCursorCasIntent>(value).unwrap(),
+            intent
+        );
+    }
+
+    #[test]
+    fn legacy_subscription_advance_command_shape_remains_unchanged() {
+        let legacy = serde_json::json!({
+            "agent_id": "agent-a",
+            "subscription_id": "subscription-a",
+            "delivered_revision_id": "revision-b",
+            "delivered_seq": 12
+        });
+        let decoded: AdvanceSubscriptionCommand = serde_json::from_value(legacy.clone()).unwrap();
+        let encoded = serde_json::to_value(decoded).unwrap();
+
+        assert_eq!(encoded, legacy);
+        assert!(encoded.get("expected_delivered_seq").is_none());
+        assert!(encoded.get("command").is_none());
+    }
 }
