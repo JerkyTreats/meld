@@ -70,7 +70,20 @@ pub mod store;
 
 pub use comparator::{BayesianComparator, ComparatorInput, ComparatorOutput};
 pub use config::{BeliefConfigLoader, ConfigSnapshot};
-pub use contracts::*;
+pub use contracts::{
+    AssessmentLease, BeliefAuthorityMigrationIdentity, BeliefAuthorityMigrationMarker,
+    BeliefAuthorityMigrationProgress, BeliefAuthorityParityReceipt, BeliefAuthoritySnapshot,
+    BeliefCommitRecoveryDisposition, BeliefFamilyConfig, BeliefKey, BeliefProvenanceSummary,
+    BeliefRevision, BeliefStatus, BeliefView, BranchScope, ComparatorConfig,
+    ComparatorFactorConfig, ContradictionReason, ContradictionState, DirtyKeyState, DirtyReason,
+    EvidenceAssignment, EvidenceConsumerCursor, EvidenceIngestionReceipt,
+    EvidenceIngestionReceiptDisposition, EvidenceIngestionReceiptIdentity,
+    EvidenceIngestionReceiptWriteDisposition, EvidenceItem, EvidencePolarity, EvidencePolicyId,
+    EvidenceRejection, EvidenceRole, EvidenceSchemaConfig, EvidenceSourceMapping, EvidenceValue,
+    FreshnessReason, FreshnessState, HydrationRefs, LeaseStatus, LegacyBeliefCompatibilityPosture,
+    ObservationOpportunity, ObservationReason, PlannerProjectionConfig, PlannerProjectionSummary,
+    PosteriorSummary, PromotedEvidenceRecord, BELIEF_AUTHORITY_MIGRATION_SCHEMA_VERSION,
+};
 pub use evidence::BeliefEvidenceNormalizer;
 pub use ingestion::{
     ingest_promoted_evidence, PromotedEvidenceIngestionRequest, PromotedEvidenceIngestionResult,

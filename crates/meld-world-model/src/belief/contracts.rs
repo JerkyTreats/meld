@@ -866,7 +866,7 @@ pub enum LeaseStatus {
     rename_all = "snake_case",
     try_from = "AssessmentLeaseCasIntentWire"
 )]
-pub enum AssessmentLeaseCasIntent {
+pub(crate) enum AssessmentLeaseCasIntent {
     /// Install the proposed leased product only when no active lease exists.
     Acquire {
         /// Complete active lease product with `LeaseStatus::Leased`.
@@ -906,7 +906,7 @@ enum AssessmentLeaseCasIntentWire {
 
 impl AssessmentLeaseCasIntent {
     /// Validate the complete legal lease transition carried by this intent.
-    pub fn validate(&self) -> Result<(), StorageError> {
+    pub(crate) fn validate(&self) -> Result<(), StorageError> {
         match self {
             Self::Acquire {
                 proposed_active_lease,
@@ -1083,7 +1083,7 @@ pub struct BeliefView {
 /// Durable intent binding every product in one atomic belief commit.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "BeliefCommitIntentWire")]
-pub struct BeliefCommitIntent {
+pub(crate) struct BeliefCommitIntent {
     /// Stable id reused while recovering the same commit attempt.
     intent_id: String,
     /// Exact active lease required before commit.
@@ -1110,7 +1110,7 @@ struct BeliefCommitIntentWire {
 
 impl BeliefCommitIntent {
     /// Bind every product in one legal leased-to-completed belief commit.
-    pub fn try_new(
+    pub(crate) fn try_new(
         intent_id: impl Into<String>,
         expected_active_lease: AssessmentLease,
         completed_lease: AssessmentLease,
@@ -1153,32 +1153,32 @@ impl BeliefCommitIntent {
     }
 
     /// Borrow the stable commit intent id.
-    pub fn intent_id(&self) -> &str {
+    pub(crate) fn intent_id(&self) -> &str {
         &self.intent_id
     }
 
     /// Borrow the exact active lease required before commit.
-    pub fn expected_active_lease(&self) -> &AssessmentLease {
+    pub(crate) fn expected_active_lease(&self) -> &AssessmentLease {
         &self.expected_active_lease
     }
 
     /// Borrow the terminal lease persisted by commit.
-    pub fn completed_lease(&self) -> &AssessmentLease {
+    pub(crate) fn completed_lease(&self) -> &AssessmentLease {
         &self.completed_lease
     }
 
     /// Borrow the dirty-key state consumed by commit.
-    pub fn expected_dirty_state(&self) -> &DirtyKeyState {
+    pub(crate) fn expected_dirty_state(&self) -> &DirtyKeyState {
         &self.expected_dirty_state
     }
 
     /// Borrow the canonical revision product.
-    pub fn revision(&self) -> &BeliefRevision {
+    pub(crate) fn revision(&self) -> &BeliefRevision {
         &self.revision
     }
 
     /// Borrow the receiver-owned public view.
-    pub fn public_view(&self) -> &BeliefView {
+    pub(crate) fn public_view(&self) -> &BeliefView {
         &self.public_view
     }
 }
@@ -1233,7 +1233,7 @@ pub struct HydrationRefs {
 }
 
 /// Validate a finite scalar probability.
-pub fn validate_probability(label: &str, value: f64) -> Result<(), StorageError> {
+pub(crate) fn validate_probability(label: &str, value: f64) -> Result<(), StorageError> {
     if !(0.0..=1.0).contains(&value) || !value.is_finite() {
         return Err(StorageError::InvalidPath(format!(
             "{label} must be a finite probability"
@@ -1243,7 +1243,7 @@ pub fn validate_probability(label: &str, value: f64) -> Result<(), StorageError>
 }
 
 /// Validate a non-empty runtime id or storage key component.
-pub fn require_non_empty(label: &str, value: &str) -> Result<(), StorageError> {
+pub(crate) fn require_non_empty(label: &str, value: &str) -> Result<(), StorageError> {
     if value.trim().is_empty() {
         return Err(StorageError::InvalidPath(format!(
             "{label} must be non-empty"

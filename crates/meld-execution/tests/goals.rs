@@ -3,9 +3,8 @@ use meld_execution::goals::{
     AddGoalCommand, ExecutionGoalRecord, GoalAcceptanceLifecycle, GoalAcceptanceRequest,
     GoalCommandCommitReceipt, GoalCommandKind, GoalCommandMetadata, GoalCommandOutcome,
     GoalCommandRequestContract, GoalCommandRequestIdentity, GoalSetApi, GoalSetApiError,
-    GoalSetQuery, GoalSetStore, LegacyGoalCommandReplayPolicy, ModifyGoalCommand,
-    PersistentGoalSetStore, RemoveGoalCommand, ResumeGoalCommand, SatisfyGoalCommand,
-    SuspendGoalCommand,
+    GoalSetQuery, GoalSetStore, ModifyGoalCommand, PersistentGoalSetStore, RemoveGoalCommand,
+    ResumeGoalCommand, SatisfyGoalCommand, SuspendGoalCommand,
 };
 use meld_lang::{
     Condition, Goal, GoalLifecycle, GoalPriority, GoalSource, Literal, Proposition, Term,
@@ -1312,43 +1311,6 @@ fn ambiguous_legacy_lifecycle_outcome_is_not_upgraded() {
 }
 
 #[test]
-fn strict_legacy_policy_rejects_unverified_outcome() {
-    let dir = tempfile::tempdir().unwrap();
-    let db = sled::open(dir.path().join("goals")).unwrap();
-    let command = AddGoalCommand {
-        metadata: metadata("cmd-legacy", None, 1),
-        goal: goal("goal-a", GoalLifecycle::Active),
-    };
-    let record = ExecutionGoalRecord {
-        goal: command.goal.clone(),
-        source_command_id: Some(command.metadata.command_id.clone()),
-        source_identity: None,
-        created_at_seq: 1,
-        updated_at_seq: 1,
-    };
-    db.open_tree("execution_goal_command_outcomes")
-        .unwrap()
-        .insert(
-            "cmd-legacy",
-            serde_json::to_vec(&GoalCommandOutcome::Applied(Box::new(record))).unwrap(),
-        )
-        .unwrap();
-    db.flush().unwrap();
-    let store = PersistentGoalSetStore::with_legacy_replay_policy(
-        db,
-        LegacyGoalCommandReplayPolicy::RejectUnverified,
-    )
-    .unwrap();
-
-    let error = store.add_goal(command).unwrap_err();
-
-    assert!(error
-        .to_string()
-        .contains("has no verified request identity"));
-    assert!(store.command_identity("cmd-legacy").unwrap().is_none());
-}
-
-#[test]
 fn stale_unique_modify_and_lifecycle_commands_are_rejected() {
     let mut store = GoalSetStore::new();
     store
@@ -1380,6 +1342,17 @@ fn stale_unique_modify_and_lifecycle_commands_are_rejected() {
     assert_eq!(record.updated_at_seq, 10);
     assert_eq!(record.goal.priority.urgency, 1);
     assert!(matches!(record.goal.lifecycle, GoalLifecycle::Active));
+}
+
+#[test]
+fn legacy_replay_policy_selection_stays_crate_owned() {
+    let goals_module = include_str!("../src/goals.rs");
+    let contracts = include_str!("../src/goals/contracts.rs");
+    let persistent_store = include_str!("../src/goals/persistent_store.rs");
+
+    assert!(!goals_module.contains("LegacyGoalCommandReplayPolicy"));
+    assert!(!contracts.contains("pub enum LegacyGoalCommandReplayPolicy"));
+    assert!(!persistent_store.contains("pub fn with_legacy_replay_policy"));
 }
 
 #[test]

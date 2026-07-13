@@ -53,8 +53,8 @@ impl PersistentGoalSetStore {
         Self::with_legacy_replay_policy(db, LegacyGoalCommandReplayPolicy::ReconstructAndVerify)
     }
 
-    /// Open goal trees with an explicit legacy replay posture.
-    pub fn with_legacy_replay_policy(
+    /// Open goal trees with an explicit crate-owned legacy replay posture.
+    pub(crate) fn with_legacy_replay_policy(
         db: Db,
         legacy_replay_policy: LegacyGoalCommandReplayPolicy,
     ) -> Result<Self, ExecutionInvariantError> {
@@ -637,6 +637,13 @@ impl PersistentGoalSetStore {
     }
 }
 
+// TODO compat-shim: remove this replay branch after the minimum supported
+// goal-store schema requires request identities beside every command outcome.
+// It preserves verified replay for outcomes written before request hashes
+// existed. Before deletion, keep
+// compatible_legacy_applied_outcome_is_verified_and_upgraded and
+// strict_legacy_policy_rejects_unverified_outcome green while proving all
+// supported stores have completed the identity upgrade.
 fn replay_or_upgrade<F>(
     identities: &TransactionalTree,
     outcomes: &TransactionalTree,
@@ -834,5 +841,70 @@ fn to_goal_transaction(err: TransactionError<ExecutionInvariantError>) -> Execut
     match err {
         TransactionError::Abort(error) => error,
         TransactionError::Storage(error) => to_store_io(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use meld_events::DomainObjectRef;
+    use meld_lang::{GoalPriority, GoalSource, Proposition, Term};
+
+    #[test]
+    fn strict_legacy_policy_rejects_unverified_outcome() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::open(dir.path().join("goals")).unwrap();
+        let goal = Goal {
+            goal_id: "goal-a".to_string(),
+            agent_id: "agent-a".to_string(),
+            target: Proposition::Accessible {
+                scope: Term::Object(
+                    DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap(),
+                ),
+            },
+            priority: GoalPriority {
+                urgency: 1,
+                cost_ceiling: None,
+            },
+            source: GoalSource::UserDirected {
+                directive: "inspect node-a".to_string(),
+            },
+            lifecycle: GoalLifecycle::Active,
+        };
+        let command = AddGoalCommand {
+            metadata: GoalCommandMetadata {
+                command_id: "cmd-legacy".to_string(),
+                source_identity: None,
+                seq: 1,
+            },
+            goal: goal.clone(),
+        };
+        let record = ExecutionGoalRecord {
+            goal,
+            source_command_id: Some(command.metadata.command_id.clone()),
+            source_identity: None,
+            created_at_seq: 1,
+            updated_at_seq: 1,
+        };
+        db.open_tree(TREE_COMMAND_OUTCOMES)
+            .unwrap()
+            .insert(
+                "cmd-legacy",
+                serde_json::to_vec(&GoalCommandOutcome::Applied(Box::new(record))).unwrap(),
+            )
+            .unwrap();
+        db.flush().unwrap();
+        let store = PersistentGoalSetStore::with_legacy_replay_policy(
+            db,
+            LegacyGoalCommandReplayPolicy::RejectUnverified,
+        )
+        .unwrap();
+
+        let error = store.add_goal(command).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("has no verified request identity"));
+        assert!(store.command_identity("cmd-legacy").unwrap().is_none());
     }
 }

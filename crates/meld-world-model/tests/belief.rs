@@ -1890,6 +1890,25 @@ fn no_mod_rs_is_required_for_belief() {
 }
 
 #[test]
+fn belief_public_surface_excludes_raw_authority_mutations() {
+    let module = include_str!("../src/belief.rs");
+    let contracts = include_str!("../src/belief/contracts.rs");
+    let store = include_str!("../src/belief/store.rs");
+
+    assert!(!module.contains("pub use contracts::*"));
+    assert!(!contracts.contains("pub enum AssessmentLeaseCasIntent"));
+    assert!(!contracts.contains("pub struct BeliefCommitIntent"));
+    for raw_mutation in [
+        "pub fn apply_assessment_lease_cas",
+        "pub fn put_lease",
+        "pub fn prepare_belief_commit",
+        "pub fn apply_belief_commit",
+    ] {
+        assert!(!store.contains(raw_mutation));
+    }
+}
+
+#[test]
 fn belief_core_has_no_family_specific_rust_identifiers() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     for path in [
@@ -2046,80 +2065,6 @@ fn test_lease(
         config_snapshot_hash: "hash".to_string(),
         status: meld_world_model::LeaseStatus::Queued,
     }
-}
-
-#[test]
-fn belief_open_reconciles_an_interrupted_atomic_commit_intent() {
-    let (_graph_dir, graph, node) = seeded_graph();
-    let belief_dir = tempfile::tempdir().unwrap();
-    let path = belief_dir.path().join("belief");
-    let revision_id;
-    let lease_id;
-    let key;
-    {
-        let store = Arc::new(BeliefStore::new(sled::open(&path).unwrap()).unwrap());
-        let runtime = BeliefRuntime::from_json_config(store.clone(), graph, config_json()).unwrap();
-        runtime
-            .assess_subject(&node, "frame_type", "analysis", "worker-a")
-            .unwrap();
-        let prior_view = BeliefQuery::new(store.as_ref())
-            .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
-            .unwrap()
-            .remove(0);
-        key = prior_view.key.clone();
-        store.mark_dirty(&key, 2).unwrap();
-        let lease = store
-            .acquire_lease(test_lease(&prior_view, "lease-interrupted", 2, 2))
-            .unwrap();
-        lease_id = lease.lease_id.clone();
-        let revision = test_revision(&prior_view, 2, 2);
-        revision_id = revision.revision_id.clone();
-        let view = store.project_view(
-            &revision,
-            HydrationRefs {
-                evidence_ids: Vec::new(),
-                source_fact_ids: Vec::new(),
-                graph_anchor_ids: Vec::new(),
-                revision_id: Some(revision.revision_id.clone()),
-            },
-        );
-        let mut completed = lease.clone();
-        completed.status = LeaseStatus::Completed;
-        let intent = meld_world_model::belief::contracts::BeliefCommitIntent::try_new(
-            "commit-interrupted",
-            lease,
-            completed,
-            store.dirty_state(&key).unwrap().unwrap(),
-            revision,
-            view,
-        )
-        .unwrap();
-        store.prepare_belief_commit(&intent).unwrap();
-    }
-
-    let reopened = BeliefStore::new(reopen_sled_after_close(&path).unwrap()).unwrap();
-    assert_eq!(
-        reopened
-            .current_revision(&key)
-            .unwrap()
-            .unwrap()
-            .revision_id,
-        revision_id
-    );
-    assert_eq!(
-        reopened
-            .current_view(&key)
-            .unwrap()
-            .unwrap()
-            .current_revision_id
-            .as_deref(),
-        Some(revision_id.as_str())
-    );
-    assert_eq!(
-        reopened.get_lease(&lease_id).unwrap().unwrap().status,
-        LeaseStatus::Completed
-    );
-    assert!(reopened.dirty_state(&key).unwrap().is_none());
 }
 
 fn evidence_cursor(

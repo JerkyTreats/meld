@@ -783,7 +783,7 @@ impl BeliefStore {
     }
 
     /// Atomically apply one validated assessment lease transition.
-    pub fn apply_assessment_lease_cas(
+    pub(crate) fn apply_assessment_lease_cas(
         &self,
         intent: &AssessmentLeaseCasIntent,
     ) -> Result<AssessmentLease, StorageError> {
@@ -902,18 +902,6 @@ impl BeliefStore {
         Ok(proposed.clone())
     }
 
-    /// Store a lease record in its current lifecycle state.
-    pub fn put_lease(&self, lease: &AssessmentLease) -> Result<(), StorageError> {
-        let _write = self.writable_guard()?;
-        self.leases
-            .insert(
-                lease.lease_id.as_bytes(),
-                serde_json::to_vec(lease).map_err(to_storage_data)?,
-            )
-            .map_err(to_storage_io)?;
-        Ok(())
-    }
-
     /// Read a lease by id.
     pub fn get_lease(&self, lease_id: &str) -> Result<Option<AssessmentLease>, StorageError> {
         decode_optional(
@@ -978,7 +966,10 @@ impl BeliefStore {
     }
 
     /// Durably stage a complete belief commit before applying its products.
-    pub fn prepare_belief_commit(&self, intent: &BeliefCommitIntent) -> Result<(), StorageError> {
+    pub(crate) fn prepare_belief_commit(
+        &self,
+        intent: &BeliefCommitIntent,
+    ) -> Result<(), StorageError> {
         let _write = self.writable_guard()?;
         let encoded = serde_json::to_vec(intent).map_err(to_storage_data)?;
         match self
@@ -1057,7 +1048,7 @@ impl BeliefStore {
     }
 
     /// Atomically apply one staged belief commit and remove its durable intent.
-    pub fn apply_belief_commit(
+    pub(crate) fn apply_belief_commit(
         &self,
         intent_id: &str,
     ) -> Result<BeliefCommitRecoveryDisposition, StorageError> {

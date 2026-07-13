@@ -31,10 +31,16 @@ pub struct GoalCommandRequestIdentity {
     pub request_hash: String,
 }
 
-/// Compatibility posture for outcomes written before request hashes existed.
+// TODO compat-shim: remove this policy after the minimum supported goal-store
+// schema requires request identities beside every command outcome. It preserves
+// verified replay for outcomes written before request hashes existed. Before
+// deletion, keep compatible_legacy_applied_outcome_is_verified_and_upgraded and
+// strict_legacy_policy_rejects_unverified_outcome green while proving all
+// supported stores have completed the identity upgrade.
+/// Crate-owned compatibility posture for outcomes written before request hashes existed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum LegacyGoalCommandReplayPolicy {
+pub(crate) enum LegacyGoalCommandReplayPolicy {
     /// Treat the prior outcome as unverified and reject replay.
     RejectUnverified,
     /// Reconstruct the old request only when durable source data is sufficient.
