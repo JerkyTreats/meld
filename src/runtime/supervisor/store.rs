@@ -8,8 +8,10 @@ use thiserror::Error;
 
 use super::contracts::{
     canonical_runtime_id, RuntimeDesiredState, RuntimeHealthSnapshot, RuntimeHeartbeat, RuntimeId,
-    RuntimeInstance, RuntimeLease, RuntimeLeaseOwner, RuntimeLeaseStatus, RuntimeRestartRecord,
-    RuntimeShutdownState, SupervisorContractError, SupervisorLifecycleEvent,
+    RuntimeInstance, RuntimeLease, RuntimeLeaseOwner, RuntimeLeaseStatus,
+    RuntimeReplacementCheckpoint, RuntimeRestartRecord, RuntimeRestartSchedule,
+    RuntimeShutdownCompletion, RuntimeShutdownState, SupervisorContractError,
+    SupervisorLifecycleEvent,
 };
 
 const TREE_INSTANCES: &str = "runtime_instances";
@@ -19,7 +21,10 @@ const TREE_ACTIVE_LEASES: &str = "runtime_active_leases";
 const TREE_HEARTBEATS: &str = "runtime_heartbeats";
 const TREE_HEALTH: &str = "runtime_health_snapshots";
 const TREE_RESTARTS: &str = "runtime_restarts";
+const TREE_RESTART_SCHEDULES: &str = "runtime_restart_schedules";
+const TREE_REPLACEMENT_CHECKPOINTS: &str = "runtime_replacement_checkpoints";
 const TREE_SHUTDOWNS: &str = "runtime_shutdowns";
+const TREE_SHUTDOWN_COMPLETIONS: &str = "runtime_shutdown_completions";
 const TREE_LIFECYCLE_EVENTS: &str = "runtime_lifecycle_events";
 
 /// Sled-backed root supervisor store.
@@ -38,7 +43,10 @@ pub struct SupervisorStore {
     heartbeats: sled::Tree,
     health: sled::Tree,
     restarts: sled::Tree,
+    restart_schedules: sled::Tree,
+    replacement_checkpoints: sled::Tree,
     shutdowns: sled::Tree,
+    shutdown_completions: sled::Tree,
     lifecycle_events: sled::Tree,
 }
 
@@ -60,7 +68,7 @@ pub enum SupervisorStoreError {
     /// Persisted lifecycle data violates supervisor invariants.
     #[error("invalid supervisor record: {0}")]
     InvalidRecord(String),
-    /// Another unexpired active lease already owns this runtime id.
+    /// Another indexed active lease already owns this runtime id.
     #[error("runtime id '{runtime_id}' already has active lease '{active_lease_id}'")]
     DuplicateActiveLease {
         /// Runtime id with an active owner.
@@ -94,6 +102,22 @@ pub enum SupervisorStoreError {
         /// Lookup key.
         key: String,
     },
+    /// An immutable lifecycle product conflicts with durable state.
+    #[error("supervisor {record_type} record '{key}' conflicts with durable state")]
+    ConflictingRecord {
+        /// Immutable record family.
+        record_type: &'static str,
+        /// Stable record key.
+        key: String,
+    },
+    /// The expected replacement checkpoint no longer matches durable state.
+    #[error("stale replacement checkpoint for runtime '{runtime_id}', restart '{restart_id}'")]
+    StaleReplacementCheckpoint {
+        /// Runtime whose replacement advanced concurrently.
+        runtime_id: String,
+        /// Restart whose replacement advanced concurrently.
+        restart_id: String,
+    },
 }
 
 impl SupervisorStore {
@@ -111,7 +135,12 @@ impl SupervisorStore {
         let heartbeats = db.open_tree(TREE_HEARTBEATS).map_err(to_sled)?;
         let health = db.open_tree(TREE_HEALTH).map_err(to_sled)?;
         let restarts = db.open_tree(TREE_RESTARTS).map_err(to_sled)?;
+        let restart_schedules = db.open_tree(TREE_RESTART_SCHEDULES).map_err(to_sled)?;
+        let replacement_checkpoints = db
+            .open_tree(TREE_REPLACEMENT_CHECKPOINTS)
+            .map_err(to_sled)?;
         let shutdowns = db.open_tree(TREE_SHUTDOWNS).map_err(to_sled)?;
+        let shutdown_completions = db.open_tree(TREE_SHUTDOWN_COMPLETIONS).map_err(to_sled)?;
         let lifecycle_events = db.open_tree(TREE_LIFECYCLE_EVENTS).map_err(to_sled)?;
         let store = Self {
             path,
@@ -123,7 +152,10 @@ impl SupervisorStore {
             heartbeats,
             health,
             restarts,
+            restart_schedules,
+            replacement_checkpoints,
             shutdowns,
+            shutdown_completions,
             lifecycle_events,
         };
         store.migrate_requirement_era_runtime_ids()?;
@@ -168,11 +200,48 @@ impl SupervisorStore {
         changed |= migrate_record_tree::<RuntimeRestartRecord, _>(&self.restarts, |record| {
             restart_key(&record.runtime_id, &record.restart_id)
         })?;
+        changed |= migrate_record_tree::<RuntimeRestartSchedule, _>(
+            &self.restart_schedules,
+            |schedule| restart_product_key(schedule.restart()),
+        )?;
+        changed |= migrate_record_tree::<RuntimeReplacementCheckpoint, _>(
+            &self.replacement_checkpoints,
+            |checkpoint| restart_product_key(checkpoint.schedule().restart()),
+        )?;
+        changed |= migrate_record_tree::<RuntimeShutdownCompletion, _>(
+            &self.shutdown_completions,
+            |completion| completion.shutdown().shutdown_id.as_bytes().to_vec(),
+        )?;
         changed |= normalize_record_values::<SupervisorLifecycleEvent>(&self.lifecycle_events)?;
+        changed |= self.reconcile_restart_products()?;
         if changed {
             self.db.flush().map_err(to_sled)?;
         }
         Ok(())
+    }
+
+    fn reconcile_restart_products(&self) -> Result<bool, SupervisorStoreError> {
+        let mut changed = false;
+        for restart in read_all::<RuntimeRestartRecord>(&self.restarts)? {
+            let schedule = RuntimeRestartSchedule::try_new(restart)?;
+            let key = restart_product_key(schedule.restart());
+            changed |=
+                insert_exact_record(&self.restart_schedules, &key, &schedule, "restart schedule")?;
+        }
+        for schedule in read_all::<RuntimeRestartSchedule>(&self.restart_schedules)? {
+            let key = restart_product_key(schedule.restart());
+            changed |=
+                insert_exact_record(&self.restarts, &key, schedule.restart(), "restart audit")?;
+        }
+        for checkpoint in read_all::<RuntimeReplacementCheckpoint>(&self.replacement_checkpoints)? {
+            let schedule = checkpoint.schedule();
+            let key = restart_product_key(schedule.restart());
+            changed |=
+                insert_exact_record(&self.restart_schedules, &key, schedule, "restart schedule")?;
+            changed |=
+                insert_exact_record(&self.restarts, &key, schedule.restart(), "restart audit")?;
+        }
+        Ok(changed)
     }
 
     /// Persist a supervisor instance record.
@@ -353,19 +422,14 @@ impl SupervisorStore {
         (&self.leases, &self.active_leases)
             .transaction(|(leases, active_leases)| {
                 if let Some(active_value) = active_leases.get(active_key.clone())? {
-                    let mut active_lease =
-                        read_lease_in_transaction(leases, active_value.as_ref())?;
-                    if active_lease.is_active_at(acquired_at_ms) {
+                    let active_lease = read_lease_in_transaction(leases, active_value.as_ref())?;
+                    if active_lease.has_active_status() {
                         return Err(ConflictableTransactionError::Abort(
                             SupervisorStoreError::DuplicateActiveLease {
                                 runtime_id: runtime_id.to_string(),
                                 active_lease_id: active_lease.lease_id,
                             },
                         ));
-                    }
-                    if active_lease.has_active_status() {
-                        active_lease.status = RuntimeLeaseStatus::Expired;
-                        leases.insert(active_value.as_ref(), encode_transaction(&active_lease)?)?;
                     }
                     active_leases.remove(active_key.clone())?;
                 }
@@ -535,6 +599,51 @@ impl SupervisorStore {
             .map_err(to_transaction)
     }
 
+    /// List expired active lease candidates without changing ownership.
+    ///
+    /// Restart orchestration uses this read before stopping and flushing the
+    /// old handle. The active index remains intact until checked release or
+    /// explicit startup recovery changes it.
+    pub fn list_expired_active_runtime_leases(
+        &self,
+        now_ms: u64,
+    ) -> Result<Vec<RuntimeLease>, SupervisorStoreError> {
+        let mut expired = Vec::new();
+        for entry in self.active_leases.iter() {
+            let (runtime_key, lease_key) = entry.map_err(to_sled)?;
+            let raw = self
+                .leases
+                .get(lease_key.as_ref())
+                .map_err(to_sled)?
+                .ok_or_else(|| {
+                    SupervisorStoreError::InvalidRecord(format!(
+                        "active lease index points at missing lease '{}'",
+                        key_debug(lease_key.as_ref())
+                    ))
+                })?;
+            let lease: RuntimeLease = decode(&raw)?;
+            if runtime_key.as_ref() != lease.runtime_id.as_str().as_bytes()
+                || lease_key.as_ref() != lease_key_for_record(&lease).as_slice()
+            {
+                return Err(SupervisorStoreError::InvalidRecord(format!(
+                    "active lease index '{}' does not match lease '{}'",
+                    key_debug(runtime_key.as_ref()),
+                    key_debug(lease_key.as_ref())
+                )));
+            }
+            if lease.has_active_status() && lease.expires_at_ms <= now_ms {
+                expired.push(lease);
+            }
+        }
+        expired.sort_by(|left, right| {
+            left.expires_at_ms
+                .cmp(&right.expires_at_ms)
+                .then_with(|| left.runtime_id.cmp(&right.runtime_id))
+                .then_with(|| left.lease_id.cmp(&right.lease_id))
+        });
+        Ok(expired)
+    }
+
     /// Mark expired active leases as expired and clear active ownership.
     pub fn recover_expired_leases(
         &self,
@@ -599,19 +708,14 @@ impl SupervisorStore {
         read_optional(&self.health, runtime_id.as_str().as_bytes())
     }
 
-    /// Persist one restart audit record.
+    /// Persist one restart audit record through the checked schedule path.
+    // TODO compat-shim: remove after every restart caller creates a checked
+    // schedule directly and compatibility tests no longer exercise this API.
     pub fn put_restart_record(
         &self,
         record: &RuntimeRestartRecord,
     ) -> Result<(), SupervisorStoreError> {
-        require_non_empty("restart_id", &record.restart_id)?;
-        self.restarts
-            .insert(
-                restart_key(&record.runtime_id, &record.restart_id),
-                encode(record)?,
-            )
-            .map_err(to_sled)?;
-        Ok(())
+        self.persist_restart_schedule(&RuntimeRestartSchedule::try_new(record.clone())?)
     }
 
     /// Read one restart audit record.
@@ -621,6 +725,200 @@ impl SupervisorStore {
         restart_id: &str,
     ) -> Result<Option<RuntimeRestartRecord>, SupervisorStoreError> {
         read_optional(&self.restarts, &restart_key(runtime_id, restart_id))
+    }
+
+    /// Durably persist one immutable checked restart schedule and its audit row.
+    ///
+    /// Exact retries are idempotent. Reusing one runtime and restart identity
+    /// for different schedule content fails closed.
+    pub fn persist_restart_schedule(
+        &self,
+        schedule: &RuntimeRestartSchedule,
+    ) -> Result<(), SupervisorStoreError> {
+        let restart = schedule.restart();
+        require_non_empty("restart_id", &restart.restart_id)?;
+        require_non_empty("instance_id", &restart.instance_id)?;
+        let key = restart_product_key(restart);
+        let audit_encoded = encode(restart)?;
+        let schedule_encoded = encode(schedule)?;
+        (&self.restarts, &self.restart_schedules)
+            .transaction(|(restarts, schedules)| {
+                insert_exact_encoded_in_transaction(
+                    restarts,
+                    &key,
+                    &audit_encoded,
+                    "restart audit",
+                )?;
+                insert_exact_encoded_in_transaction(
+                    schedules,
+                    &key,
+                    &schedule_encoded,
+                    "restart schedule",
+                )?;
+                Ok(())
+            })
+            .map_err(to_transaction)?;
+        self.flush()
+    }
+
+    /// Read one checked restart schedule.
+    pub fn get_restart_schedule(
+        &self,
+        runtime_id: &RuntimeId,
+        restart_id: &str,
+    ) -> Result<Option<RuntimeRestartSchedule>, SupervisorStoreError> {
+        read_optional(
+            &self.restart_schedules,
+            &restart_key(runtime_id, restart_id),
+        )
+    }
+
+    /// List checked restart schedules in stable request order.
+    pub fn list_restart_schedules(
+        &self,
+    ) -> Result<Vec<RuntimeRestartSchedule>, SupervisorStoreError> {
+        let mut schedules: Vec<RuntimeRestartSchedule> = read_all(&self.restart_schedules)?;
+        schedules.sort_by(|left, right| {
+            left.restart()
+                .requested_at_ms
+                .cmp(&right.restart().requested_at_ms)
+                .then_with(|| left.restart().runtime_id.cmp(&right.restart().runtime_id))
+                .then_with(|| left.restart().restart_id.cmp(&right.restart().restart_id))
+        });
+        Ok(schedules)
+    }
+
+    /// Load or durably initialize the ordered replacement checkpoint.
+    ///
+    /// A recovered advanced checkpoint is returned unchanged so orchestration
+    /// resumes from durable state instead of repeating completed stages.
+    pub fn load_or_initialize_replacement_checkpoint(
+        &self,
+        schedule: &RuntimeRestartSchedule,
+    ) -> Result<RuntimeReplacementCheckpoint, SupervisorStoreError> {
+        let key = restart_product_key(schedule.restart());
+        let schedule_encoded = encode(schedule)?;
+        let initial = RuntimeReplacementCheckpoint::new(schedule.clone());
+        let initial_encoded = encode(&initial)?;
+        let checkpoint = (&self.restart_schedules, &self.replacement_checkpoints)
+            .transaction(|(schedules, checkpoints)| {
+                let persisted_schedule = schedules.get(key.clone())?.ok_or_else(|| {
+                    ConflictableTransactionError::Abort(SupervisorStoreError::NotFound {
+                        record_type: "restart schedule",
+                        key: key_debug(&key),
+                    })
+                })?;
+                if persisted_schedule.as_ref() != schedule_encoded.as_slice() {
+                    return Err(ConflictableTransactionError::Abort(
+                        SupervisorStoreError::ConflictingRecord {
+                            record_type: "restart schedule",
+                            key: key_debug(&key),
+                        },
+                    ));
+                }
+                if let Some(raw) = checkpoints.get(key.clone())? {
+                    let current: RuntimeReplacementCheckpoint = decode_transaction(&raw)?;
+                    if current.schedule() != schedule {
+                        return Err(ConflictableTransactionError::Abort(
+                            SupervisorStoreError::ConflictingRecord {
+                                record_type: "replacement checkpoint",
+                                key: key_debug(&key),
+                            },
+                        ));
+                    }
+                    return Ok(current);
+                }
+                checkpoints.insert(key.clone(), initial_encoded.clone())?;
+                Ok(initial.clone())
+            })
+            .map_err(to_transaction)?;
+        self.flush()?;
+        Ok(checkpoint)
+    }
+
+    /// Read the durable ordered replacement checkpoint for one restart.
+    pub fn get_replacement_checkpoint(
+        &self,
+        runtime_id: &RuntimeId,
+        restart_id: &str,
+    ) -> Result<Option<RuntimeReplacementCheckpoint>, SupervisorStoreError> {
+        read_optional(
+            &self.replacement_checkpoints,
+            &restart_key(runtime_id, restart_id),
+        )
+    }
+
+    /// List replacement checkpoints in stable request order.
+    pub fn list_replacement_checkpoints(
+        &self,
+    ) -> Result<Vec<RuntimeReplacementCheckpoint>, SupervisorStoreError> {
+        let mut checkpoints: Vec<RuntimeReplacementCheckpoint> =
+            read_all(&self.replacement_checkpoints)?;
+        checkpoints.sort_by(|left, right| {
+            let left = left.schedule().restart();
+            let right = right.schedule().restart();
+            left.requested_at_ms
+                .cmp(&right.requested_at_ms)
+                .then_with(|| left.runtime_id.cmp(&right.runtime_id))
+                .then_with(|| left.restart_id.cmp(&right.restart_id))
+        });
+        Ok(checkpoints)
+    }
+
+    /// Durably compare and swap exactly one legal replacement successor.
+    ///
+    /// Replaying the already committed successor succeeds. Any other durable
+    /// state reports a stale checkpoint and never rewinds or skips a stage.
+    pub fn compare_and_swap_replacement_checkpoint(
+        &self,
+        expected: &RuntimeReplacementCheckpoint,
+        successor: &RuntimeReplacementCheckpoint,
+    ) -> Result<RuntimeReplacementCheckpoint, SupervisorStoreError> {
+        require_legal_checkpoint_successor(expected, successor)?;
+        let restart = expected.schedule().restart();
+        let key = restart_product_key(restart);
+        let expected_schedule = encode(expected.schedule())?;
+        let successor_encoded = encode(successor)?;
+        let committed = (&self.restart_schedules, &self.replacement_checkpoints)
+            .transaction(|(schedules, checkpoints)| {
+                let schedule = schedules.get(key.clone())?.ok_or_else(|| {
+                    ConflictableTransactionError::Abort(SupervisorStoreError::NotFound {
+                        record_type: "restart schedule",
+                        key: key_debug(&key),
+                    })
+                })?;
+                if schedule.as_ref() != expected_schedule.as_slice() {
+                    return Err(ConflictableTransactionError::Abort(
+                        SupervisorStoreError::ConflictingRecord {
+                            record_type: "restart schedule",
+                            key: key_debug(&key),
+                        },
+                    ));
+                }
+                let raw = checkpoints.get(key.clone())?.ok_or_else(|| {
+                    ConflictableTransactionError::Abort(SupervisorStoreError::NotFound {
+                        record_type: "replacement checkpoint",
+                        key: key_debug(&key),
+                    })
+                })?;
+                let current: RuntimeReplacementCheckpoint = decode_transaction(&raw)?;
+                if current == *successor {
+                    return Ok(successor.clone());
+                }
+                if current != *expected {
+                    return Err(ConflictableTransactionError::Abort(
+                        SupervisorStoreError::StaleReplacementCheckpoint {
+                            runtime_id: restart.runtime_id.to_string(),
+                            restart_id: restart.restart_id.clone(),
+                        },
+                    ));
+                }
+                checkpoints.insert(key.clone(), successor_encoded.clone())?;
+                Ok(successor.clone())
+            })
+            .map_err(to_transaction)?;
+        self.flush()?;
+        Ok(committed)
     }
 
     /// Persist one graceful shutdown state record.
@@ -642,6 +940,40 @@ impl SupervisorStore {
         shutdown_id: &str,
     ) -> Result<Option<RuntimeShutdownState>, SupervisorStoreError> {
         read_optional(&self.shutdowns, shutdown_id.as_bytes())
+    }
+
+    /// Durably persist one checked immutable shutdown completion.
+    ///
+    /// Exact replay succeeds while divergent reuse of a shutdown id fails.
+    pub fn put_shutdown_completion(
+        &self,
+        completion: &RuntimeShutdownCompletion,
+    ) -> Result<(), SupervisorStoreError> {
+        let shutdown = completion.shutdown();
+        require_non_empty("shutdown_id", &shutdown.shutdown_id)?;
+        require_non_empty("instance_id", &shutdown.instance_id)?;
+        let key = shutdown.shutdown_id.as_bytes().to_vec();
+        let encoded = encode(completion)?;
+        self.shutdown_completions
+            .transaction(|completions| {
+                insert_exact_encoded_in_transaction(
+                    completions,
+                    &key,
+                    &encoded,
+                    "shutdown completion",
+                )?;
+                Ok(())
+            })
+            .map_err(to_transaction)?;
+        self.flush()
+    }
+
+    /// Read one checked shutdown completion.
+    pub fn get_shutdown_completion(
+        &self,
+        shutdown_id: &str,
+    ) -> Result<Option<RuntimeShutdownCompletion>, SupervisorStoreError> {
+        read_optional(&self.shutdown_completions, shutdown_id.as_bytes())
     }
 
     /// Persist one supervisor lifecycle event.
@@ -743,6 +1075,68 @@ fn read_all<T: DeserializeOwned>(tree: &sled::Tree) -> Result<Vec<T>, Supervisor
             decode(&raw)
         })
         .collect()
+}
+
+fn insert_exact_record<T: Serialize>(
+    tree: &sled::Tree,
+    key: &[u8],
+    record: &T,
+    record_type: &'static str,
+) -> Result<bool, SupervisorStoreError> {
+    let encoded = encode(record)?;
+    if let Some(current) = tree.get(key).map_err(to_sled)? {
+        if current.as_ref() != encoded.as_slice() {
+            return Err(SupervisorStoreError::ConflictingRecord {
+                record_type,
+                key: key_debug(key),
+            });
+        }
+        return Ok(false);
+    }
+    tree.insert(key, encoded).map_err(to_sled)?;
+    Ok(true)
+}
+
+fn insert_exact_encoded_in_transaction(
+    tree: &sled::transaction::TransactionalTree,
+    key: &[u8],
+    encoded: &[u8],
+    record_type: &'static str,
+) -> Result<(), ConflictableTransactionError<SupervisorStoreError>> {
+    if let Some(current) = tree.get(key)? {
+        if current.as_ref() != encoded {
+            return Err(ConflictableTransactionError::Abort(
+                SupervisorStoreError::ConflictingRecord {
+                    record_type,
+                    key: key_debug(key),
+                },
+            ));
+        }
+        return Ok(());
+    }
+    tree.insert(key, encoded)?;
+    Ok(())
+}
+
+fn require_legal_checkpoint_successor(
+    expected: &RuntimeReplacementCheckpoint,
+    successor: &RuntimeReplacementCheckpoint,
+) -> Result<(), SupervisorStoreError> {
+    if expected.schedule() != successor.schedule() {
+        return Err(SupervisorStoreError::InvalidRecord(
+            "replacement successor changed its restart schedule".to_string(),
+        ));
+    }
+    let expected_stages = expected.completed_stages();
+    let successor_stages = successor.completed_stages();
+    if successor_stages.len() != expected_stages.len().saturating_add(1)
+        || successor_stages.get(..expected_stages.len()) != Some(expected_stages)
+    {
+        return Err(SupervisorStoreError::InvalidRecord(
+            "replacement successor must append exactly one ordered stage".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn migrate_record_tree<T, F>(
@@ -923,8 +1317,16 @@ fn lease_key(runtime_id: &RuntimeId, lease_id: &str) -> Vec<u8> {
     joined_key(runtime_id.as_str(), lease_id)
 }
 
+fn lease_key_for_record(lease: &RuntimeLease) -> Vec<u8> {
+    lease_key(&lease.runtime_id, &lease.lease_id)
+}
+
 fn restart_key(runtime_id: &RuntimeId, restart_id: &str) -> Vec<u8> {
     joined_key(runtime_id.as_str(), restart_id)
+}
+
+fn restart_product_key(restart: &RuntimeRestartRecord) -> Vec<u8> {
+    restart_key(&restart.runtime_id, &restart.restart_id)
 }
 
 fn joined_key(left: &str, right: &str) -> Vec<u8> {
@@ -962,6 +1364,12 @@ fn latest_lifecycle_event_wins(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Barrier};
+
+    use meld_events::{
+        EventFinalBarrier, EventIngressFenceSnapshot, EventIngressFenceState, EventWatermark,
+        LedgerIdentity,
+    };
     use tempfile::TempDir;
 
     use super::super::contracts::*;
@@ -1032,6 +1440,10 @@ mod tests {
             requested_at_ms: 30,
             backoff_ms: 10,
         };
+        let schedule = RuntimeRestartSchedule::try_new(restart.clone()).unwrap();
+        let checkpoint = RuntimeReplacementCheckpoint::new(schedule.clone())
+            .advance(RuntimeReplacementStage::StopOldHandle, 35)
+            .unwrap();
         let event = SupervisorLifecycleEvent {
             event_id: "event-a".to_string(),
             instance_id: "instance-a".to_string(),
@@ -1075,6 +1487,20 @@ mod tests {
                 legacy_encoded(&restart),
             )
             .unwrap();
+        db.open_tree(TREE_RESTART_SCHEDULES)
+            .unwrap()
+            .insert(
+                joined_key(LEGACY_GRAPH_RUNTIME_ID, "restart-a"),
+                legacy_encoded(&schedule),
+            )
+            .unwrap();
+        db.open_tree(TREE_REPLACEMENT_CHECKPOINTS)
+            .unwrap()
+            .insert(
+                joined_key(LEGACY_GRAPH_RUNTIME_ID, "restart-a"),
+                legacy_encoded(&checkpoint),
+            )
+            .unwrap();
         db.open_tree(TREE_LIFECYCLE_EVENTS)
             .unwrap()
             .insert("event-a", legacy_encoded(&event))
@@ -1108,6 +1534,18 @@ mod tests {
             store.get_restart_record(&runtime_id, "restart-a").unwrap(),
             Some(restart)
         );
+        assert_eq!(
+            store
+                .get_restart_schedule(&runtime_id, "restart-a")
+                .unwrap(),
+            Some(schedule)
+        );
+        assert_eq!(
+            store
+                .get_replacement_checkpoint(&runtime_id, "restart-a")
+                .unwrap(),
+            Some(checkpoint)
+        );
         assert_eq!(store.get_lifecycle_event("event-a").unwrap(), Some(event));
         for tree in [
             &store.desired,
@@ -1116,6 +1554,8 @@ mod tests {
             &store.heartbeats,
             &store.health,
             &store.restarts,
+            &store.restart_schedules,
+            &store.replacement_checkpoints,
         ] {
             assert!(tree.iter().all(|entry| !entry
                 .unwrap()
@@ -1152,6 +1592,302 @@ mod tests {
 
         assert!(matches!(error, SupervisorStoreError::InvalidRecord(_)));
         assert!(error.to_string().contains("conflicts with canonical key"));
+    }
+
+    #[test]
+    fn legacy_restart_audit_backfills_checked_schedule_on_open() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("supervisor.sled");
+        let restart = restart_record("event.append", "restart-a", 100, 25);
+        let key = restart_product_key(&restart);
+        let db = sled::open(&path).unwrap();
+        db.open_tree(TREE_RESTARTS)
+            .unwrap()
+            .insert(&key, encode(&restart).unwrap())
+            .unwrap();
+        db.flush().unwrap();
+        drop(db);
+
+        let store = SupervisorStore::open(&path).unwrap();
+        let expected = RuntimeRestartSchedule::try_new(restart.clone()).unwrap();
+
+        assert_eq!(
+            store
+                .get_restart_schedule(&restart.runtime_id, &restart.restart_id)
+                .unwrap(),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            store
+                .load_or_initialize_replacement_checkpoint(&expected)
+                .unwrap(),
+            RuntimeReplacementCheckpoint::new(expected)
+        );
+    }
+
+    #[test]
+    fn restart_schedule_and_checkpoint_resume_after_reopen() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("supervisor.sled");
+        let schedule = restart_schedule("event.append", "restart-a", 100, 50);
+        let store = SupervisorStore::open(&path).unwrap();
+
+        store.persist_restart_schedule(&schedule).unwrap();
+        store.persist_restart_schedule(&schedule).unwrap();
+        let divergent = restart_schedule("event.append", "restart-a", 101, 50);
+        assert!(matches!(
+            store.persist_restart_schedule(&divergent),
+            Err(SupervisorStoreError::ConflictingRecord { .. })
+        ));
+        let initial = store
+            .load_or_initialize_replacement_checkpoint(&schedule)
+            .unwrap();
+        let stopped = initial
+            .clone()
+            .advance(RuntimeReplacementStage::StopOldHandle, 110)
+            .unwrap();
+        assert_eq!(
+            store
+                .compare_and_swap_replacement_checkpoint(&initial, &stopped)
+                .unwrap(),
+            stopped
+        );
+        assert_eq!(
+            store
+                .compare_and_swap_replacement_checkpoint(&initial, &stopped)
+                .unwrap(),
+            stopped
+        );
+        drop(store);
+
+        let reopened = SupervisorStore::open(&path).unwrap();
+        assert_eq!(
+            reopened
+                .get_restart_schedule(&schedule.restart().runtime_id, "restart-a")
+                .unwrap(),
+            Some(schedule.clone())
+        );
+        assert_eq!(
+            reopened
+                .load_or_initialize_replacement_checkpoint(&schedule)
+                .unwrap(),
+            stopped
+        );
+        let safe = stopped
+            .clone()
+            .advance(RuntimeReplacementStage::AwaitOldSafePoint, 120)
+            .unwrap();
+        assert_eq!(
+            reopened
+                .compare_and_swap_replacement_checkpoint(&stopped, &safe)
+                .unwrap(),
+            safe
+        );
+    }
+
+    #[test]
+    fn replacement_checkpoint_rejects_stale_and_skipped_successors() {
+        let (_temp, store) = open_store();
+        let schedule = restart_schedule("event.append", "restart-a", 100, 50);
+        store.persist_restart_schedule(&schedule).unwrap();
+        let initial = store
+            .load_or_initialize_replacement_checkpoint(&schedule)
+            .unwrap();
+        let stopped = initial
+            .clone()
+            .advance(RuntimeReplacementStage::StopOldHandle, 110)
+            .unwrap();
+        let competing = initial
+            .clone()
+            .advance(RuntimeReplacementStage::StopOldHandle, 111)
+            .unwrap();
+        store
+            .compare_and_swap_replacement_checkpoint(&initial, &stopped)
+            .unwrap();
+
+        let stale = store
+            .compare_and_swap_replacement_checkpoint(&initial, &competing)
+            .unwrap_err();
+        assert!(matches!(
+            stale,
+            SupervisorStoreError::StaleReplacementCheckpoint { .. }
+        ));
+
+        let skipped = stopped
+            .clone()
+            .advance(RuntimeReplacementStage::AwaitOldSafePoint, 120)
+            .unwrap();
+        let error = store
+            .compare_and_swap_replacement_checkpoint(&initial, &skipped)
+            .unwrap_err();
+        assert!(matches!(error, SupervisorStoreError::InvalidRecord(_)));
+        assert_eq!(
+            store
+                .get_replacement_checkpoint(&schedule.restart().runtime_id, "restart-a")
+                .unwrap(),
+            Some(stopped)
+        );
+    }
+
+    #[test]
+    fn concurrent_replacement_successors_allow_one_winner() {
+        let (_temp, store) = open_store();
+        let schedule = restart_schedule("event.append", "restart-a", 100, 50);
+        store.persist_restart_schedule(&schedule).unwrap();
+        let initial = store
+            .load_or_initialize_replacement_checkpoint(&schedule)
+            .unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = [110, 111].map(|observed_at_ms| {
+            let store = store.clone();
+            let initial = initial.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let successor = initial
+                    .clone()
+                    .advance(RuntimeReplacementStage::StopOldHandle, observed_at_ms)
+                    .unwrap();
+                barrier.wait();
+                store.compare_and_swap_replacement_checkpoint(&initial, &successor)
+            })
+        });
+
+        let results = handles.map(|handle| handle.join().unwrap());
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(
+                    result,
+                    Err(SupervisorStoreError::StaleReplacementCheckpoint { .. })
+                ))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn checked_restart_products_reject_corrupt_replay() {
+        #[derive(Serialize)]
+        struct UncheckedRestartSchedule<'a> {
+            restart: &'a RuntimeRestartRecord,
+            next_eligible_at_ms: u64,
+        }
+
+        #[derive(Serialize)]
+        struct UncheckedReplacementCheckpoint<'a> {
+            schedule: &'a RuntimeRestartSchedule,
+            completed_stages: Vec<RuntimeReplacementStageReceipt>,
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let schedule_path = temp.path().join("invalid-schedule.sled");
+        let restart = restart_record("event.append", "restart-a", 100, 50);
+        let key = restart_product_key(&restart);
+        let db = sled::open(&schedule_path).unwrap();
+        db.open_tree(TREE_RESTART_SCHEDULES)
+            .unwrap()
+            .insert(
+                &key,
+                encode(&UncheckedRestartSchedule {
+                    restart: &restart,
+                    next_eligible_at_ms: 149,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        db.flush().unwrap();
+        drop(db);
+        assert!(matches!(
+            SupervisorStore::open(&schedule_path),
+            Err(SupervisorStoreError::Codec(_))
+        ));
+
+        let checkpoint_path = temp.path().join("invalid-checkpoint.sled");
+        let schedule = RuntimeRestartSchedule::try_new(restart).unwrap();
+        let db = sled::open(&checkpoint_path).unwrap();
+        db.open_tree(TREE_REPLACEMENT_CHECKPOINTS)
+            .unwrap()
+            .insert(
+                &key,
+                encode(&UncheckedReplacementCheckpoint {
+                    schedule: &schedule,
+                    completed_stages: vec![RuntimeReplacementStageReceipt {
+                        stage: RuntimeReplacementStage::AcquireReplacementLease,
+                        observed_at_ms: 150,
+                    }],
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        db.flush().unwrap();
+        drop(db);
+        assert!(matches!(
+            SupervisorStore::open(&checkpoint_path),
+            Err(SupervisorStoreError::Codec(_))
+        ));
+    }
+
+    #[test]
+    fn shutdown_completion_exact_replay_survives_reopen() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("supervisor.sled");
+        let store = SupervisorStore::open(&path).unwrap();
+        let completion = shutdown_completion("shutdown-a", 60, 3);
+
+        store.put_shutdown_completion(&completion).unwrap();
+        store.put_shutdown_completion(&completion).unwrap();
+        let conflict = shutdown_completion("shutdown-a", 61, 4);
+        assert!(matches!(
+            store.put_shutdown_completion(&conflict),
+            Err(SupervisorStoreError::ConflictingRecord {
+                record_type: "shutdown completion",
+                ..
+            })
+        ));
+        drop(store);
+
+        let reopened = SupervisorStore::open(&path).unwrap();
+        assert_eq!(
+            reopened.get_shutdown_completion("shutdown-a").unwrap(),
+            Some(completion)
+        );
+    }
+
+    #[test]
+    fn shutdown_completion_replay_rechecks_completion_state() {
+        #[derive(Serialize)]
+        struct UncheckedShutdownCompletion {
+            shutdown: RuntimeShutdownState,
+            final_event_barrier: EventFinalBarrier,
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("supervisor.sled");
+        let valid = shutdown_completion("shutdown-a", 60, 3);
+        let invalid = UncheckedShutdownCompletion {
+            shutdown: RuntimeShutdownState {
+                shutdown_id: "shutdown-a".to_string(),
+                instance_id: "instance-a".to_string(),
+                requested_at_ms: 50,
+                completed_at_ms: None,
+                status: RuntimeShutdownStatus::Requested,
+            },
+            final_event_barrier: valid.final_event_barrier(),
+        };
+        let db = sled::open(&path).unwrap();
+        db.open_tree(TREE_SHUTDOWN_COMPLETIONS)
+            .unwrap()
+            .insert("shutdown-a", encode(&invalid).unwrap())
+            .unwrap();
+        db.flush().unwrap();
+        drop(db);
+
+        assert!(matches!(
+            SupervisorStore::open(&path),
+            Err(SupervisorStoreError::Codec(_))
+        ));
     }
 
     #[test]
@@ -1553,6 +2289,45 @@ mod tests {
     }
 
     #[test]
+    fn expired_lease_listing_preserves_owner_until_checked_release() {
+        let (_temp, store) = open_store();
+        let runtime_id = runtime_id("events.ledger");
+        let lease = store
+            .acquire_runtime_lease(runtime_id.clone(), "lease-a", "instance-a", 100, 10)
+            .unwrap();
+
+        assert!(store
+            .list_expired_active_runtime_leases(109)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store.list_expired_active_runtime_leases(110).unwrap(),
+            vec![lease.clone()]
+        );
+        assert_eq!(
+            store.get_active_runtime_lease(&runtime_id).unwrap(),
+            Some(lease.clone())
+        );
+        assert!(matches!(
+            store
+                .acquire_runtime_lease(runtime_id.clone(), "lease-b", "instance-b", 120, 10)
+                .unwrap_err(),
+            SupervisorStoreError::DuplicateActiveLease { .. }
+        ));
+
+        let released = store.release_runtime_lease(&lease.owner(), 120).unwrap();
+
+        assert_eq!(released.status, RuntimeLeaseStatus::Released);
+        assert!(store
+            .get_active_runtime_lease(&runtime_id)
+            .unwrap()
+            .is_none());
+        store
+            .acquire_runtime_lease(runtime_id, "lease-b", "instance-b", 121, 10)
+            .unwrap();
+    }
+
+    #[test]
     fn expired_lease_recovery_preserves_history_and_allows_new_owner() {
         let (_temp, store) = open_store();
         let runtime_id = runtime_id("events.ledger");
@@ -1565,6 +2340,12 @@ mod tests {
         assert!(matches!(
             store
                 .acquire_runtime_lease(runtime_id.clone(), "lease-b", "instance-b", 109, 100)
+                .unwrap_err(),
+            SupervisorStoreError::DuplicateActiveLease { .. }
+        ));
+        assert!(matches!(
+            store
+                .acquire_runtime_lease(runtime_id.clone(), "lease-b", "instance-b", 111, 100)
                 .unwrap_err(),
             SupervisorStoreError::DuplicateActiveLease { .. }
         ));
@@ -1596,6 +2377,71 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let store = SupervisorStore::open(temp.path().join("supervisor.sled")).unwrap();
         (temp, store)
+    }
+
+    fn restart_record(
+        runtime_id: &str,
+        restart_id: &str,
+        requested_at_ms: u64,
+        backoff_ms: u64,
+    ) -> RuntimeRestartRecord {
+        RuntimeRestartRecord {
+            restart_id: restart_id.to_string(),
+            runtime_id: self::runtime_id(runtime_id),
+            instance_id: "instance-a".to_string(),
+            previous_lease_id: Some("lease-old".to_string()),
+            cause: RestartCause::HeartbeatExpired,
+            attempt: 1,
+            requested_at_ms,
+            backoff_ms,
+        }
+    }
+
+    fn restart_schedule(
+        runtime_id: &str,
+        restart_id: &str,
+        requested_at_ms: u64,
+        backoff_ms: u64,
+    ) -> RuntimeRestartSchedule {
+        RuntimeRestartSchedule::try_new(restart_record(
+            runtime_id,
+            restart_id,
+            requested_at_ms,
+            backoff_ms,
+        ))
+        .unwrap()
+    }
+
+    fn shutdown_completion(
+        shutdown_id: &str,
+        completed_at_ms: u64,
+        generation: u64,
+    ) -> RuntimeShutdownCompletion {
+        let ledger_id = LedgerIdentity::default();
+        let barrier = EventFinalBarrier::try_new(
+            EventIngressFenceSnapshot {
+                ledger_id,
+                generation,
+                state: EventIngressFenceState::Closed,
+            },
+            EventWatermark {
+                ledger_id,
+                committed_seq: 7,
+                tip_seq: 7,
+            },
+        )
+        .unwrap();
+        RuntimeShutdownCompletion::try_new(
+            RuntimeShutdownState {
+                shutdown_id: shutdown_id.to_string(),
+                instance_id: "instance-a".to_string(),
+                requested_at_ms: 50,
+                completed_at_ms: Some(completed_at_ms),
+                status: RuntimeShutdownStatus::Completed,
+            },
+            barrier,
+        )
+        .unwrap()
     }
 
     fn runtime_id(value: &str) -> RuntimeId {
