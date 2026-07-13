@@ -369,11 +369,13 @@ The final reviewer approved W1A with no remaining critical or high blockers.
 | W0C4 | accepted | canonical hygiene register and current visibility truth | documentation scope, links, prose, scans, and diff | passed |
 | W0D | accepted | restart publication, alias migration, and integrated closeout | full locked workspace ladder | passed after fix loop |
 | W1A | accepted | authority, replay, identity, validation, restart, and shutdown contracts | focused contract suites and full workspace static ladder | passed after three fix loops |
-| W1B1 | active | isolated belief authority lane | pending | pending |
+| W1B1 | accepted | canonical belief authority, fenced migration, atomic recovery, and gap-free evidence cursor | 180 world-model tests and strict clippy | passed after durability and concurrency review loops |
 | W1B2 | accepted | payload-derived goal identity, durable receipt visibility, monotonic updates, and lifecycle guards | 53 goal tests, 17 doc tests, full execution suite, and strict clippy | passed after two review loops |
 | W1B3 | accepted | deterministic planning identity, typed subject lowering, and attributed outcome publication | full execution all-target tests and clippy | passed after urgency fix loop |
 | W1B4 | accepted | typed append validation, shared ingress fence, retryable drain, and final durable barrier | all-feature event matrix and workspace static ladder | passed after drain-retry fix loop |
-| W1B5 through W6G | blocked | none | none | none |
+| W1B5 | active | integrated Wave 1 fault and parity gate | pending | pending |
+| W1C | ready | supervisor and root cutover dependencies are accepted | pending | pending |
+| W2A through W6G | blocked | none | none | none |
 
 ## Risks And Exceptions
 
@@ -517,6 +519,23 @@ W1B2 gate evidence:
 - 53 focused goal tests and 17 documentation tests passed
 - full `meld-execution` all-target tests and strict clippy passed
 - fresh review approved after boundary, lifecycle, parity-order, and receipt-visibility fixes
+
+W1B1 accepted commit: `8475ffb`
+
+W1B1 gate evidence:
+
+- product belief storage is the canonical authority after fenced resumable migration
+- legal marker successor transitions and exact retries preserve durable cutover truth
+- independent handles share one durable store identity and one drain admission gate
+- source fence, parity snapshot, empty-source cutover, and assignment-generation metadata are durable and migration-visible
+- lease, active index, dirty state, assignment, and mutation generation update transactionally
+- current view and subject index repair transactionally and reopen detects missing indexes
+- evidence cursor advances one canonical sequence per disposition and exact receipt replay remains idempotent
+- post-acquire evidence is excluded from the current lease and included exactly once by the rescheduled generation
+- recovery excludes evidence committed across the complete revision history
+- indeterminate fence, marker, receipt, and prepared-stage flushes are retried and survive reopen
+- all 180 world-model tests, strict clippy, formatting, diff, and no-mod-rs checks passed
+- final fresh review reported no critical, high, or medium findings
 
 ### W1C Supervisor And Root Cutover
 
