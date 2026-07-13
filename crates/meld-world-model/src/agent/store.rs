@@ -34,7 +34,9 @@ use crate::agent::hydration::{
     AgentReadinessProof, FailAgentHydrationCommand, MarkAgentOperationalCommand,
     StartAgentHydrationCommand,
 };
-use crate::belief::{BeliefConfigSnapshotFence, BeliefKey, BeliefReadinessReopenContract};
+use crate::belief::{
+    BeliefConfigSnapshotFence, BeliefKey, BeliefReadinessAuthority, BeliefReadinessReopenContract,
+};
 use crate::error::StorageError;
 
 const TREE_AGENT_RECORDS: &str = "agent_records";
@@ -611,84 +613,87 @@ pub struct AgentStore {
 impl AgentStore {
     /// Open all agent trees from the shared world model database.
     pub fn new(db: Db) -> Result<Self, StorageError> {
-        let store = Self {
-            agents: db.open_tree(TREE_AGENT_RECORDS).map_err(to_storage_io)?,
-            agent_by_status: db.open_tree(TREE_AGENT_BY_STATUS).map_err(to_storage_io)?,
-            subscriptions: db.open_tree(TREE_SUBSCRIPTIONS).map_err(to_storage_io)?,
-            subscriptions_by_agent: db
-                .open_tree(TREE_SUBSCRIPTIONS_BY_AGENT)
-                .map_err(to_storage_io)?,
-            subscriptions_by_key: db
-                .open_tree(TREE_SUBSCRIPTIONS_BY_KEY)
-                .map_err(to_storage_io)?,
-            activations: db.open_tree(TREE_ACTIVATIONS).map_err(to_storage_io)?,
-            activations_by_agent: db
-                .open_tree(TREE_ACTIVATIONS_BY_AGENT)
-                .map_err(to_storage_io)?,
-            decisions: db.open_tree(TREE_DECISIONS).map_err(to_storage_io)?,
-            decisions_by_agent: db
-                .open_tree(TREE_DECISIONS_BY_AGENT)
-                .map_err(to_storage_io)?,
-            decisions_by_dedupe: db
-                .open_tree(TREE_DECISIONS_BY_DEDUPE)
-                .map_err(to_storage_io)?,
-            decisions_by_revision: db
-                .open_tree(TREE_DECISIONS_BY_REVISION)
-                .map_err(to_storage_io)?,
-            satisfaction_decisions_by_review: db
-                .open_tree(TREE_SATISFACTION_DECISIONS_BY_REVIEW)
-                .map_err(to_storage_io)?,
-            sink_receipts: db.open_tree(TREE_SINK_RECEIPTS).map_err(to_storage_io)?,
-            sink_receipts_by_command: db
-                .open_tree(TREE_SINK_RECEIPTS_BY_COMMAND)
-                .map_err(to_storage_io)?,
-            decision_outbox: db.open_tree(TREE_DECISION_OUTBOX).map_err(to_storage_io)?,
-            satisfaction_review_cursors: db
-                .open_tree(TREE_SATISFACTION_REVIEW_CURSORS)
-                .map_err(to_storage_io)?,
-            hydration_checkpoints: db
-                .open_tree(TREE_HYDRATION_CHECKPOINTS)
-                .map_err(to_storage_io)?,
-            runtime_schema: db.open_tree(TREE_RUNTIME_SCHEMA).map_err(to_storage_io)?,
-            directives: db.open_tree(TREE_DIRECTIVES).map_err(to_storage_io)?,
-            curation_rules: db.open_tree(TREE_CURATION_RULES).map_err(to_storage_io)?,
-            bootstrap_progress: db
-                .open_tree(TREE_BOOTSTRAP_PROGRESS)
-                .map_err(to_storage_io)?,
-            bootstrap_receipts: db
-                .open_tree(TREE_BOOTSTRAP_RECEIPTS)
-                .map_err(to_storage_io)?,
-            bootstrap_receipts_by_agent: db
-                .open_tree(TREE_BOOTSTRAP_RECEIPTS_BY_AGENT)
-                .map_err(to_storage_io)?,
-            legacy_migration_receipts: db
-                .open_tree(TREE_LEGACY_MIGRATION_RECEIPTS)
-                .map_err(to_storage_io)?,
-            process_hydrations: db
-                .open_tree(TREE_PROCESS_HYDRATIONS)
-                .map_err(to_storage_io)?,
-            process_hydrations_by_agent: db
-                .open_tree(TREE_PROCESS_HYDRATIONS_BY_AGENT)
-                .map_err(to_storage_io)?,
-            process_hydrations_by_lease: db
-                .open_tree(TREE_PROCESS_HYDRATIONS_BY_LEASE)
-                .map_err(to_storage_io)?,
-            hydration_epochs: db.open_tree(TREE_HYDRATION_EPOCHS).map_err(to_storage_io)?,
-            current_hydrations: db
-                .open_tree(TREE_CURRENT_HYDRATIONS)
-                .map_err(to_storage_io)?,
-            hydration_runtime_state: db
-                .open_tree(TREE_HYDRATION_RUNTIME_STATE)
-                .map_err(to_storage_io)?,
-            readiness_proofs: db.open_tree(TREE_READINESS_PROOFS).map_err(to_storage_io)?,
-            readiness_schema: db.open_tree(TREE_READINESS_SCHEMA).map_err(to_storage_io)?,
-            #[cfg(test)]
-            flush_probe: Arc::new(Mutex::new(FlushProbe::default())),
-            db,
-        };
-        store.migrate_runtime_schema()?;
-        store.migrate_legacy_readiness_proofs()?;
-        Ok(store)
+        let belief_readiness = BeliefReadinessReopenContract::open(db.clone())?;
+        belief_readiness.with_product_authority_available(|belief_authority| {
+            let store = Self {
+                agents: db.open_tree(TREE_AGENT_RECORDS).map_err(to_storage_io)?,
+                agent_by_status: db.open_tree(TREE_AGENT_BY_STATUS).map_err(to_storage_io)?,
+                subscriptions: db.open_tree(TREE_SUBSCRIPTIONS).map_err(to_storage_io)?,
+                subscriptions_by_agent: db
+                    .open_tree(TREE_SUBSCRIPTIONS_BY_AGENT)
+                    .map_err(to_storage_io)?,
+                subscriptions_by_key: db
+                    .open_tree(TREE_SUBSCRIPTIONS_BY_KEY)
+                    .map_err(to_storage_io)?,
+                activations: db.open_tree(TREE_ACTIVATIONS).map_err(to_storage_io)?,
+                activations_by_agent: db
+                    .open_tree(TREE_ACTIVATIONS_BY_AGENT)
+                    .map_err(to_storage_io)?,
+                decisions: db.open_tree(TREE_DECISIONS).map_err(to_storage_io)?,
+                decisions_by_agent: db
+                    .open_tree(TREE_DECISIONS_BY_AGENT)
+                    .map_err(to_storage_io)?,
+                decisions_by_dedupe: db
+                    .open_tree(TREE_DECISIONS_BY_DEDUPE)
+                    .map_err(to_storage_io)?,
+                decisions_by_revision: db
+                    .open_tree(TREE_DECISIONS_BY_REVISION)
+                    .map_err(to_storage_io)?,
+                satisfaction_decisions_by_review: db
+                    .open_tree(TREE_SATISFACTION_DECISIONS_BY_REVIEW)
+                    .map_err(to_storage_io)?,
+                sink_receipts: db.open_tree(TREE_SINK_RECEIPTS).map_err(to_storage_io)?,
+                sink_receipts_by_command: db
+                    .open_tree(TREE_SINK_RECEIPTS_BY_COMMAND)
+                    .map_err(to_storage_io)?,
+                decision_outbox: db.open_tree(TREE_DECISION_OUTBOX).map_err(to_storage_io)?,
+                satisfaction_review_cursors: db
+                    .open_tree(TREE_SATISFACTION_REVIEW_CURSORS)
+                    .map_err(to_storage_io)?,
+                hydration_checkpoints: db
+                    .open_tree(TREE_HYDRATION_CHECKPOINTS)
+                    .map_err(to_storage_io)?,
+                runtime_schema: db.open_tree(TREE_RUNTIME_SCHEMA).map_err(to_storage_io)?,
+                directives: db.open_tree(TREE_DIRECTIVES).map_err(to_storage_io)?,
+                curation_rules: db.open_tree(TREE_CURATION_RULES).map_err(to_storage_io)?,
+                bootstrap_progress: db
+                    .open_tree(TREE_BOOTSTRAP_PROGRESS)
+                    .map_err(to_storage_io)?,
+                bootstrap_receipts: db
+                    .open_tree(TREE_BOOTSTRAP_RECEIPTS)
+                    .map_err(to_storage_io)?,
+                bootstrap_receipts_by_agent: db
+                    .open_tree(TREE_BOOTSTRAP_RECEIPTS_BY_AGENT)
+                    .map_err(to_storage_io)?,
+                legacy_migration_receipts: db
+                    .open_tree(TREE_LEGACY_MIGRATION_RECEIPTS)
+                    .map_err(to_storage_io)?,
+                process_hydrations: db
+                    .open_tree(TREE_PROCESS_HYDRATIONS)
+                    .map_err(to_storage_io)?,
+                process_hydrations_by_agent: db
+                    .open_tree(TREE_PROCESS_HYDRATIONS_BY_AGENT)
+                    .map_err(to_storage_io)?,
+                process_hydrations_by_lease: db
+                    .open_tree(TREE_PROCESS_HYDRATIONS_BY_LEASE)
+                    .map_err(to_storage_io)?,
+                hydration_epochs: db.open_tree(TREE_HYDRATION_EPOCHS).map_err(to_storage_io)?,
+                current_hydrations: db
+                    .open_tree(TREE_CURRENT_HYDRATIONS)
+                    .map_err(to_storage_io)?,
+                hydration_runtime_state: db
+                    .open_tree(TREE_HYDRATION_RUNTIME_STATE)
+                    .map_err(to_storage_io)?,
+                readiness_proofs: db.open_tree(TREE_READINESS_PROOFS).map_err(to_storage_io)?,
+                readiness_schema: db.open_tree(TREE_READINESS_SCHEMA).map_err(to_storage_io)?,
+                #[cfg(test)]
+                flush_probe: Arc::new(Mutex::new(FlushProbe::default())),
+                db,
+            };
+            store.migrate_runtime_schema()?;
+            store.migrate_legacy_readiness_proofs(belief_authority)?;
+            Ok(store)
+        })
     }
 
     /// Open the store behind a shared pointer for facade wiring.
@@ -1852,6 +1857,17 @@ impl AgentStore {
         &self,
         proof_id: &str,
     ) -> Result<Option<AgentReadinessProof>, StorageError> {
+        let belief = BeliefReadinessReopenContract::open(self.db.clone())?;
+        belief.with_product_authority_available(|belief_authority| {
+            self.get_readiness_proof_admitted(proof_id, belief_authority)
+        })
+    }
+
+    fn get_readiness_proof_admitted(
+        &self,
+        proof_id: &str,
+        belief: &BeliefReadinessAuthority<'_>,
+    ) -> Result<Option<AgentReadinessProof>, StorageError> {
         let mut proof: Option<AgentReadinessProof> = decode_optional(
             self.readiness_proofs
                 .get(proof_id.as_bytes())
@@ -1864,8 +1880,7 @@ impl AgentStore {
             // TODO compat-shim: remove this lazy v1 rewrite after late-inserted W3A
             // fixture coverage is retired and all supported stores carry a complete
             // readiness schema marker produced after the final v1-capable release.
-            let belief = BeliefReadinessReopenContract::open(self.db.clone())?;
-            self.migrate_readiness_proof(proof_id.as_bytes(), &belief)?;
+            self.migrate_readiness_proof(proof_id.as_bytes(), belief)?;
             proof = decode_optional(
                 self.readiness_proofs
                     .get(proof_id.as_bytes())
@@ -1884,7 +1899,6 @@ impl AgentStore {
                     "readiness proof key conflicts with its identity".to_string(),
                 ));
             }
-            let belief = BeliefReadinessReopenContract::open(self.db.clone())?;
             let attestation =
                 belief.verified_attestation(&proof.signal.attestation.attestation_id)?;
             if attestation != proof.signal.attestation {
@@ -3478,7 +3492,10 @@ impl AgentStore {
         self.flush_durable("agent runtime schema migration")
     }
 
-    fn migrate_legacy_readiness_proofs(&self) -> Result<(), StorageError> {
+    fn migrate_legacy_readiness_proofs(
+        &self,
+        belief: &BeliefReadinessAuthority<'_>,
+    ) -> Result<(), StorageError> {
         let mut state = match self
             .readiness_schema
             .get(KEY_READINESS_SCHEMA_STATE)
@@ -3499,7 +3516,6 @@ impl AgentStore {
         if state.complete {
             return Ok(());
         }
-        let belief = BeliefReadinessReopenContract::open(self.db.clone())?;
         while !state.complete {
             let mut keys = Vec::with_capacity(READINESS_MIGRATION_BATCH);
             match state.cursor.as_deref() {
@@ -3525,7 +3541,7 @@ impl AgentStore {
                 state.cursor = None;
             } else {
                 for key in &keys {
-                    self.migrate_readiness_proof(key, &belief)?;
+                    self.migrate_readiness_proof(key, belief)?;
                 }
                 state.cursor = keys.last().cloned();
             }
@@ -3537,7 +3553,7 @@ impl AgentStore {
     fn migrate_readiness_proof(
         &self,
         key: &[u8],
-        belief: &BeliefReadinessReopenContract,
+        belief: &BeliefReadinessAuthority<'_>,
     ) -> Result<(), StorageError> {
         let raw = self
             .readiness_proofs
@@ -5357,9 +5373,104 @@ pub(crate) fn fuzz_terminal_hydration_fence(data: &[u8]) {
 mod tests {
     use super::*;
     use crate::activation::BeliefActivationReceipt;
-    use crate::belief::BranchScope;
+    use crate::belief::{
+        BeliefAuthorityMigrationIdentity, BeliefAuthorityMigrationProgress, BeliefStore,
+        BranchScope,
+    };
     use crate::events::DomainObjectRef;
     use crate::world_state::graph::PerspectiveKey;
+
+    type DatabaseSnapshot = Vec<(Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>)>;
+
+    fn database_snapshot(db: &Db) -> DatabaseSnapshot {
+        let mut tree_names = db
+            .tree_names()
+            .into_iter()
+            .map(|name| name.to_vec())
+            .collect::<Vec<_>>();
+        tree_names.sort();
+        tree_names
+            .into_iter()
+            .map(|name| {
+                let tree = db.open_tree(&name).expect("snapshot tree");
+                let records = tree
+                    .iter()
+                    .map(|item| {
+                        let (key, value) = item.expect("snapshot record");
+                        (key.to_vec(), value.to_vec())
+                    })
+                    .collect();
+                (name, records)
+            })
+            .collect()
+    }
+
+    fn authority_migration_identity() -> BeliefAuthorityMigrationIdentity {
+        BeliefAuthorityMigrationIdentity::try_new(
+            "agent-readiness-authority-migration",
+            "legacy-agent-readiness-authority",
+            "product-agent-readiness-authority",
+            1,
+        )
+        .expect("migration identity")
+    }
+
+    #[test]
+    fn agent_open_and_readiness_reads_reject_pre_cutover_belief_authority_byte_clean() {
+        let source_db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary source database");
+        let product_db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary product database");
+        let source = BeliefStore::new(source_db).expect("source belief store");
+        let product = BeliefStore::new(product_db.clone()).expect("product belief store");
+        let existing_agent = AgentStore::new(product_db.clone()).expect("initial agent store");
+        let identity = authority_migration_identity();
+
+        for expected in ["prepared", "copying", "verified"] {
+            let marker = product
+                .advance_legacy_authority_migration(&source, identity.clone())
+                .expect("advance belief authority migration");
+            let actual = match marker.progress() {
+                BeliefAuthorityMigrationProgress::Prepared { .. } => "prepared",
+                BeliefAuthorityMigrationProgress::Copying { .. } => "copying",
+                BeliefAuthorityMigrationProgress::Verified { .. } => "verified",
+                BeliefAuthorityMigrationProgress::Cutover { .. } => "cutover",
+                BeliefAuthorityMigrationProgress::ForwardRepairOnly { .. } => "forward_repair",
+            };
+            assert_eq!(actual, expected);
+
+            let before_open = database_snapshot(&product_db);
+            assert!(matches!(
+                AgentStore::new(product_db.clone()),
+                Err(StorageError::Unavailable(_))
+            ));
+            assert_eq!(database_snapshot(&product_db), before_open);
+
+            let before_read = database_snapshot(&product_db);
+            assert!(matches!(
+                existing_agent.get_readiness_proof("missing-readiness-proof"),
+                Err(StorageError::Unavailable(_))
+            ));
+            assert_eq!(database_snapshot(&product_db), before_read);
+        }
+
+        let marker = product
+            .advance_legacy_authority_migration(&source, identity)
+            .expect("complete belief authority migration");
+        assert!(matches!(
+            marker.progress(),
+            BeliefAuthorityMigrationProgress::Cutover { .. }
+        ));
+        let reopened = AgentStore::new(product_db).expect("post-cutover agent store");
+        assert!(reopened
+            .get_readiness_proof("missing-readiness-proof")
+            .expect("post-cutover readiness read")
+            .is_none());
+    }
 
     #[test]
     fn complete_readiness_schema_replay_is_flush_free() {
@@ -5381,8 +5492,12 @@ mod tests {
         assert!(state.complete);
 
         let before = store.flush_calls();
-        store
-            .migrate_legacy_readiness_proofs()
+        let belief = BeliefReadinessReopenContract::open(store.db.clone())
+            .expect("belief readiness contract");
+        belief
+            .with_product_authority_available(|authority| {
+                store.migrate_legacy_readiness_proofs(authority)
+            })
             .expect("complete schema replay");
         assert_eq!(store.flush_calls(), before);
     }

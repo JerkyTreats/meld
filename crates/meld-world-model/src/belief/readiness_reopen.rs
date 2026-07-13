@@ -10,7 +10,8 @@ use sled::{
 };
 
 use crate::belief::store::{
-    load_or_create_store_instance_id, shared_write_gate, validate_readiness_owner_hash,
+    load_or_create_store_instance_id, require_product_authority_available, shared_write_gate,
+    validate_readiness_owner_hash,
 };
 use crate::belief::{
     hash_readiness_view, BeliefReadinessAttestation, BeliefReadinessSnapshot, BeliefRevision,
@@ -19,6 +20,7 @@ use crate::belief::{
 use crate::error::StorageError;
 
 const TREE_AUTHORITY_META: &str = "belief_authority_meta";
+const TREE_AUTHORITY_MIGRATION: &str = "belief_authority_migration";
 const TREE_REVISIONS: &str = "belief_revisions";
 const TREE_VIEWS: &str = "belief_views";
 const TREE_ATTESTATIONS: &str = "belief_readiness_attestations";
@@ -78,6 +80,8 @@ impl MigrationState {
 /// Belief-owned contract for reopening one exact readiness attestation product.
 pub(crate) struct BeliefReadinessReopenContract {
     db: Db,
+    authority_meta: Tree,
+    authority_migration: Tree,
     revisions: Tree,
     views: Tree,
     attestations: Tree,
@@ -88,12 +92,38 @@ pub(crate) struct BeliefReadinessReopenContract {
     write_gate: Arc<RwLock<()>>,
 }
 
+/// Proof that one cross-domain operation owns the available belief authority.
+pub(crate) struct BeliefReadinessAuthority<'a> {
+    contract: &'a BeliefReadinessReopenContract,
+}
+
+impl BeliefReadinessAuthority<'_> {
+    /// Return one attestation after verifying its exact durable products.
+    pub(crate) fn verified_attestation(
+        &self,
+        attestation_id: &str,
+    ) -> Result<BeliefReadinessAttestation, StorageError> {
+        self.contract
+            .verified_attestation_exclusively(attestation_id)
+    }
+}
+
 impl BeliefReadinessReopenContract {
     /// Open only readiness authority and complete its versioned migration.
     pub(crate) fn open(db: Db) -> Result<Self, StorageError> {
         let authority_meta = db.open_tree(TREE_AUTHORITY_META).map_err(to_storage_io)?;
+        let authority_migration = db
+            .open_tree(TREE_AUTHORITY_MIGRATION)
+            .map_err(to_storage_io)?;
+        require_product_authority_available(&authority_meta, &authority_migration)?;
         let store_instance_id = load_or_create_store_instance_id(&db, &authority_meta)?;
+        let write_gate = shared_write_gate(&store_instance_id);
+        let gate = Arc::clone(&write_gate);
+        let _exclusive = gate.write();
+        require_product_authority_available(&authority_meta, &authority_migration)?;
         let contract = Self {
+            authority_meta,
+            authority_migration,
             revisions: db.open_tree(TREE_REVISIONS).map_err(to_storage_io)?,
             views: db.open_tree(TREE_VIEWS).map_err(to_storage_io)?,
             attestations: db.open_tree(TREE_ATTESTATIONS).map_err(to_storage_io)?,
@@ -101,32 +131,37 @@ impl BeliefReadinessReopenContract {
             owner_fences: db.open_tree(TREE_OWNER_FENCES).map_err(to_storage_io)?,
             snapshots: db.open_tree(TREE_SNAPSHOTS).map_err(to_storage_io)?,
             schema: db.open_tree(TREE_SCHEMA).map_err(to_storage_io)?,
-            write_gate: shared_write_gate(&store_instance_id),
+            write_gate,
             db,
         };
-        contract.migrate()?;
+        contract.migrate_exclusively()?;
         Ok(contract)
     }
 
-    /// Return one attestation only after its exact durable products verify.
-    pub(crate) fn verified_attestation(
+    /// Hold the available product authority across one cross-domain operation.
+    pub(crate) fn with_product_authority_available<T>(
+        &self,
+        operation: impl FnOnce(&BeliefReadinessAuthority<'_>) -> Result<T, StorageError>,
+    ) -> Result<T, StorageError> {
+        let _exclusive = self.write_gate.write();
+        self.require_product_authority_available()?;
+        operation(&BeliefReadinessAuthority { contract: self })
+    }
+
+    fn verified_attestation_exclusively(
         &self,
         attestation_id: &str,
     ) -> Result<BeliefReadinessAttestation, StorageError> {
-        let needs_upgrade = {
-            let _read = self.write_gate.read();
-            self.read_attestation(attestation_id)?
-                .is_some_and(|attestation| attestation.requires_legacy_upgrade())
-        };
+        let needs_upgrade = self
+            .read_attestation(attestation_id)?
+            .is_some_and(|attestation| attestation.requires_legacy_upgrade());
         if needs_upgrade {
             // TODO compat-shim: remove this late v1 rewrite after accepted W3A
             // fixture insertion is retired and every supported store carries a
             // completed marker from the final v1-capable release.
-            let _write = self.write_gate.write();
             self.migrate_identity(attestation_id.as_bytes())?;
         }
 
-        let _read = self.write_gate.read();
         let attestation = self.read_attestation(attestation_id)?.ok_or_else(|| {
             StorageError::MigrationConflict(format!(
                 "readiness proof references missing belief attestation '{attestation_id}'"
@@ -153,8 +188,11 @@ impl BeliefReadinessReopenContract {
         )
     }
 
-    fn migrate(&self) -> Result<(), StorageError> {
-        let _write = self.write_gate.write();
+    fn require_product_authority_available(&self) -> Result<(), StorageError> {
+        require_product_authority_available(&self.authority_meta, &self.authority_migration)
+    }
+
+    fn migrate_exclusively(&self) -> Result<(), StorageError> {
         let mut state = match self.schema.get(KEY_SCHEMA_STATE).map_err(to_storage_io)? {
             Some(raw) => serde_json::from_slice(&raw).map_err(to_storage_data)?,
             None => {

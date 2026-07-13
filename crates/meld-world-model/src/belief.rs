@@ -112,7 +112,7 @@ pub use readiness::{
     hash_readiness_revision, hash_readiness_view, BeliefReadinessAttestation,
     BeliefReadinessAttestationRequest, BeliefReadinessSnapshot,
 };
-pub(crate) use readiness_reopen::BeliefReadinessReopenContract;
+pub(crate) use readiness_reopen::{BeliefReadinessAuthority, BeliefReadinessReopenContract};
 pub use runtime::{BeliefRuntime, RuntimeAssessmentResult, MAX_BELIEF_EVIDENCE_WINDOW_ITEMS};
 pub use store::BeliefStore;
 pub use task_evidence::{

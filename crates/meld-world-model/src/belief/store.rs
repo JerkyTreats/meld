@@ -315,11 +315,7 @@ impl BeliefStore {
         let authority_migration = db
             .open_tree(TREE_AUTHORITY_MIGRATION)
             .map_err(to_storage_io)?;
-        if let Some(marker) =
-            preterminal_authority_migration(&authority_meta, &authority_migration)?
-        {
-            return Err(incomplete_authority_unavailable(&marker));
-        }
+        require_product_authority_available(&authority_meta, &authority_migration)?;
         let store = Self::open_unreconciled(db, authority_meta, authority_migration)?;
         store.reconcile_exclusively_on_open()?;
         store.migrate_legacy_readiness_attestations()?;
@@ -5120,6 +5116,16 @@ fn require_exact_preterminal_authority_migration(
         ));
     }
     Ok(marker)
+}
+
+pub(super) fn require_product_authority_available(
+    authority_meta: &Tree,
+    authority_migration: &Tree,
+) -> Result<(), StorageError> {
+    if let Some(marker) = preterminal_authority_migration(authority_meta, authority_migration)? {
+        return Err(incomplete_authority_unavailable(&marker));
+    }
+    Ok(())
 }
 
 fn incomplete_authority_unavailable(marker: &BeliefAuthorityMigrationMarker) -> StorageError {
