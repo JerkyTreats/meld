@@ -2,7 +2,7 @@
 
 Date: 2026-07-04
 Revised: 2026-07-12
-Status: active
+Status: active child program with sequencing governed by the parent
 Program branch: `runtime-operator-visibility`
 
 ## Objective
@@ -10,6 +10,14 @@ Program branch: `runtime-operator-visibility`
 Implement runtime operator visibility so a user can tell whether `meld runtime run` started real work, stayed idle, stalled, retried, or moved the flywheel end to end.
 
 The first objective is Wave 0 shared contract prework. Later waves must consume these shared contracts instead of inventing alternate cache, action, or status shapes.
+
+## Parent Program
+
+The [Production Cognitive Runtime Closure Program](production_cognitive_runtime_closure_program.md) owns cross-wave dependency order, semantic runtime activation, correctness gates, product proof, process hosting, agent scheduling, integration rules, and final closeout.
+
+This ledger remains the child program for status cache, operator actions, console presentation, process visibility, and runtime command behavior.
+It does not own world model or execution semantic progress.
+Its earlier wave sequence is superseded where the parent program defines a dependency or gate, while completed Wave 0 evidence remains historical truth.
 
 ## Source Plan
 
@@ -37,6 +45,14 @@ Branch note:
 - Those existing changes were carried forward and were not reverted.
 
 ## Coordination Entries
+
+### 2026-07-12 production runtime closure orchestration
+
+The parent program adds the missing semantic activation and correctness waves around this visibility work.
+Wave 1 in this ledger remains the immediate R1 implementation slice and maps into parent Wave 0.
+Later visibility waves integrate only after their dependent domain actors and durability contracts pass the parent gates.
+
+The runtime visibility program must not treat action reporting as evidence that an inert actor performs semantic work.
 
 ### 2026-07-08 event observability workstream
 

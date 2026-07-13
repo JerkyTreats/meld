@@ -106,6 +106,7 @@ These components predate the vertical slice and support all phases.
 | `events` ledger mechanics | complete | `meld-events` |
 | event foundation closeout | closed 2026-07-12 | `meld-events` with root `meld` |
 | product event authority cutover | complete, E5 closed 2026-07-12 | `events` with root `meld` |
+| production cognitive runtime closure | design ready, Waves 0 through 6 | root `meld` with domain crates |
 | `integration/typed_loop` | complete | `meld-lang` integration tests |
 
 Foundation work follows this order:
@@ -123,7 +124,7 @@ event authority and observability hardening
 2. event authority and observability hardening — complete, E1 through E4
 3. product event authority cutover — complete, E5 closed 2026-07-12
 4. event foundation closure — closed 2026-07-12, E6
-5. runtime visibility, daemon, and semantic wiring — active next work, R1 through R4
+5. production cognitive runtime closure — design ready, Waves 0 through 6
 6. `meld-lang` — complete, Phase 1
 7. `world_model/graph` — complete, Phase 2
 8. `world_model/belief` — complete, Phase 3
@@ -152,6 +153,8 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — first slice implemented
 - [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
 - [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - closed event foundation closeout
+- [integration/production_cognitive_runtime_closure_program.md](integration/production_cognitive_runtime_closure_program.md) - design-ready production runtime closure and buildout orchestration
+- [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - executable packet, thread, review, and rollback ledger
 - [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — template
 - [integration/durable_runtime_first_slice.md](integration/durable_runtime_first_slice.md) - proposed durable flywheel runtime design
 - [integration/durable_runtime_pre_implementation_gaps.md](integration/durable_runtime_pre_implementation_gaps.md) - proposed pre assembly gap requirements
