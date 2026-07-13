@@ -1403,6 +1403,9 @@ impl From<PublicationRuntimeReport> for WorkerTickReport {
 
 impl From<PlanningRuntimeActorReport> for WorkerTickReport {
     fn from(report: PlanningRuntimeActorReport) -> Self {
+        let output_revision = report
+            .output_revision
+            .unwrap_or(report.last_acknowledged_revision);
         Self {
             actor_id: report.actor_id,
             scope: WorkerScope {
@@ -1420,7 +1423,7 @@ impl From<PlanningRuntimeActorReport> for WorkerTickReport {
             },
             output_checkpoint: WorkerCheckpoint {
                 name: "task_network_revision".to_string(),
-                value: report.output_revision,
+                value: output_revision,
             },
             items_attempted: report.attempted,
             items_committed: report.committed,
@@ -1632,7 +1635,8 @@ mod tests {
             actor_id: "execution.planning".to_string(),
             active_goal_count: 3,
             input_revision: 10,
-            output_revision: 11,
+            output_revision: Some(11),
+            last_acknowledged_revision: 11,
             attempted: 1,
             committed: 1,
             retryable_errors: vec![PlanningRuntimeActorIssue {
@@ -1656,6 +1660,37 @@ mod tests {
         assert_eq!(
             worker.retryable_errors[0].item_id.as_deref(),
             Some("goal-a")
+        );
+    }
+
+    #[test]
+    fn planning_runtime_report_uses_last_acknowledgement_when_final_revision_is_unverified() {
+        let report = PlanningRuntimeActorReport {
+            actor_id: "execution.planning".to_string(),
+            active_goal_count: 1,
+            input_revision: 10,
+            output_revision: None,
+            last_acknowledged_revision: 11,
+            attempted: 1,
+            committed: 1,
+            retryable_errors: vec![PlanningRuntimeActorIssue {
+                goal_id: None,
+                code: "task_network_final_query_failed".to_string(),
+                message: "authority replaced".to_string(),
+            }],
+            fatal_errors: Vec::new(),
+            budget_exhausted: false,
+            results: Vec::new(),
+        };
+
+        let worker: WorkerTickReport = report.into();
+
+        assert_eq!(worker.input_checkpoint.value, 10);
+        assert_eq!(worker.output_checkpoint.value, 11);
+        assert_eq!(worker.items_committed, 1);
+        assert_eq!(
+            worker.retryable_errors[0].code,
+            "task_network_final_query_failed"
         );
     }
 

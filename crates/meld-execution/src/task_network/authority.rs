@@ -19,11 +19,17 @@ use crate::task_network::command;
 use crate::task_network::journal::JournalRecord;
 use crate::task_network::outcome::{Publication, PublicationLedgerBinding, PublicationState};
 use crate::task_network::readiness::compute_ready_set;
-use crate::task_network::state::{NetworkState, ReadySet};
+use crate::task_network::state::{DependencyEdge, NetworkState, ReadySet, TaskNode};
 use crate::task_network::store::{
     network_storage_key, AuthorityStoreError, SledTaskNetworkStore, TaskNetworkStoreError,
     TaskNetworkStoreFactory,
 };
+
+const MAX_TASK_MATERIALIZATION_IDS: usize = 1_024;
+const MAX_TASK_MATERIALIZATION_ID_BYTES: usize = 1_024;
+const MAX_TASK_MATERIALIZATION_INCOMING_EDGES: usize = 1_024;
+const MAX_TASK_MATERIALIZATION_BYTES: usize = 16 * 1_048_576;
+const MAX_TASK_COMMAND_OUTCOME_ID_BYTES: usize = 1_024;
 
 /// Public lifecycle of one task network authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +68,48 @@ pub struct TaskNetworkAuthoritySnapshot {
     pub state_hash: String,
     /// Canonical event ledger established by the first published outcome.
     pub publication_ledger_binding: Option<PublicationLedgerBinding>,
+}
+
+/// Compact identity and revision view for one durable task network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskNetworkHead {
+    /// Stable network identity.
+    pub network_id: String,
+    /// Latest durably acknowledged revision.
+    pub revision: u64,
+    /// State hash acknowledged at the revision.
+    pub state_hash: String,
+}
+
+/// Bounded task materialization view for explicitly requested task identities.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskNetworkMaterialization {
+    /// Compact durable head observed with the materialization view.
+    pub head: TaskNetworkHead,
+    /// Present task nodes keyed by requested task identity.
+    pub tasks: BTreeMap<String, TaskNode>,
+    /// Incoming edges keyed by requested target task identity.
+    pub incoming_edges: BTreeMap<String, Vec<DependencyEdge>>,
+}
+
+/// Typed cause retained after a task network authority poisons itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskNetworkAuthorityPoisonKind {
+    /// Another authority superseded this worker's durable epoch.
+    StaleEpoch,
+    /// Durable storage returned a potentially transient I/O failure.
+    Storage,
+    /// Durable authority state could not be decoded or verified.
+    CorruptState,
+    /// The authority worker panicked while shutting down.
+    WorkerPanic,
+}
+
+impl TaskNetworkAuthorityPoisonKind {
+    /// Return whether replacing the authority may recover without operator repair.
+    pub fn retryable(self) -> bool {
+        matches!(self, Self::StaleEpoch | Self::Storage)
+    }
 }
 
 /// Error returned by task network authority operations.
@@ -104,8 +152,24 @@ pub enum TaskNetworkAuthorityError {
     Poisoned {
         /// Network whose authority is poisoned.
         network_id: String,
+        /// Typed cause used by supervisors to distinguish replacement from repair.
+        kind: TaskNetworkAuthorityPoisonKind,
         /// Diagnostic for the first poisoning failure.
         reason: String,
+    },
+    /// Query and command capabilities came from different authority instances.
+    #[error(
+        "task network query authority '{query_network_id}' at epoch {query_epoch} does not match command authority '{command_network_id}' at epoch {command_epoch}"
+    )]
+    MismatchedPorts {
+        /// Network identity carried by the query capability.
+        query_network_id: String,
+        /// Epoch carried by the query capability.
+        query_epoch: u64,
+        /// Network identity carried by the command capability.
+        command_network_id: String,
+        /// Epoch carried by the command capability.
+        command_epoch: u64,
     },
     /// Authority configuration is invalid.
     #[error("invalid task network authority configuration: {0}")]
@@ -165,6 +229,40 @@ pub struct TaskNetworkQueryPort {
 }
 
 impl TaskNetworkQueryPort {
+    /// Return the exact durable outcome receipt for one command id.
+    pub fn command_outcome(
+        &self,
+        command_id: impl Into<String>,
+    ) -> Result<Option<command::OutcomeReceipt>, TaskNetworkAuthorityError> {
+        let command_id = command_id.into();
+        if command_id.trim().is_empty() || command_id.len() > MAX_TASK_COMMAND_OUTCOME_ID_BYTES {
+            return Err(TaskNetworkAuthorityError::InvalidConfiguration(format!(
+                "command outcome identity must be non-empty and at most {MAX_TASK_COMMAND_OUTCOME_ID_BYTES} bytes"
+            )));
+        }
+        let (ack_sender, ack_receiver) = sync_channel(1);
+        self.shared.try_admit(
+            &self.sender,
+            Work::CommandOutcome {
+                command_id,
+                ack: ack_sender,
+            },
+        )?;
+        ack_receiver
+            .recv()
+            .map_err(|_| self.shared.closed_error())?
+    }
+
+    /// Return compact durable head metadata without cloning network products.
+    pub fn head(&self) -> Result<TaskNetworkHead, TaskNetworkAuthorityError> {
+        let (ack_sender, ack_receiver) = sync_channel(1);
+        self.shared
+            .try_admit(&self.sender, Work::Head { ack: ack_sender })?;
+        ack_receiver
+            .recv()
+            .map_err(|_| self.shared.closed_error())?
+    }
+
     /// Return lightweight mutation identity without cloning the full graph.
     pub fn snapshot(&self) -> Result<TaskNetworkAuthoritySnapshot, TaskNetworkAuthorityError> {
         let (ack_sender, ack_receiver) = sync_channel(1);
@@ -190,6 +288,25 @@ impl TaskNetworkQueryPort {
         let (ack_sender, ack_receiver) = sync_channel(1);
         self.shared
             .try_admit(&self.sender, Work::Journal { ack: ack_sender })?;
+        ack_receiver
+            .recv()
+            .map_err(|_| self.shared.closed_error())?
+    }
+
+    /// Return task nodes and incoming edges only for requested task identities.
+    pub fn materialization(
+        &self,
+        task_instance_ids: Vec<String>,
+    ) -> Result<TaskNetworkMaterialization, TaskNetworkAuthorityError> {
+        validate_materialization_request(&task_instance_ids)?;
+        let (ack_sender, ack_receiver) = sync_channel(1);
+        self.shared.try_admit(
+            &self.sender,
+            Work::Materialization {
+                task_instance_ids,
+                ack: ack_sender,
+            },
+        )?;
         ack_receiver
             .recv()
             .map_err(|_| self.shared.closed_error())?
@@ -249,6 +366,48 @@ impl TaskNetworkQueryPort {
     }
 }
 
+/// Query and command capabilities proven to share one live authority instance.
+#[derive(Clone)]
+pub struct TaskNetworkAuthorityPorts {
+    query: TaskNetworkQueryPort,
+    commands: TaskNetworkCommandPort,
+}
+
+impl TaskNetworkAuthorityPorts {
+    /// Pair independently obtained capabilities only when they share exact authority identity.
+    pub fn try_pair(
+        query: TaskNetworkQueryPort,
+        commands: TaskNetworkCommandPort,
+    ) -> Result<Self, TaskNetworkAuthorityError> {
+        if !Arc::ptr_eq(&query.shared, &commands.shared) {
+            let query_identity = query.lifecycle();
+            let command_identity = commands.lifecycle();
+            return Err(TaskNetworkAuthorityError::MismatchedPorts {
+                query_network_id: query_identity.network_id,
+                query_epoch: query_identity.epoch,
+                command_network_id: command_identity.network_id,
+                command_epoch: command_identity.epoch,
+            });
+        }
+        Ok(Self { query, commands })
+    }
+
+    /// Return the query capability owned by the paired authority.
+    pub fn query(&self) -> &TaskNetworkQueryPort {
+        &self.query
+    }
+
+    /// Return the command capability owned by the paired authority.
+    pub fn commands(&self) -> &TaskNetworkCommandPort {
+        &self.commands
+    }
+
+    /// Return the identity and current lifecycle shared by both capabilities.
+    pub fn lifecycle(&self) -> TaskNetworkAuthorityLifecycleSnapshot {
+        self.query.lifecycle()
+    }
+}
+
 /// Final proof that one authority fenced admission, drained, flushed, and
 /// joined its worker.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -288,8 +447,10 @@ impl TaskNetworkAuthority {
             ));
         }
         let network_id = network_id.into();
-        let thread_key = network_storage_key(&network_id)?;
-        let store = factory.open_network(network_id)?;
+        let thread_key = network_storage_key(&network_id).map_err(authority_open_error)?;
+        let store = factory
+            .open_network(network_id)
+            .map_err(authority_open_error)?;
         Self::spawn_store(store, thread_key, mailbox_capacity)
     }
 
@@ -335,6 +496,14 @@ impl TaskNetworkAuthority {
         }
     }
 
+    /// Return paired query and command capabilities from this exact authority instance.
+    pub fn ports(&self) -> TaskNetworkAuthorityPorts {
+        TaskNetworkAuthorityPorts {
+            query: self.query_port(),
+            commands: self.command_port(),
+        }
+    }
+
     /// Return the identity and current lifecycle of this authority.
     pub fn lifecycle(&self) -> TaskNetworkAuthorityLifecycleSnapshot {
         self.shared.snapshot()
@@ -360,6 +529,7 @@ impl TaskNetworkAuthority {
                 self.shared.finish_shutdown();
                 return Err(TaskNetworkAuthorityError::Poisoned {
                     network_id: self.shared.network_id.clone(),
+                    kind: TaskNetworkAuthorityPoisonKind::WorkerPanic,
                     reason: "authority worker panicked during shutdown".to_string(),
                 });
             }
@@ -376,6 +546,15 @@ impl TaskNetworkAuthority {
         };
         self.shutdown_receipt = Some(receipt.clone());
         Ok(receipt)
+    }
+}
+
+fn authority_open_error(error: TaskNetworkStoreError) -> TaskNetworkAuthorityError {
+    match error {
+        TaskNetworkStoreError::InvalidConfiguration(message) => {
+            TaskNetworkAuthorityError::InvalidConfiguration(message)
+        }
+        error => TaskNetworkAuthorityError::Store(error),
     }
 }
 
@@ -431,6 +610,13 @@ impl TaskNetworkAuthorities {
             .map(TaskNetworkAuthority::query_port)
     }
 
+    /// Return paired capabilities for one configured network authority.
+    pub fn ports(&self, network_id: &str) -> Option<TaskNetworkAuthorityPorts> {
+        self.authorities
+            .get(network_id)
+            .map(TaskNetworkAuthority::ports)
+    }
+
     /// Return the number of uniquely configured authorities.
     pub fn len(&self) -> usize {
         self.authorities.len()
@@ -457,14 +643,25 @@ enum Work {
         request: Box<command::Request>,
         ack: SyncSender<Result<command::Response, TaskNetworkAuthorityError>>,
     },
+    CommandOutcome {
+        command_id: String,
+        ack: SyncSender<Result<Option<command::OutcomeReceipt>, TaskNetworkAuthorityError>>,
+    },
     State {
         ack: SyncSender<Result<NetworkState, TaskNetworkAuthorityError>>,
     },
     Snapshot {
         ack: SyncSender<Result<TaskNetworkAuthoritySnapshot, TaskNetworkAuthorityError>>,
     },
+    Head {
+        ack: SyncSender<Result<TaskNetworkHead, TaskNetworkAuthorityError>>,
+    },
     Journal {
         ack: SyncSender<Result<Vec<JournalRecord>, TaskNetworkAuthorityError>>,
+    },
+    Materialization {
+        task_instance_ids: Vec<String>,
+        ack: SyncSender<Result<TaskNetworkMaterialization, TaskNetworkAuthorityError>>,
     },
     ReadySet {
         ack: SyncSender<Result<ReadySet, TaskNetworkAuthorityError>>,
@@ -499,7 +696,35 @@ enum SharedState {
     Open,
     Closing,
     Closed,
-    Poisoned(String),
+    Poisoned(AuthorityPoison),
+}
+
+#[derive(Clone)]
+struct AuthorityPoison {
+    kind: TaskNetworkAuthorityPoisonKind,
+    reason: String,
+}
+
+impl AuthorityPoison {
+    fn stale_epoch(expected: u64, actual: u64) -> Self {
+        Self {
+            kind: TaskNetworkAuthorityPoisonKind::StaleEpoch,
+            reason: format!("durable epoch changed from {expected} to {actual}"),
+        }
+    }
+
+    fn store(error: &TaskNetworkStoreError) -> Self {
+        let kind = match error {
+            TaskNetworkStoreError::Storage(_) => TaskNetworkAuthorityPoisonKind::Storage,
+            TaskNetworkStoreError::InvalidConfiguration(_)
+            | TaskNetworkStoreError::CorruptStorage(_)
+            | TaskNetworkStoreError::Decode(_) => TaskNetworkAuthorityPoisonKind::CorruptState,
+        };
+        Self {
+            kind,
+            reason: error.to_string(),
+        }
+    }
 }
 
 impl SharedLifecycle {
@@ -522,7 +747,7 @@ impl SharedLifecycle {
             SharedState::Open => {}
             SharedState::Closing => return Err(self.closing_error()),
             SharedState::Closed => return Err(self.closed_error()),
-            SharedState::Poisoned(reason) => return Err(self.poisoned_error(reason.clone())),
+            SharedState::Poisoned(poison) => return Err(self.poisoned_error(poison.clone())),
         }
         match sender.try_send(work) {
             Ok(()) => Ok(()),
@@ -550,10 +775,10 @@ impl SharedLifecycle {
         }
     }
 
-    fn poison(&self, reason: String) {
+    fn poison(&self, poison: AuthorityPoison) {
         let mut state = self.lock_state();
         if !matches!(*state, SharedState::Closed) {
-            *state = SharedState::Poisoned(reason);
+            *state = SharedState::Poisoned(poison);
         }
     }
 
@@ -593,10 +818,11 @@ impl SharedLifecycle {
         }
     }
 
-    fn poisoned_error(&self, reason: String) -> TaskNetworkAuthorityError {
+    fn poisoned_error(&self, poison: AuthorityPoison) -> TaskNetworkAuthorityError {
         TaskNetworkAuthorityError::Poisoned {
             network_id: self.network_id.clone(),
-            reason,
+            kind: poison.kind,
+            reason: poison.reason,
         }
     }
 }
@@ -607,20 +833,19 @@ fn run_worker(
     receiver: Receiver<Work>,
     shared: Arc<SharedLifecycle>,
 ) {
-    let mut poison_reason: Option<String> = None;
+    let mut poison: Option<AuthorityPoison> = None;
     while let Ok(work) = receiver.recv() {
         match work {
             Work::Command { request, ack } => {
-                let result = if let Some(reason) = &poison_reason {
-                    Err(shared.poisoned_error(reason.clone()))
+                let result = if let Some(poison) = &poison {
+                    Err(shared.poisoned_error(poison.clone()))
                 } else {
                     match store.submit_at_authority_epoch(epoch, *request) {
                         Ok(response) => Ok(response),
                         Err(AuthorityStoreError::StaleEpoch { expected, actual }) => {
-                            let reason =
-                                format!("durable epoch changed from {expected} to {actual}");
-                            poison_reason = Some(reason.clone());
-                            shared.poison(reason);
+                            let stale_poison = AuthorityPoison::stale_epoch(expected, actual);
+                            poison = Some(stale_poison.clone());
+                            shared.poison(stale_poison);
                             Err(TaskNetworkAuthorityError::StaleEpoch {
                                 network_id: shared.network_id.clone(),
                                 expected,
@@ -628,40 +853,67 @@ fn run_worker(
                             })
                         }
                         Err(AuthorityStoreError::Store(error)) => {
-                            let reason = error.to_string();
-                            poison_reason = Some(reason.clone());
-                            shared.poison(reason.clone());
-                            Err(shared.poisoned_error(reason))
+                            let store_poison = AuthorityPoison::store(&error);
+                            poison = Some(store_poison.clone());
+                            shared.poison(store_poison.clone());
+                            Err(shared.poisoned_error(store_poison))
                         }
                     }
                 };
                 let _ = ack.send(result);
             }
-            Work::State { ack } => {
-                let result = validate_query_epoch(&store, epoch, &shared, &mut poison_reason)
-                    .map(|()| store.state().clone());
-                let _ = ack.send(result);
-            }
-            Work::Snapshot { ack } => {
+            Work::CommandOutcome { command_id, ack } => {
                 let result =
-                    validate_query_epoch(&store, epoch, &shared, &mut poison_reason).map(|()| {
-                        TaskNetworkAuthoritySnapshot {
-                            network_id: store.state().network_id.clone(),
-                            epoch,
-                            revision: store.state().revision,
-                            state_hash: store.state().state_hash.clone(),
-                            publication_ledger_binding: store.publication_ledger_binding().cloned(),
+                    validate_query_epoch(&store, epoch, &shared, &mut poison).and_then(|()| {
+                        match store.command_outcome_receipt(&command_id) {
+                            Ok(receipt) => Ok(receipt),
+                            Err(error) => {
+                                let store_poison = AuthorityPoison::store(&error);
+                                poison = Some(store_poison.clone());
+                                shared.poison(store_poison.clone());
+                                Err(shared.poisoned_error(store_poison))
+                            }
                         }
                     });
                 let _ = ack.send(result);
             }
+            Work::State { ack } => {
+                let result = validate_query_epoch(&store, epoch, &shared, &mut poison)
+                    .map(|()| store.state().clone());
+                let _ = ack.send(result);
+            }
+            Work::Snapshot { ack } => {
+                let result = validate_query_epoch(&store, epoch, &shared, &mut poison).map(|()| {
+                    TaskNetworkAuthoritySnapshot {
+                        network_id: store.state().network_id.clone(),
+                        epoch,
+                        revision: store.state().revision,
+                        state_hash: store.state().state_hash.clone(),
+                        publication_ledger_binding: store.publication_ledger_binding().cloned(),
+                    }
+                });
+                let _ = ack.send(result);
+            }
+            Work::Head { ack } => {
+                let result = validate_query_epoch(&store, epoch, &shared, &mut poison)
+                    .map(|()| task_network_head(store.state()));
+                let _ = ack.send(result);
+            }
             Work::Journal { ack } => {
-                let result = validate_query_epoch(&store, epoch, &shared, &mut poison_reason)
+                let result = validate_query_epoch(&store, epoch, &shared, &mut poison)
                     .map(|()| store.journal().to_vec());
                 let _ = ack.send(result);
             }
+            Work::Materialization {
+                task_instance_ids,
+                ack,
+            } => {
+                let result = validate_query_epoch(&store, epoch, &shared, &mut poison)
+                    .and_then(|()| task_network_materialization(&store, task_instance_ids));
+                let _ = ack.send(result);
+            }
             Work::ReadySet { ack } => {
-                let result = validate_query_epoch(&store, epoch, &shared, &mut poison_reason)
+                let result = validate_query_epoch(&store, epoch, &shared, &mut poison)
                     .map(|()| compute_ready_set(store.state()));
                 let _ = ack.send(result);
             }
@@ -669,41 +921,40 @@ fn run_worker(
                 publication_id,
                 ack,
             } => {
-                let result = validate_query_epoch(&store, epoch, &shared, &mut poison_reason)
+                let result = validate_query_epoch(&store, epoch, &shared, &mut poison)
                     .map(|()| store.state().publications.get(&publication_id).cloned());
                 let _ = ack.send(result);
             }
             Work::RetryablePublications { limit, ack } => {
-                let result =
-                    validate_query_epoch(&store, epoch, &shared, &mut poison_reason).map(|()| {
-                        store
-                            .state()
-                            .publications
-                            .values()
-                            .filter(|publication| {
-                                matches!(
-                                    publication.state,
-                                    PublicationState::Pending
-                                        | PublicationState::Failed { .. }
-                                        | PublicationState::Published { receipt: None, .. }
-                                )
-                            })
-                            .take(limit)
-                            .cloned()
-                            .collect()
-                    });
+                let result = validate_query_epoch(&store, epoch, &shared, &mut poison).map(|()| {
+                    store
+                        .state()
+                        .publications
+                        .values()
+                        .filter(|publication| {
+                            matches!(
+                                publication.state,
+                                PublicationState::Pending
+                                    | PublicationState::Failed { .. }
+                                    | PublicationState::Published { receipt: None, .. }
+                            )
+                        })
+                        .take(limit)
+                        .cloned()
+                        .collect()
+                });
                 let _ = ack.send(result);
             }
             Work::Shutdown { ack } => {
                 let flush_result = store.flush();
-                let was_poisoned = poison_reason.is_some();
+                let was_poisoned = poison.is_some();
                 let result = match flush_result {
                     Ok(()) => Ok(WorkerShutdown {
                         state: store.state().clone(),
                         journal_records: store.journal().len(),
                         was_poisoned,
                     }),
-                    Err(error) => Err(shared.poisoned_error(error.to_string())),
+                    Err(error) => Err(shared.poisoned_error(AuthorityPoison::store(&error))),
                 };
                 let _ = ack.send(result);
                 return;
@@ -714,21 +965,104 @@ fn run_worker(
     shared.finish_shutdown();
 }
 
+fn task_network_head(state: &NetworkState) -> TaskNetworkHead {
+    TaskNetworkHead {
+        network_id: state.network_id.clone(),
+        revision: state.revision,
+        state_hash: state.state_hash.clone(),
+    }
+}
+
+fn task_network_materialization(
+    store: &SledTaskNetworkStore,
+    task_instance_ids: Vec<String>,
+) -> Result<TaskNetworkMaterialization, TaskNetworkAuthorityError> {
+    let requested = task_instance_ids
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut tasks = BTreeMap::new();
+    let mut incoming_edges = BTreeMap::new();
+    let mut encoded_bytes = 0usize;
+    for task_id in requested {
+        let Some((task, edges)) = store.task_materialization(&task_id) else {
+            incoming_edges.insert(task_id, Vec::new());
+            continue;
+        };
+        if edges.len() > MAX_TASK_MATERIALIZATION_INCOMING_EDGES {
+            return Err(TaskNetworkAuthorityError::InvalidConfiguration(format!(
+                "task '{task_id}' has {} incoming edges, exceeding materialization limit {MAX_TASK_MATERIALIZATION_INCOMING_EDGES}",
+                edges.len()
+            )));
+        }
+        let task_bytes = serde_json::to_vec(task).map_err(|error| {
+            TaskNetworkAuthorityError::InvalidConfiguration(format!(
+                "task '{task_id}' materialization encoding failed: {error}"
+            ))
+        })?;
+        let edge_bytes = serde_json::to_vec(edges).map_err(|error| {
+            TaskNetworkAuthorityError::InvalidConfiguration(format!(
+                "task '{task_id}' incoming edge encoding failed: {error}"
+            ))
+        })?;
+        encoded_bytes = encoded_bytes
+            .checked_add(task_id.len())
+            .and_then(|bytes| bytes.checked_add(task_bytes.len()))
+            .and_then(|bytes| bytes.checked_add(edge_bytes.len()))
+            .ok_or_else(|| {
+                TaskNetworkAuthorityError::InvalidConfiguration(
+                    "task materialization encoded size overflowed".to_string(),
+                )
+            })?;
+        if encoded_bytes > MAX_TASK_MATERIALIZATION_BYTES {
+            return Err(TaskNetworkAuthorityError::InvalidConfiguration(format!(
+                "task materialization exceeds {MAX_TASK_MATERIALIZATION_BYTES} encoded bytes"
+            )));
+        }
+        tasks.insert(task_id.clone(), task.clone());
+        incoming_edges.insert(task_id, edges.to_vec());
+    }
+    Ok(TaskNetworkMaterialization {
+        head: task_network_head(store.state()),
+        tasks,
+        incoming_edges,
+    })
+}
+
+fn validate_materialization_request(
+    task_instance_ids: &[String],
+) -> Result<(), TaskNetworkAuthorityError> {
+    if task_instance_ids.len() > MAX_TASK_MATERIALIZATION_IDS {
+        return Err(TaskNetworkAuthorityError::InvalidConfiguration(format!(
+            "task materialization requested {} identities, exceeding limit {MAX_TASK_MATERIALIZATION_IDS}",
+            task_instance_ids.len()
+        )));
+    }
+    if let Some(task_id) = task_instance_ids.iter().find(|task_id| {
+        task_id.trim().is_empty() || task_id.len() > MAX_TASK_MATERIALIZATION_ID_BYTES
+    }) {
+        return Err(TaskNetworkAuthorityError::InvalidConfiguration(format!(
+            "task materialization identity has invalid byte length {}",
+            task_id.len()
+        )));
+    }
+    Ok(())
+}
+
 fn validate_query_epoch(
     store: &SledTaskNetworkStore,
     epoch: u64,
     shared: &SharedLifecycle,
-    poison_reason: &mut Option<String>,
+    poison: &mut Option<AuthorityPoison>,
 ) -> Result<(), TaskNetworkAuthorityError> {
-    if let Some(reason) = poison_reason {
-        return Err(shared.poisoned_error(reason.clone()));
+    if let Some(poison) = poison {
+        return Err(shared.poisoned_error(poison.clone()));
     }
     match store.validate_authority_epoch(epoch) {
         Ok(()) => Ok(()),
         Err(AuthorityStoreError::StaleEpoch { expected, actual }) => {
-            let reason = format!("durable epoch changed from {expected} to {actual}");
-            *poison_reason = Some(reason.clone());
-            shared.poison(reason);
+            let stale_poison = AuthorityPoison::stale_epoch(expected, actual);
+            *poison = Some(stale_poison.clone());
+            shared.poison(stale_poison);
             Err(TaskNetworkAuthorityError::StaleEpoch {
                 network_id: shared.network_id.clone(),
                 expected,
@@ -736,10 +1070,10 @@ fn validate_query_epoch(
             })
         }
         Err(AuthorityStoreError::Store(error)) => {
-            let reason = error.to_string();
-            *poison_reason = Some(reason.clone());
-            shared.poison(reason.clone());
-            Err(shared.poisoned_error(reason))
+            let store_poison = AuthorityPoison::store(&error);
+            *poison = Some(store_poison.clone());
+            shared.poison(store_poison.clone());
+            Err(shared.poisoned_error(store_poison))
         }
     }
 }

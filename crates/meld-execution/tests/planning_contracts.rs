@@ -184,6 +184,7 @@ fn planning_module_boundary_scans_pass() {
         "execute_task_to_completion",
         "CapabilityInvocationPayload",
         "TaskExecutor",
+        "SledTaskNetworkStore",
     ] {
         assert!(!planning_sources.contains(forbidden), "found {forbidden}");
     }

@@ -147,6 +147,61 @@ fn reject_empty_goal_identity_agent_and_command_ids() {
 }
 
 #[test]
+fn reject_zero_sequences_and_invalid_terminal_lifecycle_metadata() {
+    let mut store = GoalSetStore::new();
+
+    let sequence_error = store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-sequence", None, 0),
+            goal: goal("goal-sequence", GoalLifecycle::Active),
+        })
+        .unwrap_err();
+    assert!(sequence_error
+        .to_string()
+        .contains("sequence must be greater than zero"));
+
+    let lifecycle_error = store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-lifecycle", None, 1),
+            goal: goal(
+                "goal-lifecycle",
+                GoalLifecycle::Suspended {
+                    reason: " ".to_string(),
+                },
+            ),
+        })
+        .unwrap_err();
+    assert!(lifecycle_error.to_string().contains("suspend reason"));
+
+    let satisfaction_error = store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-satisfaction", None, 1),
+            goal: goal("goal-satisfaction", GoalLifecycle::Satisfied { at_seq: 0 }),
+        })
+        .unwrap_err();
+    assert!(satisfaction_error
+        .to_string()
+        .contains("satisfaction sequence"));
+
+    store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-active", None, 1),
+            goal: goal("goal-active", GoalLifecycle::Active),
+        })
+        .unwrap();
+    let satisfaction_command_error = store
+        .satisfy_goal(SatisfyGoalCommand {
+            metadata: metadata("cmd-satisfy", None, 2),
+            goal_id: "goal-active".to_string(),
+            at_seq: 0,
+        })
+        .unwrap_err();
+    assert!(satisfaction_command_error
+        .to_string()
+        .contains("satisfaction sequence"));
+}
+
+#[test]
 fn modify_preserves_proposed_lifecycle() {
     let mut store = GoalSetStore::new();
     store
@@ -832,8 +887,10 @@ fn persistent_goal_store_reports_corrupt_record_data() {
         .unwrap();
     db.flush().unwrap();
 
-    let store = PersistentGoalSetStore::new(db).unwrap();
-    let error = store.get_goal("goal-bad").unwrap_err();
+    let error = match PersistentGoalSetStore::new(db) {
+        Ok(_) => panic!("corrupt goal record must fail reopen"),
+        Err(error) => error,
+    };
 
     assert!(error.to_string().contains("goal store JSON failed"));
 }

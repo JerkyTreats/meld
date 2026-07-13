@@ -3,10 +3,11 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::{SledTaskNetworkStore, TaskNetworkStoreError};
+use super::{codec::to_storage, SledTaskNetworkStore, TaskNetworkStoreError};
 
 const OPEN_RETRY_ATTEMPTS: usize = 100;
 const OPEN_RETRY_DELAY: Duration = Duration::from_millis(10);
+const MAX_TASK_NETWORK_ID_BYTES: usize = 128;
 
 /// Opens durable task network stores below a product-owned root directory.
 ///
@@ -54,7 +55,7 @@ fn open_sled_with_retry(
             Err(error) if is_sled_lock_error(&error) && attempt + 1 < OPEN_RETRY_ATTEMPTS => {
                 std::thread::sleep(OPEN_RETRY_DELAY);
             }
-            Err(error) => return Err(to_storage_error(error)),
+            Err(error) => return Err(to_storage(error)),
         }
     }
     unreachable!("the final open attempt returns its error")
@@ -66,16 +67,16 @@ fn is_sled_lock_error(error: &sled::Error) -> bool {
 
 /// Return a filesystem-safe storage key for a task network id.
 pub fn network_storage_key(network_id: &str) -> Result<String, TaskNetworkStoreError> {
-    if network_id.is_empty() {
-        return Err(TaskNetworkStoreError::Storage(
-            "task network id must not be empty".to_string(),
-        ));
+    if network_id.is_empty() || network_id.len() > MAX_TASK_NETWORK_ID_BYTES {
+        return Err(TaskNetworkStoreError::InvalidConfiguration(format!(
+            "task network id must be non-empty and at most {MAX_TASK_NETWORK_ID_BYTES} bytes"
+        )));
     }
     if !network_id
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
     {
-        return Err(TaskNetworkStoreError::Storage(format!(
+        return Err(TaskNetworkStoreError::InvalidConfiguration(format!(
             "task network id '{network_id}' must contain only ASCII alphanumeric characters, dash, underscore, or dot"
         )));
     }
@@ -125,6 +126,19 @@ mod tests {
         .expect_err("non-I/O errors must return immediately");
 
         assert_eq!(attempts, 1);
+        assert!(matches!(error, TaskNetworkStoreError::CorruptStorage(_)));
+    }
+
+    #[test]
+    fn sled_open_preserves_transient_io_classification() {
+        let error = open_sled_with_retry(|| {
+            Err(sled::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "temporary open failure",
+            )))
+        })
+        .expect_err("I/O errors without lock diagnostics must return immediately");
+
         assert!(matches!(error, TaskNetworkStoreError::Storage(_)));
     }
 }

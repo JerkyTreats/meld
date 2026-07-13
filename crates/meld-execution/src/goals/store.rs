@@ -210,6 +210,7 @@ impl GoalSetStore {
         identity: GoalCommandRequestIdentity,
     ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), ExecutionInvariantError> {
         validate_metadata(&command.metadata)?;
+        validate_satisfaction_sequence(command.at_seq)?;
         self.update_lifecycle(
             &command.metadata,
             &command.goal_id,
@@ -481,8 +482,22 @@ pub(crate) fn validate_metadata(
     metadata: &GoalCommandMetadata,
 ) -> Result<(), ExecutionInvariantError> {
     validate_non_empty("goal command id", &metadata.command_id)?;
+    if metadata.seq == 0 {
+        return Err(ExecutionInvariantError::ConfigError(
+            "goal command sequence must be greater than zero".to_string(),
+        ));
+    }
     if let Some(source_identity) = &metadata.source_identity {
         validate_non_empty("goal source identity", source_identity)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_satisfaction_sequence(at_seq: u64) -> Result<(), ExecutionInvariantError> {
+    if at_seq == 0 {
+        return Err(ExecutionInvariantError::ConfigError(
+            "goal satisfaction sequence must be greater than zero".to_string(),
+        ));
     }
     Ok(())
 }
@@ -495,6 +510,12 @@ pub(crate) fn validate_goal(goal: &Goal) -> Result<(), ExecutionInvariantError> 
             "Execution goal '{}' target must be ground: {}",
             goal.goal_id, variable
         )));
+    }
+    match &goal.lifecycle {
+        GoalLifecycle::Suspended { reason } => validate_non_empty("suspend reason", reason)?,
+        GoalLifecycle::Satisfied { at_seq } => validate_satisfaction_sequence(*at_seq)?,
+        GoalLifecycle::Abandoned { reason } => validate_non_empty("remove reason", reason)?,
+        GoalLifecycle::Proposed | GoalLifecycle::Active => {}
     }
     Ok(())
 }

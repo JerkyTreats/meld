@@ -21,6 +21,7 @@ serde_yaml = "0.9"
 sled = "0.34"
 thiserror = "1.0"
 tracing = "0.1"
+uuid = { workspace = true }
 walkdir = "2.4"
 
 [dev-dependencies]

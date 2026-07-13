@@ -42,10 +42,10 @@ fn task_node(id: &str) -> TaskNode {
 fuzz_target!(|data: &[u8]| {
     let count = data.len().min(8);
     let mut state = NetworkState::empty("network-fuzz");
-    for index in 0..count {
+    for (index, byte) in data.iter().copied().take(count).enumerate() {
         let id = format!("task-{index}");
         state.tasks.insert(id.clone(), task_node(&id));
-        let status = match data[index] % 4 {
+        let status = match byte % 4 {
             0 => TaskStatus::Pending,
             1 => TaskStatus::Running {
                 claim_id: format!("claim-{index}"),
@@ -60,8 +60,8 @@ fuzz_target!(|data: &[u8]| {
         };
         state.statuses.insert(id, status);
     }
-    for index in 1..count {
-        if data[index] % 2 == 0 {
+    for (index, byte) in data.iter().copied().take(count).enumerate().skip(1) {
+        if byte.is_multiple_of(2) {
             state.edges.push(DependencyEdge {
                 from: format!("task-{}", index - 1),
                 to: format!("task-{index}"),

@@ -2,7 +2,6 @@
 
 use crate::task_network::{
     command,
-    contracts::stable_hash,
     dispatch::{self, OutcomeStatus},
     initialization::{
         materialize_task_initialization, validate_task_init_graph_sources,
@@ -890,7 +889,7 @@ impl InMemoryTaskNetworkStore {
 }
 
 pub(super) fn command_request_hash(request: &command::Request) -> String {
-    stable_hash(request)
+    command::request_hash(request)
 }
 
 pub(super) fn duplicate_or_replay(response: &command::Response) -> command::Response {

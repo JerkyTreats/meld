@@ -30,8 +30,11 @@
 //! assert_eq!(command.base_revision, 0);
 //! ```
 
-use crate::task_network::{dispatch, mutation, outcome};
+use crate::task_network::{contracts::stable_hash, dispatch, mutation, outcome};
 use serde::{Deserialize, Serialize};
+
+/// Current durable command response authentication schema.
+pub const RESPONSE_AUTHENTICATION_SCHEMA_VERSION: u32 = 1;
 
 /// Task network command request with optimistic concurrency metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -84,4 +87,125 @@ pub enum Response {
     },
     /// Command was rejected before mutation.
     Rejected(mutation::Rejection),
+}
+
+/// Tamper-evident binding for one durable command response record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseAuthentication {
+    schema_version: u32,
+    response_digest: String,
+}
+
+impl ResponseAuthentication {
+    /// Bind one response to its command and stored request identity.
+    pub fn bind(command_id: &str, request_hash: &str, response: &Response) -> Result<Self, String> {
+        if command_id.trim().is_empty() || request_hash.trim().is_empty() {
+            return Err("command response authentication identity must be non-empty".to_string());
+        }
+        Ok(Self {
+            schema_version: RESPONSE_AUTHENTICATION_SCHEMA_VERSION,
+            response_digest: response_authentication_digest(command_id, request_hash, response),
+        })
+    }
+
+    /// Validate the schema and exact response binding.
+    pub fn validate(
+        &self,
+        command_id: &str,
+        request_hash: &str,
+        response: &Response,
+    ) -> Result<(), String> {
+        if self.schema_version != RESPONSE_AUTHENTICATION_SCHEMA_VERSION {
+            return Err("unsupported command response authentication schema".to_string());
+        }
+        let expected = Self::bind(command_id, request_hash, response)?;
+        if self.response_digest != expected.response_digest {
+            return Err("command response authentication digest mismatch".to_string());
+        }
+        Ok(())
+    }
+
+    /// Return the durable authentication schema version.
+    pub fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    /// Borrow the response digest.
+    pub fn response_digest(&self) -> &str {
+        &self.response_digest
+    }
+}
+
+/// Exact durable command outcome returned by the task-network authority query.
+///
+/// The authority constructs this receipt from paired request and response
+/// records after validating their exact durable binding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutcomeReceipt {
+    command_id: String,
+    request_hash: String,
+    request: Request,
+    response: Response,
+}
+
+impl OutcomeReceipt {
+    pub(crate) fn issued(
+        command_id: String,
+        request_hash: String,
+        request: Request,
+        response: Response,
+    ) -> Self {
+        Self {
+            command_id,
+            request_hash,
+            request,
+            response,
+        }
+    }
+
+    /// Borrow the exact command id proven by this authority receipt.
+    pub fn command_id(&self) -> &str {
+        &self.command_id
+    }
+
+    /// Borrow the stored request identity hash.
+    pub fn request_hash(&self) -> &str {
+        &self.request_hash
+    }
+
+    /// Borrow the exact command request proven by this authority receipt.
+    pub fn request(&self) -> &Request {
+        &self.request
+    }
+
+    /// Borrow the original response stored for the command.
+    pub fn response(&self) -> &Response {
+        &self.response
+    }
+}
+
+/// Return the canonical task-network hash of one complete command request.
+pub fn request_hash(request: &Request) -> String {
+    stable_hash(request)
+}
+
+fn response_authentication_digest(
+    command_id: &str,
+    request_hash: &str,
+    response: &Response,
+) -> String {
+    #[derive(Serialize)]
+    struct DigestInput<'a> {
+        schema_version: u32,
+        command_id: &'a str,
+        request_hash: &'a str,
+        response: &'a Response,
+    }
+
+    stable_hash(&DigestInput {
+        schema_version: RESPONSE_AUTHENTICATION_SCHEMA_VERSION,
+        command_id,
+        request_hash,
+        response,
+    })
 }

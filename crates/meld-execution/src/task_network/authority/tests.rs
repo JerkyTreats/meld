@@ -3,6 +3,7 @@ use crate::task_network::mutation::Set;
 
 const LIFECYCLE_TREE: &str = "task_network_authority_lifecycle";
 const EPOCH_KEY: &[u8] = b"epoch";
+const RESPONSE_TREE: &str = "task_network_command_responses";
 
 fn empty_command(command_id: &str) -> command::Request {
     let state = NetworkState::empty("network-docs");
@@ -58,7 +59,10 @@ fn stale_epoch_poisons_worker_without_advancing_semantic_state() {
     );
     assert!(matches!(
         authority.query_port().state(),
-        Err(TaskNetworkAuthorityError::Poisoned { .. })
+        Err(TaskNetworkAuthorityError::Poisoned {
+            kind: TaskNetworkAuthorityPoisonKind::StaleEpoch,
+            ..
+        })
     ));
     let receipt = authority.shutdown().unwrap();
     assert!(receipt.was_poisoned);
@@ -81,20 +85,65 @@ fn malformed_durable_epoch_poisoning_is_sticky_until_shutdown() {
         .unwrap();
     db.flush().unwrap();
 
-    assert!(matches!(
-        authority
+    for command_id in ["command-corrupt", "command-after-poison"] {
+        let error = authority
             .command_port()
-            .try_submit(empty_command("command-corrupt")),
-        Err(TaskNetworkAuthorityError::Poisoned { .. })
-    ));
-    assert!(matches!(
-        authority
-            .command_port()
-            .try_submit(empty_command("command-after-poison")),
-        Err(TaskNetworkAuthorityError::Poisoned { .. })
-    ));
+            .try_submit(empty_command(command_id))
+            .unwrap_err();
+        assert!(matches!(
+            &error,
+            TaskNetworkAuthorityError::Poisoned {
+                kind: TaskNetworkAuthorityPoisonKind::CorruptState,
+                ..
+            }
+        ));
+        if let TaskNetworkAuthorityError::Poisoned { kind, .. } = error {
+            assert!(!kind.retryable());
+        }
+    }
     let receipt = authority.shutdown().unwrap();
     assert!(receipt.was_poisoned);
+}
+
+#[test]
+fn outcome_query_rejects_reauthenticated_external_response_substitution() {
+    let (db, _temp, mut authority) = spawn_with_retained_db();
+    assert!(matches!(
+        authority
+            .command_port()
+            .try_submit(empty_command("command-substituted"))
+            .unwrap(),
+        command::Response::Accepted { .. }
+    ));
+    let responses = db.open_tree(RESPONSE_TREE).unwrap();
+    let raw = responses.get("command-substituted").unwrap().unwrap();
+    let mut stored: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let substituted = command::Response::Accepted {
+        revision: 1,
+        state_hash: "externally-substituted-state".to_string(),
+    };
+    let request_hash = stored["request_hash"].as_str().unwrap().to_string();
+    stored["response"] = serde_json::to_value(&substituted).unwrap();
+    stored["authentication"] = serde_json::to_value(
+        command::ResponseAuthentication::bind("command-substituted", &request_hash, &substituted)
+            .unwrap(),
+    )
+    .unwrap();
+    responses
+        .insert("command-substituted", serde_json::to_vec(&stored).unwrap())
+        .unwrap();
+    db.flush().unwrap();
+
+    assert!(matches!(
+        authority
+            .query_port()
+            .command_outcome("command-substituted"),
+        Err(TaskNetworkAuthorityError::Poisoned {
+            kind: TaskNetworkAuthorityPoisonKind::CorruptState,
+            ..
+        })
+    ));
+    assert!(authority.shutdown().unwrap().was_poisoned);
 }
 
 #[test]
@@ -117,7 +166,10 @@ fn query_port_rejects_a_superseded_durable_epoch() {
     ));
     assert!(matches!(
         authority.query_port().journal(),
-        Err(TaskNetworkAuthorityError::Poisoned { .. })
+        Err(TaskNetworkAuthorityError::Poisoned {
+            kind: TaskNetworkAuthorityPoisonKind::StaleEpoch,
+            ..
+        })
     ));
     assert!(authority.shutdown().unwrap().was_poisoned);
 }

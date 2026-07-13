@@ -5,7 +5,7 @@ use std::sync::{Arc, Barrier};
 
 use meld_execution::task_network::authority::{
     TaskNetworkAuthorities, TaskNetworkAuthority, TaskNetworkAuthorityError,
-    TaskNetworkAuthorityLifecycle,
+    TaskNetworkAuthorityLifecycle, TaskNetworkAuthorityPorts,
 };
 use meld_execution::task_network::command::{Command, Response};
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
@@ -31,6 +31,10 @@ fn authority_acknowledges_only_durable_state_and_closes_both_ports() {
     let command_port = authority.command_port();
     let query_port = authority.query_port();
     let initial = query_port.state().unwrap();
+    assert!(query_port
+        .command_outcome("command-missing")
+        .unwrap()
+        .is_none());
     assert!(query_port.ready_set().unwrap().task_instance_ids.is_empty());
     assert!(query_port
         .publication("publication-missing")
@@ -47,6 +51,17 @@ fn authority_acknowledges_only_durable_state_and_closes_both_ports() {
     assert_eq!(durable.revision, 1);
     assert!(durable.tasks.contains_key("task-alpha"));
     assert_eq!(query_port.journal().unwrap().len(), 1);
+    let outcome = query_port
+        .command_outcome("command-alpha")
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome.command_id(), "command-alpha");
+    assert!(!outcome.request_hash().is_empty());
+    assert_eq!(outcome.request().command_id, "command-alpha");
+    assert!(matches!(
+        outcome.response(),
+        Response::Accepted { revision: 1, .. }
+    ));
 
     let receipt = authority.shutdown().unwrap();
     assert_eq!(receipt.final_revision, 1);
@@ -65,6 +80,144 @@ fn authority_acknowledges_only_durable_state_and_closes_both_ports() {
         command_port.try_submit(command_for(&durable, "command-after-close")),
         Err(TaskNetworkAuthorityError::Closed { .. })
     ));
+}
+
+#[test]
+fn compact_head_and_materialization_queries_return_only_requested_products() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory = TaskNetworkStoreFactory::new(temp.path());
+    let mut authority = TaskNetworkAuthority::open(&factory, "network-docs", 8).unwrap();
+    let query = authority.query_port();
+    let initial = query.state().unwrap();
+    authority
+        .command_port()
+        .try_submit(command_for(&initial, "command-alpha"))
+        .unwrap();
+
+    let head = query.head().unwrap();
+    let materialization = query
+        .materialization(vec!["task-alpha".to_string(), "task-missing".to_string()])
+        .unwrap();
+
+    assert_eq!(head.network_id, "network-docs");
+    assert_eq!(head.revision, 1);
+    assert_eq!(head, materialization.head);
+    assert_eq!(
+        materialization.tasks.keys().collect::<Vec<_>>(),
+        vec!["task-alpha"]
+    );
+    assert_eq!(materialization.incoming_edges.len(), 2);
+    assert!(materialization.incoming_edges["task-alpha"].is_empty());
+    assert!(materialization.incoming_edges["task-missing"].is_empty());
+    authority.shutdown().unwrap();
+}
+
+#[test]
+fn compact_materialization_rejects_oversized_or_invalid_identity_sets_before_admission() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory = TaskNetworkStoreFactory::new(temp.path());
+    let mut authority = TaskNetworkAuthority::open(&factory, "network-docs", 1).unwrap();
+    let query = authority.query_port();
+
+    let oversized = (0..=1_024).map(|index| format!("task-{index}")).collect();
+    assert!(matches!(
+        query.materialization(oversized),
+        Err(TaskNetworkAuthorityError::InvalidConfiguration(_))
+    ));
+    assert!(matches!(
+        query.materialization(vec![" ".to_string()]),
+        Err(TaskNetworkAuthorityError::InvalidConfiguration(_))
+    ));
+    assert!(matches!(
+        query.command_outcome(" "),
+        Err(TaskNetworkAuthorityError::InvalidConfiguration(_))
+    ));
+    assert!(matches!(
+        query.command_outcome("x".repeat(1_025)),
+        Err(TaskNetworkAuthorityError::InvalidConfiguration(_))
+    ));
+    assert_eq!(query.head().unwrap().revision, 0);
+    authority.shutdown().unwrap();
+}
+
+#[test]
+fn compact_incoming_edge_index_remains_exact_after_reopen() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory = TaskNetworkStoreFactory::new(temp.path());
+    let expected;
+    {
+        let mut authority = TaskNetworkAuthority::open(&factory, "network-docs", 4).unwrap();
+        let ports = authority.ports();
+        let head = ports.query().head().unwrap();
+        let request = task_network_support::command_for_state(
+            &head.network_id,
+            head.revision,
+            &head.state_hash,
+            "command-two-tasks",
+            Command::ApplyMutationSet(task_network_support::two_task_ordering_set(
+                "task-upstream",
+                "task-downstream",
+            )),
+        );
+        assert!(matches!(
+            ports.commands().try_submit(request).unwrap(),
+            Response::Accepted { .. }
+        ));
+        expected = ports
+            .query()
+            .materialization(vec!["task-downstream".to_string()])
+            .unwrap();
+        assert_eq!(expected.tasks.len(), 1);
+        assert_eq!(expected.incoming_edges["task-downstream"].len(), 1);
+        assert_eq!(
+            expected.incoming_edges["task-downstream"][0].from,
+            "task-upstream"
+        );
+        authority.shutdown().unwrap();
+    }
+
+    let mut reopened = TaskNetworkAuthority::open(&factory, "network-docs", 4).unwrap();
+    let recovered = reopened
+        .query_port()
+        .materialization(vec!["task-downstream".to_string()])
+        .unwrap();
+    assert_eq!(recovered, expected);
+    reopened.shutdown().unwrap();
+}
+
+#[test]
+fn authority_port_pair_rejects_mixed_instances_with_equal_network_and_epoch() {
+    let first_temp = tempfile::tempdir().unwrap();
+    let second_temp = tempfile::tempdir().unwrap();
+    let mut first = TaskNetworkAuthority::open(
+        &TaskNetworkStoreFactory::new(first_temp.path()),
+        "network-docs",
+        8,
+    )
+    .unwrap();
+    let mut second = TaskNetworkAuthority::open(
+        &TaskNetworkStoreFactory::new(second_temp.path()),
+        "network-docs",
+        8,
+    )
+    .unwrap();
+    assert_eq!(first.lifecycle().epoch, second.lifecycle().epoch);
+
+    let error = TaskNetworkAuthorityPorts::try_pair(first.query_port(), second.command_port())
+        .err()
+        .expect("mixed authority capabilities must fail closed");
+
+    assert!(matches!(
+        error,
+        TaskNetworkAuthorityError::MismatchedPorts {
+            query_network_id,
+            query_epoch: 1,
+            command_network_id,
+            command_epoch: 1,
+        } if query_network_id == "network-docs" && command_network_id == "network-docs"
+    ));
+    first.shutdown().unwrap();
+    second.shutdown().unwrap();
 }
 
 #[test]
@@ -92,6 +245,14 @@ fn authority_reopen_recovers_state_and_advances_durable_epoch() {
     assert_eq!(recovered.revision, 1);
     assert!(recovered.tasks.contains_key("task-alpha"));
     assert_eq!(query.journal().unwrap().len(), 1);
+    assert!(matches!(
+        query
+            .command_outcome("command-alpha")
+            .unwrap()
+            .unwrap()
+            .response(),
+        Response::Accepted { revision: 1, .. }
+    ));
     assert!(matches!(
         reopened
             .command_port()
@@ -321,4 +482,19 @@ fn zero_capacity_is_rejected_before_store_open() {
         TaskNetworkAuthorityError::InvalidConfiguration(_)
     ));
     assert!(!temp.path().join("network-docs.sled").exists());
+}
+
+#[test]
+fn invalid_network_identity_is_fatal_configuration() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory = TaskNetworkStoreFactory::new(temp.path());
+
+    let error = TaskNetworkAuthority::open(&factory, "network/invalid", 4)
+        .err()
+        .expect("invalid network identity must fail before authority construction");
+
+    assert!(matches!(
+        error,
+        TaskNetworkAuthorityError::InvalidConfiguration(_)
+    ));
 }

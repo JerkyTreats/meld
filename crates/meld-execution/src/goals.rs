@@ -54,6 +54,8 @@ pub mod api;
 pub mod contracts;
 /// Durable goal set store backed by local persistence.
 pub mod persistent_store;
+/// Execution-owned active goal selection contract for planning.
+pub mod planning;
 /// Read-only goal set query facade.
 pub mod query;
 /// In-memory goal set command store.
@@ -67,5 +69,9 @@ pub use contracts::{
     SatisfyGoalCommand, SuspendGoalCommand,
 };
 pub use persistent_store::PersistentGoalSetStore;
+pub use planning::{
+    GoalPlanningClaim, GoalPlanningSelection, GoalPlanningSelectionError,
+    GoalPlanningSelectionPort, MAX_PLANNING_SELECTION_LIMIT,
+};
 pub use query::GoalSetQuery;
 pub use store::GoalSetStore;

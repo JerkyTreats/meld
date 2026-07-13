@@ -42,10 +42,13 @@ pub mod store;
 pub use authority::{
     TaskNetworkAuthorities, TaskNetworkAuthority, TaskNetworkAuthorityError,
     TaskNetworkAuthorityLifecycle, TaskNetworkAuthorityLifecycleSnapshot,
-    TaskNetworkAuthorityShutdownReceipt, TaskNetworkAuthoritySnapshot, TaskNetworkCommandPort,
-    TaskNetworkQueryPort,
+    TaskNetworkAuthorityPoisonKind, TaskNetworkAuthorityPorts, TaskNetworkAuthorityShutdownReceipt,
+    TaskNetworkAuthoritySnapshot, TaskNetworkCommandPort, TaskNetworkHead,
+    TaskNetworkMaterialization, TaskNetworkQueryPort,
 };
-pub use command::{Command, Request as CommandRequest, Response};
+pub use command::{
+    Command, OutcomeReceipt, Request as CommandRequest, Response, ResponseAuthentication,
+};
 pub use dispatch::{
     AttributedOutcome, Claim, Outcome, OutcomeSemanticLineage, OutcomeStatus,
     Request as DispatchRequest,

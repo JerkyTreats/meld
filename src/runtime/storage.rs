@@ -186,7 +186,8 @@ impl OpenProductStores {
                 WorldStateStore::new(world_model_db).map_err(to_world_model)?,
             ),
             goal_store: Arc::new(
-                PersistentGoalSetStore::new(execution_goals_db).map_err(to_execution)?,
+                PersistentGoalSetStore::open_deferred_planning_validation(execution_goals_db)
+                    .map_err(to_execution)?,
             ),
             task_networks: TaskNetworkStoreFactory::new(layout.task_networks_root.clone()),
             task_artifacts: TaskArtifactRepoFactory::new(task_artifacts_db),

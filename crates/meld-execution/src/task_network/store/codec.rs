@@ -16,7 +16,15 @@ pub(super) fn decode_error(message: impl Into<String>) -> TaskNetworkStoreError 
 }
 
 pub(super) fn to_storage(error: sled::Error) -> TaskNetworkStoreError {
-    TaskNetworkStoreError::Storage(error.to_string())
+    match error {
+        sled::Error::Io(_) => TaskNetworkStoreError::Storage(error.to_string()),
+        sled::Error::CollectionNotFound(_)
+        | sled::Error::Unsupported(_)
+        | sled::Error::ReportableBug(_)
+        | sled::Error::Corruption { .. } => {
+            TaskNetworkStoreError::CorruptStorage(error.to_string())
+        }
+    }
 }
 
 pub(super) fn to_decode(error: serde_json::Error) -> TaskNetworkStoreError {

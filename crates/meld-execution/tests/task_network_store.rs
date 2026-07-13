@@ -2,7 +2,10 @@
 mod task_network_support;
 
 use meld_events::{AppendDisposition, AppendReceipt, DomainObjectRef, LedgerIdentity};
-use meld_execution::task_network::command::{Command, Response};
+use meld_execution::task_network::command::{
+    request_hash as command_request_hash, Command, Request as CommandRequest, Response,
+    ResponseAuthentication,
+};
 use meld_execution::task_network::mutation::{Mutation, ReadPrecondition, Rejection, Set};
 use meld_execution::task_network::outcome::PublicationState;
 use meld_execution::task_network::state::TaskStatus;
@@ -89,14 +92,30 @@ fn task_network_factory_isolates_network_databases() {
 fn network_storage_key_rejects_empty_id() {
     let error = network_storage_key("").unwrap_err();
 
-    assert!(matches!(error, TaskNetworkStoreError::Storage(_)));
+    assert!(matches!(
+        error,
+        TaskNetworkStoreError::InvalidConfiguration(_)
+    ));
 }
 
 #[test]
 fn network_storage_key_rejects_invalid_id() {
     let error = network_storage_key("network/a").unwrap_err();
 
-    assert!(matches!(error, TaskNetworkStoreError::Storage(_)));
+    assert!(matches!(
+        error,
+        TaskNetworkStoreError::InvalidConfiguration(_)
+    ));
+}
+
+#[test]
+fn network_storage_key_rejects_oversized_id() {
+    let error = network_storage_key(&"n".repeat(129)).unwrap_err();
+
+    assert!(matches!(
+        error,
+        TaskNetworkStoreError::InvalidConfiguration(_)
+    ));
 }
 
 #[test]
@@ -105,6 +124,23 @@ fn network_storage_key_keeps_valid_id_unchanged() {
         network_storage_key("network-a_1.docs").unwrap(),
         "network-a_1.docs"
     );
+}
+
+#[test]
+fn durable_store_rejects_oversized_command_identity() {
+    let db = open_db();
+    let mut store = open_store(&db);
+    let request = task_network_support::apply_sled_command(
+        &store,
+        &"c".repeat(1_025),
+        Command::ApplyMutationSet(Set::empty("network-docs", "composition-empty", "empty")),
+    );
+
+    assert!(matches!(
+        store.submit(request),
+        Err(TaskNetworkStoreError::InvalidConfiguration(_))
+    ));
+    assert_eq!(store.state().revision, 0);
 }
 
 fn stored_request_json(command_id: &str, request_hash: &str) -> serde_json::Value {
@@ -523,6 +559,128 @@ fn legacy_durable_record_shapes_replay_from_contained_products() {
     assert_eq!(store.journal().len(), 1);
 }
 
+fn downgrade_command_outcomes_to_immediate_pre_auth_schema(db: &sled::Db) {
+    db.open_tree("task_network_command_schema")
+        .unwrap()
+        .remove("schema")
+        .unwrap();
+    db.open_tree("task_network_command_authentications")
+        .unwrap()
+        .clear()
+        .unwrap();
+    let responses = db.open_tree("task_network_command_responses").unwrap();
+    let entries = responses
+        .iter()
+        .map(|item| item.unwrap())
+        .collect::<Vec<_>>();
+    for (key, raw) in entries {
+        let mut response: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        response.as_object_mut().unwrap().remove("authentication");
+        responses
+            .insert(key, serde_json::to_vec(&response).unwrap())
+            .unwrap();
+    }
+    db.flush().unwrap();
+}
+
+fn assert_pre_auth_schema_was_migrated(db: &sled::Db, command_id: &str) {
+    let marker: serde_json::Value = serde_json::from_slice(
+        &db.open_tree("task_network_command_schema")
+            .unwrap()
+            .get("schema")
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(marker["schema_version"], json!(2));
+    assert_eq!(marker["migrated_from"], json!(1));
+    let response: serde_json::Value = serde_json::from_slice(
+        &db.open_tree("task_network_command_responses")
+            .unwrap()
+            .get(command_id)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(response["authentication"].is_object());
+    assert!(db
+        .open_tree("task_network_command_authentications")
+        .unwrap()
+        .contains_key(command_id)
+        .unwrap());
+}
+
+#[test]
+fn immediate_pre_auth_accepted_outcome_migrates_and_reopens_exactly() {
+    let db = open_db();
+    let request;
+    {
+        let mut store = open_store(&db);
+        request = task_network_support::apply_sled_command(
+            &store,
+            "command-accepted-pre-auth",
+            Command::ApplyMutationSet(task_network_support::single_task_mutation_set("task-alpha")),
+        );
+        assert!(matches!(
+            store.submit(request.clone()).unwrap(),
+            Response::Accepted { revision: 1, .. }
+        ));
+    }
+    downgrade_command_outcomes_to_immediate_pre_auth_schema(&db);
+
+    let mut migrated = open_store(&db);
+
+    assert_eq!(migrated.state().revision, 1);
+    assert!(migrated.state().tasks.contains_key("task-alpha"));
+    assert!(matches!(
+        migrated.submit(request).unwrap(),
+        Response::Duplicate { revision: 1, .. }
+    ));
+    assert_pre_auth_schema_was_migrated(&db, "command-accepted-pre-auth");
+    drop(migrated);
+    let reopened = open_store(&db);
+    assert_eq!(reopened.state().revision, 1);
+}
+
+#[test]
+fn immediate_pre_auth_rejected_outcome_migrates_and_reopens_exactly() {
+    let db = open_db();
+    let request;
+    {
+        let mut store = open_store(&db);
+        request = task_network_support::command_for_state(
+            "network-docs",
+            7,
+            &store.state().state_hash,
+            "command-rejected-pre-auth",
+            Command::ApplyMutationSet(task_network_support::single_task_mutation_set("task-alpha")),
+        );
+        assert!(matches!(
+            store.submit(request.clone()).unwrap(),
+            Response::Rejected(Rejection::StaleBase {
+                expected: 7,
+                actual: 0
+            })
+        ));
+    }
+    downgrade_command_outcomes_to_immediate_pre_auth_schema(&db);
+
+    let mut migrated = open_store(&db);
+
+    assert!(matches!(
+        migrated.submit(request).unwrap(),
+        Response::Rejected(Rejection::StaleBase {
+            expected: 7,
+            actual: 0
+        })
+    ));
+    assert_eq!(migrated.state().revision, 0);
+    assert_pre_auth_schema_was_migrated(&db, "command-rejected-pre-auth");
+    drop(migrated);
+    let reopened = open_store(&db);
+    assert_eq!(reopened.state().revision, 0);
+}
+
 #[test]
 fn new_durable_record_shapes_omit_duplicate_identity_and_state_fields() {
     let db = open_db();
@@ -560,6 +718,42 @@ fn new_durable_record_shapes_omit_duplicate_identity_and_state_fields() {
     assert!(snapshot_value.get("revision").is_none());
     assert!(snapshot_value.get("state_hash").is_none());
     assert_eq!(snapshot_value["state"]["network_id"], json!("network-docs"));
+
+    let response_tree = db.open_tree("task_network_command_responses").unwrap();
+    let response_value: serde_json::Value = serde_json::from_slice(
+        &response_tree
+            .get("command-commit-task-alpha")
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(response_value.get("authentication").is_some());
+    assert!(response_value["authentication"]
+        .get("response_digest")
+        .is_some());
+
+    let authentication_tree = db
+        .open_tree("task_network_command_authentications")
+        .unwrap();
+    let authentication_value: serde_json::Value = serde_json::from_slice(
+        &authentication_tree
+            .get("command-commit-task-alpha")
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        authentication_value["command_id"],
+        json!("command-commit-task-alpha")
+    );
+    assert_eq!(
+        authentication_value["request_hash"],
+        response_value["request_hash"]
+    );
+    assert_eq!(
+        authentication_value["response_authentication"],
+        response_value["authentication"]
+    );
 }
 
 #[test]
@@ -649,6 +843,216 @@ fn request_and_response_hash_mismatch_returns_decode_error_on_open() {
         .insert(
             "command-a",
             serde_json::to_vec(&stored_response_json("command-a", "hash-b")).unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    assert_decode_error(SledTaskNetworkStore::open(db, "network-docs").unwrap_err());
+}
+
+#[test]
+fn valid_json_request_corruption_fails_modern_hash_verification_on_open() {
+    let db = open_db();
+    {
+        let mut store = open_store(&db);
+        commit_single_task_for_store(&mut store, "task-alpha");
+    }
+    let requests = db.open_tree("task_network_command_requests").unwrap();
+    let raw = requests.get("command-commit-task-alpha").unwrap().unwrap();
+    let mut stored: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    stored["request"]["base_revision"] = json!(99);
+    requests
+        .insert(
+            "command-commit-task-alpha",
+            serde_json::to_vec(&stored).unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    assert_decode_error(SledTaskNetworkStore::open(db, "network-docs").unwrap_err());
+}
+
+#[test]
+fn valid_json_accepted_response_corruption_fails_journal_parity_on_open() {
+    let db = open_db();
+    {
+        let mut store = open_store(&db);
+        commit_single_task_for_store(&mut store, "task-alpha");
+    }
+    let responses = db.open_tree("task_network_command_responses").unwrap();
+    let raw = responses.get("command-commit-task-alpha").unwrap().unwrap();
+    let mut stored: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    stored["response"] = serde_json::to_value(Response::Accepted {
+        revision: 1,
+        state_hash: "corrupt-state-hash".to_string(),
+    })
+    .unwrap();
+    responses
+        .insert(
+            "command-commit-task-alpha",
+            serde_json::to_vec(&stored).unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    assert_decode_error(SledTaskNetworkStore::open(db, "network-docs").unwrap_err());
+}
+
+#[test]
+fn valid_json_accepted_response_revision_corruption_fails_on_open() {
+    let db = open_db();
+    {
+        let mut store = open_store(&db);
+        commit_single_task_for_store(&mut store, "task-alpha");
+    }
+    let responses = db.open_tree("task_network_command_responses").unwrap();
+    let raw = responses.get("command-commit-task-alpha").unwrap().unwrap();
+    let mut stored: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    stored["response"] = serde_json::to_value(Response::Accepted {
+        revision: 99,
+        state_hash: "valid-shape-but-unacknowledged".to_string(),
+    })
+    .unwrap();
+    responses
+        .insert(
+            "command-commit-task-alpha",
+            serde_json::to_vec(&stored).unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    assert_decode_error(SledTaskNetworkStore::open(db, "network-docs").unwrap_err());
+}
+
+#[test]
+fn authenticated_substitute_accepted_response_fails_exact_replay_on_open() {
+    let db = open_db();
+    {
+        let mut store = open_store(&db);
+        commit_single_task_for_store(&mut store, "task-alpha");
+    }
+    let responses = db.open_tree("task_network_command_responses").unwrap();
+    let raw = responses.get("command-commit-task-alpha").unwrap().unwrap();
+    let mut stored: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let substituted = Response::Accepted {
+        revision: 1,
+        state_hash: "authenticated-but-wrong-state-hash".to_string(),
+    };
+    let request_hash = stored["request_hash"].as_str().unwrap().to_string();
+    stored["response"] = serde_json::to_value(&substituted).unwrap();
+    stored["authentication"] = serde_json::to_value(
+        ResponseAuthentication::bind("command-commit-task-alpha", &request_hash, &substituted)
+            .unwrap(),
+    )
+    .unwrap();
+    responses
+        .insert(
+            "command-commit-task-alpha",
+            serde_json::to_vec(&stored).unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    assert_decode_error(SledTaskNetworkStore::open(db, "network-docs").unwrap_err());
+}
+
+#[test]
+fn reauthenticated_request_substitution_with_same_outcome_fails_on_open() {
+    let db = open_db();
+    {
+        let mut store = open_store(&db);
+        commit_single_task_for_store(&mut store, "task-alpha");
+    }
+    let requests = db.open_tree("task_network_command_requests").unwrap();
+    let raw_request = requests.get("command-commit-task-alpha").unwrap().unwrap();
+    let mut stored_request: serde_json::Value = serde_json::from_slice(&raw_request).unwrap();
+    let mut substituted_request: CommandRequest =
+        serde_json::from_value(stored_request["request"].clone()).unwrap();
+    substituted_request.read_preconditions = vec![ReadPrecondition::StateHashIs(
+        substituted_request.base_state_hash.clone(),
+    )];
+    let substituted_hash = command_request_hash(&substituted_request);
+    stored_request["request"] = serde_json::to_value(&substituted_request).unwrap();
+    stored_request["request_hash"] = json!(substituted_hash.clone());
+    requests
+        .insert(
+            "command-commit-task-alpha",
+            serde_json::to_vec(&stored_request).unwrap(),
+        )
+        .unwrap();
+
+    let responses = db.open_tree("task_network_command_responses").unwrap();
+    let raw_response = responses.get("command-commit-task-alpha").unwrap().unwrap();
+    let mut stored_response: serde_json::Value = serde_json::from_slice(&raw_response).unwrap();
+    let response: Response = serde_json::from_value(stored_response["response"].clone()).unwrap();
+    stored_response["request_hash"] = json!(substituted_hash.clone());
+    stored_response["authentication"] = serde_json::to_value(
+        ResponseAuthentication::bind("command-commit-task-alpha", &substituted_hash, &response)
+            .unwrap(),
+    )
+    .unwrap();
+    responses
+        .insert(
+            "command-commit-task-alpha",
+            serde_json::to_vec(&stored_response).unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    assert_decode_error(SledTaskNetworkStore::open(db, "network-docs").unwrap_err());
+}
+
+#[test]
+fn modern_outcome_missing_independent_authentication_fails_on_open() {
+    let db = open_db();
+    {
+        let mut store = open_store(&db);
+        commit_single_task_for_store(&mut store, "task-alpha");
+    }
+    db.open_tree("task_network_command_authentications")
+        .unwrap()
+        .remove("command-commit-task-alpha")
+        .unwrap();
+    db.flush().unwrap();
+
+    assert_decode_error(SledTaskNetworkStore::open(db, "network-docs").unwrap_err());
+}
+
+#[test]
+fn authenticated_substitute_rejection_fails_exact_replay_on_open() {
+    let db = open_db();
+    {
+        let mut store = open_store(&db);
+        commit_single_task_for_store(&mut store, "task-alpha");
+        let mut request = task_network_support::apply_sled_command(
+            &store,
+            "command-invalid-network",
+            Command::ApplyMutationSet(Set::empty("network-other", "composition-empty", "empty")),
+        );
+        request.network_id = "network-other".to_string();
+        assert!(matches!(
+            store.submit(request).unwrap(),
+            Response::Rejected(Rejection::InvalidGraph(_))
+        ));
+    }
+    let responses = db.open_tree("task_network_command_responses").unwrap();
+    let raw = responses.get("command-invalid-network").unwrap().unwrap();
+    let mut stored: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let substituted = Response::Rejected(Rejection::StaleBase {
+        expected: 1,
+        actual: 1,
+    });
+    let request_hash = stored["request_hash"].as_str().unwrap().to_string();
+    stored["response"] = serde_json::to_value(&substituted).unwrap();
+    stored["authentication"] = serde_json::to_value(
+        ResponseAuthentication::bind("command-invalid-network", &request_hash, &substituted)
+            .unwrap(),
+    )
+    .unwrap();
+    responses
+        .insert(
+            "command-invalid-network",
+            serde_json::to_vec(&stored).unwrap(),
         )
         .unwrap();
     db.flush().unwrap();
