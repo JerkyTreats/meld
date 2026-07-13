@@ -52,6 +52,101 @@ pub struct EventAppendValidationIssue {
     pub message: String,
 }
 
+/// Maximum bytes for namespace-like event identifiers.
+pub const MAX_EVENT_NAMESPACE_IDENTIFIER_BYTES: usize = 128;
+/// Maximum bytes for opaque event identifiers.
+pub const MAX_EVENT_OPAQUE_IDENTIFIER_BYTES: usize = 1024;
+
+/// Structural identifier field validated at append ingress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventStructuralIdentifierKind {
+    /// Session identifier with opaque printable content.
+    SessionId,
+    /// Domain namespace identifier.
+    DomainId,
+    /// Stream identifier with opaque printable content.
+    StreamId,
+    /// Event type namespace identifier.
+    EventType,
+    /// Idempotency record identifier with opaque printable content.
+    RecordId,
+    /// Object domain namespace identifier.
+    ObjectDomainId,
+    /// Object kind namespace identifier.
+    ObjectKind,
+    /// Object identifier with opaque printable content.
+    ObjectId,
+    /// Relation type namespace identifier.
+    RelationType,
+}
+
+impl EventStructuralIdentifierKind {
+    /// Return the frozen byte bound for this identifier class.
+    pub fn max_bytes(self) -> usize {
+        match self {
+            Self::DomainId
+            | Self::EventType
+            | Self::ObjectDomainId
+            | Self::ObjectKind
+            | Self::RelationType => MAX_EVENT_NAMESPACE_IDENTIFIER_BYTES,
+            Self::SessionId | Self::StreamId | Self::RecordId | Self::ObjectId => {
+                MAX_EVENT_OPAQUE_IDENTIFIER_BYTES
+            }
+        }
+    }
+
+    fn namespace(self) -> bool {
+        matches!(
+            self,
+            Self::DomainId
+                | Self::EventType
+                | Self::ObjectDomainId
+                | Self::ObjectKind
+                | Self::RelationType
+        )
+    }
+}
+
+/// Validate one structural identifier against the frozen Wave 1 grammar.
+pub fn validate_event_structural_identifier(
+    kind: EventStructuralIdentifierKind,
+    value: &str,
+) -> Result<(), EventAppendValidationIssue> {
+    let valid_length = !value.is_empty() && value.len() <= kind.max_bytes();
+    let valid_content = if kind.namespace() {
+        value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
+        }) && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+            && value
+                .as_bytes()
+                .last()
+                .is_some_and(u8::is_ascii_alphanumeric)
+    } else {
+        value.trim() == value && value.chars().all(|character| !character.is_control())
+    };
+    if valid_length && valid_content {
+        Ok(())
+    } else {
+        Err(EventAppendValidationIssue {
+            code: if kind == EventStructuralIdentifierKind::RelationType {
+                EventAppendValidationCode::MalformedRelationType
+            } else {
+                EventAppendValidationCode::MalformedEnvelopeIdentifier
+            },
+            field: format!("{kind:?}").to_ascii_lowercase(),
+            message: format!(
+                "identifier must satisfy the {:?} grammar and fit within {} bytes",
+                kind,
+                kind.max_bytes()
+            ),
+        })
+    }
+}
+
 /// Stable object coordinate carried on event envelopes for downstream graph materializers.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct DomainObjectRef {
@@ -175,5 +270,29 @@ mod tests {
 
         assert_eq!(value["code"], "missing_idempotency_record_id");
         assert_eq!(value["field"], "record_id");
+    }
+
+    #[test]
+    fn structural_identifier_grammar_has_frozen_bounds() {
+        assert!(validate_event_structural_identifier(
+            EventStructuralIdentifierKind::EventType,
+            "execution.task.completed"
+        )
+        .is_ok());
+        assert!(validate_event_structural_identifier(
+            EventStructuralIdentifierKind::EventType,
+            "Execution Task"
+        )
+        .is_err());
+        assert!(validate_event_structural_identifier(
+            EventStructuralIdentifierKind::RecordId,
+            "publication:network-a:outcome-a"
+        )
+        .is_ok());
+        assert!(validate_event_structural_identifier(
+            EventStructuralIdentifierKind::RecordId,
+            " record-a"
+        )
+        .is_err());
     }
 }

@@ -16,10 +16,11 @@ pub mod runtime;
 pub mod world_state;
 
 pub use contracts::{
-    CandidateStatus, ExecutionComposition, InvalidMethodReport, MethodCandidateReport,
-    NoApplicableMethod, OperatorResolutionReport, OperatorResolutionStatus, PlanningDiagnostic,
-    PlanningDiagnosticCode, PlanningIndeterminate, PlanningInputError, PlanningRequest,
-    PlanningRequestIdentity, PlanningRequestIdentityInputs, PlanningResult, PlanningSatisfied,
+    CandidateStatus, ExecutionComposition, IdentifiedPlanningRequest, InvalidMethodReport,
+    MethodCandidateReport, NoApplicableMethod, OperatorResolutionReport, OperatorResolutionStatus,
+    PlanningDiagnostic, PlanningDiagnosticCode, PlanningIndeterminate, PlanningInputError,
+    PlanningRequest, PlanningRequestIdentity, PlanningRequestIdentityInputs, PlanningResult,
+    PlanningSatisfied,
 };
 pub use lowering::{
     Diagnostic as CompositionLoweringDiagnostic,

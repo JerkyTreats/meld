@@ -42,9 +42,40 @@ pub struct PlanningRequestIdentityInputs {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanningRequestIdentity {
     /// Stable request id derived from the complete input record.
-    pub request_id: String,
+    request_id: String,
     /// Immutable source inputs retained for replay diagnostics.
-    pub inputs: PlanningRequestIdentityInputs,
+    inputs: PlanningRequestIdentityInputs,
+}
+
+impl PlanningRequestIdentity {
+    /// Derive one request identity from complete immutable inputs.
+    pub fn derive(inputs: PlanningRequestIdentityInputs) -> Result<Self, String> {
+        let encoded = serde_json::to_vec(&inputs).map_err(|error| error.to_string())?;
+        Ok(Self {
+            request_id: blake3::hash(&encoded).to_hex().to_string(),
+            inputs,
+        })
+    }
+
+    /// Borrow the derived request id.
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    /// Borrow the complete immutable identity inputs.
+    pub fn inputs(&self) -> &PlanningRequestIdentityInputs {
+        &self.inputs
+    }
+
+    /// Reject a request id that disagrees with its immutable inputs.
+    pub fn validate(&self) -> Result<(), String> {
+        let expected = Self::derive(self.inputs.clone())?;
+        if expected.request_id == self.request_id {
+            Ok(())
+        } else {
+            Err("planning request id does not match its immutable inputs".to_string())
+        }
+    }
 }
 
 /// Complete first-slice planning input for one active goal.
@@ -60,6 +91,60 @@ pub struct PlanningRequest {
     pub world_state_frame: PlanningWorldStateFrameRef,
     /// Projection request that produced the supplied world state.
     pub world_state_request: PlanningWorldStateRequest,
+}
+
+/// Planning request bound to complete deterministic replay identity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IdentifiedPlanningRequest {
+    /// Canonical planning request product.
+    request: PlanningRequest,
+    /// Identity derived from every required replay input.
+    identity: PlanningRequestIdentity,
+}
+
+impl IdentifiedPlanningRequest {
+    /// Bind a canonical planning request to complete immutable identity inputs.
+    pub fn bind(
+        request: PlanningRequest,
+        inputs: PlanningRequestIdentityInputs,
+    ) -> Result<Self, String> {
+        if inputs.goal_id != request.goal.goal_id {
+            return Err("planning identity goal does not match request goal".to_string());
+        }
+        if inputs.projection_frame_id != request.world_state_frame.frame_id {
+            return Err(
+                "planning identity projection does not match request projection".to_string(),
+            );
+        }
+        Ok(Self {
+            request,
+            identity: PlanningRequestIdentity::derive(inputs)?,
+        })
+    }
+
+    /// Validate the attached identity against the canonical request.
+    pub fn validate(&self) -> Result<(), String> {
+        self.identity.validate()?;
+        if self.identity.inputs.goal_id != self.request.goal.goal_id {
+            return Err("planning identity goal does not match request goal".to_string());
+        }
+        if self.identity.inputs.projection_frame_id != self.request.world_state_frame.frame_id {
+            return Err(
+                "planning identity projection does not match request projection".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Borrow the canonical planning request.
+    pub fn request(&self) -> &PlanningRequest {
+        &self.request
+    }
+
+    /// Borrow the attached deterministic identity.
+    pub fn identity(&self) -> &PlanningRequestIdentity {
+        &self.identity
+    }
 }
 
 /// Runtime planning outcome for one goal.
@@ -244,22 +329,21 @@ mod contract_freeze_tests {
 
     #[test]
     fn planning_request_identity_retains_every_replay_input() {
-        let identity = PlanningRequestIdentity {
-            request_id: "planning-a".to_string(),
-            inputs: PlanningRequestIdentityInputs {
-                goal_id: "goal-a".to_string(),
-                goal_updated_at_seq: 9,
-                projection_frame_id: "projection-a".to_string(),
-                method_library_digest: "method-a".to_string(),
-                capability_catalog_digest: "catalog-a".to_string(),
-                planning_version: "planning-v1".to_string(),
-            },
+        let inputs = PlanningRequestIdentityInputs {
+            goal_id: "goal-a".to_string(),
+            goal_updated_at_seq: 9,
+            projection_frame_id: "projection-a".to_string(),
+            method_library_digest: "method-a".to_string(),
+            capability_catalog_digest: "catalog-a".to_string(),
+            planning_version: "planning-v1".to_string(),
         };
+        let identity = PlanningRequestIdentity::derive(inputs).unwrap();
 
         let encoded = serde_json::to_vec(&identity).unwrap();
         let decoded: PlanningRequestIdentity = serde_json::from_slice(&encoded).unwrap();
 
         assert_eq!(decoded, identity);
+        assert!(decoded.validate().is_ok());
     }
 }
 

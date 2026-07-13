@@ -53,20 +53,55 @@ pub struct BeliefAuthorityMigrationIdentity {
     pub generation: u64,
 }
 
-/// Durable progress state for a belief authority migration marker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BeliefAuthorityMigrationState {
+/// Identity and record count for one frozen belief authority snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeliefAuthoritySnapshot {
+    /// BLAKE3 hash over ordered authority records.
+    pub snapshot_hash: String,
+    /// Total records covered by the snapshot hash.
+    pub record_count: u64,
+}
+
+/// Durable proof that source and target authority snapshots are equal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeliefAuthorityParityReceipt {
+    /// Frozen legacy source snapshot.
+    pub source: BeliefAuthoritySnapshot,
+    /// Product target snapshot verified against the source.
+    pub target: BeliefAuthoritySnapshot,
+}
+
+/// State-specific durable progress for belief authority migration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum BeliefAuthorityMigrationProgress {
     /// Source identity and immutable snapshot metadata are established.
-    Prepared,
-    /// At least one source record has been copied but parity is not complete.
-    Copying,
-    /// Target records match the frozen source snapshot.
-    Verified,
-    /// Product reads have cut over and the legacy source remains read-only.
-    Cutover,
-    /// New product writes make rollback unsafe and require forward repair.
-    ForwardRepairOnly,
+    Prepared {
+        /// Frozen legacy source snapshot.
+        source: BeliefAuthoritySnapshot,
+    },
+    /// Source records are being copied into the product target.
+    Copying {
+        /// Frozen legacy source snapshot.
+        source: BeliefAuthoritySnapshot,
+        /// Source records durably copied and verified so far.
+        verified_record_count: u64,
+    },
+    /// Source and target snapshots have equal durable content.
+    Verified {
+        /// Durable source and target parity proof.
+        parity: BeliefAuthorityParityReceipt,
+    },
+    /// Product reads have cut over after durable parity proof.
+    Cutover {
+        /// Durable source and target parity proof retained at cutover.
+        parity: BeliefAuthorityParityReceipt,
+    },
+    /// Product writes require forward repair after durable cutover.
+    ForwardRepairOnly {
+        /// Last durable source and target parity proof before product writes.
+        parity: BeliefAuthorityParityReceipt,
+    },
 }
 
 /// Durable checkpoint for resumable belief authority migration.
@@ -79,14 +114,8 @@ pub struct BeliefAuthorityMigrationMarker {
     pub schema_version: u32,
     /// Canonical migration identity shared by every checkpoint.
     pub migration: BeliefAuthorityMigrationIdentity,
-    /// Current recoverable migration state.
-    pub state: BeliefAuthorityMigrationState,
-    /// BLAKE3 hash over the ordered frozen source records.
-    pub source_snapshot_hash: String,
-    /// Total records in the frozen source snapshot.
-    pub source_record_count: u64,
-    /// Source records durably copied and verified at this checkpoint.
-    pub verified_record_count: u64,
+    /// State-specific recoverable migration progress.
+    pub progress: BeliefAuthorityMigrationProgress,
 }
 
 /// Compatibility posture for legacy belief state during authority cutover.
@@ -652,6 +681,23 @@ pub struct BeliefView {
     pub hydration: HydrationRefs,
 }
 
+/// Durable intent binding every product in one atomic belief commit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BeliefCommitIntent {
+    /// Stable id reused while recovering the same commit attempt.
+    pub intent_id: String,
+    /// Exact active lease required before commit.
+    pub expected_active_lease: AssessmentLease,
+    /// Complete terminal lease persisted by commit.
+    pub completed_lease: AssessmentLease,
+    /// Exact dirty-key state consumed by commit.
+    pub expected_dirty_state: DirtyKeyState,
+    /// Canonical append-only revision product.
+    pub revision: BeliefRevision,
+    /// Receiver-owned public view projected from the revision.
+    pub public_view: BeliefView,
+}
+
 /// Compact provenance and hydration summary for belief records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BeliefProvenanceSummary {
@@ -748,14 +794,22 @@ mod tests {
                 target_authority_id: "product-belief-a".to_string(),
                 generation: 3,
             },
-            state: BeliefAuthorityMigrationState::Verified,
-            source_snapshot_hash: "a".repeat(64),
-            source_record_count: 12,
-            verified_record_count: 12,
+            progress: BeliefAuthorityMigrationProgress::Verified {
+                parity: BeliefAuthorityParityReceipt {
+                    source: BeliefAuthoritySnapshot {
+                        snapshot_hash: "a".repeat(64),
+                        record_count: 12,
+                    },
+                    target: BeliefAuthoritySnapshot {
+                        snapshot_hash: "a".repeat(64),
+                        record_count: 12,
+                    },
+                },
+            },
         };
 
         let value = serde_json::to_value(&marker).unwrap();
-        assert_eq!(value["state"], "verified");
+        assert_eq!(value["progress"]["state"], "verified");
         assert_eq!(
             serde_json::from_value::<BeliefAuthorityMigrationMarker>(value).unwrap(),
             marker

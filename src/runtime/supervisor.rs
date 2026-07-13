@@ -12,8 +12,8 @@ pub use contracts::{
     RuntimeHealthSnapshot, RuntimeHealthStatus, RuntimeHeartbeat, RuntimeId, RuntimeInstance,
     RuntimeInstanceStatus, RuntimeLease, RuntimeLeaseOwner, RuntimeLeaseStatus,
     RuntimeReplacementCheckpoint, RuntimeReplacementStage, RuntimeRestartRecord,
-    RuntimeRestartSchedule, RuntimeShutdownState, RuntimeShutdownStatus, SupervisorContractError,
-    SupervisorLifecycleEvent, SupervisorLifecycleEventType,
+    RuntimeRestartSchedule, RuntimeShutdownCompletion, RuntimeShutdownState, RuntimeShutdownStatus,
+    SupervisorContractError, SupervisorLifecycleEvent, SupervisorLifecycleEventType,
 };
 pub use entrypoint::{
     RuntimeSupervisor, SupervisorRestartEvaluation, SupervisorRuntimeError,

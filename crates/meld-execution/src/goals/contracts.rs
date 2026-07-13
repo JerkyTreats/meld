@@ -50,6 +50,25 @@ pub struct GoalCommandCommitReceipt {
     pub outcome_hash: String,
 }
 
+/// Complete goal command request that can derive its own canonical identity.
+pub trait GoalCommandRequestContract: Serialize {
+    /// Return immutable command metadata.
+    fn metadata(&self) -> &GoalCommandMetadata;
+
+    /// Return the command variant included in request identity.
+    fn command_kind(&self) -> GoalCommandKind;
+
+    /// Derive identity from this complete canonical command product.
+    fn request_identity(&self) -> Result<GoalCommandRequestIdentity, String> {
+        let encoded = serde_json::to_vec(self).map_err(|error| error.to_string())?;
+        Ok(GoalCommandRequestIdentity {
+            command_id: self.metadata().command_id.clone(),
+            command_kind: self.command_kind(),
+            request_hash: blake3::hash(&encoded).to_hex().to_string(),
+        })
+    }
+}
+
 /// Execution-owned wrapper around a shared-language goal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionGoalRecord {
@@ -136,6 +155,27 @@ pub struct ResumeGoalCommand {
     pub goal_id: String,
 }
 
+macro_rules! impl_goal_command_request_contract {
+    ($command:ty, $kind:expr) => {
+        impl GoalCommandRequestContract for $command {
+            fn metadata(&self) -> &GoalCommandMetadata {
+                &self.metadata
+            }
+
+            fn command_kind(&self) -> GoalCommandKind {
+                $kind
+            }
+        }
+    };
+}
+
+impl_goal_command_request_contract!(AddGoalCommand, GoalCommandKind::Add);
+impl_goal_command_request_contract!(ModifyGoalCommand, GoalCommandKind::Modify);
+impl_goal_command_request_contract!(RemoveGoalCommand, GoalCommandKind::Remove);
+impl_goal_command_request_contract!(SatisfyGoalCommand, GoalCommandKind::Satisfy);
+impl_goal_command_request_contract!(SuspendGoalCommand, GoalCommandKind::Suspend);
+impl_goal_command_request_contract!(ResumeGoalCommand, GoalCommandKind::Resume);
+
 /// Deterministic outcome for goal curation commands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GoalCommandOutcome {
@@ -175,5 +215,29 @@ mod contract_freeze_tests {
         let policy =
             serde_json::to_string(&LegacyGoalCommandReplayPolicy::RejectUnverified).unwrap();
         assert_eq!(policy, "\"reject_unverified\"");
+    }
+
+    #[test]
+    fn complete_command_payload_derives_conflict_aware_identity() {
+        let metadata = GoalCommandMetadata {
+            command_id: "command-a".to_string(),
+            source_identity: None,
+            seq: 7,
+        };
+        let first = RemoveGoalCommand {
+            metadata: metadata.clone(),
+            goal_id: "goal-a".to_string(),
+            reason: "first reason".to_string(),
+        };
+        let second = RemoveGoalCommand {
+            metadata,
+            goal_id: "goal-a".to_string(),
+            reason: "changed reason".to_string(),
+        };
+
+        assert_ne!(
+            first.request_identity().unwrap().request_hash,
+            second.request_identity().unwrap().request_hash
+        );
     }
 }

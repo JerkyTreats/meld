@@ -161,11 +161,63 @@ pub struct EventIngressFenceSnapshot {
 
 /// Final durable barrier acknowledged after ingress closes and drains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "EventFinalBarrierWire")]
 pub struct EventFinalBarrier {
-    /// Fence generation closed by this barrier.
-    pub fence_generation: u64,
+    /// Closed identity-bearing ingress fence.
+    fence: EventIngressFenceSnapshot,
     /// Final identity-bearing committed and durable ledger position.
-    pub watermark: EventWatermark,
+    watermark: EventWatermark,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct EventFinalBarrierWire {
+    fence: EventIngressFenceSnapshot,
+    watermark: EventWatermark,
+}
+
+impl EventFinalBarrier {
+    /// Bind a closed fence to its final fully durable watermark.
+    pub fn try_new(
+        fence: EventIngressFenceSnapshot,
+        watermark: EventWatermark,
+    ) -> Result<Self, EventAuthorityError> {
+        if fence.state != EventIngressFenceState::Closed {
+            return Err(EventAuthorityError::InvalidRequest {
+                message: "final barrier requires a closed ingress fence".to_string(),
+            });
+        }
+        if fence.ledger_id != watermark.ledger_id {
+            return Err(EventAuthorityError::IdentityMismatch {
+                expected: fence.ledger_id,
+                actual: watermark.ledger_id,
+            });
+        }
+        if watermark.committed_seq != watermark.tip_seq {
+            return Err(EventAuthorityError::InvalidRequest {
+                message: "final barrier requires committed sequence to equal durable tip"
+                    .to_string(),
+            });
+        }
+        Ok(Self { fence, watermark })
+    }
+
+    /// Return the closed ingress fence.
+    pub fn fence(&self) -> EventIngressFenceSnapshot {
+        self.fence
+    }
+
+    /// Return the final durable watermark.
+    pub fn watermark(&self) -> EventWatermark {
+        self.watermark
+    }
+}
+
+impl TryFrom<EventFinalBarrierWire> for EventFinalBarrier {
+    type Error = EventAuthorityError;
+
+    fn try_from(value: EventFinalBarrierWire) -> Result<Self, Self::Error> {
+        Self::try_new(value.fence, value.watermark)
+    }
 }
 
 /// Identity-bearing consumer registry row.
@@ -889,24 +941,41 @@ mod tests {
     #[test]
     fn ingress_fence_and_final_barrier_are_identity_bearing() {
         let ledger_id = LedgerIdentity::default();
-        let fence = EventIngressFenceSnapshot {
+        let open_fence = EventIngressFenceSnapshot {
             ledger_id,
             generation: 3,
-            state: EventIngressFenceState::Draining,
+            state: EventIngressFenceState::Open,
         };
-        let barrier = EventFinalBarrier {
-            fence_generation: fence.generation,
-            watermark: EventWatermark {
+        assert!(EventFinalBarrier::try_new(
+            open_fence,
+            EventWatermark {
+                ledger_id,
+                committed_seq: 7,
+                tip_seq: 7,
+            }
+        )
+        .is_err());
+        let fence = EventIngressFenceSnapshot {
+            state: EventIngressFenceState::Closed,
+            ..open_fence
+        };
+        let barrier = EventFinalBarrier::try_new(
+            fence,
+            EventWatermark {
                 ledger_id,
                 committed_seq: 7,
                 tip_seq: 7,
             },
-        };
+        )
+        .unwrap();
 
         let encoded = serde_json::to_vec(&barrier).unwrap();
         let decoded: EventFinalBarrier = serde_json::from_slice(&encoded).unwrap();
 
         assert_eq!(decoded, barrier);
-        assert_eq!(decoded.watermark.ledger_id, fence.ledger_id);
+        assert_eq!(decoded.watermark().ledger_id, fence.ledger_id);
+        let mut invalid = serde_json::to_value(barrier).unwrap();
+        invalid["fence"]["state"] = serde_json::json!("open");
+        assert!(serde_json::from_value::<EventFinalBarrier>(invalid).is_err());
     }
 }
