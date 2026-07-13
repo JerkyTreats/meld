@@ -77,6 +77,7 @@ impl GraphConsumerCursorReporter for AuthorityGraphTestPorts {
 pub struct GraphRuntimeTestFixture {
     authority: EventAuthority,
     runtime: Arc<GraphRuntime>,
+    db: sled::Db,
 }
 
 impl GraphRuntimeTestFixture {
@@ -85,19 +86,35 @@ impl GraphRuntimeTestFixture {
         let authority = EventAuthority::open(db.clone(), EventAuthorityOpenOptions::default())
             .map_err(authority_error_to_storage)?;
         let ports = Arc::new(AuthorityGraphTestPorts::new(&authority));
-        let traversal = TraversalStore::shared(db)?;
+        let traversal = TraversalStore::shared(db.clone())?;
         let runtime = Arc::new(GraphRuntime::from_ports(
             ports.clone(),
             ports.clone(),
             ports,
             traversal,
         )?);
-        Ok(Self { authority, runtime })
+        Ok(Self {
+            authority,
+            runtime,
+            db,
+        })
     }
 
     /// Shared graph runtime under test.
     pub fn runtime(&self) -> Arc<GraphRuntime> {
         Arc::clone(&self.runtime)
+    }
+
+    /// Open another runtime over the same authority and graph store.
+    pub fn additional_runtime(&self) -> Result<Arc<GraphRuntime>, StorageError> {
+        let ports = Arc::new(AuthorityGraphTestPorts::new(&self.authority));
+        let traversal = TraversalStore::shared(self.db.clone())?;
+        Ok(Arc::new(GraphRuntime::from_ports(
+            ports.clone(),
+            ports.clone(),
+            ports,
+            traversal,
+        )?))
     }
 
     /// Ledger identity shared by all fixture capabilities.

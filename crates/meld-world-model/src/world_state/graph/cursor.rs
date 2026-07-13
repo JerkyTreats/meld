@@ -12,6 +12,7 @@ use crate::world_state::graph::store::TraversalStore;
 
 const TREE_RUNTIME_META: &str = "traversal_runtime_meta";
 const KEY_AUTHORITY_CURSOR: &[u8] = b"event_authority_cursor";
+const KEY_REPLAY_INTENT: &[u8] = b"event_authority_replay_intent";
 const KEY_LEGACY_CURSOR: &[u8] = b"last_reduced_seq";
 const KEY_LEGACY_CURSOR_EVIDENCE: &[u8] = b"legacy_last_reduced_seq_evidence";
 const KEY_LEGACY_RESET_PENDING: &[u8] = b"legacy_projection_reset_pending";
@@ -22,6 +23,16 @@ const KEY_PENDING_DERIVED_EVENTS: &[u8] = b"pending_derived_events";
 struct PersistedGraphCursor {
     ledger_id: LedgerIdentity,
     after_seq: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct GraphReplayIntent {
+    schema_version: u8,
+    ledger_id: LedgerIdentity,
+    expected_after_seq: u64,
+    event_seq: u64,
+    event_identity: String,
+    owner_id: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -131,53 +142,101 @@ impl GraphProjectionCursor {
         })
     }
 
-    pub(super) fn advance(
+    pub(super) fn pending_intent(&self) -> Result<Option<GraphReplayIntent>, StorageError> {
+        self.tree
+            .get(KEY_REPLAY_INTENT)
+            .map_err(to_storage_io)?
+            .map(|raw| self.decode_intent(raw.as_ref()))
+            .transpose()
+    }
+
+    pub(super) fn admit(
         &self,
         expected_after_seq: u64,
-        after_seq: u64,
-    ) -> Result<LedgerCursor, StorageError> {
-        if after_seq <= expected_after_seq {
+        event_seq: u64,
+        event_identity: &str,
+        owner_id: &str,
+    ) -> Result<GraphReplayIntent, StorageError> {
+        if event_seq <= expected_after_seq {
             return Err(StorageError::InvalidPath(
-                "graph cursor must advance to a newer sequence".to_string(),
+                "graph replay intent must target a newer sequence".to_string(),
             ));
         }
-        let current = self.tree.get(KEY_AUTHORITY_CURSOR).map_err(to_storage_io)?;
-        let current_after_seq = current
-            .as_deref()
-            .map(|raw| self.decode(raw))
-            .transpose()?
-            .unwrap_or(0);
+        let current_after_seq = self.get()?.after_seq;
         if current_after_seq != expected_after_seq {
             return Err(StorageError::Backpressure(format!(
-                "graph cursor changed from expected sequence {expected_after_seq} to {current_after_seq}"
+                "graph cursor changed from expected sequence {expected_after_seq} to {current_after_seq} before replay admission"
+            )));
+        }
+        let proposed = GraphReplayIntent {
+            schema_version: 1,
+            ledger_id: self.ledger_id,
+            expected_after_seq,
+            event_seq,
+            event_identity: event_identity.to_string(),
+            owner_id: owner_id.to_string(),
+        };
+        if let Some(existing) = self.pending_intent()? {
+            if existing.ledger_id != self.ledger_id {
+                return Err(StorageError::IdentityMismatch {
+                    expected: self.ledger_id,
+                    actual: existing.ledger_id,
+                });
+            }
+            if existing.expected_after_seq != expected_after_seq
+                || existing.event_seq != event_seq
+                || existing.event_identity != event_identity
+            {
+                return Err(StorageError::Backpressure(
+                    "another graph replay event already owns the durable mutation intent"
+                        .to_string(),
+                ));
+            }
+        }
+        self.tree
+            .insert(
+                KEY_REPLAY_INTENT,
+                serde_json::to_vec(&proposed).map_err(to_storage_data)?,
+            )
+            .map_err(to_storage_io)?;
+        self.tree.flush().map_err(to_storage_io)?;
+        Ok(proposed)
+    }
+
+    pub(super) fn complete(
+        &self,
+        intent: &GraphReplayIntent,
+    ) -> Result<LedgerCursor, StorageError> {
+        let persisted = self.pending_intent()?.ok_or_else(|| {
+            StorageError::Backpressure(
+                "graph replay intent disappeared before cursor completion".to_string(),
+            )
+        })?;
+        if persisted != *intent {
+            return Err(StorageError::Backpressure(
+                "graph replay intent ownership changed before cursor completion".to_string(),
+            ));
+        }
+        let current_after_seq = self.get()?.after_seq;
+        if current_after_seq != intent.expected_after_seq {
+            return Err(StorageError::Backpressure(format!(
+                "graph cursor changed from expected sequence {} to {current_after_seq} before replay completion",
+                intent.expected_after_seq
             )));
         }
         let next = serde_json::to_vec(&PersistedGraphCursor {
             ledger_id: self.ledger_id,
-            after_seq,
+            after_seq: intent.event_seq,
         })
         .map_err(to_storage_data)?;
-        match self
-            .tree
-            .compare_and_swap(
-                KEY_AUTHORITY_CURSOR,
-                current.as_deref(),
-                Some(next.as_slice()),
-            )
-            .map_err(to_storage_io)?
-        {
-            Ok(()) => {
-                self.tree.flush().map_err(to_storage_io)?;
-            }
-            Err(_) => {
-                return Err(StorageError::Backpressure(
-                    "graph cursor changed concurrently".to_string(),
-                ));
-            }
-        }
+        let mut batch = sled::Batch::default();
+        batch.insert(KEY_AUTHORITY_CURSOR, next);
+        batch.remove(KEY_REPLAY_INTENT);
+        self.tree.apply_batch(batch).map_err(to_storage_io)?;
+        self.tree.flush().map_err(to_storage_io)?;
         Ok(LedgerCursor {
             ledger_id: self.ledger_id,
-            after_seq,
+            after_seq: intent.event_seq,
         })
     }
 
@@ -205,6 +264,19 @@ impl GraphProjectionCursor {
             });
         }
         Ok(persisted.after_seq)
+    }
+
+    fn decode_intent(&self, raw: &[u8]) -> Result<GraphReplayIntent, StorageError> {
+        let intent: GraphReplayIntent = serde_json::from_slice(raw).map_err(|error| {
+            StorageError::InvalidPath(format!("invalid graph replay intent: {error}"))
+        })?;
+        if intent.schema_version != 1 {
+            return Err(StorageError::InvalidPath(format!(
+                "unsupported graph replay intent schema version {}",
+                intent.schema_version
+            )));
+        }
+        Ok(intent)
     }
 
     fn finish_legacy_reset(&self, traversal: &TraversalStore) -> Result<(), StorageError> {
@@ -319,11 +391,12 @@ mod tests {
         let first = GraphProjectionCursor::open(&traversal, ledger_id).unwrap();
         let stale = GraphProjectionCursor::open(&traversal, ledger_id).unwrap();
 
-        assert_eq!(first.advance(0, 1).unwrap().after_seq, 1);
+        let intent = first.admit(0, 1, "event-one", "owner-one").unwrap();
+        assert_eq!(first.complete(&intent).unwrap().after_seq, 1);
         assert!(matches!(
-            stale.advance(0, 2),
+            stale.admit(0, 2, "event-two", "owner-two"),
             Err(StorageError::Backpressure(message))
-                if message.contains("expected sequence 0")
+                if message.contains("before replay admission")
         ));
         assert_eq!(stale.get().unwrap().after_seq, 1);
     }

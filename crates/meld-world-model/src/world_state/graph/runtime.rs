@@ -7,9 +7,10 @@
 //! Product composition supplies all three authority-derived ports to
 //! [`GraphRuntime::from_ports`].
 
+use std::collections::HashMap;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
 use parking_lot::Mutex;
 
@@ -18,8 +19,8 @@ use meld_events::error::EventAuthorityError;
 
 use crate::events::observability::CoverageTruncation;
 use crate::events::{
-    AppendDisposition, AppendReceipt, EventPage, LedgerCursor, LedgerIdentity, ReplayRequest,
-    MAX_REPLAY_LIMIT,
+    AppendDisposition, AppendReceipt, EventPage, EventRecord, LedgerCursor, LedgerIdentity,
+    ReplayRequest, MAX_REPLAY_LIMIT,
 };
 use crate::world_state::graph::cursor::GraphProjectionCursor;
 use crate::world_state::graph::outbox::GraphDerivedOutbox;
@@ -82,6 +83,8 @@ pub struct GraphRuntime {
     cursor: GraphProjectionCursor,
     derived_outbox: GraphDerivedOutbox,
     catch_up_lock: Mutex<()>,
+    mutation_lock: Arc<Mutex<()>>,
+    owner_id: String,
 }
 
 impl GraphRuntime {
@@ -106,6 +109,7 @@ impl GraphRuntime {
         }
         let cursor = GraphProjectionCursor::open(traversal.as_ref(), ledger_id)?;
         let derived_outbox = GraphDerivedOutbox::open(traversal.db())?;
+        let mutation_lock = graph_mutation_lock(ledger_id);
         Ok(Self {
             replay,
             derived_sink,
@@ -115,6 +119,8 @@ impl GraphRuntime {
             cursor,
             derived_outbox,
             catch_up_lock: Mutex::new(()),
+            mutation_lock,
+            owner_id: format!("graph-runtime-{}", LedgerIdentity::new()),
         })
     }
 
@@ -183,7 +189,17 @@ impl GraphRuntime {
 
     fn catch_up_with_limit(&self, max_items: usize) -> Result<GraphCatchUpReport, StorageError> {
         let _guard = self.catch_up_lock.lock();
-        let mut derived_events_appended = self.drain_derived_outbox()?;
+        let mut derived_events_appended = {
+            let _mutation_guard = self.mutation_lock.lock();
+            // TODO compat-shim: remove after all supported graph stores were
+            // created by intent-aware runtimes. An outbox without an intent
+            // can only come from the former cursor-last crash protocol.
+            if self.cursor.pending_intent()?.is_none() {
+                self.drain_derived_outbox()?
+            } else {
+                0
+            }
+        };
         let cursor = self.cursor.get()?;
         let after_seq = cursor.after_seq;
         let read = self.replay.replay(ReplayRequest {
@@ -251,6 +267,15 @@ impl GraphRuntime {
         // let later projection mutations alter an earlier envelope's payload.
         for event in events {
             let event_seq = event.seq;
+            let event_identity = graph_event_identity(&event)?;
+            pause_after_replay_before_admission()?;
+            let _mutation_guard = self.mutation_lock.lock();
+            let intent = self.cursor.admit(
+                durable_cursor.after_seq,
+                event_seq,
+                &event_identity,
+                &self.owner_id,
+            )?;
             let reducer = TraversalReducer::replay_records(
                 self.traversal.as_ref(),
                 self.ledger_id,
@@ -262,7 +287,7 @@ impl GraphRuntime {
             self.derived_outbox.replace(&reducer.emitted_envelopes)?;
             derived_events_appended += self.drain_derived_outbox()?;
             self.traversal.flush()?;
-            durable_cursor = self.cursor.advance(durable_cursor.after_seq, event_seq)?;
+            durable_cursor = self.cursor.complete(&intent)?;
         }
         // Cursor registry publication follows the local durable cursor. If
         // reporting fails, the next tick reports the same or a later cursor;
@@ -315,6 +340,27 @@ impl GraphRuntime {
     pub fn durable_event_cursor(&self) -> Result<LedgerCursor, StorageError> {
         self.cursor.get()
     }
+}
+
+fn graph_mutation_lock(ledger_id: LedgerIdentity) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<LedgerIdentity, Weak<Mutex<()>>>>> = OnceLock::new();
+    let mut locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new())).lock();
+    if let Some(lock) = locks.get(&ledger_id).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(ledger_id, Arc::downgrade(&lock));
+    lock
+}
+
+fn graph_event_identity(event: &EventRecord) -> Result<String, StorageError> {
+    let encoded = serde_json::to_vec(event).map_err(|error| {
+        StorageError::InvalidPath(format!("invalid graph replay event payload: {error}"))
+    })?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"meld.world_state.graph.replay_event.v1\0");
+    hasher.update(&encoded);
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 fn validate_receipt_identity(
@@ -404,6 +450,13 @@ fn authority_error_to_storage(error: EventAuthorityError) -> StorageError {
 static FAIL_AFTER_PROJECTION_BEFORE_OUTBOX: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 static FAILPOINT_TEST_LOCK: Mutex<()> = Mutex::new(());
+#[cfg(test)]
+static PAUSE_AFTER_REPLAY_BEFORE_ADMISSION: std::sync::Mutex<
+    Option<(
+        std::sync::mpsc::SyncSender<()>,
+        std::sync::mpsc::Receiver<()>,
+    )>,
+> = std::sync::Mutex::new(None);
 
 #[cfg(test)]
 fn fail_after_projection_before_outbox() -> Result<(), StorageError> {
@@ -415,8 +468,30 @@ fn fail_after_projection_before_outbox() -> Result<(), StorageError> {
     Ok(())
 }
 
+#[cfg(test)]
+fn pause_after_replay_before_admission() -> Result<(), StorageError> {
+    let pause = PAUSE_AFTER_REPLAY_BEFORE_ADMISSION
+        .lock()
+        .map_err(|_| StorageError::Unavailable("graph replay pause lock poisoned".to_string()))?
+        .take();
+    if let Some((reached, resume)) = pause {
+        reached.send(()).map_err(|_| {
+            StorageError::Unavailable("graph replay pause observer disappeared".to_string())
+        })?;
+        resume.recv().map_err(|_| {
+            StorageError::Unavailable("graph replay pause controller disappeared".to_string())
+        })?;
+    }
+    Ok(())
+}
+
 #[cfg(not(test))]
 fn fail_after_projection_before_outbox() -> Result<(), StorageError> {
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn pause_after_replay_before_admission() -> Result<(), StorageError> {
     Ok(())
 }
 
@@ -583,5 +658,84 @@ mod tests {
             format!("anchor::{}::{second_source_seq}", head.index_key())
         );
         assert!(reopened.durable_event_cursor().unwrap().after_seq >= second_source_seq);
+    }
+
+    #[test]
+    fn stale_runtime_cannot_end_a_newer_anchor_or_append_a_derived_event() {
+        let _failpoint_guard = FAILPOINT_TEST_LOCK.lock();
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let fixture = GraphRuntimeTestFixture::open(db).unwrap();
+        let winner = fixture.runtime();
+        let head = DomainObjectRef::new("context", "head", "node-a::analysis").unwrap();
+        let node = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
+        let first_frame = DomainObjectRef::new("context", "frame", "frame-a").unwrap();
+        let newer_frame = DomainObjectRef::new("context", "frame", "frame-b").unwrap();
+        fixture
+            .append(
+                EventEnvelope::with_now_domain(
+                    "session-a",
+                    "context",
+                    "stream-a",
+                    "context.head_selected",
+                    None,
+                    json!({ "generation": 1 }),
+                )
+                .with_graph(vec![head.clone(), node.clone(), first_frame], Vec::new()),
+            )
+            .unwrap();
+        winner.catch_up().unwrap();
+        let stale = fixture.additional_runtime().unwrap();
+        fixture
+            .append(
+                EventEnvelope::with_now_domain(
+                    "session-a",
+                    "context",
+                    "stream-a",
+                    "context.head_tombstoned",
+                    None,
+                    json!({ "reason": "removed" }),
+                )
+                .with_graph(vec![head.clone()], Vec::new()),
+            )
+            .unwrap();
+
+        let (reached_tx, reached_rx) = std::sync::mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+        *PAUSE_AFTER_REPLAY_BEFORE_ADMISSION.lock().unwrap() = Some((reached_tx, resume_rx));
+        let stale_thread = std::thread::spawn(move || stale.catch_up());
+        reached_rx.recv().unwrap();
+
+        let newer_source_seq = fixture
+            .append(
+                EventEnvelope::with_now_domain(
+                    "session-a",
+                    "context",
+                    "stream-a",
+                    "context.head_selected",
+                    None,
+                    json!({ "generation": 2 }),
+                )
+                .with_graph(vec![head.clone(), node, newer_frame.clone()], Vec::new()),
+            )
+            .unwrap()
+            .seq;
+        winner.catch_up().unwrap();
+        let records_after_winner = fixture.records().unwrap().len();
+        resume_tx.send(()).unwrap();
+        assert!(matches!(
+            stale_thread.join().unwrap(),
+            Err(StorageError::Backpressure(message))
+                if message.contains("before replay admission")
+        ));
+
+        let current = winner
+            .traversal_store()
+            .current_anchor(&head)
+            .unwrap()
+            .expect("newer selection remains current");
+        assert_eq!(current.target, newer_frame);
+        assert_eq!(current.selected_at_seq, newer_source_seq);
+        assert_eq!(current.ended_at_seq, None);
+        assert_eq!(fixture.records().unwrap().len(), records_after_winner);
     }
 }
