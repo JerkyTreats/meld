@@ -4,6 +4,7 @@ use crate::task_network::{
     command,
     journal::JournalRecord,
     mutation::Rejection,
+    outcome::PublicationLedgerBinding,
     state::NetworkState,
     store::{
         codec::{decode_error, decode_optional, to_decode, to_storage},
@@ -95,6 +96,11 @@ impl SledTaskNetworkStore {
     /// Returns accepted journal records in revision order.
     pub fn journal(&self) -> &[JournalRecord] {
         self.inner.journal()
+    }
+
+    /// Returns the event ledger established by canonical publications.
+    pub fn publication_ledger_binding(&self) -> Option<&PublicationLedgerBinding> {
+        self.inner.publication_ledger_binding()
     }
 
     /// Submits one command and persists accepted records through the journal.

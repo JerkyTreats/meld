@@ -229,7 +229,8 @@ mod tests {
         fn append_envelope_idempotent(
             &self,
             envelope: EventEnvelope,
-        ) -> Result<meld_events::AppendReceipt, String> {
+        ) -> Result<meld_events::AppendReceipt, meld_execution::task_network::EventAppendFailure>
+        {
             self.envelopes.borrow_mut().push(envelope);
             Ok(meld_events::AppendReceipt {
                 ledger_id: self.ledger_id,

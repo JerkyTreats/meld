@@ -20,7 +20,7 @@ use meld_execution::task_network::authority::{
     TaskNetworkAuthorityShutdownReceipt, TaskNetworkCommandPort, TaskNetworkQueryPort,
 };
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
-use meld_execution::task_network::EventAppendSink;
+use meld_execution::task_network::{EventAppendFailure, EventAppendSink};
 use meld_world_model::belief::EvidenceEventReplaySource;
 use meld_world_model::planner::{PlannerProjectionError, PlannerProjectionOutput, PlannerQuery};
 use meld_world_model::world_state::graph::store::TraversalStore;
@@ -324,10 +324,13 @@ impl EventAppendSink for ProductEventAppendPort {
         self.append.ledger_identity()
     }
 
-    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<AppendReceipt, String> {
+    fn append_envelope_idempotent(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAppendFailure> {
         self.append
             .append_durable(envelope, AppendMode::Idempotent)
-            .map_err(|error| error.to_string())
+            .map_err(EventAppendFailure::from)
     }
 }
 

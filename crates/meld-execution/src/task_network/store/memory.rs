@@ -10,7 +10,7 @@ use crate::task_network::{
     },
     journal::JournalRecord,
     mutation::{self, CommitRecord, Rejection},
-    outcome::{Publication, PublicationState},
+    outcome::{Publication, PublicationLedgerBinding, PublicationState},
     readiness::{compute_ready_set, validate_active_graph},
     state::{DependencyEdge, NetworkState, TaskStatus},
     store::{codec::decode_error, error::TaskNetworkStoreError, records::StoredJournalRecord},
@@ -23,6 +23,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 pub struct InMemoryTaskNetworkStore {
     state: NetworkState,
     journal: Vec<JournalRecord>,
+    #[serde(default)]
+    publication_ledger_binding: Option<PublicationLedgerBinding>,
     pub(super) command_requests: BTreeMap<String, String>,
     pub(super) command_responses: BTreeMap<String, command::Response>,
 }
@@ -33,6 +35,7 @@ impl InMemoryTaskNetworkStore {
         Self {
             state: NetworkState::empty(network_id),
             journal: Vec::new(),
+            publication_ledger_binding: None,
             command_requests: BTreeMap::new(),
             command_responses: BTreeMap::new(),
         }
@@ -46,6 +49,11 @@ impl InMemoryTaskNetworkStore {
     /// Returns the accepted journal records in revision order.
     pub fn journal(&self) -> &[JournalRecord] {
         &self.journal
+    }
+
+    /// Returns the event ledger established by canonical publications.
+    pub fn publication_ledger_binding(&self) -> Option<&PublicationLedgerBinding> {
+        self.publication_ledger_binding.as_ref()
     }
 
     /// Submits one command through the single writer reducer.
@@ -557,6 +565,31 @@ impl InMemoryTaskNetworkStore {
             );
         }
 
+        let proposed_binding = match &publication.state {
+            PublicationState::Published {
+                receipt: Some(receipt),
+                ..
+            } => Some(PublicationLedgerBinding {
+                publication_id: publication.publication_id.clone(),
+                ledger_id: receipt.ledger_id,
+            }),
+            _ => None,
+        };
+        if let Some(proposed) = &proposed_binding {
+            if let Some(bound) = &self.publication_ledger_binding {
+                if bound.ledger_id != proposed.ledger_id {
+                    return self.record_response(
+                        command_id,
+                        request_hash,
+                        command::Response::Rejected(Rejection::PublicationLedgerMismatch {
+                            expected: bound.ledger_id,
+                            actual: proposed.ledger_id,
+                        }),
+                    );
+                }
+            }
+        }
+
         let revision = self.state.revision + 1;
         let mut marked = current;
         marked.state = match publication.state {
@@ -584,6 +617,9 @@ impl InMemoryTaskNetworkStore {
         self.state
             .publications
             .insert(marked.publication_id.clone(), marked.clone());
+        if self.publication_ledger_binding.is_none() {
+            self.publication_ledger_binding = proposed_binding;
+        }
         self.state.set_revision_and_hash(revision);
         self.journal.push(JournalRecord::Publication(marked));
         self.record_response(
@@ -660,6 +696,10 @@ impl InMemoryTaskNetworkStore {
                                 }
                         )
                     }),
+                mutation::ReadPrecondition::PublicationLedgerCompatible(ledger_id) => self
+                    .publication_ledger_binding
+                    .as_ref()
+                    .is_none_or(|binding| binding.ledger_id == *ledger_id),
             };
 
             if !ok {
@@ -779,6 +819,30 @@ impl InMemoryTaskNetworkStore {
             JournalRecord::Publication(publication) => {
                 if publication.network_id != self.state.network_id {
                     return Err(decode_error("publication journal record metadata mismatch"));
+                }
+                if let PublicationState::Published {
+                    receipt: Some(receipt),
+                    ..
+                } = &publication.state
+                {
+                    match &self.publication_ledger_binding {
+                        Some(binding) if binding.ledger_id != receipt.ledger_id => {
+                            return Err(decode_error(format!(
+                                "publication '{}' binds ledger '{}' but publication '{}' already bound ledger '{}'",
+                                publication.publication_id,
+                                receipt.ledger_id,
+                                binding.publication_id,
+                                binding.ledger_id
+                            )));
+                        }
+                        None => {
+                            self.publication_ledger_binding = Some(PublicationLedgerBinding {
+                                publication_id: publication.publication_id.clone(),
+                                ledger_id: receipt.ledger_id,
+                            });
+                        }
+                        Some(_) => {}
+                    }
                 }
                 self.state
                     .publications

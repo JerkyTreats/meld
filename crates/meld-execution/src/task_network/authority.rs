@@ -17,7 +17,7 @@ use thiserror::Error;
 
 use crate::task_network::command;
 use crate::task_network::journal::JournalRecord;
-use crate::task_network::outcome::{Publication, PublicationState};
+use crate::task_network::outcome::{Publication, PublicationLedgerBinding, PublicationState};
 use crate::task_network::readiness::compute_ready_set;
 use crate::task_network::state::{NetworkState, ReadySet};
 use crate::task_network::store::{
@@ -47,6 +47,21 @@ pub struct TaskNetworkAuthorityLifecycleSnapshot {
     pub epoch: u64,
     /// Current lifecycle state.
     pub lifecycle: TaskNetworkAuthorityLifecycle,
+}
+
+/// Lightweight durably acknowledged mutation snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskNetworkAuthoritySnapshot {
+    /// Stable network identity.
+    pub network_id: String,
+    /// Durable lifecycle epoch serving this snapshot.
+    pub epoch: u64,
+    /// Latest durably acknowledged task-network revision.
+    pub revision: u64,
+    /// State hash paired with the acknowledged revision.
+    pub state_hash: String,
+    /// Canonical event ledger established by the first published outcome.
+    pub publication_ledger_binding: Option<PublicationLedgerBinding>,
 }
 
 /// Error returned by task network authority operations.
@@ -150,6 +165,16 @@ pub struct TaskNetworkQueryPort {
 }
 
 impl TaskNetworkQueryPort {
+    /// Return lightweight mutation identity without cloning the full graph.
+    pub fn snapshot(&self) -> Result<TaskNetworkAuthoritySnapshot, TaskNetworkAuthorityError> {
+        let (ack_sender, ack_receiver) = sync_channel(1);
+        self.shared
+            .try_admit(&self.sender, Work::Snapshot { ack: ack_sender })?;
+        ack_receiver
+            .recv()
+            .map_err(|_| self.shared.closed_error())?
+    }
+
     /// Return the latest durably acknowledged reduced state.
     pub fn state(&self) -> Result<NetworkState, TaskNetworkAuthorityError> {
         let (ack_sender, ack_receiver) = sync_channel(1);
@@ -435,6 +460,9 @@ enum Work {
     State {
         ack: SyncSender<Result<NetworkState, TaskNetworkAuthorityError>>,
     },
+    Snapshot {
+        ack: SyncSender<Result<TaskNetworkAuthoritySnapshot, TaskNetworkAuthorityError>>,
+    },
     Journal {
         ack: SyncSender<Result<Vec<JournalRecord>, TaskNetworkAuthorityError>>,
     },
@@ -612,6 +640,19 @@ fn run_worker(
             Work::State { ack } => {
                 let result = validate_query_epoch(&store, epoch, &shared, &mut poison_reason)
                     .map(|()| store.state().clone());
+                let _ = ack.send(result);
+            }
+            Work::Snapshot { ack } => {
+                let result =
+                    validate_query_epoch(&store, epoch, &shared, &mut poison_reason).map(|()| {
+                        TaskNetworkAuthoritySnapshot {
+                            network_id: store.state().network_id.clone(),
+                            epoch,
+                            revision: store.state().revision,
+                            state_hash: store.state().state_hash.clone(),
+                            publication_ledger_binding: store.publication_ledger_binding().cloned(),
+                        }
+                    });
                 let _ = ack.send(result);
             }
             Work::Journal { ack } => {

@@ -25,7 +25,7 @@ use meld_execution::task_network::publication::{
 use meld_execution::task_network::readiness::compute_ready_set;
 use meld_execution::task_network::state::TaskStatus;
 use meld_execution::task_network::store::SledTaskNetworkStore;
-use meld_execution::task_network::PublicationRuntime;
+use meld_execution::task_network::{PublicationRuntime, TaskNetworkAuthority};
 use meld_lang::{Condition, GoalLifecycle, Literal, Proposition, Term, WorldState};
 use meld_world_model::agent::{
     ActiveGoalSummary, AgentActiveGoalQueryError, AgentCurationDedupeKey, AgentDelivery,
@@ -142,13 +142,20 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
     let harness = ReopenHarness::new();
     let stores = setup_reopened_pending_publication(&harness);
     let ports = harness.ports(&stores);
-    let mut network = harness.open_network(&stores);
+    let network = harness.open_network(&stores);
     seed_event_allocator_before_publication(&stores, &harness.fixture);
+    network.flush().unwrap();
+    drop(network);
 
     let publication_runtime = PublicationRuntime::new();
+    let mut authority =
+        TaskNetworkAuthority::open(&stores.task_networks, TASK_NETWORK_ID, 32).unwrap();
+    let query = authority.query_port();
+    let commands = authority.command_port();
     let report = publication_runtime
         .publish_pending(
-            &mut network,
+            &query,
+            &commands,
             ports.event_append(),
             PublishPendingPublicationsRequest {
                 session_id: SESSION_ID.to_string(),
@@ -157,14 +164,13 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
             },
         )
         .unwrap();
+    authority.shutdown().unwrap();
     assert_eq!(report.attempted, 1);
     assert_eq!(report.committed, 1);
     assert!(report.retryable_errors.is_empty());
     assert!(report.fatal_errors.is_empty());
     assert!(report.output_revision > report.input_revision);
 
-    network.flush().unwrap();
-    drop(network);
     stores.flush_boundary().unwrap();
     drop(ports);
     drop(stores);
@@ -385,12 +391,19 @@ fn docs_freshness_reopens_after_pending_publication_from_product_stores() {
 fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
     let harness = ReopenHarness::new();
     let mut stores = setup_reopened_pending_publication(&harness);
-    let mut network = harness.open_network(&stores);
+    let network = harness.open_network(&stores);
     seed_event_allocator_before_publication(&stores, &harness.fixture);
     let publication_ports = harness.ports(&stores);
+    network.flush().unwrap();
+    drop(network);
+    let mut authority =
+        TaskNetworkAuthority::open(&stores.task_networks, TASK_NETWORK_ID, 32).unwrap();
+    let query = authority.query_port();
+    let commands = authority.command_port();
 
     let report = publish_pending_publications(
-        &mut network,
+        &query,
+        &commands,
         publication_ports.event_append(),
         PublishPendingPublicationsRequest {
             session_id: SESSION_ID.to_string(),
@@ -410,8 +423,7 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
     let worker_report: WorkerTickReport = report.into();
     assert!(worker_report.made_progress());
 
-    network.flush().unwrap();
-    drop(network);
+    authority.shutdown().unwrap();
     drop(publication_ports);
     stores = harness.flush_and_reopen(stores);
     let network = harness.open_network(&stores);

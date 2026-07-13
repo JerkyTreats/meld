@@ -5,12 +5,12 @@
 //! semantics out of their owning modules.
 
 use crate::task_network::{
+    authority::{TaskNetworkCommandPort, TaskNetworkQueryPort},
     publication::{
         publish_pending_publications, EventAppendSink, PublicationBridgeError,
         PublicationBridgeIssue, PublicationBridgeReport, PublicationBridgeScope,
         PublicationPublishResult, PublishPendingPublicationsRequest,
     },
-    store::SledTaskNetworkStore,
 };
 
 const PUBLICATION_RUNTIME_ACTOR_ID: &str = "execution.task_network.publication.runtime";
@@ -43,14 +43,15 @@ impl PublicationRuntime {
     /// Publish a bounded set of retryable outbox records through an append sink.
     pub fn publish_pending<E>(
         &self,
-        store: &mut SledTaskNetworkStore,
+        query: &TaskNetworkQueryPort,
+        commands: &TaskNetworkCommandPort,
         events: &E,
         request: PublishPendingPublicationsRequest,
     ) -> Result<PublicationRuntimeReport, PublicationBridgeError>
     where
         E: EventAppendSink,
     {
-        let bridge_report = publish_pending_publications(store, events, request)?;
+        let bridge_report = publish_pending_publications(query, commands, events, request)?;
         Ok(PublicationRuntimeReport::from_bridge(
             self.actor_id.clone(),
             bridge_report,

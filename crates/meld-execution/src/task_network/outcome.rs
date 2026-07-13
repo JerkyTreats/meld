@@ -15,7 +15,7 @@
 //! ```
 
 use crate::task_network::{contracts::stable_id, dispatch};
-use meld_events::AppendReceipt;
+use meld_events::{AppendReceipt, LedgerIdentity};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
@@ -33,6 +33,15 @@ pub struct Publication {
     pub semantic_lineage: Option<dispatch::OutcomeSemanticLineage>,
     /// Current publication state.
     pub state: PublicationState,
+}
+
+/// Durable event-ledger binding derived from the first canonical publication.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicationLedgerBinding {
+    /// Publication that first established the network binding.
+    pub publication_id: String,
+    /// Canonical event ledger accepted for every network publication.
+    pub ledger_id: LedgerIdentity,
 }
 
 impl Publication {

@@ -42,7 +42,8 @@ pub mod store;
 pub use authority::{
     TaskNetworkAuthorities, TaskNetworkAuthority, TaskNetworkAuthorityError,
     TaskNetworkAuthorityLifecycle, TaskNetworkAuthorityLifecycleSnapshot,
-    TaskNetworkAuthorityShutdownReceipt, TaskNetworkCommandPort, TaskNetworkQueryPort,
+    TaskNetworkAuthorityShutdownReceipt, TaskNetworkAuthoritySnapshot, TaskNetworkCommandPort,
+    TaskNetworkQueryPort,
 };
 pub use command::{Command, Request as CommandRequest, Response};
 pub use dispatch::{
@@ -58,9 +59,10 @@ pub use journal::JournalRecord;
 pub use mutation::{CommitRecord, CommitRequest, CommitResult, Inject, Mutation, Set};
 pub use outcome::{Publication, PublicationState};
 pub use publication::{
-    build_publication_envelope, publish_pending_publications, publish_publication, EventAppendSink,
-    PublicationAppend, PublicationBridgeError, PublicationBridgeIssue, PublicationBridgeReport,
-    PublicationBridgeScope, PublicationPublishResult, PublishPendingPublicationsRequest,
+    build_publication_envelope, publish_pending_publications, publish_publication,
+    EventAppendFailure, EventAppendSink, PublicationAppend, PublicationBridgeError,
+    PublicationBridgeIssue, PublicationBridgeReport, PublicationBridgeScope,
+    PublicationPublishResult, PublishPendingPublicationsRequest,
 };
 pub use readiness::compute_ready_set;
 pub use runtime::{PublicationRuntime, PublicationRuntimeReport};

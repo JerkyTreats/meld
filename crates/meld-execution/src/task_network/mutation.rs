@@ -21,6 +21,7 @@ use crate::task_network::{
     contracts::{stable_id, TASK_NETWORK_SCHEMA_VERSION},
     state,
 };
+use meld_events::LedgerIdentity;
 use serde::{Deserialize, Serialize};
 
 /// Proposed task network mutation set.
@@ -222,6 +223,8 @@ pub enum ReadPrecondition {
     },
     /// Publication must be retryable.
     PublicationPending(String),
+    /// A canonical publication must use the network event ledger.
+    PublicationLedgerCompatible(LedgerIdentity),
 }
 
 /// Result of attempting to commit a mutation request.
@@ -267,6 +270,13 @@ pub enum Rejection {
     },
     /// Publication was already marked.
     PublicationAlreadyMarked(String),
+    /// A canonical publication targeted a different event ledger.
+    PublicationLedgerMismatch {
+        /// Event ledger already bound to the task network.
+        expected: LedgerIdentity,
+        /// Event ledger carried by the proposed publication.
+        actual: LedgerIdentity,
+    },
 }
 
 /// Durable record for one accepted mutation set.

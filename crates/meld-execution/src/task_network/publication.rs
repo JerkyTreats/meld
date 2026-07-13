@@ -6,6 +6,7 @@
 //! Does not own: this module does not schedule background workers or map
 //! execution facts into world model evidence.
 
+use meld_events::error::EventAuthorityError;
 use meld_events::{
     AppendMode, AppendReceipt, DomainObjectRef, EventAppendCapability, EventEnvelope,
     EventRelation, LedgerIdentity,
@@ -13,11 +14,11 @@ use meld_events::{
 use serde::Serialize;
 
 use crate::task_network::{
+    authority::{TaskNetworkAuthorityError, TaskNetworkCommandPort, TaskNetworkQueryPort},
     command::{self, Command},
     contracts::{has_text, stable_hash},
     mutation::{ReadPrecondition, Rejection},
     outcome::{Publication, PublicationState},
-    store::SledTaskNetworkStore,
 };
 
 const PUBLICATION_ACTOR_ID: &str = "execution.task_network.publication";
@@ -100,6 +101,14 @@ pub enum PublicationPublishResult {
         /// Append failure summary.
         error: String,
     },
+    /// The append or mark could not converge against the current authority
+    /// snapshot and may be retried by a later bounded pass.
+    MarkDeferred {
+        /// Task network publication id.
+        publication_id: String,
+        /// Retryable authority or optimistic concurrency detail.
+        error: String,
+    },
 }
 
 /// Report from a bounded publication bridge pass.
@@ -135,12 +144,22 @@ pub enum PublicationBridgeError {
     InvalidRequest(String),
 
     /// Event append failed outside per publication handling.
-    #[error("event append failed: {0}")]
-    EventAppend(String),
+    #[error("event append failed: {message}")]
+    EventAppend {
+        /// Stable event authority diagnostic.
+        message: String,
+        /// True when the event authority permits a later retry.
+        retryable: bool,
+    },
 
-    /// Task network store returned a storage error.
-    #[error("task network command failed: {0}")]
-    TaskNetworkStore(String),
+    /// The serialized task-network authority could not serve a query or command.
+    #[error("task network authority failed: {message}")]
+    TaskNetworkAuthority {
+        /// Stable diagnostic text from the execution-owned authority.
+        message: String,
+        /// True when replacement or a later bounded pass may converge.
+        retryable: bool,
+    },
 
     /// Stored canonical receipt belongs to another event authority.
     #[error(
@@ -156,13 +175,76 @@ pub enum PublicationBridgeError {
     },
 }
 
+impl PublicationBridgeError {
+    /// Return whether a later bounded actor pass may safely retry this failure.
+    pub fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::TaskNetworkAuthority {
+                retryable: true,
+                ..
+            } | Self::EventAppend {
+                retryable: true,
+                ..
+            }
+        )
+    }
+}
+
+/// Typed event append failure retained across the execution boundary.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
+pub struct EventAppendFailure {
+    /// Stable diagnostic text from the event authority.
+    pub message: String,
+    /// True when a later bounded actor pass may retry the append.
+    pub retryable: bool,
+}
+
+impl EventAppendFailure {
+    /// Build a retryable append failure.
+    pub fn retryable(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: true,
+        }
+    }
+
+    /// Build a fatal append failure.
+    pub fn fatal(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: false,
+        }
+    }
+}
+
+impl From<EventAuthorityError> for EventAppendFailure {
+    fn from(error: EventAuthorityError) -> Self {
+        let retryable = matches!(
+            error,
+            EventAuthorityError::Backpressure { .. }
+                | EventAuthorityError::DurabilityIndeterminate { .. }
+                | EventAuthorityError::Unavailable { .. }
+                | EventAuthorityError::Persistence { .. }
+        );
+        Self {
+            message: error.to_string(),
+            retryable,
+        }
+    }
+}
+
 /// Event append capability used by the bridge and tests.
 pub trait EventAppendSink {
     /// Returns the ledger accepted by this sink.
     fn ledger_identity(&self) -> LedgerIdentity;
 
     /// Appends an envelope idempotently and returns its durable authority receipt.
-    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<AppendReceipt, String>;
+    fn append_envelope_idempotent(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAppendFailure>;
 }
 
 impl EventAppendSink for EventAppendCapability {
@@ -170,9 +252,12 @@ impl EventAppendSink for EventAppendCapability {
         EventAppendCapability::ledger_identity(self)
     }
 
-    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<AppendReceipt, String> {
+    fn append_envelope_idempotent(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAppendFailure> {
         self.append_durable(envelope, AppendMode::Idempotent)
-            .map_err(|error| error.to_string())
+            .map_err(EventAppendFailure::from)
     }
 }
 
@@ -259,13 +344,15 @@ pub fn build_publication_envelope(
 
 /// Publishes one task network publication by id.
 pub fn publish_publication<E: EventAppendSink>(
-    store: &mut SledTaskNetworkStore,
+    query: &TaskNetworkQueryPort,
+    commands: &TaskNetworkCommandPort,
     events: &E,
     request: &PublishPendingPublicationsRequest,
     publication_id: &str,
 ) -> Result<PublicationPublishResult, PublicationBridgeError> {
     validate_request(request)?;
-    let Some(publication) = store.state().publications.get(publication_id).cloned() else {
+    let ledger_id = events.ledger_identity();
+    let Some(publication) = query.publication(publication_id).map_err(authority_error)? else {
         return Ok(PublicationPublishResult::MarkRejected {
             publication_id: publication_id.to_string(),
             reason: "publication was not found".to_string(),
@@ -306,6 +393,9 @@ pub fn publish_publication<E: EventAppendSink>(
         PublicationState::Pending | PublicationState::Failed { .. } => {}
     }
 
+    let snapshot = query.snapshot().map_err(authority_error)?;
+    validate_network_ledger_binding(&snapshot, ledger_id)?;
+
     let event_record_id = publication_event_record_id(&publication.publication_id);
     let envelope = build_publication_envelope(&request.session_id, &publication)?;
     match events.append_envelope_idempotent(envelope) {
@@ -319,92 +409,75 @@ pub fn publish_publication<E: EventAppendSink>(
                 ),
             })
         }
-        Ok(receipt) => publish_marked_publication(store, publication, event_record_id, receipt),
+        Ok(receipt) => {
+            publish_marked_publication(query, commands, publication, event_record_id, receipt)
+        }
+        Err(error) if !error.retryable => Err(PublicationBridgeError::EventAppend {
+            message: error.message,
+            retryable: false,
+        }),
         Err(error) if upgrades_legacy_receipt => Ok(PublicationPublishResult::AppendFailed {
             publication_id: publication.publication_id,
-            error,
+            error: error.message,
         }),
-        Err(error) => record_append_failure(store, publication, error),
+        Err(error) => record_append_failure(query, commands, publication, ledger_id, error.message),
     }
-}
-
-fn preflight_publication_receipts<E: EventAppendSink>(
-    store: &SledTaskNetworkStore,
-    events: &E,
-) -> Result<(), PublicationBridgeError> {
-    let expected = events.ledger_identity();
-    for publication in store.state().publications.values() {
-        let PublicationState::Published {
-            receipt: Some(receipt),
-            ..
-        } = publication.state
-        else {
-            continue;
-        };
-        if receipt.ledger_id != expected {
-            return Err(PublicationBridgeError::LedgerIdentityMismatch {
-                publication_id: publication.publication_id.clone(),
-                expected,
-                actual: receipt.ledger_id,
-            });
-        }
-    }
-    Ok(())
 }
 
 /// Publishes retryable task network publications in deterministic id order.
 pub fn publish_pending_publications<E: EventAppendSink>(
-    store: &mut SledTaskNetworkStore,
+    query: &TaskNetworkQueryPort,
+    commands: &TaskNetworkCommandPort,
     events: &E,
     request: PublishPendingPublicationsRequest,
 ) -> Result<PublicationBridgeReport, PublicationBridgeError> {
     validate_request(&request)?;
-    preflight_publication_receipts(store, events)?;
+    let input_state = query.snapshot().map_err(authority_error)?;
+    validate_network_ledger_binding(&input_state, events.ledger_identity())?;
 
-    let input_revision = store.state().revision;
+    let input_revision = input_state.revision;
     let scope = PublicationBridgeScope {
-        network_id: store.state().network_id.clone(),
+        network_id: input_state.network_id,
         session_id: request.session_id.clone(),
         worker_id: request.worker_id.clone(),
     };
 
-    let candidate_limit = request.limit.map(|limit| limit.saturating_add(1));
-    let publication_ids = store
-        .state()
-        .publications
-        .iter()
-        .filter(|(_, publication)| {
-            matches!(
-                publication.state,
-                PublicationState::Pending
-                    | PublicationState::Failed { .. }
-                    | PublicationState::Published { receipt: None, .. }
-            )
-        })
-        .map(|(publication_id, _)| publication_id.clone());
-    let mut publication_ids = match candidate_limit {
-        Some(limit) => publication_ids.take(limit).collect::<Vec<_>>(),
-        None => publication_ids.collect::<Vec<_>>(),
-    };
+    let candidate_limit = request
+        .limit
+        .map(|limit| limit.saturating_add(1))
+        .unwrap_or(usize::MAX);
+    let mut publications = query
+        .retryable_publications(candidate_limit)
+        .map_err(authority_error)?;
     let budget_exhausted = request
         .limit
-        .map(|limit| publication_ids.len() > limit)
+        .map(|limit| publications.len() > limit)
         .unwrap_or(false);
     if let Some(limit) = request.limit {
-        publication_ids.truncate(limit);
+        publications.truncate(limit);
     }
 
-    let mut results = Vec::with_capacity(publication_ids.len());
-    for publication_id in publication_ids {
-        results.push(publish_publication(
-            store,
+    let mut results = Vec::with_capacity(publications.len());
+    for publication in publications {
+        match publish_publication(
+            query,
+            commands,
             events,
             &request,
-            &publication_id,
-        )?);
+            &publication.publication_id,
+        ) {
+            Ok(result) => results.push(result),
+            Err(error) if error.retryable() => {
+                results.push(PublicationPublishResult::MarkDeferred {
+                    publication_id: publication.publication_id,
+                    error: error.to_string(),
+                });
+            }
+            Err(error) => return Err(error),
+        }
     }
 
-    let output_revision = store.state().revision;
+    let output_revision = query.snapshot().map_err(authority_error)?.revision;
     Ok(report_from_results(
         scope,
         input_revision,
@@ -447,6 +520,14 @@ fn report_from_results(
                 code: "publication_append_failed".to_string(),
                 message: error.clone(),
             }),
+            PublicationPublishResult::MarkDeferred {
+                publication_id,
+                error,
+            } => retryable_errors.push(PublicationBridgeIssue {
+                publication_id: Some(publication_id.clone()),
+                code: "publication_mark_deferred".to_string(),
+                message: error.clone(),
+            }),
         }
     }
 
@@ -465,7 +546,8 @@ fn report_from_results(
 }
 
 fn publish_marked_publication(
-    store: &mut SledTaskNetworkStore,
+    query: &TaskNetworkQueryPort,
+    commands: &TaskNetworkCommandPort,
     mut publication: Publication,
     event_record_id: String,
     receipt: AppendReceipt,
@@ -476,14 +558,19 @@ fn publish_marked_publication(
         receipt: Some(receipt),
         legacy_event_seq: None,
     };
-    let base_revision = store.state().revision;
+    let state = query.snapshot().map_err(authority_error)?;
+    let base_revision = state.revision;
+    let attempt_disposition = match receipt.disposition {
+        meld_events::AppendDisposition::Inserted => "inserted",
+        meld_events::AppendDisposition::Duplicate => "duplicate",
+    };
     let command_id = format!(
-        "task-network-publication-mark::{publication_id}::published::{event_record_id}::rev::{base_revision}"
+        "task-network-publication-mark::{publication_id}::published::{event_record_id}::{attempt_disposition}::rev::{base_revision}"
     );
-    match submit_mark_publication(store, command_id, publication)? {
+    match submit_mark_publication(commands, state, command_id, publication, receipt.ledger_id)? {
         command::Response::Accepted { .. } | command::Response::Duplicate { .. } => {
             if let Some(result) =
-                published_result_from_state(store, &publication_id, event_record_id, receipt)
+                published_result_from_authority(query, &publication_id, event_record_id, receipt)?
             {
                 Ok(result)
             } else {
@@ -493,86 +580,190 @@ fn publish_marked_publication(
                 })
             }
         }
-        command::Response::Rejected(rejection) => Ok(PublicationPublishResult::MarkRejected {
-            publication_id,
-            reason: rejection_summary(&rejection),
-        }),
+        command::Response::Rejected(rejection) => {
+            publication_mark_rejection(query, publication_id, rejection, Some(receipt))
+        }
     }
 }
 
 fn record_append_failure(
-    store: &mut SledTaskNetworkStore,
+    query: &TaskNetworkQueryPort,
+    commands: &TaskNetworkCommandPort,
     mut publication: Publication,
+    ledger_id: LedgerIdentity,
     error: String,
 ) -> Result<PublicationPublishResult, PublicationBridgeError> {
     let publication_id = publication.publication_id.clone();
     publication.state = PublicationState::Failed {
         error: error.clone(),
     };
-    let base_revision = store.state().revision;
+    let state = query.snapshot().map_err(authority_error)?;
+    let base_revision = state.revision;
     let command_id = format!(
         "task-network-publication-mark::{publication_id}::failed::{}::rev::{base_revision}",
         stable_error_hash(&error)
     );
-    match submit_mark_publication(store, command_id, publication)? {
+    match submit_mark_publication(commands, state, command_id, publication, ledger_id)? {
         command::Response::Accepted { .. } | command::Response::Duplicate { .. } => {
             Ok(PublicationPublishResult::AppendFailed {
                 publication_id,
                 error,
             })
         }
-        command::Response::Rejected(rejection) => Ok(PublicationPublishResult::MarkRejected {
-            publication_id,
-            reason: rejection_summary(&rejection),
-        }),
+        command::Response::Rejected(rejection) => {
+            if rejection_is_retryable(&rejection) {
+                Ok(PublicationPublishResult::AppendFailed {
+                    publication_id,
+                    error: format!(
+                        "{error}; failure mark deferred: {}",
+                        rejection_summary(&rejection)
+                    ),
+                })
+            } else {
+                Ok(PublicationPublishResult::MarkRejected {
+                    publication_id,
+                    reason: rejection_summary(&rejection),
+                })
+            }
+        }
     }
 }
 
 fn submit_mark_publication(
-    store: &mut SledTaskNetworkStore,
+    commands: &TaskNetworkCommandPort,
+    state: crate::task_network::authority::TaskNetworkAuthoritySnapshot,
     command_id: String,
     publication: Publication,
+    ledger_id: LedgerIdentity,
 ) -> Result<command::Response, PublicationBridgeError> {
     let request = command::Request {
         command_id,
         network_id: publication.network_id.clone(),
-        base_revision: store.state().revision,
-        base_state_hash: store.state().state_hash.clone(),
-        read_preconditions: vec![ReadPrecondition::PublicationPending(
-            publication.publication_id.clone(),
-        )],
+        base_revision: state.revision,
+        base_state_hash: state.state_hash,
+        read_preconditions: vec![
+            ReadPrecondition::PublicationPending(publication.publication_id.clone()),
+            ReadPrecondition::PublicationLedgerCompatible(ledger_id),
+        ],
         command: Command::MarkPublication(publication),
     };
-    store
-        .submit(request)
-        .map_err(|error| PublicationBridgeError::TaskNetworkStore(error.to_string()))
+    commands.try_submit(request).map_err(authority_error)
 }
 
-fn published_result_from_state(
-    store: &SledTaskNetworkStore,
+fn validate_network_ledger_binding(
+    snapshot: &crate::task_network::authority::TaskNetworkAuthoritySnapshot,
+    expected: LedgerIdentity,
+) -> Result<(), PublicationBridgeError> {
+    let Some(binding) = &snapshot.publication_ledger_binding else {
+        return Ok(());
+    };
+    if binding.ledger_id == expected {
+        return Ok(());
+    }
+    Err(PublicationBridgeError::LedgerIdentityMismatch {
+        publication_id: binding.publication_id.clone(),
+        expected,
+        actual: binding.ledger_id,
+    })
+}
+
+fn published_result_from_authority(
+    query: &TaskNetworkQueryPort,
     publication_id: &str,
     event_record_id: String,
     receipt: AppendReceipt,
-) -> Option<PublicationPublishResult> {
-    let publication = store.state().publications.get(publication_id)?;
+) -> Result<Option<PublicationPublishResult>, PublicationBridgeError> {
+    let Some(publication) = query.publication(publication_id).map_err(authority_error)? else {
+        return Ok(None);
+    };
     let PublicationState::Published {
         marked_revision,
         receipt: stored_receipt,
         legacy_event_seq: _,
     } = &publication.state
     else {
-        return None;
+        return Ok(None);
     };
-    let stored_receipt = (*stored_receipt)?;
+    let Some(stored_receipt) = *stored_receipt else {
+        return Ok(None);
+    };
     if stored_receipt != receipt {
-        return None;
+        return Ok(None);
     }
-    Some(PublicationPublishResult::Published {
+    Ok(Some(PublicationPublishResult::Published {
         publication_id: publication_id.to_string(),
         event_record_id,
         receipt: stored_receipt,
         marked_revision: *marked_revision,
-    })
+    }))
+}
+
+fn publication_mark_rejection(
+    query: &TaskNetworkQueryPort,
+    publication_id: String,
+    rejection: Rejection,
+    expected_receipt: Option<AppendReceipt>,
+) -> Result<PublicationPublishResult, PublicationBridgeError> {
+    if let Some(publication) = query
+        .publication(&publication_id)
+        .map_err(authority_error)?
+    {
+        if let PublicationState::Published {
+            receipt: Some(stored_receipt),
+            ..
+        } = publication.state
+        {
+            if expected_receipt
+                .is_some_and(|expected| canonical_receipt_matches(expected, stored_receipt))
+            {
+                return Ok(PublicationPublishResult::AlreadyPublished { publication_id });
+            }
+            if matches!(rejection, Rejection::PublicationAlreadyMarked(_)) {
+                return Ok(PublicationPublishResult::MarkRejected {
+                    publication_id,
+                    reason: "publication was marked with a conflicting ledger receipt".to_string(),
+                });
+            }
+        }
+    }
+    if rejection_is_retryable(&rejection) {
+        Ok(PublicationPublishResult::MarkDeferred {
+            publication_id,
+            error: rejection_summary(&rejection),
+        })
+    } else {
+        Ok(PublicationPublishResult::MarkRejected {
+            publication_id,
+            reason: rejection_summary(&rejection),
+        })
+    }
+}
+
+fn canonical_receipt_matches(left: AppendReceipt, right: AppendReceipt) -> bool {
+    left.ledger_id == right.ledger_id && left.seq == right.seq
+}
+
+fn rejection_is_retryable(rejection: &Rejection) -> bool {
+    matches!(
+        rejection,
+        Rejection::StaleBase { .. }
+            | Rejection::StateHashMismatch { .. }
+            | Rejection::FailedPrecondition(_)
+            | Rejection::StaleClaim { .. }
+            | Rejection::PublicationAlreadyMarked(_)
+    )
+}
+
+fn authority_error(error: TaskNetworkAuthorityError) -> PublicationBridgeError {
+    let retryable = !matches!(
+        error,
+        TaskNetworkAuthorityError::InvalidConfiguration(_)
+            | TaskNetworkAuthorityError::DuplicateNetwork(_)
+    );
+    PublicationBridgeError::TaskNetworkAuthority {
+        message: error.to_string(),
+        retryable,
+    }
 }
 
 fn validate_request(

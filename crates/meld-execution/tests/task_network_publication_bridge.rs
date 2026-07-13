@@ -9,14 +9,22 @@ use meld_events::{
 use meld_execution::task_network::command::{Command, Response};
 use meld_execution::task_network::dispatch::OutcomeStatus;
 use meld_execution::task_network::journal::JournalRecord;
+use meld_execution::task_network::mutation::Rejection;
 use meld_execution::task_network::outcome::PublicationState;
 use meld_execution::task_network::publication::{
-    build_publication_envelope, publish_pending_publications, publish_publication, EventAppendSink,
-    PublicationPublishResult, PublishPendingPublicationsRequest,
+    build_publication_envelope, publish_pending_publications as authority_publish_pending,
+    publish_publication as authority_publish_one, EventAppendFailure, EventAppendSink,
+    PublicationBridgeError, PublicationBridgeReport, PublicationPublishResult,
+    PublishPendingPublicationsRequest,
 };
-use meld_execution::task_network::{PublicationRuntime, SledTaskNetworkStore};
+use meld_execution::task_network::store::{TaskNetworkStoreError, TaskNetworkStoreFactory};
+use meld_execution::task_network::{
+    PublicationRuntime, SledTaskNetworkStore, TaskNetworkAuthority, TaskNetworkCommandPort,
+    TaskNetworkQueryPort,
+};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
+use std::sync::{Arc, Barrier};
 
 struct FailingSink;
 
@@ -28,14 +36,73 @@ impl EventAppendSink for FailingSink {
     fn append_envelope_idempotent(
         &self,
         _envelope: EventEnvelope,
-    ) -> Result<AppendReceipt, String> {
-        Err("append unavailable".to_string())
+    ) -> Result<AppendReceipt, EventAppendFailure> {
+        Err(EventAppendFailure::retryable("append unavailable"))
+    }
+}
+
+struct FatalSink;
+
+impl EventAppendSink for FatalSink {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        test_ledger_identity()
+    }
+
+    fn append_envelope_idempotent(
+        &self,
+        _envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAppendFailure> {
+        Err(EventAppendFailure::fatal("append rejected"))
+    }
+}
+
+#[derive(Clone)]
+struct BarrierSink {
+    append: EventAppendCapability,
+    barrier: Arc<Barrier>,
+}
+
+impl EventAppendSink for BarrierSink {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.append.ledger_identity()
+    }
+
+    fn append_envelope_idempotent(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAppendFailure> {
+        let receipt = EventAppendSink::append_envelope_idempotent(&self.append, envelope)?;
+        self.barrier.wait();
+        Ok(receipt)
     }
 }
 
 struct DishonestSink {
     advertised: LedgerIdentity,
     returned: LedgerIdentity,
+}
+
+struct ShutdownAfterAppendSink<'a> {
+    events: &'a TestEvents,
+    authority: RefCell<TaskNetworkAuthority>,
+}
+
+impl EventAppendSink for ShutdownAfterAppendSink<'_> {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.events.ledger_identity()
+    }
+
+    fn append_envelope_idempotent(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAppendFailure> {
+        let receipt = self.events.append_envelope_idempotent(envelope)?;
+        self.authority
+            .borrow_mut()
+            .shutdown()
+            .map_err(|error| EventAppendFailure::retryable(error.to_string()))?;
+        Ok(receipt)
+    }
 }
 
 impl EventAppendSink for DishonestSink {
@@ -46,7 +113,7 @@ impl EventAppendSink for DishonestSink {
     fn append_envelope_idempotent(
         &self,
         _envelope: EventEnvelope,
-    ) -> Result<AppendReceipt, String> {
+    ) -> Result<AppendReceipt, EventAppendFailure> {
         Ok(AppendReceipt {
             ledger_id: self.returned,
             seq: 99,
@@ -65,7 +132,10 @@ impl EventAppendSink for RecordingSink {
         test_ledger_identity()
     }
 
-    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<AppendReceipt, String> {
+    fn append_envelope_idempotent(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAppendFailure> {
         let mut envelopes = self.envelopes.borrow_mut();
         envelopes.push(envelope);
         Ok(AppendReceipt {
@@ -90,17 +160,68 @@ impl EventAppendSink for TestEvents {
         self.append.ledger_identity()
     }
 
-    fn append_envelope_idempotent(&self, envelope: EventEnvelope) -> Result<AppendReceipt, String> {
+    fn append_envelope_idempotent(
+        &self,
+        envelope: EventEnvelope,
+    ) -> Result<AppendReceipt, EventAppendFailure> {
         EventAppendSink::append_envelope_idempotent(&self.append, envelope)
     }
 }
 
-fn open_store(db: &sled::Db) -> SledTaskNetworkStore {
-    SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap()
+struct TaskDb {
+    _temp: tempfile::TempDir,
+    factory: TaskNetworkStoreFactory,
 }
 
-fn open_task_db() -> sled::Db {
-    sled::Config::new().temporary(true).open().unwrap()
+struct TestNetwork {
+    factory: TaskNetworkStoreFactory,
+    store: Option<SledTaskNetworkStore>,
+}
+
+impl TestNetwork {
+    fn raw_mut(&mut self) -> &mut SledTaskNetworkStore {
+        self.store.as_mut().unwrap()
+    }
+
+    fn state(&self) -> &meld_execution::task_network::NetworkState {
+        self.store.as_ref().unwrap().state()
+    }
+
+    fn flush(&self) -> Result<(), TaskNetworkStoreError> {
+        self.store.as_ref().unwrap().flush()
+    }
+
+    fn with_authority<T>(
+        &mut self,
+        operation: impl FnOnce(&TaskNetworkQueryPort, &TaskNetworkCommandPort) -> T,
+    ) -> T {
+        let store = self.store.take().unwrap();
+        store.flush().unwrap();
+        drop(store);
+        let mut authority = TaskNetworkAuthority::open(&self.factory, "network-docs", 32).unwrap();
+        let query = authority.query_port();
+        let commands = authority.command_port();
+        let result = operation(&query, &commands);
+        authority.shutdown().unwrap();
+        self.store = Some(self.factory.open_network("network-docs").unwrap());
+        result
+    }
+}
+
+fn open_store(db: &TaskDb) -> TestNetwork {
+    TestNetwork {
+        factory: db.factory.clone(),
+        store: Some(db.factory.open_network("network-docs").unwrap()),
+    }
+}
+
+fn open_task_db() -> TaskDb {
+    let temp = tempfile::tempdir().unwrap();
+    let factory = TaskNetworkStoreFactory::new(temp.path());
+    TaskDb {
+        _temp: temp,
+        factory,
+    }
 }
 
 fn open_events(tempdir: &tempfile::TempDir) -> TestEvents {
@@ -140,12 +261,34 @@ fn request(limit: Option<usize>) -> PublishPendingPublicationsRequest {
     }
 }
 
+fn publish_pending_publications<E: EventAppendSink>(
+    network: &mut TestNetwork,
+    events: &E,
+    request: PublishPendingPublicationsRequest,
+) -> Result<PublicationBridgeReport, PublicationBridgeError> {
+    network.with_authority(|query, commands| {
+        authority_publish_pending(query, commands, events, request)
+    })
+}
+
+fn publish_publication<E: EventAppendSink>(
+    network: &mut TestNetwork,
+    events: &E,
+    request: &PublishPendingPublicationsRequest,
+    publication_id: &str,
+) -> Result<PublicationPublishResult, PublicationBridgeError> {
+    network.with_authority(|query, commands| {
+        authority_publish_one(query, commands, events, request, publication_id)
+    })
+}
+
 fn record_success_publication(
-    store: &mut SledTaskNetworkStore,
+    store: &mut TestNetwork,
     task_instance_id: &str,
     outcome_id: &str,
     claim_id: &str,
 ) -> String {
+    let store = store.raw_mut();
     task_network_support::commit_single_task_sled(store, task_instance_id);
     let claimed_task = task_network_support::claim_ready_sled(
         store,
@@ -168,11 +311,12 @@ fn record_success_publication(
 }
 
 fn record_failed_publication(
-    store: &mut SledTaskNetworkStore,
+    store: &mut TestNetwork,
     task_instance_id: &str,
     outcome_id: &str,
     claim_id: &str,
 ) -> String {
+    let store = store.raw_mut();
     task_network_support::commit_single_task_sled(store, task_instance_id);
     let claimed_task = task_network_support::claim_ready_sled(
         store,
@@ -209,11 +353,11 @@ fn publication_id_for_outcome(store: &SledTaskNetworkStore, outcome_id: &str) ->
 }
 
 fn reopen_with_frozen_legacy_publication(
-    store: SledTaskNetworkStore,
-    db: &sled::Db,
+    mut store: TestNetwork,
+    db: &TaskDb,
     publication_id: &str,
     legacy_event_seq: u64,
-) -> SledTaskNetworkStore {
+) -> TestNetwork {
     let revision = store.state().revision + 1;
     let mut publication = store.state().publications[publication_id].clone();
     publication.state = PublicationState::Published {
@@ -238,23 +382,31 @@ fn reopen_with_frozen_legacy_publication(
         frozen_journal["record"]["Publication"]["state"]["Published"]["event_seq"],
         serde_json::json!(legacy_event_seq)
     );
-    drop(store);
+    let raw_store = store.store.take().unwrap();
+    raw_store.flush().unwrap();
+    drop(raw_store);
 
-    db.open_tree("task_network_journal_by_revision")
+    let storage_path = db.factory.root().join("network-docs.sled");
+    let sled_db = sled::open(storage_path).unwrap();
+
+    sled_db
+        .open_tree("task_network_journal_by_revision")
         .unwrap()
         .insert(
             revision.to_be_bytes(),
             serde_json::to_vec(&frozen_journal).unwrap(),
         )
         .unwrap();
-    db.open_tree("task_network_latest_state")
+    sled_db
+        .open_tree("task_network_latest_state")
         .unwrap()
         .insert(
             "latest",
             serde_json::to_vec(&serde_json::json!({ "state": legacy_state })).unwrap(),
         )
         .unwrap();
-    db.flush().unwrap();
+    sled_db.flush().unwrap();
+    drop(sled_db);
     open_store(db)
 }
 
@@ -550,7 +702,7 @@ fn bulk_preflight_rejects_foreign_receipt_before_pending_append() {
 
     assert!(matches!(
         error,
-        meld_execution::task_network::publication::PublicationBridgeError::LedgerIdentityMismatch {
+        PublicationBridgeError::LedgerIdentityMismatch {
             publication_id,
             expected,
             actual,
@@ -567,6 +719,56 @@ fn bulk_preflight_rejects_foreign_receipt_before_pending_append() {
 }
 
 #[test]
+fn reducer_persists_foreign_ledger_rejection_without_publication_mutation() {
+    let task_db = open_task_db();
+    let first_tempdir = tempfile::tempdir().unwrap();
+    let second_tempdir = tempfile::tempdir().unwrap();
+    let mut store = open_store(&task_db);
+    record_success_publication(&mut store, "task-alpha", "outcome-alpha", "claim-alpha");
+    let first = open_events(&first_tempdir);
+    publish_pending_publications(&mut store, &first, request(None)).unwrap();
+    let pending_id =
+        record_success_publication(&mut store, "task-beta", "outcome-beta", "claim-beta");
+    let second = open_events(&second_tempdir);
+
+    let mut publication = store.state().publications[&pending_id].clone();
+    publication.state = PublicationState::Published {
+        marked_revision: 0,
+        receipt: Some(AppendReceipt {
+            ledger_id: second.ledger_identity(),
+            seq: 1,
+            disposition: AppendDisposition::Inserted,
+        }),
+        legacy_event_seq: None,
+    };
+    let command = task_network_support::apply_sled_command(
+        store.raw_mut(),
+        "command-mark-publication-on-foreign-ledger",
+        Command::MarkPublication(publication),
+    );
+
+    let response = store.raw_mut().submit(command.clone()).unwrap();
+    assert!(matches!(
+        response,
+        Response::Rejected(Rejection::PublicationLedgerMismatch { expected, actual })
+            if expected == first.ledger_identity() && actual == second.ledger_identity()
+    ));
+    assert!(matches!(
+        store.state().publications[&pending_id].state,
+        PublicationState::Pending
+    ));
+
+    store.flush().unwrap();
+    drop(store.store.take().unwrap());
+    store.store = Some(store.factory.open_network("network-docs").unwrap());
+    assert_eq!(store.raw_mut().submit(command).unwrap(), response);
+    assert!(matches!(
+        store.state().publications[&pending_id].state,
+        PublicationState::Pending
+    ));
+}
+
+#[test]
 fn publication_runtime_actor_publishes_through_event_append_sink() {
     let task_db = open_task_db();
     let mut store = open_store(&task_db);
@@ -575,9 +777,11 @@ fn publication_runtime_actor_publishes_through_event_append_sink() {
     let events = RecordingSink::default();
     let runtime = PublicationRuntime::new();
 
-    let report = runtime
-        .publish_pending(&mut store, &events, request(None))
-        .unwrap();
+    let report = store.with_authority(|query, commands| {
+        runtime
+            .publish_pending(query, commands, &events, request(None))
+            .unwrap()
+    });
 
     assert_eq!(
         report.actor_id,
@@ -639,6 +843,123 @@ fn publication_bridge_retry_does_not_append_duplicate_event() {
 }
 
 #[test]
+fn overlapping_publishers_converge_inserted_and_duplicate_receipts() {
+    let task_db = open_task_db();
+    let event_tempdir = tempfile::tempdir().unwrap();
+    let mut network = open_store(&task_db);
+    let publication_id =
+        record_success_publication(&mut network, "task-alpha", "outcome-alpha", "claim-alpha");
+    let raw_store = network.store.take().unwrap();
+    raw_store.flush().unwrap();
+    drop(raw_store);
+
+    let mut authority = TaskNetworkAuthority::open(&network.factory, "network-docs", 32).unwrap();
+    let events = open_events(&event_tempdir);
+    let sink = BarrierSink {
+        append: events.append.clone(),
+        barrier: Arc::new(Barrier::new(2)),
+    };
+    let first_query = authority.query_port();
+    let first_commands = authority.command_port();
+    let first_sink = sink.clone();
+    let first_publication_id = publication_id.clone();
+    let first = std::thread::spawn(move || {
+        authority_publish_one(
+            &first_query,
+            &first_commands,
+            &first_sink,
+            &request(None),
+            &first_publication_id,
+        )
+        .unwrap()
+    });
+    let second_query = authority.query_port();
+    let second_commands = authority.command_port();
+    let second_publication_id = publication_id.clone();
+    let second = std::thread::spawn(move || {
+        authority_publish_one(
+            &second_query,
+            &second_commands,
+            &sink,
+            &request(None),
+            &second_publication_id,
+        )
+        .unwrap()
+    });
+
+    let results = [first.join().unwrap(), second.join().unwrap()];
+
+    assert!(results
+        .iter()
+        .any(|result| matches!(result, PublicationPublishResult::Published { .. })));
+    assert!(results
+        .iter()
+        .any(|result| matches!(result, PublicationPublishResult::AlreadyPublished { .. })));
+    assert_eq!(read_session(&events, "session-publication").len(), 1);
+    assert!(matches!(
+        authority
+            .query_port()
+            .publication(&publication_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        PublicationState::Published {
+            receipt: Some(_),
+            ..
+        }
+    ));
+    authority.shutdown().unwrap();
+}
+
+#[test]
+fn append_survives_authority_loss_before_mark_and_reopens_without_duplicate_event() {
+    let task_db = open_task_db();
+    let event_tempdir = tempfile::tempdir().unwrap();
+    let mut network = open_store(&task_db);
+    let publication_id =
+        record_success_publication(&mut network, "task-alpha", "outcome-alpha", "claim-alpha");
+    let raw_store = network.store.take().unwrap();
+    raw_store.flush().unwrap();
+    drop(raw_store);
+
+    let authority = TaskNetworkAuthority::open(&network.factory, "network-docs", 32).unwrap();
+    let query = authority.query_port();
+    let commands = authority.command_port();
+    let events = open_events(&event_tempdir);
+    let sink = ShutdownAfterAppendSink {
+        events: &events,
+        authority: RefCell::new(authority),
+    };
+
+    let error = authority_publish_one(&query, &commands, &sink, &request(None), &publication_id)
+        .unwrap_err();
+
+    assert!(error.retryable());
+    assert_eq!(read_session(&events, "session-publication").len(), 1);
+    drop(sink);
+    network.store = Some(network.factory.open_network("network-docs").unwrap());
+    assert!(matches!(
+        network.state().publications[&publication_id].state,
+        PublicationState::Pending
+    ));
+
+    let report = publish_pending_publications(&mut network, &events, request(None)).unwrap();
+
+    assert_eq!(report.items_committed, 1);
+    assert_eq!(read_session(&events, "session-publication").len(), 1);
+    assert!(matches!(
+        network.state().publications[&publication_id].state,
+        PublicationState::Published {
+            receipt: Some(AppendReceipt {
+                disposition: AppendDisposition::Duplicate,
+                ..
+            }),
+            ..
+        }
+    ));
+}
+
+#[test]
 fn publication_bridge_records_failure_without_published_mark() {
     let task_db = open_task_db();
     let event_tempdir = tempfile::tempdir().unwrap();
@@ -662,6 +983,32 @@ fn publication_bridge_records_failure_without_published_mark() {
     assert!(matches!(
         &publication.state,
         PublicationState::Failed { error } if error == "append unavailable"
+    ));
+}
+
+#[test]
+fn fatal_append_failure_does_not_persist_retry_state() {
+    let task_db = open_task_db();
+    let mut network = open_store(&task_db);
+    let publication_id =
+        record_success_publication(&mut network, "task-alpha", "outcome-alpha", "claim-alpha");
+    let revision = network.state().revision;
+
+    let error =
+        publish_publication(&mut network, &FatalSink, &request(None), &publication_id).unwrap_err();
+
+    assert!(matches!(
+        error,
+        PublicationBridgeError::EventAppend {
+            retryable: false,
+            ..
+        }
+    ));
+    assert!(!error.retryable());
+    assert_eq!(network.state().revision, revision);
+    assert!(matches!(
+        network.state().publications[&publication_id].state,
+        PublicationState::Pending
     ));
 }
 
