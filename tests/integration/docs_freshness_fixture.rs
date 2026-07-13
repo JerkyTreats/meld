@@ -99,7 +99,7 @@ impl DocsFreshnessFirstProofFixture {
             subject: self.subject(),
             branch_scope: self.branch_scope(),
             observation_scope: DIMENSION_ID.to_string(),
-            directive: "curate docs freshness goals".to_string(),
+            directive_id: "directive.docs_freshness".to_string(),
             seed_provenance: "trusted init".to_string(),
             created_at_seq: 0,
         }

@@ -239,7 +239,7 @@ fn agent_record(subject: &DomainObjectRef) -> AgentRecord {
         subject: subject.clone(),
         branch_scope: BranchScope::main(),
         observation_scope: "workspace".to_string(),
-        directive: "watch docs".to_string(),
+        directive_id: "directive.watch_docs".to_string(),
         seed_provenance: "test".to_string(),
         status: AgentStatus::Operational,
         created_at_seq: 1,
