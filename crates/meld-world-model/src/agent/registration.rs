@@ -1,6 +1,7 @@
 //! Agent registration commands.
 
 use crate::agent::contracts::{AgentRecord, AgentStatus, SeedAgentRegistration};
+use crate::agent::hydration::MarkAgentOperationalCommand;
 use crate::agent::store::AgentStore;
 use crate::error::StorageError;
 
@@ -52,32 +53,11 @@ impl<'a> AgentRegistration<'a> {
         Ok(record)
     }
 
-    // TODO compat-shim: remove when W3B routes every operational transition
-    // through MarkAgentOperationalCommand and readiness parity tests are green.
-    /// Mark an agent operational through the pre-hydration compatibility path.
+    /// Mark one exact registered agent operational after durable readiness proof.
     pub fn mark_operational(
         &self,
-        agent_id: &str,
-        updated_at_seq: u64,
+        command: &MarkAgentOperationalCommand,
     ) -> Result<AgentRecord, StorageError> {
-        let Some(mut record) = self.store.get_agent(agent_id)? else {
-            return Err(StorageError::InvalidPath(format!(
-                "unknown agent '{agent_id}'"
-            )));
-        };
-        if updated_at_seq < record.created_at_seq || updated_at_seq < record.updated_at_seq {
-            return Err(StorageError::InvalidPath(format!(
-                "agent '{agent_id}' operational sequence would regress"
-            )));
-        }
-        if self.store.pending_subscriptions(agent_id)?.is_empty() {
-            return Err(StorageError::InvalidPath(format!(
-                "agent '{agent_id}' has no active subscriptions"
-            )));
-        }
-        record.status = AgentStatus::Operational;
-        record.updated_at_seq = updated_at_seq;
-        self.store.put_agent(&record)?;
-        Ok(record)
+        self.store.mark_agent_operational(command)
     }
 }

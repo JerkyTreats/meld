@@ -3,7 +3,10 @@
 use std::io;
 use std::sync::Arc;
 
-use sled::{Db, Tree};
+use sled::{
+    transaction::{ConflictableTransactionError, TransactionError, Transactional},
+    Db, Tree,
+};
 
 use crate::activation::{
     AgentBootstrapReceipt, AgentCurationRuleRecord, DirectiveRecord,
@@ -11,9 +14,13 @@ use crate::activation::{
 };
 use crate::agent::bootstrap::AgentBootstrapProgress;
 use crate::agent::contracts::{
-    AgentActivationRecord, AgentCurationDecision, AgentCurationDedupeKey, AgentRecord,
-    AgentSatisfactionReview, AgentSinkReceipt, AgentStatus, AgentSubscriptionCursorCasIntent,
-    AgentSubscriptionRecord, AgentSubscriptionStatus,
+    AgentActivationRecord, AgentActivationStatus, AgentCurationDecision, AgentCurationDedupeKey,
+    AgentRecord, AgentSatisfactionReview, AgentSinkReceipt, AgentStatus,
+    AgentSubscriptionCursorCasIntent, AgentSubscriptionRecord, AgentSubscriptionStatus,
+};
+use crate::agent::hydration::{
+    AgentProcessHydrationRecord, AgentProcessHydrationStatus, AgentReadinessProof,
+    MarkAgentOperationalCommand,
 };
 use crate::error::StorageError;
 
@@ -36,6 +43,9 @@ const TREE_CURATION_RULES: &str = "agent_curation_rules";
 const TREE_BOOTSTRAP_PROGRESS: &str = "agent_bootstrap_progress";
 const TREE_BOOTSTRAP_RECEIPTS: &str = "agent_bootstrap_receipts";
 const TREE_LEGACY_MIGRATION_RECEIPTS: &str = "agent_legacy_directive_migration_receipts";
+const TREE_PROCESS_HYDRATIONS: &str = "agent_process_hydrations";
+const TREE_PROCESS_HYDRATIONS_BY_AGENT: &str = "agent_process_hydrations_by_agent";
+const TREE_READINESS_PROOFS: &str = "agent_readiness_proofs";
 const KEY_PAD: usize = 20;
 
 /// Sled backed storage for durable agent records and indexes.
@@ -61,6 +71,9 @@ pub struct AgentStore {
     bootstrap_progress: Tree,
     bootstrap_receipts: Tree,
     legacy_migration_receipts: Tree,
+    process_hydrations: Tree,
+    process_hydrations_by_agent: Tree,
+    readiness_proofs: Tree,
 }
 
 impl AgentStore {
@@ -108,6 +121,13 @@ impl AgentStore {
             legacy_migration_receipts: db
                 .open_tree(TREE_LEGACY_MIGRATION_RECEIPTS)
                 .map_err(to_storage_io)?,
+            process_hydrations: db
+                .open_tree(TREE_PROCESS_HYDRATIONS)
+                .map_err(to_storage_io)?,
+            process_hydrations_by_agent: db
+                .open_tree(TREE_PROCESS_HYDRATIONS_BY_AGENT)
+                .map_err(to_storage_io)?,
+            readiness_proofs: db.open_tree(TREE_READINESS_PROOFS).map_err(to_storage_io)?,
             db,
         })
     }
@@ -454,6 +474,286 @@ impl AgentStore {
         Ok(out)
     }
 
+    /// Persist one process-hydration attempt and its agent index.
+    pub fn put_process_hydration(
+        &self,
+        record: &AgentProcessHydrationRecord,
+    ) -> Result<(), StorageError> {
+        record
+            .validate()
+            .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
+        let hydration_id = record.hydration_id.as_bytes();
+        let index_key = hydration_agent_key(
+            &record.agent_id,
+            record.started_at_seq,
+            &record.hydration_id,
+        );
+        let encoded = serde_json::to_vec(record).map_err(to_storage_data)?;
+        (&self.process_hydrations, &self.process_hydrations_by_agent)
+            .transaction(|(hydrations, by_agent)| {
+                if let Some(existing) = hydrations.get(hydration_id)? {
+                    if existing.as_ref() != encoded.as_slice() {
+                        return Err(ConflictableTransactionError::Abort(format!(
+                            "process hydration '{}' conflicts with durable state",
+                            record.hydration_id
+                        )));
+                    }
+                } else {
+                    hydrations.insert(hydration_id, encoded.clone())?;
+                }
+                if let Some(existing) = by_agent.get(index_key.as_bytes())? {
+                    if existing.as_ref() != hydration_id {
+                        return Err(ConflictableTransactionError::Abort(format!(
+                            "process hydration '{}' conflicts with its agent index",
+                            record.hydration_id
+                        )));
+                    }
+                } else {
+                    by_agent.insert(index_key.as_bytes(), hydration_id)?;
+                }
+                Ok(())
+            })
+            .map_err(to_agent_transition_error)?;
+        Ok(())
+    }
+
+    /// Read one process-hydration attempt.
+    pub fn get_process_hydration(
+        &self,
+        hydration_id: &str,
+    ) -> Result<Option<AgentProcessHydrationRecord>, StorageError> {
+        decode_optional(
+            self.process_hydrations
+                .get(hydration_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
+    /// List hydration attempts for one agent in durable sequence order.
+    pub fn process_hydrations_for_agent(
+        &self,
+        agent_id: &str,
+    ) -> Result<Vec<AgentProcessHydrationRecord>, StorageError> {
+        let prefix = format!("{agent_id}::");
+        let mut out = Vec::new();
+        for item in self
+            .process_hydrations_by_agent
+            .scan_prefix(prefix.as_bytes())
+        {
+            let (_, value) = item.map_err(to_storage_io)?;
+            let hydration_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
+            if let Some(record) = self.get_process_hydration(&hydration_id)? {
+                out.push(record);
+            }
+        }
+        out.sort_by(|left, right| {
+            left.started_at_seq
+                .cmp(&right.started_at_seq)
+                .then_with(|| left.hydration_id.cmp(&right.hydration_id))
+        });
+        Ok(out)
+    }
+
+    /// Read one durable operational-readiness proof.
+    pub fn get_readiness_proof(
+        &self,
+        proof_id: &str,
+    ) -> Result<Option<AgentReadinessProof>, StorageError> {
+        decode_optional(
+            self.readiness_proofs
+                .get(proof_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
+    /// Atomically accept one exact readiness proof and mark its agent operational.
+    pub fn mark_agent_operational(
+        &self,
+        command: &MarkAgentOperationalCommand,
+    ) -> Result<AgentRecord, StorageError> {
+        command
+            .validate()
+            .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
+        let agent_id = &command.readiness.signal.agent_id;
+        let Some(agent) = self.get_agent(agent_id)? else {
+            return Err(StorageError::InvalidPath(format!(
+                "unknown agent '{agent_id}'"
+            )));
+        };
+        if agent.status == AgentStatus::Operational {
+            return self.validate_operational_replay(command, agent);
+        }
+        if agent.status != AgentStatus::Registered
+            || agent.updated_at_seq != command.readiness.expected_agent_updated_at_seq
+        {
+            return Err(StorageError::Backpressure(format!(
+                "registered agent fence changed for '{agent_id}'"
+            )));
+        }
+
+        let signal = &command.readiness.signal;
+        let subscription = self
+            .get_subscription(&signal.subscription_id)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(format!(
+                    "unknown readiness subscription '{}'",
+                    signal.subscription_id
+                ))
+            })?;
+        if subscription.agent_id != *agent_id
+            || subscription.status != AgentSubscriptionStatus::Active
+            || subscription.belief_key != signal.belief_key
+            || subscription.last_delivered_revision_id.as_deref()
+                != Some(signal.belief_revision_id.as_str())
+            || subscription.last_delivered_seq != signal.processed_at_seq
+        {
+            return Err(StorageError::Backpressure(format!(
+                "readiness subscription fence changed for '{}'",
+                signal.subscription_id
+            )));
+        }
+
+        let hydration = self
+            .get_process_hydration(&command.hydration_id)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(format!(
+                    "unknown process hydration '{}'",
+                    command.hydration_id
+                ))
+            })?;
+        if hydration.agent_id != *agent_id
+            || hydration.status != AgentProcessHydrationStatus::Started
+            || hydration.readiness_proof_id.is_some()
+        {
+            return Err(StorageError::Backpressure(format!(
+                "process hydration fence changed for '{}'",
+                command.hydration_id
+            )));
+        }
+
+        let activation = self.get_activation(&command.hydration_id)?.ok_or_else(|| {
+            StorageError::InvalidPath(format!(
+                "activation diagnostic '{}' is missing",
+                command.hydration_id
+            ))
+        })?;
+        if activation.agent_id != *agent_id || activation.status != AgentActivationStatus::Started {
+            return Err(StorageError::Backpressure(format!(
+                "activation diagnostic fence changed for '{}'",
+                command.hydration_id
+            )));
+        }
+
+        let mut operational = agent.clone();
+        operational.status = AgentStatus::Operational;
+        operational.updated_at_seq = command.updated_at_seq;
+        let mut ready_hydration = hydration.clone();
+        ready_hydration.status = AgentProcessHydrationStatus::Ready;
+        ready_hydration.readiness_proof_id = Some(command.readiness.proof_id.clone());
+        ready_hydration.updated_at_seq = command.updated_at_seq;
+        let mut activated = activation.clone();
+        activated.status = AgentActivationStatus::Activated;
+        activated.last_error = None;
+
+        let expected_agent = serde_json::to_vec(&agent).map_err(to_storage_data)?;
+        let expected_subscription = serde_json::to_vec(&subscription).map_err(to_storage_data)?;
+        let expected_hydration = serde_json::to_vec(&hydration).map_err(to_storage_data)?;
+        let expected_activation = serde_json::to_vec(&activation).map_err(to_storage_data)?;
+        let operational_bytes = serde_json::to_vec(&operational).map_err(to_storage_data)?;
+        let hydration_bytes = serde_json::to_vec(&ready_hydration).map_err(to_storage_data)?;
+        let activation_bytes = serde_json::to_vec(&activated).map_err(to_storage_data)?;
+        let proof_bytes = serde_json::to_vec(&command.readiness).map_err(to_storage_data)?;
+        let status_key = agent_status_key(
+            operational.status.index_key(),
+            operational.updated_at_seq,
+            &operational.agent_id,
+        );
+
+        (
+            &self.agents,
+            &self.agent_by_status,
+            &self.subscriptions,
+            &self.process_hydrations,
+            &self.activations,
+            &self.readiness_proofs,
+        )
+            .transaction(
+                |(agents, status, subscriptions, hydrations, activations, proofs)| {
+                    require_transaction_value(
+                        agents,
+                        agent_id.as_bytes(),
+                        &expected_agent,
+                        "agent",
+                    )?;
+                    require_transaction_value(
+                        subscriptions,
+                        signal.subscription_id.as_bytes(),
+                        &expected_subscription,
+                        "subscription",
+                    )?;
+                    require_transaction_value(
+                        hydrations,
+                        command.hydration_id.as_bytes(),
+                        &expected_hydration,
+                        "hydration",
+                    )?;
+                    require_transaction_value(
+                        activations,
+                        command.hydration_id.as_bytes(),
+                        &expected_activation,
+                        "activation",
+                    )?;
+                    if let Some(existing) = proofs.get(command.readiness.proof_id.as_bytes())? {
+                        if existing.as_ref() != proof_bytes.as_slice() {
+                            return Err(ConflictableTransactionError::Abort(format!(
+                                "readiness proof '{}' conflicts with durable state",
+                                command.readiness.proof_id
+                            )));
+                        }
+                    }
+                    agents.insert(agent_id.as_bytes(), operational_bytes.clone())?;
+                    status.insert(status_key.as_bytes(), agent_id.as_bytes())?;
+                    hydrations.insert(command.hydration_id.as_bytes(), hydration_bytes.clone())?;
+                    activations
+                        .insert(command.hydration_id.as_bytes(), activation_bytes.clone())?;
+                    proofs.insert(command.readiness.proof_id.as_bytes(), proof_bytes.clone())?;
+                    Ok(())
+                },
+            )
+            .map_err(to_agent_transition_error)?;
+        self.flush()?;
+        Ok(operational)
+    }
+
+    fn validate_operational_replay(
+        &self,
+        command: &MarkAgentOperationalCommand,
+        agent: AgentRecord,
+    ) -> Result<AgentRecord, StorageError> {
+        let proof = self.get_readiness_proof(&command.readiness.proof_id)?;
+        let hydration = self.get_process_hydration(&command.hydration_id)?;
+        let activation = self.get_activation(&command.hydration_id)?;
+        if agent.updated_at_seq == command.updated_at_seq
+            && proof.as_ref() == Some(&command.readiness)
+            && hydration.as_ref().is_some_and(|record| {
+                record.agent_id == agent.agent_id
+                    && record.status == AgentProcessHydrationStatus::Ready
+                    && record.readiness_proof_id.as_deref()
+                        == Some(command.readiness.proof_id.as_str())
+            })
+            && activation.as_ref().is_some_and(|record| {
+                record.agent_id == agent.agent_id
+                    && record.status == AgentActivationStatus::Activated
+            })
+        {
+            return Ok(agent);
+        }
+        Err(StorageError::InvalidPath(format!(
+            "operational replay conflicts for agent '{}'",
+            agent.agent_id
+        )))
+    }
+
     /// Persist a curation decision unless the dedupe and revision key already exists.
     pub fn put_decision(
         &self,
@@ -755,6 +1055,32 @@ fn subscription_agent_key(agent_id: &str, seq: u64, subscription_id: &str) -> St
 
 fn activation_agent_key(agent_id: &str, seq: u64, activation_id: &str) -> String {
     format!("{agent_id}::{seq:0KEY_PAD$}::{activation_id}")
+}
+
+fn hydration_agent_key(agent_id: &str, seq: u64, hydration_id: &str) -> String {
+    format!("{agent_id}::{seq:0KEY_PAD$}::{hydration_id}")
+}
+
+fn require_transaction_value(
+    tree: &sled::transaction::TransactionalTree,
+    key: &[u8],
+    expected: &[u8],
+    product: &str,
+) -> Result<(), ConflictableTransactionError<String>> {
+    let current = tree.get(key)?;
+    if current.as_deref() != Some(expected) {
+        return Err(ConflictableTransactionError::Abort(format!(
+            "{product} changed during operational transition"
+        )));
+    }
+    Ok(())
+}
+
+fn to_agent_transition_error(error: TransactionError<String>) -> StorageError {
+    match error {
+        TransactionError::Abort(message) => StorageError::Backpressure(message),
+        TransactionError::Storage(error) => StorageError::IoError(io::Error::other(error)),
+    }
 }
 
 fn decision_agent_key(agent_id: &str, seq: u64, decision_id: &str) -> String {

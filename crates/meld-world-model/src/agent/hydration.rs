@@ -24,6 +24,8 @@ pub struct AgentReadinessSignal {
     pub belief_key: BeliefKey,
     /// Readable belief revision processed by hydration.
     pub belief_revision_id: String,
+    /// Canonical digest of the readable belief view used by hydration.
+    pub belief_view_hash: String,
     /// Durable sequence observed for the processed signal.
     pub processed_at_seq: u64,
 }
@@ -35,6 +37,7 @@ impl AgentReadinessSignal {
         subscription_id: impl Into<String>,
         belief_key: BeliefKey,
         belief_revision_id: impl Into<String>,
+        belief_view_hash: impl Into<String>,
         processed_at_seq: u64,
     ) -> Result<Self, AgentHydrationContractError> {
         let mut signal = Self {
@@ -43,6 +46,7 @@ impl AgentReadinessSignal {
             subscription_id: subscription_id.into(),
             belief_key,
             belief_revision_id: belief_revision_id.into(),
+            belief_view_hash: belief_view_hash.into(),
             processed_at_seq,
         };
         signal.signal_id = signal.derive_id()?;
@@ -55,9 +59,15 @@ impl AgentReadinessSignal {
         require_non_empty("signal agent id", &self.agent_id)?;
         require_non_empty("signal subscription id", &self.subscription_id)?;
         require_non_empty("signal belief revision id", &self.belief_revision_id)?;
+        require_non_empty("signal belief view hash", &self.belief_view_hash)?;
         self.belief_key
             .validate()
             .map_err(|error| AgentHydrationContractError::Invalid(error.to_string()))?;
+        if self.processed_at_seq == 0 {
+            return Err(AgentHydrationContractError::Invalid(
+                "processed readiness sequence must be greater than zero".to_string(),
+            ));
+        }
         if self.signal_id != self.derive_id()? {
             return Err(AgentHydrationContractError::IdentityMismatch(
                 "readiness signal id".to_string(),
@@ -73,6 +83,7 @@ impl AgentReadinessSignal {
             subscription_id: &'a str,
             belief_key: &'a BeliefKey,
             belief_revision_id: &'a str,
+            belief_view_hash: &'a str,
             processed_at_seq: u64,
         }
         semantic_hash(
@@ -82,6 +93,7 @@ impl AgentReadinessSignal {
                 subscription_id: &self.subscription_id,
                 belief_key: &self.belief_key,
                 belief_revision_id: &self.belief_revision_id,
+                belief_view_hash: &self.belief_view_hash,
                 processed_at_seq: self.processed_at_seq,
             },
         )
@@ -362,6 +374,7 @@ mod tests {
             "subscription-docs",
             belief_key(),
             "revision-1",
+            "belief-view-hash",
             8,
         )
         .unwrap();
@@ -393,6 +406,7 @@ mod tests {
             "subscription-docs",
             belief_key(),
             "revision-1",
+            "belief-view-hash",
             8,
         )
         .unwrap();

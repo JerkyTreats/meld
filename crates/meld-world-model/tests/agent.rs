@@ -12,9 +12,11 @@ use meld_world_model::agent::{
     AgentActivationStatus, AgentCuration, AgentCurationDedupeKey, AgentCurationInput,
     AgentCurationInputRefs, AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery,
     AgentGoalCommand, AgentGoalCurationRuntime, AgentGoalMutationCommand, AgentGoalMutationKind,
-    AgentGoalSatisfactionInput, AgentQuery, AgentRegistration, AgentSatisfactionCurationRuntime,
-    AgentSatisfactionReview, AgentSinkError, AgentSinkReceiptKind, AgentSinkSubmission,
-    AgentStatus, AgentStore, AgentSubscription, AgentSubscriptionRecord, AgentSubscriptionStatus,
+    AgentGoalSatisfactionInput, AgentProcessHydrationRecord, AgentProcessHydrationStatus,
+    AgentQuery, AgentReadinessProof, AgentReadinessSignal, AgentRegistration,
+    AgentSatisfactionCurationRuntime, AgentSatisfactionReview, AgentSinkError,
+    AgentSinkReceiptKind, AgentSinkSubmission, AgentStatus, AgentStore, AgentSubscription,
+    AgentSubscriptionRecord, AgentSubscriptionStatus, MarkAgentOperationalCommand,
     SeedAgentRegistration, SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
@@ -798,27 +800,158 @@ fn agent_seed_registration_rejects_divergent_replay() {
 }
 
 #[test]
-fn legacy_operational_transition_requires_subscription_and_sequence() {
-    let (_temp_dir, store) = agent_store();
-    let registration = AgentRegistration::new(&store);
-    let mut request = seed_agent_registration();
-    request.created_at_seq = 5;
-    registration.register_seed_agent(request).unwrap();
-    AgentSubscription::new(&store)
-        .subscribe(SubscribeAgentCommand {
-            agent_id: AGENT_ID.to_string(),
-            belief_key: belief_key(),
-            created_at_seq: 6,
-        })
-        .unwrap();
+fn operational_transition_is_atomic_idempotent_and_durable() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let path = temp_dir.path().join("agent");
+    let command;
+    {
+        let store = AgentStore::new(sled::open(&path).unwrap()).unwrap();
+        let registration = AgentRegistration::new(&store);
+        let mut request = seed_agent_registration();
+        request.created_at_seq = 5;
+        registration.register_seed_agent(request).unwrap();
+        let subscription = AgentSubscription::new(&store)
+            .subscribe(SubscribeAgentCommand {
+                agent_id: AGENT_ID.to_string(),
+                belief_key: belief_key(),
+                created_at_seq: 6,
+            })
+            .unwrap();
+        AgentSubscription::new(&store)
+            .advance_subscription(meld_world_model::AdvanceSubscriptionCommand {
+                agent_id: AGENT_ID.to_string(),
+                subscription_id: subscription.subscription_id.clone(),
+                delivered_revision_id: "revision-ready".to_string(),
+                delivered_seq: 8,
+            })
+            .unwrap();
 
-    assert!(registration.mark_operational(AGENT_ID, 4).is_err());
-    let operational = registration.mark_operational(AGENT_ID, 7).unwrap();
-    assert_eq!(operational.updated_at_seq, 7);
-    assert!(registration.mark_operational(AGENT_ID, 6).is_err());
+        let hydration_id = "hydration-docs-1".to_string();
+        store
+            .put_activation(&AgentActivationRecord {
+                activation_id: hydration_id.clone(),
+                agent_id: AGENT_ID.to_string(),
+                started_at_seq: 7,
+                status: AgentActivationStatus::Started,
+                last_error: None,
+                lease_id: Some("lease-docs-1".to_string()),
+            })
+            .unwrap();
+        store
+            .put_process_hydration(&AgentProcessHydrationRecord {
+                hydration_id: hydration_id.clone(),
+                agent_id: AGENT_ID.to_string(),
+                status: AgentProcessHydrationStatus::Started,
+                readiness_proof_id: None,
+                lease_id: Some("lease-docs-1".to_string()),
+                last_error: None,
+                started_at_seq: 7,
+                updated_at_seq: 7,
+            })
+            .unwrap();
+
+        let signal = AgentReadinessSignal::identified(
+            AGENT_ID,
+            subscription.subscription_id,
+            belief_key(),
+            "revision-ready",
+            "belief-view-hash-ready",
+            8,
+        )
+        .unwrap();
+        let readiness = AgentReadinessProof::identified(
+            5,
+            signal,
+            "planner-frame-ready",
+            PLANNER_PROJECTION_VERSION,
+            Goal {
+                goal_id: "goal-readiness".to_string(),
+                agent_id: AGENT_ID.to_string(),
+                target: Proposition::Holds {
+                    subject: Term::Object(subject()),
+                    dimension: Term::Dimension(DIMENSION_ID.to_string()),
+                    condition: Condition::Present,
+                },
+                priority: GoalPriority {
+                    urgency: 1,
+                    cost_ceiling: None,
+                },
+                source: GoalSource::Maintenance {
+                    invariant_description: "docs remain current".to_string(),
+                },
+                lifecycle: GoalLifecycle::Proposed,
+            },
+        )
+        .unwrap();
+        command = MarkAgentOperationalCommand {
+            hydration_id,
+            readiness,
+            updated_at_seq: 9,
+        };
+
+        let mut stale = command.clone();
+        stale.readiness.signal.processed_at_seq = 7;
+        assert!(registration.mark_operational(&stale).is_err());
+        assert!(store
+            .get_readiness_proof(&command.readiness.proof_id)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store
+                .get_process_hydration(&command.hydration_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            AgentProcessHydrationStatus::Started
+        );
+
+        let operational = registration.mark_operational(&command).unwrap();
+        assert_eq!(operational.status, AgentStatus::Operational);
+        assert_eq!(operational.updated_at_seq, 9);
+        assert_eq!(
+            registration.mark_operational(&command).unwrap(),
+            operational
+        );
+
+        let mut divergent = command.clone();
+        divergent.updated_at_seq = 10;
+        assert!(registration.mark_operational(&divergent).is_err());
+        assert_eq!(store.get_agent(AGENT_ID).unwrap().unwrap(), operational);
+        assert_eq!(
+            store
+                .get_process_hydration(&command.hydration_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            AgentProcessHydrationStatus::Ready
+        );
+        assert_eq!(
+            store
+                .get_activation(&command.hydration_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            AgentActivationStatus::Activated
+        );
+        assert_eq!(
+            store
+                .get_readiness_proof(&command.readiness.proof_id)
+                .unwrap(),
+            Some(command.readiness.clone())
+        );
+        store.flush().unwrap();
+    }
+
+    let store = AgentStore::new(reopen_sled_after_close(&path).unwrap()).unwrap();
+    let operational = AgentRegistration::new(&store)
+        .mark_operational(&command)
+        .unwrap();
+    assert_eq!(operational.status, AgentStatus::Operational);
     assert_eq!(
-        store.get_agent(AGENT_ID).unwrap().unwrap().updated_at_seq,
-        7
+        store
+            .get_readiness_proof(&command.readiness.proof_id)
+            .unwrap(),
+        Some(command.readiness)
     );
 }
 
