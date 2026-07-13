@@ -1,7 +1,8 @@
-use meld::execution::{build_docs_task_success_evidence, DocsTaskSuccessEvidenceRequest};
 use meld_execution::task_network::store::network_storage_key;
 use meld_lang::{Effect, GoalLifecycle, Proposition, StepKind, Term};
-use meld_world_model::belief::BeliefConfigLoader;
+use meld_world_model::belief::{
+    build_docs_task_success_evidence, BeliefConfigLoader, DocsTaskSuccessEvidenceRequest,
+};
 
 use super::docs_freshness_fixture::{
     DocsFreshnessFirstProofFixture, CONTENT_SOURCE_KIND, DIMENSION_ID, EVIDENCE_POLICY_ID,

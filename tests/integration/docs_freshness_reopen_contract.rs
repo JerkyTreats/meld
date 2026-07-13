@@ -6,9 +6,7 @@ mod task_network_support;
 
 use meld::runtime::assembly::{ProductRuntimeAssembly, ProductRuntimeConfig};
 use meld::runtime::contracts::WorkerTickReport;
-use meld::runtime::ports::{
-    DocsTaskEvidenceReplayRequest, ProductRuntimePorts, ProviderPortConfig,
-};
+use meld::runtime::ports::{ProductRuntimePorts, ProviderPortConfig};
 use meld::runtime::storage::{OpenProductStores, ProductStorageLayout};
 use meld_events::{AppendMode, EventAuthority, EventAuthorityOpenOptions, EventEnvelope};
 use meld_execution::goals::GoalCommandOutcome;
@@ -37,7 +35,8 @@ use meld_world_model::agent::{
 };
 use meld_world_model::belief::{
     BeliefConfigLoader, BeliefProvenanceSummary, BeliefQuery, BeliefRuntime, ContradictionState,
-    FreshnessState, HydrationRefs, PlannerProjectionSummary, PosteriorSummary,
+    DocsTaskEvidenceIngestionRuntime, DocsTaskEvidenceReplayRequest, FreshnessState, HydrationRefs,
+    PlannerProjectionSummary, PosteriorSummary,
 };
 use meld_world_model::planner::{PlannerQuery, PLANNER_PROJECTION_VERSION};
 use meld_world_model::{BeliefStatus, BeliefView, TraversalQuery};
@@ -112,6 +111,18 @@ impl ReopenHarness {
             ProviderPortConfig::default(),
         )
         .unwrap()
+    }
+
+    fn task_evidence_runtime(
+        &self,
+        product: &OpenReopenProduct,
+        ports: &ProductRuntimePorts,
+    ) -> DocsTaskEvidenceIngestionRuntime {
+        DocsTaskEvidenceIngestionRuntime::new(
+            Arc::new(ports.event_replay().clone()),
+            Arc::clone(&product.belief_store),
+            Arc::clone(&product.traversal_store),
+        )
     }
 
     fn flush_and_reopen(&self, product: OpenReopenProduct) -> OpenReopenProduct {
@@ -190,8 +201,8 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
     ));
     drop(network);
 
-    let ingestion = ports
-        .docs_task_evidence()
+    let evidence_runtime = harness.task_evidence_runtime(&stores, &ports);
+    let ingestion = evidence_runtime
         .ingest_after_limit(DocsTaskEvidenceReplayRequest {
             after_seq: harness.fixture.publication_event_seq() - 1,
             limit: 1,
@@ -211,6 +222,7 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
         .ingestions
         .iter()
         .any(|result| !result.committed.is_empty()));
+    drop(evidence_runtime);
 
     let review = AgentSatisfactionReview {
         agent_id: AGENT_ID.to_string(),
@@ -434,8 +446,8 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
         } if receipt.seq == event.seq
     ));
 
-    let ingestion = ports
-        .docs_task_evidence()
+    let evidence_runtime = harness.task_evidence_runtime(&stores, &ports);
+    let ingestion = evidence_runtime
         .ingest_after_limit(DocsTaskEvidenceReplayRequest {
             after_seq: event.seq - 1,
             limit: 1,

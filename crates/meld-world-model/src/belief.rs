@@ -68,6 +68,7 @@ pub mod ingestion;
 pub mod query;
 pub mod runtime;
 pub mod store;
+mod task_evidence;
 
 pub(crate) use activation::{BeliefActivation, BeliefActivationError};
 pub use comparator::{BayesianComparator, ComparatorInput, ComparatorOutput};
@@ -93,3 +94,8 @@ pub use ingestion::{
 pub use query::BeliefQuery;
 pub use runtime::{BeliefRuntime, RuntimeAssessmentResult};
 pub use store::BeliefStore;
+pub use task_evidence::{
+    build_docs_task_success_evidence, DocsTaskEvidenceError, DocsTaskEvidenceIngestionRuntime,
+    DocsTaskEvidenceReplayReport, DocsTaskEvidenceReplayRequest, DocsTaskSuccessEvidenceRequest,
+    EvidenceEventReplaySource, MAX_TASK_EVIDENCE_REPLAY_LIMIT,
+};

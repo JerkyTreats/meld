@@ -5,10 +5,8 @@ use std::path::{Path, PathBuf};
 use meld_execution::planning::PlanningRuntimeActorReport;
 use meld_execution::task_network::{PublicationBridgeReport, PublicationRuntimeReport};
 use meld_world_model::world_state::graph::runtime::GraphCatchUpReport;
-use meld_world_model::AgentRuntimeReport;
+use meld_world_model::{AgentRuntimeReport, DocsTaskEvidenceReplayReport};
 use serde::{Deserialize, Serialize};
-
-use crate::runtime::ports::DocsTaskEvidenceReplayReport;
 
 /// Current schema version for runtime status cache records.
 pub const RUNTIME_STATUS_CACHE_SCHEMA_VERSION: u16 = 1;

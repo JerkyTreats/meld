@@ -32,9 +32,12 @@ pub use belief::{
     ingest_promoted_evidence, AssessmentLease, BayesianComparator, BeliefConfigLoader,
     BeliefEvidenceNormalizer, BeliefKey, BeliefQuery, BeliefRuntime, BeliefStatus, BeliefStore,
     BeliefView, BranchScope, ComparatorInput, ComparatorOutput, ConfigSnapshot,
-    ContradictionReason, DirtyKeyState, DirtyReason, EvidenceItem, EvidenceRole, EvidenceValue,
-    FreshnessReason, LeaseStatus, ObservationReason, PromotedEvidenceIngestionRequest,
-    PromotedEvidenceIngestionResult, PromotedEvidenceRecord, RuntimeAssessmentResult,
+    ContradictionReason, DirtyKeyState, DirtyReason, DocsTaskEvidenceError,
+    DocsTaskEvidenceIngestionRuntime, DocsTaskEvidenceReplayReport, DocsTaskEvidenceReplayRequest,
+    DocsTaskSuccessEvidenceRequest, EvidenceEventReplaySource, EvidenceItem, EvidenceRole,
+    EvidenceValue, FreshnessReason, LeaseStatus, ObservationReason,
+    PromotedEvidenceIngestionRequest, PromotedEvidenceIngestionResult, PromotedEvidenceRecord,
+    RuntimeAssessmentResult,
 };
 pub use planner::{
     project_world_state, PlannerFieldProjectionConfig, PlannerGraphScope, PlannerHydrationRefs,

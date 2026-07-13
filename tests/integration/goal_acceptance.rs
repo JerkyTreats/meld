@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use meld::execution::{
-    build_docs_task_success_evidence, satisfy_request_from_agent_mutation,
-    DocsTaskSuccessEvidenceRequest, GoalMutationError, GoalMutationRequest,
+    satisfy_request_from_agent_mutation, GoalMutationError, GoalMutationRequest,
 };
 use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
 use meld_events::{DomainObjectRef, EventRecord};
@@ -26,8 +25,9 @@ use meld_world_model::agent::{
     SeedAgentRegistration, SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
-    BeliefProvenanceSummary, BeliefQuery, BeliefStore, ContradictionState, FreshnessState,
-    HydrationRefs, PlannerProjectionSummary, PosteriorSummary,
+    build_docs_task_success_evidence, BeliefProvenanceSummary, BeliefQuery, BeliefStore,
+    ContradictionState, DocsTaskSuccessEvidenceRequest, FreshnessState, HydrationRefs,
+    PlannerProjectionSummary, PosteriorSummary,
 };
 use meld_world_model::planner::{
     project_world_state, PlannerFieldProjectionConfig, PlannerProjectionContext,

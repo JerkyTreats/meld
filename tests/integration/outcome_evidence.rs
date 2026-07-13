@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
-use meld::execution::{
-    build_docs_task_success_evidence, DocsTaskSuccessEvidenceError, DocsTaskSuccessEvidenceRequest,
-};
 use meld_events::{DomainObjectRef, EventRecord};
 use meld_world_model::belief::{
-    ingest_promoted_evidence, BeliefConfigLoader, BeliefQuery, BeliefRuntime, BeliefStore,
-    BranchScope, EvidenceValue, PromotedEvidenceIngestionRequest,
+    build_docs_task_success_evidence, ingest_promoted_evidence, BeliefConfigLoader, BeliefQuery,
+    BeliefRuntime, BeliefStore, BranchScope, DocsTaskEvidenceError, DocsTaskSuccessEvidenceRequest,
+    EvidenceValue, PromotedEvidenceIngestionRequest,
 };
 use meld_world_model::PerspectiveKey;
 
@@ -81,9 +79,45 @@ fn docs_task_success_rejects_invalid_probability() {
 
     assert!(matches!(
         error,
-        DocsTaskSuccessEvidenceError::InvalidRequest(message)
+        DocsTaskEvidenceError::InvalidRequest(message)
             if message.contains("stale probability")
     ));
+}
+
+#[test]
+fn root_production_contains_no_docs_evidence_mapping_or_belief_mutation() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = Vec::new();
+    collect_rust_sources(&root.join("src"), &mut sources);
+    let forbidden = [
+        ["ingest", "_promoted_evidence"].concat(),
+        ["build_docs_task", "_success_evidence"].concat(),
+        ["stale", "_probability"].concat(),
+        ["review", "_probability"].concat(),
+        ["content", "_written"].concat(),
+    ];
+
+    for path in sources {
+        let source = std::fs::read_to_string(&path).unwrap();
+        for fragment in &forbidden {
+            assert!(
+                !source.contains(fragment),
+                "root production source {} contains world-model evidence policy fragment {fragment}",
+                path.display()
+            );
+        }
+    }
+}
+
+fn collect_rust_sources(directory: &std::path::Path, sources: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            collect_rust_sources(&path, sources);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            sources.push(path);
+        }
+    }
 }
 
 #[test]
