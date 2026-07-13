@@ -11,6 +11,7 @@ use meld_world_model::belief::{
     BeliefAuthorityMigrationIdentity, BeliefStore, LegacyBeliefCompatibilityPosture,
 };
 use meld_world_model::error::StorageError as WorldModelStorageError;
+use meld_world_model::planner::PlannerProjectionStore;
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::store::WorldStateStore;
 use thiserror::Error;
@@ -40,7 +41,7 @@ pub struct ProductStorageLayout {
     pub ledger_db: PathBuf,
     /// Root workspace node record database.
     pub workspace_db: PathBuf,
-    /// Shared world model database for graph, belief, agent, and compatibility state.
+    /// Shared world model database for graph, belief, agent, planner, and compatibility state.
     pub world_model_db: PathBuf,
     /// Execution goal set database owned by `meld-execution`.
     pub execution_goals_db: PathBuf,
@@ -64,6 +65,8 @@ pub struct OpenProductStores {
     pub belief_store: Arc<BeliefStore>,
     /// World model agent state.
     pub agent_store: Arc<AgentStore>,
+    /// World model planner request and frame authority.
+    pub planner_projection_store: Arc<PlannerProjectionStore>,
     /// Compatibility store for legacy world state claims while migration remains active.
     pub legacy_world_state_store: Arc<WorldStateStore>,
     /// Execution-owned goal set store.
@@ -176,6 +179,9 @@ impl OpenProductStores {
                 BeliefStore::new(world_model_db.clone()).map_err(to_world_model)?,
             ),
             agent_store: Arc::new(AgentStore::new(world_model_db.clone()).map_err(to_world_model)?),
+            planner_projection_store: Arc::new(
+                PlannerProjectionStore::new(world_model_db.clone()).map_err(to_world_model)?,
+            ),
             legacy_world_state_store: Arc::new(
                 WorldStateStore::new(world_model_db).map_err(to_world_model)?,
             ),
@@ -206,6 +212,9 @@ impl OpenProductStores {
         self.traversal_store.flush().map_err(to_world_model)?;
         self.belief_store.flush().map_err(to_world_model)?;
         self.agent_store.flush().map_err(to_world_model)?;
+        self.planner_projection_store
+            .flush()
+            .map_err(to_world_model)?;
         self.legacy_world_state_store
             .flush()
             .map_err(to_world_model)?;

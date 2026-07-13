@@ -12,7 +12,8 @@ use meld_execution::goals::{AddGoalCommand, GoalCommandMetadata};
 use meld_execution::task::{ArtifactProducerRef, ArtifactRecord};
 use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
 use meld_world_model::{
-    AgentRegistration, AgentStatus, BranchScope, PerspectiveKey, SeedAgentRegistration,
+    AgentRegistration, AgentStatus, BranchScope, PerspectiveKey, PlannerProjectionRequest,
+    SeedAgentRegistration,
 };
 use serde_json::json;
 
@@ -84,6 +85,7 @@ fn product_storage_persists_and_reopens_runtime_stores() {
     let subject = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
     let stored_frame_id;
     let stored_prompt_ref;
+    let planner_request_id;
 
     {
         let stores = OpenProductStores::open(&layout).unwrap();
@@ -110,6 +112,21 @@ fn product_storage_persists_and_reopens_runtime_stores() {
             .unwrap();
         AgentRegistration::new(&stores.agent_store)
             .register_seed_agent(agent_registration(&subject))
+            .unwrap();
+        let planner_request = PlannerProjectionRequest::identified(
+            "source-request-hash-a",
+            "agent-a",
+            subject.clone(),
+            PerspectiveKey::new("agent", "agent-a").unwrap(),
+            BranchScope::main(),
+            vec!["docs_freshness".to_string()],
+            Vec::new(),
+        )
+        .unwrap();
+        planner_request_id = planner_request.request_id.clone();
+        stores
+            .planner_projection_store
+            .put_pending(planner_request, 8)
             .unwrap();
         stores
             .goal_store
@@ -189,6 +206,11 @@ fn product_storage_persists_and_reopens_runtime_stores() {
             .status,
         AgentStatus::Registered
     );
+    assert!(reopened
+        .planner_projection_store
+        .get_request(&planner_request_id)
+        .unwrap()
+        .is_some());
     assert!(reopened.goal_store.get_goal("goal-a").unwrap().is_some());
     assert!(reopened
         .task_artifacts
