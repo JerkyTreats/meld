@@ -7,7 +7,8 @@ use thiserror::Error;
 
 use crate::runtime::assembly::{
     DesiredRuntimeState, RuntimeHandle, RuntimeHandleFlushReport, RuntimeHandleStopReport,
-    RuntimeLeaseContext, SupervisorStartupPackage,
+    RuntimeLeaseContext, RuntimePassiveHealthReport, RuntimePassiveRestartSignal,
+    SupervisorStartupPackage,
 };
 use crate::runtime::contracts::{
     RuntimeActionRecord, RuntimeImplementationState, RuntimeRoleClass, WorkBudget, WorkerTickReport,
@@ -643,30 +644,35 @@ impl<'a> RuntimeSupervisor<'a> {
                     continue;
                 }
             }
-            self.supervisor_store.renew_runtime_lease(
-                &owner,
-                now_ms,
-                self.lifecycle_config.lease_duration_ms,
-            )?;
-            renewed_runtime_ids.push(owner.runtime_id.to_string());
-
             let tick_eligible = self
                 .desired
                 .get(owner.runtime_id.as_str())
                 .is_some_and(SupervisorRuntimeDesired::tick_eligible);
-            let semantic_report = if tick_eligible {
-                self.handles
-                    .get_mut(owner.runtime_id.as_str())
-                    .and_then(|runtime| runtime.handle.tick(self.default_work_budget.clone()))
-            } else {
-                None
-            };
             let passive_health = if tick_eligible {
                 None
             } else {
                 self.handles
                     .get(owner.runtime_id.as_str())
                     .and_then(|runtime| runtime.handle.poll_passive_health())
+            };
+            let passive_restart_signal = passive_health
+                .as_ref()
+                .and_then(|health| health.restart_signal);
+            if passive_restart_signal.is_none() {
+                self.supervisor_store.renew_runtime_lease(
+                    &owner,
+                    now_ms,
+                    self.lifecycle_config.lease_duration_ms,
+                )?;
+                renewed_runtime_ids.push(owner.runtime_id.to_string());
+            }
+
+            let semantic_report = if tick_eligible {
+                self.handles
+                    .get_mut(owner.runtime_id.as_str())
+                    .and_then(|runtime| runtime.handle.tick(self.default_work_budget.clone()))
+            } else {
+                None
             };
             let health_status = health_status_from_runtime_report(
                 tick_eligible,
@@ -686,7 +692,13 @@ impl<'a> RuntimeSupervisor<'a> {
                 )
             });
 
-            self.write_runtime_heartbeat(&owner, health_status, now_ms, semantic_report.as_ref())?;
+            self.write_runtime_heartbeat(
+                &owner,
+                health_status,
+                now_ms,
+                semantic_report.as_ref(),
+                passive_health.as_ref(),
+            )?;
             self.write_lifecycle_event(
                 Some(owner.runtime_id.clone()),
                 Some(owner.lease_id.clone()),
@@ -866,7 +878,13 @@ impl<'a> RuntimeSupervisor<'a> {
                 .as_ref()
                 .is_some_and(|lease| lease.is_owned_by(&owner) && lease.is_active_at(now_ms))
             {
-                self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Stopped, now_ms, None)?;
+                self.write_runtime_heartbeat(
+                    &owner,
+                    RuntimeHealthStatus::Stopped,
+                    now_ms,
+                    None,
+                    None,
+                )?;
             }
             self.supervisor_store
                 .release_runtime_lease(&owner, now_ms)?;
@@ -1289,7 +1307,13 @@ impl<'a> RuntimeSupervisor<'a> {
             },
         );
         let bookkeeping = (|| {
-            self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Starting, now_ms, None)?;
+            self.write_runtime_heartbeat(
+                &owner,
+                RuntimeHealthStatus::Starting,
+                now_ms,
+                None,
+                None,
+            )?;
             self.write_lifecycle_event(
                 Some(runtime.clone()),
                 Some(owner.lease_id.clone()),
@@ -1859,7 +1883,9 @@ impl<'a> RuntimeSupervisor<'a> {
         status: RuntimeHealthStatus,
         now_ms: u64,
         tick_report: Option<&WorkerTickReport>,
+        passive_health: Option<&RuntimePassiveHealthReport>,
     ) -> Result<(), SupervisorRuntimeError> {
+        let passive_restart_signal = passive_health.and_then(|health| health.restart_signal);
         let heartbeat = RuntimeHeartbeat {
             runtime_id: owner.runtime_id.clone(),
             lease_id: owner.lease_id.clone(),
@@ -1869,7 +1895,12 @@ impl<'a> RuntimeSupervisor<'a> {
                 status,
                 retryable_error_count: tick_report
                     .map(|report| report.retryable_errors.len() as u64)
-                    .unwrap_or(NO_RUNTIME_ERRORS),
+                    .unwrap_or_else(|| {
+                        u64::from(matches!(
+                            passive_restart_signal,
+                            Some(RuntimePassiveRestartSignal::RetryableFailure)
+                        ))
+                    }),
                 fatal_error_count: tick_report
                     .map(|report| report.fatal_errors.len() as u64)
                     .unwrap_or(NO_RUNTIME_ERRORS),
@@ -1880,7 +1911,9 @@ impl<'a> RuntimeSupervisor<'a> {
                     RuntimeHealthStatus::Healthy => Some(now_ms),
                     _ => None,
                 },
-                last_error_code: tick_report.and_then(last_error_code),
+                last_error_code: tick_report.and_then(last_error_code).or_else(|| {
+                    passive_restart_signal.map(|_| "passive_health_probe_failed".to_string())
+                }),
             },
             diagnostic: tick_report.map(|tick_report| RuntimeDiagnosticSummary {
                 actor_id: tick_report.actor_id.clone(),
@@ -2661,6 +2694,154 @@ mod tests {
         assert_eq!(service.health_status, RuntimeHealthStatus::Healthy);
         assert!(service.last_diagnostic_actor_id.is_none());
         supervisor.request_shutdown(102).unwrap();
+    }
+
+    #[test]
+    fn failed_task_network_health_stops_renewal_and_reopens_after_safe_replacement() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        config.enabled_runtime_ids = vec!["execution.task_network_command".to_string()];
+        config.configured_task_network =
+            Some(ConfiguredTaskNetworkIdentity::new("network-docs").unwrap());
+        config.lifecycle_config.lease_duration_ms = 20;
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let mut supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+        let runtime_id = RuntimeId::new("execution.task_network_command").unwrap();
+        let old_lease = assembly
+            .supervisor_store()
+            .get_active_runtime_lease(&runtime_id)
+            .unwrap()
+            .unwrap();
+        let stale_query = assembly
+            .ports()
+            .adapters()
+            .task_networks()
+            .query_port("network-docs")
+            .unwrap();
+        let old_epoch = stale_query.lifecycle().epoch;
+        supervisor
+            .handles
+            .get_mut(runtime_id.as_str())
+            .unwrap()
+            .handle
+            .set_test_passive_health_failure("task network authority is poisoned");
+
+        let unhealthy = supervisor.tick(101).unwrap();
+        let failed_heartbeat = assembly
+            .supervisor_store()
+            .get_runtime_heartbeat(&runtime_id)
+            .unwrap()
+            .unwrap();
+
+        assert!(unhealthy.actions.is_empty());
+        assert!(unhealthy.renewed_runtime_ids.is_empty());
+        assert!(unhealthy
+            .restart_evaluation
+            .restarted_runtime_ids
+            .is_empty());
+        assert_eq!(
+            failed_heartbeat.health.status,
+            RuntimeHealthStatus::Unhealthy
+        );
+        assert_eq!(failed_heartbeat.health.retryable_error_count, 1);
+        assert_eq!(
+            failed_heartbeat.health.last_error_code.as_deref(),
+            Some("passive_health_probe_failed")
+        );
+        assert!(failed_heartbeat.diagnostic.is_none());
+        assert_eq!(
+            assembly
+                .supervisor_store()
+                .get_active_runtime_lease(&runtime_id)
+                .unwrap()
+                .unwrap()
+                .renewed_at_ms,
+            None
+        );
+
+        let replacement = supervisor.tick(121).unwrap();
+        let active = assembly
+            .supervisor_store()
+            .get_active_runtime_lease(&runtime_id)
+            .unwrap()
+            .unwrap();
+        let reopened_query = assembly
+            .ports()
+            .adapters()
+            .task_networks()
+            .query_port("network-docs")
+            .unwrap();
+        let health = assembly
+            .supervisor_store()
+            .get_health_snapshot(&runtime_id)
+            .unwrap()
+            .unwrap();
+        let checkpoint = assembly
+            .supervisor_store()
+            .list_replacement_checkpoints()
+            .unwrap()
+            .pop()
+            .unwrap();
+
+        assert!(replacement.actions.is_empty());
+        assert_eq!(
+            replacement.restart_evaluation.expired_runtime_ids,
+            vec!["execution.task_network_command"]
+        );
+        assert_eq!(
+            replacement.restart_evaluation.restarted_runtime_ids,
+            vec!["execution.task_network_command"]
+        );
+        assert_ne!(active.lease_id, old_lease.lease_id);
+        assert_eq!(
+            assembly
+                .supervisor_store()
+                .get_runtime_lease(&runtime_id, &old_lease.lease_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            RuntimeLeaseStatus::Released
+        );
+        assert!(matches!(
+            stale_query.state(),
+            Err(TaskNetworkAuthorityError::Closed { .. })
+        ));
+        assert_eq!(reopened_query.lifecycle().epoch, old_epoch + 1);
+        assert_eq!(reopened_query.state().unwrap().network_id, "network-docs");
+        assert_eq!(health.restart_count, 1);
+        assert_eq!(
+            health.last_restart_cause,
+            Some(RestartCause::HeartbeatExpired)
+        );
+        assert_eq!(health.status, RuntimeHealthStatus::Starting);
+        assert_eq!(
+            checkpoint
+                .completed_stages()
+                .iter()
+                .map(|receipt| receipt.stage)
+                .collect::<Vec<_>>(),
+            vec![
+                RuntimeReplacementStage::StopOldHandle,
+                RuntimeReplacementStage::AwaitOldSafePoint,
+                RuntimeReplacementStage::FlushOldHandle,
+                RuntimeReplacementStage::ReleaseOldLease,
+                RuntimeReplacementStage::AcquireReplacementLease,
+                RuntimeReplacementStage::StartReplacementHandle,
+                RuntimeReplacementStage::Completed,
+            ]
+        );
+
+        let healthy = supervisor.tick(122).unwrap();
+        assert!(healthy.actions.is_empty());
+        assert_eq!(
+            healthy.renewed_runtime_ids,
+            vec!["execution.task_network_command"]
+        );
+        supervisor.request_shutdown(123).unwrap();
     }
 
     #[test]

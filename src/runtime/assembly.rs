@@ -236,6 +236,8 @@ pub struct RuntimeHandle {
     fail_safe_point: bool,
     #[cfg(test)]
     fail_flush: bool,
+    #[cfg(test)]
+    passive_health_failure: Option<String>,
 }
 
 // TODO compat-shim: remove after W3B production factories and downstream
@@ -361,6 +363,15 @@ pub struct RuntimePassiveHealthReport {
     pub healthy: bool,
     /// Failure detail when the service is not healthy.
     pub detail: Option<String>,
+    /// Typed supervisor signal produced by a failed passive health probe.
+    pub restart_signal: Option<RuntimePassiveRestartSignal>,
+}
+
+/// Restart signal emitted by a hosted passive service health probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimePassiveRestartSignal {
+    /// The service should be replaced through the existing retryable path.
+    RetryableFailure,
 }
 
 /// Report returned by a runtime handle flush hook.
@@ -1292,6 +1303,8 @@ impl RuntimeHandleFactory {
             fail_safe_point: false,
             #[cfg(test)]
             fail_flush: false,
+            #[cfg(test)]
+            passive_health_failure: None,
         }
     }
 }
@@ -1330,11 +1343,26 @@ impl RuntimeHandle {
         if !self.started || self.role_class != RuntimeRoleClass::PassiveService {
             return None;
         }
+        #[cfg(test)]
+        let health = self
+            .passive_health_failure
+            .clone()
+            .map_or_else(|| self.semantic.poll_passive_health(), Err);
+        #[cfg(not(test))]
         let health = self.semantic.poll_passive_health();
-        Some(RuntimePassiveHealthReport {
-            runtime_id: self.runtime_id.clone(),
-            healthy: health.is_ok(),
-            detail: health.err(),
+        Some(match health {
+            Ok(()) => RuntimePassiveHealthReport {
+                runtime_id: self.runtime_id.clone(),
+                healthy: true,
+                detail: None,
+                restart_signal: None,
+            },
+            Err(detail) => RuntimePassiveHealthReport {
+                runtime_id: self.runtime_id.clone(),
+                healthy: false,
+                detail: Some(detail),
+                restart_signal: Some(RuntimePassiveRestartSignal::RetryableFailure),
+            },
         })
     }
 
@@ -1395,6 +1423,11 @@ impl RuntimeHandle {
     pub(crate) fn set_test_lifecycle_failures(&mut self, fail_safe_point: bool, fail_flush: bool) {
         self.fail_safe_point = fail_safe_point;
         self.fail_flush = fail_flush;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_test_passive_health_failure(&mut self, detail: impl Into<String>) {
+        self.passive_health_failure = Some(detail.into());
     }
 
     /// Start only after the supervisor supplies a matching non-empty lease.
@@ -2609,6 +2642,10 @@ mod tests {
         host.shutdown_authority("network-docs").unwrap();
         let unhealthy = handle.poll_passive_health().unwrap();
         assert!(!unhealthy.healthy);
+        assert_eq!(
+            unhealthy.restart_signal,
+            Some(RuntimePassiveRestartSignal::RetryableFailure)
+        );
         assert!(unhealthy
             .detail
             .unwrap()
