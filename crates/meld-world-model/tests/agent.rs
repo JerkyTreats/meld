@@ -967,14 +967,6 @@ fn operational_transition_is_atomic_idempotent_and_durable() {
                 created_at_seq: 6,
             })
             .unwrap();
-        AgentSubscription::new(&store)
-            .advance_subscription(meld_world_model::AdvanceSubscriptionCommand {
-                agent_id: AGENT_ID.to_string(),
-                subscription_id: subscription.subscription_id.clone(),
-                delivered_revision_id: "revision-ready".to_string(),
-                delivered_seq: 8,
-            })
-            .unwrap();
 
         let hydration_id = "hydration-docs-1".to_string();
         let start = StartAgentHydrationCommand {
@@ -1019,6 +1011,12 @@ fn operational_transition_is_atomic_idempotent_and_durable() {
         let operational = registration.mark_operational(&command).unwrap();
         assert_eq!(operational.status, AgentStatus::Operational);
         assert_eq!(operational.updated_at_seq, 10);
+        let pending_delivery = store
+            .get_subscription(&subscription.subscription_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending_delivery.last_delivered_seq, 0);
+        assert!(pending_delivery.last_delivered_revision_id.is_none());
         assert_eq!(
             registration.mark_operational(&command).unwrap(),
             operational
@@ -1085,14 +1083,6 @@ fn operational_agent_rehydrates_under_a_new_epoch_and_lease() {
                 created_at_seq: 6,
             })
             .unwrap();
-        AgentSubscription::new(&store)
-            .advance_subscription(meld_world_model::AdvanceSubscriptionCommand {
-                agent_id: AGENT_ID.to_string(),
-                subscription_id: subscription.subscription_id.clone(),
-                delivered_revision_id: "revision-ready".to_string(),
-                delivered_seq: 8,
-            })
-            .unwrap();
 
         let first_start = StartAgentHydrationCommand {
             hydration_id: "hydration-docs-first".to_string(),
@@ -1112,6 +1102,22 @@ fn operational_agent_rehydrates_under_a_new_epoch_and_lease() {
             updated_at_seq: 10,
         };
         registration.mark_operational(&first_command).unwrap();
+        assert_eq!(
+            store
+                .get_subscription(&subscription.subscription_id)
+                .unwrap()
+                .unwrap()
+                .last_delivered_seq,
+            0
+        );
+        AgentSubscription::new(&store)
+            .advance_subscription(meld_world_model::AdvanceSubscriptionCommand {
+                agent_id: AGENT_ID.to_string(),
+                subscription_id: subscription.subscription_id.clone(),
+                delivered_revision_id: "revision-ready".to_string(),
+                delivered_seq: 8,
+            })
+            .unwrap();
 
         let second_start = StartAgentHydrationCommand {
             hydration_id: "hydration-docs-second".to_string(),
@@ -1141,6 +1147,14 @@ fn operational_agent_rehydrates_under_a_new_epoch_and_lease() {
 
         assert_eq!(rehydrated.status, AgentStatus::Operational);
         assert_eq!(rehydrated.updated_at_seq, 12);
+        assert_eq!(
+            store
+                .get_subscription(&subscription.subscription_id)
+                .unwrap()
+                .unwrap()
+                .last_delivered_seq,
+            8
+        );
         assert_eq!(
             store
                 .get_process_hydration(&first_start.hydration_id)

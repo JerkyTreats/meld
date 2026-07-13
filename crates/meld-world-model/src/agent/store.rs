@@ -931,9 +931,10 @@ impl AgentStore {
         if subscription.agent_id != *agent_id
             || subscription.status != AgentSubscriptionStatus::Active
             || subscription.belief_key != attestation.belief_key
-            || subscription.last_delivered_revision_id.as_deref()
-                != Some(attestation.belief_revision_id.as_str())
-            || subscription.last_delivered_seq != attestation.attested_at_seq
+            || subscription.last_delivered_seq > attestation.attested_at_seq
+            || subscription.last_delivered_seq == attestation.attested_at_seq
+                && subscription.last_delivered_revision_id.as_deref()
+                    != Some(attestation.belief_revision_id.as_str())
         {
             return Err(StorageError::Backpressure(format!(
                 "readiness subscription fence changed for '{}'",
