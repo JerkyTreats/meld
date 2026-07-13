@@ -42,24 +42,158 @@ pub const BELIEF_AUTHORITY_MIGRATION_SCHEMA_VERSION: u32 = 1;
 /// assembly owns path resolution and must prove that source and target are
 /// physically distinct before handing this product to the belief domain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "BeliefAuthorityMigrationIdentityWire")]
 pub struct BeliefAuthorityMigrationIdentity {
     /// Stable id reused for every retry of the same migration.
-    pub migration_id: String,
+    migration_id: String,
     /// Persisted identity established for the frozen legacy source.
-    pub source_authority_id: String,
+    source_authority_id: String,
     /// Persisted identity of the product belief authority.
-    pub target_authority_id: String,
+    target_authority_id: String,
     /// Product binding generation that authorized this migration.
-    pub generation: u64,
+    generation: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct BeliefAuthorityMigrationIdentityWire {
+    migration_id: String,
+    source_authority_id: String,
+    target_authority_id: String,
+    generation: u64,
+}
+
+impl BeliefAuthorityMigrationIdentity {
+    /// Build one validated authority migration identity.
+    pub fn try_new(
+        migration_id: impl Into<String>,
+        source_authority_id: impl Into<String>,
+        target_authority_id: impl Into<String>,
+        generation: u64,
+    ) -> Result<Self, StorageError> {
+        let identity = Self {
+            migration_id: migration_id.into(),
+            source_authority_id: source_authority_id.into(),
+            target_authority_id: target_authority_id.into(),
+            generation,
+        };
+        identity.validate()?;
+        Ok(identity)
+    }
+
+    /// Validate authority identity and cutover generation.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        require_non_empty("belief migration id", &self.migration_id)?;
+        require_non_empty("belief source authority id", &self.source_authority_id)?;
+        require_non_empty("belief target authority id", &self.target_authority_id)?;
+        if self.source_authority_id == self.target_authority_id {
+            return Err(StorageError::InvalidPath(
+                "belief migration source and target authorities must differ".to_string(),
+            ));
+        }
+        if self.generation == 0 {
+            return Err(StorageError::InvalidPath(
+                "belief migration generation must be positive".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Borrow the stable migration id.
+    pub fn migration_id(&self) -> &str {
+        &self.migration_id
+    }
+
+    /// Borrow the frozen source authority id.
+    pub fn source_authority_id(&self) -> &str {
+        &self.source_authority_id
+    }
+
+    /// Borrow the product target authority id.
+    pub fn target_authority_id(&self) -> &str {
+        &self.target_authority_id
+    }
+
+    /// Return the product binding generation.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+}
+
+impl TryFrom<BeliefAuthorityMigrationIdentityWire> for BeliefAuthorityMigrationIdentity {
+    type Error = StorageError;
+
+    fn try_from(value: BeliefAuthorityMigrationIdentityWire) -> Result<Self, Self::Error> {
+        Self::try_new(
+            value.migration_id,
+            value.source_authority_id,
+            value.target_authority_id,
+            value.generation,
+        )
+    }
 }
 
 /// Identity and record count for one frozen belief authority snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "BeliefAuthoritySnapshotWire")]
 pub struct BeliefAuthoritySnapshot {
     /// BLAKE3 hash over ordered authority records.
-    pub snapshot_hash: String,
+    snapshot_hash: String,
     /// Total records covered by the snapshot hash.
-    pub record_count: u64,
+    record_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct BeliefAuthoritySnapshotWire {
+    snapshot_hash: String,
+    record_count: u64,
+}
+
+impl BeliefAuthoritySnapshot {
+    /// Build validated frozen authority snapshot metadata.
+    pub fn try_new(
+        snapshot_hash: impl Into<String>,
+        record_count: u64,
+    ) -> Result<Self, StorageError> {
+        let snapshot = Self {
+            snapshot_hash: snapshot_hash.into(),
+            record_count,
+        };
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+
+    /// Validate the canonical lowercase BLAKE3 digest.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        if self.snapshot_hash.len() != 64
+            || !self
+                .snapshot_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        {
+            return Err(StorageError::InvalidPath(
+                "belief authority snapshot hash must be a lowercase BLAKE3 hex digest".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Borrow the canonical snapshot digest.
+    pub fn snapshot_hash(&self) -> &str {
+        &self.snapshot_hash
+    }
+
+    /// Return the number of records covered by the snapshot.
+    pub fn record_count(&self) -> u64 {
+        self.record_count
+    }
+}
+
+impl TryFrom<BeliefAuthoritySnapshotWire> for BeliefAuthoritySnapshot {
+    type Error = StorageError;
+
+    fn try_from(value: BeliefAuthoritySnapshotWire) -> Result<Self, Self::Error> {
+        Self::try_new(value.snapshot_hash, value.record_count)
+    }
 }
 
 /// Durable proof that source and target authority snapshots are equal.
@@ -84,6 +218,8 @@ impl BeliefAuthorityParityReceipt {
         source: BeliefAuthoritySnapshot,
         target: BeliefAuthoritySnapshot,
     ) -> Result<Self, StorageError> {
+        source.validate()?;
+        target.validate()?;
         if source != target {
             return Err(StorageError::InvalidPath(
                 "belief authority parity requires equal source and target snapshots".to_string(),
@@ -149,13 +285,98 @@ pub enum BeliefAuthorityMigrationProgress {
 /// `migration` is the canonical identity product. Counts and the source hash
 /// are operational verification metadata and must never substitute for it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "BeliefAuthorityMigrationMarkerWire")]
 pub struct BeliefAuthorityMigrationMarker {
     /// Marker wire schema.
-    pub schema_version: u32,
+    schema_version: u32,
     /// Canonical migration identity shared by every checkpoint.
-    pub migration: BeliefAuthorityMigrationIdentity,
+    migration: BeliefAuthorityMigrationIdentity,
     /// State-specific recoverable migration progress.
-    pub progress: BeliefAuthorityMigrationProgress,
+    progress: BeliefAuthorityMigrationProgress,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct BeliefAuthorityMigrationMarkerWire {
+    schema_version: u32,
+    migration: BeliefAuthorityMigrationIdentity,
+    progress: BeliefAuthorityMigrationProgress,
+}
+
+impl BeliefAuthorityMigrationMarker {
+    /// Build one validated durable migration checkpoint.
+    pub fn try_new(
+        migration: BeliefAuthorityMigrationIdentity,
+        progress: BeliefAuthorityMigrationProgress,
+    ) -> Result<Self, StorageError> {
+        let marker = Self {
+            schema_version: BELIEF_AUTHORITY_MIGRATION_SCHEMA_VERSION,
+            migration,
+            progress,
+        };
+        marker.validate()?;
+        Ok(marker)
+    }
+
+    /// Validate the marker schema and state-specific progress.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        if self.schema_version != BELIEF_AUTHORITY_MIGRATION_SCHEMA_VERSION {
+            return Err(StorageError::InvalidPath(format!(
+                "unsupported belief migration marker schema {}",
+                self.schema_version
+            )));
+        }
+        self.migration.validate()?;
+        match &self.progress {
+            BeliefAuthorityMigrationProgress::Prepared { source } => source.validate(),
+            BeliefAuthorityMigrationProgress::Copying {
+                source,
+                verified_record_count,
+            } => {
+                source.validate()?;
+                if *verified_record_count > source.record_count() {
+                    return Err(StorageError::InvalidPath(
+                        "belief migration verified count exceeds frozen source count".to_string(),
+                    ));
+                }
+                Ok(())
+            }
+            BeliefAuthorityMigrationProgress::Verified { parity }
+            | BeliefAuthorityMigrationProgress::Cutover { parity }
+            | BeliefAuthorityMigrationProgress::ForwardRepairOnly { parity } => {
+                parity.source().validate()?;
+                parity.target().validate()
+            }
+        }
+    }
+
+    /// Return the durable marker schema version.
+    pub fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    /// Borrow the migration identity.
+    pub fn migration(&self) -> &BeliefAuthorityMigrationIdentity {
+        &self.migration
+    }
+
+    /// Borrow the state-specific migration progress.
+    pub fn progress(&self) -> &BeliefAuthorityMigrationProgress {
+        &self.progress
+    }
+}
+
+impl TryFrom<BeliefAuthorityMigrationMarkerWire> for BeliefAuthorityMigrationMarker {
+    type Error = StorageError;
+
+    fn try_from(value: BeliefAuthorityMigrationMarkerWire) -> Result<Self, Self::Error> {
+        let marker = Self {
+            schema_version: value.schema_version,
+            migration: value.migration,
+            progress: value.progress,
+        };
+        marker.validate()?;
+        Ok(marker)
+    }
 }
 
 /// Compatibility posture for legacy belief state during authority cutover.
@@ -689,7 +910,9 @@ impl AssessmentLeaseCasIntent {
         match self {
             Self::Acquire {
                 proposed_active_lease,
-            } if proposed_active_lease.status == LeaseStatus::Leased => Ok(()),
+            } if proposed_active_lease.status == LeaseStatus::Leased => {
+                validate_assessment_lease(proposed_active_lease)
+            }
             Self::Complete {
                 expected_active_lease,
                 completed_lease,
@@ -748,6 +971,8 @@ fn validate_terminal_lease_transition(
     terminal: &AssessmentLease,
     terminal_status: LeaseStatus,
 ) -> Result<(), StorageError> {
+    validate_assessment_lease(expected)?;
+    validate_assessment_lease(terminal)?;
     if expected.status != LeaseStatus::Leased {
         return Err(StorageError::InvalidPath(
             "assessment lease terminal transition requires leased active status".to_string(),
@@ -762,6 +987,36 @@ fn validate_terminal_lease_transition(
             "assessment lease terminal product changed immutable lease identity".to_string(),
         ))
     }
+}
+
+fn validate_assessment_lease(lease: &AssessmentLease) -> Result<(), StorageError> {
+    require_non_empty("assessment lease id", &lease.lease_id)?;
+    require_non_empty("assessment lease owner id", &lease.owner_id)?;
+    require_non_empty(
+        "assessment lease comparator engine id",
+        &lease.comparator_engine_id,
+    )?;
+    require_non_empty(
+        "assessment lease config snapshot hash",
+        &lease.config_snapshot_hash,
+    )?;
+    lease.belief_key.validate()?;
+    if lease.epoch == 0 {
+        return Err(StorageError::InvalidPath(
+            "assessment lease epoch must be positive".to_string(),
+        ));
+    }
+    if lease.input_cursor_start > lease.input_cursor_end {
+        return Err(StorageError::InvalidPath(
+            "assessment lease input cursor range is reversed".to_string(),
+        ));
+    }
+    if lease.expires_at_seq <= lease.started_at_seq {
+        return Err(StorageError::InvalidPath(
+            "assessment lease expiry must follow its start".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Recovery result after reconciling an interrupted atomic belief commit.
@@ -862,16 +1117,14 @@ impl BeliefCommitIntent {
     ) -> Result<Self, StorageError> {
         let intent_id = intent_id.into();
         require_non_empty("belief commit intent id", &intent_id)?;
-        if expected_active_lease.status != LeaseStatus::Leased {
+        validate_terminal_lease_transition(
+            &expected_active_lease,
+            &completed_lease,
+            LeaseStatus::Completed,
+        )?;
+        if expected_dirty_state.dirty_since_seq > expected_dirty_state.latest_seq {
             return Err(StorageError::InvalidPath(
-                "belief commit requires a leased active product".to_string(),
-            ));
-        }
-        let mut expected_completion = expected_active_lease.clone();
-        expected_completion.status = LeaseStatus::Completed;
-        if completed_lease != expected_completion {
-            return Err(StorageError::InvalidPath(
-                "belief commit completed lease must preserve the active lease identity".to_string(),
+                "belief commit dirty-key sequence range is reversed".to_string(),
             ));
         }
         let key = &expected_active_lease.belief_key;
@@ -899,6 +1152,21 @@ impl BeliefCommitIntent {
     /// Borrow the stable commit intent id.
     pub fn intent_id(&self) -> &str {
         &self.intent_id
+    }
+
+    /// Borrow the exact active lease required before commit.
+    pub fn expected_active_lease(&self) -> &AssessmentLease {
+        &self.expected_active_lease
+    }
+
+    /// Borrow the terminal lease persisted by commit.
+    pub fn completed_lease(&self) -> &AssessmentLease {
+        &self.completed_lease
+    }
+
+    /// Borrow the dirty-key state consumed by commit.
+    pub fn expected_dirty_state(&self) -> &DirtyKeyState {
+        &self.expected_dirty_state
     }
 
     /// Borrow the canonical revision product.
@@ -1015,28 +1283,23 @@ mod tests {
 
     #[test]
     fn belief_authority_migration_contracts_round_trip() {
-        let marker = BeliefAuthorityMigrationMarker {
-            schema_version: BELIEF_AUTHORITY_MIGRATION_SCHEMA_VERSION,
-            migration: BeliefAuthorityMigrationIdentity {
-                migration_id: "belief-migration-a".to_string(),
-                source_authority_id: "legacy-belief-a".to_string(),
-                target_authority_id: "product-belief-a".to_string(),
-                generation: 3,
-            },
-            progress: BeliefAuthorityMigrationProgress::Verified {
+        let marker = BeliefAuthorityMigrationMarker::try_new(
+            BeliefAuthorityMigrationIdentity::try_new(
+                "belief-migration-a",
+                "legacy-belief-a",
+                "product-belief-a",
+                3,
+            )
+            .unwrap(),
+            BeliefAuthorityMigrationProgress::Verified {
                 parity: BeliefAuthorityParityReceipt::try_new(
-                    BeliefAuthoritySnapshot {
-                        snapshot_hash: "a".repeat(64),
-                        record_count: 12,
-                    },
-                    BeliefAuthoritySnapshot {
-                        snapshot_hash: "a".repeat(64),
-                        record_count: 12,
-                    },
+                    BeliefAuthoritySnapshot::try_new("a".repeat(64), 12).unwrap(),
+                    BeliefAuthoritySnapshot::try_new("a".repeat(64), 12).unwrap(),
                 )
                 .unwrap(),
             },
-        };
+        )
+        .unwrap();
 
         let value = serde_json::to_value(&marker).unwrap();
         assert_eq!(value["progress"]["state"], "verified");
@@ -1049,6 +1312,52 @@ mod tests {
             "target": {"snapshot_hash": "b", "record_count": 1}
         });
         assert!(serde_json::from_value::<BeliefAuthorityParityReceipt>(invalid).is_err());
+    }
+
+    #[test]
+    fn belief_authority_migration_rejects_invalid_durable_states() {
+        assert!(BeliefAuthorityMigrationIdentity::try_new("id", "same", "same", 1).is_err());
+        assert!(BeliefAuthoritySnapshot::try_new("not-a-digest", 1).is_err());
+
+        let marker = serde_json::json!({
+            "schema_version": BELIEF_AUTHORITY_MIGRATION_SCHEMA_VERSION + 1,
+            "migration": {
+                "migration_id": "migration-a",
+                "source_authority_id": "legacy-a",
+                "target_authority_id": "product-a",
+                "generation": 1
+            },
+            "progress": {
+                "state": "copying",
+                "source": {
+                    "snapshot_hash": "a".repeat(64),
+                    "record_count": 2
+                },
+                "verified_record_count": 3
+            }
+        });
+        assert!(serde_json::from_value::<BeliefAuthorityMigrationMarker>(marker).is_err());
+
+        let excessive_progress = serde_json::json!({
+            "schema_version": BELIEF_AUTHORITY_MIGRATION_SCHEMA_VERSION,
+            "migration": {
+                "migration_id": "migration-a",
+                "source_authority_id": "legacy-a",
+                "target_authority_id": "product-a",
+                "generation": 1
+            },
+            "progress": {
+                "state": "copying",
+                "source": {
+                    "snapshot_hash": "a".repeat(64),
+                    "record_count": 2
+                },
+                "verified_record_count": 3
+            }
+        });
+        assert!(
+            serde_json::from_value::<BeliefAuthorityMigrationMarker>(excessive_progress).is_err()
+        );
     }
 
     #[test]
@@ -1150,6 +1459,21 @@ mod tests {
             serde_json::from_value::<AssessmentLeaseCasIntent>(value).unwrap(),
             intent
         );
+    }
+
+    #[test]
+    fn assessment_lease_cas_rejects_malformed_active_products() {
+        let mut invalid = legacy_lease_json();
+        invalid["owner_id"] = serde_json::json!("");
+        invalid["input_cursor_start"] = serde_json::json!(9);
+        invalid["input_cursor_end"] = serde_json::json!(8);
+        invalid["expires_at_seq"] = serde_json::json!(4);
+        let intent = serde_json::json!({
+            "action": "acquire",
+            "proposed_active_lease": invalid
+        });
+
+        assert!(serde_json::from_value::<AssessmentLeaseCasIntent>(intent).is_err());
     }
 
     #[test]

@@ -117,17 +117,7 @@ impl IdentifiedPlanningRequest {
         mut request: PlanningRequest,
         inputs: PlanningRequestIdentityInputs,
     ) -> Result<Self, String> {
-        if inputs.goal_id != request.goal.goal_id {
-            return Err("planning identity goal does not match request goal".to_string());
-        }
-        let expected_frame = inputs
-            .projection_identity
-            .frame_ref(request.world_state_frame.warnings.clone())?;
-        if expected_frame != request.world_state_frame {
-            return Err(
-                "planning identity projection does not match request projection".to_string(),
-            );
-        }
+        validate_request_projection_binding(&request, &inputs)?;
         let identity = PlanningRequestIdentity::derive(inputs)?;
         request.request_id = identity.request_id().to_string();
         Ok(Self { request, identity })
@@ -136,19 +126,7 @@ impl IdentifiedPlanningRequest {
     /// Validate the attached identity against the canonical request.
     pub fn validate(&self) -> Result<(), String> {
         self.identity.validate()?;
-        if self.identity.inputs.goal_id != self.request.goal.goal_id {
-            return Err("planning identity goal does not match request goal".to_string());
-        }
-        let expected_frame = self
-            .identity
-            .inputs
-            .projection_identity
-            .frame_ref(self.request.world_state_frame.warnings.clone())?;
-        if expected_frame != self.request.world_state_frame {
-            return Err(
-                "planning identity projection does not match request projection".to_string(),
-            );
-        }
+        validate_request_projection_binding(&self.request, &self.identity.inputs)?;
         if self.request.request_id != self.identity.request_id {
             return Err("planning request tracing id does not match derived identity".to_string());
         }
@@ -164,6 +142,29 @@ impl IdentifiedPlanningRequest {
     pub fn identity(&self) -> &PlanningRequestIdentity {
         &self.identity
     }
+}
+
+fn validate_request_projection_binding(
+    request: &PlanningRequest,
+    inputs: &PlanningRequestIdentityInputs,
+) -> Result<(), String> {
+    if inputs.goal_id != request.goal.goal_id
+        || request.world_state_request.goal_id != request.goal.goal_id
+        || request.world_state_request.agent_id != request.goal.agent_id
+        || request.world_state_request.target != request.goal.target
+    {
+        return Err("planning projection request does not match the selected goal".to_string());
+    }
+    inputs
+        .projection_identity
+        .validate_for_request(&request.world_state_request)?;
+    let expected_frame = inputs
+        .projection_identity
+        .frame_ref(request.world_state_frame.warnings.clone())?;
+    if expected_frame != request.world_state_frame {
+        return Err("planning identity projection does not match request projection".to_string());
+    }
+    Ok(())
 }
 
 impl TryFrom<IdentifiedPlanningRequestWire> for IdentifiedPlanningRequest {
@@ -361,16 +362,24 @@ mod contract_freeze_tests {
 
     #[test]
     fn planning_request_identity_retains_every_replay_input() {
+        let projection_request = PlanningWorldStateRequest {
+            goal_id: "goal-a".to_string(),
+            agent_id: "agent-a".to_string(),
+            target: meld_lang::Proposition::All(Vec::new()),
+            perspective_id: "agent-a".to_string(),
+            branch_id: "main".to_string(),
+            requested_dimensions: vec!["docs_freshness".to_string()],
+            required_preconditions: Vec::new(),
+        };
         let inputs = PlanningRequestIdentityInputs {
             goal_id: "goal-a".to_string(),
             goal_updated_at_seq: 9,
-            projection_identity: PlanningProjectionIdentityInputs::new(
-                "projection-request-a",
+            projection_identity: PlanningProjectionIdentityInputs::for_request(
+                &projection_request,
                 "projection-v1",
-                "agent-a",
-                "main",
                 vec!["source-a".to_string()],
-            ),
+            )
+            .unwrap(),
             method_library_digest: "method-a".to_string(),
             capability_catalog_digest: "catalog-a".to_string(),
             planning_version: "planning-v1".to_string(),
@@ -382,6 +391,58 @@ mod contract_freeze_tests {
 
         assert_eq!(decoded, identity);
         assert!(decoded.validate().is_ok());
+    }
+
+    #[test]
+    fn identified_request_rejects_projection_identity_from_another_request() {
+        let goal = meld_lang::Goal {
+            goal_id: "goal-a".to_string(),
+            agent_id: "agent-a".to_string(),
+            target: meld_lang::Proposition::All(Vec::new()),
+            priority: meld_lang::GoalPriority {
+                urgency: 1,
+                cost_ceiling: None,
+            },
+            source: meld_lang::GoalSource::UserDirected {
+                directive: "test".to_string(),
+            },
+            lifecycle: meld_lang::GoalLifecycle::Active,
+        };
+        let request = PlanningWorldStateRequest {
+            goal_id: goal.goal_id.clone(),
+            agent_id: goal.agent_id.clone(),
+            target: goal.target.clone(),
+            perspective_id: "agent-a".to_string(),
+            branch_id: "main".to_string(),
+            requested_dimensions: Vec::new(),
+            required_preconditions: Vec::new(),
+        };
+        let mut other_request = request.clone();
+        other_request.branch_id = "other".to_string();
+        let projection_identity = PlanningProjectionIdentityInputs::for_request(
+            &other_request,
+            "projection-v1",
+            vec!["source-a".to_string()],
+        )
+        .unwrap();
+        let frame = projection_identity.frame_ref(Vec::new()).unwrap();
+        let planning_request = PlanningRequest {
+            request_id: String::new(),
+            goal,
+            world_state: meld_lang::WorldState::empty(),
+            world_state_frame: frame,
+            world_state_request: request,
+        };
+        let inputs = PlanningRequestIdentityInputs {
+            goal_id: "goal-a".to_string(),
+            goal_updated_at_seq: 9,
+            projection_identity,
+            method_library_digest: "method-a".to_string(),
+            capability_catalog_digest: "catalog-a".to_string(),
+            planning_version: "planning-v1".to_string(),
+        };
+
+        assert!(IdentifiedPlanningRequest::bind(planning_request, inputs).is_err());
     }
 }
 

@@ -4,37 +4,47 @@ use serde::{Deserialize, Serialize};
 
 /// Canonical inputs used to derive a durable projection frame id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "PlanningProjectionIdentityInputsWire")]
 pub struct PlanningProjectionIdentityInputs {
     /// Digest of the complete projection request.
-    pub request_hash: String,
+    request_hash: String,
     /// Projection schema or algorithm version.
-    pub projection_version: String,
+    projection_version: String,
     /// Perspective used for the projection.
-    pub perspective_id: String,
+    perspective_id: String,
     /// Branch used for the projection.
-    pub branch_id: String,
+    branch_id: String,
     /// Sorted unique source references used by the projection.
-    pub source_refs: Vec<String>,
+    source_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct PlanningProjectionIdentityInputsWire {
+    request_hash: String,
+    projection_version: String,
+    perspective_id: String,
+    branch_id: String,
+    source_refs: Vec<String>,
 }
 
 impl PlanningProjectionIdentityInputs {
-    /// Build identity inputs with canonical source ordering.
-    pub fn new(
-        request_hash: impl Into<String>,
+    /// Build identity inputs from the complete canonical projection request.
+    pub fn for_request(
+        request: &PlanningWorldStateRequest,
         projection_version: impl Into<String>,
-        perspective_id: impl Into<String>,
-        branch_id: impl Into<String>,
         mut source_refs: Vec<String>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         source_refs.sort();
         source_refs.dedup();
-        Self {
-            request_hash: request_hash.into(),
+        let inputs = Self {
+            request_hash: request.canonical_hash()?,
             projection_version: projection_version.into(),
-            perspective_id: perspective_id.into(),
-            branch_id: branch_id.into(),
+            perspective_id: request.perspective_id.clone(),
+            branch_id: request.branch_id.clone(),
             source_refs,
-        }
+        };
+        inputs.validate()?;
+        Ok(inputs)
     }
 
     /// Validate canonical ordering and required identity components.
@@ -73,6 +83,36 @@ impl PlanningProjectionIdentityInputs {
             warnings,
         })
     }
+
+    /// Validate that identity inputs were derived from this exact request.
+    pub fn validate_for_request(&self, request: &PlanningWorldStateRequest) -> Result<(), String> {
+        self.validate()?;
+        if self.request_hash != request.canonical_hash()?
+            || self.perspective_id != request.perspective_id
+            || self.branch_id != request.branch_id
+        {
+            return Err(
+                "projection identity does not match the canonical projection request".to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<PlanningProjectionIdentityInputsWire> for PlanningProjectionIdentityInputs {
+    type Error = String;
+
+    fn try_from(value: PlanningProjectionIdentityInputsWire) -> Result<Self, Self::Error> {
+        let inputs = Self {
+            request_hash: value.request_hash,
+            projection_version: value.projection_version,
+            perspective_id: value.perspective_id,
+            branch_id: value.branch_id,
+            source_refs: value.source_refs,
+        };
+        inputs.validate()?;
+        Ok(inputs)
+    }
 }
 
 /// Request shape execution sends to a world-model projection boundary.
@@ -92,6 +132,14 @@ pub struct PlanningWorldStateRequest {
     pub requested_dimensions: Vec<String>,
     /// Method preconditions that can be projected with the goal target.
     pub required_preconditions: Vec<meld_lang::Proposition>,
+}
+
+impl PlanningWorldStateRequest {
+    /// Derive a canonical digest from every projection request field.
+    pub fn canonical_hash(&self) -> Result<String, String> {
+        let encoded = serde_json::to_vec(self).map_err(|error| error.to_string())?;
+        Ok(blake3::hash(&encoded).to_hex().to_string())
+    }
 }
 
 /// Provenance for the projected world state consumed by planning.
@@ -117,19 +165,28 @@ mod contract_freeze_tests {
 
     #[test]
     fn projection_identity_inputs_canonicalize_source_order() {
-        let inputs = PlanningProjectionIdentityInputs::new(
-            "request-a",
+        let request = PlanningWorldStateRequest {
+            goal_id: "goal-a".to_string(),
+            agent_id: "agent-a".to_string(),
+            target: meld_lang::Proposition::Not(Box::new(meld_lang::Proposition::All(vec![]))),
+            perspective_id: "agent-a".to_string(),
+            branch_id: "main".to_string(),
+            requested_dimensions: vec!["docs_freshness".to_string()],
+            required_preconditions: Vec::new(),
+        };
+        let inputs = PlanningProjectionIdentityInputs::for_request(
+            &request,
             "projection-v1",
-            "agent-a",
-            "main",
             vec![
                 "source-b".to_string(),
                 "source-a".to_string(),
                 "source-b".to_string(),
             ],
-        );
+        )
+        .unwrap();
 
         assert_eq!(inputs.source_refs, vec!["source-a", "source-b"]);
+        assert!(inputs.validate_for_request(&request).is_ok());
         let first = inputs.frame_ref(Vec::new()).unwrap();
         let second = inputs.frame_ref(Vec::new()).unwrap();
         assert_eq!(first.frame_id, second.frame_id);
