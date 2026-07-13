@@ -1,7 +1,7 @@
 # Production Cognitive Runtime Closure Program
 
-Date: 2026-07-12
-Status: active, Wave 2 accepted and W3A ready
+Date: 2026-07-13
+Status: active, W3A accepted and W3B ready
 Scope: turn the completed event foundation and library-level cognitive flywheel into one honest, restart-safe, operator-visible product runtime
 Base branch: `event-foundation-closeout`
 Recommended program branch: `production-cognitive-runtime-closure`
@@ -56,8 +56,9 @@ Current delivery state:
 
 - Waves 0 and 1 are accepted.
 - Wave 2 is accepted through `de1d54c`.
-- The final integrated rereview found no critical, high, or medium findings.
-- W3A semantic contract and authority freeze is ready.
+- W3A semantic contract and authority freeze is accepted through `0217117`.
+- Final architecture and durability rereviews found no critical, high, or medium findings at `0217117`.
+- W3B semantic actor implementation is ready.
 - The active delivery ledger owns exact commit, gate, review, and next-ready evidence.
 
 ## Program Boundary
@@ -660,7 +661,25 @@ cargo test --test integration_tests product_activation
 
 Replace inert runtime descriptors with bounded domain actors while keeping every semantic cursor, decision, and recovery rule inside the owning domain.
 
-W3A begins from a registered seed and a completed genesis receipt. It must freeze the separate process-hydration contract, readiness checks, activation record ownership, and transition to operational status before curation can be enabled. It must also reconcile the remaining canonical agent fields or record an explicit later-program deferral.
+W3A began from a registered seed and a completed genesis receipt. The accepted freeze separates process hydration from operational readiness, binds readiness to durable belief attestations and planner products, owns activation transitions in the world-model agent domain, and hosts one execution-owned task-network authority as a passive service. Planner identity now preserves the exact world-model frame and projected world-state hash across the execution boundary. Root evidence adaptation is generic replay only, while docs task evidence mapping and belief mutation remain in the world-model belief domain.
+
+### W3A Canonical Agent Field Disposition
+
+Owner: world-model agent domain
+
+Reason: avoid duplicate authority and unauthored policy in the single-seed slice.
+
+Target: the later multi-agent genesis and spawned-agent program beyond this single-seed production closure.
+
+| Field | Disposition |
+| --- | --- |
+| subscription references on `AgentRecord` | superseded by normalized `AgentSubscriptionRecord` values and agent indexes |
+| agent-level evidence policy | superseded for this slice by `BeliefKey` and belief family configuration |
+| trust policy | deferred to the target program |
+| responsibility summary | deferred to the target program |
+| activation policy | deferred to the target program |
+
+The accepted W3A boundary defines authorities and lifecycle contracts only. It does not enable recurring belief, evidence, curation, projection, planning, publication, or satisfaction actors.
 
 ### Scope
 

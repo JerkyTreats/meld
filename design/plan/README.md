@@ -1,6 +1,6 @@
 # Cognitive Architecture Implementation Plan
 
-Date: 2026-07-12
+Date: 2026-07-13
 Status: active
 Scope: declarative implementation readiness and dependency order for the cognitive architecture
 
@@ -21,7 +21,7 @@ The first vertical slice threads the thinnest possible path through every layer 
 
 The typed loop has already proven the full contract chain through `meld-lang` pure types and operations. The vertical slice now makes each layer real with runtime code that materializes state, projects belief, curates goals, and dispatches work.
 
-Production runtime truth is narrower than domain-library completeness. Wave 0 establishes twelve canonical runtime roles, and Wave 2 adds the thirteenth role `world_model.agent.bootstrap.docs_freshness`. Graph replay remains the only concrete default-enabled actor. The bootstrap is concrete and enabled only by explicit activation. Seven recurring semantic actors remain inert and default disabled. Three concrete ports and the concrete `event.append` passive service are not supervisor workers. Wave 1 closes authority and recovery safety without activating those roles. Wave 2 is accepted through `de1d54c`. Explicit product activation validates source-neutral owner inputs and execution assets before stores open, then runs one supervised world-model bootstrap to durable completion with bounded retry for storage failures. Bootstrap confirms registered genesis products without creating agent activation state. W3A semantic contract and authority freeze is ready.
+Production runtime truth is narrower than domain-library completeness. The registry defines exactly fifteen canonical roles: eleven actors, two passive services, and two port-only roles. Graph replay is the only default-enabled role. The bootstrap actor is concrete and enabled only by explicit activation. Nine recurring semantic actors remain inert and default disabled. The concrete `event.append` and `execution.task_network_command` passive services and the two concrete ports are not supervisor workers. Wave 1 closes authority and recovery safety without activating semantic roles. Wave 2 is accepted through `de1d54c`. Explicit product activation validates source-neutral owner inputs and execution assets before stores open, then runs one supervised world-model bootstrap to durable completion with bounded retry for storage failures. W3A is accepted through `0217117`. It freezes proof-bearing process hydration and operational readiness, durable planner frame identity, the execution-owned task-network authority, semantic runtime selection, and passive service lifecycle recovery. No recurring semantic actor is enabled by W3A. W3B semantic actor implementation is ready.
 
 The focused runtime wiring template is [Minimal Runtime Flywheel](integration/minimal_runtime_flywheel.md). Use it after Assessment By Domain work identifies the exact requirements for each participating domain.
 
@@ -109,7 +109,7 @@ These components predate the vertical slice and support all phases.
 | `events` ledger mechanics | complete | `meld-events` |
 | event foundation closeout | closed 2026-07-12 | `meld-events` with root `meld` |
 | product event authority cutover | complete, E5 closed 2026-07-12 | `events` with root `meld` |
-| production cognitive runtime closure | active, Wave 2 accepted and W3A ready | root `meld` with domain crates |
+| production cognitive runtime closure | active, W3A accepted and W3B ready | root `meld` with domain crates |
 | `integration/typed_loop` | complete | `meld-lang` integration tests |
 
 Foundation work follows this order:
@@ -121,7 +121,7 @@ event authority and observability hardening
 -> runtime truth and visibility core complete
 -> authority and recovery correctness complete
 -> product activation accepted
--> semantic contract freeze ready
+-> semantic contract freeze accepted
 -> semantic wiring, product proof, and operator depth
 ```
 
@@ -131,7 +131,7 @@ event authority and observability hardening
 2. event authority and observability hardening — complete, E1 through E4
 3. product event authority cutover — complete, E5 closed 2026-07-12
 4. event foundation closure — closed 2026-07-12, E6
-5. production cognitive runtime closure — active, Wave 2 accepted through `de1d54c`, W3A ready
+5. production cognitive runtime closure — active, W3A accepted through `0217117`, W3B ready
 6. `meld-lang` — complete, Phase 1
 7. `world_model/graph` — complete, Phase 2
 8. `world_model/belief` — complete, Phase 3
@@ -161,7 +161,7 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
 - [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - closed event foundation closeout
 - [integration/production_cognitive_runtime_closure_program.md](integration/production_cognitive_runtime_closure_program.md) - active production runtime implementation and buildout orchestration
-- [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - current executable ledger with Wave 2 accepted and W3A ready
+- [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - current executable ledger with W3A accepted and W3B ready
 - [integration/runtime_operator_visibility_program_ledger.md](integration/runtime_operator_visibility_program_ledger.md) - active child ledger with the runtime visibility core complete under parent Wave 0
 - [integration/runtime_assembly_program_ledger.md](integration/runtime_assembly_program_ledger.md) - historical runtime assembly evidence
 - [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — template

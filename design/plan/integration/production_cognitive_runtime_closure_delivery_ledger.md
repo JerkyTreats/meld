@@ -1,6 +1,6 @@
 # Production Cognitive Runtime Closure Delivery Ledger
 
-Date: 2026-07-12
+Date: 2026-07-13
 Status: implementation in progress
 Program: [Production Cognitive Runtime Closure Program](production_cognitive_runtime_closure_program.md)
 Base branch: `event-foundation-closeout`
@@ -487,6 +487,7 @@ Next ready set: W3A semantic contract and authority freeze
 | W2B3 preflight | passed | `f549c50`, `9b82984` | store-free provider and asset preflight with truthful not-ready presentation passed |
 | W2B3 supervised proof | passed | `09f9747`, `de1d54c` | focused proof, correction gates, and final integrated rereview passed |
 | W2 integrated closeout | passed | `09f9747`, `de1d54c` | all gates passed with no critical, high, or medium review findings |
+| W3A semantic authority freeze | passed | `e9d89f8` through `0217117` | locked check, strict clippy, serial workspace, full all-target and benchmark, formatting, diff, module layout, boundary, architecture review, and durability review gates passed |
 
 ## Review Findings
 
@@ -539,6 +540,14 @@ The later integrated review found missing typed bounded retry treatment for retr
 Commit `de1d54c` closes both findings through typed fatal and retryable classification, stable issue codes and messages, three total supervised attempts, required replacement, diagnostic-preserving exhaustion, and unconditional clean shutdown.
 Focused correction suites and the complete locked gate ladder pass. The final integrated rereview found no critical, high, or medium findings. It validated typed classification, same-tick required replacement, two restart schedules for three total attempts, preservation of the first domain diagnostic, unconditional shutdown, receipt and readiness truth, and UTF-8 bounds.
 
+The first W3A architecture review found three high findings. Operational readiness accepted unverified belief and planner identity strings, hydration lacked durable epoch and lease fencing with a complete failure transition, and execution derived planner identity independently from world-model frames. It also found two medium boundary findings. Canonical agent field disposition was absent, and root evidence adaptation owned docs task semantic mapping.
+
+Commits `5021817`, `0e742ab`, `cc23a68`, and `0217117` bind readiness to owner-verified durable belief attestations and planner products, fence hydration by epoch and lease, seal raw mutation surfaces, preserve restart completion, stabilize reopen recovery, and keep operational status indexes unique. Commits `a610857`, `df850a5`, `bde4a8d`, and `5f9f065` preserve exact world-model frame and world-state identity through execution and prove cross-domain reopen parity. Commit `a288040` moves docs task evidence mapping and belief mutation into the world-model belief domain. The W3A closeout records the canonical field disposition under the world-model agent owner.
+
+The first W3A durability review found two medium issues. An operational retry could acknowledge an in-memory transaction after an indeterminate flush, and a poisoned passive task-network authority was reported unhealthy without guaranteed replacement. Commits `5021817`, `d7eb806`, and `39577b7` require durable replay acknowledgement, trigger health-based replacement, treat bounded saturation as backpressure, preserve poison behavior, and reflush indeterminate shutdown state before replacement.
+
+The final architecture rereview at `0217117` found no critical, high, or medium findings. The final durability rereview at `0217117` also found no critical, high, or medium findings. It verified durable acknowledgement, epoch fencing, poison stickiness, five repeated saturation shutdown and reopen runs, health-triggered replacement, shutdown reflush, hydration fences, sealed mutation surfaces, owner proof verification, repeated operational hydration, indeterminate flush replay, unique status indexing, and cross-domain frame identity.
+
 ## Phase Completion Matrix
 
 | Packet | Status | Implementation Evidence | Test Evidence | Review |
@@ -562,15 +571,16 @@ Focused correction suites and the complete locked gate ladder pass. The final in
 | W2B2 | accepted | sealed method and package binding with store-free deterministic validation | full execution activation and package suites plus strict clippy | passed after asset-sealing fix loop |
 | W2B3 | accepted | repository preflight, supervised durable bootstrap, and bounded retry correction | focused product activation, assembly, tooling, binary, branch runtime, correction, and locked serial gates | final integrated rereview passed |
 | W2 closeout | accepted | owner packages, pure execution binding, registered genesis, supervised one-shot runtime, truthful readiness, and bounded retry | locked all-target check and clippy plus locked serial workspace tests | no critical, high, or medium findings |
-| W3A | ready | accepted Wave 2 registered seed genesis and bootstrap receipt | Wave 2 gates complete | ready for semantic contract and authority freeze |
-| W3B through W6G | blocked | none | none | blocked by prior packet closeout |
+| W3A | accepted | process hydration, operational readiness, planner frame identity, semantic selection, evidence ownership, and task-network passive authority | 481 root library tests, 427 root integration tests, 46 world-model agent tests, 67 world-model library tests, all selected workspace targets, full all-target and benchmark suite | final architecture and durability rereviews found no critical, high, or medium findings |
+| W3B | ready | accepted W3A authority and lifecycle contracts | W3A gates complete | ready for bounded semantic actor implementation |
+| W4A through W6G | blocked | none | none | blocked by prior packet closeout |
 
 ## Risks And Exceptions
 
 - The orchestration surface does not expose model selection, so relative strength is enforced through packet scope and review depth.
 - A separate dirty T3 worktree remains outside this program and must not be reused or modified.
-- Wave 2 closes registered seed genesis only. W3A owns process hydration, readiness, activation record authority, and the transition to operational status.
-- W3A must implement or explicitly defer the remaining canonical agent fields for trust policy, evidence policy, responsibility summary, subscription references, and activation policy.
+- W3A closes authority and lifecycle contracts only. Recurring semantic actors remain disabled until their W3B packets are accepted.
+- Trust policy, responsibility summary, and activation policy remain deferred to the later multi-agent genesis and spawned-agent program under the world-model agent owner.
 - The private embedded-directive compatibility decoder remains until supported stores carry migration receipts and no embedded directive records remain.
 
 ### W0B Runtime Contract Freeze
@@ -840,20 +850,48 @@ Closeout boundary:
 ### W3A Semantic Contract And Authority Freeze
 
 Initial state: blocked by Wave 2 closeout
-Current state: ready
+Current state: accepted through `0217117`
 Threads: zero and one
 Strength: highest available
-Expected commits: shared semantic lifecycle contracts, then execution task-network authority
+Accepted commits: `e9d89f8`, `4cfabc7`, `7920db7`, `d050d7c`, `1377127`, `2bc8f9f`, `574e861`, `6b01c33`, `a610857`, `d7eb806`, `df850a5`, `a288040`, `5021817`, `bde4a8d`, `5f9f065`, `0e742ab`, `39577b7`, `cc23a68`, `0217117`
 
-W3A starts from a registered seed and completed genesis receipt. Before recurring curation is enabled it must freeze process-hydration ownership, readiness checks, agent activation records, the transition to operational status, and the disposition of remaining canonical agent fields for trust policy, evidence policy, responsibility summary, subscription references, and activation policy.
+W3A starts from a registered seed and completed genesis receipt. The accepted freeze gives the world-model agent domain proof-bearing process hydration, readiness, activation record, and operational transition authority. Belief attestations and planner request and frame products are durable owner-verified readiness inputs. Hydration start, failure, retry, and operational completion are fenced by epoch, lease, sequence, and exact durable identity.
 
-Thread one owns new execution authority child modules and focused authority tests.
-Thread zero owns public exports, root lifecycle contracts, and assembly registry integration.
-The authority commit must pass serialization, poison, bounded admission, durable acknowledgement, and reopen tests before actor fanout.
+Execution owns one serialized task-network authority per configured network with cloneable bounded command and query ports, durable acknowledgement, lifecycle epoch fencing, poison behavior, safe shutdown, and reopen recovery. Root hosts that authority as a passive service and replaces an unhealthy authority through supervisor lifecycle without presenting it as a ticking actor. Semantic runtime selection binds accepted Wave 2 receipt identity, exact actor and service sets, and the configured task network. World-model projection frame identity is preserved through execution planning without parallel derivation. Root event adaptation exposes generic replay only, while docs task evidence mapping and belief mutation are world-model belief responsibilities.
+
+Canonical field disposition:
+
+| Field | Disposition |
+| --- | --- |
+| subscription references on `AgentRecord` | superseded by normalized `AgentSubscriptionRecord` values and agent indexes |
+| agent-level evidence policy | superseded for this slice by `BeliefKey` and belief family configuration |
+| trust policy | deferred to the later multi-agent genesis and spawned-agent program |
+| responsibility summary | deferred to the later multi-agent genesis and spawned-agent program |
+| activation policy | deferred to the later multi-agent genesis and spawned-agent program |
+
+Disposition owner: world-model agent domain
+
+Disposition reason: avoid duplicate authority and unauthored policy in the single-seed slice.
+
+Disposition target: the later multi-agent genesis and spawned-agent program beyond this single-seed production closure.
+
+Gate evidence:
+
+- locked workspace all-target check passed
+- locked workspace strict clippy passed
+- locked serial workspace passed with 481 root library tests, 427 root integration tests, 46 world-model agent tests, 67 world-model library tests, and every selected workspace target
+- full all-target suite including benchmarks passed
+- formatting, diff hygiene, no `mod.rs`, and domain boundary scans passed
+- final architecture and durability rereviews at `0217117` found no critical, high, or medium findings
+
+Acceptance boundary: W3A enables no recurring semantic actor and claims no curation, projection tick, planning tick, publication tick, satisfaction tick, task dispatch, provider call, artifact, belief revision, or complete flywheel turn.
+
+Next ready set: W3B semantic actor batch
 
 ### W3B Semantic Actor Batch
 
 Initial state: blocked by W3A
+Current state: ready after accepted W3A
 
 | Packet | Thread | Strength | Exclusive Builder Scope | Expected Commit |
 | --- | ---: | --- | --- | --- |

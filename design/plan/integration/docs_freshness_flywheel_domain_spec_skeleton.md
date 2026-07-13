@@ -1,6 +1,6 @@
 # Docs Freshness Flywheel Domain Spec Skeleton
 
-Date: 2026-07-12
+Date: 2026-07-13
 Status: partially applicable predecessor specification
 Scope: dated domain skeleton for one executable `docs_freshness` flywheel
 
@@ -10,7 +10,7 @@ This document decomposes the original `docs_freshness` flywheel iteration into d
 
 The source report describes the goal and scope. This document turns that scope into buildable contracts, ordered dependencies, and verification targets.
 
-The production cognitive runtime closure program and delivery ledger control current sequencing, evidence, and readiness. Wave 2 is accepted through `de1d54c` with strict activation, pure execution binding, registered seed genesis, and one supervised bootstrap with bounded retry. W3A semantic contract and authority freeze is ready. Recurring semantic work and the complete flywheel remain later waves.
+The production cognitive runtime closure program and delivery ledger control current sequencing, evidence, and readiness. Wave 2 is accepted through `de1d54c` with strict activation, pure execution binding, registered seed genesis, and one supervised bootstrap with bounded retry. W3A semantic contract and authority freeze is accepted through `0217117`, and W3B semantic actor implementation is ready. No recurring semantic actor is enabled by W3A. Recurring semantic work and the complete flywheel remain later waves.
 
 ## Build Principle
 
@@ -299,6 +299,38 @@ Dependencies:
 - directive record schema
 - conflict semantics in registration APIs
 - activation config DTO
+
+## Accepted W3A Semantic Authority Freeze
+
+Owner: world-model agent domain, world-model belief domain, world-model planner domain, execution planning domain, execution task-network domain, and root lifecycle assembly
+
+Accepted contract:
+
+- process hydration start, failure, retry, and operational completion use durable epoch, lease, sequence, and identity fences
+- operational readiness consumes owner-verified durable belief attestations and planner request and frame products
+- planner projection preserves exact world-model frame identity and projected world-state hash through execution
+- one execution-owned task-network authority serializes bounded commands and queries per configured network
+- root hosts the task-network authority as a passive service and does not tick it as an actor
+- root event adaptation exposes generic identity-bearing replay only
+- docs task evidence mapping and belief mutation remain in the world-model belief domain
+
+Canonical agent field disposition:
+
+| Field | Disposition |
+| --- | --- |
+| subscription references on `AgentRecord` | superseded by normalized `AgentSubscriptionRecord` values and agent indexes |
+| agent-level evidence policy | superseded for this slice by `BeliefKey` and belief family configuration |
+| trust policy | deferred to the later multi-agent genesis and spawned-agent program |
+| responsibility summary | deferred to the later multi-agent genesis and spawned-agent program |
+| activation policy | deferred to the later multi-agent genesis and spawned-agent program |
+
+Disposition owner: world-model agent domain
+
+Disposition reason: avoid duplicate authority and unauthored policy in the single-seed slice.
+
+Disposition target: the later multi-agent genesis and spawned-agent program beyond this single-seed production closure.
+
+W3A enables no recurring semantic actor. W3B is ready to implement the bounded belief, evidence, curation, projection, planning, publication, and satisfaction actors against these frozen authorities.
 
 ## World Model Belief Runtime
 
@@ -740,7 +772,7 @@ Runtime handles:
 - execution publication
 - world model satisfaction curation
 
-Wave 2 enables only graph replay and the one-shot world-model bootstrap. The recurring handles in this list remain Wave 3 targets.
+Wave 2 enables only graph replay and the one-shot world-model bootstrap. W3A adds the concrete default-disabled `execution.task_network_command` passive service and freezes actor lifecycle contracts. It enables no recurring semantic actor. The recurring handles in this list remain W3B targets.
 
 Durable records:
 

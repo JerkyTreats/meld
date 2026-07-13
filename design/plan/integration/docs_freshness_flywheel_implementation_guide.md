@@ -1,6 +1,6 @@
 # Docs Freshness Flywheel Implementation Guide
 
-Date: 2026-07-12
+Date: 2026-07-13
 Status: partially applicable predecessor guide
 Scope: dated domain guidance for one executable `docs_freshness` flywheel
 
@@ -47,6 +47,16 @@ Wave 2 accepted state through `de1d54c`:
 - one supervised bootstrap reaches durable completion and exact replay through the canonical runtime lifecycle
 - storage failures retain typed bounded diagnostics and receive at most three supervised activation attempts
 - recurring semantic work and the full flywheel proof remain later waves
+
+W3A accepted state through `0217117`:
+
+- process hydration and operational readiness are separate world-model agent transitions fenced by durable epoch, lease, sequence, and exact identity
+- readiness consumes owner-verified durable belief attestations and planner request and frame products
+- execution planning preserves exact world-model frame identity and projected world-state hash
+- one execution-owned task-network authority provides bounded command and query ports through a concrete passive service
+- passive authority health, replacement, shutdown reflush, poison, saturation, and reopen behavior passed final durability review
+- docs task evidence mapping and belief mutation are owned by the world-model belief domain rather than root assembly
+- no recurring semantic actor is enabled, and W3B semantic actor implementation is ready
 
 ## Architecture Alignment
 
@@ -298,11 +308,14 @@ Owner: `meld-world-model` agent domain.
 
 World-model bootstrap owns staged, source-neutral persistence for belief configuration, directive, registered seed agent, curation rule, subscription, progress, compatibility migration, and final receipt. It recovers exclusively from world-model state and reconfirms immutable genesis products on replay while preserving mutable lifecycle and subscription cursor state.
 
-### Remaining Gaps
+### Accepted W3A Lifecycle And Field Disposition
 
-- supervisor-hosted process activation and operational readiness are Wave 3 work
-- canonical trust policy, evidence policy, responsibility summary, subscription reference, and activation policy fields need implementation or explicit later-program deferral
-- recurring curation remains disabled
+- process hydration start, failure, retry, and operational completion are durable world-model agent transitions
+- normalized `AgentSubscriptionRecord` values and agent indexes supersede duplicate subscription references on `AgentRecord`
+- `BeliefKey` and belief family configuration supersede agent-level evidence policy for this slice
+- trust policy, responsibility summary, and activation policy defer to the later multi-agent genesis and spawned-agent program
+- the world-model agent domain owns the disposition because the single-seed slice must avoid duplicate authority and unauthored policy
+- recurring curation remains disabled until its W3B packet is accepted
 
 ### Accepted Implementation
 
@@ -356,7 +369,7 @@ The compatibility decoder remains private and removable only after supported sto
 
 Owner: `meld-world-model` belief domain.
 
-### Current Code Anchors
+### 2026-06-22 Historical Code Anchors
 
 - Spec skeleton defines belief runtime at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:256`.
 - Belief contracts exist at `crates/meld-world-model/src/belief/contracts.rs:116`, `crates/meld-world-model/src/belief/contracts.rs:188`, `crates/meld-world-model/src/belief/contracts.rs:214`, `crates/meld-world-model/src/belief/contracts.rs:293`, `crates/meld-world-model/src/belief/contracts.rs:420`, and `crates/meld-world-model/src/belief/contracts.rs:444`.
@@ -365,16 +378,20 @@ Owner: `meld-world-model` belief domain.
 - Promoted ingestion is idempotent at `crates/meld-world-model/src/belief/ingestion.rs:123`.
 - Belief store trees start at `crates/meld-world-model/src/belief/store.rs:32`.
 - Planner projection reads public query facades at `crates/meld-world-model/src/planner/query.rs:12`.
-- Root runtime currently maps task success events into promoted evidence at `src/runtime/ports.rs:71`.
 - Reopen proof still injects synthetic belief view near `tests/integration/docs_freshness_reopen_contract.rs:788`.
 
 ### 2026-06-22 Snapshot
 
 The belief runtime is mostly present. It loads config, normalizes graph anchors and promoted records, computes revisions, writes views, and exposes planner-safe reads.
 
-Docs task evidence replay exists as a root runtime port over caller-supplied event windows. It does not own a durable replay cursor.
+### Accepted W3A Evidence Ownership
 
-### Spec Gaps
+The accepted W3A boundary supersedes the historical root-owned replay and mapping shape. World-model belief now owns `DocsTaskEvidenceIngestionRuntime`, semantic mapping, durable evidence mutation, and no-op receipts. Root exposes generic identity-bearing replay through `EvidenceEventReplaySource` only. Recurring durable cursor selection and bounded actor scheduling remain W3B work.
+
+- `DocsTaskEvidenceIngestionRuntime` and its mapping live in `crates/meld-world-model/src/belief/task_evidence.rs`
+- root `ProductEventReplayPort` implements only `EvidenceEventReplaySource` in `src/runtime/ports.rs`
+
+### Remaining W3B Gaps
 
 - Missing explicit `BeliefAssessmentRequest`.
 - Missing bounded dirty-key tick report.
@@ -382,8 +399,6 @@ Docs task evidence replay exists as a root runtime port over caller-supplied eve
 - Config snapshot put overwrites by hash without conflict checking.
 - Graph assessment path does not use the same conflict-safe evidence writes as promoted ingestion.
 - Missing graph anchor is fatal, so configured low confidence for missing evidence is incomplete.
-- Docs event mapping hardcodes source kind and probabilities in root runtime port.
-- Root runtime adapter currently owns too much evidence mapping behavior.
 
 ### Implementation Guide
 
@@ -394,8 +409,8 @@ Docs task evidence replay exists as a root runtime port over caller-supplied eve
 5. Refactor assessment behind `BeliefAssessmentRequest`.
 6. Use conflict-safe evidence writes in graph assessment.
 7. Implement bounded dirty-key ticking with budget, committed count, retryable errors, fatal errors, and output checkpoint.
-8. Move docs replay to a belief runtime handle that loads and persists cursor.
-9. Put event-to-evidence mapping, source kind selection, probability config, cursor advancement, and no-op receipts behind a belief-owned mapper contract.
+8. Wrap `DocsTaskEvidenceIngestionRuntime` in a recurring belief runtime handle that selects durable replay windows and persists its cursor.
+9. Keep source kind selection, probability config, evidence mutation, and no-op receipts inside the accepted world-model belief mapper.
 10. Extend proofs so belief view is rebuilt from revision state after reopen.
 
 ### Contracts To Add Or Change
@@ -404,7 +419,7 @@ Docs task evidence replay exists as a root runtime port over caller-supplied eve
 - `BeliefDirtyKeyTickRequest`
 - `BeliefRuntimeTickReport`
 - `BeliefEvidenceReplayCursorRecord`
-- belief-owned docs event evidence mapper contract
+- recurring docs task evidence cursor and selection contract
 - durable no-op receipt for skipped events
 - durable no-op receipt for docs writer failure events
 - expanded docs task evidence replay report
@@ -437,7 +452,7 @@ Cursor ownership is the main boundary risk. If root owns it, belief replay is no
 
 Owner: `meld-world-model` agent domain.
 
-### Current Code Anchors
+### 2026-06-22 Historical Code Anchors
 
 - Spec skeleton defines curation and satisfaction at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:322`.
 - Curation dedupe keys exist at `crates/meld-world-model/src/agent/contracts.rs:202`.
@@ -504,7 +519,7 @@ Two delivery paths can diverge. Product runtime should use the sink-safe runtime
 
 Owner: `meld-execution` goals domain.
 
-### Current Code Anchors
+### 2026-06-22 Historical Code Anchors
 
 - Spec skeleton defines execution goals at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:387`.
 - Goal records are defined at `crates/meld-execution/src/goals/contracts.rs:7`.
@@ -574,7 +589,7 @@ Receipt hashing must be schema stable. Existing persisted outcome records need c
 
 Owner: `meld-execution` planning and task package adapter.
 
-### Current Code Anchors
+### 2026-06-22 Historical Code Anchors
 
 - Spec skeleton defines this bridge at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:442`.
 - Planning runtime lowers composed plans at `crates/meld-execution/src/planning/runtime.rs:346`.
@@ -667,7 +682,7 @@ Fixing object refs only in the package bridge may leave generic lowering violati
 
 Owner: `meld-execution` task network and task runtime domains.
 
-### Current Code Anchors
+### 2026-06-22 Historical Code Anchors
 
 - Spec skeleton defines task dispatch at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:518`.
 - Docs writer package trigger request is used at `tests/integration/docs_writer_task.rs:302` and `tests/integration/docs_writer_task.rs:386`.
@@ -744,7 +759,7 @@ Existing tests prepare many dependencies manually. Runtime dispatch must replace
 
 Owner: `meld-execution` publication runtime plus events domain.
 
-### Current Code Anchors
+### 2026-06-22 Historical Code Anchors
 
 - Spec skeleton defines publication at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:582`.
 - Publication runtime exists at `crates/meld-execution/src/task_network/runtime.rs:20`.
@@ -808,7 +823,7 @@ Failure publication policy is explicit for this slice: publication may append th
 
 Owner: runtime supervisor and domain runtime handles.
 
-### Current Code Anchors
+### 2026-06-22 Historical Code Anchors
 
 - Spec skeleton defines handles at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:628`.
 - Supervisor stores `InertRuntimeHandle` values at `src/runtime/supervisor/entrypoint.rs:175`.
@@ -823,10 +838,15 @@ Owner: runtime supervisor and domain runtime handles.
 
 Supervisor owns lifecycle, leases, heartbeat, health snapshots, restart policy, shutdown, safe points, and flush. It hosts the concrete graph replay actor and the one-shot docs freshness bootstrap. The bootstrap handle delegates one bounded semantic operation to world-model ownership, reports durable progress, becomes no-work after its receipt exists, and participates in clean shutdown.
 
+### Accepted W3A State
+
+Supervisor now hosts `execution.task_network_command` as a concrete default-disabled passive service after acquiring its lifecycle lease. The service never receives actor ticks. Failed health suppresses renewal and drives replacement through safe stop, flush, release, reopen, and a new authority epoch. Bounded mailbox saturation remains healthy backpressure. Indeterminate shutdown state is reflushed before replacement resumes.
+
+Process hydration and operational readiness are defined by world-model agent contracts rather than supervisor policy. The supervisor provides lifecycle fencing and hosting only. No recurring belief, evidence, curation, projection, planning, publication, or satisfaction actor is enabled by W3A.
+
 ### Spec Gaps
 
 - Recurring belief, evidence, curation, planning, dispatch, publication, and satisfaction handles remain disabled.
-- Process activation and operational agent readiness remain undefined.
 - Provider-dependent dispatch remains disabled.
 - Shutdown safe point is lifecycle-only, not tied to domain cursor flush reports.
 - Scan execution route must be explicit. This guide uses task dispatch for `workspace_scan`, not a separate supervisor scan handle.
@@ -878,7 +898,7 @@ Supervisor must not become semantic orchestration logic. Keep ordering in handle
 
 Owner: CLI adapter.
 
-### Current Code Anchors
+### 2026-06-22 Historical Code Anchors
 
 - Spec skeleton defines CLI activation at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:687`.
 - Runtime commands exist at `src/cli/parse.rs:127` and `src/cli/parse.rs:275`.
@@ -936,7 +956,7 @@ The command can become too broad if it tries to be both configuration authoring 
 
 Owner: integration test suite.
 
-### Current Code Anchors
+### 2026-06-22 Historical Code Anchors
 
 - Spec skeleton defines proof at `design/plan/integration/docs_freshness_flywheel_domain_spec_skeleton.md:736`.
 - Reopen after active goal is at `tests/integration/docs_freshness_reopen_contract.rs:255`.
