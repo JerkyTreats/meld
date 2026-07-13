@@ -930,10 +930,55 @@ mod tests {
 
         assert_eq!(left.receipt, right.receipt);
         assert_eq!(left.progress, right.progress);
-        let runtime = open(temp.path());
+        let db = sled::open(temp.path()).unwrap();
+        let store = AgentStore::new(db.clone()).unwrap();
+        let agent = store.get_agent("seed-a").unwrap().unwrap();
+        let subscription = store
+            .subscription_by_agent_and_key("seed-a", &input().belief_key)
+            .unwrap()
+            .unwrap();
+        assert!(left.receipt.completed_at_seq > agent.updated_at_seq);
+        assert!(left.receipt.completed_at_seq > subscription.updated_at_seq);
+        let runtime = AgentBootstrapRuntime::new(db).unwrap();
         let replay = runtime.bootstrap(&input()).unwrap();
         assert!(!replay.work_performed);
         assert_eq!(replay.receipt, left.receipt);
+    }
+
+    #[test]
+    fn completion_refloors_after_lifecycle_mutation_following_product_confirmation() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = sled::open(temp.path()).unwrap();
+        let store = AgentStore::new(db.clone()).unwrap();
+        let runtime = AgentBootstrapRuntime::new(db).unwrap();
+        let report = runtime
+            .bootstrap_inner(&input(), |stage| {
+                if stage == AgentBootstrapStage::ProductsConfirmed {
+                    let mut agent = store.get_agent("seed-a").unwrap().unwrap();
+                    agent.status = AgentStatus::Operational;
+                    agent.updated_at_seq = 120;
+                    store.put_agent(&agent).unwrap();
+                    let mut subscription = store
+                        .subscription_by_agent_and_key("seed-a", &input().belief_key)
+                        .unwrap()
+                        .unwrap();
+                    subscription.status = AgentSubscriptionStatus::Suspended;
+                    subscription.last_delivered_revision_id =
+                        Some("revision-after-confirmation".to_string());
+                    subscription.last_delivered_seq = 120;
+                    subscription.updated_at_seq = 121;
+                    store.put_subscription(&subscription).unwrap();
+                    store.flush().unwrap();
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(report.receipt.completed_at_seq > 121);
+        assert_eq!(
+            store.get_agent("seed-a").unwrap().unwrap().status,
+            AgentStatus::Operational
+        );
     }
 
     #[test]
@@ -968,8 +1013,23 @@ mod tests {
         }
 
         let runtime = open(temp.path());
+        let interrupted = runtime.bootstrap_inner(&input(), |stage| {
+            if stage == AgentBootstrapStage::ProductsConfirmed {
+                Err(AgentBootstrapError::Storage {
+                    message: "injected before final receipt".to_string(),
+                })
+            } else {
+                Ok(())
+            }
+        });
+        assert!(interrupted.is_err());
+        let confirmed = runtime.progress("bootstrap-a").unwrap().unwrap();
+        assert_eq!(confirmed.stage, AgentBootstrapStage::ProductsConfirmed);
+        assert!(confirmed.updated_at_seq > 92);
         let report = runtime.bootstrap(&input()).unwrap();
         assert_eq!(report.progress.stage, AgentBootstrapStage::Completed);
+        assert!(report.receipt.completed_at_seq > 92);
+        assert!(report.receipt.completed_at_seq > confirmed.updated_at_seq);
         drop(runtime);
         let store = AgentStore::new(sled::open(temp.path()).unwrap()).unwrap();
         assert_eq!(

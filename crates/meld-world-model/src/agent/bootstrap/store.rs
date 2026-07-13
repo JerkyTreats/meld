@@ -451,7 +451,9 @@ impl BootstrapStore {
                     if stage_at_least(current.stage, AgentBootstrapStage::ProductsConfirmed) {
                         return Ok(current);
                     }
-                    let seq = allocate_sequence(sequence)?;
+                    let floor = durable_product_sequence_floor_tx(&agent, &subscription)?
+                        .max(current.updated_at_seq);
+                    let seq = allocate_sequence_after(sequence, floor)?;
                     let next = next_progress(&current, AgentBootstrapStage::ProductsConfirmed, seq);
                     progress.insert(bootstrap_id, encode_tx(&next)?.as_slice())?;
                     Ok(next)
@@ -468,8 +470,14 @@ impl BootstrapStore {
         subscription_id: String,
     ) -> Result<(AgentBootstrapProgress, AgentBootstrapReceipt), AgentBootstrapError> {
         let bootstrap_id = identity.bootstrap_id.as_bytes();
-        (&self.sequence, &self.progress, &self.receipts)
-            .transaction(|(sequence, progress, receipts)| {
+        (
+            &self.sequence,
+            &self.progress,
+            &self.receipts,
+            &self.agents,
+            &self.subscriptions,
+        )
+            .transaction(|(sequence, progress, receipts, agents, subscriptions)| {
                 let current = load_progress_tx(progress, bootstrap_id, identity)?;
                 if let Some(raw) = receipts.get(bootstrap_id)? {
                     let receipt: AgentBootstrapReceipt = decode_tx(&raw)?;
@@ -481,7 +489,19 @@ impl BootstrapStore {
                         "bootstrap receipt requires confirmed seed products",
                     ));
                 }
-                let seq = allocate_sequence(sequence)?;
+                let raw = agents
+                    .get(input.seed_agent.agent_id.as_bytes())?
+                    .ok_or_else(|| abort_storage("configured agent is missing"))?;
+                let agent: AgentRecord = decode_tx(&raw)?;
+                require_canonical_agent_matches(&agent, input)?;
+                let raw = subscriptions
+                    .get(subscription_id.as_bytes())?
+                    .ok_or_else(|| abort_storage("configured subscription is missing"))?;
+                let subscription: AgentSubscriptionRecord = decode_tx(&raw)?;
+                require_subscription_matches(&subscription, input, &subscription_id)?;
+                let floor = durable_product_sequence_floor_tx(&agent, &subscription)?
+                    .max(current.updated_at_seq);
+                let seq = allocate_sequence_after(sequence, floor)?;
                 let receipt = AgentBootstrapReceipt {
                     receipt_id: deterministic_id("agent-bootstrap-receipt", &identity.bootstrap_id),
                     bootstrap_id: identity.bootstrap_id.clone(),
@@ -656,6 +676,24 @@ fn require_agent_sequence_shape_tx(
     } else {
         Ok(())
     }
+}
+
+fn durable_product_sequence_floor_tx(
+    agent: &AgentRecord,
+    subscription: &AgentSubscriptionRecord,
+) -> Result<u64, ConflictableTransactionError<BootstrapAbort>> {
+    require_agent_sequence_shape_tx(agent)?;
+    if subscription.updated_at_seq < subscription.created_at_seq {
+        return Err(abort_storage(
+            "subscription updated sequence precedes creation sequence",
+        ));
+    }
+    Ok(agent
+        .created_at_seq
+        .max(agent.updated_at_seq)
+        .max(subscription.created_at_seq)
+        .max(subscription.updated_at_seq)
+        .max(subscription.last_delivered_seq))
 }
 
 fn require_subscription_matches(
