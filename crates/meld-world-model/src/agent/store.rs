@@ -3,6 +3,8 @@
 use std::io;
 use std::sync::Arc;
 
+#[cfg(test)]
+use parking_lot::Mutex;
 use sled::{
     transaction::{ConflictableTransactionError, TransactionError, Transactional},
     Db, Tree,
@@ -20,9 +22,11 @@ use crate::agent::contracts::{
 };
 use crate::agent::hydration::{
     AgentProcessHydrationRecord, AgentProcessHydrationStatus, AgentReadinessProof,
-    MarkAgentOperationalCommand,
+    FailAgentHydrationCommand, MarkAgentOperationalCommand, StartAgentHydrationCommand,
 };
+use crate::belief::store::TREE_READINESS_ATTESTATIONS;
 use crate::error::StorageError;
+use crate::planner::store::{TREE_PROJECTION_FRAMES, TREE_PROJECTION_REQUESTS};
 
 const TREE_AGENT_RECORDS: &str = "agent_records";
 const TREE_AGENT_BY_STATUS: &str = "agent_by_status";
@@ -45,8 +49,16 @@ const TREE_BOOTSTRAP_RECEIPTS: &str = "agent_bootstrap_receipts";
 const TREE_LEGACY_MIGRATION_RECEIPTS: &str = "agent_legacy_directive_migration_receipts";
 const TREE_PROCESS_HYDRATIONS: &str = "agent_process_hydrations";
 const TREE_PROCESS_HYDRATIONS_BY_AGENT: &str = "agent_process_hydrations_by_agent";
+const TREE_HYDRATION_EPOCHS: &str = "agent_hydration_epochs";
+const TREE_CURRENT_HYDRATIONS: &str = "agent_current_hydrations";
 const TREE_READINESS_PROOFS: &str = "agent_readiness_proofs";
 const KEY_PAD: usize = 20;
+
+#[cfg(test)]
+#[derive(Default)]
+struct FlushProbe {
+    fail_next: bool,
+}
 
 /// Sled backed storage for durable agent records and indexes.
 #[derive(Clone)]
@@ -73,7 +85,14 @@ pub struct AgentStore {
     legacy_migration_receipts: Tree,
     process_hydrations: Tree,
     process_hydrations_by_agent: Tree,
+    hydration_epochs: Tree,
+    current_hydrations: Tree,
     readiness_proofs: Tree,
+    belief_readiness_attestations: Tree,
+    planner_projection_requests: Tree,
+    planner_projection_frames: Tree,
+    #[cfg(test)]
+    flush_probe: Arc<Mutex<FlushProbe>>,
 }
 
 impl AgentStore {
@@ -127,7 +146,22 @@ impl AgentStore {
             process_hydrations_by_agent: db
                 .open_tree(TREE_PROCESS_HYDRATIONS_BY_AGENT)
                 .map_err(to_storage_io)?,
+            hydration_epochs: db.open_tree(TREE_HYDRATION_EPOCHS).map_err(to_storage_io)?,
+            current_hydrations: db
+                .open_tree(TREE_CURRENT_HYDRATIONS)
+                .map_err(to_storage_io)?,
             readiness_proofs: db.open_tree(TREE_READINESS_PROOFS).map_err(to_storage_io)?,
+            belief_readiness_attestations: db
+                .open_tree(TREE_READINESS_ATTESTATIONS)
+                .map_err(to_storage_io)?,
+            planner_projection_requests: db
+                .open_tree(TREE_PROJECTION_REQUESTS)
+                .map_err(to_storage_io)?,
+            planner_projection_frames: db
+                .open_tree(TREE_PROJECTION_FRAMES)
+                .map_err(to_storage_io)?,
+            #[cfg(test)]
+            flush_probe: Arc::new(Mutex::new(FlushProbe::default())),
             db,
         })
     }
@@ -417,29 +451,6 @@ impl AgentStore {
             .collect())
     }
 
-    /// Write an activation record and its agent index.
-    pub fn put_activation(&self, record: &AgentActivationRecord) -> Result<(), StorageError> {
-        record.validate()?;
-        self.activations
-            .insert(
-                record.activation_id.as_bytes(),
-                serde_json::to_vec(record).map_err(to_storage_data)?,
-            )
-            .map_err(to_storage_io)?;
-        self.activations_by_agent
-            .insert(
-                activation_agent_key(
-                    &record.agent_id,
-                    record.started_at_seq,
-                    &record.activation_id,
-                )
-                .as_bytes(),
-                record.activation_id.as_bytes(),
-            )
-            .map_err(to_storage_io)?;
-        Ok(())
-    }
-
     /// Read one activation record by id.
     pub fn get_activation(
         &self,
@@ -474,47 +485,358 @@ impl AgentStore {
         Ok(out)
     }
 
-    /// Persist one process-hydration attempt and its agent index.
-    pub fn put_process_hydration(
+    /// Atomically begin one fenced hydration attempt and its activation diagnostic.
+    pub fn start_process_hydration(
         &self,
-        record: &AgentProcessHydrationRecord,
-    ) -> Result<(), StorageError> {
-        record
+        command: &StartAgentHydrationCommand,
+    ) -> Result<AgentProcessHydrationRecord, StorageError> {
+        command
             .validate()
             .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
-        let hydration_id = record.hydration_id.as_bytes();
-        let index_key = hydration_agent_key(
-            &record.agent_id,
-            record.started_at_seq,
-            &record.hydration_id,
+        let agent = self.get_agent(&command.agent_id)?.ok_or_else(|| {
+            StorageError::InvalidPath(format!("unknown agent '{}'", command.agent_id))
+        })?;
+        if agent.status != AgentStatus::Registered {
+            return Err(StorageError::Backpressure(format!(
+                "agent '{}' is not registered for hydration",
+                command.agent_id
+            )));
+        }
+
+        let durable_epoch = self.current_hydration_epoch(&command.agent_id)?;
+        let durable_hydration_id = self.current_hydration_id(&command.agent_id)?;
+        let started = AgentProcessHydrationRecord {
+            hydration_id: command.hydration_id.clone(),
+            agent_id: command.agent_id.clone(),
+            attempt_epoch: command.attempt_epoch,
+            status: AgentProcessHydrationStatus::Started,
+            readiness_proof_id: None,
+            lease_id: command.lease_id.clone(),
+            last_error: None,
+            started_at_seq: command.started_at_seq,
+            updated_at_seq: command.started_at_seq,
+        };
+        started
+            .validate()
+            .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
+        let activation = AgentActivationRecord {
+            activation_id: command.hydration_id.clone(),
+            agent_id: command.agent_id.clone(),
+            started_at_seq: command.started_at_seq,
+            attempt_epoch: command.attempt_epoch,
+            updated_at_seq: command.started_at_seq,
+            status: AgentActivationStatus::Started,
+            last_error: None,
+            lease_id: Some(command.lease_id.clone()),
+        };
+        activation.validate()?;
+
+        if durable_epoch == command.attempt_epoch
+            && durable_hydration_id.as_deref() == Some(command.hydration_id.as_str())
+        {
+            let durable_hydration = self
+                .get_process_hydration(&command.hydration_id)?
+                .ok_or_else(|| {
+                    StorageError::Backpressure(
+                        "current hydration record is missing during start replay".to_string(),
+                    )
+                })?;
+            let durable_activation =
+                self.get_activation(&command.hydration_id)?.ok_or_else(|| {
+                    StorageError::Backpressure(
+                        "current activation diagnostic is missing during start replay".to_string(),
+                    )
+                })?;
+            if durable_hydration != started || durable_activation != activation {
+                return Err(StorageError::Backpressure(
+                    "hydration start replay conflicts with durable state".to_string(),
+                ));
+            }
+            self.verify_hydration_replay_fences(&agent, &started, &activation)?;
+            self.flush_durable("hydration start replay")?;
+            return Ok(started);
+        }
+        if durable_epoch != command.expected_prior_attempt_epoch {
+            return Err(StorageError::Backpressure(format!(
+                "hydration epoch changed for agent '{}'",
+                command.agent_id
+            )));
+        }
+
+        let prior = durable_hydration_id
+            .as_deref()
+            .map(|hydration_id| self.require_hydration_pair(hydration_id))
+            .transpose()?;
+        let mut failed_prior = None;
+        if let Some((prior_hydration, prior_activation)) = &prior {
+            if prior_hydration.agent_id != command.agent_id
+                || prior_hydration.attempt_epoch != durable_epoch
+                || prior_activation.agent_id != command.agent_id
+                || prior_activation.attempt_epoch != durable_epoch
+            {
+                return Err(StorageError::Backpressure(
+                    "prior hydration products do not match the durable epoch".to_string(),
+                ));
+            }
+            if prior_hydration.status == AgentProcessHydrationStatus::Started {
+                if command.started_at_seq <= prior_hydration.updated_at_seq
+                    || prior_activation.status != AgentActivationStatus::Started
+                {
+                    return Err(StorageError::Backpressure(
+                        "prior hydration cannot be superseded at the requested sequence"
+                            .to_string(),
+                    ));
+                }
+                let diagnostic =
+                    format!("superseded by hydration attempt '{}'", command.hydration_id);
+                let mut hydration = prior_hydration.clone();
+                hydration.status = AgentProcessHydrationStatus::Failed;
+                hydration.last_error = Some(diagnostic.clone());
+                hydration.updated_at_seq = command.started_at_seq;
+                let mut activation = prior_activation.clone();
+                activation.status = AgentActivationStatus::Failed;
+                activation.last_error = Some(diagnostic);
+                activation.updated_at_seq = command.started_at_seq;
+                failed_prior = Some((hydration, activation));
+            }
+        }
+
+        let expected_agent = serde_json::to_vec(&agent).map_err(to_storage_data)?;
+        let started_bytes = serde_json::to_vec(&started).map_err(to_storage_data)?;
+        let activation_bytes = serde_json::to_vec(&activation).map_err(to_storage_data)?;
+        let epoch_bytes = encode_epoch(command.attempt_epoch);
+        let expected_epoch_bytes = encode_epoch(durable_epoch);
+        let hydration_index = hydration_agent_key(
+            &command.agent_id,
+            command.started_at_seq,
+            &command.hydration_id,
         );
-        let encoded = serde_json::to_vec(record).map_err(to_storage_data)?;
-        (&self.process_hydrations, &self.process_hydrations_by_agent)
-            .transaction(|(hydrations, by_agent)| {
-                if let Some(existing) = hydrations.get(hydration_id)? {
-                    if existing.as_ref() != encoded.as_slice() {
-                        return Err(ConflictableTransactionError::Abort(format!(
-                            "process hydration '{}' conflicts with durable state",
-                            record.hydration_id
-                        )));
+        let activation_index = activation_agent_key(
+            &command.agent_id,
+            command.started_at_seq,
+            &command.hydration_id,
+        );
+        let prior_bytes = prior
+            .as_ref()
+            .map(|(hydration, activation)| -> Result<_, StorageError> {
+                Ok((
+                    serde_json::to_vec(hydration).map_err(to_storage_data)?,
+                    serde_json::to_vec(activation).map_err(to_storage_data)?,
+                ))
+            })
+            .transpose()?;
+        let failed_prior_bytes = failed_prior
+            .as_ref()
+            .map(|(hydration, activation)| -> Result<_, StorageError> {
+                Ok((
+                    serde_json::to_vec(hydration).map_err(to_storage_data)?,
+                    serde_json::to_vec(activation).map_err(to_storage_data)?,
+                ))
+            })
+            .transpose()?;
+
+        (
+            &self.agents,
+            &self.hydration_epochs,
+            &self.current_hydrations,
+            &self.process_hydrations,
+            &self.process_hydrations_by_agent,
+            &self.activations,
+            &self.activations_by_agent,
+        )
+            .transaction(
+                |(
+                    agents,
+                    epochs,
+                    current,
+                    hydrations,
+                    hydration_index_tree,
+                    activations,
+                    activation_index_tree,
+                )| {
+                    require_transaction_value(
+                        agents,
+                        command.agent_id.as_bytes(),
+                        &expected_agent,
+                        "agent",
+                    )?;
+                    require_optional_transaction_value(
+                        epochs,
+                        command.agent_id.as_bytes(),
+                        (durable_epoch != 0).then_some(expected_epoch_bytes.as_slice()),
+                        "hydration epoch",
+                    )?;
+                    require_optional_transaction_value(
+                        current,
+                        command.agent_id.as_bytes(),
+                        durable_hydration_id.as_deref().map(str::as_bytes),
+                        "current hydration",
+                    )?;
+                    if let Some((prior_hydration, prior_activation)) = &prior {
+                        let (expected_hydration, expected_activation) = prior_bytes
+                            .as_ref()
+                            .expect("prior bytes must exist for prior records");
+                        require_transaction_value(
+                            hydrations,
+                            prior_hydration.hydration_id.as_bytes(),
+                            expected_hydration,
+                            "prior hydration",
+                        )?;
+                        require_transaction_value(
+                            activations,
+                            prior_activation.activation_id.as_bytes(),
+                            expected_activation,
+                            "prior activation",
+                        )?;
+                        if let Some((failed_hydration, failed_activation)) = &failed_prior_bytes {
+                            hydrations.insert(
+                                prior_hydration.hydration_id.as_bytes(),
+                                failed_hydration.as_slice(),
+                            )?;
+                            activations.insert(
+                                prior_activation.activation_id.as_bytes(),
+                                failed_activation.as_slice(),
+                            )?;
+                        }
                     }
-                } else {
-                    hydrations.insert(hydration_id, encoded.clone())?;
-                }
-                if let Some(existing) = by_agent.get(index_key.as_bytes())? {
-                    if existing.as_ref() != hydration_id {
-                        return Err(ConflictableTransactionError::Abort(format!(
-                            "process hydration '{}' conflicts with its agent index",
-                            record.hydration_id
-                        )));
-                    }
-                } else {
-                    by_agent.insert(index_key.as_bytes(), hydration_id)?;
-                }
+                    require_optional_transaction_value(
+                        hydrations,
+                        command.hydration_id.as_bytes(),
+                        None,
+                        "new hydration",
+                    )?;
+                    require_optional_transaction_value(
+                        activations,
+                        command.hydration_id.as_bytes(),
+                        None,
+                        "new activation",
+                    )?;
+                    hydrations.insert(command.hydration_id.as_bytes(), started_bytes.as_slice())?;
+                    hydration_index_tree
+                        .insert(hydration_index.as_bytes(), command.hydration_id.as_bytes())?;
+                    activations
+                        .insert(command.hydration_id.as_bytes(), activation_bytes.as_slice())?;
+                    activation_index_tree
+                        .insert(activation_index.as_bytes(), command.hydration_id.as_bytes())?;
+                    epochs.insert(command.agent_id.as_bytes(), epoch_bytes.as_slice())?;
+                    current.insert(command.agent_id.as_bytes(), command.hydration_id.as_bytes())?;
+                    Ok(())
+                },
+            )
+            .map_err(to_agent_transition_error)?;
+        self.flush_durable("hydration start")?;
+        Ok(started)
+    }
+
+    /// Atomically fail one exact current hydration attempt.
+    pub fn fail_process_hydration(
+        &self,
+        command: &FailAgentHydrationCommand,
+    ) -> Result<AgentProcessHydrationRecord, StorageError> {
+        command
+            .validate()
+            .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
+        let (hydration, activation) = self.require_hydration_pair(&command.hydration_id)?;
+        if self.current_hydration_epoch(&hydration.agent_id)? != command.attempt_epoch
+            || self.current_hydration_id(&hydration.agent_id)?.as_deref()
+                != Some(command.hydration_id.as_str())
+            || hydration.attempt_epoch != command.attempt_epoch
+            || hydration.lease_id != command.lease_id
+            || activation.attempt_epoch != command.attempt_epoch
+            || activation.lease_id.as_deref() != Some(command.lease_id.as_str())
+        {
+            return Err(StorageError::Backpressure(
+                "hydration failure command lost its epoch or lease fence".to_string(),
+            ));
+        }
+        if hydration.status == AgentProcessHydrationStatus::Failed {
+            if hydration.updated_at_seq == command.failed_at_seq
+                && hydration.last_error.as_deref() == Some(command.error.as_str())
+                && activation.status == AgentActivationStatus::Failed
+                && activation.updated_at_seq == command.failed_at_seq
+                && activation.last_error.as_deref() == Some(command.error.as_str())
+            {
+                self.verify_current_hydration_products(&hydration, &activation)?;
+                self.flush_durable("hydration failure replay")?;
+                return Ok(hydration);
+            }
+            return Err(StorageError::Backpressure(
+                "hydration failure replay conflicts with durable state".to_string(),
+            ));
+        }
+        if hydration.status != AgentProcessHydrationStatus::Started
+            || activation.status != AgentActivationStatus::Started
+            || hydration.updated_at_seq != command.expected_updated_at_seq
+            || activation.updated_at_seq != command.expected_updated_at_seq
+        {
+            return Err(StorageError::Backpressure(
+                "hydration failure update fence changed".to_string(),
+            ));
+        }
+        let mut failed_hydration = hydration.clone();
+        failed_hydration.status = AgentProcessHydrationStatus::Failed;
+        failed_hydration.last_error = Some(command.error.clone());
+        failed_hydration.updated_at_seq = command.failed_at_seq;
+        let mut failed_activation = activation.clone();
+        failed_activation.status = AgentActivationStatus::Failed;
+        failed_activation.last_error = Some(command.error.clone());
+        failed_activation.updated_at_seq = command.failed_at_seq;
+        failed_hydration
+            .validate()
+            .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
+        failed_activation.validate()?;
+
+        let expected_hydration = serde_json::to_vec(&hydration).map_err(to_storage_data)?;
+        let expected_activation = serde_json::to_vec(&activation).map_err(to_storage_data)?;
+        let failed_hydration_bytes =
+            serde_json::to_vec(&failed_hydration).map_err(to_storage_data)?;
+        let failed_activation_bytes =
+            serde_json::to_vec(&failed_activation).map_err(to_storage_data)?;
+        let epoch_bytes = encode_epoch(command.attempt_epoch);
+        (
+            &self.hydration_epochs,
+            &self.current_hydrations,
+            &self.process_hydrations,
+            &self.activations,
+        )
+            .transaction(|(epochs, current, hydrations, activations)| {
+                require_transaction_value(
+                    epochs,
+                    hydration.agent_id.as_bytes(),
+                    &epoch_bytes,
+                    "hydration epoch",
+                )?;
+                require_transaction_value(
+                    current,
+                    hydration.agent_id.as_bytes(),
+                    command.hydration_id.as_bytes(),
+                    "current hydration",
+                )?;
+                require_transaction_value(
+                    hydrations,
+                    command.hydration_id.as_bytes(),
+                    &expected_hydration,
+                    "hydration",
+                )?;
+                require_transaction_value(
+                    activations,
+                    command.hydration_id.as_bytes(),
+                    &expected_activation,
+                    "activation",
+                )?;
+                hydrations.insert(
+                    command.hydration_id.as_bytes(),
+                    failed_hydration_bytes.as_slice(),
+                )?;
+                activations.insert(
+                    command.hydration_id.as_bytes(),
+                    failed_activation_bytes.as_slice(),
+                )?;
                 Ok(())
             })
             .map_err(to_agent_transition_error)?;
-        Ok(())
+        self.flush_durable("hydration failure")?;
+        Ok(failed_hydration)
     }
 
     /// Read one process-hydration attempt.
@@ -574,7 +896,8 @@ impl AgentStore {
         command
             .validate()
             .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
-        let agent_id = &command.readiness.signal.agent_id;
+        let attestation = &command.readiness.signal.attestation;
+        let agent_id = &attestation.agent_id;
         let Some(agent) = self.get_agent(agent_id)? else {
             return Err(StorageError::InvalidPath(format!(
                 "unknown agent '{agent_id}'"
@@ -585,45 +908,46 @@ impl AgentStore {
         }
         if agent.status != AgentStatus::Registered
             || agent.updated_at_seq != command.readiness.expected_agent_updated_at_seq
+            || agent.subject != attestation.belief_key.subject
+            || agent.perspective_key != attestation.belief_key.perspective
+            || agent.branch_scope != attestation.belief_key.branch_scope
         {
             return Err(StorageError::Backpressure(format!(
-                "registered agent fence changed for '{agent_id}'"
+                "registered agent scope or sequence fence changed for '{agent_id}'"
             )));
         }
 
-        let signal = &command.readiness.signal;
         let subscription = self
-            .get_subscription(&signal.subscription_id)?
+            .get_subscription(&attestation.subscription_id)?
             .ok_or_else(|| {
                 StorageError::InvalidPath(format!(
                     "unknown readiness subscription '{}'",
-                    signal.subscription_id
+                    attestation.subscription_id
                 ))
             })?;
         if subscription.agent_id != *agent_id
             || subscription.status != AgentSubscriptionStatus::Active
-            || subscription.belief_key != signal.belief_key
+            || subscription.belief_key != attestation.belief_key
             || subscription.last_delivered_revision_id.as_deref()
-                != Some(signal.belief_revision_id.as_str())
-            || subscription.last_delivered_seq != signal.processed_at_seq
+                != Some(attestation.belief_revision_id.as_str())
+            || subscription.last_delivered_seq != attestation.attested_at_seq
         {
             return Err(StorageError::Backpressure(format!(
                 "readiness subscription fence changed for '{}'",
-                signal.subscription_id
+                attestation.subscription_id
             )));
         }
 
-        let hydration = self
-            .get_process_hydration(&command.hydration_id)?
-            .ok_or_else(|| {
-                StorageError::InvalidPath(format!(
-                    "unknown process hydration '{}'",
-                    command.hydration_id
-                ))
-            })?;
+        let (hydration, activation) = self.require_hydration_pair(&command.hydration_id)?;
         if hydration.agent_id != *agent_id
             || hydration.status != AgentProcessHydrationStatus::Started
             || hydration.readiness_proof_id.is_some()
+            || hydration.attempt_epoch != command.attempt_epoch
+            || hydration.lease_id != command.lease_id
+            || hydration.updated_at_seq != command.expected_hydration_updated_at_seq
+            || self.current_hydration_epoch(agent_id)? != command.attempt_epoch
+            || self.current_hydration_id(agent_id)?.as_deref()
+                != Some(command.hydration_id.as_str())
         {
             return Err(StorageError::Backpressure(format!(
                 "process hydration fence changed for '{}'",
@@ -631,17 +955,67 @@ impl AgentStore {
             )));
         }
 
-        let activation = self.get_activation(&command.hydration_id)?.ok_or_else(|| {
-            StorageError::InvalidPath(format!(
-                "activation diagnostic '{}' is missing",
-                command.hydration_id
-            ))
-        })?;
-        if activation.agent_id != *agent_id || activation.status != AgentActivationStatus::Started {
+        if activation.agent_id != *agent_id
+            || activation.status != AgentActivationStatus::Started
+            || activation.attempt_epoch != command.attempt_epoch
+            || activation.lease_id.as_deref() != Some(command.lease_id.as_str())
+            || activation.updated_at_seq != command.expected_hydration_updated_at_seq
+        {
             return Err(StorageError::Backpressure(format!(
                 "activation diagnostic fence changed for '{}'",
                 command.hydration_id
             )));
+        }
+
+        let attestation_bytes = serde_json::to_vec(attestation).map_err(to_storage_data)?;
+        let durable_attestation = self
+            .belief_readiness_attestations
+            .get(attestation.attestation_id.as_bytes())
+            .map_err(to_storage_io)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(format!(
+                    "belief readiness attestation '{}' is not durable",
+                    attestation.attestation_id
+                ))
+            })?;
+        if durable_attestation.as_ref() != attestation_bytes.as_slice() {
+            return Err(StorageError::Backpressure(
+                "belief readiness attestation changed before activation".to_string(),
+            ));
+        }
+        let planner_request = &command.readiness.planner_request;
+        let planner_request_bytes = serde_json::to_vec(planner_request).map_err(to_storage_data)?;
+        let durable_planner_request = self
+            .planner_projection_requests
+            .get(planner_request.request.request_id.as_bytes())
+            .map_err(to_storage_io)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(format!(
+                    "planner request '{}' is not durable",
+                    planner_request.request.request_id
+                ))
+            })?;
+        if durable_planner_request.as_ref() != planner_request_bytes.as_slice() {
+            return Err(StorageError::Backpressure(
+                "planner request changed before activation".to_string(),
+            ));
+        }
+        let planner_frame = &command.readiness.planner_frame;
+        let planner_frame_bytes = serde_json::to_vec(planner_frame).map_err(to_storage_data)?;
+        let durable_planner_frame = self
+            .planner_projection_frames
+            .get(planner_frame.identity.frame_id.as_bytes())
+            .map_err(to_storage_io)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(format!(
+                    "planner frame '{}' is not durable",
+                    planner_frame.identity.frame_id
+                ))
+            })?;
+        if durable_planner_frame.as_ref() != planner_frame_bytes.as_slice() {
+            return Err(StorageError::Backpressure(
+                "planner frame changed before activation".to_string(),
+            ));
         }
 
         let mut operational = agent.clone();
@@ -654,6 +1028,7 @@ impl AgentStore {
         let mut activated = activation.clone();
         activated.status = AgentActivationStatus::Activated;
         activated.last_error = None;
+        activated.updated_at_seq = command.updated_at_seq;
 
         let expected_agent = serde_json::to_vec(&agent).map_err(to_storage_data)?;
         let expected_subscription = serde_json::to_vec(&subscription).map_err(to_storage_data)?;
@@ -663,6 +1038,7 @@ impl AgentStore {
         let hydration_bytes = serde_json::to_vec(&ready_hydration).map_err(to_storage_data)?;
         let activation_bytes = serde_json::to_vec(&activated).map_err(to_storage_data)?;
         let proof_bytes = serde_json::to_vec(&command.readiness).map_err(to_storage_data)?;
+        let epoch_bytes = encode_epoch(command.attempt_epoch);
         let status_key = agent_status_key(
             operational.status.index_key(),
             operational.updated_at_seq,
@@ -676,9 +1052,26 @@ impl AgentStore {
             &self.process_hydrations,
             &self.activations,
             &self.readiness_proofs,
+            &self.hydration_epochs,
+            &self.current_hydrations,
+            &self.belief_readiness_attestations,
+            &self.planner_projection_requests,
+            &self.planner_projection_frames,
         )
             .transaction(
-                |(agents, status, subscriptions, hydrations, activations, proofs)| {
+                |(
+                    agents,
+                    status,
+                    subscriptions,
+                    hydrations,
+                    activations,
+                    proofs,
+                    epochs,
+                    current,
+                    attestations,
+                    planner_requests,
+                    planner_frames,
+                )| {
                     require_transaction_value(
                         agents,
                         agent_id.as_bytes(),
@@ -687,7 +1080,7 @@ impl AgentStore {
                     )?;
                     require_transaction_value(
                         subscriptions,
-                        signal.subscription_id.as_bytes(),
+                        attestation.subscription_id.as_bytes(),
                         &expected_subscription,
                         "subscription",
                     )?;
@@ -702,6 +1095,36 @@ impl AgentStore {
                         command.hydration_id.as_bytes(),
                         &expected_activation,
                         "activation",
+                    )?;
+                    require_transaction_value(
+                        epochs,
+                        agent_id.as_bytes(),
+                        &epoch_bytes,
+                        "hydration epoch",
+                    )?;
+                    require_transaction_value(
+                        current,
+                        agent_id.as_bytes(),
+                        command.hydration_id.as_bytes(),
+                        "current hydration",
+                    )?;
+                    require_transaction_value(
+                        attestations,
+                        attestation.attestation_id.as_bytes(),
+                        durable_attestation.as_ref(),
+                        "belief readiness attestation",
+                    )?;
+                    require_transaction_value(
+                        planner_requests,
+                        planner_request.request.request_id.as_bytes(),
+                        durable_planner_request.as_ref(),
+                        "planner request",
+                    )?;
+                    require_transaction_value(
+                        planner_frames,
+                        planner_frame.identity.frame_id.as_bytes(),
+                        durable_planner_frame.as_ref(),
+                        "planner frame",
                     )?;
                     if let Some(existing) = proofs.get(command.readiness.proof_id.as_bytes())? {
                         if existing.as_ref() != proof_bytes.as_slice() {
@@ -721,7 +1144,7 @@ impl AgentStore {
                 },
             )
             .map_err(to_agent_transition_error)?;
-        self.flush()?;
+        self.flush_durable("operational transition")?;
         Ok(operational)
     }
 
@@ -738,14 +1161,53 @@ impl AgentStore {
             && hydration.as_ref().is_some_and(|record| {
                 record.agent_id == agent.agent_id
                     && record.status == AgentProcessHydrationStatus::Ready
+                    && record.attempt_epoch == command.attempt_epoch
+                    && record.lease_id == command.lease_id
+                    && record.updated_at_seq == command.updated_at_seq
                     && record.readiness_proof_id.as_deref()
                         == Some(command.readiness.proof_id.as_str())
             })
             && activation.as_ref().is_some_and(|record| {
                 record.agent_id == agent.agent_id
                     && record.status == AgentActivationStatus::Activated
+                    && record.attempt_epoch == command.attempt_epoch
+                    && record.lease_id.as_deref() == Some(command.lease_id.as_str())
+                    && record.updated_at_seq == command.updated_at_seq
             })
+            && self.current_hydration_epoch(&agent.agent_id)? == command.attempt_epoch
+            && self.current_hydration_id(&agent.agent_id)?.as_deref()
+                == Some(command.hydration_id.as_str())
         {
+            let attestation = &command.readiness.signal.attestation;
+            let request = &command.readiness.planner_request;
+            let frame = &command.readiness.planner_frame;
+            let attestation_bytes = serde_json::to_vec(attestation).map_err(to_storage_data)?;
+            let request_bytes = serde_json::to_vec(request).map_err(to_storage_data)?;
+            let frame_bytes = serde_json::to_vec(frame).map_err(to_storage_data)?;
+            if self
+                .belief_readiness_attestations
+                .get(attestation.attestation_id.as_bytes())
+                .map_err(to_storage_io)?
+                .as_deref()
+                != Some(attestation_bytes.as_slice())
+                || self
+                    .planner_projection_requests
+                    .get(request.request.request_id.as_bytes())
+                    .map_err(to_storage_io)?
+                    .as_deref()
+                    != Some(request_bytes.as_slice())
+                || self
+                    .planner_projection_frames
+                    .get(frame.identity.frame_id.as_bytes())
+                    .map_err(to_storage_io)?
+                    .as_deref()
+                    != Some(frame_bytes.as_slice())
+            {
+                return Err(StorageError::Backpressure(
+                    "operational replay readiness products changed".to_string(),
+                ));
+            }
+            self.flush_durable("operational transition replay")?;
             return Ok(agent);
         }
         Err(StorageError::InvalidPath(format!(
@@ -979,8 +1441,158 @@ impl AgentStore {
 
     /// Flush all sled writes for this store.
     pub fn flush(&self) -> Result<(), StorageError> {
+        #[cfg(test)]
+        {
+            let mut probe = self.flush_probe.lock();
+            if probe.fail_next {
+                probe.fail_next = false;
+                return Err(StorageError::IoError(io::Error::other(
+                    "injected agent store flush failure",
+                )));
+            }
+        }
         self.db.flush().map_err(to_storage_io)?;
         Ok(())
+    }
+
+    fn flush_durable(&self, product: &str) -> Result<(), StorageError> {
+        self.flush().map_err(|error| {
+            StorageError::DurabilityIndeterminate(format!("{product} flush failed: {error}"))
+        })
+    }
+
+    #[cfg(test)]
+    fn fail_next_flush(&self) {
+        self.flush_probe.lock().fail_next = true;
+    }
+
+    fn current_hydration_epoch(&self, agent_id: &str) -> Result<u64, StorageError> {
+        let Some(raw) = self
+            .hydration_epochs
+            .get(agent_id.as_bytes())
+            .map_err(to_storage_io)?
+        else {
+            return Ok(0);
+        };
+        decode_epoch(&raw)
+    }
+
+    fn current_hydration_id(&self, agent_id: &str) -> Result<Option<String>, StorageError> {
+        self.current_hydrations
+            .get(agent_id.as_bytes())
+            .map_err(to_storage_io)?
+            .map(|raw| String::from_utf8(raw.to_vec()).map_err(to_storage_utf8))
+            .transpose()
+    }
+
+    fn require_hydration_pair(
+        &self,
+        hydration_id: &str,
+    ) -> Result<(AgentProcessHydrationRecord, AgentActivationRecord), StorageError> {
+        let hydration = self.get_process_hydration(hydration_id)?.ok_or_else(|| {
+            StorageError::InvalidPath(format!("unknown process hydration '{hydration_id}'"))
+        })?;
+        let activation = self.get_activation(hydration_id)?.ok_or_else(|| {
+            StorageError::InvalidPath(format!("activation diagnostic '{hydration_id}' is missing"))
+        })?;
+        Ok((hydration, activation))
+    }
+
+    fn verify_hydration_replay_fences(
+        &self,
+        agent: &AgentRecord,
+        hydration: &AgentProcessHydrationRecord,
+        activation: &AgentActivationRecord,
+    ) -> Result<(), StorageError> {
+        let agent_bytes = serde_json::to_vec(agent).map_err(to_storage_data)?;
+        let hydration_bytes = serde_json::to_vec(hydration).map_err(to_storage_data)?;
+        let activation_bytes = serde_json::to_vec(activation).map_err(to_storage_data)?;
+        let epoch_bytes = encode_epoch(hydration.attempt_epoch);
+        (
+            &self.agents,
+            &self.hydration_epochs,
+            &self.current_hydrations,
+            &self.process_hydrations,
+            &self.activations,
+        )
+            .transaction(|(agents, epochs, current, hydrations, activations)| {
+                require_transaction_value(
+                    agents,
+                    agent.agent_id.as_bytes(),
+                    &agent_bytes,
+                    "agent",
+                )?;
+                require_transaction_value(
+                    epochs,
+                    agent.agent_id.as_bytes(),
+                    &epoch_bytes,
+                    "hydration epoch",
+                )?;
+                require_transaction_value(
+                    current,
+                    agent.agent_id.as_bytes(),
+                    hydration.hydration_id.as_bytes(),
+                    "current hydration",
+                )?;
+                require_transaction_value(
+                    hydrations,
+                    hydration.hydration_id.as_bytes(),
+                    &hydration_bytes,
+                    "hydration",
+                )?;
+                require_transaction_value(
+                    activations,
+                    activation.activation_id.as_bytes(),
+                    &activation_bytes,
+                    "activation",
+                )?;
+                Ok(())
+            })
+            .map_err(to_agent_transition_error)
+    }
+
+    fn verify_current_hydration_products(
+        &self,
+        hydration: &AgentProcessHydrationRecord,
+        activation: &AgentActivationRecord,
+    ) -> Result<(), StorageError> {
+        let hydration_bytes = serde_json::to_vec(hydration).map_err(to_storage_data)?;
+        let activation_bytes = serde_json::to_vec(activation).map_err(to_storage_data)?;
+        let epoch_bytes = encode_epoch(hydration.attempt_epoch);
+        (
+            &self.hydration_epochs,
+            &self.current_hydrations,
+            &self.process_hydrations,
+            &self.activations,
+        )
+            .transaction(|(epochs, current, hydrations, activations)| {
+                require_transaction_value(
+                    epochs,
+                    hydration.agent_id.as_bytes(),
+                    &epoch_bytes,
+                    "hydration epoch",
+                )?;
+                require_transaction_value(
+                    current,
+                    hydration.agent_id.as_bytes(),
+                    hydration.hydration_id.as_bytes(),
+                    "current hydration",
+                )?;
+                require_transaction_value(
+                    hydrations,
+                    hydration.hydration_id.as_bytes(),
+                    &hydration_bytes,
+                    "hydration",
+                )?;
+                require_transaction_value(
+                    activations,
+                    activation.activation_id.as_bytes(),
+                    &activation_bytes,
+                    "activation",
+                )?;
+                Ok(())
+            })
+            .map_err(to_agent_transition_error)
     }
 
     fn insert_decision_record(
@@ -1076,6 +1688,34 @@ fn require_transaction_value(
     Ok(())
 }
 
+fn require_optional_transaction_value(
+    tree: &sled::transaction::TransactionalTree,
+    key: &[u8],
+    expected: Option<&[u8]>,
+    product: &str,
+) -> Result<(), ConflictableTransactionError<String>> {
+    if tree.get(key)?.as_deref() != expected {
+        return Err(ConflictableTransactionError::Abort(format!(
+            "{product} changed during hydration transition"
+        )));
+    }
+    Ok(())
+}
+
+fn encode_epoch(epoch: u64) -> [u8; 8] {
+    epoch.to_be_bytes()
+}
+
+fn decode_epoch(raw: &[u8]) -> Result<u64, StorageError> {
+    let encoded: [u8; 8] = raw.try_into().map_err(|_| {
+        StorageError::IoError(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "hydration epoch must contain eight bytes",
+        ))
+    })?;
+    Ok(u64::from_be_bytes(encoded))
+}
+
 fn to_agent_transition_error(error: TransactionError<String>) -> StorageError {
     match error {
         TransactionError::Abort(message) => StorageError::Backpressure(message),
@@ -1136,4 +1776,62 @@ fn to_storage_data(err: serde_json::Error) -> StorageError {
 
 fn to_storage_utf8(err: std::string::FromUtf8Error) -> StorageError {
     StorageError::IoError(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::belief::BranchScope;
+    use crate::events::DomainObjectRef;
+    use crate::world_state::graph::PerspectiveKey;
+
+    #[test]
+    fn exact_hydration_start_reflushes_after_indeterminate_flush() {
+        let store = AgentStore::new(
+            sled::Config::new()
+                .temporary(true)
+                .open()
+                .expect("temporary agent database"),
+        )
+        .expect("agent store");
+        let agent = AgentRecord {
+            agent_id: "agent-a".to_string(),
+            perspective_key: PerspectiveKey::new("agent", "a").expect("perspective"),
+            subject: DomainObjectRef::new("workspace", "node", "a").expect("subject"),
+            branch_scope: BranchScope::main(),
+            observation_scope: "readiness".to_string(),
+            directive_id: "directive-a".to_string(),
+            seed_provenance: "test".to_string(),
+            status: AgentStatus::Registered,
+            created_at_seq: 1,
+            updated_at_seq: 1,
+        };
+        store.put_agent(&agent).expect("persist agent");
+        let command = StartAgentHydrationCommand {
+            hydration_id: "hydration-a".to_string(),
+            agent_id: agent.agent_id,
+            expected_prior_attempt_epoch: 0,
+            attempt_epoch: 1,
+            lease_id: "lease-a".to_string(),
+            started_at_seq: 2,
+        };
+
+        store.fail_next_flush();
+        assert!(matches!(
+            store.start_process_hydration(&command),
+            Err(StorageError::DurabilityIndeterminate(_))
+        ));
+        let replayed = store
+            .start_process_hydration(&command)
+            .expect("exact start retry reflushes");
+        assert_eq!(replayed.attempt_epoch, 1);
+        assert_eq!(
+            store
+                .get_activation(&command.hydration_id)
+                .expect("activation read")
+                .expect("activation")
+                .status,
+            AgentActivationStatus::Started
+        );
+    }
 }

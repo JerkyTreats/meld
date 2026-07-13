@@ -1,7 +1,10 @@
 //! Agent registration commands.
 
 use crate::agent::contracts::{AgentRecord, AgentStatus, SeedAgentRegistration};
-use crate::agent::hydration::MarkAgentOperationalCommand;
+use crate::agent::hydration::{
+    AgentProcessHydrationRecord, FailAgentHydrationCommand, MarkAgentOperationalCommand,
+    StartAgentHydrationCommand,
+};
 use crate::agent::store::AgentStore;
 use crate::error::StorageError;
 
@@ -59,5 +62,21 @@ impl<'a> AgentRegistration<'a> {
         command: &MarkAgentOperationalCommand,
     ) -> Result<AgentRecord, StorageError> {
         self.store.mark_agent_operational(command)
+    }
+
+    /// Begin one fenced process-hydration attempt.
+    pub fn start_hydration(
+        &self,
+        command: &StartAgentHydrationCommand,
+    ) -> Result<AgentProcessHydrationRecord, StorageError> {
+        self.store.start_process_hydration(command)
+    }
+
+    /// Fail one exact current process-hydration attempt.
+    pub fn fail_hydration(
+        &self,
+        command: &FailAgentHydrationCommand,
+    ) -> Result<AgentProcessHydrationRecord, StorageError> {
+        self.store.fail_process_hydration(command)
     }
 }

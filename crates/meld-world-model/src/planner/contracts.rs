@@ -272,6 +272,7 @@ pub(crate) fn sort_dedup<T: Ord>(items: &mut Vec<T>) {
 
 const PROJECTION_REQUEST_HASH_DOMAIN: &[u8] = b"meld.planner-projection-request.v1";
 const PROJECTION_FRAME_HASH_DOMAIN: &[u8] = b"meld.planner-projection-frame.v1";
+const PLANNER_WORLD_STATE_HASH_DOMAIN: &[u8] = b"meld.planner-world-state.v1";
 
 /// Durable world-model request for one planner-facing projection frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -422,7 +423,7 @@ impl PlannerProjectionRequestRecord {
     /// Validate request identity, monotonic sequence, and status products.
     pub fn validate(&self) -> Result<(), PlannerProjectionContractError> {
         self.request.validate()?;
-        if self.updated_at_seq < self.created_at_seq {
+        if self.created_at_seq == 0 || self.updated_at_seq < self.created_at_seq {
             return Err(PlannerProjectionContractError::SequenceRegression);
         }
         let products_valid = match self.status {
@@ -464,6 +465,8 @@ pub struct PlannerProjectionFrameIdentity {
     pub projection_version: String,
     /// Canonical digest of the complete projection output.
     pub projection_hash: String,
+    /// Canonical digest of the projected world state for execution verification.
+    pub world_state_hash: String,
     /// Canonically sorted source provenance.
     pub source_refs: Vec<PlannerSourceRef>,
 }
@@ -482,12 +485,14 @@ impl PlannerProjectionFrameIdentity {
             return Err(PlannerProjectionContractError::NonCanonicalFrame);
         }
         let projection_hash = planner_contract_hash(b"meld.planner-projection-output.v1", output)?;
+        let world_state_hash = hash_planner_world_state(&output.world_state)?;
         let mut identity = Self {
             frame_id: String::new(),
             request_id: request.request_id.clone(),
             source_request_hash: request.source_request_hash.clone(),
             projection_version: output.projection_version.clone(),
             projection_hash,
+            world_state_hash,
             source_refs,
         };
         identity.frame_id = identity.derive_id()?;
@@ -505,6 +510,7 @@ impl PlannerProjectionFrameIdentity {
             ),
             ("frame projection version", self.projection_version.as_str()),
             ("frame projection hash", self.projection_hash.as_str()),
+            ("frame world state hash", self.world_state_hash.as_str()),
         ] {
             projection_required(field, value)?;
         }
@@ -529,6 +535,7 @@ impl PlannerProjectionFrameIdentity {
             source_request_hash: &'a str,
             projection_version: &'a str,
             projection_hash: &'a str,
+            world_state_hash: &'a str,
             source_refs: &'a [PlannerSourceRef],
         }
         planner_contract_hash(
@@ -538,6 +545,7 @@ impl PlannerProjectionFrameIdentity {
                 source_request_hash: &self.source_request_hash,
                 projection_version: &self.projection_version,
                 projection_hash: &self.projection_hash,
+                world_state_hash: &self.world_state_hash,
                 source_refs: &self.source_refs,
             },
         )
@@ -560,8 +568,12 @@ impl PlannerProjectionFrame {
     /// Validate output digest, version, provenance, and frame identity.
     pub fn validate(&self) -> Result<(), PlannerProjectionContractError> {
         self.identity.validate()?;
+        if self.completed_at_seq == 0 {
+            return Err(PlannerProjectionContractError::SequenceRegression);
+        }
         if self.output.projection_version != self.identity.projection_version
             || self.output.source_refs != self.identity.source_refs
+            || hash_planner_world_state(&self.output.world_state)? != self.identity.world_state_hash
             || planner_contract_hash(b"meld.planner-projection-output.v1", &self.output)?
                 != self.identity.projection_hash
         {
@@ -569,6 +581,16 @@ impl PlannerProjectionFrame {
         }
         Ok(())
     }
+}
+
+/// Hash one projected world state for cross-domain execution verification.
+///
+/// Execution mirrors this algorithm over serde JSON and carries the
+/// world-model-owned frame id unchanged.
+pub fn hash_planner_world_state(
+    world_state: &WorldState,
+) -> Result<String, PlannerProjectionContractError> {
+    planner_contract_hash(PLANNER_WORLD_STATE_HASH_DOMAIN, world_state)
 }
 
 /// Invalid durable planner projection contract.

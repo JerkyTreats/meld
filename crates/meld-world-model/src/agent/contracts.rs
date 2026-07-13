@@ -192,6 +192,10 @@ pub struct AgentActivationRecord {
     pub agent_id: AgentId,
     /// Sequence assigned when activation began.
     pub started_at_seq: u64,
+    /// Domain-owned hydration attempt epoch that fences stale workers.
+    pub attempt_epoch: u64,
+    /// Last durable update sequence for this activation diagnostic.
+    pub updated_at_seq: u64,
     /// Current activation state.
     pub status: AgentActivationStatus,
     /// Last activation failure message, when present.
@@ -205,6 +209,31 @@ impl AgentActivationRecord {
     pub fn validate(&self) -> Result<(), StorageError> {
         require_non_empty("activation id", &self.activation_id)?;
         require_non_empty("agent id", &self.agent_id)?;
+        if self.attempt_epoch == 0
+            || self.started_at_seq == 0
+            || self.updated_at_seq < self.started_at_seq
+        {
+            return Err(StorageError::InvalidPath(
+                "activation epoch and sequences must advance monotonically".to_string(),
+            ));
+        }
+        match self.status {
+            AgentActivationStatus::Started | AgentActivationStatus::Activated
+                if self.last_error.is_some() =>
+            {
+                return Err(StorageError::InvalidPath(
+                    "non-failed activation cannot carry an error".to_string(),
+                ));
+            }
+            AgentActivationStatus::Failed
+                if self.last_error.as_deref().is_none_or(str::is_empty) =>
+            {
+                return Err(StorageError::InvalidPath(
+                    "failed activation requires an error".to_string(),
+                ));
+            }
+            _ => {}
+        }
         Ok(())
     }
 }

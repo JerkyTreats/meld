@@ -66,6 +66,7 @@ pub mod contracts;
 pub mod evidence;
 pub mod ingestion;
 pub mod query;
+pub mod readiness;
 pub mod runtime;
 pub mod store;
 mod task_evidence;
@@ -92,6 +93,9 @@ pub use ingestion::{
     ingest_promoted_evidence, PromotedEvidenceIngestionRequest, PromotedEvidenceIngestionResult,
 };
 pub use query::BeliefQuery;
+pub use readiness::{
+    hash_readiness_view, BeliefReadinessAttestation, BeliefReadinessAttestationRequest,
+};
 pub use runtime::{BeliefRuntime, RuntimeAssessmentResult};
 pub use store::BeliefStore;
 pub use task_evidence::{

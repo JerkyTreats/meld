@@ -7,7 +7,9 @@
 pub mod contracts;
 pub mod projection;
 pub mod query;
+pub mod store;
 
 pub use contracts::*;
 pub use projection::project_world_state;
 pub use query::PlannerQuery;
+pub use store::PlannerProjectionStore;

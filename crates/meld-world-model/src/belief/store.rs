@@ -33,6 +33,7 @@ use crate::belief::contracts::{
     HydrationRefs, LeaseStatus, LegacyBeliefCompatibilityPosture, ObservationOpportunity,
     ObservationReason,
 };
+use crate::belief::readiness::{BeliefReadinessAttestation, BeliefReadinessAttestationRequest};
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
 use crate::world_state::graph::{PerspectiveKey, TraversalQuery};
@@ -55,6 +56,7 @@ const TREE_EVIDENCE_INGESTION_RECEIPTS: &str = "belief_evidence_ingestion_receip
 const TREE_AUTHORITY_META: &str = "belief_authority_meta";
 const TREE_AUTHORITY_MIGRATION: &str = "belief_authority_migration";
 const TREE_COMMIT_INTENTS: &str = "belief_commit_intents";
+pub(crate) const TREE_READINESS_ATTESTATIONS: &str = "belief_readiness_attestations";
 const KEY_PRODUCT_AUTHORITY_ID: &[u8] = b"product_authority_id";
 const KEY_AUTHORITY_MIGRATION_MARKER: &[u8] = b"marker";
 const KEY_LEGACY_WRITE_FENCE: &[u8] = b"legacy_write_fence";
@@ -91,6 +93,7 @@ pub struct BeliefStore {
     authority_meta: Tree,
     authority_migration: Tree,
     commit_intents: Tree,
+    readiness_attestations: Tree,
     write_gate: Arc<RwLock<()>>,
     #[cfg(test)]
     flush_probe: Arc<Mutex<FlushProbe>>,
@@ -129,6 +132,9 @@ impl BeliefStore {
                 .open_tree(TREE_AUTHORITY_MIGRATION)
                 .map_err(to_storage_io)?,
             commit_intents: db.open_tree(TREE_COMMIT_INTENTS).map_err(to_storage_io)?,
+            readiness_attestations: db
+                .open_tree(TREE_READINESS_ATTESTATIONS)
+                .map_err(to_storage_io)?,
             write_gate,
             #[cfg(test)]
             flush_probe: Arc::new(Mutex::new(FlushProbe::default())),
@@ -1322,6 +1328,133 @@ impl BeliefStore {
         )
     }
 
+    /// Durably attest the exact current view and revision read by hydration.
+    ///
+    /// The revision head, revision record, and complete view participate in the
+    /// same transaction as the attestation. An exact retry always flushes again,
+    /// which resolves an earlier indeterminate flush without accepting drift.
+    pub fn attest_current_view(
+        &self,
+        request: &BeliefReadinessAttestationRequest,
+    ) -> Result<BeliefReadinessAttestation, StorageError> {
+        request.validate()?;
+        let _write = self.writable_guard()?;
+        let key = request.belief_key.index_key();
+        let head = self
+            .revision_head
+            .get(key.as_bytes())
+            .map_err(to_storage_io)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(
+                    "belief readiness attestation requires a current revision".to_string(),
+                )
+            })?;
+        if head.as_ref() != request.expected_revision_id.as_bytes() {
+            return Err(StorageError::Backpressure(
+                "belief revision head changed before readiness attestation".to_string(),
+            ));
+        }
+        let revision_raw = self
+            .revisions
+            .get(request.expected_revision_id.as_bytes())
+            .map_err(to_storage_io)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(
+                    "belief readiness revision is missing from durable history".to_string(),
+                )
+            })?;
+        let revision: BeliefRevision =
+            serde_json::from_slice(&revision_raw).map_err(to_storage_data)?;
+        if revision.belief_key != request.belief_key {
+            return Err(StorageError::InvalidPath(
+                "belief readiness revision belongs to another key".to_string(),
+            ));
+        }
+        let view_raw = self
+            .views
+            .get(key.as_bytes())
+            .map_err(to_storage_io)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(
+                    "belief readiness attestation requires a persisted current view".to_string(),
+                )
+            })?;
+        let view: BeliefView = serde_json::from_slice(&view_raw).map_err(to_storage_data)?;
+        if view.key != request.belief_key
+            || view.current_revision_id.as_deref() != Some(request.expected_revision_id.as_str())
+            || view.view_id.trim().is_empty()
+        {
+            return Err(StorageError::Backpressure(
+                "persisted belief view does not match the readiness revision".to_string(),
+            ));
+        }
+        let attestation = BeliefReadinessAttestation::identified(request, &view)?;
+        let attestation_bytes = serde_json::to_vec(&attestation).map_err(to_storage_data)?;
+
+        use sled::transaction::{ConflictableTransactionError, TransactionError};
+        (
+            &self.revision_head,
+            &self.revisions,
+            &self.views,
+            &self.readiness_attestations,
+        )
+            .transaction(|(heads, revisions, views, attestations)| {
+                require_belief_transaction_value(
+                    heads,
+                    key.as_bytes(),
+                    request.expected_revision_id.as_bytes(),
+                    "belief revision head",
+                )?;
+                require_belief_transaction_value(
+                    revisions,
+                    request.expected_revision_id.as_bytes(),
+                    revision_raw.as_ref(),
+                    "belief revision",
+                )?;
+                require_belief_transaction_value(
+                    views,
+                    key.as_bytes(),
+                    view_raw.as_ref(),
+                    "belief current view",
+                )?;
+                if let Some(existing) = attestations.get(attestation.attestation_id.as_bytes())? {
+                    if existing.as_ref() != attestation_bytes.as_slice() {
+                        return Err(ConflictableTransactionError::Abort(
+                            "belief readiness attestation identity conflict".to_string(),
+                        ));
+                    }
+                } else {
+                    attestations.insert(
+                        attestation.attestation_id.as_bytes(),
+                        attestation_bytes.as_slice(),
+                    )?;
+                }
+                Ok(())
+            })
+            .map_err(|error| match error {
+                TransactionError::Abort(message) => StorageError::Backpressure(message),
+                TransactionError::Storage(error) => to_storage_io(error),
+            })?;
+        self.flush().map_err(|error| {
+            StorageError::DurabilityIndeterminate(format!(
+                "belief readiness attestation flush failed: {error}"
+            ))
+        })?;
+        Ok(attestation)
+    }
+
+    /// Read one belief-owned readiness attestation by deterministic identity.
+    pub fn get_readiness_attestation(
+        &self,
+        attestation_id: &str,
+    ) -> Result<Option<BeliefReadinessAttestation>, StorageError> {
+        decode_optional(
+            self.readiness_attestations
+                .get(attestation_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
     /// Read current views for a subject and perspective.
     pub fn views_for_subject(
         &self,
@@ -1867,6 +2000,20 @@ fn view_subject_index_key(view: &BeliefView) -> String {
     )
 }
 
+fn require_belief_transaction_value(
+    tree: &sled::transaction::TransactionalTree,
+    key: &[u8],
+    expected: &[u8],
+    product: &str,
+) -> Result<(), sled::transaction::ConflictableTransactionError<String>> {
+    if tree.get(key)?.as_deref() != Some(expected) {
+        return Err(sled::transaction::ConflictableTransactionError::Abort(
+            format!("{product} changed during readiness attestation"),
+        ));
+    }
+    Ok(())
+}
+
 fn evidence_cursor_key(cursor: &EvidenceConsumerCursor) -> Result<Vec<u8>, StorageError> {
     serde_json::to_vec(&(
         &cursor.consumer_id,
@@ -2057,6 +2204,44 @@ mod tests {
 
     fn flush_calls(store: &BeliefStore) -> usize {
         store.flush_probe.lock().calls
+    }
+
+    #[test]
+    fn readiness_attestation_exact_retry_reflushes_and_reopens() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("belief-readiness");
+        let request;
+        let attestation;
+        {
+            let store = BeliefStore::new(sled::open(&path).unwrap()).unwrap();
+            let belief_key = key();
+            store.mark_dirty(&belief_key, 1).unwrap();
+            let lease = store.acquire_lease(queued_lease()).unwrap();
+            let revision = revision(&belief_key, "revision-readiness", 1);
+            store.commit_revision(&lease, &revision).unwrap();
+            request = BeliefReadinessAttestationRequest {
+                agent_id: "agent-a".to_string(),
+                subscription_id: "subscription-a".to_string(),
+                belief_key,
+                expected_revision_id: revision.revision_id,
+                attested_at_seq: 2,
+            };
+            let calls_before_attestation = flush_calls(&store);
+            fail_next_flush(&store);
+            assert!(matches!(
+                store.attest_current_view(&request),
+                Err(StorageError::DurabilityIndeterminate(_))
+            ));
+            attestation = store.attest_current_view(&request).unwrap();
+            assert_eq!(flush_calls(&store), calls_before_attestation + 2);
+        }
+        let reopened = BeliefStore::new(sled::open(&path).unwrap()).unwrap();
+        assert_eq!(
+            reopened
+                .get_readiness_attestation(&attestation.attestation_id)
+                .unwrap(),
+            Some(attestation)
+        );
     }
 
     fn revision(key: &BeliefKey, revision_id: &str, end: u64) -> BeliefRevision {
