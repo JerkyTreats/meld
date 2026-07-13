@@ -10,6 +10,7 @@ use meld_world_model::agent::AgentStore;
 use meld_world_model::belief::{
     BeliefAuthorityMigrationIdentity, BeliefStore, LegacyBeliefCompatibilityPosture,
 };
+use meld_world_model::error::StorageError as WorldModelStorageError;
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::store::WorldStateStore;
 use thiserror::Error;
@@ -86,6 +87,14 @@ pub enum ProductStorageError {
     Sled(String),
     #[error("world model store error: {0}")]
     WorldModel(String),
+    #[error("world model store backpressure: {0}")]
+    Backpressure(String),
+    #[error("world model store unavailable: {0}")]
+    Unavailable(String),
+    #[error("storage durability is indeterminate: {0}")]
+    DurabilityIndeterminate(String),
+    #[error("storage migration conflict: {0}")]
+    MigrationConflict(String),
     #[error("execution store error: {0}")]
     Execution(String),
     #[error("context storage error: {0}")]
@@ -210,6 +219,10 @@ impl OpenProductStores {
 /// The event binding is the durable root authority product. Its branch,
 /// ledger identity, and generation derive every belief migration identity so
 /// retries cannot silently select a different source or target authority.
+// TODO compat-shim: remove after all supported workspaces have durable product
+// belief cutover markers and no CLI release can write legacy belief trees. The
+// legacy view parity, source fence, interrupted-stage reopen, and root assembly
+// characterization tests must remain green before this seam is deleted.
 pub(crate) fn migrate_legacy_belief_authority(
     layout: &ProductStorageLayout,
     legacy_store_path: &Path,
@@ -232,12 +245,12 @@ pub(crate) fn migrate_legacy_belief_authority(
     let product = BeliefStore::new(open_db(&product_path)?).map_err(to_world_model)?;
     let posture = product
         .migrate_legacy_authority(&legacy, belief_migration_identity(binding)?)
-        .map_err(to_world_model)?;
+        .map_err(to_belief_migration)?;
 
     // Both the legacy fence and product marker must be durable before caller
     // assembly is allowed to construct any product reader or writer.
-    legacy.flush().map_err(to_world_model)?;
-    product.flush().map_err(to_world_model)?;
+    legacy.flush().map_err(to_belief_durability)?;
+    product.flush().map_err(to_belief_durability)?;
     Ok(posture)
 }
 
@@ -275,8 +288,37 @@ fn to_sled(error: impl ToString) -> ProductStorageError {
     ProductStorageError::Sled(error.to_string())
 }
 
-fn to_world_model(error: impl ToString) -> ProductStorageError {
-    ProductStorageError::WorldModel(error.to_string())
+fn to_world_model(error: WorldModelStorageError) -> ProductStorageError {
+    match error {
+        WorldModelStorageError::Backpressure(message) => ProductStorageError::Backpressure(message),
+        WorldModelStorageError::Unavailable(message) => ProductStorageError::Unavailable(message),
+        WorldModelStorageError::DurabilityIndeterminate(message) => {
+            ProductStorageError::DurabilityIndeterminate(message)
+        }
+        WorldModelStorageError::MigrationConflict(message) => {
+            ProductStorageError::MigrationConflict(message)
+        }
+        WorldModelStorageError::IoError(error) => ProductStorageError::Io(error.to_string()),
+        error => ProductStorageError::WorldModel(error.to_string()),
+    }
+}
+
+fn to_belief_migration(error: WorldModelStorageError) -> ProductStorageError {
+    match error {
+        WorldModelStorageError::Backpressure(message) => ProductStorageError::Backpressure(message),
+        WorldModelStorageError::Unavailable(message) => ProductStorageError::Unavailable(message),
+        WorldModelStorageError::DurabilityIndeterminate(message) => {
+            ProductStorageError::DurabilityIndeterminate(message)
+        }
+        WorldModelStorageError::IoError(error) => {
+            ProductStorageError::DurabilityIndeterminate(error.to_string())
+        }
+        error => ProductStorageError::MigrationConflict(error.to_string()),
+    }
+}
+
+fn to_belief_durability(error: WorldModelStorageError) -> ProductStorageError {
+    ProductStorageError::DurabilityIndeterminate(error.to_string())
 }
 
 fn to_execution(error: impl ToString) -> ProductStorageError {
@@ -555,5 +597,27 @@ mod tests {
         assert!(error
             .to_string()
             .contains("legacy and product belief databases resolve to the same path"));
+    }
+
+    #[test]
+    fn belief_migration_error_mapping_preserves_retry_and_durability_classes() {
+        assert!(matches!(
+            to_belief_migration(WorldModelStorageError::Backpressure("retry".to_string())),
+            ProductStorageError::Backpressure(message) if message == "retry"
+        ));
+        assert!(matches!(
+            to_belief_migration(WorldModelStorageError::IoError(std::io::Error::other(
+                "flush failed"
+            ))),
+            ProductStorageError::DurabilityIndeterminate(message)
+                if message == "flush failed"
+        ));
+        assert!(matches!(
+            to_belief_migration(WorldModelStorageError::InvalidPath(
+                "fence conflict".to_string()
+            )),
+            ProductStorageError::MigrationConflict(message)
+                if message.contains("fence conflict")
+        ));
     }
 }

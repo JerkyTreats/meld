@@ -195,7 +195,21 @@ impl CliRuntimeAssembly {
 }
 
 fn belief_migration_error(error: ProductStorageError) -> ApiError {
-    ApiError::StorageError(StorageError::MigrationConflict(error.to_string()))
+    let error = match error {
+        ProductStorageError::MigrationConflict(message) => StorageError::MigrationConflict(message),
+        ProductStorageError::DurabilityIndeterminate(message) => {
+            StorageError::DurabilityIndeterminate(message)
+        }
+        ProductStorageError::Backpressure(message) => StorageError::Backpressure(message),
+        ProductStorageError::Unavailable(message) => {
+            StorageError::EventAuthorityUnavailable(message)
+        }
+        ProductStorageError::Io(message) | ProductStorageError::Sled(message) => {
+            StorageError::IoError(std::io::Error::other(message))
+        }
+        error => StorageError::InvalidPath(error.to_string()),
+    };
+    ApiError::StorageError(error)
 }
 
 fn product_flush_error(error: ProductStorageError) -> ApiError {
@@ -217,5 +231,32 @@ fn binding_error(error: ProductEventBindingError) -> ApiError {
         ProductEventBindingError::SourceUnavailable(message) => {
             ApiError::StorageError(StorageError::EventAuthorityUnavailable(message))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn belief_cutover_errors_keep_operator_actionability() {
+        assert!(matches!(
+            belief_migration_error(ProductStorageError::DurabilityIndeterminate(
+                "flush failed".to_string()
+            )),
+            ApiError::StorageError(StorageError::DurabilityIndeterminate(message))
+                if message == "flush failed"
+        ));
+        assert!(matches!(
+            belief_migration_error(ProductStorageError::Backpressure("retry".to_string())),
+            ApiError::StorageError(StorageError::Backpressure(message)) if message == "retry"
+        ));
+        assert!(matches!(
+            belief_migration_error(ProductStorageError::MigrationConflict(
+                "fence conflict".to_string()
+            )),
+            ApiError::StorageError(StorageError::MigrationConflict(message))
+                if message == "fence conflict"
+        ));
     }
 }
