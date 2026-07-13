@@ -1,3 +1,6 @@
+use std::path::Path;
+use std::time::Duration;
+
 use meld_execution::planning::{
     PlanningPerspectiveRef, PlanningProjectionIdentityInputs, PlanningWorldStateFrameRef,
     PlanningWorldStateRequest,
@@ -11,6 +14,25 @@ use meld_world_model::planner::{
     PlannerProjectionRequest, PlannerProjectionStore, PlannerSourceRef, PLANNER_PROJECTION_VERSION,
 };
 use meld_world_model::PerspectiveKey;
+
+fn reopen_sled_after_close(path: &Path) -> sled::Result<sled::Db> {
+    const MAX_ATTEMPTS: usize = 50;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        match sled::open(path) {
+            Ok(db) => return Ok(db),
+            Err(error)
+                if error.to_string().contains("could not acquire lock")
+                    && attempt + 1 < MAX_ATTEMPTS =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("the final open attempt returns its error")
+}
 
 fn execution_source_refs(source_refs: &[PlannerSourceRef]) -> Vec<String> {
     let mut encoded = source_refs
@@ -81,19 +103,22 @@ fn durable_world_model_frame_identity_requires_the_exact_execution_projection() 
 
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("planner");
-    {
-        let store = PlannerProjectionStore::new(sled::open(&path).unwrap()).unwrap();
-        store.put_pending(projection_request.clone(), 11).unwrap();
-        store
-            .complete(
-                &projection_request.request_id,
-                11,
-                projection_frame.clone(),
-                12,
-            )
-            .unwrap();
-    }
-    let reopened = PlannerProjectionStore::new(sled::open(&path).unwrap()).unwrap();
+    let db = sled::open(&path).unwrap();
+    let store = PlannerProjectionStore::new(db.clone()).unwrap();
+    store.put_pending(projection_request.clone(), 11).unwrap();
+    store
+        .complete(
+            &projection_request.request_id,
+            11,
+            projection_frame.clone(),
+            12,
+        )
+        .unwrap();
+    db.flush().unwrap();
+    drop(store);
+    drop(db);
+
+    let reopened = PlannerProjectionStore::new(reopen_sled_after_close(&path).unwrap()).unwrap();
     let durable_frame = reopened
         .get_frame(&projection_frame.identity.frame_id)
         .unwrap()
