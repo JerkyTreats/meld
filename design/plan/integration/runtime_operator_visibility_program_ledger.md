@@ -54,6 +54,62 @@ Later visibility waves integrate only after their dependent domain actors and du
 
 The runtime visibility program must not treat action reporting as evidence that an inert actor performs semantic work.
 
+### 2026-07-12 Wave 0 runtime truth gate
+
+Wave 0 freezes twelve canonical runtime ids. Legacy requirement-era ids are ingress aliases only, and all emitted state uses canonical ids.
+
+The registry classifies eight actors, three port-only roles, and one passive service. Only `world_model.graph_replay` is both concrete actor code and default enabled. The other seven actors are inert and default disabled. The three concrete ports and the concrete `event.append` passive service are not supervisor workers and are also default disabled.
+
+Passive status reads product configuration and bounded cache files without constructing `RunContext`, opening the supervisor store, or opening product databases. Foreground runtime publication owns one exclusive cache writer lock. A contender that fails supervisor lease acquisition cannot publish active-owner health.
+
+The cache root is `runtime/status`. Schema version one reads version zero through additive defaults and reports future versions as unsupported. `latest.json` is bounded to one MiB, `actions.jsonl` to four MiB, recent actions to 256, issues per action to 16, and each issue message to 1024 UTF-8 bytes. Snapshot replacement serializes and validates, creates a unique temporary file, writes and syncs it, renames it over the destination, and syncs the parent directory.
+
+This truth supersedes the earlier child-ledger claim that eleven registered roles were enabled semantic workers. Operator visibility must preserve role class and implementation state so passive availability, callable ports, inert actors, and semantic progress cannot be conflated.
+
+### 2026-07-12 canonical hygiene adjudication
+
+The exhaustive W0A scan was rerun across canonical cognitive architecture. Genuine repository-state claims were rewritten as declarative ownership, baseline, dependency, or target contracts. Design requirements, examples, research comparisons, and idempotency statements were preserved.
+
+| Candidate | Adjudication |
+| --- | --- |
+| `meld-lang/PLAN.md` | rewritten from completed implementation ledger to declarative construction contract |
+| `execution/GAPS.md` | rewritten from current code assessment to contract gaps and compatibility migration rules |
+| `world_model/planner/spec.md` | implementation preface and code-gap claims rewritten as projection and public-contract requirements |
+| `world_model/belief/README.md` | landed-slice claims rewritten as durable and baseline belief contracts |
+| `execution/task_network.md` | source-file location claim rewritten as executor ownership |
+| `meld-lang/README.md` | implementation comparison rewritten as domain contract comparison |
+| `world_model/graph/README.md` | current implementation phrasing rewritten as stable graph ownership |
+| `world_model/agent/README.md` | implemented-slice phrasing rewritten as baseline agent contract |
+| `world_model/public_interface.md` | implemented route phrasing rewritten as baseline public route |
+| `world_model/belief/curation.md` | implementation sequencing rewritten as substrate dependency |
+| `execution/planning/planning_pipeline.md` | current code inventory rewritten as layer responsibilities and target deepening |
+| `world_model/planner/README.md` | implemented projection claim rewritten as baseline projection contract |
+| `world_model/belief/substrate.md` | implemented status set rewritten as baseline vocabulary |
+| `world_model/belief/comparator_model.md` | landed interface claim rewritten as baseline comparator contract |
+| `world_model/belief/microarchitecture.md` | landed process claim rewritten as baseline process boundary |
+| `world_model/belief/fact_to_belief.md` | implementation-enabling inventory rewritten as required substrate and evidence links |
+| `world_model/agent/runtime_surface.md` | current output and implementation phrasing rewritten as baseline contract requirements |
+| `core/CRATE.md` | current-code heading rewritten as a declarative product shell source map |
+| `execution/CRATE.md` | status metadata and current-code wording rewritten as crate ownership and module boundaries |
+| `meld-lang/CRATE.md` | current-code heading and no-code claim rewritten as a declarative crate source map |
+| `execution/examples/bayesian_evaluation.md` | retained because it defines the example model |
+| `execution/goals/README.md` | retained because existing-goal language describes dedupe behavior |
+| `execution/planning/htn/README.md` | retained because first-slice language defines target scope |
+| `execution/planning/htn/lineage_model.md` | retained because first-slice language defines target scope |
+| `execution/research/htn_turing.md` | retained because it is a research comparison |
+| `meld-lang/primitives.md` | retained because matches describe grammar coverage and idempotency |
+| `meld-lang/requirements.md` | retained because first-slice language is normative |
+| `meld-lang/world_state.md` | retained because already-exists language defines idempotency |
+| `world_model/agent/genesis_and_activation.md` | retained because first-slice language defines readiness requirements |
+| `world_model/agent/goal_curation.md` | retained because first-slice language defines target policy |
+| `world_model/belief/belief_families.md` | retained because first-slice language bounds future families |
+| `world_model/belief/requirements.md` | retained because first-slice language is normative |
+| `world_model/causation/README.md` | retained because first-slice language defines design scope |
+| `world_model/causation/requirements.md` | retained because first-slice language is normative |
+| `world_model/regime/README.md` | retained because first-slice language defines design scope |
+
+Residual scan matches are therefore intentional canonical design language, not current implementation status.
+
 ### 2026-07-08 event observability workstream
 
 The event observability program additively extended the Wave 0 status contracts: `RuntimeStatusSnapshot` gains an optional, serde-defaulted `ledger` field carrying `RuntimeStatusLedgerSummary`, an operational projection of event ledger health whose authority remains the ledger watermark and cursor registry. Old cache JSON without the field still deserializes, proven by contract test. The `event.append` runtime id now builds a diagnostics-only semantic handle reporting the commit watermark and drop deltas through heartbeats; Wave 3's event runtime reports seam should consume rather than duplicate it.

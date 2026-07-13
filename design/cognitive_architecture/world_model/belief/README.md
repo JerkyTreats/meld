@@ -8,7 +8,7 @@ Scope: priors, posteriors, uncertainty, freshness, contradiction, hypotheses, an
 
 `world_model/belief` answers what should be believed about the graph, how uncertain that belief is, what evidence would change it, and which unresolved uncertainty matters for action.
 
-The earlier belief design is not just implementation history. Its first-slice machinery is still useful: belief keys, evidence items, comparator contracts, revisions, leases, replay, and planner-facing views. What needs elevation is the role of belief in the larger world model architecture. Belief is not only "do we trust the current anchor." It is the generative inference layer over graph state, agent perspective, evidence reliability, hidden causes, and future-relevant uncertainty.
+The baseline belief design supplies belief keys, evidence items, comparator contracts, revisions, leases, replay, and planner-facing views. The broader role of belief is the generative inference layer over graph state, agent perspective, evidence reliability, hidden causes, and future-relevant uncertainty.
 
 Graph tells the system what is current and reachable.
 Belief tells the system what is credible, uncertain, stale, contradicted, predicted, or worth observing.
@@ -35,9 +35,9 @@ It publishes:
 
 Belief does not dispatch tasks, decide execution policy, own causal claims, or decide regime identity. It supplies the posterior state and uncertainty structure those layers need.
 
-## What Remains Durable
+## Durable Contract
 
-These parts of the landed belief work remain active architecture:
+These belief concepts remain durable architecture:
 
 - `BeliefKey` as stable identity for the question being assessed
 - `EvidenceItem` as normalized input from facts, anchors, outcomes, or measurements
@@ -48,7 +48,7 @@ These parts of the landed belief work remain active architecture:
 - lease-based assessment and recovery for concurrent belief maintenance
 - provenance over evidence, revision, and view publication
 
-These are the implementation-shaped primitives that let the research architecture land incrementally.
+These primitives let the research architecture advance incrementally.
 
 ## What Must Broaden
 
@@ -183,7 +183,7 @@ The public contract should therefore make perspective explicit on belief keys, e
 - [Belief Spec](spec.md)
   domain types, data model, and pipelines for belief
 - [Belief Requirements](requirements.md)
-  expanded implementation requirements for belief
+  expanded belief contract requirements
 - [Belief Microarchitecture](microarchitecture.md)
   event, world model, and execution boundaries for belief
 - [Fact To Belief](fact_to_belief.md)
@@ -197,9 +197,9 @@ The public contract should therefore make perspective explicit on belief keys, e
 - [Belief Spec](spec.md)
   consolidated domain types, data model, and pipelines for belief
 
-## Landed First Slice
+## Baseline Belief Contract
 
-The first belief slice has landed without attempting full generative inference or full curation.
+The baseline belief contract remains narrower than full generative inference or full curation.
 
 It defines:
 

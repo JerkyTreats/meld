@@ -209,7 +209,7 @@ Output:
 - optional goal command for execution
 - advanced subscription cursor
 
-The curation rule must not write execution goal state directly. The first slice emits producer curation output, currently `AgentGoalCommand`, that maps into execution's neutral Goal Set API outside execution core.
+The curation rule must not write execution goal state directly. The baseline contract emits `AgentGoalCommand` as producer curation output that maps into execution's neutral Goal Set API outside execution core.
 
 ## Goal Command Dedupe
 
@@ -247,7 +247,7 @@ No live watcher handle may be required to replay curation.
 
 ## First Slice Requirements
 
-The first slice implements:
+The baseline contract requires:
 
 - one seed agent registration path
 - one durable agent record

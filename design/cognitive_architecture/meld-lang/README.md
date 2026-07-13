@@ -14,7 +14,7 @@ The language is pure. No IO, no async, no side effects, no persistence. Every fu
 
 ## Motivation
 
-The gap this crate resolves is the planning pipeline's "missing middle." The world model has strong design across graph, belief, causation, regime, and planner-facing projection. Execution has strong implementation in task compilation, capability contracts, readiness computation, and task execution. Between them sits the planning loop — the process that reads goals and world state, selects or constructs decompositions, and emits task network mutations.
+The gap this crate resolves is the planning pipeline's missing middle. The world model supplies graph, belief, causation, regime, and planner-facing projection contracts. Execution supplies task compilation, capability, readiness, and task execution contracts. Between them sits the planning loop, which reads goals and world state, selects or constructs decompositions, and emits task network mutations.
 
 Previous design iterations attempted to have execution interpret semantic goals through linguistic decomposition layers: parse goal fields, retrieve matching methods by frame analysis, fill precondition gaps through means-end search, and fall back to LLM for novel situations. This pushes epistemic work into execution — the wrong domain for it.
 
@@ -103,8 +103,8 @@ meld (core)
 
 ## Documents
 
-- [Implementation Plan](PLAN.md)
-  phased implementation order, gates, and verification for the `meld-lang` crate
+- [Construction Contract](PLAN.md)
+  phased dependency order, gates, and verification for the `meld-lang` crate
 - [Crate Boundary](CRATE.md)
   crate identity, ownership, dependency rule, forbidden directions
 - [Requirements](requirements.md)

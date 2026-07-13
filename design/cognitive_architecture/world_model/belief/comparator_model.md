@@ -200,9 +200,9 @@ For now, the belief layer should record:
 - suggested artifact type
 - source evidence that made the gap visible
 
-## Landed First Slice
+## Baseline Comparator Contract
 
-The interface has landed before comparator intelligence is broadened.
+The interface remains narrow while comparator intelligence broadens.
 
 The first slice supports:
 

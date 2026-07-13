@@ -59,7 +59,7 @@ This area may describe action relevance, but it must not drift into execution po
 
 The planner-facing projection's downstream output is `WorldState` — a set of ground `Proposition` values in the shared language [`meld-lang`](../../meld-lang/README.md). This is the concrete contract that resolves the world-model-to-execution seam named as Gap 3 in [Execution Gaps](../../execution/GAPS.md).
 
-The implemented first slice projects directly from `BeliefView` plus graph scope into `WorldState` through `project_world_state` and `PlannerQuery::project_current_world_state`.
+The baseline projection maps `BeliefView` plus graph scope into `WorldState` through `project_world_state` and `PlannerQuery::project_current_world_state`.
 
 The broader planner architecture still expects `WorldModelView` from lower-layer inputs. That future projection then translates this richer view into `WorldState` for execution consumption:
 

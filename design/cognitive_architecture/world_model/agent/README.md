@@ -206,9 +206,9 @@ When the capability catalog changes or the subject scope expands, the agent re-s
 
 Agent shutdown is also a goal. The agent's subscriptions are unbound. Active goals curated by this agent are evaluated for transfer to another agent or abandonment. Cleanup runs through the normal task network.
 
-## First Slice
+## Baseline Contract
 
-The implemented first slice remains narrow.
+The baseline agent contract remains narrow.
 
 It defines:
 

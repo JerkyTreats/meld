@@ -327,28 +327,28 @@ When HTN decomposition reaches a task that requires a capability not in the cata
 
 Synthesis is a task in the network, not a special-case pipeline. Graphs lower graphs — the synthesis task is itself a graph of capabilities.
 
-## What Exists Today
+## Layer Responsibilities
 
-### Fully implemented
+### Baseline surfaces
 
-- **task compiler**: `task/compiler.rs` transforms TaskDefinition into CompiledTaskRecord
-- **task executor**: `task/executor.rs` executes a single task's capability graph at the lower level of the fractal
-- **capability catalog**: `capability/catalog.rs` provides versioned capability lookup
-- **task events**: `task/events.rs` builds task lifecycle events
-- **readiness computation**: `task/readiness.rs` computes ready capabilities within a task
-- **goal store**: `goals/` stores execution owned goals and lifecycle command outcomes
-- **method library**: `planning/method_library.rs` loads and verifies serialized methods
-- **planning runtime**: `planning/runtime.rs` turns one active goal and one projected world state into `ExecutionComposition`
-- **expanded execution slice**: [Phase 8 Expanded Execution Slice](../../../plan/execution/task_network/PHASE8.md) lowers multi node compositions, materializes task init payloads, dispatches real task runs, and replays accepted graph state
+- **task compiler**: transforms a task definition into a compiled task record
+- **task executor**: executes one task capability graph at the lower level of the fractal
+- **capability catalog**: provides versioned capability lookup
+- **task events**: carry task lifecycle state
+- **readiness computation**: computes ready capabilities within a task
+- **goal store**: stores execution-owned goals and lifecycle command outcomes
+- **method library**: loads and verifies serialized methods
+- **planning runtime**: turns one active goal and one projected world state into an `ExecutionComposition`
+- **expanded execution contract**: lowers multi node compositions, materializes task inputs, dispatches task runs, and replays accepted graph state
 
-### Designed but not fully implemented
+### Target deepening
 
 - **recursive HTN decomposition**: later planning recurses through sub-goal steps and preserves broader lineage
 - **guard expressions**: fully specified in [Guard Expression Semantics](guard_expression_semantics.md), applicable as conditional dependency edges
 - **observation wait semantics**: fully specified in [Observation Wait Semantics](observation_wait_semantics.md), applicable as data-flow dependencies from observation tasks
 - **task network first slice**: specified in [Phase 7 Task Network Plan](../../../plan/execution/task_network/PLAN.md), covering one inject mutation, one ready task, one dispatch, and one publication handoff
 
-### Deferred Beyond First Slice
+### Later contract scope
 
 - **planning loop**: continuous operation, world-model reads, cost-aware mutation proposal decisions
 - **task network deepening**: recursive sub-goal lowering, cancel, relink, preserve, and prune
@@ -356,7 +356,7 @@ Synthesis is a task in the network, not a special-case pipeline. Graphs lower gr
 - **switching cost model**: cleanup estimation, sunk cost calculation, benefit comparison
 - **plan diffing**: identifying affected subtrees from belief changes, computing minimal mutations
 
-## How The Existing Slices Map
+## Contract Map
 
 | Design slice | Role in this model |
 |---|---|
@@ -370,7 +370,7 @@ Synthesis is a task in the network, not a special-case pipeline. Graphs lower gr
 
 ## Relationship To Workflow Compatibility
 
-Workflows currently short-circuit the planning loop entirely. The user-authored workflow profile IS the plan — a hand-specified task sequence.
+The compatibility workflow route may short-circuit the planning loop. On that route, the user-authored workflow profile is the hand-specified plan.
 
 In the graphs-lower-graphs model, workflow integration becomes clearer:
 
@@ -379,13 +379,13 @@ In the graphs-lower-graphs model, workflow integration becomes clearer:
 - as the planning loop matures, it can produce graphs with parallelism, branching, and observation points
 - the task network executor handles both linear and complex graphs identically — the execution model doesn't change
 
-The workflow executor's current role maps onto the task network graph executor's role. Workflow advances through turns, evaluates gates, and persists state. Task network execution advances through the ready set, evaluates conditional edges, and persists task network state. The existing workflow executor is a specialized instance of the general pattern.
+The workflow executor role maps onto the task network graph executor role. Workflow advances through turns, evaluates gates, and persists state. Task network execution advances through the ready set, evaluates conditional edges, and persists task network state. The workflow executor is a specialized instance of the general pattern.
 
-## Open Gaps
+## Extension Contracts
 
 ### Method Library Deepening
 
-The first method library slice exists and supports serialized `meld-lang::Method` values. The `Method` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md) with:
+The baseline method library contract supports serialized `meld-lang::Method` values. The `Method` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md) with:
 
 - `trigger`: a `Proposition` pattern with `Term::Variable` for unification against goals
 - `preconditions`: `Vec<Proposition>` checked against `WorldState` after trigger unification
@@ -394,7 +394,7 @@ The first method library slice exists and supports serialized `meld-lang::Method
 - `cost`: `CostEstimate` for comparison and ceiling checks
 - `preference`: ordering among alternative methods for the same goal
 
-The method type, matching operations, method loading, verification, and the first `docs_freshness` fixture are implemented. What remains:
+The baseline contract covers method values, matching, loading, verification, and a `docs_freshness` fixture. Deeper scope includes:
 
 - **method authoring**: concrete methods beyond docs freshness, such as test status and course generation
 - **method library operations**: indexing by trigger shape and cache invalidation on file change
@@ -402,7 +402,7 @@ The method type, matching operations, method loading, verification, and the firs
 
 ### Task Network Deepening
 
-The Phase 7 and Phase 8 slices now cover inject mutation, reduced state, ready set computation, dispatch claim fencing, multi node graph execution, task init materialization, real task runtime bridge, durable publication handoff, and replay.
+The baseline task network contract covers inject mutation, reduced state, ready set computation, dispatch claim fencing, multi node graph execution, task input materialization, task runtime bridging, durable publication handoff, and replay.
 
 Later work still requires:
 

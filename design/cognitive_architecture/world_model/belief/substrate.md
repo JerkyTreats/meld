@@ -165,7 +165,7 @@ It must not depend on hidden belief substrate state.
 
 ## Status Vocabulary
 
-The implemented first status set is small:
+The baseline status vocabulary is small:
 
 - settled
 - stale

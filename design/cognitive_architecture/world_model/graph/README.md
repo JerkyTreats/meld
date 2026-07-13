@@ -8,7 +8,7 @@ Scope: current anchor selection, lineage, provenance, traversal, and branch-scop
 
 `world_model/graph` answers what is current, how it became current, where it is present, and how to reach related objects.
 
-This is the current Meld substrate for the rest of the world model. It is not the belief layer, a causal graph, a regime detector, or a planner. It is the replayable bitemporal graph surface that those layers consume.
+This is the Meld graph substrate for the rest of the world model. It is not the belief layer, a causal graph, a regime detector, or a planner. It is the replayable bitemporal graph surface that those layers consume.
 
 The graph contract is:
 
@@ -23,9 +23,9 @@ The graph contract is:
 
 The design work now is to keep this surface narrow, replayable, index backed, and explicit enough for belief, causation, regime, and planner-facing projection layers to use without reaching into source-domain internals.
 
-## Current Outcome
+## Baseline Graph Contract
 
-The graph baseline is largely achieved in code today.
+The graph baseline requires:
 
 It includes:
 

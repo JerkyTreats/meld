@@ -1,7 +1,7 @@
 # Execution Crate
 
 Date: 2026-05-02
-Status: completed authority crate
+Status: reference contract
 Scope: `meld-execution` crate boundary for execution-owned contracts, task and capability authority, workflow runtime, and runtime ports
 
 ## Intent
@@ -9,7 +9,7 @@ Scope: `meld-execution` crate boundary for execution-owned contracts, task and c
 `meld-execution` owns the public contract boundary and runtime algorithms for deliberate action.
 It defines the provider execution request shape, task and capability contracts, workflow execution runtime, and the ports that let execution code read context, dispatch provider work, query the world model, load workflow profiles, write generated frames, and publish outcomes without depending on root `meld`.
 
-Root `meld` remains the product shell and adapter host for current concrete runtime implementations.
+Root `meld` is the product shell and adapter host for concrete runtime bindings.
 
 ## Target Crate
 
@@ -45,7 +45,7 @@ Root `meld` remains the product shell and adapter host for current concrete runt
 - CLI formatting
 - app config loading
 
-## Current Code Areas
+## Module Boundary
 
 - `crates/meld-execution/src/execution/contracts.rs`
 - `crates/meld-execution/src/execution/ports.rs`
@@ -65,10 +65,10 @@ Execution code should depend on the provider execution port, not on root `meld`.
 
 ## Context And Provider Reliance
 
-`meld-execution` relies on context and provider capabilities in the current product shape.
+`meld-execution` relies on context and provider capabilities through product composition.
 
 That reliance should be explicit.
-The extracted crate owns the ports it needs:
+The crate owns the ports it needs:
 
 - context read port
 - context write port for produced artifacts and frames
@@ -86,10 +86,10 @@ It also lets context and provider remain in root `meld` while their long-term cr
 
 ## Root Adapter Posture
 
-Root `meld` binds the associated-type port contracts to the product's current concrete types.
+Root `meld` binds the associated-type port contracts to concrete product types.
 Those wrappers are compatibility adapters, not the long-term authority surface.
 
-The extraction intentionally leaves root-owned storage, config, CLI, provider registry, provider clients, and workspace-specific capability registration in root `meld`.
+The boundary leaves root-owned storage, config, CLI, provider registry, provider clients, and workspace-specific capability registration in root `meld`.
 Root compatibility adapters provide those concrete product concerns to `meld-execution` through explicit ports and runtime inputs.
 
 ## Target Dependencies

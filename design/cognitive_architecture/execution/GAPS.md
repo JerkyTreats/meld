@@ -1,18 +1,18 @@
 # Execution Domain Gaps
 
 Date: 2026-06-02
-Status: active
-Scope: open contracts and undefined seams preventing a complete execution architecture
+Status: reference contract
+Scope: contract gaps and seams required for a complete execution architecture
 
 ## Purpose
 
-The execution domain has strong lower layers (capability, task, task network, control program) and strong internal design (repair, synthesis, runtime continuation). The gaps are at the top (goal model), at the edges (world model reads, outcome publication), and in the relationship between the current production path and the cognitive pipeline direction.
+The execution domain joins capability, task, task network, planning, repair, synthesis, and runtime continuation. The gaps are in goal policy, world model reads, outcome publication, and the relationship between compatibility workflows and the cognitive pipeline.
 
 Each gap below names what is missing, why it blocks a complete architecture diagram, and what minimum contract would close it.
 
 ## Gap 1: Goal Model
 
-**Status: resolved. Goal type implemented in `meld-lang`. Residual gaps identified.**
+**Contract:** Goals are typed propositions in `meld-lang`, with residual policy gaps owned by the world model agent.
 
 See [Goals](goals/README.md) for the full goal model and [World Model Agent](../world_model/agent/README.md) for the curation side.
 
@@ -31,30 +31,30 @@ Residual gaps within the goal model:
 
 ## Gap 2: Planning Pipeline
 
-**Status: type substrate and expanded execution slice implemented. Residual runtime gaps identified.**
+**Contract:** The planning type substrate and expanded execution boundary precede the residual runtime work.
 
 See [Planning Pipeline](planning/planning_pipeline.md) for the unified pipeline: two concurrent processes connected by task network commands.
 
 The pipeline document resolves the structural gap. The previous six-stage sequential model and the separate adaptation domain both dissolved into the graphs-lower-graphs abstraction. Control flow is expressed as graph structure through conditional dependency edges and multi-dependency nodes, not as a separate compiled control program. Adaptation's reconciliation concern folds into the planning loop's cost-aware mutation proposal decisions.
 
-`meld-lang` now provides the planning type substrate: `Method` with trigger, preconditions, composition, net effects, cost, and preference; `Composition` as a step and edge graph; `Operator` with preconditions, effects, cost, and resolution; plus `unify()`, `substitute()`, and `validate()`. Method definitions are typed values that can be serialized to and deserialized from JSON. The method matching flow — unify trigger against goal, check preconditions against world state, substitute bindings into composition, validate, project effects — is proven in integration tests.
+`meld-lang` defines the planning type substrate: `Method` with trigger, preconditions, composition, net effects, cost, and preference; `Composition` as a step and edge graph; `Operator` with preconditions, effects, cost, and resolution; plus `unify()`, `substitute()`, and `validate()`. Method definitions are typed values that support JSON serialization. The matching contract unifies a trigger against a goal, checks preconditions, substitutes bindings, validates the composition, and projects effects.
 
 Residual gaps within the pipeline:
 
-- **method library loading** — the `Method` type and JSON serialization exist; the runtime infrastructure for loading, indexing, and querying method libraries belongs to `meld-execution` and is not yet implemented
+- **method library deepening** — loading, indexing, and querying method libraries belongs to `meld-execution`
 - **planning algorithm** — the search strategy for HTN decomposition is unspecified; `meld-lang` provides the matching primitives but the search orchestration is an `meld-execution` concern
-- **task network graph executor** — the expanded execution slice exists; remaining gaps are conditional edge evaluation, recursive sub-goal lowering, graph repair mutations, shared task reuse, and deeper runtime recovery
+- **task network graph executor** — the expanded execution contract precedes conditional edge evaluation, recursive sub-goal lowering, graph repair mutations, shared task reuse, and deeper runtime recovery
 - **switching cost model** — cost-aware plan transitions require cost estimates on tasks and a model for computing cleanup cost, sunk cost, disruption cost, and benefit estimation
 
 ## Gap 3: World Model Read Interface
 
-**Status: resolved. `WorldState` in `meld-lang` is the read interface.**
+**Contract:** `WorldState` in `meld-lang` is the execution read interface.
 
-### What Exists
+### Contract Surface
 
 The world model planner layer defines projection types (`WorldModelView`, `DecisionContext`, etc.) that scope beliefs through graph, belief, causation, regime, and agent perspective.
 
-`meld-lang` now provides the execution-side read contract: `WorldState` is a set of ground propositions published by the world model's planner-facing projection. `evaluate()` checks propositions against `WorldState` with three-valued semantics (Satisfied, Unsatisfied with gap, Indeterminate for missing knowledge). `WorldState::gap()` returns unsatisfied and indeterminate sub-propositions. `WorldState::query()` performs pattern matching with variable binding.
+`meld-lang` defines the execution-side read contract. `WorldState` is a set of ground propositions published by the world model planner-facing projection. `evaluate()` checks propositions with three-valued semantics. `WorldState::gap()` returns unsatisfied and indeterminate sub-propositions. `WorldState::query()` performs pattern matching with variable binding.
 
 ### Resolution
 
@@ -67,13 +67,13 @@ The read interface is the shared language itself — not a bespoke port trait. T
 
 ### Residual
 
-The world model planner layer must implement the projection from its internal types (`WorldModelView`, `DecisionContext`, etc.) into ground `WorldState` propositions. This is a `meld-world-model` concern — the contract shape is defined, the implementation is not.
+The world model planner layer owns projection from its internal view and decision context types into ground `WorldState` propositions.
 
 ## Gap 4: Outcome Publication Contract
 
-**Status: resolved. Execution publishes task lifecycle events to the spine. The world model consumes them and derives epistemic meaning.**
+**Contract:** Execution publishes task lifecycle events to the spine, and the world model derives epistemic meaning.
 
-### What Exists
+### Event Contract
 
 Execution publishes typed task lifecycle events to the event spine:
 
@@ -82,7 +82,7 @@ Execution publishes typed task lifecycle events to the event spine:
 - `task_artifact_emitted`, `task_cancelled`
 - `repair_requested`, `repair_applied`
 
-The world model reducer subscribes to these events via `replay_from_spine()` and `apply_event()`. It currently materializes claims from execution events: `GenerationSucceeded`, `GenerationFailed`, `ArtifactAvailable`. This closes the cognitive loop — execution acts, the world model observes execution's events and revises belief.
+The world model reducer subscribes through `replay_from_spine()` and `apply_event()`. It materializes claims such as `GenerationSucceeded`, `GenerationFailed`, and `ArtifactAvailable` from execution events. Execution acts, and the world model observes factual outcomes and revises belief.
 
 Execution does not construct semantically rich outcomes. It does not know what "docs_freshness" means or whether a task result implies a belief should change. Execution reports what happened (succeeded, failed, artifacts produced). The world model derives what that means through its belief layer, causal layer, and agent normative framework.
 
@@ -90,34 +90,34 @@ Execution does not construct semantically rich outcomes. It does not know what "
 
 ### Residual
 
-The world model's reducer currently produces coarse claims from task events. As the belief layer matures, the reducer's interpretation of execution events will grow richer — more nuanced belief revision from the same task lifecycle signals. This is a world model concern, not an execution gap.
+The world model reducer may begin with coarse task claims and deepen interpretation as the belief layer matures. This remains a world model concern.
 
-Execution's responsibility is to emit sufficient factual detail in its task events (what ran, what artifacts were produced, what failed and how) so that the world model has adequate signal. If the current event payloads prove insufficient for belief revision, the fix is richer event content — not execution constructing epistemic judgments.
+Execution must emit sufficient factual detail for the world model to revise belief. Insufficient payloads require richer factual event content, never execution-owned epistemic judgment.
 
 ## Gap 5: Workflow Integration Strategy
 
-### What Exists
+### Compatibility Contract
 
-The codebase has approximately 12,000 lines of workflow execution in `meld-execution`:
+Compatibility workflow execution covers:
 
 - turn-based executor with retry and gate evaluation
 - state persistence to filesystem
 - prompt resolution from artifact IDs and file paths
 - generation orchestration with level-by-level queue submission
 
-This is the current production execution path. It runs today. The task/capability engine was proven through workflows. The task package system (`task/package/`) already bridges workflow definitions into task-compiler-consumable specs.
+The workflow route remains a compatibility path. Task packages bridge workflow definitions into task-compiler-consumable specifications.
 
 The design docs describe a cognitive pipeline (goals, HTN planning, control programs, task network, task, capability) that does not mention workflows. The CRATE.md lists "workflow execution runtime" as owned by `meld-execution` but no design doc explains how workflows relate to the cognitive pipeline.
 
 ### Why It Blocks
 
-The execution architecture cannot be drawn without accounting for the 12,000 lines of working orchestration that make the system usable today. The cognitive pipeline (goals → planning → control programs → task network) is the direction of travel, but every subsystem in that pipeline except task and capability is unbuilt. Until the full pipeline exists, workflows are the substrate that closes the loop.
+The execution architecture must account for compatibility orchestration while the cognitive pipeline assumes authority. Workflows close the compatibility loop until the full goal, planning, task network, task, and capability path carries the same obligations.
 
 This creates a chicken-and-egg problem: the cognitive subsystems cannot be proven without a working execution loop, and the working execution loop is workflows.
 
 ### Strategic Direction
 
-Workflows should not be ripped and replaced. At 12,000 lines of proven orchestration, they are a non-trivial component that should be elevated into the execution subsystems rather than discarded.
+Workflows should be elevated into execution subsystems through compatibility boundaries rather than discarded as an undifferentiated unit.
 
 Two integration strategies are available, and both may apply to different parts of the workflow system:
 
@@ -127,15 +127,15 @@ Examples of where this applies:
 
 - world-model reads can be added as a new input source for workflow turn resolution, alongside the existing prompt and artifact resolution
 - outcome publication can be added as a new output path after turn completion, alongside the existing state persistence
-- gate evaluation already performs a simple form of observation-and-branch; this can be extended toward the control program semantics rather than reimplemented
+- gate evaluation can extend toward observation and branch semantics
 
 **Strategy B: Treat workflows as a compatibility layer.** Where the cognitive pipeline is incomplete, workflows paper over the gap with user configuration. The workflow profile, turn structure, and gate definitions serve as user-facing configuration for behavior that will eventually be planner-driven.
 
 Examples of where this applies:
 
-- workflow profiles currently define turn sequences that a planner would eventually derive from goals and belief; until planning exists, the user-authored profile is the plan
-- workflow gates currently define quality checks that a belief layer would eventually drive; until belief exists, the user-authored gate is the quality contract
-- workflow thread policies currently define retry and failure handling that repair semantics would eventually own; until repair is fully specified, the user-authored policy is the repair strategy
+- workflow profiles define turn sequences on the compatibility route, where the user-authored profile is the plan
+- workflow gates define quality checks on the compatibility route, where the user-authored gate is the quality contract
+- workflow thread policies define retry and failure handling on the compatibility route, where the user-authored policy is the repair strategy
 
 ### What Would Close It
 
@@ -154,31 +154,31 @@ A mapping document that walks through each major workflow subsystem and classifi
 | retry / failure | 370 | compatibility → extend | repair | currently user-configured; extends toward repair semantics as repair matures |
 | normalization | 180 | keep | capability | output normalization is a capability-level concern |
 
-The mapping does not need to be implemented all at once. It should identify which workflow subsystems can be extended incrementally and which must wait for their target execution area to exist.
+The mapping may advance incrementally while preserving the dependency order of target execution areas.
 
-### Current Tension
+### Coherence Risk
 
-The risk with both strategies is drift. If workflows are extended with cognitive subsystems piecemeal, the result may be a hybrid that is harder to reason about than either the current workflow engine or the target cognitive pipeline. The mapping document should define a coherence rule: at any point in time, a given execution concern should be owned by exactly one system (workflow or cognitive subsystem), not split across both.
+The risk with both strategies is drift. The mapping must preserve one owner for each execution concern throughout migration.
 
 ## Dependencies Between Gaps
 
 The gaps are not independent. Closing them in the wrong order produces circular definitions.
 
-Current resolution state:
+Contract dependency state:
 
-- **Gap 1 (goal model)**: **resolved and implemented.** `Goal`, `GoalPriority`, `GoalSource`, `GoalLifecycle` are implemented in `meld-lang`. Goals are typed propositions in the shared language. The world model agent constructs goals as `Proposition` targets with priority and lifecycle metadata. Execution evaluates goals mechanically without interpreting semantic intent. Residual: agent normative framework, goal conflict resolution, multi-agent coordination, goal learning. See [Lang Goals and Methods](../meld-lang/goals_and_methods.md).
-- **Gap 2 planning pipeline**: **type substrate and expanded execution slice implemented.** `Method`, `Composition`, `Operator`, `unify()`, `substitute()`, and `validate()` are implemented in `meld-lang`. The planning loop reads goals and world state as propositions, matches methods via pattern unification, substitutes bindings into compositions, validates, and projects effects. Phase 8 proves multi node task network lowering, task init materialization, real task runtime dispatch, and replay. Residual: recursive planning algorithm, conditional graph execution, graph repair mutations, shared task reuse, and switching cost model. See [Lang Compositions](../meld-lang/compositions.md).
-- **Gap 3 (world model read interface)**: **resolved and implemented.** `WorldState`, `evaluate()`, `EvalResult`, gap detection, and pattern query are implemented in `meld-lang`. The world model publishes `WorldState` as a set of ground propositions. Execution evaluates propositions with three-valued semantics. Residual: world model planner projection from internal types into ground `WorldState` propositions (`meld-world-model` concern). See [Lang World State](../meld-lang/world_state.md).
-- **Gap 4 (outcome publication)**: **resolved.** Execution publishes task lifecycle events to the spine. The world model reducer consumes them and materializes claims for belief revision. `Effect` and `WorldState::apply()` in `meld-lang` serve forward projection in the planning loop, not outcome publication. Residual: world model reducer enrichment as belief layer matures (world model concern).
-- **Gap 5 (workflow integration)**: continuous. Workflows remain the compatibility layer where cognitive subsystems are not yet built.
+- **Gap 1 goal model**: goals are typed propositions. Residual scope covers normative policy, conflict resolution, coordination, and learning. See [Lang Goals and Methods](../meld-lang/goals_and_methods.md).
+- **Gap 2 planning pipeline**: typed methods, compositions, operators, matching, substitution, and validation precede recursive planning, conditional graph execution, repair mutations, shared task reuse, and switching cost.
+- **Gap 3 world model read interface**: `WorldState`, evaluation, gap detection, and pattern query define the shared boundary. Planner projection remains owned by `meld-world-model`.
+- **Gap 4 outcome publication**: execution emits facts and the world model derives belief meaning.
+- **Gap 5 workflow integration**: workflows remain a compatibility layer during authority migration.
 
-Recommended next resolution:
+Dependency order:
 
-1. ~~**`meld-lang` first slice implementation**~~: **complete.** All types and pure operations implemented. Full evaluation loop proven end-to-end. Consumer crates (`meld-execution`, `meld-world-model`) compile with `meld-lang` as dependency.
-2. ~~**Gap 4 residual (outcome publication)**~~: **resolved.** The loop already closes — execution emits task events, world model reducer consumes them and materializes claims. Reducer enrichment is a world model concern.
-3. **Gap 2 residuals**: recursive planning algorithm, conditional graph execution, graph repair mutations, shared task reuse, and switching cost model.
-4. **Gap 3 residual**: world model planner projection into `WorldState` (`meld-world-model`).
-5. **Gap 5**: continuous integration as each subsystem matures.
+1. shared language types and pure operations
+2. factual outcome publication and world model consumption
+3. recursive planning, conditional graph execution, repair mutations, shared task reuse, and switching cost
+4. world model planner projection into `WorldState`
+5. workflow compatibility migration as each cognitive subsystem assumes authority
 
 ## Read With
 

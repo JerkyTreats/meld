@@ -119,7 +119,7 @@ It may hydrate facts after a planner decision, but the planner decision is over 
 
 ## API Shape
 
-Landed belief public API:
+Belief public API:
 
 - query current belief view by key
 - query belief views by subject
@@ -168,10 +168,10 @@ Spine public API:
 - Regime changes silently reset priors without an explicit regime record
 - Belief policy hints are treated as action commands
 
-## Landed First Slice Boundary
+## Baseline Process Boundary
 
-The first slice remains in one binary.
-It still behaves as if these were separate processes.
+The baseline may remain in one binary.
+The boundary must still behave as if these were separate processes.
 
 The slice defines:
 
@@ -201,6 +201,6 @@ The slice explicitly defers:
 - [Fact To Belief](fact_to_belief.md)
 - [Belief Substrate](substrate.md)
 - [Comparator Model](comparator_model.md)
-- [Microarchitecture Assessment By Domain](../../microarchitecture_assessment_by_domain.md)
+- [Microarchitecture Assessment By Domain](../../../completed/world_state/microarchitecture_assessment_by_domain.md)
 - [Execution Domain](../../execution/README.md)
 - [Spine Concern](../../spine/README.md)

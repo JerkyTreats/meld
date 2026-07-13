@@ -18,17 +18,17 @@ Belief view to action is an agent concern.
 
 This document describes the first bottom-up transition path. It is not the whole long-term belief architecture. Later belief work must also support top-down predictions, latent hypotheses, precision-weighted evidence, observation policy, and regime-conditioned priors.
 
-## Enabling Base
+## Required Substrate
 
-Belief exists because these implemented layers now exist:
+Belief depends on these substrate contracts:
 
-- [Completed Events](../../../completed/events/README.md)
+- [Event Foundation Record](../../../completed/events/README.md)
   durable spine, runtime-wide sequence, append, replay, idempotent derived facts, and graph attachment fields
-- [Completed World State Graph](../../completed/world_state/graph/README.md)
+- [World State Graph Record](../../../completed/world_state/graph/README.md)
   current anchors, lineage, provenance, traversal indexes, and branch annotated federation
-- [Graph Implementation Status](../../completed/world_state/graph/implementation_plan.md)
-  implemented `DomainObjectRef`, `EventRelation`, `GraphRuntime`, traversal queries, and graph-readable publishers
-- [Spine Graph Completion Review](../../completed/world_state/graph/spine_graph_completion_plan.md)
+- [Graph Construction Record](../../../completed/world_state/graph/implementation_plan.md)
+  `DomainObjectRef`, `EventRelation`, `GraphRuntime`, traversal queries, and graph-readable publisher evidence
+- [Spine Graph Review](../../../completed/world_state/graph/spine_graph_completion_plan.md)
   explicit closeout that belief and planner-facing views are next scope
 - [World Model Graph](../graph/README.md)
   source model where semantic spine facts materialize graph views and future belief facts

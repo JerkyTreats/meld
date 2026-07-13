@@ -21,6 +21,8 @@ The first vertical slice threads the thinnest possible path through every layer 
 
 The typed loop has already proven the full contract chain through `meld-lang` pure types and operations. The vertical slice now makes each layer real with runtime code that materializes state, projects belief, curates goals, and dispatches work.
 
+Production runtime truth is narrower than domain-library completeness. Wave 0 registers twelve canonical runtime roles, but only `world_model.graph_replay` is a concrete default-enabled actor. Seven semantic actors remain inert and default disabled. Three concrete ports and the concrete `event.append` passive service are not supervisor workers. The active closure program owns the waves that convert those declarations into end-to-end semantic progress.
+
 The focused runtime wiring template is [Minimal Runtime Flywheel](integration/minimal_runtime_flywheel.md). Use it after Assessment By Domain work identifies the exact requirements for each participating domain.
 
 ## Vertical Slice: Implementation Order
@@ -107,7 +109,7 @@ These components predate the vertical slice and support all phases.
 | `events` ledger mechanics | complete | `meld-events` |
 | event foundation closeout | closed 2026-07-12 | `meld-events` with root `meld` |
 | product event authority cutover | complete, E5 closed 2026-07-12 | `events` with root `meld` |
-| production cognitive runtime closure | design ready, Waves 0 through 6 | root `meld` with domain crates |
+| production cognitive runtime closure | active, Wave 0 runtime visibility core | root `meld` with domain crates |
 | `integration/typed_loop` | complete | `meld-lang` integration tests |
 
 Foundation work follows this order:
@@ -125,7 +127,7 @@ event authority and observability hardening
 2. event authority and observability hardening — complete, E1 through E4
 3. product event authority cutover — complete, E5 closed 2026-07-12
 4. event foundation closure — closed 2026-07-12, E6
-5. production cognitive runtime closure — design ready, Waves 0 through 6
+5. production cognitive runtime closure — active, Wave 0 runtime visibility core
 6. `meld-lang` — complete, Phase 1
 7. `world_model/graph` — complete, Phase 2
 8. `world_model/belief` — complete, Phase 3

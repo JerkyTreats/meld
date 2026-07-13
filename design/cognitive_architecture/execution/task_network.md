@@ -203,7 +203,7 @@ Each dispatched task is executed by a task executor that runs the internal capab
 - When all capabilities are complete, the task is complete
 - The task executor emits `task_succeeded` or `task_failed` back to the task network
 
-The task executor is implemented in `task/executor.rs`. It uses `compute_ready_capability_instances` from `task/readiness.rs` for ready-set computation.
+The task executor owns ready-set computation for capability instances and emits task success or failure back to the task network.
 
 Task-internal retry remains in the task executor. Only when retries are exhausted does the failure propagate to the task network, where the planning loop handles it.
 

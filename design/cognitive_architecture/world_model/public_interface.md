@@ -123,7 +123,7 @@ query_observation_opportunities(context: DecisionContext) -> Vec<ObservationOppo
 query_preconditions(context: DecisionContext) -> Vec<PreconditionAssessment>
 ```
 
-The implemented first-slice planner route is `PlannerQuery::project_current_world_state`. It reads current belief views and current graph anchors, then returns a ground `meld-lang::WorldState` with provenance, hydration refs, and projection warnings.
+The baseline planner route is `PlannerQuery::project_current_world_state`. It reads belief views and graph anchors, then returns a ground `meld-lang::WorldState` with provenance, hydration refs, and projection warnings.
 
 Planner operations are read-only deterministic projections over graph and belief in the first slice. Later broad views may add causation and regime state.
 They do not expose raw inference internals.

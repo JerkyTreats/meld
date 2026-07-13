@@ -37,7 +37,7 @@ The root crate is not the owner of event truth, world-model truth, or execution 
 - task execution internals
 - provider execution policy inside `meld-execution`
 
-## Current Code Areas
+## Product Shell Source Map
 
 - `src/bin/meld.rs`
 - `src/cli`
@@ -56,7 +56,7 @@ The root crate is not the owner of event truth, world-model truth, or execution 
 
 Context and provider remain in root `meld` for now.
 
-They are too coupled to the current product shell to extract cleanly, but they are also too broad to fold into `meld-execution`.
+They remain coupled to product-shell composition, but they are also too broad to fold into `meld-execution`.
 
 Root `meld` should expose explicit public APIs and adapters for:
 
