@@ -132,15 +132,22 @@ impl PlannerProjectionStore {
         completed_at_seq: u64,
     ) -> Result<PlannerProjectionRequestRecord, StorageError> {
         frame.validate().map_err(to_contract_error)?;
-        if completed_at_seq == 0 || frame.completed_at_seq != completed_at_seq {
+        let expected_terminal_seq = expected_updated_at_seq.checked_add(1).ok_or_else(|| {
+            StorageError::InvalidPath(
+                "planner request completion sequence cannot advance".to_string(),
+            )
+        })?;
+        if completed_at_seq != expected_terminal_seq || frame.completed_at_seq != completed_at_seq {
             return Err(StorageError::InvalidPath(
-                "planner frame completion sequence must match the transition".to_string(),
+                "planner frame completion sequence must be the exact request successor".to_string(),
             ));
         }
         let current = self.require_request(request_id)?;
         if current.status == PlannerProjectionRequestStatus::Completed {
             let durable_frame = self.get_frame(&frame.identity.frame_id)?;
             if current.updated_at_seq == completed_at_seq
+                && current.updated_at_seq == current.created_at_seq.checked_add(1).unwrap_or(0)
+                && frame.completed_at_seq == current.updated_at_seq
                 && current.frame_id.as_deref() == Some(frame.identity.frame_id.as_str())
                 && durable_frame.as_ref() == Some(&frame)
             {
@@ -153,7 +160,7 @@ impl PlannerProjectionStore {
         }
         if current.status != PlannerProjectionRequestStatus::Pending
             || current.updated_at_seq != expected_updated_at_seq
-            || completed_at_seq <= expected_updated_at_seq
+            || current.updated_at_seq != current.created_at_seq
             || frame.identity.request_id != current.request.request_id
             || frame.identity.source_request_hash != current.request.source_request_hash
         {
@@ -225,9 +232,18 @@ impl PlannerProjectionStore {
                 "planner failure detail must contain at most 1024 bytes".to_string(),
             ));
         }
+        let expected_terminal_seq = expected_updated_at_seq.checked_add(1).ok_or_else(|| {
+            StorageError::InvalidPath("planner request failure sequence cannot advance".to_string())
+        })?;
+        if failed_at_seq != expected_terminal_seq {
+            return Err(StorageError::InvalidPath(
+                "planner request failure sequence must be the exact request successor".to_string(),
+            ));
+        }
         let current = self.require_request(request_id)?;
         if current.status == PlannerProjectionRequestStatus::Failed {
             if current.updated_at_seq == failed_at_seq
+                && current.updated_at_seq == current.created_at_seq.checked_add(1).unwrap_or(0)
                 && current.last_error.as_deref() == Some(error.as_str())
             {
                 self.flush_durable("failed planner request replay")?;
@@ -239,7 +255,7 @@ impl PlannerProjectionStore {
         }
         if current.status != PlannerProjectionRequestStatus::Pending
             || current.updated_at_seq != expected_updated_at_seq
-            || failed_at_seq <= expected_updated_at_seq
+            || current.updated_at_seq != current.created_at_seq
         {
             return Err(StorageError::Backpressure(
                 "planner request failure fence changed".to_string(),
@@ -289,11 +305,16 @@ impl PlannerProjectionStore {
         &self,
         request_id: &str,
     ) -> Result<Option<PlannerProjectionRequestRecord>, StorageError> {
-        decode_optional(
+        let record: Option<PlannerProjectionRequestRecord> = decode_optional(
             self.requests
                 .get(request_id.as_bytes())
                 .map_err(to_storage_io)?,
-        )
+        )?;
+        if let Some(record) = record.as_ref() {
+            record.validate().map_err(to_contract_error)?;
+            validate_store_record_sequence(record)?;
+        }
+        Ok(record)
     }
 
     /// Read one completed planner projection frame by identity.
@@ -360,6 +381,9 @@ impl PlannerProjectionStore {
             || expected_request.frame_id.as_deref()
                 != Some(expected_frame.identity.frame_id.as_str())
             || expected_request.request.request_id != expected_frame.identity.request_id
+            || expected_request.updated_at_seq != expected_frame.completed_at_seq
+            || expected_request.updated_at_seq
+                != expected_request.created_at_seq.checked_add(1).unwrap_or(0)
         {
             return Err(StorageError::InvalidPath(
                 "planner readiness products do not form one completed projection".to_string(),
@@ -425,6 +449,7 @@ impl PlannerProjectionStore {
             let record: PlannerProjectionRequestRecord =
                 serde_json::from_slice(raw.as_ref()).map_err(to_storage_data)?;
             record.validate().map_err(to_contract_error)?;
+            validate_store_record_sequence(&record)?;
             if key.as_ref() != record.request.request_id.as_bytes() {
                 return Err(StorageError::InvalidPath(
                     "planner request tree key conflicts with embedded request identity".to_string(),
@@ -492,6 +517,24 @@ fn request_status_key(record: &PlannerProjectionRequestRecord) -> String {
         "{status}::{:020}::{}",
         record.created_at_seq, record.request.request_id
     )
+}
+
+fn validate_store_record_sequence(
+    record: &PlannerProjectionRequestRecord,
+) -> Result<(), StorageError> {
+    let valid = match record.status {
+        PlannerProjectionRequestStatus::Pending => record.updated_at_seq == record.created_at_seq,
+        PlannerProjectionRequestStatus::Completed | PlannerProjectionRequestStatus::Failed => {
+            record.updated_at_seq == record.created_at_seq.checked_add(1).unwrap_or(0)
+        }
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(StorageError::InvalidPath(
+            "planner request durable sequence does not match its lifecycle".to_string(),
+        ))
+    }
 }
 
 fn require_transaction_value(
@@ -641,6 +684,60 @@ mod tests {
         assert!(store
             .complete(&request.request_id, 3, frame(&request, 4), 4)
             .is_err());
+    }
+
+    #[test]
+    fn terminal_transitions_require_exact_successor_and_bound_frame_sequence() {
+        let store =
+            PlannerProjectionStore::new(sled::Config::new().temporary(true).open().unwrap())
+                .unwrap();
+        let request = request();
+        store.put_pending(request.clone(), 3).unwrap();
+
+        assert!(matches!(
+            store.complete(&request.request_id, 3, frame(&request, 5), 5),
+            Err(StorageError::InvalidPath(_))
+        ));
+        assert!(matches!(
+            store.fail(&request.request_id, 3, "skipped sequence", 5),
+            Err(StorageError::InvalidPath(_))
+        ));
+
+        let durable_frame = frame(&request, 4);
+        let completed = store
+            .complete(&request.request_id, 3, durable_frame.clone(), 4)
+            .unwrap();
+        let mut malformed_record = completed.clone();
+        malformed_record.updated_at_seq = 5;
+        assert!(matches!(
+            store.verify_completed_projection(&malformed_record, &durable_frame),
+            Err(StorageError::InvalidPath(_))
+        ));
+        let mut malformed_frame = durable_frame;
+        malformed_frame.completed_at_seq = 5;
+        assert!(matches!(
+            store.verify_completed_projection(&completed, &malformed_frame),
+            Err(StorageError::InvalidPath(_))
+        ));
+    }
+
+    #[test]
+    fn exact_pending_replay_rejects_missing_status_index() {
+        let store =
+            PlannerProjectionStore::new(sled::Config::new().temporary(true).open().unwrap())
+                .unwrap();
+        let request = request();
+        let pending = store.put_pending(request.clone(), 3).unwrap();
+        store
+            .request_status
+            .remove(request_status_key(&pending).as_bytes())
+            .unwrap();
+
+        assert!(matches!(
+            store.put_pending(request, 3),
+            Err(StorageError::Backpressure(message))
+                if message.contains("status index conflicts")
+        ));
     }
 
     #[test]

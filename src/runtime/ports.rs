@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use meld_events::error::EventAuthorityError;
 use meld_events::{
-    AppendMode, AppendReceipt, DomainObjectRef, EventAppendCapability, EventAuthority,
+    AppendMode, AppendReceipt, EventAppendCapability, EventAuthority,
     EventConsumerRegistryCapability, EventEnvelope, EventObservabilityCapability, EventPage,
     EventRecord, EventReplayCapability, EventWatermark, EventWatermarkCapability, LedgerCursor,
     LedgerIdentity, ReplayRequest,
@@ -13,6 +13,11 @@ use meld_events::{
 use meld_execution::goals::{
     GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
     GoalSetApi, PersistentGoalSetStore,
+};
+use meld_execution::planning::{
+    PlanningProjectionError as ExecutionPlanningProjectionError,
+    PlanningProjectionPort as ExecutionPlanningProjectionPort, PlanningWorldStateFrameRef,
+    PlanningWorldStateProjection, PlanningWorldStateRequest,
 };
 use meld_execution::task::TaskArtifactRepoFactory;
 use meld_execution::task_network::authority::{
@@ -22,13 +27,15 @@ use meld_execution::task_network::authority::{
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use meld_execution::task_network::{EventAppendFailure, EventAppendSink};
 use meld_world_model::belief::EvidenceEventReplaySource;
-use meld_world_model::planner::{PlannerProjectionError, PlannerProjectionOutput, PlannerQuery};
-use meld_world_model::world_state::graph::store::TraversalStore;
+use meld_world_model::error::StorageError as WorldModelStorageError;
+use meld_world_model::planner::{
+    PlannerProjectionFrame, PlannerProjectionRequest, PlannerProjectionRequestRecord,
+    PlannerProjectionRequestStatus, PlannerProjectionStore,
+};
 use meld_world_model::world_state::graph::{
     GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource, PerspectiveKey,
 };
-use meld_world_model::{AgentGoalCommand, AgentGoalMutationCommand, BeliefQuery, BeliefStore};
-use meld_world_model::{BranchScope, TraversalQuery};
+use meld_world_model::{AgentGoalCommand, AgentGoalMutationCommand, BranchScope};
 
 use crate::context::frame::FrameStorage;
 use crate::control::projection::ExecutionProjectionReplaySource;
@@ -122,11 +129,10 @@ pub struct ExecutionGoalMutationPort {
     store: Arc<PersistentGoalSetStore>,
 }
 
-/// Planner projection query port backed by world model stores.
+/// Durable planner projection port backed by the world-model authority.
 #[derive(Clone)]
 pub struct PlannerProjectionPort {
-    belief_store: Arc<BeliefStore>,
-    traversal_store: Arc<TraversalStore>,
+    store: Arc<PlannerProjectionStore>,
 }
 
 /// Context frame adapter port.
@@ -186,10 +192,9 @@ impl ProductRuntimePorts {
             graph_cursor: ProductGraphCursorPort::new(authority.consumer_registry_capability()),
             goal_command: ExecutionGoalCommandPort::new(Arc::clone(&stores.goal_store)),
             goal_mutation: ExecutionGoalMutationPort::new(Arc::clone(&stores.goal_store)),
-            planner_projection: PlannerProjectionPort::new(
-                Arc::clone(&stores.belief_store),
-                Arc::clone(&stores.traversal_store),
-            ),
+            planner_projection: PlannerProjectionPort::new(Arc::clone(
+                &stores.planner_projection_store,
+            )),
             adapters: RuntimeAdapterPorts {
                 context: ContextRuntimePort::new(Arc::clone(&stores.frame_storage)),
                 provider: provider_port,
@@ -499,29 +504,44 @@ impl ExecutionGoalMutationPort {
 }
 
 impl PlannerProjectionPort {
-    /// Bind the port to opened world model graph and belief stores.
-    pub fn new(belief_store: Arc<BeliefStore>, traversal_store: Arc<TraversalStore>) -> Self {
-        Self {
-            belief_store,
-            traversal_store,
-        }
+    /// Bind the port to the world-model planner request authority.
+    pub fn new(store: Arc<PlannerProjectionStore>) -> Self {
+        Self { store }
     }
+}
 
-    /// Project current planner state for one subject and dimension.
-    pub fn project_current_world_state(
-        &self,
-        subject: &DomainObjectRef,
-        dimension_id: &str,
-        perspective: Option<PerspectiveKey>,
-        branch_scope: Option<BranchScope>,
-    ) -> Result<PlannerProjectionOutput, RuntimePortError> {
-        let query = PlannerQuery::new(
-            BeliefQuery::new(self.belief_store.as_ref()),
-            TraversalQuery::new(self.traversal_store.as_ref()),
-        );
-        query
-            .project_current_world_state(subject, dimension_id, perspective, branch_scope)
-            .map_err(map_projection_error)
+impl ExecutionPlanningProjectionPort for PlannerProjectionPort {
+    fn project(
+        &mut self,
+        request: PlanningWorldStateRequest,
+    ) -> Result<PlanningWorldStateProjection, ExecutionPlanningProjectionError> {
+        let durable_request = execution_projection_request(&request)?;
+        let record = match self
+            .store
+            .get_request(&durable_request.request_id)
+            .map_err(map_planner_storage_error)?
+        {
+            Some(record) => revalidate_existing_planner_request(
+                self.store.as_ref(),
+                &durable_request,
+                request.source_seq,
+                record,
+            )?,
+            None => match self
+                .store
+                .put_pending(durable_request.clone(), request.source_seq)
+            {
+                Ok(record) => record,
+                Err(error) if planner_submit_outcome_ambiguous(&error) => recover_planner_submit(
+                    self.store.as_ref(),
+                    &durable_request,
+                    request.source_seq,
+                    error,
+                )?,
+                Err(error) => return Err(map_planner_storage_error(error)),
+            },
+        };
+        resolve_planner_projection(self.store.as_ref(), &request, &durable_request, record)
     }
 }
 
@@ -723,6 +743,268 @@ fn map_task_network_authority_error(
     RuntimePortError::TaskNetworkAuthority(error.to_string())
 }
 
-fn map_projection_error(error: PlannerProjectionError) -> RuntimePortError {
-    RuntimePortError::PlannerProjection(error.to_string())
+fn execution_projection_request(
+    request: &PlanningWorldStateRequest,
+) -> Result<PlannerProjectionRequest, ExecutionPlanningProjectionError> {
+    request.validate().map_err(|error| {
+        ExecutionPlanningProjectionError::fatal(format!(
+            "execution projection request is invalid: {error}"
+        ))
+    })?;
+    let source_request_hash = request.canonical_hash().map_err(|error| {
+        ExecutionPlanningProjectionError::fatal(format!(
+            "execution projection request identity failed: {error}"
+        ))
+    })?;
+    let perspective = PerspectiveKey::new(
+        request.perspective.perspective_kind.clone(),
+        request.perspective.perspective_id.clone(),
+    )
+    .map_err(|error| {
+        ExecutionPlanningProjectionError::fatal(format!(
+            "execution projection perspective is invalid: {error}"
+        ))
+    })?;
+    let branch_scope = BranchScope::new(request.branch_id.clone()).map_err(|error| {
+        ExecutionPlanningProjectionError::fatal(format!(
+            "execution projection branch is invalid: {error}"
+        ))
+    })?;
+    PlannerProjectionRequest::identified(
+        source_request_hash,
+        request.agent_id.clone(),
+        request.subject.clone(),
+        perspective,
+        branch_scope,
+        request.requested_dimensions.clone(),
+        request.required_preconditions.clone(),
+    )
+    .map_err(|error| {
+        ExecutionPlanningProjectionError::fatal(format!(
+            "world-model projection request identity failed: {error}"
+        ))
+    })
+}
+
+fn resolve_planner_projection(
+    store: &PlannerProjectionStore,
+    source_request: &PlanningWorldStateRequest,
+    expected_request: &PlannerProjectionRequest,
+    record: PlannerProjectionRequestRecord,
+) -> Result<PlanningWorldStateProjection, ExecutionPlanningProjectionError> {
+    record.validate().map_err(|error| {
+        ExecutionPlanningProjectionError::fatal(format!(
+            "durable planner projection request is invalid: {error}"
+        ))
+    })?;
+    if record.request != *expected_request || record.created_at_seq != source_request.source_seq {
+        return Err(ExecutionPlanningProjectionError::fatal(format!(
+            "durable planner projection identity conflicts with execution request '{}'",
+            expected_request.request_id
+        )));
+    }
+
+    match record.status {
+        PlannerProjectionRequestStatus::Pending => {
+            Err(ExecutionPlanningProjectionError::retryable(format!(
+                "planner projection request '{}' is pending",
+                expected_request.request_id
+            )))
+        }
+        PlannerProjectionRequestStatus::Failed => {
+            Err(ExecutionPlanningProjectionError::fatal(format!(
+                "planner projection request '{}' failed: {}",
+                expected_request.request_id,
+                record
+                    .last_error
+                    .as_deref()
+                    .unwrap_or("missing failure detail")
+            )))
+        }
+        PlannerProjectionRequestStatus::Completed => {
+            let frame_id = record.frame_id.as_deref().ok_or_else(|| {
+                ExecutionPlanningProjectionError::fatal(format!(
+                    "completed planner projection request '{}' has no frame identity",
+                    expected_request.request_id
+                ))
+            })?;
+            let frame = store
+                .get_frame(frame_id)
+                .map_err(map_planner_storage_error)?
+                .ok_or_else(|| {
+                    ExecutionPlanningProjectionError::fatal(format!(
+                        "completed planner projection request '{}' is missing frame '{frame_id}'",
+                        expected_request.request_id
+                    ))
+                })?;
+            store
+                .verify_completed_projection(&record, &frame)
+                .map_err(map_planner_storage_error)?;
+            adapt_planner_frame(source_request, frame)
+        }
+    }
+}
+
+fn adapt_planner_frame(
+    request: &PlanningWorldStateRequest,
+    frame: PlannerProjectionFrame,
+) -> Result<PlanningWorldStateProjection, ExecutionPlanningProjectionError> {
+    let mut source_refs = frame
+        .output
+        .source_refs
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            ExecutionPlanningProjectionError::fatal(format!(
+                "planner projection source provenance is invalid: {error}"
+            ))
+        })?;
+    source_refs.sort();
+    source_refs.dedup();
+    let mut warnings = frame
+        .output
+        .warnings
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            ExecutionPlanningProjectionError::fatal(format!(
+                "planner projection warning provenance is invalid: {error}"
+            ))
+        })?;
+    warnings.sort();
+    warnings.dedup();
+    let world_state = frame.output.world_state;
+    let frame_ref = PlanningWorldStateFrameRef::from_authority(
+        frame.identity.frame_id,
+        frame.identity.request_id,
+        frame.identity.source_request_hash,
+        frame.identity.projection_version,
+        frame.identity.projection_hash,
+        frame.identity.world_state_hash,
+        request,
+        &world_state,
+        source_refs,
+        warnings,
+    )
+    .map_err(|error| {
+        ExecutionPlanningProjectionError::fatal(format!(
+            "planner projection frame does not satisfy execution identity: {error}"
+        ))
+    })?;
+    Ok(PlanningWorldStateProjection {
+        world_state,
+        frame: frame_ref,
+    })
+}
+
+fn map_planner_storage_error(error: WorldModelStorageError) -> ExecutionPlanningProjectionError {
+    let message = format!("planner projection authority failed: {error}");
+    if planner_storage_retryable(&error) {
+        ExecutionPlanningProjectionError::retryable(message)
+    } else {
+        ExecutionPlanningProjectionError::fatal(message)
+    }
+}
+
+fn planner_storage_retryable(error: &WorldModelStorageError) -> bool {
+    matches!(
+        error,
+        WorldModelStorageError::Unavailable(_)
+            | WorldModelStorageError::DurabilityIndeterminate(_)
+            | WorldModelStorageError::IoError(_)
+    )
+}
+
+fn planner_submit_outcome_ambiguous(error: &WorldModelStorageError) -> bool {
+    matches!(error, WorldModelStorageError::Backpressure(_)) || planner_storage_retryable(error)
+}
+
+fn recover_planner_submit(
+    store: &PlannerProjectionStore,
+    request: &PlannerProjectionRequest,
+    created_at_seq: u64,
+    original_error: WorldModelStorageError,
+) -> Result<PlannerProjectionRequestRecord, ExecutionPlanningProjectionError> {
+    let recovered = match store
+        .get_request(&request.request_id)
+        .map_err(map_planner_storage_error)?
+    {
+        Some(record) => record,
+        None => return Err(map_planner_storage_error(original_error)),
+    };
+    if recovered.request != *request || recovered.created_at_seq != created_at_seq {
+        return Ok(recovered);
+    }
+    if recovered.status != PlannerProjectionRequestStatus::Pending {
+        return Ok(recovered);
+    }
+
+    match store.put_pending(request.clone(), created_at_seq) {
+        Ok(record) => Ok(record),
+        Err(WorldModelStorageError::Backpressure(message)) => {
+            let latest = store
+                .get_request(&request.request_id)
+                .map_err(map_planner_storage_error)?
+                .ok_or_else(|| {
+                    ExecutionPlanningProjectionError::fatal(format!(
+                        "planner projection request '{}' disappeared during submit recovery",
+                        request.request_id
+                    ))
+                })?;
+            if latest.request == *request
+                && latest.created_at_seq == created_at_seq
+                && latest.status != PlannerProjectionRequestStatus::Pending
+            {
+                Ok(latest)
+            } else {
+                Err(ExecutionPlanningProjectionError::fatal(format!(
+                    "planner projection request '{}' conflicts with durable submit state: {message}",
+                    request.request_id
+                )))
+            }
+        }
+        Err(error) => Err(map_planner_storage_error(error)),
+    }
+}
+
+fn revalidate_existing_planner_request(
+    store: &PlannerProjectionStore,
+    request: &PlannerProjectionRequest,
+    created_at_seq: u64,
+    record: PlannerProjectionRequestRecord,
+) -> Result<PlannerProjectionRequestRecord, ExecutionPlanningProjectionError> {
+    if record.request != *request
+        || record.created_at_seq != created_at_seq
+        || record.status != PlannerProjectionRequestStatus::Pending
+    {
+        return Ok(record);
+    }
+    match store.put_pending(request.clone(), created_at_seq) {
+        Ok(replayed) => Ok(replayed),
+        Err(WorldModelStorageError::Backpressure(message)) => {
+            let latest = store
+                .get_request(&request.request_id)
+                .map_err(map_planner_storage_error)?
+                .ok_or_else(|| {
+                    ExecutionPlanningProjectionError::fatal(format!(
+                        "planner projection request '{}' disappeared during replay validation",
+                        request.request_id
+                    ))
+                })?;
+            if latest.request == *request
+                && latest.created_at_seq == created_at_seq
+                && latest.status != PlannerProjectionRequestStatus::Pending
+            {
+                Ok(latest)
+            } else {
+                Err(ExecutionPlanningProjectionError::fatal(format!(
+                    "planner projection request '{}' conflicts with its durable status index: {message}",
+                    request.request_id
+                )))
+            }
+        }
+        Err(error) => Err(map_planner_storage_error(error)),
+    }
 }

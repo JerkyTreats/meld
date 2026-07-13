@@ -2029,11 +2029,17 @@ mod tests {
 
     use meld_events::EventEnvelope;
     use meld_execution::goals::GoalCommandOutcome;
+    use meld_execution::planning::{
+        PlanningPerspectiveRef, PlanningProjectionPort as _, PlanningWorldStateRequest,
+    };
     use meld_execution::task_network::{
         EventAppendSink, TaskNetworkAuthorityError, TaskNetworkAuthorityLifecycle,
     };
     use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
-    use meld_world_model::PerspectiveKey;
+    use meld_world_model::{
+        PerspectiveKey, PlannerProjectionActor, PlannerProjectionRequest,
+        PlannerProjectionTickRequest,
+    };
     use proptest::prelude::*;
 
     use super::*;
@@ -2473,18 +2479,110 @@ mod tests {
     }
 
     #[test]
-    fn planner_projection_port_is_wired_to_world_model_stores() {
+    fn planner_projection_port_submits_then_reads_one_durable_frame() {
         let temp = tempfile::tempdir().unwrap();
         let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
-        let subject = subject();
+        let request = planning_world_state_request();
+        let mut port = assembly.ports().planner_projection().clone();
 
-        let projection = assembly
-            .ports()
-            .planner_projection()
-            .project_current_world_state(&subject, "docs_freshness", None, None)
+        let pending = port.project(request.clone()).unwrap_err();
+        assert!(pending.retryable);
+        let replayed_pending = port.project(request.clone()).unwrap_err();
+        assert!(replayed_pending.retryable);
+        let selected = assembly
+            .stores()
+            .planner_projection_store
+            .pending_requests_bounded(1)
+            .unwrap();
+        assert_eq!(selected.records.len(), 1);
+        assert_eq!(selected.records[0].created_at_seq, request.source_seq);
+
+        let actor = PlannerProjectionActor::new(
+            Arc::clone(&assembly.stores().planner_projection_store),
+            Arc::clone(&assembly.stores().belief_store),
+            Arc::clone(&assembly.stores().traversal_store),
+        );
+        let report = actor.tick(PlannerProjectionTickRequest { max_items: 1 });
+        assert_eq!(report.completed_count, 1);
+        assert!(report.retryable_errors.is_empty());
+        assert!(report.fatal_errors.is_empty());
+
+        let projection = port.project(request.clone()).unwrap();
+        assert_eq!(
+            projection.frame.source_request_hash,
+            request.canonical_hash().unwrap()
+        );
+        assert_eq!(
+            projection.frame.projection_version,
+            "world_model.planner.v1"
+        );
+        assert!(!projection.frame.frame_id.is_empty());
+        assert!(!projection.frame.request_id.is_empty());
+    }
+
+    #[test]
+    fn planner_projection_port_recovers_pending_request_across_reopen() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let request = planning_world_state_request();
+        let mut first_port = first.ports().planner_projection().clone();
+
+        assert!(first_port.project(request.clone()).unwrap_err().retryable);
+        first.flush_product_boundary().unwrap();
+        drop(first_port);
+        drop(first);
+
+        let second = reopen_assembly_after_lock_release(temp.path());
+        let actor = PlannerProjectionActor::new(
+            Arc::clone(&second.stores().planner_projection_store),
+            Arc::clone(&second.stores().belief_store),
+            Arc::clone(&second.stores().traversal_store),
+        );
+        let report = actor.tick(PlannerProjectionTickRequest { max_items: 1 });
+        assert_eq!(report.completed_count, 1);
+        assert!(report.retryable_errors.is_empty());
+        assert!(report.fatal_errors.is_empty());
+
+        let mut second_port = second.ports().planner_projection().clone();
+        let projection = second_port.project(request).unwrap();
+        assert!(!projection.frame.frame_id.is_empty());
+    }
+
+    #[test]
+    fn planner_projection_port_fails_closed_on_durable_failure_and_sequence_conflict() {
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let request = planning_world_state_request();
+        let durable_request = durable_planner_request(&request);
+        assembly
+            .stores()
+            .planner_projection_store
+            .put_pending(durable_request, request.source_seq + 1)
+            .unwrap();
+        let mut port = assembly.ports().planner_projection().clone();
+
+        let conflict = port.project(request).unwrap_err();
+        assert!(!conflict.retryable);
+        assert!(conflict.message.contains("identity conflicts"));
+
+        let mut failed_request = planning_world_state_request();
+        failed_request.source_seq = 20;
+        assert!(port.project(failed_request.clone()).unwrap_err().retryable);
+        let durable_failed_request = durable_planner_request(&failed_request);
+        assembly
+            .stores()
+            .planner_projection_store
+            .fail(
+                &durable_failed_request.request_id,
+                failed_request.source_seq,
+                "projection contract rejected".to_string(),
+                failed_request.source_seq + 1,
+            )
             .unwrap();
 
-        assert_eq!(projection.projection_version, "world_model.planner.v1");
+        let failed = port.project(failed_request).unwrap_err();
+        assert!(!failed.retryable);
+        assert!(failed.message.contains("projection contract rejected"));
     }
 
     #[test]
@@ -3008,11 +3106,21 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(assembly.stores().goal_store.active_goals().is_err());
-        assert!(assembly
-            .ports()
-            .planner_projection()
-            .project_current_world_state(&subject(), "docs_freshness", None, None)
-            .is_err());
+        let mut planner_projection = assembly.ports().planner_projection().clone();
+        let projection_error = planner_projection
+            .project(planning_world_state_request())
+            .unwrap_err();
+        assert!(projection_error.retryable);
+        assert_eq!(
+            assembly
+                .stores()
+                .planner_projection_store
+                .pending_requests_bounded(1)
+                .unwrap()
+                .records
+                .len(),
+            1
+        );
         assert!(matches!(
             assembly
                 .ports()
@@ -3201,6 +3309,36 @@ mod tests {
 
     fn subject() -> meld_events::DomainObjectRef {
         meld_events::DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap()
+    }
+
+    fn planning_world_state_request() -> PlanningWorldStateRequest {
+        let goal = agent_goal_command().goal;
+        PlanningWorldStateRequest::for_goal(
+            &goal,
+            7,
+            PlanningPerspectiveRef::new("agent", "agent-a").unwrap(),
+            "main",
+            vec!["docs_freshness".to_string()],
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    fn durable_planner_request(request: &PlanningWorldStateRequest) -> PlannerProjectionRequest {
+        PlannerProjectionRequest::identified(
+            request.canonical_hash().unwrap(),
+            request.agent_id.clone(),
+            request.subject.clone(),
+            PerspectiveKey::new(
+                request.perspective.perspective_kind.clone(),
+                request.perspective.perspective_id.clone(),
+            )
+            .unwrap(),
+            meld_world_model::BranchScope::new(request.branch_id.clone()).unwrap(),
+            request.requested_dimensions.clone(),
+            request.required_preconditions.clone(),
+        )
+        .unwrap()
     }
 
     #[test]
