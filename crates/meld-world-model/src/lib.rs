@@ -45,10 +45,12 @@ pub use belief::{
 };
 pub use planner::{
     project_world_state, PlannerFieldProjectionConfig, PlannerGraphScope, PlannerHydrationRefs,
-    PlannerProjectionContext, PlannerProjectionError, PlannerProjectionFrame,
-    PlannerProjectionFrameIdentity, PlannerProjectionInput, PlannerProjectionOutput,
+    PlannerPendingSelection, PlannerProjectionActor, PlannerProjectionContext,
+    PlannerProjectionError, PlannerProjectionFrame, PlannerProjectionFrameIdentity,
+    PlannerProjectionInput, PlannerProjectionIssue, PlannerProjectionOutput,
     PlannerProjectionRequest, PlannerProjectionRequestRecord, PlannerProjectionRequestStatus,
-    PlannerProjectionStore, PlannerProjectionWarning, PlannerQuery, PlannerSourceRef,
-    PLANNER_PROJECTION_VERSION,
+    PlannerProjectionStore, PlannerProjectionTickReport, PlannerProjectionTickRequest,
+    PlannerProjectionWarning, PlannerQuery, PlannerSourceRef, MAX_PLANNER_PROJECTION_ITEMS,
+    PLANNER_PROJECTION_ACTOR_ID, PLANNER_PROJECTION_VERSION,
 };
 pub use world_state::*;
