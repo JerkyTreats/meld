@@ -114,6 +114,11 @@ pub fn head_selected_envelope(
     frame_id: FrameID,
     previous_frame_id: Option<FrameID>,
 ) -> EventEnvelope {
+    let mut objects = vec![
+        head_ref(node_id, frame_type),
+        node_ref(node_id),
+        frame_ref(frame_id),
+    ];
     let mut relations = vec![
         EventRelation::new(
             "attached_to",
@@ -129,14 +134,12 @@ pub fn head_selected_envelope(
         .expect("head selected relation should be valid"),
     ];
     if let Some(previous_frame_id) = previous_frame_id {
+        let previous_frame = frame_ref(previous_frame_id);
         relations.push(
-            EventRelation::new(
-                "supersedes",
-                frame_ref(frame_id),
-                frame_ref(previous_frame_id),
-            )
-            .expect("head supersedes relation should be valid"),
+            EventRelation::new("supersedes", frame_ref(frame_id), previous_frame.clone())
+                .expect("head supersedes relation should be valid"),
         );
+        objects.push(previous_frame);
     }
     context_envelope(
         session_id,
@@ -148,11 +151,7 @@ pub fn head_selected_envelope(
             frame_id: hex::encode(frame_id),
             previous_frame_id: previous_frame_id.map(hex::encode),
         }),
-        vec![
-            head_ref(node_id, frame_type),
-            node_ref(node_id),
-            frame_ref(frame_id),
-        ],
+        objects,
         relations,
     )
 }
