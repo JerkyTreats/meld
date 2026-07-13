@@ -178,9 +178,25 @@ pub struct PlanningWorldStateRequest {
 impl PlanningWorldStateRequest {
     /// Derive a canonical digest from every projection request field.
     pub fn canonical_hash(&self) -> Result<String, String> {
-        let encoded = serde_json::to_vec(self).map_err(|error| error.to_string())?;
+        let mut canonical = self.clone();
+        canonical.requested_dimensions.sort();
+        canonical.requested_dimensions.dedup();
+        canonicalize_propositions(&mut canonical.required_preconditions)?;
+        let encoded = serde_json::to_vec(&canonical).map_err(|error| error.to_string())?;
         Ok(blake3::hash(&encoded).to_hex().to_string())
     }
+}
+
+fn canonicalize_propositions(propositions: &mut Vec<meld_lang::Proposition>) -> Result<(), String> {
+    let mut keyed = propositions
+        .drain(..)
+        .map(|proposition| serde_json::to_string(&proposition).map(|key| (key, proposition)))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    keyed.sort_by(|left, right| left.0.cmp(&right.0));
+    keyed.dedup_by(|left, right| left.0 == right.0);
+    propositions.extend(keyed.into_iter().map(|(_, proposition)| proposition));
+    Ok(())
 }
 
 /// Provenance for the projected world state consumed by planning.
@@ -237,5 +253,30 @@ mod contract_freeze_tests {
         let encoded = serde_json::to_vec(&inputs).unwrap();
         let decoded: PlanningProjectionIdentityInputs = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(decoded, inputs);
+    }
+
+    #[test]
+    fn source_request_hash_canonicalizes_semantic_set_order() {
+        let mut first = PlanningWorldStateRequest {
+            goal_id: "goal-a".to_string(),
+            agent_id: "agent-a".to_string(),
+            target: meld_lang::Proposition::All(Vec::new()),
+            perspective: PlanningPerspectiveRef::new("agent", "agent-a").unwrap(),
+            branch_id: "main".to_string(),
+            requested_dimensions: vec!["freshness".to_string(), "docs".to_string()],
+            required_preconditions: vec![
+                meld_lang::Proposition::All(Vec::new()),
+                meld_lang::Proposition::Not(Box::new(meld_lang::Proposition::All(Vec::new()))),
+            ],
+        };
+        let mut second = first.clone();
+        second.requested_dimensions.reverse();
+        second.required_preconditions.reverse();
+        first.requested_dimensions.push("docs".to_string());
+
+        assert_eq!(
+            first.canonical_hash().unwrap(),
+            second.canonical_hash().unwrap()
+        );
     }
 }

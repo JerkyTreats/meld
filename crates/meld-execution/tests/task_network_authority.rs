@@ -194,6 +194,120 @@ fn bounded_mailbox_reports_saturation_under_concurrent_admission() {
 }
 
 #[test]
+fn shutdown_during_saturation_drains_admitted_commands_and_reopens_without_loss() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory = TaskNetworkStoreFactory::new(temp.path());
+    let mut authority = TaskNetworkAuthority::open(&factory, "network-docs", 1).unwrap();
+    let initial = authority.query_port().state().unwrap();
+    let baseline_request = command_for(&initial, "command-baseline");
+    assert!(matches!(
+        authority
+            .command_port()
+            .try_submit(baseline_request.clone())
+            .unwrap(),
+        Response::Accepted { revision: 1, .. }
+    ));
+    let concurrent_base = authority.query_port().state().unwrap();
+    let workers = 64;
+    let barrier = Arc::new(Barrier::new(workers + 2));
+    let mut joins = Vec::new();
+
+    for index in 0..workers {
+        let port = authority.command_port();
+        let barrier = Arc::clone(&barrier);
+        let mut request = command_for(&concurrent_base, &format!("command-racing-{index}"));
+        request.command =
+            Command::ApplyMutationSet(meld_execution::task_network::mutation::Set::empty(
+                "network-docs",
+                format!("composition-racing-{index}"),
+                format!("once-racing-{index}"),
+            ));
+        joins.push(std::thread::spawn(move || {
+            barrier.wait();
+            let result = port.try_submit(request.clone());
+            (request, result)
+        }));
+    }
+
+    let shutdown_barrier = Arc::clone(&barrier);
+    let shutdown = std::thread::spawn(move || {
+        shutdown_barrier.wait();
+        authority.shutdown().unwrap()
+    });
+    barrier.wait();
+
+    let outcomes = joins
+        .into_iter()
+        .map(|join| join.join().unwrap())
+        .collect::<Vec<_>>();
+    let receipt = shutdown.join().unwrap();
+    assert!(outcomes.iter().all(|(_, result)| {
+        result.is_ok()
+            || matches!(
+                result,
+                Err(TaskNetworkAuthorityError::Full { .. })
+                    | Err(TaskNetworkAuthorityError::Closing { .. })
+                    | Err(TaskNetworkAuthorityError::Closed { .. })
+            )
+    }));
+
+    let mut accepted_revisions = outcomes
+        .iter()
+        .filter_map(|(_, result)| match result {
+            Ok(Response::Accepted { revision, .. }) => Some(*revision),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    accepted_revisions.push(1);
+    accepted_revisions.sort_unstable();
+    assert_eq!(
+        accepted_revisions,
+        (1..=receipt.final_revision).collect::<Vec<_>>()
+    );
+    assert_eq!(receipt.journal_records as u64, receipt.final_revision);
+
+    let mut reopened = TaskNetworkAuthority::open(&factory, "network-docs", 1).unwrap();
+    assert_eq!(
+        reopened.query_port().journal().unwrap().len(),
+        receipt.journal_records
+    );
+    assert_eq!(
+        reopened.query_port().state().unwrap().state_hash,
+        receipt.final_state_hash
+    );
+    assert!(matches!(
+        reopened
+            .command_port()
+            .try_submit(baseline_request)
+            .unwrap(),
+        Response::Duplicate { revision: 1, .. }
+    ));
+    for (request, result) in outcomes {
+        let Ok(original) = result else {
+            continue;
+        };
+        let replay = reopened.command_port().try_submit(request).unwrap();
+        match original {
+            Response::Accepted {
+                revision,
+                state_hash,
+            } => assert_eq!(
+                replay,
+                Response::Duplicate {
+                    revision,
+                    state_hash
+                }
+            ),
+            Response::Rejected(rejection) => {
+                assert_eq!(replay, Response::Rejected(rejection));
+            }
+            Response::Duplicate { .. } => panic!("new command returned duplicate"),
+        }
+    }
+    reopened.shutdown().unwrap();
+}
+
+#[test]
 fn zero_capacity_is_rejected_before_store_open() {
     let temp = tempfile::tempdir().unwrap();
     let factory = TaskNetworkStoreFactory::new(temp.path());

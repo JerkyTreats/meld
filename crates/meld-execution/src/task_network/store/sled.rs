@@ -172,6 +172,9 @@ impl SledTaskNetworkStore {
         if self.durability_indeterminate {
             return Err(durability_indeterminate().into());
         }
+        if let Some(expected_epoch) = authority_epoch {
+            self.validate_authority_epoch(expected_epoch)?;
+        }
         let command_id = request.command_id.clone();
         let request_hash = command_request_hash(&request);
 
@@ -607,5 +610,26 @@ mod tests {
         let reopened = SledTaskNetworkStore::open(db, "network-docs").unwrap();
         assert_eq!(reopened.state().revision, 1);
         assert_eq!(reopened.journal().len(), 1);
+    }
+
+    #[test]
+    fn stale_authority_epoch_cannot_acknowledge_a_duplicate_replay() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let mut store = SledTaskNetworkStore::open(db, "network-docs").unwrap();
+        let first_epoch = store.acquire_authority_epoch().unwrap();
+        let request = empty_command(store.state(), "command-docs");
+        store
+            .submit_at_authority_epoch(first_epoch, request.clone())
+            .unwrap();
+        let second_epoch = store.acquire_authority_epoch().unwrap();
+        assert!(second_epoch > first_epoch);
+
+        assert!(matches!(
+            store.submit_at_authority_epoch(first_epoch, request),
+            Err(AuthorityStoreError::StaleEpoch {
+                expected,
+                actual
+            }) if expected == first_epoch && actual == second_epoch
+        ));
     }
 }
