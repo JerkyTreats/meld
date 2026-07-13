@@ -371,7 +371,8 @@ The final reviewer approved W1A with no remaining critical or high blockers.
 | W1A | accepted | authority, replay, identity, validation, restart, and shutdown contracts | focused contract suites and full workspace static ladder | passed after three fix loops |
 | W1B1 | active | isolated belief authority lane | pending | pending |
 | W1B2 | active | isolated goal durability lane | pending | pending |
-| W1B3 through W1B4 | ready | domain packets may start | pending | pending |
+| W1B3 | accepted | deterministic planning identity, typed subject lowering, and attributed outcome publication | full execution all-target tests and clippy | passed after urgency fix loop |
+| W1B4 | ready | event validation packet may start | pending | pending |
 | W1B5 through W6G | blocked | none | none | none |
 
 ## Risks And Exceptions
@@ -471,6 +472,20 @@ Initial state: ready after accepted W1A
 
 Thread six prepares documentation evidence without changing program state.
 Threads retire after focused review.
+
+W1B3 accepted commit: `8f464cd`
+
+W1B3 gate evidence:
+
+- complete planning identity binds goal update sequence, exact projection request, derived frame, method library, capability catalog, and planning version
+- bounded planning selects ascending numeric urgency and then stable goal id
+- full typed object coordinates survive lowering in task lineage
+- canonical lowered tasks reject legacy unattributed outcomes
+- attributed outcomes survive task-network reopen and retain semantic publication lineage
+- full `meld-execution` all-target tests passed
+- focused planning, lowering, task-network store, execution bridge, and publication bridge suites passed
+- all-target clippy with warnings denied passed
+- fresh review approved after one urgency-order fix loop
 
 ### W1C Supervisor And Root Cutover
 
