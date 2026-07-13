@@ -144,7 +144,7 @@ Started from checkpoint: `1f6dc1d`
 ### W0A Canonical Hygiene Inventory
 
 Immediate corrections remove current implementation assessment from the world model and sensory domain roots.
-The following confirmed historical or implementation-shaped documents remain scheduled for W0C4 relocation or declarative cleanup:
+W0C4 rewrote the following confirmed historical or implementation-shaped documents as declarative contracts:
 
 - `design/cognitive_architecture/meld-lang/PLAN.md`
 - `design/cognitive_architecture/execution/GAPS.md`
@@ -158,13 +158,13 @@ The following confirmed historical or implementation-shaped documents remain sch
 - implementation sequencing in `design/cognitive_architecture/world_model/belief/curation.md`
 - current implementation wording in `design/cognitive_architecture/execution/planning/planning_pipeline.md`
 
-W0C4 must also adjudicate every static candidate returned by this scan before Wave 0 closes:
+W0C4 also adjudicated every static candidate returned by this scan:
 
 ```sh
 rg -l "implemented|implementation status|landed|current implementation|not yet implemented|already exists|exists today|current code|currently implemented|first slice" design/cognitive_architecture -g '*.md'
 ```
 
-The current candidate set includes:
+The adjudicated candidate set included:
 
 - `design/cognitive_architecture/core/CRATE.md`
 - `design/cognitive_architecture/execution/examples/bayesian_evaluation.md`
@@ -243,7 +243,7 @@ Next ready set: W0C1 through W0C4
 Ready items: W0C1 through W0C4
 Parallelization: isolated cache-host worktree beside root-owned passive route and lifecycle integration
 Cache commits: `4823303`, `b6dd724`
-Integrated state: review passed, root commit pending
+Integrated state: accepted as `fcac040`
 Implementation evidence:
 
 - exclusive bounded cache writer with atomic full-file replacement
@@ -267,6 +267,35 @@ Focused evidence:
 Review state: cache host and root integration approved after fix loops with no remaining high or critical findings
 Next ready set: W0C4 documentation evidence, then W0D closeout
 
+### 2026-07-12 W0D Integrated Closeout
+
+Ready items: W0C4 and W0D
+Accepted commits: `355f244`, `7d5e209`, `00e0b23`
+Implementation evidence:
+
+- canonical architecture status leaks replaced with declarative contracts and an explicit adjudication register
+- restart policy transitions routed through a first-class cache publication seam
+- requirement-era runtime ids canonicalized at ingress
+- resumable supervisor-store migration across desired state, leases, active lease indexes, heartbeats, health, restarts, and lifecycle values
+- divergent alias and canonical records fail closed during migration
+- assembly reopen checks tolerate the documented delayed sled lock release
+
+Final gate evidence:
+
+- `cargo fmt --all -- --check`
+- `cargo check --locked --workspace --all-targets`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo test --locked --workspace --all-targets`
+- `git diff --check`
+- no `mod.rs` paths
+- exhaustive canonical hygiene scan with every residual match adjudicated
+
+Fresh integrated review found two high issues: restart publication was not explicit and persisted alias migration lacked complete characterization.
+Commit `00e0b23` closed both findings, and the reviewer approved the corrected integrated state with no remaining high or critical blockers.
+
+Closeout state: accepted
+Next ready set: W1A authority contract freeze
+
 ## Gate Evidence
 
 | Wave | Gate | Result | Commit | Notes |
@@ -275,8 +304,10 @@ Next ready set: W0C4 documentation evidence, then W0D closeout
 | W0A | source truth and documentation checks | passed | `642af1c` | fresh reviewer withdrew all findings |
 | W0B | runtime contract focused ladder and workspace clippy | passed | `0819dbf` | fresh review passed after two fix loops |
 | W0C1 | bounded cache host | passed | `4823303`, `b6dd724` | fresh review passed after ingress-bound fix loop |
-| W0C2 | passive route and lifecycle publication | passed | pending | fresh review passed after action identity fix |
-| W0C3 | separate-process lock isolation | passed | pending | foreground host remained active while status succeeded |
+| W0C2 | passive route and lifecycle publication | passed | `fcac040` | fresh review passed after action identity fix |
+| W0C3 | separate-process lock isolation | passed | `fcac040` | foreground host remained active while status succeeded |
+| W0C4 | canonical document truth | passed | `355f244` | all candidates and retained matches adjudicated |
+| W0D | integrated Wave 0 ladder | passed | `00e0b23` | full locked workspace gate and fresh integrated review passed |
 
 ## Review Findings
 
@@ -294,6 +325,10 @@ W0C2 fresh review found same-millisecond action identity collisions.
 A supervisor-owned monotonic action sequence and focused regression closed the finding.
 Final route and lifecycle review passed.
 
+W0D fresh review found no explicit restart publication seam and incomplete persisted-id migration evidence.
+The closeout fix added distinct restart snapshot publication and a resumable collision-detecting migration for every supervisor record family that stores a runtime id.
+The final review approved the integrated Wave 0 state with no high or critical findings.
+
 ## Phase Completion Matrix
 
 | Packet | Status | Implementation Evidence | Test Evidence | Review |
@@ -301,10 +336,12 @@ Final route and lifecycle review passed.
 | W0A | complete | source classification and reconciled docs | Markdown, links, diff, boundaries | passed after fix loop |
 | W0B | accepted | canonical identity, truthful roles, cache freeze, contender safety | focused runtime suites and workspace clippy | passed after two fix loops |
 | W0C1 | accepted | cache host | 15 focused tests | passed after fix loop |
-| W0C2 | review | passive status route and lifecycle publisher | focused passive and runtime CLI suites | passed after fix loop |
-| W0C3 | review | process isolation proof | separate-process test | passed |
-| W0C4 | ready | documentation truth evidence | none | none |
-| W0D through W6G | blocked | none | none | none |
+| W0C2 | accepted | passive status route and lifecycle publisher | focused passive and runtime CLI suites | passed after fix loop |
+| W0C3 | accepted | process isolation proof | separate-process test | passed |
+| W0C4 | accepted | canonical hygiene register and current visibility truth | documentation scope, links, prose, scans, and diff | passed |
+| W0D | accepted | restart publication, alias migration, and integrated closeout | full locked workspace ladder | passed after fix loop |
+| W1A | ready | contract freeze packet | pending | pending |
+| W1B through W6G | blocked | none | none | none |
 
 ## Risks And Exceptions
 
@@ -364,16 +401,19 @@ W0C3 and W0C4 receive exact allowed files only after W0C1 and W0C2 expose their 
 
 ### W0D Wave Closeout
 
-Initial state: blocked by W0C
+Initial state: accepted
 Thread: zero, then thread seven reviewer
 Strength: highest available
 Output: accepted commits, exact gate evidence, updated risks, and W1A ready.
+
+Accepted commits: `355f244`, `7d5e209`, `00e0b23`
+Gate result: passed
 
 ## Wave 1 Delivery
 
 ### W1A Authority Contract Freeze
 
-Initial state: blocked by W0D
+Initial state: ready
 Thread: zero
 Strength: highest available
 Write scope: central compatibility contracts and public domain amendment integration
