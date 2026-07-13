@@ -826,10 +826,21 @@ pub enum ObservationReason {
     MissingComparator,
 }
 
+/// Exact durable position in one belief key assignment stream.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AssessmentAssignmentCursor {
+    /// Mutation generation assigned when this evidence edge became durable.
+    pub mutation_generation: u64,
+    /// Canonical source sequence carried by the assignment.
+    pub source_cursor_end: u64,
+    /// Stable assignment identity used to order equal-sequence edges.
+    pub assignment_id: String,
+}
+
 /// Durable worker lease for assessing one belief key.
 ///
-/// Leases serialize revision commits by key and give recovery enough state to
-/// abandon expired work without relying on worker memory.
+/// Leases serialize revision commits by key and retain the exact bounded
+/// assignment window so recovery never depends on process-local iteration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssessmentLease {
     pub lease_id: String,
@@ -838,6 +849,16 @@ pub struct AssessmentLease {
     pub owner_id: String,
     pub input_cursor_start: u64,
     pub input_cursor_end: u64,
+    // TODO compat-shim: remove these defaults after the minimum supported
+    // belief store schema includes bounded assignment cursors. They preserve
+    // pre-bounded lease blobs. Keep the base-format reopen parity proof green
+    // before deleting this compatibility path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment_cursor_start: Option<AssessmentAssignmentCursor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment_cursor_end: Option<AssessmentAssignmentCursor>,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub assignment_window_complete: bool,
     pub started_at_seq: u64,
     pub expires_at_seq: u64,
     pub comparator_engine_id: String,
@@ -1011,12 +1032,29 @@ fn validate_assessment_lease(lease: &AssessmentLease) -> Result<(), StorageError
             "assessment lease input cursor range is reversed".to_string(),
         ));
     }
+    if let Some(cursor) = &lease.assignment_cursor_start {
+        validate_assessment_assignment_cursor(cursor)?;
+    }
+    if let Some(cursor) = &lease.assignment_cursor_end {
+        validate_assessment_assignment_cursor(cursor)?;
+    }
+    if lease.assignment_cursor_end < lease.assignment_cursor_start {
+        return Err(StorageError::InvalidPath(
+            "assessment lease assignment cursor range is reversed".to_string(),
+        ));
+    }
     if lease.expires_at_seq <= lease.started_at_seq {
         return Err(StorageError::InvalidPath(
             "assessment lease expiry must follow its start".to_string(),
         ));
     }
     Ok(())
+}
+
+fn validate_assessment_assignment_cursor(
+    cursor: &AssessmentAssignmentCursor,
+) -> Result<(), StorageError> {
+    require_non_empty("assessment assignment cursor id", &cursor.assignment_id)
 }
 
 /// Recovery result after reconciling an interrupted atomic belief commit.
@@ -1042,6 +1080,12 @@ pub struct DirtyKeyState {
     /// Monotonic mutation generation used to detect work admitted after leasing.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub mutation_generation: u64,
+    /// Last exact assignment edge durably inspected by a bounded settlement.
+    // TODO compat-shim: remove this default after all supported dirty-key
+    // records carry assignment cursor state. It preserves legacy dirty records.
+    // Keep migration and bounded reopen parity proofs green before removal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assessment_cursor: Option<AssessmentAssignmentCursor>,
     pub active_lease_id: Option<String>,
     pub reason: DirtyReason,
 }
@@ -1254,6 +1298,14 @@ pub(crate) fn require_non_empty(label: &str, value: &str) -> Result<(), StorageE
 
 fn is_zero(value: &u64) -> bool {
     *value == 0
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 #[cfg(test)]

@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use meld_world_model::belief::EvidenceRejection;
 use meld_world_model::belief::{
-    ingest_promoted_evidence, BayesianComparator, BeliefConfigLoader, BeliefEvidenceNormalizer,
-    BeliefQuery, BeliefRuntime, BeliefStore, BranchScope, ComparatorInput, LeaseStatus,
-    PromotedEvidenceIngestionRequest,
+    ingest_promoted_evidence, BayesianComparator, BeliefAssessmentActor, BeliefAssessmentRequest,
+    BeliefConfigLoader, BeliefEvidenceNormalizer, BeliefQuery, BeliefRuntime, BeliefStore,
+    BranchScope, ComparatorInput, LeaseStatus, PromotedEvidenceIngestionRequest,
 };
 use meld_world_model::belief::{
     BeliefProvenanceSummary, BeliefRevision, ContradictionState, EvidencePolarity, FreshnessState,
@@ -749,6 +749,14 @@ fn belief_runtime_persists_revision_and_view() {
     assert_eq!(views[0].status, BeliefStatus::Settled);
     assert!(views[0].planner_projection.confidence < 0.7);
     assert_eq!(views[0].hydration.evidence_ids.len(), 1);
+    let subject_lease_id = format!(
+        "lease-1-{}-{}",
+        result.source_cursor_end,
+        views[0].key.index_key()
+    );
+    let subject_lease = belief_store.get_lease(&subject_lease_id).unwrap().unwrap();
+    assert_eq!(subject_lease.started_at_seq, 1);
+    assert_eq!(subject_lease.expires_at_seq, 101);
     assert_eq!(
         query
             .evidence_by_revision(&result.revision_id)
@@ -766,6 +774,191 @@ fn belief_runtime_persists_revision_and_view() {
         .current_revision(&views[0].key)
         .unwrap()
         .is_some());
+}
+
+#[test]
+fn successful_subject_assessment_replays_after_reopen_without_a_new_lease() {
+    let (graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_path = belief_dir.path().join("belief");
+    let config = BeliefConfigLoader::load_json(config_json()).unwrap();
+    let request = BeliefAssessmentRequest {
+        subject: node.clone(),
+        anchor_perspective_kind: "frame_type".to_string(),
+        anchor_perspective_id: "analysis".to_string(),
+        lease_owner_id: "subject-worker".to_string(),
+    };
+    let revision_id;
+    let belief_key;
+    {
+        let store = Arc::new(BeliefStore::new(sled::open(&belief_path).unwrap()).unwrap());
+        let actor = BeliefAssessmentActor::new(
+            Arc::clone(&store),
+            Arc::clone(&graph),
+            config.clone(),
+            PerspectiveKey::new("default", "default").unwrap(),
+            BranchScope::main(),
+        );
+        let first = actor.assess_subject(request.clone());
+        assert_eq!(first.input_sequence, 0);
+        assert_eq!(first.output_sequence, 1);
+        assert_eq!(first.lease_clock, 1);
+        assert_eq!(first.committed_count, 1);
+        assert!(first.retryable_errors.is_empty());
+        assert!(first.fatal_errors.is_empty());
+        let view = BeliefQuery::new(store.as_ref())
+            .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+            .unwrap()
+            .remove(0);
+        revision_id = view.current_revision_id.unwrap();
+        belief_key = view.key;
+    }
+    drop(graph);
+
+    let graph = Arc::new(
+        TraversalStore::new(reopen_sled_after_close(&graph_dir.path().join("graph")).unwrap())
+            .unwrap(),
+    );
+    let store = Arc::new(BeliefStore::new(reopen_sled_after_close(&belief_path).unwrap()).unwrap());
+    let actor = BeliefAssessmentActor::new(
+        Arc::clone(&store),
+        graph,
+        config,
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    );
+    let replay = actor.assess_subject(request);
+
+    assert_eq!(replay.input_sequence, 1);
+    assert_eq!(replay.output_sequence, 1);
+    assert_eq!(replay.lease_clock, 1);
+    assert_eq!(replay.committed_count, 1);
+    assert_eq!(replay.no_work_count, 0);
+    assert!(replay.retryable_errors.is_empty());
+    assert!(replay.fatal_errors.is_empty());
+    assert_eq!(
+        store
+            .current_revision(&belief_key)
+            .unwrap()
+            .unwrap()
+            .revision_id,
+        revision_id
+    );
+    assert!(store
+        .get_lease(&format!("lease-2-1-{}", belief_key.index_key()))
+        .unwrap()
+        .is_none());
+    assert!(store.dirty_state(&belief_key).unwrap().is_none());
+}
+
+#[test]
+fn pre_progress_base_subject_replay_migrates_without_a_new_lease() {
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let belief_path = belief_dir.path().join("belief-base-subject");
+    let config = BeliefConfigLoader::load_json(config_json()).unwrap();
+    let request = BeliefAssessmentRequest {
+        subject: node,
+        anchor_perspective_kind: "frame_type".to_string(),
+        anchor_perspective_id: "analysis".to_string(),
+        lease_owner_id: "legacy-subject-owner".to_string(),
+    };
+    let revision_id;
+    let belief_key;
+    let lease_id;
+    {
+        let store = Arc::new(BeliefStore::new(sled::open(&belief_path).unwrap()).unwrap());
+        let actor = BeliefAssessmentActor::new(
+            Arc::clone(&store),
+            Arc::clone(&graph),
+            config.clone(),
+            PerspectiveKey::new("default", "default").unwrap(),
+            BranchScope::main(),
+        );
+        let first = actor.assess_subject(request.clone());
+        assert_eq!(first.output_sequence, 1);
+        let view = BeliefQuery::new(store.as_ref())
+            .current_views_for_subject(
+                &request.subject,
+                &PerspectiveKey::new("default", "default").unwrap(),
+            )
+            .unwrap()
+            .remove(0);
+        revision_id = view.current_revision_id.unwrap();
+        belief_key = view.key;
+        let source_cursor_end = store
+            .current_revision(&belief_key)
+            .unwrap()
+            .unwrap()
+            .source_cursor_end;
+        lease_id = format!("lease-1-{source_cursor_end}-{}", belief_key.index_key());
+        assert!(store.get_lease(&lease_id).unwrap().is_some());
+    }
+    {
+        let db = reopen_sled_after_close(&belief_path).unwrap();
+        let leases = db.open_tree("belief_leases").unwrap();
+        let raw = leases.get(lease_id.as_bytes()).unwrap().unwrap();
+        let mut legacy: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        let legacy = legacy.as_object_mut().unwrap();
+        legacy.remove("assignment_cursor_start");
+        legacy.remove("assignment_cursor_end");
+        legacy.remove("assignment_window_complete");
+        leases
+            .insert(lease_id.as_bytes(), serde_json::to_vec(legacy).unwrap())
+            .unwrap();
+        for tree in [
+            "belief_assignments_by_key",
+            "belief_assignment_tail_by_key",
+            "belief_committed_evidence",
+            "belief_commit_intent_by_lease",
+            "belief_commit_receipts",
+            "belief_legacy_assessment_receipts",
+        ] {
+            db.open_tree(tree).unwrap().clear().unwrap();
+        }
+        let runtime_meta = db.open_tree("belief_runtime_meta").unwrap();
+        let assessment_keys = runtime_meta
+            .scan_prefix(b"assessment_")
+            .map(|item| item.unwrap().0)
+            .collect::<Vec<_>>();
+        for key in assessment_keys {
+            runtime_meta.remove(key).unwrap();
+        }
+        db.open_tree("belief_authority_meta")
+            .unwrap()
+            .remove("legacy_assessment_migration_fence")
+            .unwrap();
+        db.flush().unwrap();
+    }
+
+    let store = Arc::new(BeliefStore::new(reopen_sled_after_close(&belief_path).unwrap()).unwrap());
+    let actor = BeliefAssessmentActor::new(
+        Arc::clone(&store),
+        graph,
+        config,
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    );
+    let replay = actor.assess_subject(request);
+
+    assert_eq!(replay.input_sequence, 0);
+    assert_eq!(replay.output_sequence, 0);
+    assert_eq!(replay.lease_clock, 0);
+    assert_eq!(replay.committed_count, 1);
+    assert!(replay.retryable_errors.is_empty());
+    assert!(replay.fatal_errors.is_empty());
+    assert_eq!(
+        store
+            .current_revision(&belief_key)
+            .unwrap()
+            .unwrap()
+            .revision_id,
+        revision_id
+    );
+    assert_eq!(
+        store.get_lease(&lease_id).unwrap().unwrap().status,
+        LeaseStatus::Completed
+    );
 }
 
 #[test]
@@ -1039,6 +1232,9 @@ fn belief_recovery_abandons_expired_lease() {
         owner_id: "worker-b".to_string(),
         input_cursor_start: 1,
         input_cursor_end: 2,
+        assignment_cursor_start: None,
+        assignment_cursor_end: None,
+        assignment_window_complete: true,
         started_at_seq: 2,
         expires_at_seq: 3,
         comparator_engine_id: "weighted_bayesian".to_string(),
@@ -1420,6 +1616,33 @@ fn belief_store_persists_runtime_meta() {
     );
 }
 
+#[test]
+fn belief_public_runtime_meta_cannot_mutate_reserved_actor_authority() {
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let store = BeliefStore::new(db).unwrap();
+
+    for key in [
+        "assessment_source_high_water",
+        "assessment_progress_sequence",
+        "assessment_lease_clock",
+        "assessment_dirty_cursor",
+        "assessment_progress_receipt::commit::forged",
+        "active_config_hash::docs_freshness",
+        "active_policy_id::docs_freshness",
+    ] {
+        assert!(store.put_runtime_meta(key, "12345678").is_err(), "{key}");
+        assert!(store.get_runtime_meta(key).unwrap().is_none(), "{key}");
+    }
+    store.put_runtime_meta("compatibility_note", "ok").unwrap();
+    assert_eq!(
+        store
+            .get_runtime_meta("compatibility_note")
+            .unwrap()
+            .as_deref(),
+        Some("ok")
+    );
+}
+
 fn migration_identity() -> meld_world_model::belief::contracts::BeliefAuthorityMigrationIdentity {
     meld_world_model::belief::contracts::BeliefAuthorityMigrationIdentity::try_new(
         "belief-migration-a",
@@ -1502,48 +1725,6 @@ fn empty_belief_authority_migration_persists_cutover_marker() {
 }
 
 #[test]
-fn belief_authority_marker_rejects_snapshot_replacement_and_regression() {
-    use meld_world_model::belief::contracts::{
-        BeliefAuthorityMigrationMarker, BeliefAuthorityMigrationProgress, BeliefAuthoritySnapshot,
-    };
-
-    let legacy_dir = tempfile::tempdir().unwrap();
-    let product_dir = tempfile::tempdir().unwrap();
-    let legacy = BeliefStore::new(sled::open(legacy_dir.path().join("belief")).unwrap()).unwrap();
-    legacy.put_runtime_meta("legacy_seq", "1").unwrap();
-    let product = BeliefStore::new(sled::open(product_dir.path().join("belief")).unwrap()).unwrap();
-    product
-        .advance_legacy_authority_migration(&legacy, migration_identity())
-        .unwrap();
-    let replacement = BeliefAuthorityMigrationMarker::try_new(
-        migration_identity(),
-        BeliefAuthorityMigrationProgress::Prepared {
-            source: BeliefAuthoritySnapshot::try_new("b".repeat(64), 1).unwrap(),
-        },
-    )
-    .unwrap();
-    assert!(product
-        .put_authority_migration_marker(&replacement)
-        .is_err());
-    let copying = product
-        .advance_legacy_authority_migration(&legacy, migration_identity())
-        .unwrap();
-    let prepared = BeliefAuthorityMigrationMarker::try_new(
-        migration_identity(),
-        match copying.progress() {
-            BeliefAuthorityMigrationProgress::Copying { source, .. } => {
-                BeliefAuthorityMigrationProgress::Prepared {
-                    source: source.clone(),
-                }
-            }
-            _ => unreachable!(),
-        },
-    )
-    .unwrap();
-    assert!(product.put_authority_migration_marker(&prepared).is_err());
-}
-
-#[test]
 fn belief_authority_fence_rejects_concurrent_source_mutation() {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1581,10 +1762,9 @@ fn belief_authority_fence_rejects_concurrent_source_mutation() {
 }
 
 #[test]
-fn belief_authority_migration_resumes_after_reopen_from_every_marker_state() {
+fn belief_authority_migration_uses_recovery_capability_for_incomplete_copy() {
     use meld_world_model::belief::contracts::{
-        BeliefAuthorityMigrationMarker, BeliefAuthorityMigrationProgress,
-        LegacyBeliefCompatibilityPosture,
+        BeliefAuthorityMigrationProgress, LegacyBeliefCompatibilityPosture,
     };
 
     let legacy_dir = tempfile::tempdir().unwrap();
@@ -1593,23 +1773,45 @@ fn belief_authority_migration_resumes_after_reopen_from_every_marker_state() {
     let product_path = product_dir.path().join("belief");
     let legacy = BeliefStore::new(sled::open(&legacy_path).unwrap()).unwrap();
     legacy.put_runtime_meta("legacy_seq", "42").unwrap();
-    let mut product = BeliefStore::new(sled::open(&product_path).unwrap()).unwrap();
-    let expected_states = ["prepared", "copying", "verified", "cutover"];
-    for expected in expected_states {
-        let marker = product
+    let product = BeliefStore::new(sled::open(&product_path).unwrap()).unwrap();
+    assert!(matches!(
+        product
             .advance_legacy_authority_migration(&legacy, migration_identity())
-            .unwrap();
-        let actual = match marker.progress() {
-            BeliefAuthorityMigrationProgress::Prepared { .. } => "prepared",
-            BeliefAuthorityMigrationProgress::Copying { .. } => "copying",
-            BeliefAuthorityMigrationProgress::Verified { .. } => "verified",
-            BeliefAuthorityMigrationProgress::Cutover { .. } => "cutover",
-            BeliefAuthorityMigrationProgress::ForwardRepairOnly { .. } => "forward_repair_only",
-        };
-        assert_eq!(actual, expected);
-        drop(product);
-        product = BeliefStore::new(reopen_sled_after_close(&product_path).unwrap()).unwrap();
-    }
+            .unwrap()
+            .progress(),
+        BeliefAuthorityMigrationProgress::Prepared { .. }
+    ));
+    assert!(matches!(
+        product
+            .advance_legacy_authority_migration(&legacy, migration_identity())
+            .unwrap()
+            .progress(),
+        BeliefAuthorityMigrationProgress::Copying { .. }
+    ));
+    drop(product);
+
+    let product_db = reopen_sled_after_close(&product_path).unwrap();
+    assert!(matches!(
+        BeliefStore::new(product_db.clone()),
+        Err(meld_world_model::error::StorageError::Unavailable(_))
+    ));
+    let recovery =
+        BeliefStore::open_for_authority_migration(product_db, migration_identity()).unwrap();
+    assert_eq!(
+        recovery.resume(&legacy).unwrap(),
+        LegacyBeliefCompatibilityPosture::ProductAuthoritative
+    );
+    drop(recovery);
+
+    let product = BeliefStore::new(reopen_sled_after_close(&product_path).unwrap()).unwrap();
+    assert!(matches!(
+        product
+            .authority_migration_marker()
+            .unwrap()
+            .unwrap()
+            .progress(),
+        BeliefAuthorityMigrationProgress::Cutover { .. }
+    ));
     product.put_runtime_meta("product_seq", "43").unwrap();
     let marker = product
         .advance_legacy_authority_migration(&legacy, migration_identity())
@@ -1618,19 +1820,6 @@ fn belief_authority_migration_resumes_after_reopen_from_every_marker_state() {
         marker.progress(),
         BeliefAuthorityMigrationProgress::ForwardRepairOnly { .. }
     ));
-    let cutover = BeliefAuthorityMigrationMarker::try_new(
-        migration_identity(),
-        match marker.progress() {
-            BeliefAuthorityMigrationProgress::ForwardRepairOnly { parity } => {
-                BeliefAuthorityMigrationProgress::Cutover {
-                    parity: parity.clone(),
-                }
-            }
-            _ => unreachable!(),
-        },
-    )
-    .unwrap();
-    assert!(product.put_authority_migration_marker(&cutover).is_err());
     drop(product);
     let reopened = BeliefStore::new(reopen_sled_after_close(&product_path).unwrap()).unwrap();
     assert_eq!(
@@ -1787,6 +1976,9 @@ fn belief_store_rejects_revision_commit_outside_lease_window() {
         owner_id: "worker-b".to_string(),
         input_cursor_start: 10,
         input_cursor_end: 12,
+        assignment_cursor_start: None,
+        assignment_cursor_end: None,
+        assignment_window_complete: true,
         started_at_seq: 10,
         expires_at_seq: 20,
         comparator_engine_id: "weighted_bayesian".to_string(),
@@ -1870,6 +2062,9 @@ fn belief_store_rejects_stale_lease_owner() {
         owner_id: "worker-b".to_string(),
         input_cursor_start: 1,
         input_cursor_end: 2,
+        assignment_cursor_start: None,
+        assignment_cursor_end: None,
+        assignment_window_complete: true,
         started_at_seq: 1,
         expires_at_seq: 20,
         comparator_engine_id: "weighted_bayesian".to_string(),
@@ -1903,9 +2098,25 @@ fn belief_public_surface_excludes_raw_authority_mutations() {
         "pub fn put_lease",
         "pub fn prepare_belief_commit",
         "pub fn apply_belief_commit",
+        "pub fn put_authority_migration_marker",
     ] {
         assert!(!store.contains(raw_mutation));
     }
+}
+
+#[test]
+fn belief_actors_depend_on_explicit_graph_query_contract() {
+    let assessment_actor = include_str!("../src/belief/assessment_actor.rs");
+    let evidence_actor = include_str!("../src/belief/evidence_actor.rs");
+    let ports = include_str!("../src/belief/ports.rs");
+
+    for actor in [assessment_actor, evidence_actor] {
+        assert!(!actor.contains("TraversalStore"));
+        assert!(!actor.contains("world_state::graph::store"));
+        assert!(actor.contains("BeliefGraphQuery"));
+    }
+    assert!(ports.contains("pub trait BeliefGraphQuery"));
+    assert!(ports.contains("impl BeliefGraphQuery for TraversalStore"));
 }
 
 #[test]
@@ -1952,6 +2163,7 @@ fn belief_public_records_round_trip_through_serde() {
         dirty_since_seq: 2,
         latest_seq: 2,
         mutation_generation: 1,
+        assessment_cursor: None,
         active_lease_id: None,
         reason: meld_world_model::DirtyReason::NewEvidence,
     };
@@ -2059,6 +2271,9 @@ fn test_lease(
         owner_id: "worker-b".to_string(),
         input_cursor_start: start,
         input_cursor_end: end,
+        assignment_cursor_start: None,
+        assignment_cursor_end: None,
+        assignment_window_complete: true,
         started_at_seq: start,
         expires_at_seq: end + 10,
         comparator_engine_id: "weighted_bayesian".to_string(),

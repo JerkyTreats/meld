@@ -7,10 +7,11 @@ use meld_events::{
     EventReplayCapability, LedgerIdentity, ReplayRequest,
 };
 use meld_world_model::belief::{
-    BeliefAssessmentActor, BeliefAssessmentRequest, BeliefConfigLoader, BeliefDirtyKeyTickRequest,
-    BeliefEvidenceNormalizer, BeliefStore, BranchScope, EvidenceEventReplaySource,
-    EvidenceIngestionActor, EvidenceIngestionActorRequest, EvidenceIngestionReceiptDisposition,
-    EvidenceIngestionReceiptWriteDisposition, EvidenceValue, LeaseStatus, PromotedEvidenceRecord,
+    AssessmentLease, BeliefAssessmentActor, BeliefAssessmentRequest, BeliefConfigLoader,
+    BeliefDirtyKeyTickRequest, BeliefEvidenceNormalizer, BeliefKey, BeliefRuntime, BeliefStore,
+    BranchScope, EvidenceEventReplaySource, EvidenceIngestionActor, EvidenceIngestionActorRequest,
+    EvidenceIngestionReceiptDisposition, EvidenceIngestionReceiptWriteDisposition, EvidenceValue,
+    LeaseStatus, PromotedEvidenceRecord,
 };
 use meld_world_model::events::DomainObjectRef;
 use meld_world_model::world_state::graph::store::TraversalStore;
@@ -110,11 +111,14 @@ fn assessment_actor_selects_dirty_keys_deterministically_and_uses_supervisor_lea
     );
 
     let report = actor.tick_dirty(BeliefDirtyKeyTickRequest {
-        current_sequence: 0,
         max_items: 1,
         lease_owner_id: "supervisor-lease-assessment".to_string(),
     });
 
+    assert_eq!(report.input_sequence, 0);
+    assert_eq!(report.output_sequence, 1);
+    assert_eq!(report.source_high_water, 0);
+    assert_eq!(report.lease_clock, 1);
     assert_eq!(report.selected_count, 1);
     assert_eq!(report.committed_count, 1);
     assert!(report.budget_exhausted);
@@ -161,6 +165,412 @@ fn assessment_actor_reports_missing_anchor_as_retryable_no_work() {
     assert_eq!(report.retryable_errors.len(), 1);
     assert_eq!(report.retryable_errors[0].code, "missing_graph_anchor");
     assert!(report.fatal_errors.is_empty());
+}
+
+#[test]
+fn assessment_actor_cursor_survives_reopen_and_passes_a_blocked_head() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("world-model");
+    let config = BeliefConfigLoader::load_json(CONFIG_JSON).unwrap();
+    let perspective = PerspectiveKey::new("agent", "default").unwrap();
+    let branch_scope = BranchScope::main();
+    let key_a;
+    let key_b;
+    {
+        let db = sled::open(&path).unwrap();
+        let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+        let traversal = Arc::new(TraversalStore::new(db).unwrap());
+        let normalizer = BeliefEvidenceNormalizer::new(
+            config.config.clone(),
+            perspective.clone(),
+            branch_scope.clone(),
+        );
+        key_a = seed_assignment(&store, &normalizer, "event-a", "node-a", 10);
+        key_b = seed_assignment(&store, &normalizer, "event-b", "node-b", 20);
+        let key_c = seed_assignment(&store, &normalizer, "event-c", "node-c", 30);
+        store
+            .acquire_lease(active_lease(&key_a, &config, "blocked-head", 10, 1000))
+            .unwrap();
+        store.flush().unwrap();
+        let actor = BeliefAssessmentActor::new(
+            Arc::clone(&store),
+            traversal,
+            config.clone(),
+            perspective.clone(),
+            branch_scope.clone(),
+        );
+
+        let first = actor.tick_dirty(BeliefDirtyKeyTickRequest {
+            max_items: 1,
+            lease_owner_id: "supervisor-lease-a".to_string(),
+        });
+
+        assert_eq!(first.input_sequence, 0);
+        assert_eq!(first.output_sequence, 0);
+        assert_eq!(first.source_high_water, 0);
+        assert_eq!(first.lease_clock, 1);
+        assert_eq!(first.selected_count, 1);
+        assert_eq!(first.committed_count, 0);
+        assert_eq!(first.no_work_count, 0);
+        assert_eq!(first.retryable_errors.len(), 1);
+        assert!(first.budget_exhausted);
+        assert!(store.current_revision(&key_a).unwrap().is_none());
+        assert!(store.current_revision(&key_b).unwrap().is_none());
+        assert!(store.current_revision(&key_c).unwrap().is_none());
+    }
+    {
+        let db = reopen_sled(&path);
+        let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+        let traversal = Arc::new(TraversalStore::new(db).unwrap());
+        let actor = BeliefAssessmentActor::new(
+            Arc::clone(&store),
+            traversal,
+            config,
+            perspective,
+            branch_scope,
+        );
+
+        let resumed = actor.tick_dirty(BeliefDirtyKeyTickRequest {
+            max_items: 1,
+            lease_owner_id: "supervisor-lease-b".to_string(),
+        });
+
+        assert_eq!(resumed.input_sequence, 0);
+        assert_eq!(resumed.output_sequence, 1);
+        assert_eq!(resumed.source_high_water, 0);
+        assert_eq!(resumed.lease_clock, 2);
+        assert_eq!(resumed.selected_count, 1);
+        assert_eq!(resumed.committed_count, 1);
+        assert!(resumed.retryable_errors.is_empty());
+        assert!(resumed.fatal_errors.is_empty());
+        assert!(store.current_revision(&key_b).unwrap().is_some());
+        assert!(store.current_revision(&key_a).unwrap().is_none());
+    }
+}
+
+#[test]
+fn assessment_actor_recovers_expired_lease_from_idle_clock_after_reopen() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("belief-idle-recovery");
+    let config = BeliefConfigLoader::load_json(CONFIG_JSON).unwrap();
+    let perspective = PerspectiveKey::new("agent", "default").unwrap();
+    let branch_scope = BranchScope::main();
+    let key;
+    {
+        let db = sled::open(&path).unwrap();
+        let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+        let traversal = Arc::new(TraversalStore::new(db).unwrap());
+        let normalizer = BeliefEvidenceNormalizer::new(
+            config.config.clone(),
+            perspective.clone(),
+            branch_scope.clone(),
+        );
+        key = seed_assignment(&store, &normalizer, "event-a", "node-a", 10);
+        store
+            .acquire_lease(active_lease(&key, &config, "expired", 10, 2))
+            .unwrap();
+        store.flush().unwrap();
+        let actor = BeliefAssessmentActor::new(
+            Arc::clone(&store),
+            traversal,
+            config.clone(),
+            perspective.clone(),
+            branch_scope.clone(),
+        );
+        let first = actor.tick_dirty(BeliefDirtyKeyTickRequest {
+            max_items: 1,
+            lease_owner_id: "supervisor-lease-recovery".to_string(),
+        });
+        assert_eq!(first.lease_clock, 1);
+        assert_eq!(first.recovered_lease_count, 0);
+        assert_eq!(first.committed_count, 0);
+        assert_eq!(first.retryable_errors.len(), 1);
+    }
+    {
+        let db = reopen_sled(&path);
+        let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+        let traversal = Arc::new(TraversalStore::new(db).unwrap());
+        let actor = BeliefAssessmentActor::new(
+            Arc::clone(&store),
+            traversal,
+            config,
+            perspective,
+            branch_scope,
+        );
+        let resumed = actor.tick_dirty(BeliefDirtyKeyTickRequest {
+            max_items: 1,
+            lease_owner_id: "supervisor-lease-recovery".to_string(),
+        });
+        assert_eq!(resumed.input_sequence, 0);
+        assert_eq!(resumed.output_sequence, 1);
+        assert_eq!(resumed.source_high_water, 0);
+        assert_eq!(resumed.lease_clock, 2);
+        assert_eq!(resumed.recovered_lease_count, 1);
+        assert_eq!(resumed.committed_count, 1);
+        assert!(resumed.retryable_errors.is_empty());
+        assert!(resumed.fatal_errors.is_empty());
+        assert_eq!(
+            store.get_lease("expired").unwrap().unwrap().status,
+            LeaseStatus::Abandoned
+        );
+        assert!(store.current_revision(&key).unwrap().is_some());
+    }
+}
+
+#[test]
+fn dirty_assessment_settles_bounded_evidence_windows_without_losing_tail_work() {
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+    let traversal = Arc::new(TraversalStore::new(db).unwrap());
+    let config = BeliefConfigLoader::load_json(CONFIG_JSON).unwrap();
+    let perspective = PerspectiveKey::new("agent", "default").unwrap();
+    let branch_scope = BranchScope::main();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        config.config.clone(),
+        perspective.clone(),
+        branch_scope.clone(),
+    );
+    let key = seed_assignment(&store, &normalizer, "event-1", "node-a", 1);
+    seed_assignment(&store, &normalizer, "event-2", "node-a", 2);
+    seed_assignment(&store, &normalizer, "event-3", "node-a", 3);
+    let runtime = BeliefRuntime::new(
+        Arc::clone(&store),
+        traversal,
+        config,
+        perspective,
+        branch_scope,
+    );
+
+    for expected_sequence in 1..=3 {
+        let result = runtime
+            .assess_dirty_key_bounded(&key, "supervisor-lease-window", 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.evidence_count, 1);
+        assert_eq!(result.source_cursor_end, expected_sequence);
+        if expected_sequence < 3 {
+            let dirty = store.dirty_state(&key).unwrap().unwrap();
+            assert_eq!(dirty.dirty_since_seq, 1);
+            assert_eq!(dirty.latest_seq, 3);
+        }
+    }
+
+    assert!(store.dirty_state(&key).unwrap().is_none());
+    assert_eq!(store.revision_history(&key).unwrap().len(), 3);
+}
+
+#[test]
+fn single_blocked_dirty_key_remains_retryable_after_cursor_wrap() {
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+    let traversal = Arc::new(TraversalStore::new(db).unwrap());
+    let config = BeliefConfigLoader::load_json(CONFIG_JSON).unwrap();
+    let perspective = PerspectiveKey::new("agent", "default").unwrap();
+    let branch_scope = BranchScope::main();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        config.config.clone(),
+        perspective.clone(),
+        branch_scope.clone(),
+    );
+    let key = seed_assignment(&store, &normalizer, "event-blocked", "node-a", 10);
+    store
+        .acquire_lease(active_lease(&key, &config, "blocked-only", 10, 1000))
+        .unwrap();
+    store.flush().unwrap();
+    let actor = BeliefAssessmentActor::new(
+        Arc::clone(&store),
+        traversal,
+        config,
+        perspective,
+        branch_scope,
+    );
+    let request = BeliefDirtyKeyTickRequest {
+        max_items: 1,
+        lease_owner_id: "supervisor-lease-wrap".to_string(),
+    };
+
+    let first = actor.tick_dirty(request.clone());
+    let second = actor.tick_dirty(request);
+
+    for report in [&first, &second] {
+        assert_eq!(report.selected_count, 1);
+        assert_eq!(report.committed_count, 0);
+        assert_eq!(report.no_work_count, 0);
+        assert_eq!(report.retryable_errors.len(), 1);
+        assert!(report.fatal_errors.is_empty());
+    }
+    assert_eq!(first.lease_clock, 1);
+    assert_eq!(second.lease_clock, 2);
+    assert!(store.current_revision(&key).unwrap().is_none());
+}
+
+#[test]
+fn recurring_settlement_is_independent_of_assignment_page_size() {
+    let narrow = settlement_signature(1);
+    let wide = settlement_signature(1024);
+
+    assert_eq!(narrow.len(), 3);
+    assert_eq!(narrow, wide);
+}
+
+#[test]
+fn late_source_sequences_use_assignment_cursor_progress_and_reopen_safely() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("late-source-belief");
+    let config = BeliefConfigLoader::load_json(CONFIG_JSON).unwrap();
+    let perspective = PerspectiveKey::new("agent", "default").unwrap();
+    let branch_scope = BranchScope::main();
+    let key;
+    let first_revision_id;
+    {
+        let db = sled::open(&path).unwrap();
+        let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+        let traversal = Arc::new(TraversalStore::new(db).unwrap());
+        let normalizer = BeliefEvidenceNormalizer::new(
+            config.config.clone(),
+            perspective.clone(),
+            branch_scope.clone(),
+        );
+        key = seed_assignment(&store, &normalizer, "event-100", "node-a", 100);
+        seed_assignment(&store, &normalizer, "event-50", "node-a", 50);
+        let dirty = store.dirty_state(&key).unwrap().unwrap();
+        assert_eq!(dirty.dirty_since_seq, 50);
+        assert_eq!(dirty.latest_seq, 100);
+        let runtime = BeliefRuntime::new(
+            Arc::clone(&store),
+            traversal,
+            config.clone(),
+            perspective.clone(),
+            branch_scope.clone(),
+        );
+        let first = runtime
+            .assess_dirty_key_bounded(&key, "late-source-first", 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.source_cursor_end, 100);
+        first_revision_id = first.revision_id;
+        let remaining = store.dirty_state(&key).unwrap().unwrap();
+        assert_eq!(remaining.dirty_since_seq, 50);
+        assert_eq!(remaining.latest_seq, 100);
+        store.flush().unwrap();
+    }
+    {
+        let db = reopen_sled(&path);
+        let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+        let traversal = Arc::new(TraversalStore::new(db).unwrap());
+        let runtime = BeliefRuntime::new(
+            Arc::clone(&store),
+            traversal,
+            config.clone(),
+            perspective.clone(),
+            branch_scope.clone(),
+        );
+        let late = runtime
+            .assess_dirty_key_bounded(&key, "late-source-second", 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(late.source_cursor_end, 100);
+        assert_eq!(
+            store
+                .current_revision(&key)
+                .unwrap()
+                .unwrap()
+                .source_cursor_end,
+            100
+        );
+        let history = store.revision_history(&key).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].revision_id, first_revision_id);
+        assert_eq!(
+            history[1].prior_revision_id.as_deref(),
+            Some(history[0].revision_id.as_str())
+        );
+        assert!(store.dirty_state(&key).unwrap().is_none());
+    }
+
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+    let traversal = Arc::new(TraversalStore::new(db).unwrap());
+    let normalizer = BeliefEvidenceNormalizer::new(
+        config.config.clone(),
+        perspective.clone(),
+        branch_scope.clone(),
+    );
+    let ordered_key = seed_assignment(&store, &normalizer, "event-50", "node-a", 50);
+    seed_assignment(&store, &normalizer, "event-100", "node-a", 100);
+    let runtime = BeliefRuntime::new(store, traversal, config, perspective, branch_scope);
+    assert_eq!(
+        runtime
+            .assess_dirty_key_bounded(&ordered_key, "ordered-source-first", 1)
+            .unwrap()
+            .unwrap()
+            .source_cursor_end,
+        50
+    );
+    assert_eq!(
+        runtime
+            .assess_dirty_key_bounded(&ordered_key, "ordered-source-second", 1)
+            .unwrap()
+            .unwrap()
+            .source_cursor_end,
+        100
+    );
+}
+
+#[test]
+fn bounded_assignment_cursor_crosses_long_committed_history_before_new_evidence() {
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+    let traversal = Arc::new(TraversalStore::new(db).unwrap());
+    let config = BeliefConfigLoader::load_json(CONFIG_JSON).unwrap();
+    let perspective = PerspectiveKey::new("agent", "default").unwrap();
+    let branch_scope = BranchScope::main();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        config.config.clone(),
+        perspective.clone(),
+        branch_scope.clone(),
+    );
+    let runtime = BeliefRuntime::new(
+        Arc::clone(&store),
+        traversal,
+        config,
+        perspective,
+        branch_scope,
+    );
+    let mut key = None;
+    for sequence in 1..=32 {
+        let selected = seed_assignment(
+            &store,
+            &normalizer,
+            &format!("event-{sequence}"),
+            "node-a",
+            sequence,
+        );
+        key = Some(selected.clone());
+        assert!(runtime
+            .assess_dirty_key_bounded(&selected, "history-builder", 1024)
+            .unwrap()
+            .is_some());
+    }
+    let key = key.unwrap();
+    seed_assignment(&store, &normalizer, "event-33", "node-a", 33);
+
+    for _ in 0..8 {
+        assert!(runtime
+            .assess_dirty_key_bounded(&key, "bounded-history-reader", 4)
+            .unwrap()
+            .is_none());
+        assert!(store.dirty_state(&key).unwrap().is_some());
+    }
+    let settled = runtime
+        .assess_dirty_key_bounded(&key, "bounded-history-reader", 4)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(settled.evidence_count, 1);
+    assert_eq!(settled.source_cursor_end, 33);
+    assert!(store.dirty_state(&key).unwrap().is_none());
+    assert_eq!(store.revision_history(&key).unwrap().len(), 33);
 }
 
 #[test]
@@ -348,6 +758,99 @@ fn evidence_actor_persists_rejected_disposition_before_advancing() {
 }
 
 #[test]
+fn evidence_actor_replay_waits_for_exact_settlement_after_active_lease_conflict() {
+    let event_db = sled::Config::new().temporary(true).open().unwrap();
+    let authority = EventAuthority::open(event_db, EventAuthorityOpenOptions::default()).unwrap();
+    authority
+        .append_capability()
+        .append_durable(
+            EventEnvelope::with_now_domain(
+                "session-a",
+                "execution",
+                "task-a",
+                "execution.task.succeeded",
+                None,
+                json!({
+                    "artifact_records": [{"artifact_type_id": "docs_patch"}]
+                }),
+            ),
+            AppendMode::Plain,
+        )
+        .unwrap();
+    let replay: Arc<dyn EvidenceEventReplaySource> = Arc::new(ReplayPort {
+        replay: authority.replay_capability(),
+    });
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+    let traversal = Arc::new(TraversalStore::new(db).unwrap());
+    let request = evidence_request(1);
+    let normalizer = BeliefEvidenceNormalizer::new(
+        request.config.config.clone(),
+        request.perspective.clone(),
+        request.branch_scope.clone(),
+    );
+    let key = normalizer
+        .normalize_promoted(&promoted_record("event-spine::1", "node-a", 1))
+        .unwrap()
+        .remove(0)
+        .candidate_key;
+    store.mark_dirty(&key, 1).unwrap();
+    store
+        .acquire_lease(active_lease(
+            &key,
+            &request.config,
+            "prior-active-assessment",
+            1,
+            2,
+        ))
+        .unwrap();
+    let actor = EvidenceIngestionActor::new(replay, Arc::clone(&store), traversal);
+
+    let blocked = actor.tick(request.clone());
+
+    assert_eq!(blocked.output_event_sequence, 0);
+    assert_eq!(blocked.retryable_errors.len(), 1);
+    assert!(blocked.receipts.is_empty());
+    assert!(actor.durable_cursor(&request).unwrap().is_none());
+    assert!(store.current_revision(&key).unwrap().is_none());
+    assert!(store
+        .get_runtime_meta("assessment_source_high_water")
+        .unwrap()
+        .is_none());
+
+    let settled = actor.tick(request.clone());
+
+    assert_eq!(settled.input_event_sequence, 0);
+    assert_eq!(settled.output_event_sequence, 1);
+    assert_eq!(settled.committed_revision_count, 1);
+    assert_eq!(settled.receipts.len(), 1);
+    assert!(settled.retryable_errors.is_empty());
+    assert_eq!(
+        store
+            .get_lease("prior-active-assessment")
+            .unwrap()
+            .unwrap()
+            .status,
+        LeaseStatus::Abandoned
+    );
+    let revision = store.current_revision(&key).unwrap().unwrap();
+    assert_eq!(revision.evidence_ids.len(), 1);
+    assert!(store
+        .get_runtime_meta("assessment_source_high_water")
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        actor
+            .durable_cursor(&request)
+            .unwrap()
+            .unwrap()
+            .ledger_cursor
+            .after_seq,
+        1
+    );
+}
+
+#[test]
 fn config_snapshots_accept_exact_replay_and_reject_hash_conflicts() {
     let db = sled::Config::new().temporary(true).open().unwrap();
     let store = BeliefStore::new(db).unwrap();
@@ -358,6 +861,21 @@ fn config_snapshots_accept_exact_replay_and_reject_hash_conflicts() {
     assert_eq!(
         store.get_config_snapshot("hash-a").unwrap().as_deref(),
         Some("one")
+    );
+}
+
+#[test]
+fn belief_config_rejects_unbounded_mapping_fanout() {
+    let mut config: serde_json::Value = serde_json::from_str(CONFIG_JSON).unwrap();
+    let mapping = config["source_mappings"][0].clone();
+    config["source_mappings"] = serde_json::Value::Array(vec![mapping; 1025]);
+
+    let error =
+        BeliefConfigLoader::load_json(&serde_json::to_string(&config).unwrap()).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "Invalid path: belief source mappings exceed the 1024-item limit"
     );
 }
 
@@ -390,6 +908,90 @@ fn promoted_record(source_id: &str, object_id: &str, seq: u64) -> PromotedEviden
         transaction_seq: seq,
         content_hash: None,
         fields,
+    }
+}
+
+fn seed_assignment(
+    store: &BeliefStore,
+    normalizer: &BeliefEvidenceNormalizer,
+    source_id: &str,
+    object_id: &str,
+    sequence: u64,
+) -> BeliefKey {
+    let item = normalizer
+        .normalize_promoted(&promoted_record(source_id, object_id, sequence))
+        .unwrap()
+        .remove(0);
+    let key = item.candidate_key.clone();
+    store.put_evidence_once(&item).unwrap();
+    store
+        .put_assignment_once(&normalizer.assign(&item).unwrap())
+        .unwrap();
+    key
+}
+
+fn settlement_signature(limit: usize) -> Vec<(String, Vec<String>, u64, u64)> {
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+    let traversal = Arc::new(TraversalStore::new(db).unwrap());
+    let config = BeliefConfigLoader::load_json(CONFIG_JSON).unwrap();
+    let perspective = PerspectiveKey::new("agent", "default").unwrap();
+    let branch_scope = BranchScope::main();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        config.config.clone(),
+        perspective.clone(),
+        branch_scope.clone(),
+    );
+    let key = seed_assignment(&store, &normalizer, "event-1", "node-a", 1);
+    seed_assignment(&store, &normalizer, "event-2", "node-a", 2);
+    seed_assignment(&store, &normalizer, "event-3", "node-a", 3);
+    let runtime = BeliefRuntime::new(store.clone(), traversal, config, perspective, branch_scope);
+    for _ in 0..8 {
+        if store.dirty_state(&key).unwrap().is_none() {
+            break;
+        }
+        runtime
+            .assess_dirty_key_bounded(&key, "partition-equivalence", limit)
+            .unwrap();
+    }
+    assert!(store.dirty_state(&key).unwrap().is_none());
+    store
+        .revision_history(&key)
+        .unwrap()
+        .into_iter()
+        .map(|revision| {
+            (
+                revision.revision_id,
+                revision.evidence_ids,
+                revision.source_cursor_end,
+                revision.posterior.probability.to_bits(),
+            )
+        })
+        .collect()
+}
+
+fn active_lease(
+    key: &BeliefKey,
+    config: &meld_world_model::belief::ConfigSnapshot,
+    lease_id: &str,
+    source_sequence: u64,
+    expires_at_sequence: u64,
+) -> AssessmentLease {
+    AssessmentLease {
+        lease_id: lease_id.to_string(),
+        belief_key: key.clone(),
+        epoch: 1,
+        owner_id: "prior-supervisor-lease".to_string(),
+        input_cursor_start: source_sequence,
+        input_cursor_end: source_sequence,
+        assignment_cursor_start: None,
+        assignment_cursor_end: None,
+        assignment_window_complete: true,
+        started_at_seq: expires_at_sequence.saturating_sub(1),
+        expires_at_seq: expires_at_sequence,
+        comparator_engine_id: config.config.comparator.engine_id.clone(),
+        config_snapshot_hash: config.hash.clone(),
+        status: LeaseStatus::Queued,
     }
 }
 

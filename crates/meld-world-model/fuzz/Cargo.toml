@@ -17,6 +17,7 @@ tempfile = "3.8"
 
 [dependencies.meld-world-model]
 path = ".."
+features = ["test-support"]
 
 [[bin]]
 name = "fuzz_belief_config"
@@ -42,6 +43,13 @@ bench = false
 [[bin]]
 name = "fuzz_agent_contracts"
 path = "fuzz_targets/fuzz_agent_contracts.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_belief_recurring_settlement"
+path = "fuzz_targets/fuzz_belief_recurring_settlement.rs"
 test = false
 doc = false
 bench = false

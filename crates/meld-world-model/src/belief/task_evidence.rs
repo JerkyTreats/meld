@@ -18,7 +18,7 @@ use super::{
     EvidenceValue, PromotedEvidenceIngestionRequest, PromotedEvidenceIngestionResult,
     PromotedEvidenceRecord,
 };
-use crate::world_state::graph::store::TraversalStore;
+use crate::belief::ports::BeliefGraphQuery;
 use crate::world_state::graph::PerspectiveKey;
 
 /// Maximum events one task-evidence ingestion invocation may inspect.
@@ -131,20 +131,36 @@ pub enum DocsTaskEvidenceError {
 pub struct DocsTaskEvidenceIngestionRuntime {
     event_replay: Arc<dyn EvidenceEventReplaySource>,
     belief_store: Arc<BeliefStore>,
-    traversal_store: Arc<TraversalStore>,
+    graph_query: Arc<dyn BeliefGraphQuery>,
 }
 
 impl DocsTaskEvidenceIngestionRuntime {
     /// Bind event replay and the shared world-model stores without doing work.
-    pub fn new(
+    pub fn new<Q>(
         event_replay: Arc<dyn EvidenceEventReplaySource>,
         belief_store: Arc<BeliefStore>,
-        traversal_store: Arc<TraversalStore>,
+        graph_query: Arc<Q>,
+    ) -> Self
+    where
+        Q: BeliefGraphQuery + 'static,
+    {
+        Self {
+            event_replay,
+            belief_store,
+            graph_query,
+        }
+    }
+
+    /// Bind an already erased graph query contract.
+    pub fn from_graph_query(
+        event_replay: Arc<dyn EvidenceEventReplaySource>,
+        belief_store: Arc<BeliefStore>,
+        graph_query: Arc<dyn BeliefGraphQuery>,
     ) -> Self {
         Self {
             event_replay,
             belief_store,
-            traversal_store,
+            graph_query,
         }
     }
 
@@ -164,9 +180,9 @@ impl DocsTaskEvidenceIngestionRuntime {
                 limit: request.limit,
             })
             .map_err(|error| DocsTaskEvidenceError::Replay(error.to_string()))?;
-        let runtime = BeliefRuntime::new(
+        let runtime = BeliefRuntime::from_graph_query(
             Arc::clone(&self.belief_store),
-            Arc::clone(&self.traversal_store),
+            Arc::clone(&self.graph_query),
             request.config.clone(),
             request.perspective.clone(),
             request.branch_scope.clone(),

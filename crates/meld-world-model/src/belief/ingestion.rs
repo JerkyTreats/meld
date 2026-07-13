@@ -157,6 +157,23 @@ pub fn ingest_promoted_evidence(
     runtime: &BeliefRuntime,
     request: PromotedEvidenceIngestionRequest<'_>,
 ) -> Result<PromotedEvidenceIngestionResult, StorageError> {
+    ingest_promoted_evidence_with_settlement(store, runtime, request, false)
+}
+
+pub(crate) fn ingest_promoted_evidence_exact(
+    store: &BeliefStore,
+    runtime: &BeliefRuntime,
+    request: PromotedEvidenceIngestionRequest<'_>,
+) -> Result<PromotedEvidenceIngestionResult, StorageError> {
+    ingest_promoted_evidence_with_settlement(store, runtime, request, true)
+}
+
+fn ingest_promoted_evidence_with_settlement(
+    store: &BeliefStore,
+    runtime: &BeliefRuntime,
+    request: PromotedEvidenceIngestionRequest<'_>,
+    require_exact_settlement: bool,
+) -> Result<PromotedEvidenceIngestionResult, StorageError> {
     let normalizer = BeliefEvidenceNormalizer::new(
         request.config.config,
         request.perspective,
@@ -187,8 +204,14 @@ pub fn ingest_promoted_evidence(
     for item in &evidence {
         store.put_evidence_once(item)?;
         let assignment = normalizer.assign(item)?;
-        if store.put_assignment_once(&assignment)? {
+        let inserted = store.put_assignment_once(&assignment)?;
+        if inserted {
             new_assignment_count += 1;
+        }
+        if inserted || require_exact_settlement {
+            // Exact source replay must still prove that the evidence reached a
+            // committed assessment. Restricting this list to new assignments
+            // lets a prior lease conflict become a false successful replay.
             affected_keys.push(item.candidate_key.clone());
         }
     }
@@ -198,6 +221,19 @@ pub fn ingest_promoted_evidence(
     for key in affected_keys {
         if let Some(result) = runtime.assess_dirty_key(&key, request.owner_id)? {
             committed.push(result);
+        }
+    }
+    if require_exact_settlement {
+        for item in &evidence {
+            if store
+                .committed_revision_for_evidence(&item.candidate_key, &item.evidence_id)?
+                .is_none()
+            {
+                return Err(StorageError::Backpressure(format!(
+                    "promoted evidence '{}' is durable but not yet settled",
+                    item.evidence_id
+                )));
+            }
         }
     }
 

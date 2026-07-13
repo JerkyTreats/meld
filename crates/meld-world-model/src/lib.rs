@@ -30,9 +30,9 @@ pub use agent::{
     SubscribeAgentCommand,
 };
 pub use belief::{
-    ingest_promoted_evidence, AssessmentLease, BayesianComparator, BeliefAssessmentActor,
-    BeliefAssessmentRequest, BeliefConfigLoader, BeliefDirtyKeyTickRequest,
-    BeliefEvidenceNormalizer, BeliefKey, BeliefQuery, BeliefReadinessAttestation,
+    ingest_promoted_evidence, AssessmentAssignmentCursor, AssessmentLease, BayesianComparator,
+    BeliefAssessmentActor, BeliefAssessmentRequest, BeliefConfigLoader, BeliefDirtyKeyTickRequest,
+    BeliefEvidenceNormalizer, BeliefGraphQuery, BeliefKey, BeliefQuery, BeliefReadinessAttestation,
     BeliefReadinessAttestationRequest, BeliefRuntime, BeliefRuntimeIssue, BeliefRuntimeTickReport,
     BeliefStatus, BeliefStore, BeliefView, BranchScope, ComparatorInput, ComparatorOutput,
     ConfigSnapshot, ContradictionReason, DirtyKeyState, DirtyReason, DocsTaskEvidenceError,

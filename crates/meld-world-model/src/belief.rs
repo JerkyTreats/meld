@@ -67,6 +67,7 @@ pub mod contracts;
 pub mod evidence;
 mod evidence_actor;
 pub mod ingestion;
+pub mod ports;
 pub mod query;
 pub mod readiness;
 pub mod runtime;
@@ -81,18 +82,19 @@ pub use assessment_actor::{
 pub use comparator::{BayesianComparator, ComparatorInput, ComparatorOutput};
 pub use config::{BeliefConfigLoader, ConfigSnapshot};
 pub use contracts::{
-    AssessmentLease, BeliefAuthorityMigrationIdentity, BeliefAuthorityMigrationMarker,
-    BeliefAuthorityMigrationProgress, BeliefAuthorityParityReceipt, BeliefAuthoritySnapshot,
-    BeliefCommitRecoveryDisposition, BeliefFamilyConfig, BeliefKey, BeliefProvenanceSummary,
-    BeliefRevision, BeliefStatus, BeliefView, BranchScope, ComparatorConfig,
-    ComparatorFactorConfig, ContradictionReason, ContradictionState, DirtyKeyState, DirtyReason,
-    EvidenceAssignment, EvidenceConsumerCursor, EvidenceIngestionReceipt,
-    EvidenceIngestionReceiptDisposition, EvidenceIngestionReceiptIdentity,
-    EvidenceIngestionReceiptWriteDisposition, EvidenceItem, EvidencePolarity, EvidencePolicyId,
-    EvidenceRejection, EvidenceRole, EvidenceSchemaConfig, EvidenceSourceMapping, EvidenceValue,
-    FreshnessReason, FreshnessState, HydrationRefs, LeaseStatus, LegacyBeliefCompatibilityPosture,
-    ObservationOpportunity, ObservationReason, PlannerProjectionConfig, PlannerProjectionSummary,
-    PosteriorSummary, PromotedEvidenceRecord, BELIEF_AUTHORITY_MIGRATION_SCHEMA_VERSION,
+    AssessmentAssignmentCursor, AssessmentLease, BeliefAuthorityMigrationIdentity,
+    BeliefAuthorityMigrationMarker, BeliefAuthorityMigrationProgress, BeliefAuthorityParityReceipt,
+    BeliefAuthoritySnapshot, BeliefCommitRecoveryDisposition, BeliefFamilyConfig, BeliefKey,
+    BeliefProvenanceSummary, BeliefRevision, BeliefStatus, BeliefView, BranchScope,
+    ComparatorConfig, ComparatorFactorConfig, ContradictionReason, ContradictionState,
+    DirtyKeyState, DirtyReason, EvidenceAssignment, EvidenceConsumerCursor,
+    EvidenceIngestionReceipt, EvidenceIngestionReceiptDisposition,
+    EvidenceIngestionReceiptIdentity, EvidenceIngestionReceiptWriteDisposition, EvidenceItem,
+    EvidencePolarity, EvidencePolicyId, EvidenceRejection, EvidenceRole, EvidenceSchemaConfig,
+    EvidenceSourceMapping, EvidenceValue, FreshnessReason, FreshnessState, HydrationRefs,
+    LeaseStatus, LegacyBeliefCompatibilityPosture, ObservationOpportunity, ObservationReason,
+    PlannerProjectionConfig, PlannerProjectionSummary, PosteriorSummary, PromotedEvidenceRecord,
+    BELIEF_AUTHORITY_MIGRATION_SCHEMA_VERSION,
 };
 pub use evidence::BeliefEvidenceNormalizer;
 pub use evidence_actor::{
@@ -103,11 +105,12 @@ pub use evidence_actor::{
 pub use ingestion::{
     ingest_promoted_evidence, PromotedEvidenceIngestionRequest, PromotedEvidenceIngestionResult,
 };
+pub use ports::BeliefGraphQuery;
 pub use query::BeliefQuery;
 pub use readiness::{
     hash_readiness_view, BeliefReadinessAttestation, BeliefReadinessAttestationRequest,
 };
-pub use runtime::{BeliefRuntime, RuntimeAssessmentResult};
+pub use runtime::{BeliefRuntime, RuntimeAssessmentResult, MAX_BELIEF_EVIDENCE_WINDOW_ITEMS};
 pub use store::BeliefStore;
 pub use task_evidence::{
     build_docs_task_success_evidence, DocsTaskEvidenceError, DocsTaskEvidenceIngestionRuntime,

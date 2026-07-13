@@ -4,17 +4,17 @@ use std::sync::Arc;
 
 use meld_events::error::EventAuthorityError;
 
+use crate::belief::ingestion::ingest_promoted_evidence_exact;
 use crate::belief::{
-    build_docs_task_success_evidence, ingest_promoted_evidence, BeliefRuntime, BeliefStore,
-    BranchScope, ConfigSnapshot, DocsTaskEvidenceError, DocsTaskSuccessEvidenceRequest,
-    EvidenceConsumerCursor, EvidenceEventReplaySource, EvidenceIngestionReceipt,
-    EvidenceIngestionReceiptDisposition, EvidenceIngestionReceiptIdentity,
-    EvidenceIngestionReceiptWriteDisposition, PromotedEvidenceIngestionRequest,
+    build_docs_task_success_evidence, BeliefGraphQuery, BeliefRuntime, BeliefStore, BranchScope,
+    ConfigSnapshot, DocsTaskEvidenceError, DocsTaskSuccessEvidenceRequest, EvidenceConsumerCursor,
+    EvidenceEventReplaySource, EvidenceIngestionReceipt, EvidenceIngestionReceiptDisposition,
+    EvidenceIngestionReceiptIdentity, EvidenceIngestionReceiptWriteDisposition,
+    PromotedEvidenceIngestionRequest,
 };
 use crate::error::StorageError;
 use crate::events::observability::CoverageTruncation;
 use crate::events::{DomainObjectRef, EventPage, EventRecordRef, LedgerCursor, ReplayRequest};
-use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::PerspectiveKey;
 
 /// Canonical recurring evidence ingestion runtime identity.
@@ -122,20 +122,36 @@ impl EvidenceIngestionActorReport {
 pub struct EvidenceIngestionActor {
     replay: Arc<dyn EvidenceEventReplaySource>,
     store: Arc<BeliefStore>,
-    traversal: Arc<TraversalStore>,
+    graph_query: Arc<dyn BeliefGraphQuery>,
 }
 
 impl EvidenceIngestionActor {
     /// Bind identity-bearing event replay and durable world-model stores.
-    pub fn new(
+    pub fn new<Q>(
         replay: Arc<dyn EvidenceEventReplaySource>,
         store: Arc<BeliefStore>,
-        traversal: Arc<TraversalStore>,
+        graph_query: Arc<Q>,
+    ) -> Self
+    where
+        Q: BeliefGraphQuery + 'static,
+    {
+        Self {
+            replay,
+            store,
+            graph_query,
+        }
+    }
+
+    /// Bind an already erased graph query contract.
+    pub fn from_graph_query(
+        replay: Arc<dyn EvidenceEventReplaySource>,
+        store: Arc<BeliefStore>,
+        graph_query: Arc<dyn BeliefGraphQuery>,
     ) -> Self {
         Self {
             replay,
             store,
-            traversal,
+            graph_query,
         }
     }
 
@@ -160,9 +176,9 @@ impl EvidenceIngestionActor {
                 .push(issue(None, "invalid_request", message));
             return report;
         }
-        let runtime = BeliefRuntime::new(
+        let runtime = BeliefRuntime::from_graph_query(
             Arc::clone(&self.store),
-            Arc::clone(&self.traversal),
+            Arc::clone(&self.graph_query),
             request.config.clone(),
             request.perspective.clone(),
             request.branch_scope.clone(),
@@ -226,7 +242,7 @@ impl EvidenceIngestionActor {
                 }
                 Some(record) => {
                     report.promoted_record_count += 1;
-                    match ingest_promoted_evidence(
+                    match ingest_promoted_evidence_exact(
                         self.store.as_ref(),
                         &runtime,
                         PromotedEvidenceIngestionRequest {
@@ -490,5 +506,212 @@ fn issue(
         item_id,
         code: code.into(),
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use meld_events::{
+        AppendMode, EventAuthority, EventAuthorityOpenOptions, EventEnvelope,
+        EventReplayCapability, LedgerIdentity,
+    };
+    use serde_json::json;
+
+    use crate::belief::BeliefConfigLoader;
+    use crate::events::ReplayRequest;
+
+    const CONFIG_JSON: &str = r#"{
+      "family_id": "docs_freshness",
+      "dimension_id": "docs_freshness",
+      "predicate_id": "confidence",
+      "evidence_policy_id": "default_policy",
+      "evidence_schemas": [
+        {
+          "schema_id": "content_written_signal",
+          "required": false,
+          "role": "Support",
+          "reliability": 1.0,
+          "precision": 1.0
+        }
+      ],
+      "source_mappings": [
+        {
+          "mapping_id": "content_written_to_signal",
+          "source_kind": "content_written",
+          "evidence_schema_id": "content_written_signal",
+          "subject_from": "record.subject",
+          "value_field": "stale_probability",
+          "factor_id": "content_written_signal"
+        }
+      ],
+      "comparator": {
+        "engine_id": "weighted_bayesian",
+        "engine_version": "1",
+        "factors": [
+          {
+            "factor_id": "content_written_signal",
+            "evidence_schema_id": "content_written_signal",
+            "weight": 1.0,
+            "polarity": "Supports"
+          }
+        ],
+        "missing_evidence_uncertainty": 0.9
+      },
+      "default_prior": 0.8,
+      "planner_projection": {
+        "confidence_field": "confidence",
+        "threshold": 0.7,
+        "posterior_meaning": "stale_probability"
+      },
+      "config_version": "1"
+    }"#;
+
+    #[derive(Clone)]
+    struct ReplayPort {
+        replay: EventReplayCapability,
+    }
+
+    impl EvidenceEventReplaySource for ReplayPort {
+        fn ledger_identity(&self) -> LedgerIdentity {
+            self.replay.ledger_identity()
+        }
+
+        fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
+            self.replay.replay(request)
+        }
+    }
+
+    struct NoGraphQuery;
+
+    impl BeliefGraphQuery for NoGraphQuery {
+        fn current_anchor_for_subject(
+            &self,
+            _subject: &DomainObjectRef,
+            _perspective_kind: &str,
+            _perspective_id: &str,
+        ) -> Result<Option<crate::world_state::graph::AnchorSelectionRecord>, StorageError>
+        {
+            Ok(None)
+        }
+
+        fn provenance_for_anchor(
+            &self,
+            _anchor_id: &str,
+        ) -> Result<crate::world_state::graph::AnchorProvenanceRecord, StorageError> {
+            Err(StorageError::InvalidPath(
+                "test graph query has no anchors".to_string(),
+            ))
+        }
+    }
+
+    #[test]
+    fn indeterminate_lease_acquire_replays_event_after_reopen_before_cursor_advance() {
+        let event_db = sled::Config::new().temporary(true).open().unwrap();
+        let authority =
+            EventAuthority::open(event_db, EventAuthorityOpenOptions::default()).unwrap();
+        authority
+            .append_capability()
+            .append_durable(
+                EventEnvelope::with_now_domain(
+                    "session-a",
+                    "execution",
+                    "task-a",
+                    "execution.task.succeeded",
+                    None,
+                    json!({
+                        "artifact_records": [{"artifact_type_id": "docs_patch"}]
+                    }),
+                ),
+                AppendMode::Plain,
+            )
+            .unwrap();
+        let replay: Arc<dyn EvidenceEventReplaySource> = Arc::new(ReplayPort {
+            replay: authority.replay_capability(),
+        });
+        let request = EvidenceIngestionActorRequest {
+            subject: DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap(),
+            config: BeliefConfigLoader::load_json(CONFIG_JSON).unwrap(),
+            perspective: PerspectiveKey::new("agent", "default").unwrap(),
+            branch_scope: BranchScope::main(),
+            lease_owner_id: "exact-replay-owner".to_string(),
+            max_items: 1,
+            required_artifact_type_id: Some("docs_patch".to_string()),
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("indeterminate-evidence-actor");
+        let key;
+
+        {
+            let db = sled::open(&path).unwrap();
+            let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+            let graph_query = Arc::new(NoGraphQuery);
+            drop(db);
+            let actor =
+                EvidenceIngestionActor::new(Arc::clone(&replay), Arc::clone(&store), graph_query);
+            // The third actor flush is the assessment lease acquire barrier.
+            store.fail_flush_after_for_test(3);
+
+            let indeterminate = actor.tick(request.clone());
+
+            assert_eq!(indeterminate.input_event_sequence, 0);
+            assert_eq!(indeterminate.output_event_sequence, 0);
+            assert_eq!(indeterminate.retryable_errors.len(), 1);
+            assert_eq!(
+                indeterminate.retryable_errors[0].code,
+                "durability_indeterminate"
+            );
+            assert!(indeterminate.receipts.is_empty());
+            assert!(actor.durable_cursor(&request).unwrap().is_none());
+            assert_eq!(store.assessment_source_high_water().unwrap(), 0);
+            let dirty = store.dirty_key_states().unwrap();
+            assert_eq!(dirty.len(), 1);
+            key = dirty[0].belief_key.clone();
+            assert!(store.current_revision(&key).unwrap().is_none());
+            assert!(store.active_lease_for_key(&key).unwrap().is_some());
+            // Choose the persisted branch of the ambiguous acquire before the
+            // process boundary. Replay must reuse this exact durable window.
+            store.flush().unwrap();
+        }
+
+        let db = reopen_sled(&path);
+        let store = Arc::new(BeliefStore::new(db).unwrap());
+        let graph_query = Arc::new(NoGraphQuery);
+        let actor =
+            EvidenceIngestionActor::new(Arc::clone(&replay), Arc::clone(&store), graph_query);
+
+        let settled = actor.tick(request.clone());
+
+        assert_eq!(settled.input_event_sequence, 0);
+        assert_eq!(settled.output_event_sequence, 1);
+        assert_eq!(settled.committed_revision_count, 1);
+        assert_eq!(settled.receipts.len(), 1);
+        assert!(settled.retryable_errors.is_empty());
+        assert!(settled.fatal_errors.is_empty());
+        assert_eq!(store.assessment_source_high_water().unwrap(), 1);
+        assert!(store.current_revision(&key).unwrap().is_some());
+        assert!(store.active_lease_for_key(&key).unwrap().is_none());
+        assert_eq!(
+            actor
+                .durable_cursor(&request)
+                .unwrap()
+                .unwrap()
+                .ledger_cursor
+                .after_seq,
+            1
+        );
+    }
+
+    fn reopen_sled(path: &std::path::Path) -> sled::Db {
+        for _ in 0..100 {
+            match sled::open(path) {
+                Ok(db) => return db,
+                Err(error) if error.to_string().contains("could not acquire lock") => {
+                    std::thread::yield_now();
+                }
+                Err(error) => panic!("failed to reopen sled database: {error}"),
+            }
+        }
+        panic!("failed to reopen sled database after close")
     }
 }

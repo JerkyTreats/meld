@@ -1152,7 +1152,7 @@ fn semantic_schema_migration_rejects_orphaned_indexes() {
         store.flush().expect("flush corrupt migration fixture");
     }
 
-    let result = AgentStore::new(sled::open(temp.path()).expect("reopen database"));
+    let result = AgentStore::new(reopen_database(temp.path()));
     assert!(result.is_err());
     assert!(result
         .err()
@@ -1182,7 +1182,7 @@ fn semantic_schema_migration_rejects_noncanonical_dedupe_alias() {
         store.flush().expect("flush corrupt migration fixture");
     }
 
-    let result = AgentStore::new(sled::open(temp.path()).expect("reopen database"));
+    let result = AgentStore::new(reopen_database(temp.path()));
     assert!(result.is_err());
     assert!(result
         .err()
@@ -1212,7 +1212,7 @@ fn semantic_schema_migration_rejects_goal_decision_satisfaction_alias() {
         store.flush().expect("flush corrupt migration fixture");
     }
 
-    let result = AgentStore::new(sled::open(temp.path()).expect("reopen database"));
+    let result = AgentStore::new(reopen_database(temp.path()));
     assert!(result.is_err());
     assert!(result
         .err()

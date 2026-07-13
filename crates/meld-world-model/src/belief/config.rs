@@ -41,6 +41,8 @@ use crate::belief::contracts::{
 };
 use crate::error::StorageError;
 
+const MAX_BELIEF_CONFIG_ITEMS: usize = 1024;
+
 /// Validated configuration plus a stable content hash.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigSnapshot {
@@ -102,6 +104,17 @@ impl BeliefConfigLoader {
             "missing evidence uncertainty",
             config.comparator.missing_evidence_uncertainty,
         )?;
+        for (name, count) in [
+            ("evidence schemas", config.evidence_schemas.len()),
+            ("source mappings", config.source_mappings.len()),
+            ("comparator factors", config.comparator.factors.len()),
+        ] {
+            if count > MAX_BELIEF_CONFIG_ITEMS {
+                return Err(StorageError::InvalidPath(format!(
+                    "belief {name} exceed the {MAX_BELIEF_CONFIG_ITEMS}-item limit"
+                )));
+            }
+        }
 
         let mut schemas = BTreeSet::new();
         for schema in &config.evidence_schemas {

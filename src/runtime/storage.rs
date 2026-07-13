@@ -171,8 +171,10 @@ impl OpenProductStores {
     pub fn open(layout: &ProductStorageLayout) -> Result<Self, ProductStorageError> {
         layout.create_dirs()?;
 
-        let workspace_db = open_db(&layout.workspace_db)?;
         let world_model_db = open_db(&layout.world_model_db)?;
+        let belief_store =
+            Arc::new(BeliefStore::new(world_model_db.clone()).map_err(to_world_model)?);
+        let workspace_db = open_db(&layout.workspace_db)?;
         let execution_goals_db = open_db(&layout.execution_goals_db)?;
         let execution_planning_attempts_db = open_db(&layout.execution_planning_attempts_db)?;
         let task_artifacts_db = open_db(&layout.task_artifacts_db)?;
@@ -182,9 +184,7 @@ impl OpenProductStores {
             traversal_store: Arc::new(
                 TraversalStore::new(world_model_db.clone()).map_err(to_world_model)?,
             ),
-            belief_store: Arc::new(
-                BeliefStore::new(world_model_db.clone()).map_err(to_world_model)?,
-            ),
+            belief_store,
             agent_store: Arc::new(AgentStore::new(world_model_db.clone()).map_err(to_world_model)?),
             planner_projection_store: Arc::new(
                 PlannerProjectionStore::new(world_model_db.clone()).map_err(to_world_model)?,
@@ -265,16 +265,30 @@ pub(crate) fn migrate_legacy_belief_authority(
         )));
     }
 
+    let identity = belief_migration_identity(binding)?;
     let legacy = BeliefStore::new(open_db(&legacy_path)?).map_err(to_world_model)?;
-    let product = BeliefStore::new(open_db(&product_path)?).map_err(to_world_model)?;
-    let posture = product
-        .migrate_legacy_authority(&legacy, belief_migration_identity(binding)?)
-        .map_err(to_belief_migration)?;
+    let product_db = open_db(&product_path)?;
+    let posture = match BeliefStore::new(product_db.clone()) {
+        Ok(product) => {
+            let posture = product
+                .migrate_legacy_authority(&legacy, identity.clone())
+                .map_err(to_belief_migration)?;
+            product.flush().map_err(to_belief_durability)?;
+            posture
+        }
+        Err(WorldModelStorageError::Unavailable(_)) => {
+            let recovery = BeliefStore::open_for_authority_migration(product_db, identity)
+                .map_err(to_belief_migration)?;
+            let posture = recovery.resume(&legacy).map_err(to_belief_migration)?;
+            recovery.flush().map_err(to_belief_durability)?;
+            posture
+        }
+        Err(error) => return Err(to_belief_migration(error)),
+    };
 
     // Both the legacy fence and product marker must be durable before caller
     // assembly is allowed to construct any product reader or writer.
     legacy.flush().map_err(to_belief_durability)?;
-    product.flush().map_err(to_belief_durability)?;
     Ok(posture)
 }
 
@@ -360,6 +374,8 @@ mod tests {
     use meld_events::LedgerIdentity;
     use meld_world_model::belief::BeliefAuthorityMigrationProgress;
 
+    type DatabaseSnapshot = Vec<(Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>)>;
+
     fn binding() -> ProductEventBinding {
         ProductEventBinding {
             schema_version: 1,
@@ -374,6 +390,26 @@ mod tests {
 
     fn open_belief(path: &Path) -> BeliefStore {
         BeliefStore::new(sled::open(path).unwrap()).unwrap()
+    }
+
+    fn database_snapshot(path: &Path) -> DatabaseSnapshot {
+        let database = sled::open(path).unwrap();
+        let mut tree_names = database.tree_names();
+        tree_names.sort();
+        tree_names
+            .into_iter()
+            .map(|tree_name| {
+                let tree = database.open_tree(&tree_name).unwrap();
+                let records = tree
+                    .iter()
+                    .map(|item| {
+                        let (key, value) = item.unwrap();
+                        (key.to_vec(), value.to_vec())
+                    })
+                    .collect::<Vec<_>>();
+                (tree_name.to_vec(), records)
+            })
+            .collect()
     }
 
     #[test]
@@ -580,6 +616,112 @@ mod tests {
                 BeliefAuthorityMigrationProgress::Cutover { .. }
             ));
         }
+    }
+
+    #[test]
+    fn product_assembly_rejects_incomplete_belief_copy_byte_clean_then_migration_resumes() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = ProductStorageLayout::from_root(temp.path().join("product"));
+        let legacy_path = temp.path().join("legacy.sled");
+        let binding = binding();
+        let identity = belief_migration_identity(&binding).unwrap();
+        layout.create_dirs().unwrap();
+
+        let legacy_db = sled::open(&legacy_path).unwrap();
+        let legacy = BeliefStore::new(legacy_db).unwrap();
+        legacy
+            .put_config_snapshot("partial-config", r#"{"enabled":true}"#)
+            .unwrap();
+        let source = legacy.authority_snapshot().unwrap();
+
+        let product_db = sled::open(&layout.world_model_db).unwrap();
+        let product = BeliefStore::new(product_db.clone()).unwrap();
+        product
+            .advance_legacy_authority_migration(&legacy, identity.clone())
+            .unwrap();
+        product
+            .advance_legacy_authority_migration(&legacy, identity.clone())
+            .unwrap();
+        product_db
+            .open_tree("belief_config_snapshots")
+            .unwrap()
+            .insert(b"partial-config", br#"{"enabled":true}"#)
+            .unwrap();
+        let partial = meld_world_model::belief::BeliefAuthorityMigrationMarker::try_new(
+            identity,
+            BeliefAuthorityMigrationProgress::Copying {
+                source,
+                verified_record_count: 1,
+            },
+        )
+        .unwrap();
+        product_db
+            .open_tree("belief_authority_migration")
+            .unwrap()
+            .insert(b"marker", serde_json::to_vec(&partial).unwrap())
+            .unwrap();
+        product.flush().unwrap();
+        drop(product);
+        drop(product_db);
+        drop(legacy);
+
+        for (path, value) in [
+            (&layout.workspace_db, b"workspace".as_slice()),
+            (&layout.execution_goals_db, b"goals".as_slice()),
+            (&layout.task_artifacts_db, b"artifacts".as_slice()),
+        ] {
+            let database = sled::open(path).unwrap();
+            database
+                .open_tree("assembly_open_sentinel")
+                .unwrap()
+                .insert(b"sentinel", value)
+                .unwrap();
+            database.flush().unwrap();
+        }
+
+        let before_open = [
+            database_snapshot(&layout.world_model_db),
+            database_snapshot(&layout.workspace_db),
+            database_snapshot(&layout.execution_goals_db),
+            database_snapshot(&layout.task_artifacts_db),
+        ];
+        assert!(matches!(
+            OpenProductStores::open(&layout),
+            Err(ProductStorageError::Unavailable(message))
+                if message.contains("requires coordinator recovery")
+        ));
+        assert_eq!(
+            [
+                database_snapshot(&layout.world_model_db),
+                database_snapshot(&layout.workspace_db),
+                database_snapshot(&layout.execution_goals_db),
+                database_snapshot(&layout.task_artifacts_db),
+            ],
+            before_open
+        );
+
+        assert_eq!(
+            migrate_legacy_belief_authority(&layout, &legacy_path, &binding).unwrap(),
+            LegacyBeliefCompatibilityPosture::ProductAuthoritative
+        );
+        let stores = OpenProductStores::open(&layout).unwrap();
+        assert_eq!(
+            stores
+                .belief_store
+                .get_config_snapshot("partial-config")
+                .unwrap()
+                .as_deref(),
+            Some(r#"{"enabled":true}"#)
+        );
+        assert!(matches!(
+            stores
+                .belief_store
+                .authority_migration_marker()
+                .unwrap()
+                .unwrap()
+                .progress(),
+            BeliefAuthorityMigrationProgress::Cutover { .. }
+        ));
     }
 
     #[test]
