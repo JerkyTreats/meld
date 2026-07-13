@@ -1231,6 +1231,8 @@ fn validate_runtime_id(runtime_id: &str) -> Result<(), RuntimeRegistryError> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use meld_events::EventEnvelope;
     use meld_execution::goals::GoalCommandOutcome;
     use meld_execution::task_network::EventAppendSink;
@@ -1240,6 +1242,21 @@ mod tests {
 
     use super::*;
     use crate::runtime::error::RuntimePortError;
+
+    fn reopen_assembly_after_lock_release(path: &Path) -> ProductRuntimeAssembly {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match ProductRuntimeAssembly::load_for_product_root(path) {
+                Ok(assembly) => return assembly,
+                Err(RuntimeAssemblyError::PortConstruction(message))
+                    if message.contains("could not acquire lock") && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("failed to reopen product runtime assembly: {error}"),
+            }
+        }
+    }
 
     #[test]
     fn assembly_opens_product_and_supervisor_stores() {
@@ -1304,7 +1321,7 @@ mod tests {
         first.flush_supervisor_store().unwrap();
         drop(first);
 
-        let second = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let second = reopen_assembly_after_lock_release(temp.path());
 
         assert_eq!(second.product_root(), temp.path());
         assert!(second.registry().contains("execution.publication"));
@@ -1992,7 +2009,7 @@ mod tests {
         first.flush_supervisor_store().unwrap();
         drop(first);
 
-        let second = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let second = reopen_assembly_after_lock_release(temp.path());
         let records = second
             .ports()
             .event_replay()
