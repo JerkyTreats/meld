@@ -123,6 +123,10 @@ path = "tests/o1_lookup_verification.rs"
 name = "task_artifact_repo"
 path = "tests/task_artifact_repo.rs"
 
+[[test]]
+name = "cli_belief_authority_cutover"
+path = "tests/cli_belief_authority_cutover.rs"
+
 [[bench]]
 name = "node_lookup"
 harness = false
