@@ -1439,7 +1439,15 @@ impl AgentBootstrapRuntimeHandle {
             .map(|progress| progress.updated_at_seq)
             .unwrap_or(0);
         if budget.max_items == 0 {
-            return self.report(input_sequence, input_sequence, 0, 0, Vec::new(), true);
+            return self.report(
+                input_sequence,
+                input_sequence,
+                0,
+                0,
+                Vec::new(),
+                Vec::new(),
+                true,
+            );
         }
         if let Err(error) = prior_progress {
             return self.failure_report(input_sequence, error);
@@ -1451,6 +1459,7 @@ impl AgentBootstrapRuntimeHandle {
                 report.progress.updated_at_seq,
                 1,
                 usize::from(report.work_performed),
+                Vec::new(),
                 Vec::new(),
                 false,
             ),
@@ -1470,16 +1479,18 @@ impl AgentBootstrapRuntimeHandle {
             .flatten()
             .map(|progress| progress.updated_at_seq)
             .unwrap_or(input_checkpoint);
+        let (classification, issue) = bootstrap_worker_issue(&self.input.bootstrap_id, error);
+        let (retryable_errors, fatal_errors) = match classification {
+            meld_world_model::AgentBootstrapErrorClass::Retryable => (vec![issue], Vec::new()),
+            meld_world_model::AgentBootstrapErrorClass::Fatal => (Vec::new(), vec![issue]),
+        };
         self.report(
             input_checkpoint,
             output_checkpoint,
             1,
             0,
-            vec![crate::runtime::contracts::WorkerTickIssue {
-                item_id: Some(self.input.bootstrap_id.clone()),
-                code: "agent_bootstrap_failed".to_string(),
-                message: bounded_bootstrap_error(error),
-            }],
+            retryable_errors,
+            fatal_errors,
             false,
         )
     }
@@ -1491,6 +1502,7 @@ impl AgentBootstrapRuntimeHandle {
         output_sequence: u64,
         items_attempted: usize,
         items_committed: usize,
+        retryable_errors: Vec<crate::runtime::contracts::WorkerTickIssue>,
         fatal_errors: Vec<crate::runtime::contracts::WorkerTickIssue>,
         budget_exhausted: bool,
     ) -> WorkerTickReport {
@@ -1524,14 +1536,30 @@ impl AgentBootstrapRuntimeHandle {
             },
             items_attempted,
             items_committed,
-            retryable_errors: Vec::new(),
+            retryable_errors,
             fatal_errors,
             budget_exhausted,
         }
     }
 }
 
-fn bounded_bootstrap_error(error: meld_world_model::AgentBootstrapError) -> String {
+fn bootstrap_worker_issue(
+    bootstrap_id: &str,
+    error: meld_world_model::AgentBootstrapError,
+) -> (
+    meld_world_model::AgentBootstrapErrorClass,
+    crate::runtime::contracts::WorkerTickIssue,
+) {
+    let classification = error.classification();
+    let issue = crate::runtime::contracts::WorkerTickIssue {
+        item_id: Some(bootstrap_id.to_string()),
+        code: error.diagnostic_code().to_string(),
+        message: bounded_bootstrap_error(&error),
+    };
+    (classification, issue)
+}
+
+fn bounded_bootstrap_error(error: &meld_world_model::AgentBootstrapError) -> String {
     const MAX_BYTES: usize = 512;
     let message = error.to_string();
     if message.len() <= MAX_BYTES {
@@ -1669,6 +1697,40 @@ mod tests {
                 Err(error) => panic!("failed to reopen product runtime assembly: {error}"),
             }
         }
+    }
+
+    #[test]
+    fn bootstrap_worker_issue_preserves_retry_class_code_and_message_bound() {
+        let storage = meld_world_model::AgentBootstrapError::Storage {
+            message: "x".repeat(600),
+        };
+        let (storage_class, storage_issue) = bootstrap_worker_issue("bootstrap-a", storage);
+        assert_eq!(
+            storage_class,
+            meld_world_model::AgentBootstrapErrorClass::Retryable
+        );
+        assert_eq!(storage_issue.item_id.as_deref(), Some("bootstrap-a"));
+        assert_eq!(storage_issue.code, "agent_bootstrap_storage_failed");
+        assert!(storage_issue
+            .message
+            .starts_with("bootstrap storage failure"));
+        assert!(storage_issue.message.len() <= 515);
+
+        let conflict = meld_world_model::AgentBootstrapError::Conflict {
+            field: "bootstrap.activation_hash".to_string(),
+            configured_value_hash: "configured".to_string(),
+            durable_value_hash: "durable".to_string(),
+        };
+        let (conflict_class, conflict_issue) = bootstrap_worker_issue("bootstrap-a", conflict);
+        assert_eq!(
+            conflict_class,
+            meld_world_model::AgentBootstrapErrorClass::Fatal
+        );
+        assert_eq!(conflict_issue.code, "agent_bootstrap_conflict");
+        assert_eq!(
+            conflict_issue.message,
+            "bootstrap content conflict at 'bootstrap.activation_hash'"
+        );
     }
 
     #[test]

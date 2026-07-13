@@ -6,7 +6,7 @@ use meld::runtime::assembly::{
     ProductRuntimeAssembly, RuntimeFactoryRegistry, RuntimeLeaseContext,
 };
 use meld::runtime::contracts::{RuntimeImplementationState, RuntimeRoleClass, WorkBudget};
-use meld::runtime::supervisor::{RuntimeId, RuntimeInstanceStatus, SupervisorStore};
+use meld::runtime::supervisor::{RestartCause, RuntimeId, RuntimeInstanceStatus, SupervisorStore};
 use meld::runtime::tooling::handle_cli_activation;
 use meld_events::{EventAuthority, EventAuthorityOpenOptions};
 use meld_world_model::{
@@ -274,7 +274,10 @@ fn divergent_activation_fails_closed_and_preserves_the_first_receipt() {
         )
         .unwrap();
         let error = activate(&workspace, &config_path, &activation_path).unwrap_err();
-        assert!(error.to_string().contains("failed supervisor action"));
+        assert!(error.to_string().contains("agent_bootstrap_conflict"));
+        assert!(error
+            .to_string()
+            .contains("bootstrap content conflict at 'bootstrap.activation_hash'"));
         assert_eq!(read_receipt(&layout.world_model_db), receipt);
 
         let supervisor = SupervisorStore::open(layout.root.join("supervisor.sled")).unwrap();
@@ -286,6 +289,66 @@ fn divergent_activation_fails_closed_and_preserves_the_first_receipt() {
                 .status,
             RuntimeInstanceStatus::Stopped
         );
+    });
+}
+
+#[test]
+fn retryable_bootstrap_exhaustion_is_bounded_and_shuts_down_cleanly() {
+    let temp = tempfile::tempdir().unwrap();
+    with_xdg_env(&temp, || {
+        let workspace = workspace(&temp);
+        let config_path = write_config(temp.path(), "docs-writer");
+        let activation_path = workspace.join("docs_freshness_activation.toml");
+        fs::write(&activation_path, ACTIVATION).unwrap();
+
+        let config = ConfigLoader::load_from_file(&config_path).unwrap();
+        let product_root = config
+            .system
+            .storage
+            .resolve_product_root(&workspace)
+            .unwrap();
+        let layout = meld::runtime::storage::ProductStorageLayout::from_root(&product_root);
+        let db = sled::open(&layout.world_model_db).unwrap();
+        db.open_tree("agent_bootstrap_progress")
+            .unwrap()
+            .insert(
+                "world_model.agent.bootstrap.docs_freshness",
+                b"not valid bootstrap progress".as_slice(),
+            )
+            .unwrap();
+        db.flush().unwrap();
+        drop(db);
+
+        let error = activate(&workspace, &config_path, &activation_path).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("exhausted 3 attempts"));
+        assert!(message.contains("agent_bootstrap_storage_failed"));
+        assert!(message.contains("bootstrap storage failure"));
+
+        let supervisor = SupervisorStore::open(layout.root.join("supervisor.sled")).unwrap();
+        let schedules = supervisor.list_restart_schedules().unwrap();
+        assert_eq!(schedules.len(), 2);
+        assert!(schedules.iter().all(|schedule| {
+            schedule.restart().runtime_id.as_str() == "world_model.agent.bootstrap.docs_freshness"
+                && schedule.restart().cause == RestartCause::RetryableFailure
+        }));
+        assert_eq!(
+            supervisor
+                .latest_runtime_instance()
+                .unwrap()
+                .unwrap()
+                .status,
+            RuntimeInstanceStatus::Stopped
+        );
+        for runtime_id in [
+            "world_model.agent.bootstrap.docs_freshness",
+            "world_model.graph_replay",
+        ] {
+            assert!(supervisor
+                .get_active_runtime_lease(&RuntimeId::new(runtime_id).unwrap())
+                .unwrap()
+                .is_none());
+        }
     });
 }
 

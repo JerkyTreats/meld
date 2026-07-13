@@ -86,6 +86,15 @@ pub struct AgentBootstrapReport {
     pub diagnostics: Vec<AgentBootstrapDiagnostic>,
 }
 
+/// Recovery posture owned by the world-model bootstrap boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentBootstrapErrorClass {
+    /// Re-run the same idempotent bootstrap input after supervisor recovery.
+    Retryable,
+    /// Stop automatic recovery because input or durable identity diverged.
+    Fatal,
+}
+
 /// Failure returned by world-model bootstrap.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentBootstrapError {
@@ -114,6 +123,28 @@ pub enum AgentBootstrapError {
     },
 }
 
+impl AgentBootstrapError {
+    /// Return the recovery posture for this domain-owned failure.
+    pub fn classification(&self) -> AgentBootstrapErrorClass {
+        match self {
+            Self::Storage { .. } => AgentBootstrapErrorClass::Retryable,
+            Self::Validation { .. } | Self::Conflict { .. } | Self::LegacyDirectiveConflict(_) => {
+                AgentBootstrapErrorClass::Fatal
+            }
+        }
+    }
+
+    /// Return the stable worker diagnostic code for this failure variant.
+    pub fn diagnostic_code(&self) -> &'static str {
+        match self {
+            Self::Validation { .. } => "agent_bootstrap_validation_failed",
+            Self::Conflict { .. } => "agent_bootstrap_conflict",
+            Self::LegacyDirectiveConflict(_) => "agent_bootstrap_legacy_directive_conflict",
+            Self::Storage { .. } => "agent_bootstrap_storage_failed",
+        }
+    }
+}
+
 impl fmt::Display for AgentBootstrapError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -132,3 +163,28 @@ impl fmt::Display for AgentBootstrapError {
 }
 
 impl Error for AgentBootstrapError {}
+
+#[cfg(test)]
+mod tests {
+    use super::{AgentBootstrapError, AgentBootstrapErrorClass};
+
+    #[test]
+    fn storage_is_retryable_without_misclassifying_divergence() {
+        let storage = AgentBootstrapError::Storage {
+            message: "temporarily unavailable".to_string(),
+        };
+        let conflict = AgentBootstrapError::Conflict {
+            field: "bootstrap.activation_hash".to_string(),
+            configured_value_hash: "configured".to_string(),
+            durable_value_hash: "durable".to_string(),
+        };
+
+        assert_eq!(
+            storage.classification(),
+            AgentBootstrapErrorClass::Retryable
+        );
+        assert_eq!(storage.diagnostic_code(), "agent_bootstrap_storage_failed");
+        assert_eq!(conflict.classification(), AgentBootstrapErrorClass::Fatal);
+        assert_eq!(conflict.diagnostic_code(), "agent_bootstrap_conflict");
+    }
+}

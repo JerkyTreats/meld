@@ -6,9 +6,9 @@ mod runtime;
 mod store;
 
 pub use contracts::{
-    AgentBootstrapDiagnostic, AgentBootstrapError, AgentBootstrapProgress,
-    AgentBootstrapProgressStatus, AgentBootstrapReport, AgentBootstrapStage,
-    MAX_BOOTSTRAP_DIAGNOSTICS,
+    AgentBootstrapDiagnostic, AgentBootstrapError, AgentBootstrapErrorClass,
+    AgentBootstrapProgress, AgentBootstrapProgressStatus, AgentBootstrapReport,
+    AgentBootstrapStage, MAX_BOOTSTRAP_DIAGNOSTICS,
 };
 pub use runtime::AgentBootstrapRuntime;
 

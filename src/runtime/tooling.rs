@@ -12,13 +12,13 @@ use crate::cli::RuntimeCommands;
 use crate::error::ApiError;
 use crate::runtime::assembly::{DesiredRuntimeState, ProductRuntimeAssembly};
 use crate::runtime::contracts::{
-    RuntimeActionRecord, RuntimeHandleKind, RuntimeImplementationState, RuntimeLaunchStatus,
-    RuntimeRoleClass, RuntimeRunMode, RuntimeStatusCacheLayout, RuntimeStatusCacheRecord,
-    RuntimeStatusHealthCounts, RuntimeStatusHealthSummary, RuntimeStatusHeartbeatSummary,
-    RuntimeStatusInstanceSummary, RuntimeStatusLeaseSummary, RuntimeStatusLedgerSummary,
-    RuntimeStatusProcessSummary, RuntimeStatusPublisher, RuntimeStatusRuntimeRow,
-    RuntimeStatusShutdownSummary, RuntimeStatusSnapshot, RuntimeStatusWriterIdentity,
-    RUNTIME_STATUS_RECENT_ACTION_MAX_COUNT,
+    RuntimeActionIssueSeverity, RuntimeActionRecord, RuntimeHandleKind, RuntimeImplementationState,
+    RuntimeLaunchStatus, RuntimeRoleClass, RuntimeRunMode, RuntimeStatusCacheLayout,
+    RuntimeStatusCacheRecord, RuntimeStatusHealthCounts, RuntimeStatusHealthSummary,
+    RuntimeStatusHeartbeatSummary, RuntimeStatusInstanceSummary, RuntimeStatusLeaseSummary,
+    RuntimeStatusLedgerSummary, RuntimeStatusProcessSummary, RuntimeStatusPublisher,
+    RuntimeStatusRuntimeRow, RuntimeStatusShutdownSummary, RuntimeStatusSnapshot,
+    RuntimeStatusWriterIdentity, RUNTIME_STATUS_RECENT_ACTION_MAX_COUNT,
 };
 use crate::runtime::presentation::{
     format_runtime_activation_description, format_runtime_run_result, format_runtime_status,
@@ -34,6 +34,7 @@ use crate::runtime::supervisor::{
 static CTRL_C_TARGET: OnceLock<Mutex<Option<Weak<AtomicBool>>>> = OnceLock::new();
 static CTRL_C_HANDLER_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 static ACTIVATION_INSTANCE_NONCE: AtomicU64 = AtomicU64::new(1);
+const ACTIVATION_ATTEMPT_LIMIT: u64 = 3;
 
 /// Validate one explicit activation before product stores or `RunContext` open.
 pub fn handle_cli_activation(
@@ -117,25 +118,27 @@ fn apply_prepared_activation(
         "runtime-activation-{}-{started_at_ms}-{nonce}",
         std::process::id()
     );
-    let mut supervisor = RuntimeSupervisor::start(
-        assembly.supervisor_startup_package(),
-        SupervisorStartCommand::new(instance_id, started_at_ms),
-    )
-    .map_err(runtime_error)?;
+    let mut start_command = SupervisorStartCommand::new(instance_id, started_at_ms);
+    start_command.default_restart_policy = RestartPolicy::OnRetryableFailure;
+    start_command.restart_attempt_limit = ACTIVATION_ATTEMPT_LIMIT.saturating_sub(1);
+    let mut supervisor =
+        RuntimeSupervisor::start(assembly.supervisor_startup_package(), start_command)
+            .map_err(runtime_error)?;
     let tick_at_ms = started_at_ms.saturating_add(1);
-    let tick_result = supervisor
-        .tick(tick_at_ms)
-        .map_err(runtime_error)
-        .and_then(|tick| {
+    let tick_result = run_bounded_activation_attempts(
+        tick_at_ms,
+        |attempt_at_ms| supervisor.tick(attempt_at_ms).map_err(runtime_error),
+        |tick| {
             verify_bootstrap_application(
                 &assembly,
-                &tick,
+                tick,
                 &runtime_inputs.world_model,
                 &world_identity,
             )
-        });
+        },
+    );
     let shutdown_result = supervisor
-        .request_shutdown(tick_at_ms.saturating_add(1))
+        .request_shutdown(tick_at_ms.saturating_add(ACTIVATION_ATTEMPT_LIMIT))
         .map_err(runtime_error);
 
     let shutdown = match (tick_result, shutdown_result) {
@@ -194,7 +197,7 @@ fn verify_bootstrap_application(
     tick: &SupervisorTickReport,
     input: &meld_world_model::activation::WorldModelActivationInput,
     identity: &meld_world_model::activation::WorldModelActivationIdentity,
-) -> Result<(), ApiError> {
+) -> Result<ActivationApplicationStatus, ApiError> {
     let runtime_id = "world_model.agent.bootstrap.docs_freshness";
     let desired = assembly
         .desired_runtime_state()
@@ -210,34 +213,10 @@ fn verify_bootstrap_application(
             "bootstrap desired state is not a concrete enabled actor",
         ));
     }
-    for enabled in assembly
-        .desired_runtime_state()
-        .iter()
-        .filter(|state| state.enabled)
-    {
-        let action = tick
-            .actions
-            .iter()
-            .find(|action| action.runtime_id == enabled.runtime_id)
-            .ok_or_else(|| {
-                runtime_message(format!(
-                    "enabled runtime '{}' produced no supervisor action",
-                    enabled.runtime_id
-                ))
-            })?;
-        if action.metrics.fatal_issue_count != 0 || action.metrics.retryable_issue_count != 0 {
-            return Err(runtime_message(format!(
-                "enabled runtime '{}' reported a failed supervisor action",
-                enabled.runtime_id
-            )));
-        }
-        if enabled.runtime_id == runtime_id
-            && (action.actor_id != runtime_id || action.metrics.attempted != 1)
-        {
-            return Err(runtime_message(
-                "bootstrap supervisor action did not report its bounded domain attempt",
-            ));
-        }
+    let action_status =
+        classify_activation_actions(assembly.desired_runtime_state(), tick, runtime_id)?;
+    if matches!(action_status, ActivationApplicationStatus::Retryable(_)) {
+        return Ok(action_status);
     }
     let receipt = assembly
         .stores()
@@ -254,7 +233,160 @@ fn verify_bootstrap_application(
             "durable bootstrap receipt does not match activated world-model input",
         ));
     }
-    Ok(())
+    Ok(ActivationApplicationStatus::Applied)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ActivationApplicationStatus {
+    Applied,
+    Retryable(ActivationRetry),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActivationRetry {
+    runtime_ids: BTreeSet<String>,
+    issue: ActivationRuntimeIssue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActivationRuntimeIssue {
+    runtime_id: String,
+    code: String,
+    message: String,
+}
+
+fn classify_activation_actions(
+    desired_runtime_state: &[DesiredRuntimeState],
+    tick: &SupervisorTickReport,
+    bootstrap_runtime_id: &str,
+) -> Result<ActivationApplicationStatus, ApiError> {
+    let enabled_actions = desired_runtime_state
+        .iter()
+        .filter(|state| state.enabled)
+        .map(|state| {
+            tick.actions
+                .iter()
+                .find(|action| action.runtime_id == state.runtime_id)
+                .ok_or_else(|| {
+                    runtime_message(format!(
+                        "enabled runtime '{}' produced no supervisor action",
+                        state.runtime_id
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for action in &enabled_actions {
+        if action.metrics.fatal_issue_count != 0 {
+            let issue = activation_runtime_issue(
+                action,
+                RuntimeActionIssueSeverity::Fatal,
+                "runtime_fatal_failure",
+                "runtime reported a fatal activation failure",
+            );
+            return Err(runtime_message(format!(
+                "enabled runtime '{}' reported fatal activation issue '{}': {}",
+                issue.runtime_id, issue.code, issue.message
+            )));
+        }
+    }
+
+    let retrying_actions = enabled_actions
+        .iter()
+        .filter(|action| action.metrics.retryable_issue_count != 0)
+        .copied()
+        .collect::<Vec<_>>();
+    if let Some(first) = retrying_actions.first() {
+        let issue = activation_runtime_issue(
+            first,
+            RuntimeActionIssueSeverity::Retryable,
+            "runtime_retryable_failure",
+            "runtime reported a retryable activation failure",
+        );
+        return Ok(ActivationApplicationStatus::Retryable(ActivationRetry {
+            runtime_ids: retrying_actions
+                .iter()
+                .map(|action| action.runtime_id.clone())
+                .collect(),
+            issue,
+        }));
+    }
+
+    let bootstrap = enabled_actions
+        .into_iter()
+        .find(|action| action.runtime_id == bootstrap_runtime_id)
+        .ok_or_else(|| runtime_message("bootstrap supervisor action is missing"))?;
+    if bootstrap.actor_id != bootstrap_runtime_id || bootstrap.metrics.attempted != 1 {
+        return Err(runtime_message(
+            "bootstrap supervisor action did not report its bounded domain attempt",
+        ));
+    }
+    Ok(ActivationApplicationStatus::Applied)
+}
+
+fn activation_runtime_issue(
+    action: &RuntimeActionRecord,
+    severity: RuntimeActionIssueSeverity,
+    fallback_code: &str,
+    fallback_message: &str,
+) -> ActivationRuntimeIssue {
+    let issue = action
+        .issues
+        .iter()
+        .find(|issue| issue.severity == severity);
+    ActivationRuntimeIssue {
+        runtime_id: action.runtime_id.clone(),
+        code: issue
+            .map(|issue| issue.code.clone())
+            .unwrap_or_else(|| fallback_code.to_string()),
+        message: issue
+            .map(|issue| issue.message.clone())
+            .unwrap_or_else(|| fallback_message.to_string()),
+    }
+}
+
+fn run_bounded_activation_attempts(
+    first_attempt_at_ms: u64,
+    mut tick: impl FnMut(u64) -> Result<SupervisorTickReport, ApiError>,
+    mut verify: impl FnMut(&SupervisorTickReport) -> Result<ActivationApplicationStatus, ApiError>,
+) -> Result<(), ApiError> {
+    for attempt in 1..=ACTIVATION_ATTEMPT_LIMIT {
+        let attempt_at_ms = first_attempt_at_ms.saturating_add(attempt.saturating_sub(1));
+        let tick = tick(attempt_at_ms)?;
+        match verify(&tick)? {
+            ActivationApplicationStatus::Applied => return Ok(()),
+            ActivationApplicationStatus::Retryable(retry) if attempt < ACTIVATION_ATTEMPT_LIMIT => {
+                let restarted = tick
+                    .restart_evaluation
+                    .restarted_runtime_ids
+                    .iter()
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                let missing = retry
+                    .runtime_ids
+                    .difference(&restarted)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !missing.is_empty() {
+                    return Err(runtime_message(format!(
+                        "activation retry recovery did not restart {} after issue '{}': {}",
+                        missing.join(", "),
+                        retry.issue.code,
+                        retry.issue.message
+                    )));
+                }
+            }
+            ActivationApplicationStatus::Retryable(retry) => {
+                return Err(runtime_message(format!(
+                    "activation exhausted {ACTIVATION_ATTEMPT_LIMIT} attempts for runtime '{}' after issue '{}': {}",
+                    retry.issue.runtime_id, retry.issue.code, retry.issue.message
+                )));
+            }
+        }
+    }
+    Err(runtime_message(
+        "activation attempt bound was not evaluated",
+    ))
 }
 
 /// CLI status DTO for runtime supervisor commands.
@@ -1239,7 +1371,165 @@ impl From<RuntimeInstance> for RuntimeCliInstanceStatus {
 mod activation_tests {
     use std::path::PathBuf;
 
-    use super::handle_cli_activation;
+    use super::*;
+    use crate::runtime::contracts::{
+        RuntimeActionIssueSeverity, WorkerCheckpoint, WorkerScope, WorkerTickIssue,
+        WorkerTickReport,
+    };
+    use crate::runtime::supervisor::SupervisorRestartEvaluation;
+
+    const BOOTSTRAP_RUNTIME_ID: &str = "world_model.agent.bootstrap.docs_freshness";
+
+    fn bootstrap_desired_state() -> Vec<DesiredRuntimeState> {
+        vec![DesiredRuntimeState {
+            runtime_id: BOOTSTRAP_RUNTIME_ID.to_string(),
+            enabled: true,
+            factory_available: true,
+            role_class: RuntimeRoleClass::Actor,
+            implementation_state: RuntimeImplementationState::Concrete,
+        }]
+    }
+
+    fn bootstrap_action(
+        issue: Option<(RuntimeActionIssueSeverity, &str, &str)>,
+    ) -> RuntimeActionRecord {
+        let mut report = WorkerTickReport {
+            actor_id: BOOTSTRAP_RUNTIME_ID.to_string(),
+            scope: WorkerScope {
+                domain_id: "world_model".to_string(),
+                stream_id: None,
+                work_key: Some(BOOTSTRAP_RUNTIME_ID.to_string()),
+                agent_id: Some("seed.docs_freshness".to_string()),
+                perspective_key: None,
+                branch_id: Some("main".to_string()),
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "agent_bootstrap_sequence".to_string(),
+                value: 0,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "agent_bootstrap_sequence".to_string(),
+                value: 0,
+            },
+            items_attempted: 1,
+            items_committed: 0,
+            retryable_errors: Vec::new(),
+            fatal_errors: Vec::new(),
+            budget_exhausted: false,
+        };
+        if let Some((severity, code, message)) = issue {
+            let issue = WorkerTickIssue {
+                item_id: Some(BOOTSTRAP_RUNTIME_ID.to_string()),
+                code: code.to_string(),
+                message: message.to_string(),
+            };
+            match severity {
+                RuntimeActionIssueSeverity::Retryable => report.retryable_errors.push(issue),
+                RuntimeActionIssueSeverity::Fatal => report.fatal_errors.push(issue),
+            }
+        }
+        RuntimeActionRecord::from_worker_tick("action-bootstrap", BOOTSTRAP_RUNTIME_ID, 1, report)
+    }
+
+    fn activation_tick(action: RuntimeActionRecord, restarted: bool) -> SupervisorTickReport {
+        SupervisorTickReport {
+            renewed_runtime_ids: vec![BOOTSTRAP_RUNTIME_ID.to_string()],
+            heartbeat_runtime_ids: vec![BOOTSTRAP_RUNTIME_ID.to_string()],
+            actions: vec![action],
+            restart_evaluation: SupervisorRestartEvaluation {
+                expired_runtime_ids: Vec::new(),
+                restarted_runtime_ids: if restarted {
+                    vec![BOOTSTRAP_RUNTIME_ID.to_string()]
+                } else {
+                    Vec::new()
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn bounded_activation_retries_after_supervisor_recovery() {
+        let desired = bootstrap_desired_state();
+        let ticks = [
+            activation_tick(
+                bootstrap_action(Some((
+                    RuntimeActionIssueSeverity::Retryable,
+                    "agent_bootstrap_storage_failed",
+                    "bootstrap storage failure: temporarily unavailable",
+                ))),
+                true,
+            ),
+            activation_tick(bootstrap_action(None), false),
+        ];
+        let mut next_tick = 0;
+        let mut observed_times = Vec::new();
+
+        run_bounded_activation_attempts(
+            10,
+            |attempt_at_ms| {
+                observed_times.push(attempt_at_ms);
+                let tick = ticks[next_tick].clone();
+                next_tick += 1;
+                Ok(tick)
+            },
+            |tick| classify_activation_actions(&desired, tick, BOOTSTRAP_RUNTIME_ID),
+        )
+        .unwrap();
+
+        assert_eq!(next_tick, 2);
+        assert_eq!(observed_times, vec![10, 11]);
+    }
+
+    #[test]
+    fn bounded_activation_exhaustion_preserves_retryable_diagnostic() {
+        let desired = bootstrap_desired_state();
+        let retry_tick = activation_tick(
+            bootstrap_action(Some((
+                RuntimeActionIssueSeverity::Retryable,
+                "agent_bootstrap_storage_failed",
+                "bootstrap storage failure: corrupt progress",
+            ))),
+            true,
+        );
+        let mut attempt_count = 0;
+
+        let error = run_bounded_activation_attempts(
+            20,
+            |_| {
+                attempt_count += 1;
+                Ok(retry_tick.clone())
+            },
+            |tick| classify_activation_actions(&desired, tick, BOOTSTRAP_RUNTIME_ID),
+        )
+        .unwrap_err();
+
+        assert_eq!(attempt_count, ACTIVATION_ATTEMPT_LIMIT);
+        assert!(error.to_string().contains("exhausted 3 attempts"));
+        assert!(error.to_string().contains("agent_bootstrap_storage_failed"));
+        assert!(error.to_string().contains("corrupt progress"));
+    }
+
+    #[test]
+    fn activation_verification_preserves_divergence_diagnostic() {
+        let tick = activation_tick(
+            bootstrap_action(Some((
+                RuntimeActionIssueSeverity::Fatal,
+                "agent_bootstrap_conflict",
+                "bootstrap content conflict at 'bootstrap.activation_hash'",
+            ))),
+            false,
+        );
+
+        let error =
+            classify_activation_actions(&bootstrap_desired_state(), &tick, BOOTSTRAP_RUNTIME_ID)
+                .unwrap_err();
+
+        assert!(error.to_string().contains("agent_bootstrap_conflict"));
+        assert!(error
+            .to_string()
+            .contains("bootstrap content conflict at 'bootstrap.activation_hash'"));
+    }
 
     #[test]
     fn public_cli_activation_boundary_honors_explicit_config_path() {
