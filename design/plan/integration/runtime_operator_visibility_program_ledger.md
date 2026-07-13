@@ -3,13 +3,14 @@
 Date: 2026-07-04
 Revised: 2026-07-12
 Status: active child program with sequencing governed by the parent
-Program branch: `runtime-operator-visibility`
+Program branch: `production-cognitive-runtime-closure`
+Historical child branch: `runtime-operator-visibility`
 
 ## Objective
 
 Implement runtime operator visibility so a user can tell whether `meld runtime run` started real work, stayed idle, stalled, retried, or moved the flywheel end to end.
 
-The first objective is Wave 0 shared contract prework. Later waves must consume these shared contracts instead of inventing alternate cache, action, or status shapes.
+Wave 0 shared contracts and Wave 1 runtime visibility core are complete under parent Wave 0. Remaining child scopes must consume these contracts and follow the parent wave order.
 
 ## Parent Program
 
@@ -37,19 +38,19 @@ Supporting requirement artifacts:
 
 Branch:
 
-- `runtime-operator-visibility`
+- `production-cognitive-runtime-closure`
 
 Branch note:
 
-- The branch was created from `master` while existing dirty runtime and design changes were present.
-- Those existing changes were carried forward and were not reverted.
+- The original child work began on `runtime-operator-visibility`.
+- The parent program integrated the accepted visibility core on `production-cognitive-runtime-closure`.
 
 ## Coordination Entries
 
 ### 2026-07-12 production runtime closure orchestration
 
 The parent program adds the missing semantic activation and correctness waves around this visibility work.
-Wave 1 in this ledger remains the immediate R1 implementation slice and maps into parent Wave 0.
+Wave 1 in this ledger is the completed R1 implementation slice and maps into parent Wave 0.
 Later visibility waves integrate only after their dependent domain actors and durability contracts pass the parent gates.
 
 The runtime visibility program must not treat action reporting as evidence that an inert actor performs semantic work.
@@ -114,7 +115,7 @@ Residual scan matches are therefore intentional canonical design language, not c
 
 The event observability program additively extended the Wave 0 status contracts: `RuntimeStatusSnapshot` gains an optional, serde-defaulted `ledger` field carrying `RuntimeStatusLedgerSummary`, an operational projection of event ledger health whose authority remains the ledger watermark and cursor registry. Old cache JSON without the field still deserializes, proven by contract test. The `event.append` runtime id now builds a diagnostics-only semantic handle reporting the commit watermark and drop deltas through heartbeats; Wave 3's event runtime reports seam should consume rather than duplicate it.
 
-Scope correction on 2026-07-10: events supplies `EventHealthReport` with stable mapping inputs. Wave 1 owns `RuntimeStatusLedgerSummary::from_health`, supervisor cadence, `RuntimeStatusPublisher` invocation, cache persistence, and staleness. Wave 3 owns heartbeat and runtime action mapping. None of those runtime tasks is an event closure gate.
+Scope correction on 2026-07-10: events supplies `EventHealthReport` with stable mapping inputs. Parent Wave 0 completed `RuntimeStatusLedgerSummary::from_health`, supervisor cadence, `RuntimeStatusPublisher` invocation, cache persistence, and staleness. Later operator depth owns broad heartbeat and runtime action mapping. None of those runtime tasks is an event closure gate.
 
 ### 2026-07-10 event foundation dependency correction
 
@@ -138,9 +139,9 @@ Dormant branches resolve their own configuration, source, product path, and ledg
 The real route tests in `tests/integration/product_event_authority_cutover.rs` prove that direct event commands and `runtime run` reuse one authority and sequence space, preserve identity across processes and reopen, leave legacy event rows unchanged, and reject a mismatched active binding without fallback.
 The branch tests in `tests/integration/branches_runtime.rs` prove configured-source selection and authority isolation for dormant branches.
 
-The event dependency is therefore satisfied and Wave 1 is ready to start.
-No runtime visibility wave became complete as a side effect of event closure.
-Runtime still owns R1 status publisher invocation, cache persistence and staleness; R2 daemon and real IPC; R3 console frames, runtime actions, and heartbeat mapping; and R4 the complete flywheel proof.
+The event dependency was therefore satisfied and Wave 1 became ready to start.
+Parent Wave 0 later completed R1 status publisher invocation, bounded cache persistence, passive reads, staleness, and separate-process lock isolation through `4e7ae14`.
+Runtime still owns daemon and real IPC, console frames, broad runtime actions, heartbeat mapping, and the complete flywheel proof under the parent sequence.
 
 ## Phase Inventory
 
@@ -196,7 +197,7 @@ Unresolved risks:
 
 ### wave-1-runtime-visibility-core
 
-Status: ready
+Status: complete
 
 Summary:
 
@@ -219,24 +220,30 @@ Write scope:
 
 Owner:
 
-- future worker set
+- production cognitive runtime closure parent program
 
 Implementation evidence:
 
-- none yet
+- `4823303` persists an exclusive bounded status cache writer with atomic replacement.
+- `b6dd724` enforces snapshot, action, issue, and UTF-8 ingress bounds.
+- `fcac040` adds tolerant passive status reads, early CLI routing, lifecycle publication, monotonic action identities, and foreground cache ownership.
+- `00e0b23` publishes restart transitions and migrates persisted runtime aliases without hiding collisions.
+- `4e7ae14` accepts the integrated parent Wave 0 runtime truth and visibility gate.
 
 Test evidence:
 
-- none yet
+- focused status cache, passive status, supervisor, and runtime CLI suites passed
+- separate-process status succeeded while the foreground host retained product database ownership
+- full locked workspace formatting, check, clippy, and test ladder passed
 
 Review status:
 
-- not started
+- passed after cache ingress, action identity, restart publication, and alias migration fix loops
 
 Unresolved risks:
 
-- lock safety must be proven with an integration test
-- event closure proves one direct local authority, not status-cache lock isolation
+- none within the bounded runtime visibility core
+- semantic progress, broad action depth, and process hosting remain parent-program work
 
 ### wave-2-run-console-and-lifecycle-events
 
@@ -251,6 +258,8 @@ Summary:
 Dependencies:
 
 - `wave-1-runtime-visibility-core`
+- parent Wave 5 product proof
+- parent Wave 6 process topology and lifecycle bridge contracts
 
 Write scope:
 
@@ -291,6 +300,7 @@ Dependencies:
 
 - `wave-0-shared-contracts`
 - `wave-1-runtime-visibility-core`
+- parent Wave 5 product proof before broad operator depth
 
 Write scope:
 
@@ -330,6 +340,8 @@ Summary:
 Dependencies:
 
 - `wave-1-runtime-visibility-core`
+- parent Wave 5 foreground product proof
+- parent Wave 6 process topology contract
 
 Write scope:
 
@@ -370,7 +382,7 @@ Summary:
 Dependencies:
 
 - `wave-1-runtime-visibility-core`
-- `wave-3-domain-action-publishers`
+- parent Waves 2 through 4 semantic activation and dispatch
 
 Write scope:
 
@@ -403,15 +415,18 @@ Unresolved risks:
 - `wave-1-runtime-visibility-core -> wave-0-shared-contracts` because cache persistence and route isolation consume shared snapshot and action shapes.
 - `wave-1-runtime-visibility-core -> event-foundation-closeout-E6` is satisfied through `9350a90`; runtime hosting now consumes the closed direct product authority.
 - `wave-2-run-console-and-lifecycle-events -> wave-1-runtime-visibility-core` because console frames should use the same cache and status row data.
+- `wave-2-run-console-and-lifecycle-events -> parent-wave-5` because broad lifecycle presentation follows honest foreground proof.
 - `wave-3-domain-action-publishers -> wave-0-shared-contracts` because domains must emit shared action records.
 - `wave-3-domain-action-publishers -> wave-1-runtime-visibility-core` because domain actions need a cache writer and reader path.
+- `wave-3-domain-action-publishers -> parent-wave-5` because broad action depth follows proven semantic actors and dispatch.
 - `wave-4-process-control -> wave-1-runtime-visibility-core` because readiness and stop behavior should publish stable status.
-- `wave-5-end-to-end-proof -> wave-3-domain-action-publishers` because the proof needs domain action depth.
+- `wave-4-process-control -> parent-wave-5` because detached hosting follows the foreground product proof.
+- `wave-5-end-to-end-proof -> parent-wave-4` because the proof needs restart-safe provider dispatch.
 - `wave-5-end-to-end-proof -> event-foundation-closeout-E6` is satisfied through `9350a90`; Wave 5 must still prove the runtime-owned flywheel and operator surfaces.
 
 ## Wave Plan
 
-Runtime resumption maps to the corrected dependency order as follows: Wave 1 is R1, Wave 4 supplies the daemon portion of R2, Waves 2 and 3 supply R3, and Wave 5 is R4. Real IPC work may extend Wave 4 without changing event contracts.
+Runtime resumption maps to the corrected parent order as follows. Child Wave 1 completed R1 in parent Wave 0. Child Wave 5 contributes to parent Wave 5 product proof. Child Waves 2 through 4 are completed under parent Wave 6 operator depth and process hosting after the semantic and product-proof gates pass.
 
 Wave 0:
 
@@ -453,7 +468,7 @@ Wave 5:
 - Runtime action records are observation data only.
 - Worker checkpoints may be displayed but must not become supervisor resume cursors.
 - Cache publisher and reader are traits in `src/runtime/contracts.rs`.
-- Concrete file persistence is deferred to Wave 1.
+- Concrete file persistence is complete and owned by the bounded status cache host.
 - Worker reports are serializable so cache and action writers can persist bounded summaries.
 - Runtime object refs are compact ids, not borrowed domain internals.
 - Provider and workflow action records must use redaction state before any payload is surfaced.
@@ -511,6 +526,34 @@ Next ready set:
 
 - `wave-1-runtime-visibility-core`
 
+### Wave 1
+
+Ready items:
+
+- bounded status cache persistence
+- passive CLI status route
+- foreground lifecycle publication
+- separate-process lock isolation
+
+Commits accepted:
+
+- `4823303`
+- `b6dd724`
+- `fcac040`
+- `00e0b23`
+- parent closeout `4e7ae14`
+
+Gate results:
+
+- focused cache, passive route, supervisor, runtime CLI, and process-isolation suites passed
+- full locked workspace formatting, check, clippy, and test ladder passed
+- fresh integrated review passed after restart publication and persisted alias migration corrections
+
+Next ready set:
+
+- none in child order
+- parent Wave 1 authority and correctness, now accepted through `eec0181`
+
 ## Gate Evidence
 
 Wave 0 focused gates:
@@ -542,6 +585,14 @@ Route contracts handed to runtime:
 - `dormant_branch_migrations_keep_separate_product_authorities`
 - `dormant_branch_migration_uses_its_configured_legacy_store`
 
+Runtime visibility core gate through `4e7ae14`:
+
+- bounded cache writer and tolerant reader tests passed
+- passive status routing and lifecycle publication tests passed
+- separate-process lock isolation passed
+- locked workspace formatting, check, clippy with warnings denied, and full tests passed
+- fresh cache, route, and integrated reviews closed every high finding
+
 ## Review Findings
 
 Wave 0 first fresh review findings:
@@ -567,10 +618,10 @@ Wave 0:
 
 Wave 1:
 
-- status: ready
-- implementation evidence: none yet
-- test evidence: none yet
-- review status: not started
+- status: complete
+- implementation evidence: bounded cache host, passive status route, lifecycle publisher, restart publication, and alias migration
+- test evidence: focused runtime suites, separate-process isolation, and full locked workspace ladder
+- review status: passed after fix loops
 - dependency evidence: event foundation handoff passed through `9350a90`
 
 Wave 2:
@@ -603,16 +654,14 @@ Wave 5:
 
 ## Risks And Exceptions
 
-- Existing dirty runtime and design files predated this Wave 0 task and were not reverted.
-- The ledger is bootstrapped before Wave 1, so later workers must update evidence as they land work.
-- Wave 0 is complete, but later waves still need their own review lanes.
-- Runtime status still uses the old blocking route until Wave 1.
-- Event closure supplies reports and stable mapping inputs but does not invoke `RuntimeStatusPublisher`.
-- Direct local authority routing is proven; daemon process ownership and real IPC remain unimplemented.
+- Wave 0 and Wave 1 are complete, but later child scopes still need parent-owned review lanes.
+- Runtime status uses the passive early route and does not construct `RunContext` or open product databases.
+- Direct local authority routing and passive status isolation are proven; daemon process ownership and real IPC remain unimplemented.
 
 ## Final Reconciliation
 
 Program is active.
 
-The event foundation dependency is reconciled and Wave 1 is unblocked.
-No runtime visibility completion reconciliation has been performed because Waves 1 through 5 remain unimplemented.
+The event foundation dependency is reconciled and child Wave 1 is complete under parent Wave 0 through `4e7ae14`.
+The parent authority and correctness wave is accepted through `eec0181`, so W2A product activation is ready.
+Child Waves 2 through 5 remain governed by parent Waves 5 and 6 and are not complete.

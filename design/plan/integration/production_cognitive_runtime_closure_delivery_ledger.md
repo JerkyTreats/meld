@@ -317,6 +317,63 @@ Gate evidence: focused contract suites, locked workspace check, locked workspace
 Review evidence: three independent correction loops closed every critical and high finding
 Next ready set: W1B1 through W1B4
 
+### 2026-07-12 W1B Domain Correctness And Fault Proof
+
+Ready items: W1B1 through W1B5
+Parallelization: four isolated domain lanes followed by one cross-domain fault lane
+Accepted commits: `8f464cd`, `9a425f4`, `5688842`, `fffdb9a`, `8475ffb`, `db3249c`, `1f5ecc0`, `6ce4a8a`
+Implementation evidence:
+
+- belief authority migration, commit reconciliation, evidence cursor ownership, and concurrent lease behavior
+- conflict-aware durable goal commands with legal lifecycle transitions and flushed receipt visibility
+- deterministic projection and planning identity with complete typed object and outcome lineage
+- typed event append validation, shared ingress fencing, retryable drain, and a durable final barrier
+- subprocess interruption, reopen, parity, divergent replay, concurrent append and drain, and abrupt barrier recovery tests across events, execution, and world model
+- durable compatibility mutation internals narrowed behind crate-owned high-level operations
+
+Focused gate state: passed for every accepted domain lane and the committed cross-domain fault suites
+Integrated Wave 1 gate state: passed with W1C closure `eec0181`
+Next ready set: W1C integration only
+
+### 2026-07-12 W1C Root And Supervisor Integration
+
+Ready items: W1C1 and W1C2
+Parallelization: isolated supervisor-store and compatibility lanes beside root-owned entrypoint integration
+Committed component evidence: `f02253a`, `c131ca8`, `84e2e17`, `1506325`, `6ce4a8a`, `8fa37b9`, `eec0181`
+Implementation evidence through `6ce4a8a`:
+
+- runtime assembly cuts legacy belief storage over to the canonical product authority
+- characterization proves CLI context and generation reopen on one migrated belief authority
+- error semantics reject invalid legacy paths and incompatible migration state without fallback
+- durable restart schedules, ordered replacement checkpoints, and checked shutdown completions survive reopen and reject divergent replay
+
+Integrated closure in `eec0181`:
+
+- supervisor entrypoint consumes durable restart schedules and resumes ordered replacement checkpoints after reopen
+- replacement waits for eligibility after the old handle stops, reaches a safe point, flushes, and releases its lease
+- stale handles stop and flush before their local process state is discarded
+- shutdown closes and drains append ingress before actor stop, safe-point, flush, product-store flush, and lease release
+- the final event barrier is identity bearing, survives abrupt loss, and is persisted in the checked shutdown completion
+- interrupted shutdown reopens fenced and resumes without starting actors
+- completed shutdown replays exactly and rejects a divergent fence at the same watermark
+
+Current state: accepted
+Commit gate: accepted as `eec0181`
+Review state: final durability rereview found no critical, high, or medium findings
+Next ready set: W2A activation contract freeze
+
+Final gate evidence:
+
+- `cargo fmt --all -- --check`
+- `git diff --check`
+- `cargo check --locked --workspace --all-targets`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- `cargo test --locked --workspace --all-targets -- --test-threads=1`
+- ten serial repetitions of `runtime::supervisor::store::tests::concurrent_replacement_successors_allow_one_winner`
+- five serial repetitions of `concurrent_append_and_drain_admission_is_linearizable`
+
+The serial workspace run includes 443 root library tests, 419 root integration tests, the dedicated CLI belief cutover target, every extracted crate target, and the subprocess restart and shutdown crash matrices.
+
 ## Gate Evidence
 
 | Wave | Gate | Result | Commit | Notes |
@@ -330,6 +387,15 @@ Next ready set: W1B1 through W1B4
 | W0C4 | canonical document truth | passed | `355f244` | all candidates and retained matches adjudicated |
 | W0D | integrated Wave 0 ladder | passed | `00e0b23` | full locked workspace gate and fresh integrated review passed |
 | W1A | authority recovery contract freeze | passed | `7d01ba2`, `23d0c92`, `80ae62e`, `a9033eb`, `d9f8a43` | focused suites and workspace static gates passed after three review loops |
+| W1B1 | belief authority and evidence cursor | passed | `8475ffb` | full world model suite, strict clippy, formatting, and durability review passed |
+| W1B2 | durable goal commands | passed | `fffdb9a` | focused and full execution suites plus strict clippy passed |
+| W1B3 | planning and outcome lineage | passed | `8f464cd` | full execution all-target tests and strict clippy passed after urgency correction |
+| W1B4 | fenced event append | passed | `9a425f4`, `5688842` | all-feature event matrix and workspace static ladder passed after drain correction |
+| W1B5 | integrated authority fault harness | passed | `db3249c`, `1f5ecc0` | subprocess interruption, reopen, divergent replay, concurrency, and barrier recovery coverage landed |
+| W1C belief cutover | passed | `f02253a`, `84e2e17`, `1506325`, `6ce4a8a` | CLI compatibility characterization and narrowed public mutation surface landed |
+| W1C supervisor store | passed | `c131ca8` | checked restart, replacement, shutdown, reopen, replay, and concurrency products landed |
+| W1C integrated entrypoint | passed | `eec0181` | restart ordering, abrupt recovery, final barrier, checked shutdown completion, formatting, and durability rereview passed |
+| W1 integrated closeout | passed | `6ce4a8a`, `8fa37b9`, `eec0181` | full locked workspace serial ladder, repeated concurrency suites, architecture hygiene, and final durability rereview passed |
 
 ## Review Findings
 
@@ -357,6 +423,13 @@ The final loop found malformed migration states, projection identity detached fr
 Commits `80ae62e`, `a9033eb`, and `d9f8a43` closed the findings.
 The final reviewer approved W1A with no remaining critical or high blockers.
 
+W1B domain reviews closed durability, concurrency, lifecycle, urgency, validation, drain retry, and public-boundary findings before their accepted commits.
+The W1B5 harness then added abrupt process loss and concurrent admission coverage at the cross-domain authority boundaries.
+
+W1C integration first exposed restart and shutdown recovery work that could not be accepted from durable store products alone.
+Commit `eec0181` wired checked restart schedules, ordered replacement checkpoints, append close and drain, final barrier reporting, and checked shutdown completion into the entrypoint.
+The final durability rereview found no critical, high, or medium findings.
+
 ## Phase Completion Matrix
 
 | Packet | Status | Implementation Evidence | Test Evidence | Review |
@@ -373,9 +446,10 @@ The final reviewer approved W1A with no remaining critical or high blockers.
 | W1B2 | accepted | payload-derived goal identity, durable receipt visibility, monotonic updates, and lifecycle guards | 53 goal tests, 17 doc tests, full execution suite, and strict clippy | passed after two review loops |
 | W1B3 | accepted | deterministic planning identity, typed subject lowering, and attributed outcome publication | full execution all-target tests and clippy | passed after urgency fix loop |
 | W1B4 | accepted | typed append validation, shared ingress fence, retryable drain, and final durable barrier | all-feature event matrix and workspace static ladder | passed after drain-retry fix loop |
-| W1B5 | active | integrated Wave 1 fault and parity gate | pending | pending |
-| W1C | ready | supervisor and root cutover dependencies are accepted | pending | pending |
-| W2A through W6G | blocked | none | none | none |
+| W1B5 | accepted | integrated subprocess fault, parity, concurrency, and reopen harness | focused cross-domain fault suites | passed with Wave 1 closeout |
+| W1C | accepted | canonical belief cutover, checked restart ordering, durable shutdown recovery, and final event barrier | focused cutover and store suites plus entrypoint recovery gates | final durability rereview passed |
+| W2A | ready | Wave 1 accepted through `eec0181` | Wave 1 gate evidence complete | not started |
+| W2B through W6G | blocked | none | none | none |
 
 ## Risks And Exceptions
 
@@ -537,9 +611,22 @@ W1B1 gate evidence:
 - all 180 world-model tests, strict clippy, formatting, diff, and no-mod-rs checks passed
 - final fresh review reported no critical, high, or medium findings
 
+W1B5 accepted commits: `db3249c`, `1f5ecc0`
+
+W1B5 gate evidence:
+
+- event append recovery distinguishes work before and after durable acknowledgement under abrupt process loss
+- append admission and drain are linearizable under concurrency
+- final barrier recovery reopens at the durable tip without admitting late writes through the closed authority
+- goal command recovery preserves the canonical commit and rejects divergent replay across reopen
+- attributed outcome publication remains canonical and does not duplicate after reopen
+- belief migration preserves a gap-free evidence receipt chain and fences the legacy source
+- every harness uses public domain operations and durable reopen behavior rather than internal mutation shortcuts
+
 ### W1C Supervisor And Root Cutover
 
 Initial state: blocked by W1B1 through W1B4
+Current state: accepted
 
 | Packet | Thread | Strength | Exclusive Builder Scope | Expected Commit |
 | --- | ---: | --- | --- | --- |
@@ -548,13 +635,35 @@ Initial state: blocked by W1B1 through W1B4
 
 Thread zero integrates root belief cutover, projection adapters, event fence wiring, supervisor entrypoint changes, and public exports.
 
+Committed component evidence:
+
+- `f02253a` cuts root assembly over to canonical belief authority
+- `c131ca8` persists checked restart schedules, ordered replacement checkpoints, and shutdown completions
+- `84e2e17` characterizes CLI belief authority migration and reopen
+- `1506325` preserves fail-closed belief cutover errors
+- `6ce4a8a` narrows durable compatibility mutations behind domain-owned public operations
+- `8fa37b9` reconciles canonical language and execution contracts with the accepted authority boundaries
+- `eec0181` enforces restart ordering and recoverable final-barrier shutdown in the supervisor entrypoint
+
+Accepted root integration:
+
+- checked restart schedules and replacement checkpoints drive entrypoint recovery
+- replacement eligibility is enforced before lease acquisition and actor start
+- the old actor stops, reaches a safe point, flushes, and releases its lease before replacement
+- event ingress closes and drains before actor shutdown and lease release
+- shutdown completion persists the final identity-bearing event barrier and survives abrupt reopen
+- final durability rereview reports no critical, high, or medium findings
+
 Gate: crash matrix, repeated serial concurrency, full ladder, three fresh review lenses, and W2A ready.
+Accepted closure commit: `eec0181`
+Gate result: passed
 
 ## Wave 2 Delivery
 
 ### W2A Activation Contract Freeze
 
 Initial state: blocked by Wave 1 closeout
+Current state: ready after accepted Wave 1 closure `eec0181`
 Thread: zero
 Strength: highest available
 Expected commit: `feat(runtime): define typed product activation packages`
