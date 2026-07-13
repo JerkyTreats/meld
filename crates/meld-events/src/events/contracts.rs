@@ -25,6 +25,33 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::StorageError;
 
+/// Structural validation category for canonical append ingress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventAppendValidationCode {
+    /// Idempotent append omitted a stable record id.
+    MissingIdempotencyRecordId,
+    /// An envelope identity component violated the frozen grammar.
+    MalformedEnvelopeIdentifier,
+    /// The envelope repeated one object coordinate.
+    DuplicateObjectReference,
+    /// A relation endpoint was not carried by the envelope object set.
+    RelationEndpointNotDeclared,
+    /// A relation name violated the frozen grammar.
+    MalformedRelationType,
+}
+
+/// Typed structural validation failure returned before append admission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventAppendValidationIssue {
+    /// Stable machine-readable validation category.
+    pub code: EventAppendValidationCode,
+    /// Field path rejected by ingress validation.
+    pub field: String,
+    /// Bounded human-readable explanation.
+    pub message: String,
+}
+
 /// Stable object coordinate carried on event envelopes for downstream graph materializers.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct DomainObjectRef {
@@ -134,5 +161,19 @@ mod tests {
         assert_eq!(parsed.object_kind, "task_run");
         assert_eq!(parsed.object_id, "run_a");
         assert_eq!(parsed.index_key(), "execution::task_run::run_a");
+    }
+
+    #[test]
+    fn append_validation_issue_has_stable_wire_shape() {
+        let issue = EventAppendValidationIssue {
+            code: EventAppendValidationCode::MissingIdempotencyRecordId,
+            field: "record_id".to_string(),
+            message: "idempotent append requires a record id".to_string(),
+        };
+
+        let value = serde_json::to_value(&issue).unwrap();
+
+        assert_eq!(value["code"], "missing_idempotency_record_id");
+        assert_eq!(value["field"], "record_id");
     }
 }

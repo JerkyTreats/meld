@@ -19,7 +19,7 @@ pub use contracts::{
     CandidateStatus, ExecutionComposition, InvalidMethodReport, MethodCandidateReport,
     NoApplicableMethod, OperatorResolutionReport, OperatorResolutionStatus, PlanningDiagnostic,
     PlanningDiagnosticCode, PlanningIndeterminate, PlanningInputError, PlanningRequest,
-    PlanningResult, PlanningSatisfied,
+    PlanningRequestIdentity, PlanningRequestIdentityInputs, PlanningResult, PlanningSatisfied,
 };
 pub use lowering::{
     Diagnostic as CompositionLoweringDiagnostic,
@@ -35,4 +35,6 @@ pub use runtime::{
     PlanningRuntimeActorError, PlanningRuntimeActorGoalResult, PlanningRuntimeActorIssue,
     PlanningRuntimeActorReport, PlanningRuntimeActorRequest, PlanningWorldStateProjection,
 };
-pub use world_state::{PlanningWorldStateFrameRef, PlanningWorldStateRequest};
+pub use world_state::{
+    PlanningProjectionIdentityInputs, PlanningWorldStateFrameRef, PlanningWorldStateRequest,
+};

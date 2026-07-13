@@ -26,6 +26,7 @@ use crate::task::{
     ArtifactRecord, TaskArtifactRepo, TaskEvent, TaskExecutor, TaskInitializationPayload,
 };
 use crate::task_network::state::{ArtifactAvailability, TaskNode};
+use meld_events::DomainObjectRef;
 use serde::{Deserialize, Serialize};
 
 /// Request to claim one ready task.
@@ -110,6 +111,28 @@ pub struct Outcome {
     pub artifact_records: Vec<ArtifactRecord>,
     /// Task events emitted by the existing task runtime.
     pub task_events: Vec<TaskEvent>,
+}
+
+/// Semantic attribution missing from the task-local outcome product.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutcomeSemanticLineage {
+    /// Execution goal that authorized planning.
+    pub goal: DomainObjectRef,
+    /// Method selected by planning.
+    pub method: DomainObjectRef,
+    /// Durable projection frame used by planning.
+    pub projection_frame: DomainObjectRef,
+    /// Full typed subject preserved from the goal and lowering boundary.
+    pub subject: DomainObjectRef,
+}
+
+/// Self-contained publication input that preserves the canonical task outcome.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttributedOutcome {
+    /// Canonical task-network outcome product.
+    pub outcome: Outcome,
+    /// Additional semantic lineage owned by execution planning.
+    pub semantic_lineage: OutcomeSemanticLineage,
 }
 
 /// Creates a task executor for a fenced claim.
@@ -222,4 +245,27 @@ fn emitted_artifact_records(executor: &TaskExecutor) -> Vec<ArtifactRecord> {
         .filter(|artifact| artifact.producer.capability_instance_id != "__task_init__")
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+mod contract_freeze_tests {
+    use super::*;
+
+    #[test]
+    fn semantic_lineage_preserves_full_object_coordinates() {
+        let lineage = OutcomeSemanticLineage {
+            goal: DomainObjectRef::new("execution", "goal", "goal-a").unwrap(),
+            method: DomainObjectRef::new("execution", "method", "method-a").unwrap(),
+            projection_frame: DomainObjectRef::new("world_model", "projection_frame", "frame-a")
+                .unwrap(),
+            subject: DomainObjectRef::new("workspace_fs", "node", "shared-id").unwrap(),
+        };
+
+        let encoded = serde_json::to_vec(&lineage).unwrap();
+        let decoded: OutcomeSemanticLineage = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded, lineage);
+        assert_eq!(decoded.subject.domain_id, "workspace_fs");
+        assert_eq!(decoded.subject.object_kind, "node");
+    }
 }

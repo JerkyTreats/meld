@@ -73,12 +73,14 @@ pub(crate) mod writer;
 pub use authority::{
     AppendDisposition, AppendMode, AppendReceipt, BestEffortAppendReceipt, ConsumerCursorPosition,
     EventAppendCapability, EventAuthority, EventAuthorityOpenOptions,
-    EventConsumerRegistryCapability, EventObservabilityCapability, EventPage,
-    EventReplayCapability, EventSubscriptionCapability, EventWatermark, EventWatermarkCapability,
-    LedgerCursor, ReplayRequest, SubscriptionPollRequest, MAX_REPLAY_LIMIT,
-    MAX_SUBSCRIPTION_TIMEOUT_MS,
+    EventConsumerRegistryCapability, EventFinalBarrier, EventIngressFenceSnapshot,
+    EventIngressFenceState, EventObservabilityCapability, EventPage, EventReplayCapability,
+    EventSubscriptionCapability, EventWatermark, EventWatermarkCapability, LedgerCursor,
+    ReplayRequest, SubscriptionPollRequest, MAX_REPLAY_LIMIT, MAX_SUBSCRIPTION_TIMEOUT_MS,
 };
-pub use contracts::{DomainObjectRef, EventRelation};
+pub use contracts::{
+    DomainObjectRef, EventAppendValidationCode, EventAppendValidationIssue, EventRelation,
+};
 pub use identity::LedgerIdentity;
 pub use migration::{
     LegacyEventCutoverMarker, LegacyEventMigrationMapping, LegacyEventMigrationOptions,

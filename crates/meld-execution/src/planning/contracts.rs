@@ -21,6 +21,32 @@
 use crate::planning::world_state::{PlanningWorldStateFrameRef, PlanningWorldStateRequest};
 use serde::{Deserialize, Serialize};
 
+/// Complete immutable inputs for deterministic planning request identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanningRequestIdentityInputs {
+    /// Stable goal id.
+    pub goal_id: String,
+    /// Goal update sequence observed by planning.
+    pub goal_updated_at_seq: u64,
+    /// Durable world-state projection frame id.
+    pub projection_frame_id: String,
+    /// Digest of the verified method library.
+    pub method_library_digest: String,
+    /// Digest of the capability catalog visible to lowering.
+    pub capability_catalog_digest: String,
+    /// Planning algorithm version.
+    pub planning_version: String,
+}
+
+/// Durable identity derived from complete planning inputs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanningRequestIdentity {
+    /// Stable request id derived from the complete input record.
+    pub request_id: String,
+    /// Immutable source inputs retained for replay diagnostics.
+    pub inputs: PlanningRequestIdentityInputs,
+}
+
 /// Complete first-slice planning input for one active goal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanningRequest {
@@ -210,6 +236,31 @@ pub enum PlanningDiagnosticCode {
     OperatorTagsDiagnosticOnly,
     /// No candidate survived planning checks.
     NoApplicableMethod,
+}
+
+#[cfg(test)]
+mod contract_freeze_tests {
+    use super::*;
+
+    #[test]
+    fn planning_request_identity_retains_every_replay_input() {
+        let identity = PlanningRequestIdentity {
+            request_id: "planning-a".to_string(),
+            inputs: PlanningRequestIdentityInputs {
+                goal_id: "goal-a".to_string(),
+                goal_updated_at_seq: 9,
+                projection_frame_id: "projection-a".to_string(),
+                method_library_digest: "method-a".to_string(),
+                capability_catalog_digest: "catalog-a".to_string(),
+                planning_version: "planning-v1".to_string(),
+            },
+        };
+
+        let encoded = serde_json::to_vec(&identity).unwrap();
+        let decoded: PlanningRequestIdentity = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded, identity);
+    }
 }
 
 /// Per-method candidate evaluation report.

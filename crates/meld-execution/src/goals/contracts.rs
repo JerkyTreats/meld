@@ -2,6 +2,54 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Stable command kind included in conflict-aware request identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalCommandKind {
+    /// Insert a new goal.
+    Add,
+    /// Replace an existing goal.
+    Modify,
+    /// Abandon an existing goal.
+    Remove,
+    /// Mark an existing goal satisfied.
+    Satisfy,
+    /// Suspend an existing goal.
+    Suspend,
+    /// Resume an existing goal.
+    Resume,
+}
+
+/// Canonical identity for one complete goal command request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalCommandRequestIdentity {
+    /// Stable id used to replay the persisted command outcome.
+    pub command_id: String,
+    /// Command variant included in the canonical request hash.
+    pub command_kind: GoalCommandKind,
+    /// Digest of the complete normalized command request.
+    pub request_hash: String,
+}
+
+/// Compatibility posture for outcomes written before request hashes existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LegacyGoalCommandReplayPolicy {
+    /// Treat the prior outcome as unverified and reject replay.
+    RejectUnverified,
+    /// Reconstruct the old request only when durable source data is sufficient.
+    ReconstructAndVerify,
+}
+
+/// Durable acknowledgement returned only after the full command boundary flushes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalCommandCommitReceipt {
+    /// Request identity committed beside the outcome.
+    pub identity: GoalCommandRequestIdentity,
+    /// Digest of the persisted command outcome.
+    pub outcome_hash: String,
+}
+
 /// Execution-owned wrapper around a shared-language goal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionGoalRecord {
@@ -103,4 +151,29 @@ pub enum GoalCommandOutcome {
         /// Goal identifier that could not be found.
         goal_id: String,
     },
+}
+
+#[cfg(test)]
+mod contract_freeze_tests {
+    use super::*;
+
+    #[test]
+    fn goal_command_identity_and_commit_receipt_round_trip() {
+        let receipt = GoalCommandCommitReceipt {
+            identity: GoalCommandRequestIdentity {
+                command_id: "command-a".to_string(),
+                command_kind: GoalCommandKind::Modify,
+                request_hash: "blake3:request-a".to_string(),
+            },
+            outcome_hash: "blake3:outcome-a".to_string(),
+        };
+
+        let encoded = serde_json::to_vec(&receipt).unwrap();
+        let decoded: GoalCommandCommitReceipt = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded, receipt);
+        let policy =
+            serde_json::to_string(&LegacyGoalCommandReplayPolicy::RejectUnverified).unwrap();
+        assert_eq!(policy, "\"reject_unverified\"");
+    }
 }

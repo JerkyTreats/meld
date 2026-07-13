@@ -296,6 +296,24 @@ Commit `00e0b23` closed both findings, and the reviewer approved the corrected i
 Closeout state: accepted
 Next ready set: W1A authority contract freeze
 
+### 2026-07-12 W1A Authority Contract Freeze
+
+Ready items: W1A
+Parallelization: root-owned cross-domain contract integration beside an isolated world-model contract lane
+Contract scope:
+
+- belief authority migration identity, marker state, reconciliation, and legacy posture
+- identity-bearing evidence consumer cursor and durable receipt disposition
+- subscription and assessment lease compare-and-swap intent
+- conflict-aware goal request identity and flushed commit receipt
+- deterministic projection frame and planning request identity inputs
+- semantic outcome lineage preserving the canonical task outcome
+- typed event ingress validation, shared fence state, and final identity-bearing barrier
+- enforced restart eligibility and durable replacement ordering
+
+Implementation state: active
+Next gate: focused contract tests, compatibility review, and accepted W1A commits
+
 ## Gate Evidence
 
 | Wave | Gate | Result | Commit | Notes |
@@ -414,6 +432,7 @@ Gate result: passed
 ### W1A Authority Contract Freeze
 
 Initial state: ready
+Current state: active
 Thread: zero
 Strength: highest available
 Write scope: central compatibility contracts and public domain amendment integration

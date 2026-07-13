@@ -38,7 +38,10 @@ pub mod state;
 pub mod store;
 
 pub use command::{Command, Request as CommandRequest, Response};
-pub use dispatch::{Claim, Outcome, OutcomeStatus, Request as DispatchRequest};
+pub use dispatch::{
+    AttributedOutcome, Claim, Outcome, OutcomeSemanticLineage, OutcomeStatus,
+    Request as DispatchRequest,
+};
 pub use initialization::{
     materialize_task_initialization, validate_task_init_graph_sources, validate_task_init_sources,
     MaterializedInitSource, MaterializedTaskInitialization, TaskInitializationDiagnostic,

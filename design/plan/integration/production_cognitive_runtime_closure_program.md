@@ -360,7 +360,7 @@ These contracts land before dependent fan-out.
 | status cache layout, bounds, schema, and truncation | root runtime | Wave 0 |
 | activation document DTO and owner-scoped input packages | root config and assembly | Wave 2 |
 | durable directive identity and bootstrap conflict rules | world model agent | Wave 2 |
-| evidence ingestion cursor identity | world model belief | Wave 3 |
+| evidence ingestion cursor identity | world model belief | Wave 1, consumed by Wave 3 |
 | agent delivery and satisfaction selection cursors | world model agent | Wave 3 |
 | planning projection frame identity and adapter | world model and execution | Wave 3 |
 | goal request hash and transaction boundary | execution goals | Wave 1 |

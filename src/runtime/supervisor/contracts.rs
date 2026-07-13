@@ -254,6 +254,44 @@ pub struct RuntimeRestartRecord {
     pub backoff_ms: u64,
 }
 
+/// Enforced restart schedule retaining the canonical audit record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeRestartSchedule {
+    /// Canonical restart audit product.
+    pub restart: RuntimeRestartRecord,
+    /// Earliest supervisor time when replacement may begin.
+    pub next_eligible_at_ms: u64,
+}
+
+/// Ordered replacement stage for one expired or failed runtime handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeReplacementStage {
+    /// Signal the old handle to stop.
+    StopOldHandle,
+    /// Wait for the old handle safe point.
+    AwaitOldSafePoint,
+    /// Flush resources owned by the old handle.
+    FlushOldHandle,
+    /// Release the prior lease after the old handle is safe and durable.
+    ReleaseOldLease,
+    /// Acquire the replacement lease after backoff.
+    AcquireReplacementLease,
+    /// Start the replacement handle under the new lease.
+    StartReplacementHandle,
+    /// Replacement completed.
+    Completed,
+}
+
+/// Persistable replacement checkpoint used for restart recovery.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeReplacementCheckpoint {
+    /// Enforced schedule and canonical restart audit product.
+    pub schedule: RuntimeRestartSchedule,
+    /// Last durable replacement stage.
+    pub stage: RuntimeReplacementStage,
+}
+
 /// Graceful shutdown state for one supervisor instance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeShutdownState {
@@ -494,6 +532,33 @@ mod tests {
                 .as_str(),
             "world_model.agent_goal_curation"
         );
+    }
+
+    #[test]
+    fn restart_schedule_retains_backoff_eligibility_and_order() {
+        let schedule = RuntimeRestartSchedule {
+            restart: RuntimeRestartRecord {
+                restart_id: "restart-a".to_string(),
+                runtime_id: RuntimeId::new("world_model.graph_replay").unwrap(),
+                instance_id: "instance-a".to_string(),
+                previous_lease_id: Some("lease-a".to_string()),
+                cause: RestartCause::HeartbeatExpired,
+                attempt: 1,
+                requested_at_ms: 100,
+                backoff_ms: 50,
+            },
+            next_eligible_at_ms: 150,
+        };
+        let checkpoint = RuntimeReplacementCheckpoint {
+            schedule,
+            stage: RuntimeReplacementStage::AwaitOldSafePoint,
+        };
+
+        let encoded = serde_json::to_vec(&checkpoint).unwrap();
+        let decoded: RuntimeReplacementCheckpoint = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded, checkpoint);
+        assert_eq!(decoded.schedule.next_eligible_at_ms, 150);
     }
 
     #[test]

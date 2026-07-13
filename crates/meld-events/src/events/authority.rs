@@ -136,6 +136,38 @@ pub struct EventWatermark {
     pub tip_seq: u64,
 }
 
+/// Lifecycle state shared by every clone of one append capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventIngressFenceState {
+    /// New append requests may enter the writer queue.
+    Open,
+    /// New requests are rejected while admitted work drains.
+    Draining,
+    /// The final barrier completed and ingress remains closed.
+    Closed,
+}
+
+/// Identity-bearing snapshot of one shared append-ingress fence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventIngressFenceSnapshot {
+    /// Ledger governed by this fence.
+    pub ledger_id: LedgerIdentity,
+    /// Monotonic fence generation.
+    pub generation: u64,
+    /// Current ingress state.
+    pub state: EventIngressFenceState,
+}
+
+/// Final durable barrier acknowledged after ingress closes and drains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventFinalBarrier {
+    /// Fence generation closed by this barrier.
+    pub fence_generation: u64,
+    /// Final identity-bearing committed and durable ledger position.
+    pub watermark: EventWatermark,
+}
+
 /// Identity-bearing consumer registry row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsumerCursorPosition {
@@ -852,5 +884,29 @@ mod tests {
             error,
             EventAuthorityError::MigrationConflict { .. }
         ));
+    }
+
+    #[test]
+    fn ingress_fence_and_final_barrier_are_identity_bearing() {
+        let ledger_id = LedgerIdentity::default();
+        let fence = EventIngressFenceSnapshot {
+            ledger_id,
+            generation: 3,
+            state: EventIngressFenceState::Draining,
+        };
+        let barrier = EventFinalBarrier {
+            fence_generation: fence.generation,
+            watermark: EventWatermark {
+                ledger_id,
+                committed_seq: 7,
+                tip_seq: 7,
+            },
+        };
+
+        let encoded = serde_json::to_vec(&barrier).unwrap();
+        let decoded: EventFinalBarrier = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded, barrier);
+        assert_eq!(decoded.watermark.ledger_id, fence.ledger_id);
     }
 }
