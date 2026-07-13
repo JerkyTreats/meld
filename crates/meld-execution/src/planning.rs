@@ -37,5 +37,6 @@ pub use runtime::{
     PlanningRuntimeActorReport, PlanningRuntimeActorRequest, PlanningWorldStateProjection,
 };
 pub use world_state::{
-    PlanningProjectionIdentityInputs, PlanningWorldStateFrameRef, PlanningWorldStateRequest,
+    PlanningPerspectiveRef, PlanningProjectionIdentityInputs, PlanningWorldStateFrameRef,
+    PlanningWorldStateRequest,
 };

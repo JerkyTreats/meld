@@ -366,7 +366,10 @@ mod contract_freeze_tests {
             goal_id: "goal-a".to_string(),
             agent_id: "agent-a".to_string(),
             target: meld_lang::Proposition::All(Vec::new()),
-            perspective_id: "agent-a".to_string(),
+            perspective: crate::planning::world_state::PlanningPerspectiveRef::new(
+                "agent", "agent-a",
+            )
+            .unwrap(),
             branch_id: "main".to_string(),
             requested_dimensions: vec!["docs_freshness".to_string()],
             required_preconditions: Vec::new(),
@@ -412,7 +415,10 @@ mod contract_freeze_tests {
             goal_id: goal.goal_id.clone(),
             agent_id: goal.agent_id.clone(),
             target: goal.target.clone(),
-            perspective_id: "agent-a".to_string(),
+            perspective: crate::planning::world_state::PlanningPerspectiveRef::new(
+                "agent", "agent-a",
+            )
+            .unwrap(),
             branch_id: "main".to_string(),
             requested_dimensions: Vec::new(),
             required_preconditions: Vec::new(),

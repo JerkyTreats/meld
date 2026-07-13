@@ -335,6 +335,7 @@ pub fn frame() -> PlanningWorldStateFrameRef {
     PlanningWorldStateFrameRef {
         frame_id: "frame-docs".to_string(),
         projection_version: "world_model.planner.v1".to_string(),
+        perspective_kind: "default".to_string(),
         perspective_id: "default".to_string(),
         branch_id: "main".to_string(),
         source_refs: vec!["source".to_string()],

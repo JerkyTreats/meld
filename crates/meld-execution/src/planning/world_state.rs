@@ -10,7 +10,9 @@ pub struct PlanningProjectionIdentityInputs {
     request_hash: String,
     /// Projection schema or algorithm version.
     projection_version: String,
-    /// Perspective used for the projection.
+    /// Perspective family used for the projection.
+    perspective_kind: String,
+    /// Perspective member used for the projection.
     perspective_id: String,
     /// Branch used for the projection.
     branch_id: String,
@@ -22,6 +24,7 @@ pub struct PlanningProjectionIdentityInputs {
 struct PlanningProjectionIdentityInputsWire {
     request_hash: String,
     projection_version: String,
+    perspective_kind: String,
     perspective_id: String,
     branch_id: String,
     source_refs: Vec<String>,
@@ -39,7 +42,8 @@ impl PlanningProjectionIdentityInputs {
         let inputs = Self {
             request_hash: request.canonical_hash()?,
             projection_version: projection_version.into(),
-            perspective_id: request.perspective_id.clone(),
+            perspective_kind: request.perspective.perspective_kind.clone(),
+            perspective_id: request.perspective.perspective_id.clone(),
             branch_id: request.branch_id.clone(),
             source_refs,
         };
@@ -57,6 +61,7 @@ impl PlanningProjectionIdentityInputs {
         }
         if self.request_hash.trim().is_empty()
             || self.projection_version.trim().is_empty()
+            || self.perspective_kind.trim().is_empty()
             || self.perspective_id.trim().is_empty()
             || self.branch_id.trim().is_empty()
         {
@@ -77,6 +82,7 @@ impl PlanningProjectionIdentityInputs {
         Ok(PlanningWorldStateFrameRef {
             frame_id: self.derive_frame_id()?,
             projection_version: self.projection_version.clone(),
+            perspective_kind: self.perspective_kind.clone(),
             perspective_id: self.perspective_id.clone(),
             branch_id: self.branch_id.clone(),
             source_refs: self.source_refs.clone(),
@@ -88,7 +94,8 @@ impl PlanningProjectionIdentityInputs {
     pub fn validate_for_request(&self, request: &PlanningWorldStateRequest) -> Result<(), String> {
         self.validate()?;
         if self.request_hash != request.canonical_hash()?
-            || self.perspective_id != request.perspective_id
+            || self.perspective_kind != request.perspective.perspective_kind
+            || self.perspective_id != request.perspective.perspective_id
             || self.branch_id != request.branch_id
         {
             return Err(
@@ -106,12 +113,46 @@ impl TryFrom<PlanningProjectionIdentityInputsWire> for PlanningProjectionIdentit
         let inputs = Self {
             request_hash: value.request_hash,
             projection_version: value.projection_version,
+            perspective_kind: value.perspective_kind,
             perspective_id: value.perspective_id,
             branch_id: value.branch_id,
             source_refs: value.source_refs,
         };
         inputs.validate()?;
         Ok(inputs)
+    }
+}
+
+/// Complete world-model perspective identity supplied by execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanningPerspectiveRef {
+    /// Perspective family.
+    pub perspective_kind: String,
+    /// Perspective member.
+    pub perspective_id: String,
+}
+
+impl PlanningPerspectiveRef {
+    /// Build and validate a complete perspective reference.
+    pub fn new(
+        perspective_kind: impl Into<String>,
+        perspective_id: impl Into<String>,
+    ) -> Result<Self, String> {
+        let perspective = Self {
+            perspective_kind: perspective_kind.into(),
+            perspective_id: perspective_id.into(),
+        };
+        perspective.validate()?;
+        Ok(perspective)
+    }
+
+    /// Validate both perspective identity components.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.perspective_kind.trim().is_empty() || self.perspective_id.trim().is_empty() {
+            return Err("planning perspective components must be non-empty".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -124,8 +165,8 @@ pub struct PlanningWorldStateRequest {
     pub agent_id: String,
     /// Target proposition that planning will evaluate.
     pub target: meld_lang::Proposition,
-    /// World model perspective identifier.
-    pub perspective_id: String,
+    /// Complete world-model perspective identity.
+    pub perspective: PlanningPerspectiveRef,
     /// World model branch identifier.
     pub branch_id: String,
     /// Dimensions execution expects to evaluate.
@@ -149,7 +190,9 @@ pub struct PlanningWorldStateFrameRef {
     pub frame_id: String,
     /// Projection schema or algorithm version.
     pub projection_version: String,
-    /// Perspective used for the projection.
+    /// Perspective family used for the projection.
+    pub perspective_kind: String,
+    /// Perspective member used for the projection.
     pub perspective_id: String,
     /// Branch used for the projection.
     pub branch_id: String,
@@ -169,7 +212,7 @@ mod contract_freeze_tests {
             goal_id: "goal-a".to_string(),
             agent_id: "agent-a".to_string(),
             target: meld_lang::Proposition::Not(Box::new(meld_lang::Proposition::All(vec![]))),
-            perspective_id: "agent-a".to_string(),
+            perspective: PlanningPerspectiveRef::new("agent", "agent-a").unwrap(),
             branch_id: "main".to_string(),
             requested_dimensions: vec!["docs_freshness".to_string()],
             required_preconditions: Vec::new(),

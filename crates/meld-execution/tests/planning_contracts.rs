@@ -2,8 +2,8 @@ use meld_events::DomainObjectRef;
 use meld_execution::planning::{
     CandidateStatus, ExecutionComposition, InvalidMethodReport, MethodCandidateReport,
     NoApplicableMethod, OperatorResolutionReport, OperatorResolutionStatus, PlanningDiagnostic,
-    PlanningDiagnosticCode, PlanningIndeterminate, PlanningRequest, PlanningResult,
-    PlanningSatisfied, PlanningWorldStateFrameRef, PlanningWorldStateRequest,
+    PlanningDiagnosticCode, PlanningIndeterminate, PlanningPerspectiveRef, PlanningRequest,
+    PlanningResult, PlanningSatisfied, PlanningWorldStateFrameRef, PlanningWorldStateRequest,
 };
 use meld_lang::{
     Condition, Goal, GoalLifecycle, GoalPriority, GoalSource, Literal, Proposition, Term,
@@ -40,6 +40,7 @@ fn frame() -> PlanningWorldStateFrameRef {
     PlanningWorldStateFrameRef {
         frame_id: "frame-1".to_string(),
         projection_version: "world_model.planner.v1".to_string(),
+        perspective_kind: "agent".to_string(),
         perspective_id: "default".to_string(),
         branch_id: "main".to_string(),
         source_refs: vec!["source".to_string()],
@@ -52,7 +53,7 @@ fn world_state_request() -> PlanningWorldStateRequest {
         goal_id: "goal-1".to_string(),
         agent_id: "agent".to_string(),
         target: goal().target,
-        perspective_id: "default".to_string(),
+        perspective: PlanningPerspectiveRef::new("agent", "default").unwrap(),
         branch_id: "main".to_string(),
         requested_dimensions: vec!["docs_freshness".to_string()],
         required_preconditions: vec![],

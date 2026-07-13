@@ -37,6 +37,7 @@
 //!     world_state_frame: PlanningWorldStateFrameRef {
 //!         frame_id: "frame-a".to_string(),
 //!         projection_version: "world_model.planner.v1".to_string(),
+//!         perspective_kind: "default".to_string(),
 //!         perspective_id: "default".to_string(),
 //!         branch_id: "main".to_string(),
 //!         source_refs: vec![],

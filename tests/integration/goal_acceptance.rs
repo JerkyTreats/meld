@@ -11,8 +11,8 @@ use meld_execution::goals::{
     GoalSetApi, PersistentGoalSetStore,
 };
 use meld_execution::planning::{
-    PlanningRequest, PlanningResult, PlanningRuntime, PlanningWorldStateFrameRef,
-    PlanningWorldStateRequest,
+    PlanningPerspectiveRef, PlanningRequest, PlanningResult, PlanningRuntime,
+    PlanningWorldStateFrameRef, PlanningWorldStateRequest,
 };
 use meld_execution::task_network::dispatch::{Outcome, OutcomeStatus};
 use meld_execution::task_network::outcome::Publication;
@@ -205,7 +205,7 @@ fn planning_request(goal: meld_lang::Goal, world_state: WorldState) -> PlanningR
             goal_id: goal.goal_id.clone(),
             agent_id: goal.agent_id.clone(),
             target: goal.target.clone(),
-            perspective_id: "default".to_string(),
+            perspective: PlanningPerspectiveRef::new("default", "default").unwrap(),
             branch_id: "main".to_string(),
             requested_dimensions: vec![DIMENSION_ID.to_string()],
             required_preconditions: vec![],
@@ -215,6 +215,7 @@ fn planning_request(goal: meld_lang::Goal, world_state: WorldState) -> PlanningR
         world_state_frame: PlanningWorldStateFrameRef {
             frame_id: "frame-1".to_string(),
             projection_version: PLANNER_PROJECTION_VERSION.to_string(),
+            perspective_kind: "default".to_string(),
             perspective_id: "default".to_string(),
             branch_id: "main".to_string(),
             source_refs: vec!["source".to_string()],

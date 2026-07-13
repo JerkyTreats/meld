@@ -13,7 +13,8 @@ use meld::runtime::storage::{OpenProductStores, ProductStorageLayout};
 use meld_events::{AppendMode, EventAuthority, EventAuthorityOpenOptions, EventEnvelope};
 use meld_execution::goals::GoalCommandOutcome;
 use meld_execution::planning::{
-    PlanningRequest, PlanningResult, PlanningWorldStateFrameRef, PlanningWorldStateRequest,
+    PlanningPerspectiveRef, PlanningRequest, PlanningResult, PlanningWorldStateFrameRef,
+    PlanningWorldStateRequest,
 };
 use meld_execution::task::{ArtifactProducerRef, ArtifactRecord};
 use meld_execution::task_network::command::{Command, Response};
@@ -796,7 +797,7 @@ fn planning_request(goal: meld_lang::Goal, world_state: WorldState) -> PlanningR
             goal_id: goal.goal_id.clone(),
             agent_id: goal.agent_id.clone(),
             target: goal.target.clone(),
-            perspective_id: "default".to_string(),
+            perspective: PlanningPerspectiveRef::new("default", "default").unwrap(),
             branch_id: "main".to_string(),
             requested_dimensions: vec![DIMENSION_ID.to_string()],
             required_preconditions: Vec::new(),
@@ -806,6 +807,7 @@ fn planning_request(goal: meld_lang::Goal, world_state: WorldState) -> PlanningR
         world_state_frame: PlanningWorldStateFrameRef {
             frame_id: "frame-1".to_string(),
             projection_version: PLANNER_PROJECTION_VERSION.to_string(),
+            perspective_kind: "default".to_string(),
             perspective_id: "default".to_string(),
             branch_id: "main".to_string(),
             source_refs: vec!["source".to_string()],

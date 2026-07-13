@@ -6,11 +6,11 @@ use meld_execution::capability::{
 use meld_execution::goals::{AddGoalCommand, GoalCommandMetadata, PersistentGoalSetStore};
 use meld_execution::planning::{
     CandidateStatus, ExecutionCompositionLowerer, MethodLibrary, MethodSourceRef,
-    MethodVerification, PlanningDiagnosticCode, PlanningInputError, PlanningProjectionError,
-    PlanningProjectionIdentityInputs, PlanningRequest, PlanningResult, PlanningRuntime,
-    PlanningRuntimeActor, PlanningRuntimeActorGoalResult, PlanningRuntimeActorRequest,
-    PlanningWorldStateFrameRef, PlanningWorldStateProjection, PlanningWorldStateRequest,
-    VerifiedMethodEntry,
+    MethodVerification, PlanningDiagnosticCode, PlanningInputError, PlanningPerspectiveRef,
+    PlanningProjectionError, PlanningProjectionIdentityInputs, PlanningRequest, PlanningResult,
+    PlanningRuntime, PlanningRuntimeActor, PlanningRuntimeActorGoalResult,
+    PlanningRuntimeActorRequest, PlanningWorldStateFrameRef, PlanningWorldStateProjection,
+    PlanningWorldStateRequest, VerifiedMethodEntry,
 };
 use meld_execution::task::TaskCompiler;
 use meld_execution::task_network::{Response, SledTaskNetworkStore};
@@ -54,6 +54,7 @@ fn frame() -> PlanningWorldStateFrameRef {
     PlanningWorldStateFrameRef {
         frame_id: "frame-1".to_string(),
         projection_version: "world_model.planner.v1".to_string(),
+        perspective_kind: "agent".to_string(),
         perspective_id: "default".to_string(),
         branch_id: "main".to_string(),
         source_refs: vec!["source".to_string()],
@@ -79,7 +80,7 @@ fn request(goal: Goal, world_state: WorldState) -> PlanningRequest {
             goal_id: goal.goal_id.clone(),
             agent_id: goal.agent_id.clone(),
             target: goal.target.clone(),
-            perspective_id: "default".to_string(),
+            perspective: PlanningPerspectiveRef::new("agent", "default").unwrap(),
             branch_id: "main".to_string(),
             requested_dimensions: vec!["docs_freshness".to_string()],
             required_preconditions: vec![],
@@ -197,7 +198,7 @@ fn planning_actor() -> PlanningRuntimeActor<TaskCompiler> {
 fn actor_request(limit: Option<usize>) -> PlanningRuntimeActorRequest {
     PlanningRuntimeActorRequest {
         network_id: "network-docs".to_string(),
-        perspective_id: "default".to_string(),
+        perspective: PlanningPerspectiveRef::new("agent", "default").unwrap(),
         branch_id: "main".to_string(),
         requested_dimensions: vec!["docs_freshness".to_string()],
         required_preconditions: vec![],

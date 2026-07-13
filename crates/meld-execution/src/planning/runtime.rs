@@ -14,7 +14,8 @@ use crate::planning::lowering::{
 };
 use crate::planning::method_library::{operator_resolutions, MethodLibrary, VerifiedMethodEntry};
 use crate::planning::world_state::{
-    PlanningProjectionIdentityInputs, PlanningWorldStateFrameRef, PlanningWorldStateRequest,
+    PlanningPerspectiveRef, PlanningProjectionIdentityInputs, PlanningWorldStateFrameRef,
+    PlanningWorldStateRequest,
 };
 use crate::task::TaskDefinitionCompiler;
 use crate::task_network::{
@@ -34,8 +35,8 @@ const PLANNING_IDENTITY_VERSION: &str = "execution.planning.v1";
 pub struct PlanningRuntimeActorRequest {
     /// Target task network for any lowered mutation command.
     pub network_id: String,
-    /// Projection perspective to include in each world state request.
-    pub perspective_id: String,
+    /// Complete projection perspective included in each world state request.
+    pub perspective: PlanningPerspectiveRef,
     /// Projection branch to include in each world state request.
     pub branch_id: String,
     /// Dimensions the projection port should prioritize for each goal.
@@ -528,11 +529,10 @@ fn validate_actor_request(
             "network_id must be non-empty".to_string(),
         ));
     }
-    if request.perspective_id.trim().is_empty() {
-        return Err(PlanningRuntimeActorError::InvalidRequest(
-            "perspective_id must be non-empty".to_string(),
-        ));
-    }
+    request
+        .perspective
+        .validate()
+        .map_err(PlanningRuntimeActorError::InvalidRequest)?;
     if request.branch_id.trim().is_empty() {
         return Err(PlanningRuntimeActorError::InvalidRequest(
             "branch_id must be non-empty".to_string(),
@@ -549,7 +549,7 @@ fn projection_request_for_goal(
         goal_id: goal.goal_id.clone(),
         agent_id: goal.agent_id.clone(),
         target: goal.target.clone(),
-        perspective_id: request.perspective_id.clone(),
+        perspective: request.perspective.clone(),
         branch_id: request.branch_id.clone(),
         requested_dimensions: request.requested_dimensions.clone(),
         required_preconditions: request.required_preconditions.clone(),
