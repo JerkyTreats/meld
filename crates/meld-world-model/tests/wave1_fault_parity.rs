@@ -1,6 +1,3 @@
-use std::path::Path;
-use std::time::{Duration, Instant};
-
 use meld_world_model::belief::{
     BeliefAuthorityMigrationIdentity, BeliefAuthorityMigrationProgress, BeliefStore, BranchScope,
     EvidenceConsumerCursor, EvidenceIngestionReceipt, EvidenceIngestionReceiptDisposition,
@@ -9,22 +6,6 @@ use meld_world_model::belief::{
 };
 use meld_world_model::events::{EventRecordRef, LedgerCursor};
 use meld_world_model::PerspectiveKey;
-
-fn reopen_sled(path: &Path) -> sled::Db {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        match sled::open(path) {
-            Ok(db) => return db,
-            Err(error)
-                if error.to_string().contains("could not acquire lock")
-                    && Instant::now() < deadline =>
-            {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(error) => panic!("cannot reopen belief database: {error}"),
-        }
-    }
-}
 
 fn migration_identity() -> BeliefAuthorityMigrationIdentity {
     BeliefAuthorityMigrationIdentity::try_new(
@@ -74,6 +55,8 @@ fn migration_parity_preserves_gapless_receipts_and_fences_the_source() {
     let product_temp = tempfile::tempdir().unwrap();
     let legacy_path = legacy_temp.path().join("belief");
     let product_path = product_temp.path().join("belief");
+    let legacy_db = sled::open(&legacy_path).unwrap();
+    let product_db = sled::open(&product_path).unwrap();
     let ledger_id = "00000000-0000-0000-0000-000000000123".parse().unwrap();
     let first = cursor(ledger_id, 1);
     let first_receipt = receipt(&first);
@@ -82,7 +65,7 @@ fn migration_parity_preserves_gapless_receipts_and_fences_the_source() {
     let second = cursor(ledger_id, 2);
     let second_receipt = receipt(&second);
 
-    let legacy = BeliefStore::new(sled::open(&legacy_path).unwrap()).unwrap();
+    let legacy = BeliefStore::new(legacy_db.clone()).unwrap();
     legacy.put_runtime_meta("legacy-seq", "1").unwrap();
     assert_eq!(
         legacy
@@ -100,7 +83,7 @@ fn migration_parity_preserves_gapless_receipts_and_fences_the_source() {
         EvidenceIngestionReceiptWriteDisposition::ExactReplay
     );
 
-    let product = BeliefStore::new(sled::open(&product_path).unwrap()).unwrap();
+    let product = BeliefStore::new(product_db.clone()).unwrap();
     assert_eq!(
         product
             .migrate_legacy_authority(&legacy, migration_identity())
@@ -135,10 +118,10 @@ fn migration_parity_preserves_gapless_receipts_and_fences_the_source() {
     drop(product);
 
     for _ in 0..4 {
-        let legacy = BeliefStore::new(reopen_sled(&legacy_path)).unwrap();
+        let legacy = BeliefStore::new(legacy_db.clone()).unwrap();
         assert!(legacy.put_runtime_meta("legacy-seq", "late").is_err());
         drop(legacy);
-        let product = BeliefStore::new(reopen_sled(&product_path)).unwrap();
+        let product = BeliefStore::new(product_db.clone()).unwrap();
         assert_eq!(
             product
                 .record_evidence_receipt_and_advance(None, &second_receipt, &second)
