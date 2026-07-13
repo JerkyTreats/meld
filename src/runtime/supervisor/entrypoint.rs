@@ -383,8 +383,25 @@ impl<'a> RuntimeSupervisor<'a> {
             supervisor.supervisor_store.flush()?;
             return Err(error);
         }
-        supervisor.mark_instance(RuntimeInstanceStatus::Running, None, command.started_at_ms)?;
-        supervisor.supervisor_store.flush()?;
+        let finalize_startup = (|| {
+            supervisor.mark_instance(
+                RuntimeInstanceStatus::Running,
+                None,
+                command.started_at_ms,
+            )?;
+            supervisor.supervisor_store.flush()?;
+            Ok::<(), SupervisorRuntimeError>(())
+        })();
+        if let Err(error) = finalize_startup {
+            supervisor.rollback_startup_ownership(&startup_leases, command.started_at_ms)?;
+            supervisor.mark_instance(
+                RuntimeInstanceStatus::Failed,
+                Some(command.started_at_ms),
+                command.started_at_ms,
+            )?;
+            supervisor.supervisor_store.flush()?;
+            return Err(error);
+        }
         Ok(supervisor)
     }
 
@@ -644,8 +661,18 @@ impl<'a> RuntimeSupervisor<'a> {
             } else {
                 None
             };
-            let health_status =
-                health_status_from_tick_report(tick_eligible, semantic_report.as_ref());
+            let passive_health = if tick_eligible {
+                None
+            } else {
+                self.handles
+                    .get(owner.runtime_id.as_str())
+                    .and_then(|runtime| runtime.handle.poll_passive_health())
+            };
+            let health_status = health_status_from_runtime_report(
+                tick_eligible,
+                semantic_report.as_ref(),
+                passive_health.as_ref(),
+            );
             let action = semantic_report.clone().map(|report| {
                 self.action_sequence = self.action_sequence.saturating_add(1);
                 RuntimeActionRecord::from_worker_tick(
@@ -1174,10 +1201,20 @@ impl<'a> RuntimeSupervisor<'a> {
             if let Some(runtime) = self.handles.get_mut(&runtime_id) {
                 if runtime.handle.is_started() {
                     runtime.handle.request_stop();
-                    runtime.handle.wait_for_safe_point();
                 }
+                let safe_point = runtime.handle.wait_for_safe_point();
+                if !safe_point.safe_for_flush {
+                    return Err(SupervisorRuntimeError::InvalidCommand(format!(
+                        "runtime '{}' did not reach a safe point during startup rollback",
+                        runtime_id
+                    )));
+                }
+                runtime.handle.flush_resources()?;
             }
         }
+        self.stores
+            .flush_boundary()
+            .map_err(RuntimeAssemblyError::from)?;
         self.handles.clear();
         self.release_startup_leases(startup_leases, now_ms)?;
         Ok(())
@@ -1218,6 +1255,11 @@ impl<'a> RuntimeSupervisor<'a> {
                 runtime_id
             ))
         })?;
+        if self.handles.contains_key(runtime_id) {
+            return Err(SupervisorRuntimeError::InvalidCommand(format!(
+                "runtime '{runtime_id}' already has a local supervised handle"
+            )));
+        }
         self.write_lifecycle_event(
             Some(runtime.clone()),
             None,
@@ -1239,22 +1281,6 @@ impl<'a> RuntimeSupervisor<'a> {
             lease_id: lease.lease_id.clone(),
         })?;
         let owner = lease.owner();
-        self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Starting, now_ms, None)?;
-        self.write_lifecycle_event(
-            Some(runtime.clone()),
-            Some(owner.lease_id.clone()),
-            now_ms,
-            SupervisorLifecycleEventType::HeartbeatAccepted,
-            Some("initial heartbeat accepted".to_string()),
-        )?;
-        self.write_health_snapshot(
-            &runtime,
-            Some(owner.lease_id.clone()),
-            RuntimeHealthStatus::Starting,
-            now_ms,
-            restart_count,
-            last_restart_cause,
-        )?;
         self.handles.insert(
             runtime_id.to_string(),
             SupervisedRuntimeHandle {
@@ -1262,7 +1288,54 @@ impl<'a> RuntimeSupervisor<'a> {
                 owner: owner.clone(),
             },
         );
+        let bookkeeping = (|| {
+            self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Starting, now_ms, None)?;
+            self.write_lifecycle_event(
+                Some(runtime.clone()),
+                Some(owner.lease_id.clone()),
+                now_ms,
+                SupervisorLifecycleEventType::HeartbeatAccepted,
+                Some("initial heartbeat accepted".to_string()),
+            )?;
+            self.write_health_snapshot(
+                &runtime,
+                Some(owner.lease_id.clone()),
+                RuntimeHealthStatus::Starting,
+                now_ms,
+                restart_count,
+                last_restart_cause,
+            )?;
+            Ok::<(), SupervisorRuntimeError>(())
+        })();
+        if let Err(error) = bookkeeping {
+            self.stop_flush_and_remove_starting_handle(runtime_id)?;
+            return Err(error);
+        }
         Ok(owner)
+    }
+
+    fn stop_flush_and_remove_starting_handle(
+        &mut self,
+        runtime_id: &str,
+    ) -> Result<(), SupervisorRuntimeError> {
+        let runtime = self.handles.get_mut(runtime_id).ok_or_else(|| {
+            SupervisorRuntimeError::InvalidCommand(format!(
+                "runtime '{runtime_id}' disappeared during startup unwind"
+            ))
+        })?;
+        runtime.handle.request_stop();
+        let safe_point = runtime.handle.wait_for_safe_point();
+        if !safe_point.safe_for_flush {
+            return Err(SupervisorRuntimeError::InvalidCommand(format!(
+                "runtime '{runtime_id}' did not reach a safe point during startup unwind"
+            )));
+        }
+        runtime.handle.flush_resources()?;
+        self.stores
+            .flush_boundary()
+            .map_err(RuntimeAssemblyError::from)?;
+        self.handles.remove(runtime_id);
+        Ok(())
     }
 
     fn restart_runtime(
@@ -1981,12 +2054,17 @@ fn replacement_checkpoint_completed(checkpoint: &RuntimeReplacementCheckpoint) -
         .is_some_and(|receipt| receipt.stage == RuntimeReplacementStage::Completed)
 }
 
-fn health_status_from_tick_report(
+fn health_status_from_runtime_report(
     tick_eligible: bool,
     report: Option<&WorkerTickReport>,
+    passive_health: Option<&crate::runtime::assembly::RuntimePassiveHealthReport>,
 ) -> RuntimeHealthStatus {
     if !tick_eligible {
-        return RuntimeHealthStatus::Healthy;
+        return if passive_health.is_some_and(|health| health.healthy) {
+            RuntimeHealthStatus::Healthy
+        } else {
+            RuntimeHealthStatus::Unhealthy
+        };
     }
     let Some(report) = report else {
         return RuntimeHealthStatus::Unhealthy;
@@ -2013,12 +2091,14 @@ mod tests {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
-    use crate::runtime::assembly::{ProductRuntimeAssembly, ProductRuntimeConfig};
+    use crate::runtime::assembly::{
+        ConfiguredTaskNetworkIdentity, ProductRuntimeAssembly, ProductRuntimeConfig,
+    };
     use meld_events::{
         AppendMode, DomainObjectRef, EventEnvelope, EventIngressFenceSnapshot,
         EventIngressFenceState,
     };
-    use meld_execution::task_network::EventAppendSink;
+    use meld_execution::task_network::{EventAppendSink, TaskNetworkAuthorityError};
     use serde_json::json;
 
     use super::*;
@@ -2506,20 +2586,22 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
         config.enabled_runtime_ids = vec![
-            "event.append".to_string(),
+            "execution.task_network_command".to_string(),
             "world_model.graph_replay".to_string(),
         ];
+        config.configured_task_network =
+            Some(ConfiguredTaskNetworkIdentity::new("network-docs").unwrap());
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
         let mut supervisor = RuntimeSupervisor::start(
             assembly.supervisor_startup_package(),
             SupervisorStartCommand::new("instance-a", 100),
         )
         .unwrap();
-        let event_append = RuntimeId::new("event.append").unwrap();
+        let task_network = RuntimeId::new("execution.task_network_command").unwrap();
         let graph_replay = RuntimeId::new("world_model.graph_replay").unwrap();
         let service_started = assembly
             .supervisor_store()
-            .latest_lifecycle_event_for_runtime(&event_append)
+            .latest_lifecycle_event_for_runtime(&task_network)
             .unwrap()
             .unwrap();
         let actor_started = assembly
@@ -2528,6 +2610,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(service_started.event_id < actor_started.event_id);
+        let stale_query = assembly
+            .ports()
+            .adapters()
+            .task_networks()
+            .query_port("network-docs")
+            .unwrap();
 
         let shutdown = supervisor.request_shutdown(101).unwrap();
         assert_eq!(
@@ -2536,8 +2624,43 @@ mod tests {
                 .iter()
                 .map(|report| report.runtime_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["world_model.graph_replay", "event.append"]
+            vec!["world_model.graph_replay", "execution.task_network_command"]
         );
+        assert!(shutdown.flush_reports.iter().any(|report| {
+            report.runtime_id == "execution.task_network_command" && report.flushed_resource
+        }));
+        assert!(matches!(
+            stale_query.state(),
+            Err(TaskNetworkAuthorityError::Closed { .. })
+        ));
+    }
+
+    #[test]
+    fn task_network_service_reports_passive_health_without_worker_actions() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        config.enabled_runtime_ids = vec!["execution.task_network_command".to_string()];
+        config.configured_task_network =
+            Some(ConfiguredTaskNetworkIdentity::new("network-docs").unwrap());
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let mut supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+
+        let tick = supervisor.tick(101).unwrap();
+        assert!(tick.actions.is_empty());
+        assert_eq!(
+            tick.heartbeat_runtime_ids,
+            vec!["execution.task_network_command"]
+        );
+        let status = supervisor.status_snapshot(101).unwrap();
+        let service = runtime_status(&status, "execution.task_network_command");
+        assert!(service.handle_started);
+        assert_eq!(service.health_status, RuntimeHealthStatus::Healthy);
+        assert!(service.last_diagnostic_actor_id.is_none());
+        supervisor.request_shutdown(102).unwrap();
     }
 
     #[test]

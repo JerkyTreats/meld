@@ -216,6 +216,28 @@ fn bootstrap_handle_reports_bounded_first_work_and_exact_replay_checkpoints() {
         let retained_execution = assembly.activation_execution().unwrap();
         assert_eq!(retained_execution.input, expected_execution_input);
         assert_eq!(retained_execution.receipt, expected_execution_receipt);
+        let configured_network = assembly.configured_task_network().unwrap();
+        assert_eq!(configured_network.network_id(), "network-docs");
+        assert_eq!(
+            configured_network.storage_key(),
+            retained_execution.receipt.task_network_storage_key
+        );
+        let task_network_service = assembly
+            .desired_runtime_state()
+            .iter()
+            .find(|state| state.runtime_id == "execution.task_network_command")
+            .unwrap();
+        assert_eq!(
+            task_network_service.role_class,
+            RuntimeRoleClass::PassiveService
+        );
+        assert!(!task_network_service.enabled);
+        assert!(layout
+            .task_networks_root
+            .read_dir()
+            .unwrap()
+            .next()
+            .is_none());
         let mut handle = assembly
             .handle_factories()
             .get("world_model.agent.bootstrap.docs_freshness")

@@ -61,6 +61,9 @@ pub enum RuntimePortError {
     /// The event replay contract failed.
     #[error("event replay error: {0}")]
     EventReplay(String),
+    /// The execution-owned task-network authority failed.
+    #[error("task network authority error: {0}")]
+    TaskNetworkAuthority(String),
 }
 
 /// Error returned while validating runtime factory registry metadata.

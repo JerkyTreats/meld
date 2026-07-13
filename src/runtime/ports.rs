@@ -1,6 +1,7 @@
 //! Thin direct handoff ports built by product runtime assembly.
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use meld_events::error::EventAuthorityError;
 use meld_events::{
@@ -14,6 +15,10 @@ use meld_execution::goals::{
     GoalSetApi, PersistentGoalSetStore,
 };
 use meld_execution::task::TaskArtifactRepoFactory;
+use meld_execution::task_network::authority::{
+    TaskNetworkAuthority, TaskNetworkAuthorityLifecycleSnapshot,
+    TaskNetworkAuthorityShutdownReceipt, TaskNetworkCommandPort, TaskNetworkQueryPort,
+};
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use meld_execution::task_network::EventAppendSink;
 use meld_world_model::belief::{
@@ -63,7 +68,7 @@ pub struct RuntimeAdapterPorts {
     prompt: PromptRuntimePort,
     workspace: WorkspaceRuntimePort,
     task_artifacts: TaskArtifactFactoryPort,
-    task_networks: TaskNetworkFactoryPort,
+    task_networks: TaskNetworkAuthorityHostPort,
 }
 
 /// Provider availability settings checked during assembly.
@@ -211,10 +216,15 @@ pub struct TaskArtifactFactoryPort {
     factory: TaskArtifactRepoFactory,
 }
 
-/// Task network store factory port.
+/// Lazy process host for execution-owned task-network authorities.
+///
+/// The adapter owns no task semantics. It serializes process-local authority
+/// admission so one configured network cannot be opened twice, then exposes
+/// only cloneable execution-owned command and query capabilities.
 #[derive(Clone)]
-pub struct TaskNetworkFactoryPort {
+pub struct TaskNetworkAuthorityHostPort {
     factory: TaskNetworkStoreFactory,
+    authorities: Arc<Mutex<BTreeMap<String, TaskNetworkAuthority>>>,
 }
 
 impl ProductRuntimePorts {
@@ -248,7 +258,7 @@ impl ProductRuntimePorts {
                 prompt: PromptRuntimePort::new(Arc::clone(&stores.prompt_artifacts)),
                 workspace: WorkspaceRuntimePort::new(Arc::clone(&stores.node_store)),
                 task_artifacts: TaskArtifactFactoryPort::new(stores.task_artifacts.clone()),
-                task_networks: TaskNetworkFactoryPort::new(stores.task_networks.clone()),
+                task_networks: TaskNetworkAuthorityHostPort::new(stores.task_networks.clone()),
             },
         })
     }
@@ -320,8 +330,8 @@ impl RuntimeAdapterPorts {
         &self.task_artifacts
     }
 
-    /// Return the task network factory adapter port.
-    pub fn task_networks(&self) -> &TaskNetworkFactoryPort {
+    /// Return the lazy task-network authority host adapter.
+    pub fn task_networks(&self) -> &TaskNetworkAuthorityHostPort {
         &self.task_networks
     }
 }
@@ -735,16 +745,102 @@ impl TaskArtifactFactoryPort {
     }
 }
 
-impl TaskNetworkFactoryPort {
-    /// Bind the port to the execution-owned task network store factory.
+impl TaskNetworkAuthorityHostPort {
+    /// Bind a lazy authority host to the execution-owned store factory.
     pub fn new(factory: TaskNetworkStoreFactory) -> Self {
-        Self { factory }
+        Self {
+            factory,
+            authorities: Arc::new(Mutex::new(BTreeMap::new())),
+        }
     }
 
-    /// Return the execution-owned task network store factory.
-    pub fn factory(&self) -> &TaskNetworkStoreFactory {
-        &self.factory
+    /// Return a cloneable command capability for one hosted network.
+    pub fn command_port(
+        &self,
+        network_id: &str,
+    ) -> Result<TaskNetworkCommandPort, RuntimePortError> {
+        self.with_authority(network_id, TaskNetworkAuthority::command_port)
     }
+
+    /// Return a cloneable query capability for one hosted network.
+    pub fn query_port(&self, network_id: &str) -> Result<TaskNetworkQueryPort, RuntimePortError> {
+        self.with_authority(network_id, TaskNetworkAuthority::query_port)
+    }
+
+    /// Return the execution-owned lifecycle for one hosted network.
+    pub fn lifecycle(
+        &self,
+        network_id: &str,
+    ) -> Result<TaskNetworkAuthorityLifecycleSnapshot, RuntimePortError> {
+        self.with_authority(network_id, TaskNetworkAuthority::lifecycle)
+    }
+
+    pub(crate) fn start_authority(
+        &self,
+        network_id: &str,
+        mailbox_capacity: usize,
+    ) -> Result<TaskNetworkAuthorityLifecycleSnapshot, RuntimePortError> {
+        let mut authorities = self.lock_authorities()?;
+        if authorities.contains_key(network_id) {
+            return Err(RuntimePortError::TaskNetworkAuthority(format!(
+                "network '{network_id}' already has a process authority"
+            )));
+        }
+        let authority =
+            TaskNetworkAuthority::open(&self.factory, network_id.to_string(), mailbox_capacity)
+                .map_err(map_task_network_authority_error)?;
+        let lifecycle = authority.lifecycle();
+        authorities.insert(network_id.to_string(), authority);
+        Ok(lifecycle)
+    }
+
+    pub(crate) fn shutdown_authority(
+        &self,
+        network_id: &str,
+    ) -> Result<TaskNetworkAuthorityShutdownReceipt, RuntimePortError> {
+        let mut authorities = self.lock_authorities()?;
+        let shutdown = authorities
+            .get_mut(network_id)
+            .ok_or_else(|| {
+                RuntimePortError::TaskNetworkAuthority(format!(
+                    "network '{network_id}' has no hosted process authority"
+                ))
+            })?
+            .shutdown()
+            .map_err(map_task_network_authority_error);
+        authorities.remove(network_id);
+        shutdown
+    }
+
+    fn with_authority<T>(
+        &self,
+        network_id: &str,
+        map: impl FnOnce(&TaskNetworkAuthority) -> T,
+    ) -> Result<T, RuntimePortError> {
+        let authorities = self.lock_authorities()?;
+        authorities.get(network_id).map(map).ok_or_else(|| {
+            RuntimePortError::TaskNetworkAuthority(format!(
+                "network '{network_id}' has no hosted process authority"
+            ))
+        })
+    }
+
+    fn lock_authorities(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, BTreeMap<String, TaskNetworkAuthority>>, RuntimePortError>
+    {
+        self.authorities.lock().map_err(|_| {
+            RuntimePortError::TaskNetworkAuthority(
+                "process authority host lock is poisoned".to_string(),
+            )
+        })
+    }
+}
+
+fn map_task_network_authority_error(
+    error: meld_execution::task_network::authority::TaskNetworkAuthorityError,
+) -> RuntimePortError {
+    RuntimePortError::TaskNetworkAuthority(error.to_string())
 }
 
 fn map_projection_error(error: PlannerProjectionError) -> RuntimePortError {

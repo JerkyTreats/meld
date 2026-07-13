@@ -10,6 +10,7 @@ use meld_events::EventAuthorityOpenOptions;
 use meld_execution::activation::{
     validate_execution_activation, ExecutionActivationInput, ExecutionActivationValidationReceipt,
 };
+use meld_execution::task_network::store::network_storage_key;
 use meld_world_model::activation::{validate_world_model_activation, WorldModelActivationInput};
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
 use meld_world_model::AgentBootstrapRuntime;
@@ -45,6 +46,7 @@ pub struct ProductRuntimeAssembly {
     process_services: RuntimeProcessServices,
     diagnostics: Vec<AssemblyDiagnostic>,
     activation_execution: Option<ExecutionActivationState>,
+    configured_task_network: Option<ConfiguredTaskNetworkIdentity>,
 }
 
 /// Pure execution activation products retained without opening execution stores.
@@ -77,6 +79,8 @@ pub struct ProductRuntimeDescription {
     pub default_work_budget: WorkBudget,
     /// Passive process service identities.
     pub process_services: RuntimeProcessServices,
+    /// Validated execution task-network identity retained without opening it.
+    pub configured_task_network: Option<ConfiguredTaskNetworkIdentity>,
 }
 
 /// Inputs needed to build product runtime infrastructure.
@@ -98,6 +102,17 @@ pub struct ProductRuntimeConfig {
     pub default_work_budget: WorkBudget,
     /// Passive process service identities for supervisor handoff.
     pub process_services: RuntimeProcessServices,
+    /// Validated execution task-network identity hosted when its service is enabled.
+    pub configured_task_network: Option<ConfiguredTaskNetworkIdentity>,
+    /// Bounded mailbox capacity for the configured task-network authority.
+    pub task_network_mailbox_capacity: usize,
+}
+
+/// Source-neutral identity for one configured execution task network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfiguredTaskNetworkIdentity {
+    network_id: String,
+    storage_key: String,
 }
 
 /// Diagnostic captured while assembling product infrastructure.
@@ -242,6 +257,11 @@ enum RuntimeSemanticHandleFactory {
         runtime: Arc<AgentBootstrapRuntime>,
         input: Arc<WorldModelActivationInput>,
     },
+    TaskNetworkAuthority {
+        host: crate::runtime::ports::TaskNetworkAuthorityHostPort,
+        identity: ConfiguredTaskNetworkIdentity,
+        mailbox_capacity: usize,
+    },
 }
 
 enum RuntimeSemanticHandle {
@@ -249,6 +269,7 @@ enum RuntimeSemanticHandle {
     GraphReplay(GraphReplayRuntimeHandle),
     EventAppend(EventAppendRuntimeHandle),
     AgentBootstrap(AgentBootstrapRuntimeHandle),
+    TaskNetworkAuthority(TaskNetworkAuthorityRuntimeHandle),
 }
 
 #[derive(Clone)]
@@ -261,15 +282,29 @@ struct AgentBootstrapRuntimeHandle {
     input: Arc<WorldModelActivationInput>,
 }
 
-/// Diagnostics-only handle publishing ledger ingress health through the
-/// standard tick report path: the watermark is its checkpoint and drop
-/// bursts surface as retryable issues, so heartbeats and health snapshots
-/// carry ledger state without new publisher plumbing.
+struct TaskNetworkAuthorityRuntimeHandle {
+    host: crate::runtime::ports::TaskNetworkAuthorityHostPort,
+    identity: ConfiguredTaskNetworkIdentity,
+    mailbox_capacity: usize,
+    state: TaskNetworkAuthorityRuntimeState,
+}
+
+#[derive(Clone)]
+struct TaskNetworkAuthorityHandleConfig {
+    identity: ConfiguredTaskNetworkIdentity,
+    mailbox_capacity: usize,
+}
+
+enum TaskNetworkAuthorityRuntimeState {
+    Dormant,
+    Hosted,
+    Stopped,
+    Failed(String),
+}
+
+/// Passive ledger-ingress health handle with no worker-tick surface.
 struct EventAppendRuntimeHandle {
     port: crate::runtime::ports::ProductEventAppendPort,
-    // Baseline sampled on the first tick so a restart or an existing ledger
-    // never misreports history as fresh work or fresh drops.
-    last: Option<(u64, u64)>,
 }
 
 /// Lease context supplied by the supervisor before a handle starts.
@@ -315,6 +350,17 @@ pub struct RuntimeHandleDiagnostic {
     pub started: bool,
     /// Passive resources referenced by the handle.
     pub required_resources: Vec<RuntimeResource>,
+}
+
+/// Health observation produced by a hosted passive service without a worker tick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimePassiveHealthReport {
+    /// Runtime id that owns the passive service.
+    pub runtime_id: String,
+    /// Whether the hosted service accepts its intended process-local work.
+    pub healthy: bool,
+    /// Failure detail when the service is not healthy.
+    pub detail: Option<String>,
 }
 
 /// Report returned by a runtime handle flush hook.
@@ -386,7 +432,45 @@ impl ProductRuntimeConfig {
             lifecycle_config: RuntimeLifecycleConfig::default(),
             default_work_budget: WorkBudget { max_items: 64 },
             process_services: RuntimeProcessServices::default(),
+            configured_task_network: None,
+            task_network_mailbox_capacity: 64,
         }
+    }
+}
+
+impl ConfiguredTaskNetworkIdentity {
+    /// Validate and construct one execution task-network identity.
+    pub fn new(network_id: impl Into<String>) -> Result<Self, RuntimeAssemblyError> {
+        let network_id = network_id.into();
+        let storage_key = network_storage_key(&network_id)
+            .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
+        Ok(Self {
+            network_id,
+            storage_key,
+        })
+    }
+
+    fn from_execution_receipt(
+        receipt: &ExecutionActivationValidationReceipt,
+    ) -> Result<Self, RuntimeAssemblyError> {
+        let identity = Self::new(receipt.task_network_id.clone())?;
+        if identity.storage_key != receipt.task_network_storage_key {
+            return Err(RuntimeAssemblyError::Config(
+                "execution receipt task-network storage key is not derived from its identity"
+                    .to_string(),
+            ));
+        }
+        Ok(identity)
+    }
+
+    /// Return the stable semantic network identity.
+    pub fn network_id(&self) -> &str {
+        &self.network_id
+    }
+
+    /// Return the filesystem-safe execution-owned storage key.
+    pub fn storage_key(&self) -> &str {
+        &self.storage_key
     }
 }
 
@@ -546,6 +630,11 @@ impl ProductRuntimeAssembly {
             config.enabled_runtime_ids,
             config.disabled_runtime_ids,
         )?;
+        validate_task_network_service_config(
+            config.configured_task_network.as_ref(),
+            config.task_network_mailbox_capacity,
+            &desired_runtime_state,
+        )?;
 
         Ok(ProductRuntimeDescription {
             product_root: product_root.root,
@@ -555,6 +644,7 @@ impl ProductRuntimeAssembly {
             lifecycle_config: config.lifecycle_config,
             default_work_budget: config.default_work_budget,
             process_services: config.process_services,
+            configured_task_network: config.configured_task_network,
         })
     }
 
@@ -594,6 +684,9 @@ impl ProductRuntimeAssembly {
             .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
         let mut product_config = ProductRuntimeConfig::for_product_root(product_root);
         product_config.enabled_runtime_ids = runtime.enabled_runtime_ids.clone();
+        product_config.configured_task_network = Some(
+            ConfiguredTaskNetworkIdentity::from_execution_receipt(&execution_receipt)?,
+        );
         Self::load_with_authority_inner(
             product_config,
             event_authority,
@@ -642,6 +735,14 @@ impl ProductRuntimeAssembly {
     ) -> Result<Self, RuntimeAssemblyError> {
         let (registry, desired_runtime_state) =
             prevalidate_runtime_assembly_config(&config, activation.is_some())?;
+        let configured_task_network = config.configured_task_network.clone();
+        let task_network_handle_config =
+            configured_task_network
+                .as_ref()
+                .map(|identity| TaskNetworkAuthorityHandleConfig {
+                    identity: identity.clone(),
+                    mailbox_capacity: config.task_network_mailbox_capacity,
+                });
         let product_root = ProductStorageRoot::new(config.product_root);
         let layout = product_root.layout();
         let supervisor_store_path = config
@@ -673,8 +774,14 @@ impl ProductRuntimeAssembly {
                 stores.agent_store.as_ref(),
                 runtime,
                 world_model,
+                task_network_handle_config.as_ref(),
             )?,
-            None => RuntimeHandleFactoryRegistry::from_registry(&registry, &ports, &graph_runtime)?,
+            None => RuntimeHandleFactoryRegistry::from_registry_with_task_network(
+                &registry,
+                &ports,
+                &graph_runtime,
+                task_network_handle_config.as_ref(),
+            )?,
         };
 
         Ok(Self {
@@ -693,6 +800,7 @@ impl ProductRuntimeAssembly {
             process_services: config.process_services,
             diagnostics: Vec::new(),
             activation_execution,
+            configured_task_network,
         })
     }
 
@@ -754,6 +862,11 @@ impl ProductRuntimeAssembly {
     /// Return retained pure execution activation products when configured.
     pub fn activation_execution(&self) -> Option<&ExecutionActivationState> {
         self.activation_execution.as_ref()
+    }
+
+    /// Return the configured task-network identity without opening its store.
+    pub fn configured_task_network(&self) -> Option<&ConfiguredTaskNetworkIdentity> {
+        self.configured_task_network.as_ref()
     }
 
     /// Build the passive startup package handed to the supervisor.
@@ -997,7 +1110,7 @@ impl RuntimeFactoryRegistry {
             RuntimeFactoryDescriptor::classified(
                 "execution.task_network_command",
                 &["execution.task_network.command"],
-                PortOnly,
+                PassiveService,
                 Concrete,
                 false,
                 vec![TaskNetworkFactory],
@@ -1077,6 +1190,15 @@ impl RuntimeHandleFactoryRegistry {
         ports: &ProductRuntimePorts,
         graph_runtime: &Arc<GraphRuntime>,
     ) -> Result<Self, RuntimeAssemblyError> {
+        Self::from_registry_with_task_network(registry, ports, graph_runtime, None)
+    }
+
+    fn from_registry_with_task_network(
+        registry: &RuntimeFactoryRegistry,
+        ports: &ProductRuntimePorts,
+        graph_runtime: &Arc<GraphRuntime>,
+        task_network_config: Option<&TaskNetworkAuthorityHandleConfig>,
+    ) -> Result<Self, RuntimeAssemblyError> {
         let factories = registry
             .descriptors()
             .map(|descriptor| {
@@ -1088,6 +1210,7 @@ impl RuntimeHandleFactoryRegistry {
                             descriptor,
                             ports,
                             graph_runtime,
+                            task_network_config,
                         )?,
                     },
                 ))
@@ -1103,6 +1226,7 @@ impl RuntimeHandleFactoryRegistry {
         agent_store: &meld_world_model::AgentStore,
         runtime_input: RuntimeActivationInput,
         world_model_input: WorldModelActivationInput,
+        task_network_config: Option<&TaskNetworkAuthorityHandleConfig>,
     ) -> Result<Self, RuntimeAssemblyError> {
         let bootstrap_runtime = Arc::new(
             AgentBootstrapRuntime::from_agent_store(agent_store).map_err(|error| {
@@ -1125,6 +1249,7 @@ impl RuntimeHandleFactoryRegistry {
                             &bootstrap_runtime_id,
                             &bootstrap_runtime,
                             &world_model_input,
+                            task_network_config,
                         )?,
                     },
                 ))
@@ -1194,10 +1319,23 @@ impl RuntimeHandle {
 
     /// Run one bounded semantic tick when this handle owns concrete work.
     pub fn tick(&mut self, budget: WorkBudget) -> Option<WorkerTickReport> {
-        if !self.started {
+        if !self.started || self.role_class != RuntimeRoleClass::Actor {
             return None;
         }
         self.semantic.tick(budget)
+    }
+
+    /// Poll one passive service without presenting it as bounded actor work.
+    pub fn poll_passive_health(&self) -> Option<RuntimePassiveHealthReport> {
+        if !self.started || self.role_class != RuntimeRoleClass::PassiveService {
+            return None;
+        }
+        let health = self.semantic.poll_passive_health();
+        Some(RuntimePassiveHealthReport {
+            runtime_id: self.runtime_id.clone(),
+            healthy: health.is_ok(),
+            detail: health.err(),
+        })
     }
 
     /// Return a supervisor-facing diagnostic snapshot.
@@ -1218,9 +1356,10 @@ impl RuntimeHandle {
                 self.runtime_id
             )));
         }
+        let flushed_resource = self.semantic.flush_resources()?;
         Ok(RuntimeHandleFlushReport {
             runtime_id: self.runtime_id.clone(),
-            flushed_resource: false,
+            flushed_resource,
         })
     }
 
@@ -1239,7 +1378,7 @@ impl RuntimeHandle {
     pub fn wait_for_safe_point(&self) -> RuntimeHandleSafePointReport {
         RuntimeHandleSafePointReport {
             runtime_id: self.runtime_id.clone(),
-            safe_for_flush: !self.started && {
+            safe_for_flush: !self.started && self.semantic.safe_for_flush() && {
                 #[cfg(test)]
                 {
                     !self.fail_safe_point
@@ -1274,6 +1413,7 @@ impl RuntimeHandle {
                 "lease id must be non-empty".to_string(),
             ));
         }
+        self.semantic.start_after_lease()?;
         self.started = true;
         Ok(RuntimeHandleStartReport {
             runtime_id: self.runtime_id.clone(),
@@ -1293,6 +1433,7 @@ impl RuntimeSemanticHandleFactory {
         descriptor: &RuntimeFactoryDescriptor,
         ports: &ProductRuntimePorts,
         graph_runtime: &Arc<GraphRuntime>,
+        task_network_config: Option<&TaskNetworkAuthorityHandleConfig>,
     ) -> Result<Self, RuntimeAssemblyError> {
         match descriptor.runtime_id.as_str() {
             "world_model.graph_replay" => Ok(Self::GraphReplay {
@@ -1301,6 +1442,14 @@ impl RuntimeSemanticHandleFactory {
             "event.append" => Ok(Self::EventAppend {
                 port: ports.event_append().clone(),
             }),
+            "execution.task_network_command" => task_network_config
+                .cloned()
+                .map(|config| Self::TaskNetworkAuthority {
+                    host: ports.adapters().task_networks().clone(),
+                    identity: config.identity,
+                    mailbox_capacity: config.mailbox_capacity,
+                })
+                .map_or(Ok(Self::None), Ok),
             _ => Ok(Self::None),
         }
     }
@@ -1312,6 +1461,7 @@ impl RuntimeSemanticHandleFactory {
         bootstrap_runtime_id: &str,
         bootstrap_runtime: &Arc<AgentBootstrapRuntime>,
         world_model_input: &Arc<WorldModelActivationInput>,
+        task_network_config: Option<&TaskNetworkAuthorityHandleConfig>,
     ) -> Result<Self, RuntimeAssemblyError> {
         if descriptor.runtime_id == bootstrap_runtime_id {
             return Ok(Self::AgentBootstrap {
@@ -1319,7 +1469,7 @@ impl RuntimeSemanticHandleFactory {
                 input: Arc::clone(world_model_input),
             });
         }
-        Self::for_descriptor(descriptor, ports, graph_runtime)
+        Self::for_descriptor(descriptor, ports, graph_runtime, task_network_config)
     }
 
     fn build_handle(&self) -> RuntimeSemanticHandle {
@@ -1331,10 +1481,7 @@ impl RuntimeSemanticHandleFactory {
                 })
             }
             Self::EventAppend { port } => {
-                RuntimeSemanticHandle::EventAppend(EventAppendRuntimeHandle {
-                    port: port.clone(),
-                    last: None,
-                })
+                RuntimeSemanticHandle::EventAppend(EventAppendRuntimeHandle { port: port.clone() })
             }
             Self::AgentBootstrap { runtime, input } => {
                 RuntimeSemanticHandle::AgentBootstrap(AgentBootstrapRuntimeHandle {
@@ -1342,6 +1489,16 @@ impl RuntimeSemanticHandleFactory {
                     input: Arc::clone(input),
                 })
             }
+            Self::TaskNetworkAuthority {
+                host,
+                identity,
+                mailbox_capacity,
+            } => RuntimeSemanticHandle::TaskNetworkAuthority(TaskNetworkAuthorityRuntimeHandle {
+                host: host.clone(),
+                identity: identity.clone(),
+                mailbox_capacity: *mailbox_capacity,
+                state: TaskNetworkAuthorityRuntimeState::Dormant,
+            }),
         }
     }
 }
@@ -1351,79 +1508,126 @@ impl RuntimeSemanticHandle {
         match self {
             Self::None => None,
             Self::GraphReplay(handle) => Some(handle.tick(budget)),
-            Self::EventAppend(handle) => Some(handle.tick()),
+            Self::EventAppend(_) => None,
             Self::AgentBootstrap(handle) => Some(handle.tick(budget)),
+            Self::TaskNetworkAuthority(_) => None,
         }
     }
 
-    fn request_stop(&mut self) {}
+    fn poll_passive_health(&self) -> Result<(), String> {
+        match self {
+            Self::EventAppend(handle) => handle.poll_health(),
+            Self::TaskNetworkAuthority(handle) => handle.poll_health(),
+            _ => Ok(()),
+        }
+    }
+
+    fn start_after_lease(&mut self) -> Result<(), RuntimeAssemblyError> {
+        match self {
+            Self::TaskNetworkAuthority(handle) => handle.start_after_lease(),
+            _ => Ok(()),
+        }
+    }
+
+    fn request_stop(&mut self) {
+        if let Self::TaskNetworkAuthority(handle) = self {
+            handle.request_stop();
+        }
+    }
+
+    fn safe_for_flush(&self) -> bool {
+        match self {
+            Self::TaskNetworkAuthority(handle) => handle.safe_for_flush(),
+            _ => true,
+        }
+    }
+
+    fn flush_resources(&self) -> Result<bool, RuntimeAssemblyError> {
+        match self {
+            Self::TaskNetworkAuthority(handle) => handle.flush_resources(),
+            _ => Ok(false),
+        }
+    }
+}
+
+impl TaskNetworkAuthorityRuntimeHandle {
+    fn start_after_lease(&mut self) -> Result<(), RuntimeAssemblyError> {
+        if matches!(self.state, TaskNetworkAuthorityRuntimeState::Hosted) {
+            return Err(RuntimeAssemblyError::SupervisorHandoff(format!(
+                "task-network authority '{}' is already hosted",
+                self.identity.network_id()
+            )));
+        }
+        self.host
+            .start_authority(self.identity.network_id(), self.mailbox_capacity)
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        self.state = TaskNetworkAuthorityRuntimeState::Hosted;
+        Ok(())
+    }
+
+    fn request_stop(&mut self) {
+        if !matches!(self.state, TaskNetworkAuthorityRuntimeState::Hosted) {
+            return;
+        }
+        self.state = match self.host.shutdown_authority(self.identity.network_id()) {
+            Ok(_) => TaskNetworkAuthorityRuntimeState::Stopped,
+            Err(error) => TaskNetworkAuthorityRuntimeState::Failed(error.to_string()),
+        };
+    }
+
+    fn safe_for_flush(&self) -> bool {
+        matches!(
+            self.state,
+            TaskNetworkAuthorityRuntimeState::Dormant | TaskNetworkAuthorityRuntimeState::Stopped
+        )
+    }
+
+    fn flush_resources(&self) -> Result<bool, RuntimeAssemblyError> {
+        match &self.state {
+            TaskNetworkAuthorityRuntimeState::Stopped => Ok(true),
+            TaskNetworkAuthorityRuntimeState::Dormant => Ok(false),
+            TaskNetworkAuthorityRuntimeState::Hosted => {
+                Err(RuntimeAssemblyError::SupervisorHandoff(format!(
+                    "task-network authority '{}' is still hosted",
+                    self.identity.network_id()
+                )))
+            }
+            TaskNetworkAuthorityRuntimeState::Failed(error) => {
+                Err(RuntimeAssemblyError::SupervisorHandoff(format!(
+                    "task-network authority '{}' failed to stop: {error}",
+                    self.identity.network_id()
+                )))
+            }
+        }
+    }
+
+    fn poll_health(&self) -> Result<(), String> {
+        if !matches!(self.state, TaskNetworkAuthorityRuntimeState::Hosted) {
+            return Err(format!(
+                "task-network authority '{}' is not hosted",
+                self.identity.network_id()
+            ));
+        }
+        let query = self
+            .host
+            .query_port(self.identity.network_id())
+            .map_err(|error| error.to_string())?;
+        query.state().map(|_| ()).map_err(|error| error.to_string())
+    }
+}
+
+impl Drop for TaskNetworkAuthorityRuntimeHandle {
+    fn drop(&mut self) {
+        self.request_stop();
+    }
 }
 
 impl EventAppendRuntimeHandle {
-    fn tick(&mut self) -> WorkerTickReport {
-        let (watermark, dropped, health_error) = match self.port.health() {
-            Ok(health) => (health.committed_watermark, health.dropped_events, None),
-            Err(error) => {
-                let (watermark, dropped) = self.last.unwrap_or((0, 0));
-                (watermark, dropped, Some(error.to_string()))
-            }
-        };
-        // The first tick only establishes the baseline: an existing ledger
-        // is not fresh work and all-time drops are not a fresh burst.
-        let (input_watermark, mut retryable_errors) = match self.last {
-            None => (watermark, Vec::new()),
-            Some((last_watermark, last_dropped)) => {
-                let mut issues = Vec::new();
-                if dropped > last_dropped {
-                    issues.push(crate::runtime::contracts::WorkerTickIssue {
-                        item_id: None,
-                        code: "ingest_drops_observed".to_string(),
-                        message: format!(
-                            "{} best-effort events dropped since the last tick, {dropped} total",
-                            dropped - last_dropped
-                        ),
-                    });
-                }
-                (last_watermark, issues)
-            }
-        };
-        if let Some(error) = health_error {
-            retryable_errors.push(crate::runtime::contracts::WorkerTickIssue {
-                item_id: None,
-                code: "event_health_unavailable".to_string(),
-                message: error,
-            });
-        }
-        retryable_errors.shrink_to_fit();
-        // Items stay zero: the observer commits nothing itself, and the
-        // checkpoint movement alone reports ledger progress.
-        let report = WorkerTickReport {
-            actor_id: "event.append".to_string(),
-            scope: crate::runtime::contracts::WorkerScope {
-                domain_id: "events".to_string(),
-                stream_id: None,
-                work_key: None,
-                agent_id: None,
-                perspective_key: None,
-                branch_id: None,
-                subject_key: None,
-            },
-            input_checkpoint: crate::runtime::contracts::WorkerCheckpoint {
-                name: "event_commit_watermark".to_string(),
-                value: input_watermark,
-            },
-            output_checkpoint: crate::runtime::contracts::WorkerCheckpoint {
-                name: "event_commit_watermark".to_string(),
-                value: watermark,
-            },
-            items_attempted: 0,
-            items_committed: 0,
-            retryable_errors,
-            fatal_errors: Vec::new(),
-            budget_exhausted: false,
-        };
-        self.last = Some((watermark, dropped));
-        report
+    fn poll_health(&self) -> Result<(), String> {
+        self.port
+            .health()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -1464,6 +1668,11 @@ fn prevalidate_runtime_assembly_config(
         config.enabled_runtime_ids.clone(),
         config.disabled_runtime_ids.clone(),
     )?;
+    validate_task_network_service_config(
+        config.configured_task_network.as_ref(),
+        config.task_network_mailbox_capacity,
+        &desired_runtime_state,
+    )?;
     if !has_activation
         && desired_runtime_state.iter().any(|state| {
             state.enabled && state.runtime_id == "world_model.agent.bootstrap.docs_freshness"
@@ -1474,6 +1683,28 @@ fn prevalidate_runtime_assembly_config(
         ));
     }
     Ok((registry, desired_runtime_state))
+}
+
+fn validate_task_network_service_config(
+    configured_task_network: Option<&ConfiguredTaskNetworkIdentity>,
+    mailbox_capacity: usize,
+    desired_runtime_state: &[DesiredRuntimeState],
+) -> Result<(), RuntimeAssemblyError> {
+    if mailbox_capacity == 0 {
+        return Err(RuntimeAssemblyError::Config(
+            "task-network authority mailbox capacity must be greater than zero".to_string(),
+        ));
+    }
+    if desired_runtime_state
+        .iter()
+        .any(|state| state.enabled && state.runtime_id == "execution.task_network_command")
+        && configured_task_network.is_none()
+    {
+        return Err(RuntimeAssemblyError::RuntimeHandleConstruction(
+            "task-network command service requires one configured execution network".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 impl AgentBootstrapRuntimeHandle {
@@ -1720,7 +1951,9 @@ mod tests {
 
     use meld_events::EventEnvelope;
     use meld_execution::goals::GoalCommandOutcome;
-    use meld_execution::task_network::EventAppendSink;
+    use meld_execution::task_network::{
+        EventAppendSink, TaskNetworkAuthorityError, TaskNetworkAuthorityLifecycle,
+    };
     use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
     use meld_world_model::PerspectiveKey;
     use proptest::prelude::*;
@@ -1907,6 +2140,31 @@ mod tests {
             error,
             RuntimeAssemblyError::RuntimeHandleConstruction(message)
                 if message.contains("requires activated world-model owner input")
+        ));
+        assert!(!product_root.exists());
+    }
+
+    #[test]
+    fn task_network_service_requires_identity_before_store_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let product_root = temp.path().join("product");
+        let mut config = ProductRuntimeConfig::for_product_root(&product_root);
+        config.enabled_runtime_ids = vec!["execution.task_network_command".to_string()];
+
+        assert!(matches!(
+            ProductRuntimeAssembly::describe(config.clone()),
+            Err(RuntimeAssemblyError::RuntimeHandleConstruction(_))
+        ));
+
+        let error = match ProductRuntimeAssembly::load(config) {
+            Ok(_) => panic!("task-network service without identity should fail"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            RuntimeAssemblyError::RuntimeHandleConstruction(message)
+                if message.contains("requires one configured execution network")
         ));
         assert!(!product_root.exists());
     }
@@ -2152,18 +2410,17 @@ mod tests {
     }
 
     #[test]
-    fn adapter_ports_expose_passive_factories_and_stores() {
+    fn adapter_ports_expose_passive_authority_host_and_stores() {
         let temp = tempfile::tempdir().unwrap();
         let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
         let adapters = assembly.ports().adapters();
 
         assert!(!adapters.provider().is_required());
         assert!(!adapters.provider().is_available());
-        assert!(adapters
-            .task_networks()
-            .factory()
-            .root()
-            .ends_with("task_networks"));
+        assert!(matches!(
+            adapters.task_networks().query_port("network-docs"),
+            Err(RuntimePortError::TaskNetworkAuthority(_))
+        ));
         adapters.task_artifacts().factory().flush().unwrap();
         assert!(adapters
             .context()
@@ -2204,6 +2461,8 @@ mod tests {
             .unwrap();
         assert_eq!(started.runtime_id, "event.append");
         assert!(handle.is_started());
+        assert!(handle.tick(WorkBudget { max_items: 1 }).is_none());
+        assert!(handle.poll_passive_health().unwrap().healthy);
         let diagnostic = handle.diagnostic_report();
         assert_eq!(diagnostic.runtime_id, "event.append");
         assert!(diagnostic.started);
@@ -2256,6 +2515,107 @@ mod tests {
             RuntimeImplementationState::Concrete
         );
         assert!(!bootstrap.default_enabled);
+        let task_network = registry.get("execution.task_network_command").unwrap();
+        assert_eq!(task_network.role_class, RuntimeRoleClass::PassiveService);
+        assert_eq!(
+            task_network.implementation_state,
+            RuntimeImplementationState::Concrete
+        );
+        assert!(!task_network.default_enabled);
+    }
+
+    #[test]
+    fn task_network_service_is_lazy_single_owner_stale_after_stop_and_reopenable() {
+        let temp = tempfile::tempdir().unwrap();
+        let identity = ConfiguredTaskNetworkIdentity::new("network-docs").unwrap();
+        let network_path = ProductStorageLayout::from_root(temp.path())
+            .task_networks_root
+            .join(format!("{}.sled", identity.storage_key()));
+        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        config.enabled_runtime_ids = vec!["execution.task_network_command".to_string()];
+        config.configured_task_network = Some(identity);
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let factory = assembly
+            .handle_factories()
+            .get("execution.task_network_command")
+            .unwrap();
+        let mut handle = factory.build_handle();
+        let mut contender = factory.build_handle();
+
+        assert!(!network_path.exists());
+        assert!(handle.tick(WorkBudget { max_items: 1 }).is_none());
+        assert!(handle.poll_passive_health().is_none());
+        handle
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "execution.task_network_command".to_string(),
+                lease_id: "lease-a".to_string(),
+            })
+            .unwrap();
+        assert!(network_path.exists());
+        assert!(handle.tick(WorkBudget { max_items: 1 }).is_none());
+        assert!(handle.poll_passive_health().unwrap().healthy);
+
+        let host = assembly.ports().adapters().task_networks();
+        let stale_command = host.command_port("network-docs").unwrap();
+        let stale_query = host.query_port("network-docs").unwrap();
+        let first_epoch = stale_query.lifecycle().epoch;
+        assert_eq!(
+            stale_query.lifecycle().lifecycle,
+            TaskNetworkAuthorityLifecycle::Open
+        );
+        assert!(contender
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "execution.task_network_command".to_string(),
+                lease_id: "lease-b".to_string(),
+            })
+            .is_err());
+
+        let stop = handle.request_stop();
+        assert!(stop.was_started);
+        assert!(handle.wait_for_safe_point().safe_for_flush);
+        assert!(handle.flush_resources().unwrap().flushed_resource);
+        assert!(matches!(
+            stale_query.state(),
+            Err(TaskNetworkAuthorityError::Closed { .. })
+        ));
+        assert_eq!(
+            stale_command.lifecycle().lifecycle,
+            TaskNetworkAuthorityLifecycle::Closed
+        );
+
+        contender
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "execution.task_network_command".to_string(),
+                lease_id: "lease-orphan".to_string(),
+            })
+            .unwrap();
+        let orphaned_query = host.query_port("network-docs").unwrap();
+        assert_eq!(orphaned_query.lifecycle().epoch, first_epoch + 1);
+        drop(contender);
+        assert!(matches!(
+            orphaned_query.state(),
+            Err(TaskNetworkAuthorityError::Closed { .. })
+        ));
+
+        handle
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "execution.task_network_command".to_string(),
+                lease_id: "lease-c".to_string(),
+            })
+            .unwrap();
+        let reopened = host.query_port("network-docs").unwrap();
+        assert_eq!(reopened.lifecycle().epoch, first_epoch + 2);
+        assert_eq!(reopened.state().unwrap().network_id, "network-docs");
+        host.shutdown_authority("network-docs").unwrap();
+        let unhealthy = handle.poll_passive_health().unwrap();
+        assert!(!unhealthy.healthy);
+        assert!(unhealthy
+            .detail
+            .unwrap()
+            .contains("no hosted process authority"));
+        assert!(handle.request_stop().was_started);
+        assert!(!handle.wait_for_safe_point().safe_for_flush);
+        assert!(handle.flush_resources().is_err());
     }
 
     #[test]
@@ -2554,13 +2914,14 @@ mod tests {
             .planner_projection()
             .project_current_world_state(&subject(), "docs_freshness", None, None)
             .is_err());
-        assert!(assembly
-            .ports()
-            .adapters()
-            .task_networks()
-            .factory()
-            .open_network("network-a")
-            .is_err());
+        assert!(matches!(
+            assembly
+                .ports()
+                .adapters()
+                .task_networks()
+                .query_port("network-a"),
+            Err(RuntimePortError::TaskNetworkAuthority(_))
+        ));
         let outcome = assembly
             .ports()
             .goal_command()
@@ -2596,10 +2957,8 @@ mod tests {
             .accept_agent_goal_command(command, 7)
             .unwrap();
         let network = first
-            .ports()
-            .adapters()
-            .task_networks()
-            .factory()
+            .stores()
+            .task_networks
             .open_network("network-a")
             .unwrap();
         network.flush().unwrap();
@@ -2746,7 +3105,7 @@ mod tests {
     }
 
     #[test]
-    fn event_append_handle_reports_watermark_and_drop_diagnostics() {
+    fn event_append_service_reports_health_without_worker_ticks() {
         let temp = tempfile::tempdir().unwrap();
         let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
         let factory = assembly.handle_factories().get("event.append").unwrap();
@@ -2758,17 +3117,8 @@ mod tests {
             })
             .unwrap();
 
-        let first = handle.tick(WorkBudget { max_items: 8 }).unwrap();
-        assert_eq!(first.actor_id, "event.append");
-        assert_eq!(first.scope.domain_id, "events");
-        assert_eq!(first.input_checkpoint.name, "event_commit_watermark");
-        assert!(first.fatal_errors.is_empty());
-        assert!(first.retryable_errors.is_empty());
-        // The first tick is a baseline: an existing ledger is never
-        // reported as fresh progress or fresh work.
-        assert_eq!(first.input_checkpoint.value, first.output_checkpoint.value);
-        assert_eq!(first.items_committed, 0);
-        assert!(!first.made_progress());
+        assert!(handle.tick(WorkBudget { max_items: 8 }).is_none());
+        assert!(handle.poll_passive_health().unwrap().healthy);
 
         assembly
             .ports()
@@ -2782,9 +3132,7 @@ mod tests {
                 .with_record_id("runtime-assembly-status-tick"),
             )
             .unwrap();
-        let second = handle.tick(WorkBudget { max_items: 8 }).unwrap();
-        assert!(second.output_checkpoint.value > second.input_checkpoint.value);
-        assert!(second.made_progress());
-        assert_eq!(second.items_committed, 0);
+        assert!(handle.tick(WorkBudget { max_items: 8 }).is_none());
+        assert!(handle.poll_passive_health().unwrap().healthy);
     }
 }

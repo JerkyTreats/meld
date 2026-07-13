@@ -68,7 +68,10 @@ pub struct OpenProductStores {
     pub legacy_world_state_store: Arc<WorldStateStore>,
     /// Execution-owned goal set store.
     pub goal_store: Arc<PersistentGoalSetStore>,
-    /// Execution-owned factory for per-network task network stores.
+    // TODO compat-shim: remove after W3B planning and publication consume
+    // TaskNetworkAuthorityHostPort command and query capabilities and the
+    // direct-store characterization tests have equivalent authority coverage.
+    /// Execution-owned factory retained only for the active W3B migration.
     pub task_networks: TaskNetworkStoreFactory,
     /// Execution-owned factory for task-scoped artifact repositories.
     pub task_artifacts: TaskArtifactRepoFactory,
