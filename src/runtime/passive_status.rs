@@ -394,7 +394,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
 
         assert_eq!(value["cache_state"], "missing");
-        assert_eq!(value["runtimes"].as_array().unwrap().len(), 13);
+        assert_eq!(value["runtimes"].as_array().unwrap().len(), 15);
         let graph = value["runtimes"]
             .as_array()
             .unwrap()

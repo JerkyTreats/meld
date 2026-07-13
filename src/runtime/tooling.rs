@@ -1139,7 +1139,7 @@ fn runtime_status_row(
                 heartbeat.lease_id == lease.lease_id && heartbeat.instance_id == lease.instance_id
             }
             None => {
-                desired_worker_eligible(desired)
+                desired.host_eligible()
                     && matches!(
                         heartbeat.health.status,
                         RuntimeHealthStatus::Stopped | RuntimeHealthStatus::Unhealthy
@@ -1152,7 +1152,7 @@ fn runtime_status_row(
         .filter(|health| match active_lease.as_ref() {
             Some(lease) => health.lease_id.as_deref() == Some(lease.lease_id.as_str()),
             None => {
-                desired_worker_eligible(desired)
+                desired.host_eligible()
                     && matches!(
                         health.status,
                         RuntimeHealthStatus::Stopped | RuntimeHealthStatus::Unhealthy
@@ -1264,13 +1264,6 @@ fn default_health_status(desired: &DesiredRuntimeState) -> RuntimeHealthStatus {
     } else {
         RuntimeHealthStatus::Unknown
     }
-}
-
-fn desired_worker_eligible(desired: &DesiredRuntimeState) -> bool {
-    desired.enabled
-        && desired.factory_available
-        && desired.role_class == RuntimeRoleClass::Actor
-        && desired.implementation_state == RuntimeImplementationState::Concrete
 }
 
 fn parse_restart_policy(value: &str) -> Result<RestartPolicy, ApiError> {

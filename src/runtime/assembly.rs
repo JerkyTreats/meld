@@ -27,7 +27,7 @@ use crate::runtime::supervisor::SupervisorStore;
 /// Root product runtime assembly.
 ///
 /// This type opens product stores, opens supervisor lifecycle storage, builds
-/// direct handoff ports, and prepares inert runtime factory metadata. It does
+/// direct handoff ports, and prepares runtime factory metadata. It does
 /// not run semantic work or own domain progress.
 pub struct ProductRuntimeAssembly {
     product_root: ProductStorageRoot,
@@ -94,7 +94,7 @@ pub struct ProductRuntimeConfig {
     pub provider: ProviderPortConfig,
     /// Supervisor lifecycle timing defaults.
     pub lifecycle_config: RuntimeLifecycleConfig,
-    /// Work budget defaults passed to inert runtime factories.
+    /// Work budget defaults passed to ticking runtime factories.
     pub default_work_budget: WorkBudget,
     /// Passive process service identities for supervisor handoff.
     pub process_services: RuntimeProcessServices,
@@ -122,6 +122,24 @@ pub struct DesiredRuntimeState {
     pub role_class: RuntimeRoleClass,
     /// Honest implementation posture after desired-state resolution.
     pub implementation_state: RuntimeImplementationState,
+}
+
+impl DesiredRuntimeState {
+    /// Return whether supervisor lifecycle may host this configured role.
+    pub fn host_eligible(&self) -> bool {
+        self.enabled
+            && self.factory_available
+            && self.implementation_state == RuntimeImplementationState::Concrete
+            && matches!(
+                self.role_class,
+                RuntimeRoleClass::Actor | RuntimeRoleClass::PassiveService
+            )
+    }
+
+    /// Return whether this hosted role owns bounded semantic ticks.
+    pub fn tick_eligible(&self) -> bool {
+        self.host_eligible() && self.role_class == RuntimeRoleClass::Actor
+    }
 }
 
 /// Passive runtime factory metadata.
@@ -170,7 +188,7 @@ pub enum RuntimeResource {
     Workspace,
 }
 
-/// Process-local registry of inert runtime factories.
+/// Process-local registry of runtime factories.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeFactoryRegistry {
     descriptors: BTreeMap<String, RuntimeFactoryDescriptor>,
@@ -193,8 +211,9 @@ pub struct RuntimeHandleFactory {
 /// The handle exposes lifecycle hooks and may own a bounded domain tick hook.
 /// Construction remains passive; semantic work only runs after supervisor
 /// lease acquisition and an explicit tick.
-pub struct InertRuntimeHandle {
+pub struct RuntimeHandle {
     runtime_id: String,
+    role_class: RuntimeRoleClass,
     required_resources: Vec<RuntimeResource>,
     started: bool,
     semantic: RuntimeSemanticHandle,
@@ -203,6 +222,12 @@ pub struct InertRuntimeHandle {
     #[cfg(test)]
     fail_flush: bool,
 }
+
+// TODO compat-shim: remove after W3B production factories and downstream
+// callers use RuntimeHandle and the runtime assembly parity suite stays green.
+/// Compatibility name for callers compiled against the pre-W3A handle type.
+#[deprecated(since = "2.7.0", note = "use RuntimeHandle")]
+pub type InertRuntimeHandle = RuntimeHandle;
 
 #[derive(Clone)]
 enum RuntimeSemanticHandleFactory {
@@ -256,14 +281,14 @@ pub struct RuntimeLeaseContext {
     pub lease_id: String,
 }
 
-/// Report returned when an inert handle accepts a supervisor start.
+/// Report returned when a runtime handle accepts a supervisor start.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeHandleStartReport {
     /// Runtime id that accepted the start.
     pub runtime_id: String,
 }
 
-/// Report returned when an inert handle accepts a stop request.
+/// Report returned when a runtime handle accepts a stop request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeHandleStopReport {
     /// Runtime id that accepted the stop.
@@ -272,7 +297,7 @@ pub struct RuntimeHandleStopReport {
     pub was_started: bool,
 }
 
-/// Report returned when an inert handle reaches a safe point.
+/// Report returned when a runtime handle reaches a safe point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeHandleSafePointReport {
     /// Runtime id that reached the safe point.
@@ -281,7 +306,7 @@ pub struct RuntimeHandleSafePointReport {
     pub safe_for_flush: bool,
 }
 
-/// Diagnostic snapshot from one inert runtime handle.
+/// Diagnostic snapshot from one runtime handle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeHandleDiagnostic {
     /// Runtime id that produced the diagnostic.
@@ -292,7 +317,7 @@ pub struct RuntimeHandleDiagnostic {
     pub required_resources: Vec<RuntimeResource>,
 }
 
-/// Report returned by an inert handle flush hook.
+/// Report returned by a runtime handle flush hook.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeHandleFlushReport {
     /// Runtime id whose flush hook was called.
@@ -706,12 +731,12 @@ impl ProductRuntimeAssembly {
         &self.ports
     }
 
-    /// Return the inert runtime factory registry.
+    /// Return the runtime factory registry.
     pub fn registry(&self) -> &RuntimeFactoryRegistry {
         &self.registry
     }
 
-    /// Return inert runtime handle factories.
+    /// Return runtime handle factories.
     pub fn handle_factories(&self) -> &RuntimeHandleFactoryRegistry {
         &self.handle_factories
     }
@@ -922,12 +947,28 @@ impl RuntimeFactoryRegistry {
                 vec![GoalCommand, PlannerProjection],
             )?,
             RuntimeFactoryDescriptor::classified(
+                "world_model.agent_hydration",
+                &[],
+                Actor,
+                Inert,
+                false,
+                vec![PlannerProjection],
+            )?,
+            RuntimeFactoryDescriptor::classified(
                 "world_model.evidence_ingestion",
                 &["world_model.belief.event_evidence_ingestion"],
                 Actor,
                 Inert,
                 false,
                 vec![EventReplay],
+            )?,
+            RuntimeFactoryDescriptor::classified(
+                "world_model.planner_projection",
+                &[],
+                Actor,
+                Inert,
+                false,
+                vec![],
             )?,
             RuntimeFactoryDescriptor::classified(
                 "world_model.satisfaction_curation",
@@ -1030,7 +1071,7 @@ impl RuntimeFactoryDescriptor {
 }
 
 impl RuntimeHandleFactoryRegistry {
-    /// Build inert handle factories from the runtime factory registry.
+    /// Build handle factories from the runtime factory registry.
     pub fn from_registry(
         registry: &RuntimeFactoryRegistry,
         ports: &ProductRuntimePorts,
@@ -1092,12 +1133,12 @@ impl RuntimeHandleFactoryRegistry {
         Ok(Self { factories })
     }
 
-    /// Return one inert handle factory by runtime id.
+    /// Return one handle factory by runtime id.
     pub fn get(&self, runtime_id: &str) -> Option<&RuntimeHandleFactory> {
         self.factories.get(runtime_id)
     }
 
-    /// Return the number of inert handle factories.
+    /// Return the number of handle factories.
     pub fn len(&self) -> usize {
         self.factories.len()
     }
@@ -1114,10 +1155,11 @@ impl RuntimeHandleFactory {
         &self.descriptor.runtime_id
     }
 
-    /// Build an inert runtime handle.
-    pub fn build_handle(&self) -> InertRuntimeHandle {
-        InertRuntimeHandle {
+    /// Build a runtime handle.
+    pub fn build_handle(&self) -> RuntimeHandle {
+        RuntimeHandle {
             runtime_id: self.descriptor.runtime_id.clone(),
+            role_class: self.descriptor.role_class,
             required_resources: self.descriptor.required_resources.clone(),
             started: false,
             semantic: self.semantic.build_handle(),
@@ -1129,7 +1171,7 @@ impl RuntimeHandleFactory {
     }
 }
 
-impl InertRuntimeHandle {
+impl RuntimeHandle {
     /// Return this handle's runtime id.
     pub fn runtime_id(&self) -> &str {
         &self.runtime_id
@@ -1138,6 +1180,11 @@ impl InertRuntimeHandle {
     /// Return passive resources required by this runtime handle.
     pub fn required_resources(&self) -> &[RuntimeResource] {
         &self.required_resources
+    }
+
+    /// Return the lifecycle role assigned by the canonical registry.
+    pub fn role_class(&self) -> RuntimeRoleClass {
+        self.role_class
     }
 
     /// Return whether the supervisor has started this handle.
@@ -1177,7 +1224,7 @@ impl InertRuntimeHandle {
         })
     }
 
-    /// Request that an inert handle stop at its next safe point.
+    /// Request that a runtime handle stop at its next safe point.
     pub fn request_stop(&mut self) -> RuntimeHandleStopReport {
         let was_started = self.started;
         self.started = false;
@@ -1188,7 +1235,7 @@ impl InertRuntimeHandle {
         }
     }
 
-    /// Wait for an inert handle safe point.
+    /// Wait for a runtime handle safe point.
     pub fn wait_for_safe_point(&self) -> RuntimeHandleSafePointReport {
         RuntimeHandleSafePointReport {
             runtime_id: self.runtime_id.clone(),
@@ -1655,10 +1702,7 @@ fn provider_required(
     desired_runtime_state: &[DesiredRuntimeState],
 ) -> bool {
     desired_runtime_state.iter().any(|state| {
-        state.enabled
-            && state.factory_available
-            && state.role_class == RuntimeRoleClass::Actor
-            && state.implementation_state == RuntimeImplementationState::Concrete
+        state.tick_eligible()
             && registry
                 .get(&state.runtime_id)
                 .is_some_and(|descriptor| descriptor.requires_resource(RuntimeResource::Provider))
@@ -1745,7 +1789,7 @@ mod tests {
             assembly.supervisor_store().path(),
             temp.path().join("supervisor.sled")
         );
-        assert_eq!(assembly.registry().len(), 13);
+        assert_eq!(assembly.registry().len(), 15);
         assert!(assembly
             .registry()
             .contains("world_model.agent_goal_curation"));
@@ -1783,7 +1827,7 @@ mod tests {
             description.supervisor_store_path,
             expected_root.join("supervisor.sled")
         );
-        assert_eq!(description.desired_runtime_state.len(), 13);
+        assert_eq!(description.desired_runtime_state.len(), 15);
         assert!(!description.product_root.exists());
         assert!(!description.supervisor_store_path.exists());
     }
@@ -1800,7 +1844,7 @@ mod tests {
 
         assert_eq!(second.product_root(), temp.path());
         assert!(second.registry().contains("execution.publication"));
-        assert_eq!(second.desired_runtime_state().len(), 13);
+        assert_eq!(second.desired_runtime_state().len(), 15);
     }
 
     #[test]
@@ -2144,7 +2188,7 @@ mod tests {
         let package = assembly.supervisor_startup_package();
 
         assert_eq!(package.product_root, temp.path());
-        assert_eq!(package.handle_factories.len(), 13);
+        assert_eq!(package.handle_factories.len(), 15);
         assert_eq!(package.default_work_budget.max_items, 64);
         assert_eq!(package.lifecycle_config.heartbeat_interval_ms, 1_000);
         assert_eq!(package.process_services.clock_source, "system");
@@ -2195,7 +2239,7 @@ mod tests {
             .filter(|descriptor| descriptor.default_enabled)
             .collect::<Vec<_>>();
 
-        assert_eq!(registry.len(), 13);
+        assert_eq!(registry.len(), 15);
         assert_eq!(default_actors.len(), 1);
         assert_eq!(default_actors[0].runtime_id, "world_model.graph_replay");
         assert_eq!(default_actors[0].role_class, RuntimeRoleClass::Actor);
@@ -2346,6 +2390,42 @@ mod tests {
     }
 
     #[test]
+    fn hosting_and_ticking_are_distinct_runtime_eligibility_contracts() {
+        let state = |role_class, implementation_state| DesiredRuntimeState {
+            runtime_id: "execution.role".to_string(),
+            enabled: true,
+            factory_available: true,
+            role_class,
+            implementation_state,
+        };
+
+        let actor = state(
+            RuntimeRoleClass::Actor,
+            RuntimeImplementationState::Concrete,
+        );
+        assert!(actor.host_eligible());
+        assert!(actor.tick_eligible());
+
+        let service = state(
+            RuntimeRoleClass::PassiveService,
+            RuntimeImplementationState::Concrete,
+        );
+        assert!(service.host_eligible());
+        assert!(!service.tick_eligible());
+
+        let port = state(
+            RuntimeRoleClass::PortOnly,
+            RuntimeImplementationState::Concrete,
+        );
+        assert!(!port.host_eligible());
+        assert!(!port.tick_eligible());
+
+        let inert = state(RuntimeRoleClass::Actor, RuntimeImplementationState::Inert);
+        assert!(!inert.host_eligible());
+        assert!(!inert.tick_eligible());
+    }
+
+    #[test]
     fn configured_alias_emits_only_the_canonical_runtime_id() {
         let registry = RuntimeFactoryRegistry::first_proof_registry().unwrap();
         let desired = desired_runtime_state(
@@ -2355,7 +2435,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(desired.len(), 13);
+        assert_eq!(desired.len(), 15);
         assert!(desired
             .iter()
             .any(|state| state.runtime_id == "execution.task_dispatch" && state.enabled));

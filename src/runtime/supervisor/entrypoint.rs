@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::runtime::assembly::{
-    DesiredRuntimeState, InertRuntimeHandle, RuntimeHandleFlushReport, RuntimeHandleStopReport,
+    DesiredRuntimeState, RuntimeHandle, RuntimeHandleFlushReport, RuntimeHandleStopReport,
     RuntimeLeaseContext, SupervisorStartupPackage,
 };
 use crate::runtime::contracts::{
@@ -209,16 +209,23 @@ struct SupervisorRuntimeDesired {
 }
 
 impl SupervisorRuntimeDesired {
-    fn worker_eligible(&self) -> bool {
+    fn host_eligible(&self) -> bool {
         self.enabled
             && self.factory_available
-            && self.role_class == RuntimeRoleClass::Actor
             && self.implementation_state == RuntimeImplementationState::Concrete
+            && matches!(
+                self.role_class,
+                RuntimeRoleClass::Actor | RuntimeRoleClass::PassiveService
+            )
+    }
+
+    fn tick_eligible(&self) -> bool {
+        self.host_eligible() && self.role_class == RuntimeRoleClass::Actor
     }
 }
 
 struct SupervisedRuntimeHandle {
-    handle: InertRuntimeHandle,
+    handle: RuntimeHandle,
     owner: RuntimeLeaseOwner,
 }
 
@@ -411,7 +418,7 @@ impl<'a> RuntimeSupervisor<'a> {
                             && heartbeat.instance_id == lease.instance_id
                     }
                     None => {
-                        desired.worker_eligible()
+                        desired.host_eligible()
                             && matches!(
                                 heartbeat.health.status,
                                 RuntimeHealthStatus::Stopped | RuntimeHealthStatus::Unhealthy
@@ -424,7 +431,7 @@ impl<'a> RuntimeSupervisor<'a> {
                 .filter(|health| match active_lease.as_ref() {
                     Some(lease) => health.lease_id.as_deref() == Some(lease.lease_id.as_str()),
                     None => {
-                        desired.worker_eligible()
+                        desired.host_eligible()
                             && matches!(
                                 health.status,
                                 RuntimeHealthStatus::Stopped | RuntimeHealthStatus::Unhealthy
@@ -626,11 +633,19 @@ impl<'a> RuntimeSupervisor<'a> {
             )?;
             renewed_runtime_ids.push(owner.runtime_id.to_string());
 
-            let semantic_report = self
-                .handles
-                .get_mut(owner.runtime_id.as_str())
-                .and_then(|runtime| runtime.handle.tick(self.default_work_budget.clone()));
-            let health_status = health_status_from_tick_report(semantic_report.as_ref());
+            let tick_eligible = self
+                .desired
+                .get(owner.runtime_id.as_str())
+                .is_some_and(SupervisorRuntimeDesired::tick_eligible);
+            let semantic_report = if tick_eligible {
+                self.handles
+                    .get_mut(owner.runtime_id.as_str())
+                    .and_then(|runtime| runtime.handle.tick(self.default_work_budget.clone()))
+            } else {
+                None
+            };
+            let health_status =
+                health_status_from_tick_report(tick_eligible, semantic_report.as_ref());
             let action = semantic_report.clone().map(|report| {
                 self.action_sequence = self.action_sequence.saturating_add(1);
                 RuntimeActionRecord::from_worker_tick(
@@ -755,7 +770,13 @@ impl<'a> RuntimeSupervisor<'a> {
 
         let mut stop_reports = Vec::new();
         let mut flush_reports = Vec::new();
-        for runtime in self.handles.values_mut() {
+        let shutdown_runtime_ids = ordered_handle_ids(&self.handles, false);
+        for runtime_id in &shutdown_runtime_ids {
+            let runtime = self.handles.get_mut(runtime_id).ok_or_else(|| {
+                SupervisorRuntimeError::InvalidCommand(format!(
+                    "runtime '{runtime_id}' disappeared during shutdown signaling"
+                ))
+            })?;
             stop_reports.push(runtime.handle.request_stop());
         }
         self.put_shutdown_phase(
@@ -764,7 +785,12 @@ impl<'a> RuntimeSupervisor<'a> {
             None,
             RuntimeShutdownStatus::WaitingForSafePoint,
         )?;
-        for runtime in self.handles.values() {
+        for runtime_id in &shutdown_runtime_ids {
+            let runtime = self.handles.get(runtime_id).ok_or_else(|| {
+                SupervisorRuntimeError::InvalidCommand(format!(
+                    "runtime '{runtime_id}' disappeared before its safe point"
+                ))
+            })?;
             let safe_point = runtime.handle.wait_for_safe_point();
             if !safe_point.safe_for_flush {
                 self.record_shutdown_failure(&shutdown_id, requested_at_ms, now_ms)?;
@@ -780,7 +806,12 @@ impl<'a> RuntimeSupervisor<'a> {
             None,
             RuntimeShutdownStatus::FlushingStores,
         )?;
-        for runtime in self.handles.values() {
+        for runtime_id in &shutdown_runtime_ids {
+            let runtime = self.handles.get(runtime_id).ok_or_else(|| {
+                SupervisorRuntimeError::InvalidCommand(format!(
+                    "runtime '{runtime_id}' disappeared before resource flush"
+                ))
+            })?;
             match runtime.handle.flush_resources() {
                 Ok(report) => flush_reports.push(report),
                 Err(error) => {
@@ -1018,7 +1049,7 @@ impl<'a> RuntimeSupervisor<'a> {
             let Some(desired) = self.desired.get(&runtime_id) else {
                 continue;
             };
-            if !desired.worker_eligible()
+            if !desired.host_eligible()
                 || desired.restart_policy != RestartPolicy::OnHeartbeatExpiry
             {
                 blocked.insert(runtime_id);
@@ -1076,7 +1107,7 @@ impl<'a> RuntimeSupervisor<'a> {
     ) -> Result<BTreeMap<String, RuntimeLease>, SupervisorRuntimeError> {
         let mut acquired = BTreeMap::new();
         for desired in self.desired.values().filter(|desired| {
-            desired.worker_eligible() && !pending_replacements.contains(desired.runtime_id.as_str())
+            desired.host_eligible() && !pending_replacements.contains(desired.runtime_id.as_str())
         }) {
             let runtime_id = desired.runtime_id.to_string();
             let lease_id = format!("lease:{}:{}:{}:{}", self.instance_id, runtime_id, 0, now_ms);
@@ -1114,8 +1145,22 @@ impl<'a> RuntimeSupervisor<'a> {
         now_ms: u64,
         startup_leases: &BTreeMap<String, RuntimeLease>,
     ) -> Result<(), SupervisorRuntimeError> {
-        for (runtime_id, lease) in startup_leases {
-            self.start_runtime_after_lease(runtime_id, lease, now_ms, NO_RESTART_ATTEMPTS, None)?;
+        let mut runtime_ids = startup_leases.keys().cloned().collect::<Vec<_>>();
+        runtime_ids.sort_by_key(|runtime_id| {
+            let role_class = self
+                .desired
+                .get(runtime_id)
+                .map(|desired| desired.role_class)
+                .unwrap_or(RuntimeRoleClass::Unknown);
+            (start_role_order(role_class), runtime_id.clone())
+        });
+        for runtime_id in runtime_ids {
+            let lease = startup_leases.get(&runtime_id).ok_or_else(|| {
+                SupervisorRuntimeError::InvalidCommand(format!(
+                    "startup lease for runtime '{runtime_id}' disappeared"
+                ))
+            })?;
+            self.start_runtime_after_lease(&runtime_id, lease, now_ms, NO_RESTART_ATTEMPTS, None)?;
         }
         Ok(())
     }
@@ -1125,10 +1170,12 @@ impl<'a> RuntimeSupervisor<'a> {
         startup_leases: &BTreeMap<String, RuntimeLease>,
         now_ms: u64,
     ) -> Result<(), SupervisorRuntimeError> {
-        for runtime in self.handles.values_mut() {
-            if runtime.handle.is_started() {
-                runtime.handle.request_stop();
-                runtime.handle.wait_for_safe_point();
+        for runtime_id in ordered_handle_ids(&self.handles, false) {
+            if let Some(runtime) = self.handles.get_mut(&runtime_id) {
+                if runtime.handle.is_started() {
+                    runtime.handle.request_stop();
+                    runtime.handle.wait_for_safe_point();
+                }
             }
         }
         self.handles.clear();
@@ -1309,7 +1356,7 @@ impl<'a> RuntimeSupervisor<'a> {
             if !self
                 .desired
                 .get(&runtime_id)
-                .is_some_and(SupervisorRuntimeDesired::worker_eligible)
+                .is_some_and(SupervisorRuntimeDesired::host_eligible)
             {
                 continue;
             }
@@ -1762,20 +1809,12 @@ impl<'a> RuntimeSupervisor<'a> {
                 },
                 last_error_code: tick_report.and_then(last_error_code),
             },
-            diagnostic: Some(RuntimeDiagnosticSummary {
-                actor_id: tick_report
-                    .map(|report| report.actor_id.clone())
-                    .unwrap_or_else(|| owner.runtime_id.to_string()),
-                retryable_issue_count: tick_report
-                    .map(|report| report.retryable_errors.len() as u64)
-                    .unwrap_or(NO_RUNTIME_ERRORS),
-                fatal_issue_count: tick_report
-                    .map(|report| report.fatal_errors.len() as u64)
-                    .unwrap_or(NO_RUNTIME_ERRORS),
-                budget_exhausted: tick_report
-                    .map(|report| report.budget_exhausted)
-                    .unwrap_or(false),
-                last_error_code: tick_report.and_then(last_error_code),
+            diagnostic: tick_report.map(|tick_report| RuntimeDiagnosticSummary {
+                actor_id: tick_report.actor_id.clone(),
+                retryable_issue_count: tick_report.retryable_errors.len() as u64,
+                fatal_issue_count: tick_report.fatal_errors.len() as u64,
+                budget_exhausted: tick_report.budget_exhausted,
+                last_error_code: last_error_code(tick_report),
             }),
         };
         self.supervisor_store.write_runtime_heartbeat(&heartbeat)?;
@@ -1884,6 +1923,44 @@ fn desired_default_health_status(desired: &SupervisorRuntimeDesired) -> RuntimeH
     }
 }
 
+fn start_role_order(role_class: RuntimeRoleClass) -> u8 {
+    match role_class {
+        RuntimeRoleClass::PassiveService => 0,
+        RuntimeRoleClass::Actor => 1,
+        RuntimeRoleClass::PortOnly => 2,
+        RuntimeRoleClass::Unknown => 3,
+    }
+}
+
+fn stop_role_order(role_class: RuntimeRoleClass) -> u8 {
+    match role_class {
+        RuntimeRoleClass::Actor => 0,
+        RuntimeRoleClass::PassiveService => 1,
+        RuntimeRoleClass::PortOnly => 2,
+        RuntimeRoleClass::Unknown => 3,
+    }
+}
+
+fn ordered_handle_ids(
+    handles: &BTreeMap<String, SupervisedRuntimeHandle>,
+    start_order: bool,
+) -> Vec<String> {
+    let mut runtime_ids = handles.keys().cloned().collect::<Vec<_>>();
+    runtime_ids.sort_by_key(|runtime_id| {
+        let role_class = handles
+            .get(runtime_id)
+            .map(|runtime| runtime.handle.role_class())
+            .unwrap_or(RuntimeRoleClass::Unknown);
+        let order = if start_order {
+            start_role_order(role_class)
+        } else {
+            stop_role_order(role_class)
+        };
+        (order, runtime_id.clone())
+    });
+    runtime_ids
+}
+
 fn is_retryable_restart_signal(heartbeat: &RuntimeHeartbeat) -> bool {
     heartbeat.health.fatal_error_count == 0
         && matches!(
@@ -1904,7 +1981,13 @@ fn replacement_checkpoint_completed(checkpoint: &RuntimeReplacementCheckpoint) -
         .is_some_and(|receipt| receipt.stage == RuntimeReplacementStage::Completed)
 }
 
-fn health_status_from_tick_report(report: Option<&WorkerTickReport>) -> RuntimeHealthStatus {
+fn health_status_from_tick_report(
+    tick_eligible: bool,
+    report: Option<&WorkerTickReport>,
+) -> RuntimeHealthStatus {
+    if !tick_eligible {
+        return RuntimeHealthStatus::Healthy;
+    }
     let Some(report) = report else {
         return RuntimeHealthStatus::Unhealthy;
     };
@@ -1955,7 +2038,7 @@ mod tests {
         assert_eq!(status.instance_id, "instance-a");
         assert_eq!(status.product_root, temp.path());
         assert_eq!(status.instance_status, RuntimeInstanceStatus::Running);
-        assert_eq!(status.runtimes.len(), 13);
+        assert_eq!(status.runtimes.len(), 15);
         assert_eq!(
             status
                 .runtimes
@@ -2342,7 +2425,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_runtime_alias_resolves_to_canonical_non_worker_records() {
+    fn legacy_runtime_alias_hosts_canonical_passive_service_without_worker_ticks() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
         config.enabled_runtime_ids = vec!["events.ledger".to_string()];
@@ -2375,33 +2458,86 @@ mod tests {
             .supervisor_store()
             .get_active_runtime_lease(&canonical)
             .unwrap()
-            .is_none());
+            .is_some());
         assert!(assembly
             .supervisor_store()
             .get_active_runtime_lease(&legacy)
             .unwrap()
-            .is_none());
+            .is_some());
         assert!(assembly
             .supervisor_store()
             .get_runtime_heartbeat(&legacy)
             .unwrap()
-            .is_none());
+            .is_some());
         assert!(assembly
             .supervisor_store()
             .get_health_snapshot(&legacy)
             .unwrap()
-            .is_none());
+            .is_some());
         assert!(assembly
             .supervisor_store()
             .latest_lifecycle_event_for_runtime(&legacy)
             .unwrap()
-            .is_none());
+            .is_some());
         let snapshot = supervisor.status_snapshot(100).unwrap();
         let status = runtime_status(&snapshot, "event.append");
         assert!(status.desired_enabled);
-        assert!(!status.handle_started);
-        assert!(status.active_owner_instance_id.is_none());
-        assert_eq!(status.health_status, RuntimeHealthStatus::Unknown);
+        assert!(status.handle_started);
+        assert_eq!(
+            status.active_owner_instance_id.as_deref(),
+            Some("instance-a")
+        );
+        assert_eq!(status.health_status, RuntimeHealthStatus::Starting);
+
+        let mut supervisor = supervisor;
+        let tick = supervisor.tick(101).unwrap();
+        assert!(tick.actions.is_empty());
+        let heartbeat = assembly
+            .supervisor_store()
+            .get_runtime_heartbeat(&canonical)
+            .unwrap()
+            .unwrap();
+        assert_eq!(heartbeat.health.status, RuntimeHealthStatus::Healthy);
+        assert!(heartbeat.diagnostic.is_none());
+    }
+
+    #[test]
+    fn passive_services_start_before_actors_and_stop_after_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        config.enabled_runtime_ids = vec![
+            "event.append".to_string(),
+            "world_model.graph_replay".to_string(),
+        ];
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let mut supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+        let event_append = RuntimeId::new("event.append").unwrap();
+        let graph_replay = RuntimeId::new("world_model.graph_replay").unwrap();
+        let service_started = assembly
+            .supervisor_store()
+            .latest_lifecycle_event_for_runtime(&event_append)
+            .unwrap()
+            .unwrap();
+        let actor_started = assembly
+            .supervisor_store()
+            .latest_lifecycle_event_for_runtime(&graph_replay)
+            .unwrap()
+            .unwrap();
+        assert!(service_started.event_id < actor_started.event_id);
+
+        let shutdown = supervisor.request_shutdown(101).unwrap();
+        assert_eq!(
+            shutdown
+                .stop_reports
+                .iter()
+                .map(|report| report.runtime_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["world_model.graph_replay", "event.append"]
+        );
     }
 
     #[test]

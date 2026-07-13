@@ -5,6 +5,7 @@ mod loader;
 mod normalization;
 mod packages;
 mod preflight;
+mod semantic;
 mod service;
 
 pub use contracts::{
@@ -27,6 +28,10 @@ pub use meld_execution::activation::{
 pub use packages::{ProductActivationRuntimeInputs, RuntimeActivationInput};
 pub use preflight::{
     preflight_execution_activation, preflight_validated_activation, ActivationPreflightError,
+};
+pub use semantic::{
+    SemanticRuntimeSelection, SemanticRuntimeSelectionError,
+    SEMANTIC_RUNTIME_SELECTION_SCHEMA_VERSION,
 };
 pub use service::{
     load_and_preflight_activation, load_and_prepare_activation, load_and_validate_activation,
