@@ -19,7 +19,9 @@ use crate::events::observability::{CoverageTruncation, EventReadCoverage};
 use crate::events::registry::{ConsumerCursor, EventCursorRegistry};
 use crate::events::store::EventStore;
 use crate::events::writer::{CommitWatermark, EventWriter};
-use crate::events::{EventEnvelope, EventRecord};
+use crate::events::{
+    validate_event_append_envelope, EventAppendValidationIssue, EventEnvelope, EventRecord,
+};
 
 /// Largest replay page accepted by the authority.
 pub const MAX_REPLAY_LIMIT: usize = 1_024;
@@ -44,6 +46,7 @@ struct AuthorityInner {
     store: Arc<EventStore>,
     writer: EventWriter,
     registry: EventCursorRegistry,
+    ingress_fence: Mutex<EventIngressFenceSnapshot>,
     _lease: AuthorityLease,
 }
 
@@ -376,6 +379,11 @@ impl EventAuthority {
                 store,
                 writer,
                 registry,
+                ingress_fence: Mutex::new(EventIngressFenceSnapshot {
+                    ledger_id,
+                    generation: 1,
+                    state: EventIngressFenceState::Open,
+                }),
                 _lease: lease,
             }),
         })
@@ -459,10 +467,14 @@ impl EventAppendCapability {
         mode: AppendMode,
     ) -> Result<AppendReceipt, EventAuthorityError> {
         validate_provenance(self.inner.ledger_id, &envelope)?;
+        validate_event_append_envelope(&envelope, mode == AppendMode::Idempotent)
+            .map_err(append_validation_error)?;
+        let fence = self.lock_open_ingress()?;
         let outcome = self
             .inner
             .writer
             .append_durable_outcome(envelope, mode == AppendMode::Idempotent)?;
+        drop(fence);
         Ok(AppendReceipt {
             ledger_id: self.inner.ledger_id,
             seq: outcome.seq,
@@ -483,8 +495,12 @@ impl EventAppendCapability {
     ) -> Result<Vec<AppendReceipt>, EventAuthorityError> {
         for envelope in &envelopes {
             validate_provenance(self.inner.ledger_id, envelope)?;
+            validate_event_append_envelope(envelope, mode == AppendMode::Idempotent)
+                .map_err(append_validation_error)?;
         }
-        self.inner
+        let fence = self.lock_open_ingress()?;
+        let receipts = self
+            .inner
             .writer
             .append_durable_outcomes_batch(envelopes, mode == AppendMode::Idempotent)?
             .into_iter()
@@ -499,7 +515,9 @@ impl EventAppendCapability {
                     },
                 })
             })
-            .collect()
+            .collect();
+        drop(fence);
+        receipts
     }
 
     /// Enqueues an envelope without claiming durability or a sequence.
@@ -509,9 +527,13 @@ impl EventAppendCapability {
         mode: AppendMode,
     ) -> Result<BestEffortAppendReceipt, EventAuthorityError> {
         validate_provenance(self.inner.ledger_id, &envelope)?;
+        validate_event_append_envelope(&envelope, mode == AppendMode::Idempotent)
+            .map_err(append_validation_error)?;
+        let fence = self.lock_open_ingress()?;
         self.inner
             .writer
             .enqueue_best_effort(envelope, mode == AppendMode::Idempotent)?;
+        drop(fence);
         Ok(BestEffortAppendReceipt {
             ledger_id: self.inner.ledger_id,
         })
@@ -521,6 +543,83 @@ impl EventAppendCapability {
     /// processed and its group flush attempted.
     pub fn barrier(&self) -> Result<(), EventAuthorityError> {
         self.inner.writer.barrier().map_err(Into::into)
+    }
+
+    /// Return the shared append-ingress fence snapshot.
+    pub fn ingress_fence(&self) -> EventIngressFenceSnapshot {
+        *self
+            .inner
+            .ingress_fence
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Fence new append admission, drain accepted work, and return the final durable barrier.
+    pub fn close_and_drain(&self) -> Result<EventFinalBarrier, EventAuthorityError> {
+        let draining = {
+            let mut fence = self
+                .inner
+                .ingress_fence
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if fence.state == EventIngressFenceState::Open {
+                fence.generation = fence.generation.saturating_add(1);
+                fence.state = EventIngressFenceState::Draining;
+            }
+            *fence
+        };
+
+        self.inner.writer.barrier()?;
+        let watermark = EventWatermark {
+            ledger_id: self.inner.ledger_id,
+            committed_seq: self.inner.writer.watermark().committed_seq(),
+            tip_seq: self.inner.store.tip_seq()?,
+        };
+        let closed = EventIngressFenceSnapshot {
+            state: EventIngressFenceState::Closed,
+            ..draining
+        };
+        let barrier = EventFinalBarrier::try_new(closed, watermark)?;
+        let closed = {
+            let mut fence = self
+                .inner
+                .ingress_fence
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if fence.generation != draining.generation {
+                return Err(EventAuthorityError::Internal {
+                    message: "event ingress fence generation changed while draining".to_string(),
+                });
+            }
+            fence.state = EventIngressFenceState::Closed;
+            *fence
+        };
+        debug_assert_eq!(closed, barrier.fence());
+        Ok(barrier)
+    }
+
+    fn lock_open_ingress(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, EventIngressFenceSnapshot>, EventAuthorityError> {
+        let fence = self
+            .inner
+            .ingress_fence
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if fence.state != EventIngressFenceState::Open {
+            return Err(EventAuthorityError::Unavailable {
+                message: format!("event append ingress is {:?}", fence.state),
+            });
+        }
+        Ok(fence)
+    }
+}
+
+fn append_validation_error(issue: EventAppendValidationIssue) -> EventAuthorityError {
+    EventAuthorityError::AppendValidation {
+        code: issue.code,
+        field: issue.field,
+        message: issue.message,
     }
 }
 
@@ -827,6 +926,38 @@ mod tests {
         let watermark = authority.watermark_capability().snapshot().unwrap();
         assert_eq!(watermark.committed_seq, 0);
         assert_eq!(watermark.tip_seq, 1);
+    }
+
+    #[test]
+    fn final_drain_retries_a_transient_barrier_flush_failure() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let authority = EventAuthority::open(db, EventAuthorityOpenOptions::default()).unwrap();
+        let append = authority.append_capability();
+        append
+            .append_durable(
+                EventEnvelope::new_domain(
+                    "2026-07-10T00:00:00Z".to_string(),
+                    "drain-test",
+                    "execution",
+                    "drain-test",
+                    "execution.drain_test",
+                    None,
+                    json!({}),
+                ),
+                AppendMode::Plain,
+            )
+            .unwrap();
+        authority.inner.store.fail_next_flush_for_test();
+
+        assert!(append.close_and_drain().is_err());
+        assert_eq!(
+            append.ingress_fence().state,
+            EventIngressFenceState::Draining
+        );
+        let barrier = append.close_and_drain().unwrap();
+        assert_eq!(barrier.fence().state, EventIngressFenceState::Closed);
+        assert_eq!(barrier.watermark().committed_seq, 1);
+        assert_eq!(barrier.watermark().tip_seq, 1);
     }
 
     #[test]

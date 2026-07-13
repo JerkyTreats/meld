@@ -2186,11 +2186,14 @@ mod tests {
         assembly
             .ports()
             .event_append()
-            .append_envelope_idempotent(meld_events::EventEnvelope::with_now(
-                "session-a",
-                "session.tick",
-                serde_json::json!({}),
-            ))
+            .append_envelope_idempotent(
+                meld_events::EventEnvelope::with_now(
+                    "session-a",
+                    "session.tick",
+                    serde_json::json!({}),
+                )
+                .with_record_id("runtime-assembly-status-tick"),
+            )
             .unwrap();
         let second = handle.tick(WorkBudget { max_items: 8 }).unwrap();
         assert!(second.output_checkpoint.value > second.input_checkpoint.value);

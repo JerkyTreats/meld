@@ -79,7 +79,7 @@ enum WriteRequest {
         idempotent: bool,
         ack: Option<SyncSender<Result<StoreAppendOutcome, StorageError>>>,
     },
-    Barrier(SyncSender<()>),
+    Barrier(SyncSender<Result<(), StorageError>>),
     Shutdown,
 }
 
@@ -242,7 +242,7 @@ impl EventWriter {
         self.sender
             .send(WriteRequest::Barrier(ack_sender))
             .map_err(|_| disconnected())?;
-        ack_receiver.recv().map_err(|_| disconnected())
+        ack_receiver.recv().map_err(|_| disconnected())?
     }
 
     /// Returns the shared committed-sequence watermark.
@@ -282,6 +282,7 @@ fn run_writer(
     watermark: Arc<CommitWatermark>,
 ) {
     let mut shutting_down = false;
+    let mut pending_max_seq = 0u64;
     while !shutting_down {
         let first = match receiver.recv() {
             Ok(request) => request,
@@ -304,7 +305,7 @@ fn run_writer(
                 Err(_) => break,
             }
         }
-        commit_batch(&store, &watermark, batch);
+        commit_batch(&store, &watermark, batch, &mut pending_max_seq);
     }
 
     // Drain-on-shutdown: everything already queued still commits before the
@@ -315,18 +316,22 @@ fn run_writer(
             remaining.push(request);
         }
     }
-    commit_batch(&store, &watermark, remaining);
+    commit_batch(&store, &watermark, remaining, &mut pending_max_seq);
 }
 
-fn commit_batch(store: &EventStore, watermark: &CommitWatermark, batch: Vec<WriteRequest>) {
-    if batch.is_empty() {
+fn commit_batch(
+    store: &EventStore,
+    watermark: &CommitWatermark,
+    batch: Vec<WriteRequest>,
+    pending_max_seq: &mut u64,
+) {
+    if batch.is_empty() && *pending_max_seq == 0 {
         return;
     }
 
     let mut acks = Vec::new();
     let mut barriers = Vec::new();
     let mut max_seq = 0u64;
-    let mut appends = 0usize;
     for request in batch {
         let (envelope, idempotent, ack) = match request {
             WriteRequest::Append {
@@ -340,7 +345,6 @@ fn commit_batch(store: &EventStore, watermark: &CommitWatermark, batch: Vec<Writ
             }
             WriteRequest::Shutdown => continue,
         };
-        appends += 1;
         let result = store.append_envelope_outcome(*envelope, idempotent);
         if let Ok(outcome) = result.as_ref() {
             max_seq = max_seq.max(outcome.seq);
@@ -355,14 +359,16 @@ fn commit_batch(store: &EventStore, watermark: &CommitWatermark, batch: Vec<Writ
         }
     }
 
-    // A barrier-only batch has nothing new to flush: earlier batches
-    // already flushed their appends before acking.
-    let flush_result = if appends > 0 { store.flush() } else { Ok(()) };
+    // Barrier-only batches retry a prior indeterminate flush and reconcile the
+    // writer watermark with the durable ledger tip.
+    *pending_max_seq = (*pending_max_seq).max(max_seq);
+    let flush_result = store.flush();
 
     // The watermark advances before any ack releases a producer, so an
     // acked caller can always observe a watermark at or past its sequence.
-    if flush_result.is_ok() && max_seq > 0 {
-        watermark.advance(max_seq);
+    if flush_result.is_ok() && *pending_max_seq > 0 {
+        watermark.advance(*pending_max_seq);
+        *pending_max_seq = 0;
     }
 
     // A durable ack means durable bytes: successful appends are downgraded
@@ -378,7 +384,7 @@ fn commit_batch(store: &EventStore, watermark: &CommitWatermark, batch: Vec<Writ
     }
 
     for barrier in barriers {
-        let _ = barrier.send(());
+        let _ = barrier.send(flush_result.clone().map(|_| ()));
     }
 }
 

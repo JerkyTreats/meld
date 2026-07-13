@@ -364,6 +364,13 @@ fn validate_replay_page(
 
 fn authority_error_to_storage(error: EventAuthorityError) -> StorageError {
     match error {
+        EventAuthorityError::AppendValidation {
+            code,
+            field,
+            message,
+        } => StorageError::InvalidPath(format!(
+            "event append validation {code:?} at {field}: {message}"
+        )),
         EventAuthorityError::InvalidRequest { message }
         | EventAuthorityError::Internal { message }
         | EventAuthorityError::CorruptPersistedIdentity { message }

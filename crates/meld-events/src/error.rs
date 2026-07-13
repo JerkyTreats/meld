@@ -97,6 +97,17 @@ impl Clone for StorageError {
 #[derive(Debug, Error, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EventAuthorityError {
+    /// Canonical append ingress rejected malformed envelope structure.
+    #[error("Event append validation failed at {field}: {message}")]
+    AppendValidation {
+        /// Stable machine-readable validation category.
+        code: crate::events::EventAppendValidationCode,
+        /// Rejected envelope field path.
+        field: String,
+        /// Bounded validation detail.
+        message: String,
+    },
+
     /// The request violates a documented bound or invariant.
     #[error("Invalid request: {message}")]
     InvalidRequest {

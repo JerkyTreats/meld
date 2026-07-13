@@ -148,6 +148,7 @@ pub fn snapshot_selected_envelope(
         snapshot_head_ref(workspace_root).expect("workspace snapshot head ref should be valid");
     let snapshot = snapshot_ref(root_node_id).expect("workspace snapshot ref should be valid");
     let stream_id = source.object_id.clone();
+    let mut objects = vec![source.clone(), head.clone(), snapshot.clone()];
     let mut relations = vec![
         EventRelation::new("attached_to", head.clone(), source.clone())
             .expect("workspace attached_to relation should be valid"),
@@ -155,14 +156,13 @@ pub fn snapshot_selected_envelope(
             .expect("workspace selected relation should be valid"),
     ];
     if let Some(previous_root_node_id) = previous_root_node_id {
+        let previous_snapshot =
+            snapshot_ref(previous_root_node_id).expect("previous snapshot ref should be valid");
         relations.push(
-            EventRelation::new(
-                "supersedes",
-                snapshot.clone(),
-                snapshot_ref(previous_root_node_id).expect("previous snapshot ref should be valid"),
-            )
-            .expect("workspace supersedes relation should be valid"),
+            EventRelation::new("supersedes", snapshot.clone(), previous_snapshot.clone())
+                .expect("workspace supersedes relation should be valid"),
         );
+        objects.push(previous_snapshot);
     }
     workspace_envelope(
         session_id,
@@ -173,11 +173,7 @@ pub fn snapshot_selected_envelope(
             snapshot_id: snapshot.object_id.clone(),
             root_node_id: hex::encode(root_node_id),
         }),
-        vec![
-            source.clone(),
-            snapshot_head_ref(workspace_root).expect("workspace snapshot head ref should be valid"),
-            snapshot,
-        ],
+        objects,
         relations,
     )
 }

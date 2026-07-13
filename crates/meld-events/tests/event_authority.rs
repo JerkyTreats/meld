@@ -3,8 +3,9 @@ use std::time::Duration;
 
 use meld_events::error::{EventAuthorityError, StorageError};
 use meld_events::events::authority::{
-    AppendDisposition, AppendMode, EventAuthority, EventAuthorityOpenOptions, LedgerCursor,
-    ReplayRequest, SubscriptionPollRequest, MAX_REPLAY_LIMIT, MAX_SUBSCRIPTION_TIMEOUT_MS,
+    AppendDisposition, AppendMode, EventAuthority, EventAuthorityOpenOptions,
+    EventIngressFenceState, LedgerCursor, ReplayRequest, SubscriptionPollRequest, MAX_REPLAY_LIMIT,
+    MAX_SUBSCRIPTION_TIMEOUT_MS,
 };
 use meld_events::events::identity::LedgerIdentity;
 use meld_events::events::observability::CoverageTruncation;
@@ -12,7 +13,7 @@ use meld_events::events::observability::CoverageTruncation;
 use meld_events::events::test_support::{
     EventCursor, EventCursorTestSupport as _, EventStore, EventStoreTestSupport as _,
 };
-use meld_events::EventEnvelope;
+use meld_events::{DomainObjectRef, EventAppendValidationCode, EventEnvelope, EventRelation};
 use serde_json::json;
 
 const META_TREE: &str = "obs_spine_meta";
@@ -276,6 +277,91 @@ fn idempotent_duplicate_receipt_reuses_the_original_sequence() {
     assert_eq!(first.seq, duplicate.seq);
     assert_eq!(first.disposition, AppendDisposition::Inserted);
     assert_eq!(duplicate.disposition, AppendDisposition::Duplicate);
+}
+
+#[test]
+fn idempotent_append_requires_a_stable_record_id_before_admission() {
+    let (_dir, authority) = temporary_authority();
+    let append = authority.append_capability();
+
+    assert!(matches!(
+        append.append_durable(envelope(0), AppendMode::Idempotent),
+        Err(EventAuthorityError::AppendValidation {
+            code: EventAppendValidationCode::MissingIdempotencyRecordId,
+            ..
+        })
+    ));
+    let watermark = authority.watermark_capability().snapshot().unwrap();
+    assert_eq!(watermark.tip_seq, 0);
+    assert_eq!(watermark.committed_seq, 0);
+}
+
+#[test]
+fn append_ingress_rejects_duplicate_objects_and_undeclared_relation_endpoints() {
+    let (_dir, authority) = temporary_authority();
+    let append = authority.append_capability();
+    let subject = DomainObjectRef::new("workspace_fs", "node", "readme").unwrap();
+    let duplicate = envelope(0).with_graph(vec![subject.clone(), subject.clone()], vec![]);
+    assert!(matches!(
+        append.append_durable(duplicate, AppendMode::Plain),
+        Err(EventAuthorityError::AppendValidation {
+            code: EventAppendValidationCode::DuplicateObjectReference,
+            ..
+        })
+    ));
+
+    let missing = DomainObjectRef::new("execution", "artifact", "artifact-a").unwrap();
+    let relation = EventRelation::new("selected", subject.clone(), missing).unwrap();
+    let undeclared = envelope(1).with_graph(vec![subject], vec![relation]);
+    assert!(matches!(
+        append.append_durable(undeclared, AppendMode::Plain),
+        Err(EventAuthorityError::AppendValidation {
+            code: EventAppendValidationCode::RelationEndpointNotDeclared,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn final_barrier_closes_shared_ingress_after_draining_accepted_work() {
+    let (_dir, authority) = temporary_authority();
+    let first = authority.append_capability();
+    let contender = first.clone();
+    first
+        .append_best_effort(envelope(0), AppendMode::Plain)
+        .unwrap();
+
+    let barrier = first.close_and_drain().unwrap();
+
+    assert_eq!(barrier.fence().state, EventIngressFenceState::Closed);
+    assert_eq!(barrier.fence().ledger_id, authority.ledger_identity());
+    assert_eq!(barrier.watermark().committed_seq, 1);
+    assert_eq!(barrier.watermark().tip_seq, 1);
+    assert!(matches!(
+        contender.append_durable(envelope(1), AppendMode::Plain),
+        Err(EventAuthorityError::Unavailable { .. })
+    ));
+    assert_eq!(contender.ingress_fence(), barrier.fence());
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn failed_final_barrier_keeps_ingress_in_draining_state() {
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let authority = EventAuthority::open(db.clone(), EventAuthorityOpenOptions::default()).unwrap();
+    let raw_store = EventStore::new(db).unwrap();
+    raw_store.append_envelope(envelope(0)).unwrap();
+    raw_store.flush().unwrap();
+    let append = authority.append_capability();
+
+    assert!(matches!(
+        append.close_and_drain(),
+        Err(EventAuthorityError::InvalidRequest { .. })
+    ));
+    assert_eq!(
+        append.ingress_fence().state,
+        EventIngressFenceState::Draining
+    );
 }
 
 #[test]

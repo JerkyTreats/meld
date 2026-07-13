@@ -205,6 +205,13 @@ fn authority_api_error(error: EventAuthorityError) -> ApiError {
 
 fn authority_storage_error(error: EventAuthorityError) -> StorageError {
     match error {
+        EventAuthorityError::AppendValidation {
+            code,
+            field,
+            message,
+        } => StorageError::InvalidPath(format!(
+            "event append validation {code:?} at {field}: {message}"
+        )),
         EventAuthorityError::InvalidRequest { message } => StorageError::InvalidPath(message),
         EventAuthorityError::IdentityMismatch { expected, actual } => {
             StorageError::LedgerIdentityMismatch {

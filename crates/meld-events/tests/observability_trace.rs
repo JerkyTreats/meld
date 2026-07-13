@@ -434,7 +434,7 @@ fn unknown_subjects_trace_to_empty_reports() {
 }
 
 #[test]
-fn relation_only_records_support_object_and_record_neighborhoods() {
+fn declared_relation_endpoints_support_object_and_record_neighborhoods() {
     let fx = fixture();
     let first = fx.append(
         EventEnvelope::new_domain(
@@ -447,7 +447,7 @@ fn relation_only_records_support_object_and_record_neighborhoods() {
             json!({}),
         )
         .with_graph(
-            Vec::new(),
+            vec![node_ref("node-a"), node_ref("node-b")],
             vec![EventRelation::new("contains", node_ref("node-a"), node_ref("node-b")).unwrap()],
         ),
     );
@@ -462,7 +462,7 @@ fn relation_only_records_support_object_and_record_neighborhoods() {
             json!({}),
         )
         .with_graph(
-            Vec::new(),
+            vec![node_ref("node-b"), node_ref("node-c")],
             vec![EventRelation::new("depends_on", node_ref("node-b"), node_ref("node-c")).unwrap()],
         ),
     );

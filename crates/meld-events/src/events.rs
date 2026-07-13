@@ -79,9 +79,10 @@ pub use authority::{
     ReplayRequest, SubscriptionPollRequest, MAX_REPLAY_LIMIT, MAX_SUBSCRIPTION_TIMEOUT_MS,
 };
 pub use contracts::{
-    validate_event_structural_identifier, DomainObjectRef, EventAppendValidationCode,
-    EventAppendValidationIssue, EventRelation, EventStructuralIdentifierKind,
-    MAX_EVENT_NAMESPACE_IDENTIFIER_BYTES, MAX_EVENT_OPAQUE_IDENTIFIER_BYTES,
+    validate_event_append_envelope, validate_event_structural_identifier, DomainObjectRef,
+    EventAppendValidationCode, EventAppendValidationIssue, EventRelation,
+    EventStructuralIdentifierKind, MAX_EVENT_NAMESPACE_IDENTIFIER_BYTES,
+    MAX_EVENT_OPAQUE_IDENTIFIER_BYTES,
 };
 pub use identity::LedgerIdentity;
 pub use migration::{

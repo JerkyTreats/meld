@@ -22,8 +22,10 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 use crate::error::StorageError;
+use crate::events::EventEnvelope;
 
 /// Structural validation category for canonical append ingress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +147,109 @@ pub fn validate_event_structural_identifier(
             ),
         })
     }
+}
+
+/// Validate one complete envelope before canonical append admission.
+pub fn validate_event_append_envelope(
+    envelope: &EventEnvelope,
+    idempotent: bool,
+) -> Result<(), EventAppendValidationIssue> {
+    if idempotent && envelope.record_id.is_none() {
+        return Err(EventAppendValidationIssue {
+            code: EventAppendValidationCode::MissingIdempotencyRecordId,
+            field: "record_id".to_string(),
+            message: "idempotent append requires a stable record id".to_string(),
+        });
+    }
+    for (kind, field, value) in [
+        (
+            EventStructuralIdentifierKind::SessionId,
+            "session",
+            envelope.session.as_str(),
+        ),
+        (
+            EventStructuralIdentifierKind::DomainId,
+            "domain_id",
+            envelope.domain_id.as_str(),
+        ),
+        (
+            EventStructuralIdentifierKind::StreamId,
+            "stream_id",
+            envelope.stream_id.as_str(),
+        ),
+        (
+            EventStructuralIdentifierKind::EventType,
+            "event_type",
+            envelope.event_type.as_str(),
+        ),
+    ] {
+        validate_event_structural_identifier(kind, value).map_err(|mut issue| {
+            issue.field = field.to_string();
+            issue
+        })?;
+    }
+    if let Some(record_id) = &envelope.record_id {
+        validate_event_structural_identifier(EventStructuralIdentifierKind::RecordId, record_id)
+            .map_err(|mut issue| {
+                issue.field = "record_id".to_string();
+                issue
+            })?;
+    }
+
+    let mut declared = BTreeSet::new();
+    for (index, object) in envelope.objects.iter().enumerate() {
+        for (kind, component, value) in [
+            (
+                EventStructuralIdentifierKind::ObjectDomainId,
+                "domain_id",
+                object.domain_id.as_str(),
+            ),
+            (
+                EventStructuralIdentifierKind::ObjectKind,
+                "object_kind",
+                object.object_kind.as_str(),
+            ),
+            (
+                EventStructuralIdentifierKind::ObjectId,
+                "object_id",
+                object.object_id.as_str(),
+            ),
+        ] {
+            validate_event_structural_identifier(kind, value).map_err(|mut issue| {
+                issue.field = format!("objects.{index}.{component}");
+                issue
+            })?;
+        }
+        if !declared.insert(object.clone()) {
+            return Err(EventAppendValidationIssue {
+                code: EventAppendValidationCode::DuplicateObjectReference,
+                field: format!("objects.{index}"),
+                message: "event object references must be unique".to_string(),
+            });
+        }
+    }
+
+    for (index, relation) in envelope.relations.iter().enumerate() {
+        validate_event_structural_identifier(
+            EventStructuralIdentifierKind::RelationType,
+            &relation.relation_type,
+        )
+        .map_err(|mut issue| {
+            issue.field = format!("relations.{index}.relation_type");
+            issue
+        })?;
+        for (endpoint, object) in [("src", &relation.src), ("dst", &relation.dst)] {
+            if !declared.contains(object) {
+                return Err(EventAppendValidationIssue {
+                    code: EventAppendValidationCode::RelationEndpointNotDeclared,
+                    field: format!("relations.{index}.{endpoint}"),
+                    message: "relation endpoints must be declared in the event object set"
+                        .to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Stable object coordinate carried on event envelopes for downstream graph materializers.

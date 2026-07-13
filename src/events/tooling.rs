@@ -119,6 +119,13 @@ pub(crate) fn surface_authority_error(_surface: &str, error: EventAuthorityError
     use crate::error::StorageError;
 
     let error = match error {
+        EventAuthorityError::AppendValidation {
+            code,
+            field,
+            message,
+        } => StorageError::InvalidPath(format!(
+            "event append validation {code:?} at {field}: {message}"
+        )),
         EventAuthorityError::InvalidRequest { message } => StorageError::InvalidPath(message),
         EventAuthorityError::IdentityMismatch { expected, actual } => {
             StorageError::LedgerIdentityMismatch {
