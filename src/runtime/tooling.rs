@@ -11,6 +11,7 @@ use serde::Serialize;
 use crate::cli::RuntimeCommands;
 use crate::error::ApiError;
 use crate::runtime::assembly::{DesiredRuntimeState, ProductRuntimeAssembly};
+use crate::runtime::contracts::{RuntimeImplementationState, RuntimeRoleClass};
 use crate::runtime::presentation::{format_runtime_run_result, format_runtime_status};
 use crate::runtime::supervisor::{
     RestartCause, RestartPolicy, RuntimeHealthStatus, RuntimeId, RuntimeInstance,
@@ -58,10 +59,16 @@ pub struct RuntimeCliRuntimeStatus {
     pub desired_enabled: bool,
     /// Whether assembly provided a factory for the runtime.
     pub factory_available: bool,
+    /// Canonical lifecycle shape for this role.
+    pub role_class: RuntimeRoleClass,
+    /// Honest implementation posture for this desired row.
+    pub implementation_state: RuntimeImplementationState,
     /// Whether this command has a process-local started handle.
     pub handle_started: bool,
     /// Active lease id when present.
     pub active_lease_id: Option<String>,
+    /// Supervisor instance that owns the active lease.
+    pub active_owner_instance_id: Option<String>,
     /// Active lease status when present.
     pub lease_status: Option<RuntimeLeaseStatus>,
     /// Active lease expiry time when present.
@@ -158,14 +165,62 @@ fn runtime_status(
     runtime_ids: &[String],
 ) -> Result<String, ApiError> {
     validate_format(format)?;
-    let selected = select_desired_runtime_state(assembly.desired_runtime_state(), runtime_ids)?;
+    let canonical_runtime_ids = runtime_ids
+        .iter()
+        .map(|runtime_id| {
+            assembly
+                .registry()
+                .canonical_id(runtime_id)
+                .unwrap_or(runtime_id)
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    let selected =
+        select_desired_runtime_state(assembly.desired_runtime_state(), &canonical_runtime_ids)?;
     let store = assembly.supervisor_store();
     let now_ms = current_time_ms()?;
-
-    let instance = store
-        .latest_runtime_instance()
-        .map_err(runtime_error)?
-        .map(RuntimeCliInstanceStatus::from);
+    let active_owner_ids = selected
+        .iter()
+        .map(|desired| {
+            let runtime_id = RuntimeId::new(desired.runtime_id.clone()).map_err(runtime_error)?;
+            store
+                .get_active_runtime_lease(&runtime_id)
+                .map_err(runtime_error)
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .filter(|lease| lease.is_active_at(now_ms))
+        .map(|lease| lease.instance_id)
+        .collect::<BTreeSet<_>>();
+    let selected_runtime_ids = selected
+        .iter()
+        .map(|desired| desired.runtime_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let historical_owner_id = if active_owner_ids.is_empty() {
+        store
+            .list_runtime_leases()
+            .map_err(runtime_error)?
+            .into_iter()
+            .rev()
+            .find(|lease| selected_runtime_ids.contains(lease.runtime_id.as_str()))
+            .map(|lease| lease.instance_id)
+    } else {
+        None
+    };
+    let owner_instance_id = if active_owner_ids.len() == 1 {
+        active_owner_ids.iter().next().cloned()
+    } else {
+        historical_owner_id
+    };
+    let instance = if let Some(owner_instance_id) = owner_instance_id {
+        store
+            .get_runtime_instance(&owner_instance_id)
+            .map_err(runtime_error)?
+    } else {
+        store.latest_runtime_instance().map_err(runtime_error)?
+    }
+    .map(RuntimeCliInstanceStatus::from);
     store.list_desired_runtime_state().map_err(runtime_error)?;
 
     let runtimes = selected
@@ -386,8 +441,11 @@ fn runtime_status_row(
             runtime_id: desired.runtime_id.clone(),
             desired_enabled: desired.enabled,
             factory_available: desired.factory_available,
+            role_class: desired.role_class,
+            implementation_state: desired.implementation_state,
             handle_started: false,
             active_lease_id: None,
+            active_owner_instance_id: None,
             lease_status: None,
             lease_expires_at_ms: None,
             last_heartbeat_at_ms: None,
@@ -406,12 +464,35 @@ fn runtime_status_row(
     let active_lease = store
         .get_active_runtime_lease(&runtime_id)
         .map_err(runtime_error)?;
+    let active_lease = active_lease.filter(|lease| lease.is_active_at(now_ms));
     let heartbeat = store
         .get_runtime_heartbeat(&runtime_id)
-        .map_err(runtime_error)?;
+        .map_err(runtime_error)?
+        .filter(|heartbeat| match active_lease.as_ref() {
+            Some(lease) => {
+                heartbeat.lease_id == lease.lease_id && heartbeat.instance_id == lease.instance_id
+            }
+            None => {
+                desired_worker_eligible(desired)
+                    && matches!(
+                        heartbeat.health.status,
+                        RuntimeHealthStatus::Stopped | RuntimeHealthStatus::Unhealthy
+                    )
+            }
+        });
     let health = store
         .get_health_snapshot(&runtime_id)
-        .map_err(runtime_error)?;
+        .map_err(runtime_error)?
+        .filter(|health| match active_lease.as_ref() {
+            Some(lease) => health.lease_id.as_deref() == Some(lease.lease_id.as_str()),
+            None => {
+                desired_worker_eligible(desired)
+                    && matches!(
+                        health.status,
+                        RuntimeHealthStatus::Stopped | RuntimeHealthStatus::Unhealthy
+                    )
+            }
+        });
     let event = store
         .latest_lifecycle_event_for_runtime(&runtime_id)
         .map_err(runtime_error)?;
@@ -454,8 +535,13 @@ fn runtime_status_row(
         runtime_id: desired.runtime_id.clone(),
         desired_enabled: desired.enabled,
         factory_available: desired.factory_available,
+        role_class: desired.role_class,
+        implementation_state: desired.implementation_state,
         handle_started: false,
         active_lease_id: active_lease.as_ref().map(|record| record.lease_id.clone()),
+        active_owner_instance_id: active_lease
+            .as_ref()
+            .map(|record| record.instance_id.clone()),
         lease_status: active_lease.as_ref().map(|record| record.status),
         lease_expires_at_ms: active_lease.as_ref().map(|record| record.expires_at_ms),
         last_heartbeat_at_ms,
@@ -505,11 +591,20 @@ fn select_desired_runtime_state(
 fn default_health_status(desired: &DesiredRuntimeState) -> RuntimeHealthStatus {
     if !desired.enabled {
         RuntimeHealthStatus::Stopped
-    } else if !desired.factory_available {
+    } else if desired.implementation_state != RuntimeImplementationState::Concrete
+        || !desired.factory_available
+    {
         RuntimeHealthStatus::Unhealthy
     } else {
         RuntimeHealthStatus::Unknown
     }
+}
+
+fn desired_worker_eligible(desired: &DesiredRuntimeState) -> bool {
+    desired.enabled
+        && desired.factory_available
+        && desired.role_class == RuntimeRoleClass::Actor
+        && desired.implementation_state == RuntimeImplementationState::Concrete
 }
 
 fn parse_restart_policy(value: &str) -> Result<RestartPolicy, ApiError> {

@@ -68,6 +68,12 @@ pub enum SupervisorStoreError {
         /// Current active lease id.
         active_lease_id: String,
     },
+    /// A supervisor instance id is already registered.
+    #[error("supervisor instance id '{instance_id}' is already registered")]
+    DuplicateInstanceId {
+        /// Caller-supplied duplicate instance id.
+        instance_id: String,
+    },
     /// Caller is not the active lease owner for the runtime id.
     #[error(
         "stale lease owner for runtime id '{runtime_id}', lease '{lease_id}', instance '{instance_id}'"
@@ -154,6 +160,29 @@ impl SupervisorStore {
         Ok(())
     }
 
+    /// Register one new supervisor instance without overwriting an existing id.
+    pub fn register_runtime_instance(
+        &self,
+        record: &RuntimeInstance,
+    ) -> Result<(), SupervisorStoreError> {
+        require_non_empty("instance_id", &record.instance_id)?;
+        let key = record.instance_id.as_bytes().to_vec();
+        let encoded = encode(record)?;
+        self.instances
+            .transaction(|instances| {
+                if instances.get(key.clone())?.is_some() {
+                    return Err(ConflictableTransactionError::Abort(
+                        SupervisorStoreError::DuplicateInstanceId {
+                            instance_id: record.instance_id.clone(),
+                        },
+                    ));
+                }
+                instances.insert(key.clone(), encoded.clone())?;
+                Ok(())
+            })
+            .map_err(to_transaction)
+    }
+
     /// Read a supervisor instance record.
     pub fn get_runtime_instance(
         &self,
@@ -226,6 +255,18 @@ impl SupervisorStore {
         lease_id: &str,
     ) -> Result<Option<RuntimeLease>, SupervisorStoreError> {
         read_optional(&self.leases, &lease_key(runtime_id, lease_id))
+    }
+
+    /// List historical leases ordered by acquisition time and stable identity.
+    pub fn list_runtime_leases(&self) -> Result<Vec<RuntimeLease>, SupervisorStoreError> {
+        let mut records: Vec<RuntimeLease> = read_all(&self.leases)?;
+        records.sort_by(|left, right| {
+            left.acquired_at_ms
+                .cmp(&right.acquired_at_ms)
+                .then_with(|| left.runtime_id.cmp(&right.runtime_id))
+                .then_with(|| left.lease_id.cmp(&right.lease_id))
+        });
+        Ok(records)
     }
 
     /// Read the current active lease for one runtime id.

@@ -1,6 +1,6 @@
 //! Runtime worker diagnostic and operator visibility contracts.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use meld_execution::planning::PlanningRuntimeActorReport;
 use meld_execution::task_network::{PublicationBridgeReport, PublicationRuntimeReport};
@@ -12,6 +12,175 @@ use crate::runtime::ports::DocsTaskEvidenceReplayReport;
 
 /// Current schema version for runtime status cache records.
 pub const RUNTIME_STATUS_CACHE_SCHEMA_VERSION: u16 = 1;
+
+/// Oldest cache schema supported through additive defaults.
+pub const RUNTIME_STATUS_CACHE_MIN_SUPPORTED_SCHEMA_VERSION: u16 = 0;
+
+/// Stable warning code for a cache timestamp ahead of the reader clock.
+pub const RUNTIME_STATUS_WARNING_CLOCK_SKEW: &str = "runtime_status_clock_skew";
+
+/// Stable warning code for an older compatible schema.
+pub const RUNTIME_STATUS_WARNING_OLDER_SCHEMA: &str = "runtime_status_older_schema";
+
+/// Stable warning code for truncated cache data.
+pub const RUNTIME_STATUS_WARNING_TRUNCATED: &str = "runtime_status_truncated";
+
+/// Stable warning code for an unreadable cache projection.
+pub const RUNTIME_STATUS_WARNING_UNREADABLE: &str = "runtime_status_unreadable";
+
+/// Maximum encoded byte size for `latest.json`.
+pub const RUNTIME_STATUS_LATEST_MAX_BYTES: usize = 1024 * 1024;
+
+/// Maximum encoded byte size for `actions.jsonl`, including line endings.
+pub const RUNTIME_STATUS_ACTIONS_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// Maximum retained action count.
+pub const RUNTIME_STATUS_RECENT_ACTION_MAX_COUNT: usize = 256;
+
+/// Maximum issue summaries retained for one action.
+pub const RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT: usize = 16;
+
+/// Maximum UTF-8 byte size for one issue message.
+pub const RUNTIME_STATUS_ISSUE_MESSAGE_MAX_BYTES: usize = 1024;
+
+/// Stable filesystem layout for passive runtime status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeStatusCacheLayout {
+    /// Directory containing every cache projection.
+    pub root: PathBuf,
+    /// Atomically replaced latest status snapshot.
+    pub latest: PathBuf,
+    /// Bounded recent action log.
+    pub actions: PathBuf,
+    /// Process locator projection reserved for process hosting.
+    pub process: PathBuf,
+    /// Exclusive advisory lock held for the publisher lifetime.
+    pub writer_lock: PathBuf,
+}
+
+impl RuntimeStatusCacheLayout {
+    /// Derive the cache paths from one product root.
+    pub fn from_product_root(product_root: impl AsRef<Path>) -> Self {
+        let root = product_root.as_ref().join("runtime").join("status");
+        Self {
+            latest: root.join("latest.json"),
+            actions: root.join("actions.jsonl"),
+            process: root.join("process.json"),
+            writer_lock: root.join("writer.lock"),
+            root,
+        }
+    }
+
+    /// Derive a unique sibling used before sync and atomic rename.
+    pub fn temporary_path(target: &Path, process_id: u32, nonce: u64) -> PathBuf {
+        let mut name = target.as_os_str().to_os_string();
+        name.push(format!(".{process_id}-{nonce}.tmp"));
+        PathBuf::from(name)
+    }
+}
+
+/// Frozen cache bounds shared by publishers and readers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeStatusCacheLimits {
+    /// Maximum encoded latest snapshot bytes.
+    pub latest_max_bytes: usize,
+    /// Maximum encoded recent action file bytes.
+    pub actions_max_bytes: usize,
+    /// Maximum recent action records retained.
+    pub recent_action_max_count: usize,
+    /// Maximum issues retained per action.
+    pub issue_max_count: usize,
+    /// Maximum UTF-8 bytes retained per issue message.
+    pub issue_message_max_bytes: usize,
+}
+
+/// Ordered durability steps required for cache file replacement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeStatusAtomicWriteStep {
+    /// Serialize and enforce bounds before touching the destination.
+    SerializeAndValidate,
+    /// Create one unique sibling temporary file without overwriting another.
+    CreateNewTemporaryFile,
+    /// Write all bytes and synchronize the temporary file.
+    WriteAndSyncTemporaryFile,
+    /// Atomically rename the temporary file over the destination.
+    RenameOverDestination,
+    /// Synchronize the parent directory after rename.
+    SyncParentDirectory,
+}
+
+/// Frozen atomic replacement protocol for cache publishers.
+pub const RUNTIME_STATUS_ATOMIC_WRITE_PROTOCOL: &[RuntimeStatusAtomicWriteStep] = &[
+    RuntimeStatusAtomicWriteStep::SerializeAndValidate,
+    RuntimeStatusAtomicWriteStep::CreateNewTemporaryFile,
+    RuntimeStatusAtomicWriteStep::WriteAndSyncTemporaryFile,
+    RuntimeStatusAtomicWriteStep::RenameOverDestination,
+    RuntimeStatusAtomicWriteStep::SyncParentDirectory,
+];
+
+impl Default for RuntimeStatusCacheLimits {
+    fn default() -> Self {
+        Self {
+            latest_max_bytes: RUNTIME_STATUS_LATEST_MAX_BYTES,
+            actions_max_bytes: RUNTIME_STATUS_ACTIONS_MAX_BYTES,
+            recent_action_max_count: RUNTIME_STATUS_RECENT_ACTION_MAX_COUNT,
+            issue_max_count: RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT,
+            issue_message_max_bytes: RUNTIME_STATUS_ISSUE_MESSAGE_MAX_BYTES,
+        }
+    }
+}
+
+/// Reader compatibility decision derived before full cache decoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeStatusCacheCompatibility {
+    /// Current schema can be decoded normally.
+    Current,
+    /// Older schema is decoded with additive defaults and a warning.
+    Older,
+    /// Future schema is not decoded and is reported as unsupported.
+    UnsupportedFuture,
+}
+
+impl RuntimeStatusCacheCompatibility {
+    /// Classify one observed schema version.
+    pub fn for_schema_version(schema_version: u16) -> Self {
+        match schema_version.cmp(&RUNTIME_STATUS_CACHE_SCHEMA_VERSION) {
+            std::cmp::Ordering::Less => Self::Older,
+            std::cmp::Ordering::Equal => Self::Current,
+            std::cmp::Ordering::Greater => Self::UnsupportedFuture,
+        }
+    }
+}
+
+/// Lifecycle shape owned by one registered runtime role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeRoleClass {
+    /// Older cache data did not classify the role.
+    #[default]
+    Unknown,
+    /// A supervised worker that advances domain-owned durable state.
+    Actor,
+    /// A hosted service whose availability does not imply worker progress.
+    PassiveService,
+    /// A callable port that does not own a supervised lifecycle.
+    PortOnly,
+}
+
+/// Current implementation posture for one runtime role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeImplementationState {
+    /// Older cache data did not record implementation posture.
+    #[default]
+    Unknown,
+    /// The registered role has a concrete hosted implementation.
+    Concrete,
+    /// The role is declared but has no semantic implementation.
+    Inert,
+    /// A required factory or resource is unavailable.
+    Unavailable,
+}
 
 /// Bounded work request shared by runtime supervisor adapters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +255,7 @@ pub struct WorkerTickReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeStatusCacheRecord {
     /// Cache schema version.
+    #[serde(default)]
     pub schema_version: u16,
     /// Product root this cache describes.
     pub product_root: PathBuf,
@@ -148,6 +318,41 @@ pub struct RuntimeStatusReadRequest {
     pub recent_action_limit: usize,
 }
 
+/// Tolerant low-level result for one latest snapshot read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeStatusSnapshotRead {
+    /// The snapshot file does not exist.
+    Missing,
+    /// One supported snapshot decoded successfully.
+    Decoded {
+        /// Decoded cache record.
+        record: Box<RuntimeStatusCacheRecord>,
+        /// Compatibility or recovery warnings from decoding.
+        warnings: Vec<RuntimeStatusCacheWarning>,
+    },
+    /// A snapshot exists but is partial, corrupt, or otherwise unreadable.
+    Unreadable {
+        /// Stable warnings that explain the unreadable projection.
+        warnings: Vec<RuntimeStatusCacheWarning>,
+    },
+    /// The snapshot declares a schema newer than this reader supports.
+    UnsupportedVersion {
+        /// Version observed before payload decoding.
+        observed_version: u16,
+        /// Stable warnings that explain the compatibility result.
+        warnings: Vec<RuntimeStatusCacheWarning>,
+    },
+}
+
+/// Tolerant low-level result for the bounded action file.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RuntimeStatusActionsRead {
+    /// Valid newest actions retained by the reader.
+    pub actions: Vec<RuntimeActionRecord>,
+    /// Warnings for skipped, partial, old, or unsupported lines.
+    pub warnings: Vec<RuntimeStatusCacheWarning>,
+}
+
 /// Cache read result returned to operator commands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeStatusReadResult {
@@ -183,12 +388,24 @@ impl RuntimeStatusReadResult {
             },
             None => RuntimeStatusCacheState::Missing,
         };
+        let warnings = latest
+            .as_ref()
+            .filter(|record| record.written_at_ms > observed_at_ms)
+            .map(|record| RuntimeStatusCacheWarning {
+                code: RUNTIME_STATUS_WARNING_CLOCK_SKEW.to_string(),
+                message: format!(
+                    "cache write time {} is ahead of reader time {observed_at_ms}",
+                    record.written_at_ms
+                ),
+            })
+            .into_iter()
+            .collect();
         Self {
             latest,
             recent_actions,
             observed_at_ms,
             cache_state,
-            warnings: Vec::new(),
+            warnings,
         }
     }
 }
@@ -210,6 +427,15 @@ pub enum RuntimeStatusCacheState {
         age_ms: u64,
         /// Stale threshold in milliseconds.
         stale_after_ms: u64,
+    },
+    /// Cache files were present but could not be safely decoded.
+    Unreadable,
+    /// Cache schema is newer than this reader supports.
+    UnsupportedVersion {
+        /// Version observed in the cache envelope.
+        observed_version: u16,
+        /// Newest schema supported by this reader.
+        max_supported_version: u16,
     },
 }
 
@@ -387,6 +613,12 @@ pub struct RuntimeStatusRuntimeRow {
     pub desired_enabled: bool,
     /// Whether a matching factory was available.
     pub factory_available: bool,
+    /// Lifecycle shape declared by the canonical runtime registry.
+    #[serde(default)]
+    pub role_class: RuntimeRoleClass,
+    /// Honest implementation posture at cache write time.
+    #[serde(default)]
+    pub implementation_state: RuntimeImplementationState,
     /// Observed handle kind.
     pub handle_kind: RuntimeHandleKind,
     /// Active lease summary when present.
@@ -426,6 +658,9 @@ pub enum RuntimeHandleKind {
 pub struct RuntimeStatusLeaseSummary {
     /// Active lease id.
     pub lease_id: String,
+    /// Supervisor instance that owns the active lease.
+    #[serde(default)]
+    pub owner_instance_id: Option<String>,
     /// Lease status as display text.
     pub status: String,
     /// Lease expiry time in milliseconds.
@@ -507,6 +742,9 @@ pub struct RuntimeActionRecord {
     pub checkpoints: Vec<RuntimeCheckpointObservation>,
     /// Bounded issue summaries.
     pub issues: Vec<RuntimeActionIssueSummary>,
+    /// Explicit detail removed to satisfy cache bounds.
+    #[serde(default)]
+    pub truncation: RuntimeActionTruncation,
     /// Whether sensitive values were absent or redacted.
     pub redaction: RuntimeRedactionState,
 }
@@ -547,26 +785,31 @@ impl RuntimeActionRecord {
                 .chain(report.scope.agent_id.iter().cloned())
                 .collect(),
         };
+        let issue_count = report.retryable_errors.len() + report.fatal_errors.len();
+        let mut issue_message_truncated = false;
         let issues = report
-            .retryable_errors
+            .fatal_errors
             .iter()
-            .map(|issue| RuntimeActionIssueSummary {
-                severity: RuntimeActionIssueSeverity::Retryable,
-                item_id: issue.item_id.clone(),
-                code: issue.code.clone(),
-                message: issue.message.clone(),
-            })
+            .map(|issue| (RuntimeActionIssueSeverity::Fatal, issue))
             .chain(
                 report
-                    .fatal_errors
+                    .retryable_errors
                     .iter()
-                    .map(|issue| RuntimeActionIssueSummary {
-                        severity: RuntimeActionIssueSeverity::Fatal,
-                        item_id: issue.item_id.clone(),
-                        code: issue.code.clone(),
-                        message: issue.message.clone(),
-                    }),
+                    .map(|issue| (RuntimeActionIssueSeverity::Retryable, issue)),
             )
+            .take(RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT)
+            .map(|(severity, issue)| {
+                let (message, truncated) =
+                    bounded_utf8(&issue.message, RUNTIME_STATUS_ISSUE_MESSAGE_MAX_BYTES);
+                issue_message_truncated |= truncated;
+                RuntimeActionIssueSummary {
+                    severity,
+                    item_id: issue.item_id.clone(),
+                    code: issue.code.clone(),
+                    message,
+                    truncated,
+                }
+            })
             .collect();
         let checkpoints = vec![RuntimeCheckpointObservation {
             input_name: report.input_checkpoint.name.clone(),
@@ -587,6 +830,24 @@ impl RuntimeActionRecord {
             metrics: RuntimeActionMetrics::from_worker_tick(&report),
             checkpoints,
             issues,
+            truncation: RuntimeActionTruncation {
+                omitted_issue_count: issue_count
+                    .saturating_sub(RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT)
+                    as u64,
+                truncated_message_count: if issue_message_truncated {
+                    report
+                        .fatal_errors
+                        .iter()
+                        .chain(report.retryable_errors.iter())
+                        .take(RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT)
+                        .filter(|issue| {
+                            issue.message.len() > RUNTIME_STATUS_ISSUE_MESSAGE_MAX_BYTES
+                        })
+                        .count() as u64
+                } else {
+                    0
+                },
+            },
             redaction: RuntimeRedactionState::NotNeeded,
         }
     }
@@ -768,6 +1029,56 @@ pub struct RuntimeActionIssueSummary {
     pub code: String,
     /// Human-readable issue message.
     pub message: String,
+    /// True when the message exceeded the cache byte bound.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+/// Counts of action detail removed by cache bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RuntimeActionTruncation {
+    /// Issue summaries omitted after severity-prioritized retention.
+    pub omitted_issue_count: u64,
+    /// Retained issue messages shortened on a UTF-8 boundary.
+    pub truncated_message_count: u64,
+}
+
+impl RuntimeActionTruncation {
+    /// Return whether any action detail was removed.
+    pub fn is_truncated(self) -> bool {
+        self.omitted_issue_count != 0 || self.truncated_message_count != 0
+    }
+}
+
+/// Versioned line stored in `actions.jsonl`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatusActionEnvelope {
+    /// Cache schema version used for this line.
+    #[serde(default)]
+    pub schema_version: u16,
+    /// Bounded runtime action payload.
+    pub action: RuntimeActionRecord,
+}
+
+impl RuntimeStatusActionEnvelope {
+    /// Wrap one action with the current cache schema version.
+    pub fn current(action: RuntimeActionRecord) -> Self {
+        Self {
+            schema_version: RUNTIME_STATUS_CACHE_SCHEMA_VERSION,
+            action,
+        }
+    }
+}
+
+fn bounded_utf8(value: &str, max_bytes: usize) -> (String, bool) {
+    if value.len() <= max_bytes {
+        return (value.to_string(), false);
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    (value[..end].to_string(), true)
 }
 
 /// Runtime action issue severity.
@@ -793,6 +1104,9 @@ pub enum RuntimeRedactionState {
 }
 
 /// Cache publisher interface owned by the runtime supervisor domain.
+///
+/// A concrete publisher must hold `writer_lock` exclusively for its full
+/// lifetime so an inactive contender cannot replace active-owner truth.
 pub trait RuntimeStatusPublisher {
     /// Error returned by the concrete publisher.
     type Error;
@@ -828,24 +1142,72 @@ pub trait RuntimeStatusReader {
     type Error;
 
     /// Read the latest cache snapshot when present.
-    fn read_latest_snapshot(&self) -> Result<Option<RuntimeStatusCacheRecord>, Self::Error>;
+    fn read_latest_snapshot(&self) -> Result<RuntimeStatusSnapshotRead, Self::Error>;
 
     /// Read recent actions up to the requested limit.
-    fn read_recent_actions(&self, limit: usize) -> Result<Vec<RuntimeActionRecord>, Self::Error>;
+    fn read_recent_actions(&self, limit: usize) -> Result<RuntimeStatusActionsRead, Self::Error>;
 
     /// Read latest status and derive cache state in one operation.
     fn read_status(
         &self,
         request: RuntimeStatusReadRequest,
     ) -> Result<RuntimeStatusReadResult, Self::Error> {
-        let latest = self.read_latest_snapshot()?;
-        let recent_actions = self.read_recent_actions(request.recent_action_limit)?;
-        Ok(RuntimeStatusReadResult::from_latest(
-            latest,
-            recent_actions,
-            request.now_ms,
-            request.stale_after_ms,
-        ))
+        let snapshot_read = self.read_latest_snapshot()?;
+        let mut actions_read = self.read_recent_actions(
+            request
+                .recent_action_limit
+                .min(RUNTIME_STATUS_RECENT_ACTION_MAX_COUNT),
+        )?;
+        match snapshot_read {
+            RuntimeStatusSnapshotRead::Missing => Ok(RuntimeStatusReadResult {
+                latest: None,
+                recent_actions: actions_read.actions,
+                observed_at_ms: request.now_ms,
+                cache_state: RuntimeStatusCacheState::Missing,
+                warnings: actions_read.warnings,
+            }),
+            RuntimeStatusSnapshotRead::Decoded {
+                record,
+                mut warnings,
+            } => {
+                let mut result = RuntimeStatusReadResult::from_latest(
+                    Some(*record),
+                    actions_read.actions,
+                    request.now_ms,
+                    request.stale_after_ms,
+                );
+                warnings.append(&mut result.warnings);
+                warnings.append(&mut actions_read.warnings);
+                result.warnings = warnings;
+                Ok(result)
+            }
+            RuntimeStatusSnapshotRead::Unreadable { mut warnings } => {
+                warnings.append(&mut actions_read.warnings);
+                Ok(RuntimeStatusReadResult {
+                    latest: None,
+                    recent_actions: actions_read.actions,
+                    observed_at_ms: request.now_ms,
+                    cache_state: RuntimeStatusCacheState::Unreadable,
+                    warnings,
+                })
+            }
+            RuntimeStatusSnapshotRead::UnsupportedVersion {
+                observed_version,
+                mut warnings,
+            } => {
+                warnings.append(&mut actions_read.warnings);
+                Ok(RuntimeStatusReadResult {
+                    latest: None,
+                    recent_actions: actions_read.actions,
+                    observed_at_ms: request.now_ms,
+                    cache_state: RuntimeStatusCacheState::UnsupportedVersion {
+                        observed_version,
+                        max_supported_version: RUNTIME_STATUS_CACHE_SCHEMA_VERSION,
+                    },
+                    warnings,
+                })
+            }
+        }
     }
 }
 
@@ -1474,7 +1836,11 @@ mod tests {
             RuntimeActionRecord::from_worker_tick("action-fatal", "execution.planning", 5, report);
         assert_eq!(fatal.outcome, RuntimeActionOutcome::FatalFailure);
         assert_eq!(fatal.metrics.fatal_issue_count, 1);
-        assert_eq!(fatal.issues[1].severity, RuntimeActionIssueSeverity::Fatal);
+        assert_eq!(fatal.issues[0].severity, RuntimeActionIssueSeverity::Fatal);
+        assert_eq!(
+            fatal.issues[1].severity,
+            RuntimeActionIssueSeverity::Retryable
+        );
     }
 
     #[test]
@@ -1511,6 +1877,7 @@ mod tests {
                 output_value: 10,
             }],
             issues: Vec::new(),
+            truncation: RuntimeActionTruncation::default(),
             redaction: RuntimeRedactionState::NotNeeded,
         };
         let snapshot = RuntimeStatusSnapshot {
@@ -1534,9 +1901,12 @@ mod tests {
                 runtime_id: "event.replay".to_string(),
                 desired_enabled: true,
                 factory_available: true,
+                role_class: RuntimeRoleClass::Actor,
+                implementation_state: RuntimeImplementationState::Concrete,
                 handle_kind: RuntimeHandleKind::Concrete,
                 lease: Some(RuntimeStatusLeaseSummary {
                     lease_id: "lease-a".to_string(),
+                    owner_instance_id: Some("runtime-cli-1".to_string()),
                     status: "active".to_string(),
                     expires_at_ms: 30_000,
                 }),
@@ -1603,6 +1973,18 @@ mod tests {
             decoded.recent_actions[0].action_kind,
             RuntimeActionKind::Replay
         );
+
+        let mut older_value = serde_json::to_value(&record).unwrap();
+        older_value
+            .as_object_mut()
+            .unwrap()
+            .remove("schema_version");
+        let older: RuntimeStatusCacheRecord = serde_json::from_value(older_value).unwrap();
+        assert_eq!(older.schema_version, 0);
+        assert_eq!(
+            RuntimeStatusCacheCompatibility::for_schema_version(older.schema_version),
+            RuntimeStatusCacheCompatibility::Older
+        );
     }
 
     #[test]
@@ -1648,13 +2030,245 @@ mod tests {
             RuntimeStatusCacheState::Fresh { age_ms: 2 }
         );
 
-        let stale = RuntimeStatusReadResult::from_latest(Some(record), Vec::new(), 20, 5);
+        let boundary =
+            RuntimeStatusReadResult::from_latest(Some(record.clone()), Vec::new(), 15, 5);
+        assert_eq!(
+            boundary.cache_state,
+            RuntimeStatusCacheState::Fresh { age_ms: 5 }
+        );
+
+        let stale = RuntimeStatusReadResult::from_latest(Some(record.clone()), Vec::new(), 20, 5);
         assert_eq!(
             stale.cache_state,
             RuntimeStatusCacheState::Stale {
                 age_ms: 10,
                 stale_after_ms: 5,
             }
+        );
+
+        let future = RuntimeStatusReadResult::from_latest(Some(record), Vec::new(), 5, 5);
+        assert_eq!(
+            future.cache_state,
+            RuntimeStatusCacheState::Fresh { age_ms: 0 }
+        );
+        assert_eq!(future.warnings[0].code, RUNTIME_STATUS_WARNING_CLOCK_SKEW);
+    }
+
+    #[test]
+    fn status_reader_clamps_recent_action_requests() {
+        struct RecordingReader(std::cell::Cell<usize>);
+
+        impl RuntimeStatusReader for RecordingReader {
+            type Error = std::convert::Infallible;
+
+            fn read_latest_snapshot(&self) -> Result<RuntimeStatusSnapshotRead, Self::Error> {
+                Ok(RuntimeStatusSnapshotRead::Missing)
+            }
+
+            fn read_recent_actions(
+                &self,
+                limit: usize,
+            ) -> Result<RuntimeStatusActionsRead, Self::Error> {
+                self.0.set(limit);
+                Ok(RuntimeStatusActionsRead::default())
+            }
+        }
+
+        let reader = RecordingReader(std::cell::Cell::new(0));
+        reader
+            .read_status(RuntimeStatusReadRequest {
+                now_ms: 10,
+                stale_after_ms: 5,
+                recent_action_limit: usize::MAX,
+            })
+            .unwrap();
+
+        assert_eq!(reader.0.get(), RUNTIME_STATUS_RECENT_ACTION_MAX_COUNT);
+    }
+
+    #[test]
+    fn status_reader_preserves_unreadable_and_unsupported_states() {
+        struct FixedReader(RuntimeStatusSnapshotRead);
+
+        impl RuntimeStatusReader for FixedReader {
+            type Error = std::convert::Infallible;
+
+            fn read_latest_snapshot(&self) -> Result<RuntimeStatusSnapshotRead, Self::Error> {
+                Ok(self.0.clone())
+            }
+
+            fn read_recent_actions(
+                &self,
+                _limit: usize,
+            ) -> Result<RuntimeStatusActionsRead, Self::Error> {
+                Ok(RuntimeStatusActionsRead {
+                    actions: Vec::new(),
+                    warnings: vec![RuntimeStatusCacheWarning {
+                        code: "action_warning".to_string(),
+                        message: "one action line was skipped".to_string(),
+                    }],
+                })
+            }
+        }
+
+        let unreadable = FixedReader(RuntimeStatusSnapshotRead::Unreadable {
+            warnings: vec![RuntimeStatusCacheWarning {
+                code: RUNTIME_STATUS_WARNING_UNREADABLE.to_string(),
+                message: "latest snapshot is partial".to_string(),
+            }],
+        })
+        .read_status(RuntimeStatusReadRequest {
+            now_ms: 10,
+            stale_after_ms: 5,
+            recent_action_limit: 10,
+        })
+        .unwrap();
+        assert_eq!(unreadable.cache_state, RuntimeStatusCacheState::Unreadable);
+        assert_eq!(unreadable.warnings.len(), 2);
+
+        let unsupported = FixedReader(RuntimeStatusSnapshotRead::UnsupportedVersion {
+            observed_version: 9,
+            warnings: Vec::new(),
+        })
+        .read_status(RuntimeStatusReadRequest {
+            now_ms: 10,
+            stale_after_ms: 5,
+            recent_action_limit: 10,
+        })
+        .unwrap();
+        assert_eq!(
+            unsupported.cache_state,
+            RuntimeStatusCacheState::UnsupportedVersion {
+                observed_version: 9,
+                max_supported_version: RUNTIME_STATUS_CACHE_SCHEMA_VERSION,
+            }
+        );
+        assert_eq!(unsupported.warnings.len(), 1);
+    }
+
+    #[test]
+    fn status_cache_layout_limits_and_compatibility_are_frozen() {
+        let layout = RuntimeStatusCacheLayout::from_product_root("/tmp/product");
+        let limits = RuntimeStatusCacheLimits::default();
+
+        assert_eq!(layout.root, PathBuf::from("/tmp/product/runtime/status"));
+        assert_eq!(layout.latest, layout.root.join("latest.json"));
+        assert_eq!(layout.actions, layout.root.join("actions.jsonl"));
+        assert_eq!(layout.process, layout.root.join("process.json"));
+        assert_eq!(layout.writer_lock, layout.root.join("writer.lock"));
+        assert_eq!(
+            RuntimeStatusCacheLayout::temporary_path(&layout.latest, 7, 42),
+            PathBuf::from("/tmp/product/runtime/status/latest.json.7-42.tmp")
+        );
+        assert_eq!(limits.latest_max_bytes, 1024 * 1024);
+        assert_eq!(limits.actions_max_bytes, 4 * 1024 * 1024);
+        assert_eq!(limits.recent_action_max_count, 256);
+        assert_eq!(limits.issue_max_count, 16);
+        assert_eq!(limits.issue_message_max_bytes, 1024);
+        assert_eq!(RUNTIME_STATUS_ATOMIC_WRITE_PROTOCOL.len(), 5);
+        assert_eq!(
+            RUNTIME_STATUS_ATOMIC_WRITE_PROTOCOL.last(),
+            Some(&RuntimeStatusAtomicWriteStep::SyncParentDirectory)
+        );
+        assert_eq!(
+            RuntimeStatusCacheCompatibility::for_schema_version(0),
+            RuntimeStatusCacheCompatibility::Older
+        );
+        assert_eq!(
+            RuntimeStatusCacheCompatibility::for_schema_version(1),
+            RuntimeStatusCacheCompatibility::Current
+        );
+        assert_eq!(
+            RuntimeStatusCacheCompatibility::for_schema_version(2),
+            RuntimeStatusCacheCompatibility::UnsupportedFuture
+        );
+    }
+
+    #[test]
+    fn action_issue_count_and_utf8_messages_are_bounded() {
+        let report = WorkerTickReport {
+            actor_id: "execution.planning".to_string(),
+            scope: WorkerScope {
+                domain_id: "execution".to_string(),
+                stream_id: None,
+                work_key: Some("planning".to_string()),
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "revision".to_string(),
+                value: 1,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "revision".to_string(),
+                value: 1,
+            },
+            items_attempted: 20,
+            items_committed: 0,
+            retryable_errors: (0..20)
+                .map(|index| WorkerTickIssue {
+                    item_id: Some(format!("item-{index}")),
+                    code: "retry".to_string(),
+                    message: "é".repeat(600),
+                })
+                .collect(),
+            fatal_errors: vec![WorkerTickIssue {
+                item_id: Some("fatal-item".to_string()),
+                code: "fatal".to_string(),
+                message: "é".repeat(600),
+            }],
+            budget_exhausted: true,
+        };
+
+        let action =
+            RuntimeActionRecord::from_worker_tick("action-a", "execution.planning", 10, report);
+
+        assert_eq!(action.issues.len(), RUNTIME_STATUS_ACTION_ISSUE_MAX_COUNT);
+        assert!(action.truncation.is_truncated());
+        assert_eq!(action.truncation.omitted_issue_count, 5);
+        assert_eq!(action.truncation.truncated_message_count, 16);
+        assert_eq!(action.issues[0].severity, RuntimeActionIssueSeverity::Fatal);
+        assert!(action.issues.iter().all(|issue| issue.truncated));
+        assert!(action
+            .issues
+            .iter()
+            .all(|issue| issue.message.len() <= RUNTIME_STATUS_ISSUE_MESSAGE_MAX_BYTES));
+
+        let envelope = RuntimeStatusActionEnvelope::current(action);
+        let encoded = serde_json::to_string(&envelope).unwrap();
+        let decoded: RuntimeStatusActionEnvelope = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.schema_version, RUNTIME_STATUS_CACHE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn older_runtime_rows_default_new_classification_fields() {
+        let row: RuntimeStatusRuntimeRow = serde_json::from_value(serde_json::json!({
+            "runtime_id": "execution.planning",
+            "desired_enabled": false,
+            "factory_available": false,
+            "handle_kind": "inert",
+            "lease": null,
+            "heartbeat": null,
+            "health": {
+                "status": "stopped",
+                "retryable_error_count": 0,
+                "fatal_error_count": 0,
+                "budget_exhausted": false
+            },
+            "restart_count": 0,
+            "last_restart_cause": null,
+            "last_lifecycle_event": null,
+            "last_action": null,
+            "last_progress": null
+        }))
+        .unwrap();
+
+        assert_eq!(row.role_class, RuntimeRoleClass::Unknown);
+        assert_eq!(
+            row.implementation_state,
+            RuntimeImplementationState::Unknown
         );
     }
 

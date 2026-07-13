@@ -10,7 +10,9 @@ use meld_events::EventAuthorityOpenOptions;
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
 
 use crate::config::MerkleConfig;
-use crate::runtime::contracts::{WorkBudget, WorkerTickReport};
+use crate::runtime::contracts::{
+    RuntimeImplementationState, RuntimeRoleClass, WorkBudget, WorkerTickReport,
+};
 use crate::runtime::error::{RuntimeAssemblyError, RuntimeRegistryError};
 use crate::runtime::ports::{ProductRuntimePorts, ProviderPortConfig};
 use crate::runtime::storage::{OpenProductStores, ProductStorageLayout, ProductStorageRoot};
@@ -68,7 +70,7 @@ pub struct ProductRuntimeConfig {
     pub product_root: PathBuf,
     /// Optional override for the root supervisor store path.
     pub supervisor_store_path: Option<PathBuf>,
-    /// Runtime ids desired by configuration. Empty means all first proof ids.
+    /// Runtime ids desired by configuration. Empty uses registry defaults.
     pub enabled_runtime_ids: Vec<String>,
     /// Runtime ids kept disabled but visible in desired state.
     pub disabled_runtime_ids: Vec<String>,
@@ -100,6 +102,10 @@ pub struct DesiredRuntimeState {
     pub enabled: bool,
     /// Whether product assembly has a factory for this runtime id.
     pub factory_available: bool,
+    /// Canonical lifecycle shape for this runtime id.
+    pub role_class: RuntimeRoleClass,
+    /// Honest implementation posture after desired-state resolution.
+    pub implementation_state: RuntimeImplementationState,
 }
 
 /// Passive runtime factory metadata.
@@ -109,6 +115,14 @@ pub struct RuntimeFactoryDescriptor {
     pub runtime_id: String,
     /// Passive resources required by the future runtime handle.
     pub required_resources: Vec<RuntimeResource>,
+    /// Legacy or requirement-era names accepted only at ingress.
+    pub aliases: Vec<String>,
+    /// Lifecycle shape owned by this role.
+    pub role_class: RuntimeRoleClass,
+    /// Current hosted implementation posture.
+    pub implementation_state: RuntimeImplementationState,
+    /// Whether empty configuration starts this role.
+    pub default_enabled: bool,
 }
 
 /// Resource requirement advertised by a runtime factory descriptor.
@@ -144,6 +158,7 @@ pub enum RuntimeResource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeFactoryRegistry {
     descriptors: BTreeMap<String, RuntimeFactoryDescriptor>,
+    aliases: BTreeMap<String, String>,
 }
 
 /// Registry of runtime handle factories.
@@ -305,14 +320,13 @@ pub struct SupervisorStartupPackage<'a> {
 impl ProductRuntimeConfig {
     /// Build config for a concrete product root with default safe runtimes.
     ///
-    /// Provider-dependent task dispatch is present in the registry but disabled
-    /// by default until provider access is explicitly available.
+    /// Only concrete actor roles are enabled by default.
     pub fn for_product_root(product_root: impl Into<PathBuf>) -> Self {
         Self {
             product_root: product_root.into(),
             supervisor_store_path: None,
             enabled_runtime_ids: Vec::new(),
-            disabled_runtime_ids: vec!["execution.task_dispatch".to_string()],
+            disabled_runtime_ids: Vec::new(),
             provider: ProviderPortConfig::default(),
             lifecycle_config: RuntimeLifecycleConfig::default(),
             default_work_budget: WorkBudget { max_items: 64 },
@@ -598,6 +612,45 @@ impl RuntimeFactoryDescriptor {
         Ok(Self {
             runtime_id,
             required_resources,
+            aliases: Vec::new(),
+            role_class: RuntimeRoleClass::Actor,
+            implementation_state: RuntimeImplementationState::Inert,
+            default_enabled: false,
+        })
+    }
+
+    /// Construct one fully classified canonical runtime descriptor.
+    pub fn classified(
+        runtime_id: impl Into<String>,
+        aliases: &[&str],
+        role_class: RuntimeRoleClass,
+        implementation_state: RuntimeImplementationState,
+        default_enabled: bool,
+        required_resources: Vec<RuntimeResource>,
+    ) -> Result<Self, RuntimeRegistryError> {
+        let runtime_id = runtime_id.into();
+        validate_runtime_id(&runtime_id)?;
+        let aliases = aliases
+            .iter()
+            .map(|alias| (*alias).to_string())
+            .map(|alias| {
+                validate_runtime_id(&alias)?;
+                Ok(alias)
+            })
+            .collect::<Result<Vec<_>, RuntimeRegistryError>>()?;
+        if default_enabled
+            && (role_class != RuntimeRoleClass::Actor
+                || implementation_state != RuntimeImplementationState::Concrete)
+        {
+            return Err(RuntimeRegistryError::InvalidDefaultRuntimeRole(runtime_id));
+        }
+        Ok(Self {
+            runtime_id,
+            required_resources,
+            aliases,
+            role_class,
+            implementation_state,
+            default_enabled,
         })
     }
 }
@@ -610,6 +663,14 @@ impl RuntimeFactoryRegistry {
         let mut registry = BTreeMap::new();
         for descriptor in descriptors {
             validate_runtime_id(&descriptor.runtime_id)?;
+            if descriptor.default_enabled
+                && (descriptor.role_class != RuntimeRoleClass::Actor
+                    || descriptor.implementation_state != RuntimeImplementationState::Concrete)
+            {
+                return Err(RuntimeRegistryError::InvalidDefaultRuntimeRole(
+                    descriptor.runtime_id,
+                ));
+            }
             if registry.contains_key(&descriptor.runtime_id) {
                 return Err(RuntimeRegistryError::DuplicateRuntimeId(
                     descriptor.runtime_id,
@@ -617,42 +678,120 @@ impl RuntimeFactoryRegistry {
             }
             registry.insert(descriptor.runtime_id.clone(), descriptor);
         }
+        let canonical_ids = registry.keys().cloned().collect::<BTreeSet<_>>();
+        let mut aliases = BTreeMap::new();
+        for descriptor in registry.values() {
+            for alias in &descriptor.aliases {
+                validate_runtime_id(alias)?;
+                if canonical_ids.contains(alias) {
+                    return Err(RuntimeRegistryError::RuntimeAliasCollision(alias.clone()));
+                }
+                if aliases
+                    .insert(alias.clone(), descriptor.runtime_id.clone())
+                    .is_some()
+                {
+                    return Err(RuntimeRegistryError::DuplicateRuntimeAlias(alias.clone()));
+                }
+            }
+        }
         Ok(Self {
             descriptors: registry,
+            aliases,
         })
     }
 
     /// Build the first durable flywheel proof runtime registry.
     pub fn first_proof_registry() -> Result<Self, RuntimeRegistryError> {
+        use RuntimeImplementationState::{Concrete, Inert};
         use RuntimeResource::*;
+        use RuntimeRoleClass::{Actor, PassiveService, PortOnly};
         Self::from_descriptors([
-            RuntimeFactoryDescriptor::new("event.append", vec![EventAppend])?,
-            RuntimeFactoryDescriptor::new("event.replay", vec![EventReplay])?,
-            RuntimeFactoryDescriptor::new(
+            RuntimeFactoryDescriptor::classified(
+                "event.append",
+                &["events.ledger"],
+                PassiveService,
+                Concrete,
+                false,
+                vec![EventAppend],
+            )?,
+            RuntimeFactoryDescriptor::classified(
+                "event.replay",
+                &[],
+                PortOnly,
+                Concrete,
+                false,
+                vec![EventReplay],
+            )?,
+            RuntimeFactoryDescriptor::classified(
                 "world_model.graph_replay",
+                &["world_model.graph.replay"],
+                Actor,
+                Concrete,
+                true,
                 vec![EventAppend, EventReplay, EventConsumerRegistry],
             )?,
-            RuntimeFactoryDescriptor::new("world_model.belief_assessment", vec![])?,
-            RuntimeFactoryDescriptor::new(
+            RuntimeFactoryDescriptor::classified(
+                "world_model.belief_assessment",
+                &["world_model.belief.assessment"],
+                Actor,
+                Inert,
+                false,
+                vec![],
+            )?,
+            RuntimeFactoryDescriptor::classified(
                 "world_model.agent_goal_curation",
+                &["world_model.agent.goal_curation"],
+                Actor,
+                Inert,
+                false,
                 vec![GoalCommand, PlannerProjection],
             )?,
-            RuntimeFactoryDescriptor::new("world_model.evidence_ingestion", vec![EventReplay])?,
-            RuntimeFactoryDescriptor::new(
+            RuntimeFactoryDescriptor::classified(
+                "world_model.evidence_ingestion",
+                &["world_model.belief.event_evidence_ingestion"],
+                Actor,
+                Inert,
+                false,
+                vec![EventReplay],
+            )?,
+            RuntimeFactoryDescriptor::classified(
                 "world_model.satisfaction_curation",
+                &["world_model.agent.satisfaction_curation"],
+                Actor,
+                Inert,
+                false,
                 vec![GoalMutation, PlannerProjection],
             )?,
-            RuntimeFactoryDescriptor::new("execution.goal_set", vec![GoalCommand])?,
-            RuntimeFactoryDescriptor::new(
+            RuntimeFactoryDescriptor::classified(
+                "execution.goal_set",
+                &["execution.goal.set"],
+                PortOnly,
+                Concrete,
+                false,
+                vec![GoalCommand],
+            )?,
+            RuntimeFactoryDescriptor::classified(
                 "execution.planning",
+                &[],
+                Actor,
+                Inert,
+                false,
                 vec![PlannerProjection, TaskNetworkFactory],
             )?,
-            RuntimeFactoryDescriptor::new(
+            RuntimeFactoryDescriptor::classified(
                 "execution.task_network_command",
+                &["execution.task_network.command"],
+                PortOnly,
+                Concrete,
+                false,
                 vec![TaskNetworkFactory],
             )?,
-            RuntimeFactoryDescriptor::new(
+            RuntimeFactoryDescriptor::classified(
                 "execution.task_dispatch",
+                &["execution.task.dispatch"],
+                Actor,
+                Inert,
+                false,
                 vec![
                     TaskNetworkFactory,
                     TaskArtifactFactory,
@@ -662,8 +801,12 @@ impl RuntimeFactoryRegistry {
                     Workspace,
                 ],
             )?,
-            RuntimeFactoryDescriptor::new(
+            RuntimeFactoryDescriptor::classified(
                 "execution.publication",
+                &["execution.task_network.publication"],
+                Actor,
+                Inert,
+                false,
                 vec![TaskNetworkFactory, EventAppend],
             )?,
         ])
@@ -671,7 +814,8 @@ impl RuntimeFactoryRegistry {
 
     /// Return one descriptor by runtime id.
     pub fn get(&self, runtime_id: &str) -> Option<&RuntimeFactoryDescriptor> {
-        self.descriptors.get(runtime_id)
+        let canonical = self.canonical_id(runtime_id)?;
+        self.descriptors.get(canonical)
     }
 
     /// Return descriptors in stable runtime id order.
@@ -681,7 +825,16 @@ impl RuntimeFactoryRegistry {
 
     /// Return whether the registry has a runtime id.
     pub fn contains(&self, runtime_id: &str) -> bool {
-        self.descriptors.contains_key(runtime_id)
+        self.canonical_id(runtime_id).is_some()
+    }
+
+    /// Resolve a canonical id or ingress alias to the persisted id.
+    pub fn canonical_id<'a>(&'a self, runtime_id: &'a str) -> Option<&'a str> {
+        if self.descriptors.contains_key(runtime_id) {
+            Some(runtime_id)
+        } else {
+            self.aliases.get(runtime_id).map(String::as_str)
+        }
     }
 
     /// Return the number of registered runtime factories.
@@ -994,15 +1147,16 @@ fn desired_runtime_state(
     enabled_runtime_ids: Vec<String>,
     disabled_runtime_ids: Vec<String>,
 ) -> Result<Vec<DesiredRuntimeState>, RuntimeAssemblyError> {
-    let disabled_ids = disabled_runtime_ids.into_iter().collect::<BTreeSet<_>>();
+    let disabled_ids = canonical_runtime_selection(registry, disabled_runtime_ids)?;
     let enabled_ids = if enabled_runtime_ids.is_empty() {
         registry
             .descriptors()
+            .filter(|descriptor| descriptor.default_enabled)
             .map(|descriptor| descriptor.runtime_id.clone())
             .filter(|runtime_id| !disabled_ids.contains(runtime_id))
             .collect::<BTreeSet<_>>()
     } else {
-        enabled_runtime_ids.into_iter().collect::<BTreeSet<_>>()
+        canonical_runtime_selection(registry, enabled_runtime_ids)?
     };
     if let Some(overlap) = enabled_ids.intersection(&disabled_ids).next() {
         return Err(RuntimeAssemblyError::Config(format!(
@@ -1010,25 +1164,49 @@ fn desired_runtime_state(
         )));
     }
 
-    let mut states = enabled_ids
+    let runtime_ids = registry
+        .descriptors()
+        .map(|descriptor| descriptor.runtime_id.clone())
+        .chain(enabled_ids.iter().cloned())
+        .chain(disabled_ids.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    let mut states = runtime_ids
         .into_iter()
-        .map(|runtime_id| DesiredRuntimeState {
-            factory_available: registry.contains(&runtime_id),
-            runtime_id,
-            enabled: true,
+        .map(|runtime_id| {
+            let descriptor = registry.get(&runtime_id);
+            let enabled = enabled_ids.contains(&runtime_id) && !disabled_ids.contains(&runtime_id);
+            DesiredRuntimeState {
+                factory_available: descriptor.is_some(),
+                role_class: descriptor
+                    .map(|descriptor| descriptor.role_class)
+                    .unwrap_or(RuntimeRoleClass::Unknown),
+                implementation_state: descriptor
+                    .map(|descriptor| descriptor.implementation_state)
+                    .unwrap_or(RuntimeImplementationState::Unavailable),
+                runtime_id,
+                enabled,
+            }
         })
-        .chain(
-            disabled_ids
-                .into_iter()
-                .map(|runtime_id| DesiredRuntimeState {
-                    factory_available: registry.contains(&runtime_id),
-                    runtime_id,
-                    enabled: false,
-                }),
-        )
         .collect::<Vec<_>>();
     states.sort_by(|left, right| left.runtime_id.cmp(&right.runtime_id));
     Ok(states)
+}
+
+fn canonical_runtime_selection(
+    registry: &RuntimeFactoryRegistry,
+    runtime_ids: Vec<String>,
+) -> Result<BTreeSet<String>, RuntimeAssemblyError> {
+    let mut canonical_ids = BTreeSet::new();
+    for runtime_id in runtime_ids {
+        let canonical_id = registry
+            .canonical_id(&runtime_id)
+            .map(str::to_string)
+            .unwrap_or(runtime_id);
+        if !canonical_ids.insert(canonical_id.clone()) {
+            return Err(RuntimeRegistryError::DuplicateRuntimeId(canonical_id).into());
+        }
+    }
+    Ok(canonical_ids)
 }
 
 fn provider_required(
@@ -1038,6 +1216,8 @@ fn provider_required(
     desired_runtime_state.iter().any(|state| {
         state.enabled
             && state.factory_available
+            && state.role_class == RuntimeRoleClass::Actor
+            && state.implementation_state == RuntimeImplementationState::Concrete
             && registry
                 .get(&state.runtime_id)
                 .is_some_and(|descriptor| descriptor.requires_resource(RuntimeResource::Provider))
@@ -1045,26 +1225,12 @@ fn provider_required(
 }
 
 fn validate_runtime_id(runtime_id: &str) -> Result<(), RuntimeRegistryError> {
-    if runtime_id.is_empty()
-        || runtime_id.starts_with('.')
-        || runtime_id.ends_with('.')
-        || runtime_id.contains("..")
-        || !runtime_id.contains('.')
-        || !runtime_id
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_')
-    {
-        return Err(RuntimeRegistryError::InvalidRuntimeId(
-            runtime_id.to_string(),
-        ));
-    }
-    Ok(())
+    crate::runtime::supervisor::contracts::validate_runtime_id(runtime_id)
+        .map_err(|_| RuntimeRegistryError::InvalidRuntimeId(runtime_id.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use meld_events::EventEnvelope;
     use meld_execution::goals::GoalCommandOutcome;
     use meld_execution::task_network::EventAppendSink;
@@ -1074,8 +1240,6 @@ mod tests {
 
     use super::*;
     use crate::runtime::error::RuntimePortError;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn assembly_opens_product_and_supervisor_stores() {
@@ -1100,6 +1264,10 @@ mod tests {
             .unwrap();
         assert!(!task_dispatch.enabled);
         assert!(task_dispatch.factory_available);
+        assert_eq!(
+            task_dispatch.implementation_state,
+            RuntimeImplementationState::Inert
+        );
         assembly.flush_product_boundary().unwrap();
         assembly.flush_supervisor_store().unwrap();
     }
@@ -1165,7 +1333,7 @@ mod tests {
                 .iter()
                 .filter(|state| state.enabled)
                 .count(),
-            10
+            1
         );
     }
 
@@ -1202,53 +1370,44 @@ mod tests {
     }
 
     #[test]
-    fn provider_required_runtime_without_provider_fails_before_start() {
+    fn enabled_inert_runtime_does_not_require_provider() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
         config.enabled_runtime_ids = vec!["execution.task_dispatch".to_string()];
         config.disabled_runtime_ids = Vec::new();
 
-        let error = match ProductRuntimeAssembly::load(config) {
-            Ok(_) => panic!("provider-dependent runtime should require provider availability"),
-            Err(error) => error,
-        };
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let dispatch = assembly
+            .desired_runtime_state()
+            .iter()
+            .find(|state| state.runtime_id == "execution.task_dispatch")
+            .unwrap();
 
-        assert!(matches!(
-            error,
-            RuntimeAssemblyError::ProviderConstruction(_)
-        ));
+        assert!(dispatch.enabled);
+        assert!(dispatch.factory_available);
+        assert_eq!(
+            dispatch.implementation_state,
+            RuntimeImplementationState::Inert
+        );
+        assert!(!assembly.ports().adapters().provider().is_required());
     }
 
     #[test]
-    fn provider_required_runtime_opens_when_provider_is_available() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
-        config.enabled_runtime_ids = vec!["execution.task_dispatch".to_string()];
-        config.disabled_runtime_ids = Vec::new();
-        config.provider.provider_available = true;
+    fn concrete_provider_actor_requires_provider_availability() {
+        let registry =
+            RuntimeFactoryRegistry::from_descriptors([RuntimeFactoryDescriptor::classified(
+                "execution.provider_test",
+                &[],
+                RuntimeRoleClass::Actor,
+                RuntimeImplementationState::Concrete,
+                true,
+                vec![RuntimeResource::Provider],
+            )
+            .unwrap()])
+            .unwrap();
+        let desired = desired_runtime_state(&registry, Vec::new(), Vec::new()).unwrap();
 
-        let assembly = ProductRuntimeAssembly::load(config).unwrap();
-
-        assert!(assembly.ports().adapters().provider().is_required());
-        assert!(assembly.ports().adapters().provider().is_available());
-    }
-
-    #[test]
-    fn provider_required_runtime_accepts_present_environment_credentials() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let temp = tempfile::tempdir().unwrap();
-        let env_name = "MELD_RUNTIME_ASSEMBLY_TEST_PROVIDER_KEY";
-        std::env::set_var(env_name, "present");
-        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
-        config.enabled_runtime_ids = vec!["execution.task_dispatch".to_string()];
-        config.disabled_runtime_ids = Vec::new();
-        config.provider.required_env_vars = vec![env_name.to_string()];
-
-        let assembly = ProductRuntimeAssembly::load(config).unwrap();
-
-        std::env::remove_var(env_name);
-        assert!(assembly.ports().adapters().provider().is_required());
-        assert!(assembly.ports().adapters().provider().is_available());
+        assert!(provider_required(&registry, &desired));
     }
 
     #[test]
@@ -1514,6 +1673,184 @@ mod tests {
     }
 
     #[test]
+    fn first_proof_registry_has_one_default_concrete_actor() {
+        let registry = RuntimeFactoryRegistry::first_proof_registry().unwrap();
+        let default_actors = registry
+            .descriptors()
+            .filter(|descriptor| descriptor.default_enabled)
+            .collect::<Vec<_>>();
+
+        assert_eq!(registry.len(), 12);
+        assert_eq!(default_actors.len(), 1);
+        assert_eq!(default_actors[0].runtime_id, "world_model.graph_replay");
+        assert_eq!(default_actors[0].role_class, RuntimeRoleClass::Actor);
+        assert_eq!(
+            default_actors[0].implementation_state,
+            RuntimeImplementationState::Concrete
+        );
+    }
+
+    #[test]
+    fn ingress_aliases_resolve_to_canonical_persisted_ids() {
+        let registry = RuntimeFactoryRegistry::first_proof_registry().unwrap();
+
+        assert_eq!(
+            registry.canonical_id("world_model.graph.replay"),
+            Some("world_model.graph_replay")
+        );
+        assert_eq!(
+            registry.canonical_id("execution.task.dispatch"),
+            Some("execution.task_dispatch")
+        );
+        assert_eq!(registry.canonical_id("events.ledger"), Some("event.append"));
+    }
+
+    #[test]
+    fn alias_collisions_fail_registry_construction() {
+        let canonical_collision = RuntimeFactoryRegistry::from_descriptors([
+            RuntimeFactoryDescriptor::classified(
+                "execution.one",
+                &["execution.two"],
+                RuntimeRoleClass::Actor,
+                RuntimeImplementationState::Inert,
+                false,
+                Vec::new(),
+            )
+            .unwrap(),
+            RuntimeFactoryDescriptor::new("execution.two", Vec::new()).unwrap(),
+        ])
+        .unwrap_err();
+        assert!(matches!(
+            canonical_collision,
+            RuntimeRegistryError::RuntimeAliasCollision(_)
+        ));
+
+        let duplicate_alias = RuntimeFactoryRegistry::from_descriptors([
+            RuntimeFactoryDescriptor::classified(
+                "execution.one",
+                &["execution.legacy"],
+                RuntimeRoleClass::Actor,
+                RuntimeImplementationState::Inert,
+                false,
+                Vec::new(),
+            )
+            .unwrap(),
+            RuntimeFactoryDescriptor::classified(
+                "execution.two",
+                &["execution.legacy"],
+                RuntimeRoleClass::Actor,
+                RuntimeImplementationState::Inert,
+                false,
+                Vec::new(),
+            )
+            .unwrap(),
+        ])
+        .unwrap_err();
+        assert!(matches!(
+            duplicate_alias,
+            RuntimeRegistryError::DuplicateRuntimeAlias(_)
+        ));
+    }
+
+    #[test]
+    fn registry_rejects_malformed_literal_aliases() {
+        let descriptor = RuntimeFactoryDescriptor {
+            runtime_id: "execution.one".to_string(),
+            required_resources: Vec::new(),
+            aliases: vec!["Execution Legacy".to_string()],
+            role_class: RuntimeRoleClass::Actor,
+            implementation_state: RuntimeImplementationState::Inert,
+            default_enabled: false,
+        };
+
+        let error = RuntimeFactoryRegistry::from_descriptors([descriptor]).unwrap_err();
+
+        assert!(matches!(error, RuntimeRegistryError::InvalidRuntimeId(_)));
+    }
+
+    #[test]
+    fn only_concrete_actors_can_be_default_enabled() {
+        for (role_class, implementation_state) in [
+            (RuntimeRoleClass::Actor, RuntimeImplementationState::Inert),
+            (
+                RuntimeRoleClass::PassiveService,
+                RuntimeImplementationState::Concrete,
+            ),
+            (
+                RuntimeRoleClass::PortOnly,
+                RuntimeImplementationState::Concrete,
+            ),
+        ] {
+            let error = RuntimeFactoryDescriptor::classified(
+                "execution.invalid_default",
+                &[],
+                role_class,
+                implementation_state,
+                true,
+                Vec::new(),
+            )
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                RuntimeRegistryError::InvalidDefaultRuntimeRole(_)
+            ));
+        }
+
+        let literal = RuntimeFactoryDescriptor {
+            runtime_id: "execution.literal_default".to_string(),
+            required_resources: Vec::new(),
+            aliases: Vec::new(),
+            role_class: RuntimeRoleClass::PortOnly,
+            implementation_state: RuntimeImplementationState::Concrete,
+            default_enabled: true,
+        };
+        assert!(matches!(
+            RuntimeFactoryRegistry::from_descriptors([literal]).unwrap_err(),
+            RuntimeRegistryError::InvalidDefaultRuntimeRole(_)
+        ));
+    }
+
+    #[test]
+    fn configured_alias_emits_only_the_canonical_runtime_id() {
+        let registry = RuntimeFactoryRegistry::first_proof_registry().unwrap();
+        let desired = desired_runtime_state(
+            &registry,
+            vec!["execution.task.dispatch".to_string()],
+            Vec::new(),
+        )
+        .unwrap();
+
+        assert_eq!(desired.len(), 12);
+        assert!(desired
+            .iter()
+            .any(|state| state.runtime_id == "execution.task_dispatch" && state.enabled));
+        assert!(!desired
+            .iter()
+            .any(|state| state.runtime_id == "execution.task.dispatch"));
+    }
+
+    #[test]
+    fn canonical_and_alias_selection_is_rejected_as_duplicate_ingress() {
+        let registry = RuntimeFactoryRegistry::first_proof_registry().unwrap();
+        let error = desired_runtime_state(
+            &registry,
+            vec![
+                "world_model.graph_replay".to_string(),
+                "world_model.graph.replay".to_string(),
+            ],
+            Vec::new(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RuntimeAssemblyError::RuntimeRegistry(RuntimeRegistryError::DuplicateRuntimeId(
+                runtime_id
+            )) if runtime_id == "world_model.graph_replay"
+        ));
+    }
+
+    #[test]
     fn invalid_runtime_ids_fail_registry_construction() {
         let error = RuntimeFactoryDescriptor::new("execution planning", Vec::new()).unwrap_err();
 
@@ -1534,7 +1871,11 @@ mod tests {
                     && !candidate.contains("..")
                     && candidate.contains('.')
                     && candidate.chars().all(|ch| {
-                        ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_'
+                        ch.is_ascii_lowercase()
+                            || ch.is_ascii_digit()
+                            || ch == '.'
+                            || ch == '-'
+                            || ch == '_'
                     });
                 prop_assert_eq!(result.is_ok(), expected);
                 Ok(())
@@ -1544,8 +1885,8 @@ mod tests {
 
     #[test]
     fn duplicate_enabled_and_disabled_runtime_ids_fail_selection() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut enabled = ProductRuntimeConfig::for_product_root(temp.path());
+        let enabled_temp = tempfile::tempdir().unwrap();
+        let mut enabled = ProductRuntimeConfig::for_product_root(enabled_temp.path());
         enabled.enabled_runtime_ids = vec![
             "execution.publication".to_string(),
             "execution.publication".to_string(),
@@ -1560,7 +1901,8 @@ mod tests {
             RuntimeAssemblyError::RuntimeRegistry(RuntimeRegistryError::DuplicateRuntimeId(_))
         ));
 
-        let mut disabled = ProductRuntimeConfig::for_product_root(temp.path());
+        let disabled_temp = tempfile::tempdir().unwrap();
+        let mut disabled = ProductRuntimeConfig::for_product_root(disabled_temp.path());
         disabled.disabled_runtime_ids = vec![
             "execution.publication".to_string(),
             "execution.publication".to_string(),

@@ -1,6 +1,7 @@
 //! Runtime CLI presentation.
 
 use crate::error::ApiError;
+use crate::runtime::contracts::{RuntimeImplementationState, RuntimeRoleClass};
 use crate::runtime::supervisor::{RuntimeHealthStatus, RuntimeInstanceStatus};
 use crate::runtime::tooling::{RuntimeCliRunResult, RuntimeCliStatus};
 
@@ -64,20 +65,26 @@ fn format_runtime_status_text(status: &RuntimeCliStatus) -> String {
 
     for runtime in &status.runtimes {
         lines.push(format!(
-            "- {} {} {} health={} lease={}",
+            "- {} {} role={} implementation={} factory={} health={} lease={} owner={}",
             runtime.runtime_id,
             if runtime.desired_enabled {
                 "enabled"
             } else {
                 "disabled"
             },
+            role_class(runtime.role_class),
+            implementation_state(runtime.implementation_state),
             if runtime.factory_available {
                 "available"
             } else {
                 "unavailable"
             },
             health_status(runtime.health_status),
-            runtime.active_lease_id.as_deref().unwrap_or("<none>")
+            runtime.active_lease_id.as_deref().unwrap_or("<none>"),
+            runtime
+                .active_owner_instance_id
+                .as_deref()
+                .unwrap_or("<none>")
         ));
     }
 
@@ -116,5 +123,23 @@ fn health_status(status: RuntimeHealthStatus) -> &'static str {
         RuntimeHealthStatus::Degraded => "degraded",
         RuntimeHealthStatus::Unhealthy => "unhealthy",
         RuntimeHealthStatus::Stopped => "stopped",
+    }
+}
+
+fn role_class(role: RuntimeRoleClass) -> &'static str {
+    match role {
+        RuntimeRoleClass::Unknown => "unknown",
+        RuntimeRoleClass::Actor => "actor",
+        RuntimeRoleClass::PassiveService => "passive-service",
+        RuntimeRoleClass::PortOnly => "port-only",
+    }
+}
+
+fn implementation_state(state: RuntimeImplementationState) -> &'static str {
+    match state {
+        RuntimeImplementationState::Unknown => "unknown",
+        RuntimeImplementationState::Concrete => "concrete",
+        RuntimeImplementationState::Inert => "inert",
+        RuntimeImplementationState::Unavailable => "unavailable",
     }
 }

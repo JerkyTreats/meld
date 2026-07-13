@@ -30,12 +30,19 @@ fn runtime_status_reports_desired_runtimes_without_supervisor_store() {
             .unwrap()
             .ends_with("supervisor.sled"));
         let event_append = runtime_row(&parsed, "event.append");
-        assert_eq!(event_append["desired_enabled"], true);
+        assert_eq!(event_append["desired_enabled"], false);
         assert_eq!(event_append["factory_available"], true);
+        assert_eq!(event_append["role_class"], "passive_service");
+        assert_eq!(event_append["implementation_state"], "concrete");
         assert_eq!(event_append["handle_started"], false);
+        let graph_replay = runtime_row(&parsed, "world_model.graph_replay");
+        assert_eq!(graph_replay["desired_enabled"], true);
+        assert_eq!(graph_replay["factory_available"], true);
+        assert_eq!(graph_replay["role_class"], "actor");
         let task_dispatch = runtime_row(&parsed, "execution.task_dispatch");
         assert_eq!(task_dispatch["desired_enabled"], false);
         assert_eq!(task_dispatch["factory_available"], true);
+        assert_eq!(task_dispatch["implementation_state"], "inert");
     });
 }
 
@@ -188,13 +195,37 @@ fn runtime_status_filters_runtime_ids() {
         let run_context = RunContext::new(workspace_root, None).unwrap();
 
         let output = run_context
-            .execute(&runtime_status_json(vec!["event.append".to_string()]))
+            .execute(&runtime_status_json(vec![
+                "world_model.graph.replay".to_string()
+            ]))
             .unwrap();
         let parsed: Value = serde_json::from_str(&output).unwrap();
         let runtimes = parsed["runtimes"].as_array().unwrap();
 
         assert_eq!(runtimes.len(), 1);
-        assert_eq!(runtimes[0]["runtime_id"], "event.append");
+        assert_eq!(runtimes[0]["runtime_id"], "world_model.graph_replay");
+    });
+}
+
+#[test]
+fn runtime_status_text_distinguishes_role_and_implementation() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = workspace(&temp_dir);
+        let run_context = RunContext::new(workspace_root, None).unwrap();
+
+        let output = run_context
+            .execute(&runtime_status(
+                "text",
+                vec!["execution.task_dispatch".to_string()],
+            ))
+            .unwrap();
+
+        assert!(output.contains("execution.task_dispatch disabled"));
+        assert!(output.contains("role=actor"));
+        assert!(output.contains("implementation=inert"));
+        assert!(output.contains("factory=available"));
+        assert!(!output.contains("execution.task_dispatch disabled unavailable"));
     });
 }
 
@@ -254,9 +285,13 @@ fn workspace(temp_dir: &TempDir) -> std::path::PathBuf {
 }
 
 fn runtime_status_json(runtime_ids: Vec<String>) -> Commands {
+    runtime_status("json", runtime_ids)
+}
+
+fn runtime_status(format: &str, runtime_ids: Vec<String>) -> Commands {
     Commands::Runtime {
         command: RuntimeCommands::Status {
-            format: "json".to_string(),
+            format: format.to_string(),
             runtime_ids,
         },
     }

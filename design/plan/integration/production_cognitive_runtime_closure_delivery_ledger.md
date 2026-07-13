@@ -206,27 +206,61 @@ The current candidate set includes:
 Ready items: W0A only
 Parallelization: two read-only analysts beside root reconciliation
 Workers: `w0a_source_truth` and `w0a_runtime_baseline`
-Commits accepted: W0A packet commit pending id insertion
+Commits accepted: `642af1c`
 Gate state: W0A checks and fresh review passed
 Next ready set: W0B after the W0A commit gate
+
+### 2026-07-12 W0B Contract Freeze
+
+Ready items: W0B only
+Parallelization: root-owned contract implementation with one fresh cache and compatibility reviewer
+Implementation state: review
+Contract evidence:
+
+- twelve canonical persisted runtime ids with ingress-only requirement aliases
+- one lowercase runtime id validator shared by assembly and supervisor
+- actor, passive service, and port-only role classes
+- concrete, inert, unavailable, and older-data implementation states with explicit desired-disabled presentation
+- all roles visible in desired state with only graph replay enabled by default
+- frozen cache paths, schema compatibility, byte and count limits, action envelopes, truncation metadata, staleness, and atomic replacement steps
+- active-owner lease identity exposed in status
+- heartbeat and health accepted for presentation only when they match the active lease
+- a losing supervisor contender fails startup without overwriting owner health or heartbeat
+
+Focused evidence:
+
+- `cargo test --locked runtime::contracts --lib`
+- `cargo test --locked runtime::assembly --lib`
+- `cargo test --locked runtime::supervisor --lib`
+- `cargo test --locked --test integration_tests runtime_cli`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+
+Commit state: fresh review passed, commit pending
+Next ready set: W0C1 through W0C4 after review and commit gate
 
 ## Gate Evidence
 
 | Wave | Gate | Result | Commit | Notes |
 | --- | --- | --- | --- | --- |
 | baseline | full locked workspace ladder | passed | `1f6dc1d` | implementation-ready checkpoint before program branch |
-| W0A | source truth and documentation checks | passed | pending id insertion | fresh reviewer withdrew all findings |
+| W0A | source truth and documentation checks | passed | `642af1c` | fresh reviewer withdrew all findings |
+| W0B | runtime contract focused ladder and workspace clippy | passed | pending | fresh review passed after two fix loops |
 
 ## Review Findings
 
 W0A findings for incomplete hygiene inventory and missing plan-index ledgers were fixed and withdrawn by the fresh reviewer.
+
+W0B fresh review found false worker eligibility for passive and port-only roles, contender mutation before lease conflict, hidden terminal health, incomplete tolerant-reader outcomes, ambiguous availability presentation, bypassable registry invariants, duplicate instance overwrite, and a startup rollback gap.
+Both fix loops closed every high finding.
+The final reviewer approved W0B for commit and W0C fanout with no remaining high or critical findings.
 
 ## Phase Completion Matrix
 
 | Packet | Status | Implementation Evidence | Test Evidence | Review |
 | --- | --- | --- | --- | --- |
 | W0A | complete | source classification and reconciled docs | Markdown, links, diff, boundaries | passed after fix loop |
-| W0B through W6G | blocked | none | none | none |
+| W0B | review | canonical identity, truthful roles, cache freeze, contender safety | focused runtime suites and workspace clippy | passed after two fix loops |
+| W0C1 through W6G | blocked | none | none | none |
 
 ## Risks And Exceptions
 
@@ -236,6 +270,7 @@ W0A findings for incomplete hygiene inventory and missing plan-index ledgers wer
 ### W0B Runtime Contract Freeze
 
 Initial state: blocked by W0A
+Current state: review
 Thread: zero
 Strength: highest available
 Write scope: central runtime contracts, assembly registry, supervisor contract adapter, compatibility tests

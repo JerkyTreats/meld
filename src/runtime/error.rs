@@ -72,4 +72,13 @@ pub enum RuntimeRegistryError {
     /// Runtime id appears more than once in the registry.
     #[error("duplicate runtime id: {0}")]
     DuplicateRuntimeId(String),
+    /// One alias is claimed by more than one canonical runtime id.
+    #[error("duplicate runtime alias: {0}")]
+    DuplicateRuntimeAlias(String),
+    /// An alias collides with another canonical runtime id.
+    #[error("runtime alias collides with canonical id: {0}")]
+    RuntimeAliasCollision(String),
+    /// A descriptor attempts to default-enable a non-concrete actor role.
+    #[error("runtime cannot be default enabled without a concrete actor implementation: {0}")]
+    InvalidDefaultRuntimeRole(String),
 }

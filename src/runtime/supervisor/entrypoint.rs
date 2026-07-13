@@ -9,7 +9,9 @@ use crate::runtime::assembly::{
     DesiredRuntimeState, InertRuntimeHandle, RuntimeHandleFlushReport, RuntimeHandleStopReport,
     RuntimeLeaseContext, SupervisorStartupPackage,
 };
-use crate::runtime::contracts::{WorkBudget, WorkerTickReport};
+use crate::runtime::contracts::{
+    RuntimeImplementationState, RuntimeRoleClass, WorkBudget, WorkerTickReport,
+};
 use crate::runtime::error::RuntimeAssemblyError;
 
 use super::contracts::{
@@ -43,6 +45,14 @@ pub enum SupervisorRuntimeError {
     /// The caller supplied an invalid lifecycle command.
     #[error("invalid supervisor command: {0}")]
     InvalidCommand(String),
+    /// Another supervisor instance owns a required runtime lease.
+    #[error("runtime contender rejected for '{runtime_id}'; active lease is '{active_lease_id}'")]
+    ActiveOwnerConflict {
+        /// Runtime whose lease rejected this contender.
+        runtime_id: String,
+        /// Lease id retained by the active owner.
+        active_lease_id: String,
+    },
 }
 
 /// Command used to register and start one supervisor instance.
@@ -86,6 +96,8 @@ pub struct SupervisorRuntimeStatus {
     pub handle_started: bool,
     /// Active lease id when present.
     pub active_lease_id: Option<String>,
+    /// Supervisor instance that owns the active lease.
+    pub active_owner_instance_id: Option<String>,
     /// Active lease status when present.
     pub lease_status: Option<super::contracts::RuntimeLeaseStatus>,
     /// Active lease expiry time when present.
@@ -171,7 +183,18 @@ struct SupervisorRuntimeDesired {
     runtime_id: RuntimeId,
     enabled: bool,
     factory_available: bool,
+    role_class: RuntimeRoleClass,
+    implementation_state: RuntimeImplementationState,
     restart_policy: RestartPolicy,
+}
+
+impl SupervisorRuntimeDesired {
+    fn worker_eligible(&self) -> bool {
+        self.enabled
+            && self.factory_available
+            && self.role_class == RuntimeRoleClass::Actor
+            && self.implementation_state == RuntimeImplementationState::Concrete
+    }
 }
 
 struct SupervisedRuntimeHandle {
@@ -226,9 +249,41 @@ impl<'a> RuntimeSupervisor<'a> {
         };
 
         supervisor.register_instance()?;
-        supervisor.persist_desired_state()?;
         supervisor.recover_expired_leases(command.started_at_ms)?;
-        supervisor.start_enabled_runtimes(command.started_at_ms)?;
+        let startup_leases = match supervisor.acquire_startup_leases(command.started_at_ms) {
+            Ok(leases) => leases,
+            Err(error) => {
+                supervisor.mark_instance(
+                    RuntimeInstanceStatus::Failed,
+                    Some(command.started_at_ms),
+                    command.started_at_ms,
+                )?;
+                supervisor.supervisor_store.flush()?;
+                return Err(error);
+            }
+        };
+        if let Err(error) = supervisor.persist_desired_state() {
+            supervisor.rollback_startup_ownership(&startup_leases, command.started_at_ms)?;
+            supervisor.mark_instance(
+                RuntimeInstanceStatus::Failed,
+                Some(command.started_at_ms),
+                command.started_at_ms,
+            )?;
+            supervisor.supervisor_store.flush()?;
+            return Err(error);
+        }
+        if let Err(error) =
+            supervisor.start_enabled_runtimes(command.started_at_ms, &startup_leases)
+        {
+            supervisor.rollback_startup_ownership(&startup_leases, command.started_at_ms)?;
+            supervisor.mark_instance(
+                RuntimeInstanceStatus::Failed,
+                Some(command.started_at_ms),
+                command.started_at_ms,
+            )?;
+            supervisor.supervisor_store.flush()?;
+            return Err(error);
+        }
         supervisor.mark_instance(RuntimeInstanceStatus::Running, None, command.started_at_ms)?;
         supervisor.supervisor_store.flush()?;
         Ok(supervisor)
@@ -254,25 +309,43 @@ impl<'a> RuntimeSupervisor<'a> {
             let active_lease = self
                 .supervisor_store
                 .get_active_runtime_lease(&desired.runtime_id)?;
+            let active_lease = active_lease.filter(|lease| lease.is_active_at(now_ms));
             let heartbeat = self
                 .supervisor_store
-                .get_runtime_heartbeat(&desired.runtime_id)?;
+                .get_runtime_heartbeat(&desired.runtime_id)?
+                .filter(|heartbeat| match active_lease.as_ref() {
+                    Some(lease) => {
+                        heartbeat.lease_id == lease.lease_id
+                            && heartbeat.instance_id == lease.instance_id
+                    }
+                    None => {
+                        desired.worker_eligible()
+                            && matches!(
+                                heartbeat.health.status,
+                                RuntimeHealthStatus::Stopped | RuntimeHealthStatus::Unhealthy
+                            )
+                    }
+                });
             let health = self
                 .supervisor_store
-                .get_health_snapshot(&desired.runtime_id)?;
+                .get_health_snapshot(&desired.runtime_id)?
+                .filter(|health| match active_lease.as_ref() {
+                    Some(lease) => health.lease_id.as_deref() == Some(lease.lease_id.as_str()),
+                    None => {
+                        desired.worker_eligible()
+                            && matches!(
+                                health.status,
+                                RuntimeHealthStatus::Stopped | RuntimeHealthStatus::Unhealthy
+                            )
+                    }
+                });
             let event = self
                 .supervisor_store
                 .latest_lifecycle_event_for_runtime(&desired.runtime_id)?;
             let last_heartbeat_at_ms = heartbeat.as_ref().map(|record| record.observed_at_ms);
             let heartbeat_age_ms =
                 last_heartbeat_at_ms.map(|observed| now_ms.saturating_sub(observed));
-            let default_health_status = if !desired.enabled {
-                RuntimeHealthStatus::Stopped
-            } else if !desired.factory_available {
-                RuntimeHealthStatus::Unhealthy
-            } else {
-                RuntimeHealthStatus::Unknown
-            };
+            let default_health_status = desired_default_health_status(desired);
             let health_status = health
                 .as_ref()
                 .map(|record| record.status)
@@ -326,6 +399,9 @@ impl<'a> RuntimeSupervisor<'a> {
                     .get(desired.runtime_id.as_str())
                     .is_some_and(|runtime| runtime.handle.is_started()),
                 active_lease_id: active_lease.as_ref().map(|record| record.lease_id.clone()),
+                active_owner_instance_id: active_lease
+                    .as_ref()
+                    .map(|record| record.instance_id.clone()),
                 lease_status: active_lease.as_ref().map(|record| record.status),
                 lease_expires_at_ms: active_lease.as_ref().map(|record| record.expires_at_ms),
                 last_heartbeat_at_ms,
@@ -609,7 +685,7 @@ impl<'a> RuntimeSupervisor<'a> {
 
     fn register_instance(&mut self) -> Result<(), SupervisorRuntimeError> {
         self.supervisor_store
-            .put_runtime_instance(&RuntimeInstance {
+            .register_runtime_instance(&RuntimeInstance {
                 instance_id: self.instance_id.clone(),
                 product_root: self.product_root.clone(),
                 started_at_ms: self.started_at_ms,
@@ -654,24 +730,90 @@ impl<'a> RuntimeSupervisor<'a> {
         Ok(())
     }
 
-    fn start_enabled_runtimes(&mut self, now_ms: u64) -> Result<(), SupervisorRuntimeError> {
-        let runtime_ids = self.desired.keys().cloned().collect::<Vec<_>>();
-        for runtime_id in runtime_ids {
-            let Some(desired) = self.desired.get(&runtime_id) else {
-                continue;
-            };
-            if !desired.enabled {
-                self.write_health_snapshot(
-                    &desired.runtime_id.clone(),
-                    None,
-                    RuntimeHealthStatus::Stopped,
-                    now_ms,
-                    NO_RESTART_ATTEMPTS,
-                    None,
-                )?;
-                continue;
+    fn acquire_startup_leases(
+        &self,
+        now_ms: u64,
+    ) -> Result<BTreeMap<String, RuntimeLease>, SupervisorRuntimeError> {
+        let mut acquired = BTreeMap::new();
+        for desired in self
+            .desired
+            .values()
+            .filter(|desired| desired.worker_eligible())
+        {
+            let runtime_id = desired.runtime_id.to_string();
+            let lease_id = format!("lease:{}:{}:{}:{}", self.instance_id, runtime_id, 0, now_ms);
+            match self.supervisor_store.acquire_runtime_lease(
+                desired.runtime_id.clone(),
+                lease_id,
+                self.instance_id.clone(),
+                now_ms,
+                self.lifecycle_config.lease_duration_ms,
+            ) {
+                Ok(lease) => {
+                    acquired.insert(runtime_id, lease);
+                }
+                Err(SupervisorStoreError::DuplicateActiveLease {
+                    runtime_id,
+                    active_lease_id,
+                }) => {
+                    self.release_startup_leases(&acquired, now_ms)?;
+                    return Err(SupervisorRuntimeError::ActiveOwnerConflict {
+                        runtime_id,
+                        active_lease_id,
+                    });
+                }
+                Err(error) => {
+                    self.release_startup_leases(&acquired, now_ms)?;
+                    return Err(error.into());
+                }
             }
-            self.start_runtime(&runtime_id, now_ms, NO_RESTART_ATTEMPTS, None)?;
+        }
+        Ok(acquired)
+    }
+
+    fn start_enabled_runtimes(
+        &mut self,
+        now_ms: u64,
+        startup_leases: &BTreeMap<String, RuntimeLease>,
+    ) -> Result<(), SupervisorRuntimeError> {
+        for (runtime_id, lease) in startup_leases {
+            self.start_runtime_after_lease(runtime_id, lease, now_ms, NO_RESTART_ATTEMPTS, None)?;
+        }
+        Ok(())
+    }
+
+    fn rollback_startup_ownership(
+        &mut self,
+        startup_leases: &BTreeMap<String, RuntimeLease>,
+        now_ms: u64,
+    ) -> Result<(), SupervisorRuntimeError> {
+        for runtime in self.handles.values_mut() {
+            if runtime.handle.is_started() {
+                runtime.handle.request_stop();
+                runtime.handle.wait_for_safe_point();
+            }
+        }
+        self.handles.clear();
+        self.release_startup_leases(startup_leases, now_ms)?;
+        Ok(())
+    }
+
+    fn release_startup_leases(
+        &self,
+        startup_leases: &BTreeMap<String, RuntimeLease>,
+        now_ms: u64,
+    ) -> Result<(), SupervisorRuntimeError> {
+        for lease in startup_leases.values() {
+            let owner = lease.owner();
+            if self
+                .supervisor_store
+                .get_active_runtime_lease(&owner.runtime_id)?
+                .as_ref()
+                .is_some_and(|active| active.is_owned_by(&owner))
+            {
+                self.supervisor_store
+                    .release_runtime_lease(&owner, now_ms)?;
+            }
         }
         Ok(())
     }
@@ -693,39 +835,10 @@ impl<'a> RuntimeSupervisor<'a> {
                 ))
             })?
             .clone();
-        let runtime = desired.runtime_id.clone();
-        self.write_lifecycle_event(
-            Some(runtime.clone()),
-            None,
-            now_ms,
-            SupervisorLifecycleEventType::RuntimeStartRequested,
-            Some("runtime start requested".to_string()),
-        )?;
-
-        let Some(factory) = self.handle_factories.get(runtime_id) else {
-            self.write_health_snapshot(
-                &runtime,
-                None,
-                RuntimeHealthStatus::Unhealthy,
-                now_ms,
-                restart_count,
-                last_restart_cause,
-            )?;
-            return Ok(None);
-        };
-
-        if !desired.factory_available {
-            self.write_health_snapshot(
-                &runtime,
-                None,
-                RuntimeHealthStatus::Unhealthy,
-                now_ms,
-                restart_count,
-                last_restart_cause,
-            )?;
+        if !desired.worker_eligible() {
             return Ok(None);
         }
-
+        let runtime = desired.runtime_id.clone();
         let lease_id = format!(
             "lease:{}:{}:{}:{}",
             self.instance_id, runtime_id, restart_count, now_ms
@@ -738,19 +851,49 @@ impl<'a> RuntimeSupervisor<'a> {
             self.lifecycle_config.lease_duration_ms,
         ) {
             Ok(lease) => lease,
-            Err(SupervisorStoreError::DuplicateActiveLease { .. }) => {
-                self.write_health_snapshot(
-                    &runtime,
-                    None,
-                    RuntimeHealthStatus::Unhealthy,
-                    now_ms,
-                    restart_count,
-                    last_restart_cause,
-                )?;
-                return Ok(None);
+            Err(SupervisorStoreError::DuplicateActiveLease {
+                runtime_id,
+                active_lease_id,
+            }) => {
+                return Err(SupervisorRuntimeError::ActiveOwnerConflict {
+                    runtime_id,
+                    active_lease_id,
+                });
             }
             Err(error) => return Err(error.into()),
         };
+        self.start_runtime_after_lease(
+            runtime_id,
+            &lease,
+            now_ms,
+            restart_count,
+            last_restart_cause,
+        )
+        .map(Some)
+    }
+
+    fn start_runtime_after_lease(
+        &mut self,
+        runtime_id: &str,
+        lease: &RuntimeLease,
+        now_ms: u64,
+        restart_count: u64,
+        last_restart_cause: Option<RestartCause>,
+    ) -> Result<RuntimeLeaseOwner, SupervisorRuntimeError> {
+        let runtime = lease.runtime_id.clone();
+        let factory = self.handle_factories.get(runtime_id).ok_or_else(|| {
+            SupervisorRuntimeError::InvalidCommand(format!(
+                "eligible runtime '{}' has no handle factory",
+                runtime_id
+            ))
+        })?;
+        self.write_lifecycle_event(
+            Some(runtime.clone()),
+            None,
+            now_ms,
+            SupervisorLifecycleEventType::RuntimeStartRequested,
+            Some("runtime start requested".to_string()),
+        )?;
         self.write_lifecycle_event(
             Some(runtime.clone()),
             Some(lease.lease_id.clone()),
@@ -765,7 +908,7 @@ impl<'a> RuntimeSupervisor<'a> {
             lease_id: lease.lease_id.clone(),
         })?;
         let owner = lease.owner();
-        self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Healthy, now_ms, None)?;
+        self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Starting, now_ms, None)?;
         self.write_lifecycle_event(
             Some(runtime.clone()),
             Some(owner.lease_id.clone()),
@@ -776,7 +919,7 @@ impl<'a> RuntimeSupervisor<'a> {
         self.write_health_snapshot(
             &runtime,
             Some(owner.lease_id.clone()),
-            RuntimeHealthStatus::Healthy,
+            RuntimeHealthStatus::Starting,
             now_ms,
             restart_count,
             last_restart_cause,
@@ -788,7 +931,7 @@ impl<'a> RuntimeSupervisor<'a> {
                 owner: owner.clone(),
             },
         );
-        Ok(Some(owner))
+        Ok(owner)
     }
 
     fn restart_runtime(
@@ -989,11 +1132,28 @@ fn desired_runtime_map(
                 runtime_id,
                 enabled: state.enabled,
                 factory_available: state.factory_available,
+                role_class: state.role_class,
+                implementation_state: state.implementation_state,
                 restart_policy,
             },
         );
     }
     Ok(desired)
+}
+
+fn desired_default_health_status(desired: &SupervisorRuntimeDesired) -> RuntimeHealthStatus {
+    if !desired.enabled {
+        RuntimeHealthStatus::Stopped
+    } else if !desired.factory_available
+        || matches!(
+            desired.implementation_state,
+            RuntimeImplementationState::Inert | RuntimeImplementationState::Unavailable
+        )
+    {
+        RuntimeHealthStatus::Unhealthy
+    } else {
+        RuntimeHealthStatus::Unknown
+    }
 }
 
 fn is_retryable_restart_signal(heartbeat: &RuntimeHeartbeat) -> bool {
@@ -1011,7 +1171,7 @@ fn is_retryable_restart_signal(heartbeat: &RuntimeHeartbeat) -> bool {
 
 fn health_status_from_tick_report(report: Option<&WorkerTickReport>) -> RuntimeHealthStatus {
     let Some(report) = report else {
-        return RuntimeHealthStatus::Healthy;
+        return RuntimeHealthStatus::Unhealthy;
     };
     if !report.fatal_errors.is_empty() {
         RuntimeHealthStatus::Unhealthy
@@ -1060,19 +1220,24 @@ mod tests {
                 .iter()
                 .filter(|runtime| runtime.desired_enabled && runtime.handle_started)
                 .count(),
-            11
+            1
         );
-        let event_append = runtime_status(&status, "event.append");
-        assert!(event_append.desired_enabled);
-        assert!(event_append.factory_available);
-        assert!(event_append.handle_started);
-        assert_eq!(event_append.health_status, RuntimeHealthStatus::Healthy);
-        assert_eq!(event_append.last_heartbeat_at_ms, Some(100));
-        assert_eq!(event_append.heartbeat_age_ms, Some(50));
+        let graph_replay = runtime_status(&status, "world_model.graph_replay");
+        assert!(graph_replay.desired_enabled);
+        assert!(graph_replay.factory_available);
+        assert!(graph_replay.handle_started);
+        assert_eq!(graph_replay.health_status, RuntimeHealthStatus::Starting);
+        assert_eq!(graph_replay.last_heartbeat_at_ms, Some(100));
+        assert_eq!(graph_replay.heartbeat_age_ms, Some(50));
         assert_eq!(
-            event_append.last_lifecycle_event,
+            graph_replay.last_lifecycle_event,
             Some(SupervisorLifecycleEventType::HeartbeatAccepted)
         );
+        let event_append = runtime_status(&status, "event.append");
+        assert!(!event_append.desired_enabled);
+        assert!(event_append.factory_available);
+        assert!(!event_append.handle_started);
+        assert_eq!(event_append.health_status, RuntimeHealthStatus::Stopped);
         let dispatch = runtime_status(&status, "execution.task_dispatch");
         assert!(!dispatch.desired_enabled);
         assert!(!dispatch.handle_started);
@@ -1105,9 +1270,9 @@ mod tests {
     fn supervisor_start_recovers_expired_lease_before_starting_new_owner() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
-        config.enabled_runtime_ids = vec!["event.append".to_string()];
+        config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
-        let runtime_id = RuntimeId::new("event.append").unwrap();
+        let runtime_id = RuntimeId::new("world_model.graph_replay").unwrap();
         assembly
             .supervisor_store()
             .acquire_runtime_lease(runtime_id.clone(), "lease-old", "old-instance", 10, 10)
@@ -1137,16 +1302,307 @@ mod tests {
         assert_eq!(active.instance_id, "instance-a");
         assert_ne!(active.lease_id, "lease-old");
         assert!(
-            runtime_status(&supervisor.status_snapshot(31).unwrap(), "event.append").handle_started
+            runtime_status(
+                &supervisor.status_snapshot(31).unwrap(),
+                "world_model.graph_replay"
+            )
+            .handle_started
         );
+    }
+
+    #[test]
+    fn losing_contender_cannot_overwrite_active_owner_truth() {
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let mut owner = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+        let runtime_id = RuntimeId::new("world_model.graph_replay").unwrap();
+        let owner_lease = assembly
+            .supervisor_store()
+            .get_active_runtime_lease(&runtime_id)
+            .unwrap()
+            .unwrap();
+        let sentinel_runtime = RuntimeId::new("event.append").unwrap();
+        let sentinel_desired = RuntimeDesiredState {
+            runtime_id: sentinel_runtime.clone(),
+            enabled: true,
+            restart_policy: RestartPolicy::Never,
+        };
+        let sentinel_health = RuntimeHealthSnapshot {
+            runtime_id: sentinel_runtime.clone(),
+            lease_id: None,
+            observed_at_ms: 100,
+            status: RuntimeHealthStatus::Degraded,
+            last_heartbeat_at_ms: None,
+            retryable_error_count: 7,
+            fatal_error_count: 0,
+            budget_exhausted: false,
+            restart_count: 9,
+            last_restart_cause: Some(RestartCause::RetryableFailure),
+        };
+        assembly
+            .supervisor_store()
+            .put_desired_runtime_state(&sentinel_desired)
+            .unwrap();
+        assembly
+            .supervisor_store()
+            .put_health_snapshot(&sentinel_health)
+            .unwrap();
+
+        let error = match RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-b", 101),
+        ) {
+            Ok(_) => panic!("a second supervisor must not start over an active owner"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            SupervisorRuntimeError::ActiveOwnerConflict { .. }
+        ));
+        let contender = assembly
+            .supervisor_store()
+            .get_runtime_instance("instance-b")
+            .unwrap()
+            .unwrap();
+        assert_eq!(contender.status, RuntimeInstanceStatus::Failed);
+        let active = assembly
+            .supervisor_store()
+            .get_active_runtime_lease(&runtime_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(active, owner_lease);
+        assert_eq!(active.instance_id, "instance-a");
+        let heartbeat = assembly
+            .supervisor_store()
+            .get_runtime_heartbeat(&runtime_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(heartbeat.instance_id, "instance-a");
+        assert_eq!(heartbeat.lease_id, active.lease_id);
+        let health = assembly
+            .supervisor_store()
+            .get_health_snapshot(&runtime_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(health.lease_id.as_deref(), Some(active.lease_id.as_str()));
+        assert_eq!(health.status, RuntimeHealthStatus::Starting);
+        assert_eq!(
+            assembly
+                .supervisor_store()
+                .get_desired_runtime_state(&sentinel_runtime)
+                .unwrap(),
+            Some(sentinel_desired)
+        );
+        assert_eq!(
+            assembly
+                .supervisor_store()
+                .get_health_snapshot(&sentinel_runtime)
+                .unwrap(),
+            Some(sentinel_health)
+        );
+        let status = owner.status_snapshot(101).unwrap();
+        let graph = runtime_status(&status, "world_model.graph_replay");
+        assert_eq!(
+            graph.active_owner_instance_id.as_deref(),
+            Some("instance-a")
+        );
+        assert_eq!(graph.health_status, RuntimeHealthStatus::Starting);
+
+        owner.tick(102).unwrap();
+    }
+
+    #[test]
+    fn duplicate_instance_id_cannot_overwrite_active_owner_truth() {
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let owner = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+        let runtime_id = RuntimeId::new("world_model.graph_replay").unwrap();
+        let owner_instance = assembly
+            .supervisor_store()
+            .get_runtime_instance("instance-a")
+            .unwrap()
+            .unwrap();
+        let owner_lease = assembly
+            .supervisor_store()
+            .get_active_runtime_lease(&runtime_id)
+            .unwrap()
+            .unwrap();
+        let owner_heartbeat = assembly
+            .supervisor_store()
+            .get_runtime_heartbeat(&runtime_id)
+            .unwrap()
+            .unwrap();
+        let owner_health = assembly
+            .supervisor_store()
+            .get_health_snapshot(&runtime_id)
+            .unwrap()
+            .unwrap();
+        let owner_event = assembly
+            .supervisor_store()
+            .latest_lifecycle_event_for_runtime(&runtime_id)
+            .unwrap()
+            .unwrap();
+
+        let error = match RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 101),
+        ) {
+            Ok(_) => panic!("duplicate instance id must fail before registration"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            SupervisorRuntimeError::Store(SupervisorStoreError::DuplicateInstanceId { .. })
+        ));
+        assert_eq!(
+            assembly
+                .supervisor_store()
+                .get_runtime_instance("instance-a")
+                .unwrap(),
+            Some(owner_instance)
+        );
+        assert_eq!(
+            assembly
+                .supervisor_store()
+                .get_active_runtime_lease(&runtime_id)
+                .unwrap(),
+            Some(owner_lease)
+        );
+        assert_eq!(
+            assembly
+                .supervisor_store()
+                .get_runtime_heartbeat(&runtime_id)
+                .unwrap(),
+            Some(owner_heartbeat)
+        );
+        assert_eq!(
+            assembly
+                .supervisor_store()
+                .get_health_snapshot(&runtime_id)
+                .unwrap(),
+            Some(owner_health)
+        );
+        assert_eq!(
+            assembly
+                .supervisor_store()
+                .latest_lifecycle_event_for_runtime(&runtime_id)
+                .unwrap(),
+            Some(owner_event)
+        );
+        assert_eq!(owner.instance_id(), "instance-a");
+    }
+
+    #[test]
+    fn legacy_runtime_alias_persists_only_canonical_non_worker_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        config.enabled_runtime_ids = vec!["events.ledger".to_string()];
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+        let canonical = RuntimeId::new("event.append").unwrap();
+        let legacy = RuntimeId::new("events.ledger").unwrap();
+
+        assert_eq!(
+            assembly
+                .desired_runtime_state()
+                .iter()
+                .filter(|state| state.enabled)
+                .map(|state| state.runtime_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["event.append"]
+        );
+        assert!(assembly
+            .supervisor_store()
+            .get_desired_runtime_state(&canonical)
+            .unwrap()
+            .is_some());
+        assert!(assembly
+            .supervisor_store()
+            .get_desired_runtime_state(&legacy)
+            .unwrap()
+            .is_none());
+        assert!(assembly
+            .supervisor_store()
+            .get_active_runtime_lease(&canonical)
+            .unwrap()
+            .is_none());
+        assert!(assembly
+            .supervisor_store()
+            .get_active_runtime_lease(&legacy)
+            .unwrap()
+            .is_none());
+        assert!(assembly
+            .supervisor_store()
+            .get_runtime_heartbeat(&legacy)
+            .unwrap()
+            .is_none());
+        assert!(assembly
+            .supervisor_store()
+            .get_health_snapshot(&legacy)
+            .unwrap()
+            .is_none());
+        assert!(assembly
+            .supervisor_store()
+            .latest_lifecycle_event_for_runtime(&legacy)
+            .unwrap()
+            .is_none());
+        let snapshot = supervisor.status_snapshot(100).unwrap();
+        let status = runtime_status(&snapshot, "event.append");
+        assert!(status.desired_enabled);
+        assert!(!status.handle_started);
+        assert!(status.active_owner_instance_id.is_none());
+        assert_eq!(status.health_status, RuntimeHealthStatus::Unknown);
+    }
+
+    #[test]
+    fn explicitly_enabled_port_only_role_never_acquires_worker_lease() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        config.enabled_runtime_ids = vec!["execution.goal.set".to_string()];
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+        let runtime_id = RuntimeId::new("execution.goal_set").unwrap();
+
+        assert!(assembly
+            .supervisor_store()
+            .get_active_runtime_lease(&runtime_id)
+            .unwrap()
+            .is_none());
+        assert!(assembly
+            .supervisor_store()
+            .get_runtime_heartbeat(&runtime_id)
+            .unwrap()
+            .is_none());
+        let snapshot = supervisor.status_snapshot(100).unwrap();
+        let status = runtime_status(&snapshot, "execution.goal_set");
+        assert!(status.desired_enabled);
+        assert!(status.factory_available);
+        assert!(!status.handle_started);
+        assert_eq!(status.health_status, RuntimeHealthStatus::Unknown);
     }
 
     #[test]
     fn shutdown_writes_final_heartbeat_releases_leases_and_is_idempotent() {
         let temp = tempfile::tempdir().unwrap();
-        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
-        config.enabled_runtime_ids = vec!["event.append".to_string()];
-        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
         let mut supervisor = RuntimeSupervisor::start(
             assembly.supervisor_startup_package(),
             SupervisorStartCommand::new("instance-a", 100),
@@ -1155,7 +1611,7 @@ mod tests {
 
         let first = supervisor.request_shutdown(200).unwrap();
         let second = supervisor.request_shutdown(210).unwrap();
-        let runtime_id = RuntimeId::new("event.append").unwrap();
+        let runtime_id = RuntimeId::new("world_model.graph_replay").unwrap();
         let heartbeat = assembly
             .supervisor_store()
             .get_runtime_heartbeat(&runtime_id)
@@ -1172,7 +1628,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(first.stopped_runtime_ids, vec!["event.append"]);
+        assert_eq!(first.stopped_runtime_ids, vec!["world_model.graph_replay"]);
         assert!(second.stopped_runtime_ids.is_empty());
         assert_eq!(heartbeat.health.status, RuntimeHealthStatus::Stopped);
         assert!(assembly
@@ -1183,13 +1639,21 @@ mod tests {
         assert_eq!(shutdown.status, RuntimeShutdownStatus::Completed);
         assert_eq!(instance.status, RuntimeInstanceStatus::Stopped);
         assert_eq!(instance.stopped_at_ms, Some(200));
+        assert_eq!(
+            runtime_status(
+                &supervisor.status_snapshot(210).unwrap(),
+                "world_model.graph_replay"
+            )
+            .health_status,
+            RuntimeHealthStatus::Stopped
+        );
     }
 
     #[test]
     fn heartbeat_expiry_policy_restarts_with_new_lease_and_counter() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
-        config.enabled_runtime_ids = vec!["event.append".to_string()];
+        config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
         config.lifecycle_config.lease_duration_ms = 20;
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
         let mut supervisor = RuntimeSupervisor::start(
@@ -1197,7 +1661,7 @@ mod tests {
             SupervisorStartCommand::new("instance-a", 100),
         )
         .unwrap();
-        let runtime_id = RuntimeId::new("event.append").unwrap();
+        let runtime_id = RuntimeId::new("world_model.graph_replay").unwrap();
         let old_lease = assembly
             .supervisor_store()
             .get_active_runtime_lease(&runtime_id)
@@ -1217,8 +1681,14 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(evaluation.expired_runtime_ids, vec!["event.append"]);
-        assert_eq!(evaluation.restarted_runtime_ids, vec!["event.append"]);
+        assert_eq!(
+            evaluation.expired_runtime_ids,
+            vec!["world_model.graph_replay"]
+        );
+        assert_eq!(
+            evaluation.restarted_runtime_ids,
+            vec!["world_model.graph_replay"]
+        );
         assert_ne!(active.lease_id, old_lease.lease_id);
         assert!(matches!(
             assembly
@@ -1238,14 +1708,14 @@ mod tests {
     fn never_restart_policy_leaves_expired_runtime_unhealthy() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
-        config.enabled_runtime_ids = vec!["event.append".to_string()];
+        config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
         config.lifecycle_config.lease_duration_ms = 20;
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
         let mut command = SupervisorStartCommand::new("instance-a", 100);
         command.default_restart_policy = RestartPolicy::Never;
         let mut supervisor =
             RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap();
-        let runtime_id = RuntimeId::new("event.append").unwrap();
+        let runtime_id = RuntimeId::new("world_model.graph_replay").unwrap();
 
         let evaluation = supervisor.evaluate_restart_policies(130).unwrap();
         let health = assembly
@@ -1254,7 +1724,10 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(evaluation.expired_runtime_ids, vec!["event.append"]);
+        assert_eq!(
+            evaluation.expired_runtime_ids,
+            vec!["world_model.graph_replay"]
+        );
         assert!(evaluation.restarted_runtime_ids.is_empty());
         assert!(assembly
             .supervisor_store()
@@ -1262,19 +1735,27 @@ mod tests {
             .unwrap()
             .is_none());
         assert_eq!(health.status, RuntimeHealthStatus::Unhealthy);
+        assert_eq!(
+            runtime_status(
+                &supervisor.status_snapshot(131).unwrap(),
+                "world_model.graph_replay"
+            )
+            .health_status,
+            RuntimeHealthStatus::Unhealthy
+        );
     }
 
     #[test]
     fn retryable_failure_policy_restarts_without_reading_domain_state() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
-        config.enabled_runtime_ids = vec!["event.append".to_string()];
+        config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
         let mut command = SupervisorStartCommand::new("instance-a", 100);
         command.default_restart_policy = RestartPolicy::OnRetryableFailure;
         let mut supervisor =
             RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap();
-        let runtime_id = RuntimeId::new("event.append").unwrap();
+        let runtime_id = RuntimeId::new("world_model.graph_replay").unwrap();
         let active = assembly
             .supervisor_store()
             .get_active_runtime_lease(&runtime_id)
@@ -1296,7 +1777,7 @@ mod tests {
                     last_error_code: Some("retryable_io".to_string()),
                 },
                 diagnostic: Some(RuntimeDiagnosticSummary {
-                    actor_id: "event.append".to_string(),
+                    actor_id: "world_model.graph_replay".to_string(),
                     retryable_issue_count: 1,
                     fatal_issue_count: 0,
                     budget_exhausted: false,
@@ -1313,27 +1794,30 @@ mod tests {
             .unwrap();
 
         assert!(evaluation.expired_runtime_ids.is_empty());
-        assert_eq!(evaluation.restarted_runtime_ids, vec!["event.append"]);
+        assert_eq!(
+            evaluation.restarted_runtime_ids,
+            vec!["world_model.graph_replay"]
+        );
         assert_eq!(health.restart_count, 1);
         assert_eq!(
             health.last_restart_cause,
             Some(RestartCause::RetryableFailure)
         );
-        assert_eq!(health.status, RuntimeHealthStatus::Healthy);
+        assert_eq!(health.status, RuntimeHealthStatus::Starting);
     }
 
     #[test]
     fn tick_renews_lease_and_writes_heartbeat() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
-        config.enabled_runtime_ids = vec!["event.append".to_string()];
+        config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
         let mut supervisor = RuntimeSupervisor::start(
             assembly.supervisor_startup_package(),
             SupervisorStartCommand::new("instance-a", 100),
         )
         .unwrap();
-        let runtime_id = RuntimeId::new("event.append").unwrap();
+        let runtime_id = RuntimeId::new("world_model.graph_replay").unwrap();
 
         let report = supervisor.tick(120).unwrap();
         let active = assembly
@@ -1357,8 +1841,11 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(report.renewed_runtime_ids, vec!["event.append"]);
-        assert_eq!(report.heartbeat_runtime_ids, vec!["event.append"]);
+        assert_eq!(report.renewed_runtime_ids, vec!["world_model.graph_replay"]);
+        assert_eq!(
+            report.heartbeat_runtime_ids,
+            vec!["world_model.graph_replay"]
+        );
         assert!(report.restart_evaluation.expired_runtime_ids.is_empty());
         assert_eq!(active.renewed_at_ms, Some(120));
         assert_eq!(heartbeat.observed_at_ms, 120);
@@ -1429,7 +1916,7 @@ mod tests {
     fn tick_preserves_restart_count_in_health_snapshot() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
-        config.enabled_runtime_ids = vec!["event.append".to_string()];
+        config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
         config.lifecycle_config.lease_duration_ms = 20;
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
         let mut supervisor = RuntimeSupervisor::start(
@@ -1437,7 +1924,7 @@ mod tests {
             SupervisorStartCommand::new("instance-a", 100),
         )
         .unwrap();
-        let runtime_id = RuntimeId::new("event.append").unwrap();
+        let runtime_id = RuntimeId::new("world_model.graph_replay").unwrap();
 
         supervisor.evaluate_restart_policies(130).unwrap();
         supervisor.tick(131).unwrap();
@@ -1459,7 +1946,7 @@ mod tests {
     fn tick_runs_restart_policy_evaluation() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
-        config.enabled_runtime_ids = vec!["event.append".to_string()];
+        config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
         config.lifecycle_config.lease_duration_ms = 5;
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
         let mut supervisor = RuntimeSupervisor::start(
@@ -1467,7 +1954,7 @@ mod tests {
             SupervisorStartCommand::new("instance-a", 100),
         )
         .unwrap();
-        let runtime_id = RuntimeId::new("event.append").unwrap();
+        let runtime_id = RuntimeId::new("world_model.graph_replay").unwrap();
         let old_lease = assembly
             .supervisor_store()
             .get_active_runtime_lease(&runtime_id)
@@ -1483,17 +1970,20 @@ mod tests {
 
         assert_eq!(
             report.restart_evaluation.expired_runtime_ids,
-            vec!["event.append"]
+            vec!["world_model.graph_replay"]
         );
         assert_eq!(
             report.restart_evaluation.restarted_runtime_ids,
-            vec!["event.append"]
+            vec!["world_model.graph_replay"]
         );
         assert!(report.renewed_runtime_ids.is_empty());
         assert_ne!(active.lease_id, old_lease.lease_id);
         assert!(
-            runtime_status(&supervisor.status_snapshot(111).unwrap(), "event.append")
-                .handle_started
+            runtime_status(
+                &supervisor.status_snapshot(111).unwrap(),
+                "world_model.graph_replay"
+            )
+            .handle_started
         );
     }
 
