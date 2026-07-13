@@ -274,6 +274,58 @@ const PROJECTION_REQUEST_HASH_DOMAIN: &[u8] = b"meld.planner-projection-request.
 const PROJECTION_FRAME_HASH_DOMAIN: &[u8] = b"meld.planner-projection-frame.v1";
 const PLANNER_WORLD_STATE_HASH_DOMAIN: &[u8] = b"meld.planner-world-state.v1";
 
+/// Immutable attested belief boundary frozen by one projection request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannerAttestedBeliefSnapshot {
+    /// Belief-owned readiness attestation identity.
+    pub attestation_id: String,
+    /// Exact append-only belief revision identity.
+    pub revision_id: String,
+    /// Canonical digest of the complete belief revision.
+    pub revision_hash: String,
+    /// Exact planner-safe view identity.
+    pub view_id: String,
+    /// Canonical digest of the complete planner-safe view.
+    pub view_hash: String,
+    /// Inclusive lower source sequence consumed by the revision.
+    pub source_cursor_start: u64,
+    /// Inclusive upper source sequence consumed by the revision.
+    pub source_cursor_end: u64,
+}
+
+impl PlannerAttestedBeliefSnapshot {
+    /// Build the planner boundary from a belief-owned readiness attestation.
+    pub fn from_attestation(attestation: &crate::belief::BeliefReadinessAttestation) -> Self {
+        Self {
+            attestation_id: attestation.attestation_id.clone(),
+            revision_id: attestation.belief_revision_id.clone(),
+            revision_hash: attestation.belief_revision_hash.clone(),
+            view_id: attestation.belief_view_id.clone(),
+            view_hash: attestation.belief_view_hash.clone(),
+            source_cursor_start: attestation.source_cursor_start,
+            source_cursor_end: attestation.source_cursor_end,
+        }
+    }
+
+    /// Validate exact identities, content digests, and the source boundary.
+    pub fn validate(&self) -> Result<(), PlannerProjectionContractError> {
+        for (field, value) in [
+            ("planner attestation id", self.attestation_id.as_str()),
+            ("planner belief revision id", self.revision_id.as_str()),
+            ("planner belief revision hash", self.revision_hash.as_str()),
+            ("planner belief view id", self.view_id.as_str()),
+            ("planner belief view hash", self.view_hash.as_str()),
+        ] {
+            projection_required(field, value)?;
+        }
+        if self.source_cursor_start == 0 || self.source_cursor_end < self.source_cursor_start {
+            return Err(PlannerProjectionContractError::SequenceRegression);
+        }
+        Ok(())
+    }
+}
+
 /// Durable world-model request for one planner-facing projection frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -294,6 +346,9 @@ pub struct PlannerProjectionRequest {
     pub requested_dimensions: Vec<String>,
     /// Canonically ordered extra planner preconditions.
     pub required_preconditions: Vec<meld_lang::Proposition>,
+    /// Exact belief snapshot for attested hydration projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attested_belief: Option<PlannerAttestedBeliefSnapshot>,
 }
 
 impl PlannerProjectionRequest {
@@ -305,8 +360,55 @@ impl PlannerProjectionRequest {
         subject: DomainObjectRef,
         perspective: PerspectiveKey,
         branch_scope: BranchScope,
+        requested_dimensions: Vec<String>,
+        required_preconditions: Vec<meld_lang::Proposition>,
+    ) -> Result<Self, PlannerProjectionContractError> {
+        Self::identified_inner(
+            source_request_hash,
+            agent_id,
+            subject,
+            perspective,
+            branch_scope,
+            requested_dimensions,
+            required_preconditions,
+            None,
+        )
+    }
+
+    /// Canonicalize and identify a projection over one exact attested view.
+    #[allow(clippy::too_many_arguments)]
+    pub fn identified_attested(
+        source_request_hash: impl Into<String>,
+        agent_id: impl Into<String>,
+        subject: DomainObjectRef,
+        perspective: PerspectiveKey,
+        branch_scope: BranchScope,
+        requested_dimensions: Vec<String>,
+        required_preconditions: Vec<meld_lang::Proposition>,
+        attested_belief: PlannerAttestedBeliefSnapshot,
+    ) -> Result<Self, PlannerProjectionContractError> {
+        Self::identified_inner(
+            source_request_hash,
+            agent_id,
+            subject,
+            perspective,
+            branch_scope,
+            requested_dimensions,
+            required_preconditions,
+            Some(attested_belief),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn identified_inner(
+        source_request_hash: impl Into<String>,
+        agent_id: impl Into<String>,
+        subject: DomainObjectRef,
+        perspective: PerspectiveKey,
+        branch_scope: BranchScope,
         mut requested_dimensions: Vec<String>,
         mut required_preconditions: Vec<meld_lang::Proposition>,
+        attested_belief: Option<PlannerAttestedBeliefSnapshot>,
     ) -> Result<Self, PlannerProjectionContractError> {
         requested_dimensions.sort();
         requested_dimensions.dedup();
@@ -320,6 +422,7 @@ impl PlannerProjectionRequest {
             branch_scope,
             requested_dimensions,
             required_preconditions,
+            attested_belief,
         };
         request.request_id = request.derive_id()?;
         request.validate()?;
@@ -337,6 +440,9 @@ impl PlannerProjectionRequest {
             .validate()
             .map_err(|error| PlannerProjectionContractError::Invalid(error.to_string()))?;
         projection_required("projection branch id", &self.branch_scope.branch_id)?;
+        if let Some(snapshot) = self.attested_belief.as_ref() {
+            snapshot.validate()?;
+        }
         if self.requested_dimensions.is_empty()
             || self
                 .requested_dimensions
@@ -365,7 +471,7 @@ impl PlannerProjectionRequest {
 
     fn derive_id(&self) -> Result<String, PlannerProjectionContractError> {
         #[derive(Serialize)]
-        struct Identity<'a> {
+        struct LegacyIdentity<'a> {
             source_request_hash: &'a str,
             agent_id: &'a str,
             subject: &'a DomainObjectRef,
@@ -374,16 +480,29 @@ impl PlannerProjectionRequest {
             requested_dimensions: &'a [String],
             required_preconditions: &'a [meld_lang::Proposition],
         }
+        let legacy = LegacyIdentity {
+            source_request_hash: &self.source_request_hash,
+            agent_id: &self.agent_id,
+            subject: &self.subject,
+            perspective: &self.perspective,
+            branch_scope: &self.branch_scope,
+            requested_dimensions: &self.requested_dimensions,
+            required_preconditions: &self.required_preconditions,
+        };
+        let Some(attested_belief) = self.attested_belief.as_ref() else {
+            return planner_contract_hash(PROJECTION_REQUEST_HASH_DOMAIN, &legacy);
+        };
+        #[derive(Serialize)]
+        struct AttestedIdentity<'a> {
+            #[serde(flatten)]
+            legacy: LegacyIdentity<'a>,
+            attested_belief: &'a PlannerAttestedBeliefSnapshot,
+        }
         planner_contract_hash(
             PROJECTION_REQUEST_HASH_DOMAIN,
-            &Identity {
-                source_request_hash: &self.source_request_hash,
-                agent_id: &self.agent_id,
-                subject: &self.subject,
-                perspective: &self.perspective,
-                branch_scope: &self.branch_scope,
-                requested_dimensions: &self.requested_dimensions,
-                required_preconditions: &self.required_preconditions,
+            &AttestedIdentity {
+                legacy,
+                attested_belief,
             },
         )
     }
@@ -417,6 +536,15 @@ pub struct PlannerProjectionRequestRecord {
     pub created_at_seq: u64,
     /// Last durable transition sequence.
     pub updated_at_seq: u64,
+}
+
+/// Crate-private non-visible hydration request intent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PreparedPlannerProjectionRequest {
+    pub(crate) request: PlannerProjectionRequest,
+    pub(crate) created_at_seq: u64,
+    pub(crate) owner_fence_hash: String,
 }
 
 impl PlannerProjectionRequestRecord {

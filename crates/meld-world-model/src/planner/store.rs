@@ -9,15 +9,20 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use sled::{transaction::Transactional, Db, Tree};
 
+use crate::agent::AgentHydrationFenceCapability;
+use crate::belief::{hash_readiness_view, BeliefReadinessSnapshot, BeliefView};
 use crate::error::StorageError;
 use crate::planner::{
     PlannerProjectionFrame, PlannerProjectionRequest, PlannerProjectionRequestRecord,
-    PlannerProjectionRequestStatus,
+    PlannerProjectionRequestStatus, PreparedPlannerProjectionRequest,
 };
 
 const TREE_PROJECTION_REQUESTS: &str = "planner_projection_requests";
 const TREE_PROJECTION_FRAMES: &str = "planner_projection_frames";
 const TREE_PROJECTION_REQUEST_STATUS: &str = "planner_projection_request_status";
+const TREE_PROJECTION_REQUEST_OWNER_FENCES: &str = "planner_projection_request_owner_fences";
+const TREE_PREPARED_PROJECTION_REQUESTS: &str = "planner_prepared_projection_requests";
+const TREE_PROJECTION_REQUEST_VIEWS: &str = "planner_projection_request_views";
 const KEY_STATUS_SCHEMA: &[u8] = b"__schema";
 const STATUS_SCHEMA_V1: &[u8] = b"planner_projection_request_status.v1";
 const PENDING_PREFIX: &[u8] = b"pending::";
@@ -29,6 +34,39 @@ pub struct PlannerPendingSelection {
     pub records: Vec<PlannerProjectionRequestRecord>,
     /// True when at least one additional pending request remains.
     pub budget_exhausted: bool,
+}
+
+/// Opaque authority issued only to the planner actor for one attested request.
+pub(super) struct PlannerProjectionTerminalCapability {
+    pending: PlannerProjectionRequestRecord,
+    owner_fence_bytes: Vec<u8>,
+    hydration_fence: AgentHydrationFenceCapability,
+}
+
+impl PlannerProjectionTerminalCapability {
+    fn validate_call(
+        &self,
+        current: &PlannerProjectionRequestRecord,
+        request_id: &str,
+        expected_updated_at_seq: u64,
+    ) -> Result<(), StorageError> {
+        if self.pending.status != PlannerProjectionRequestStatus::Pending
+            || self.pending.request.attested_belief.is_none()
+            || self.pending.request.request_id != request_id
+            || self.pending.updated_at_seq != expected_updated_at_seq
+            || current.request != self.pending.request
+            || current.created_at_seq != self.pending.created_at_seq
+        {
+            return Err(StorageError::Backpressure(
+                "planner terminal capability does not authorize this exact request".to_string(),
+            ));
+        }
+        self.hydration_fence.validate_planner_terminal_scope(
+            request_id,
+            &current.request.agent_id,
+            expected_updated_at_seq,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -44,6 +82,9 @@ pub struct PlannerProjectionStore {
     requests: Tree,
     frames: Tree,
     request_status: Tree,
+    request_owner_fences: Tree,
+    prepared_requests: Tree,
+    request_views: Tree,
     #[cfg(test)]
     flush_probe: Arc<Mutex<FlushProbe>>,
 }
@@ -61,6 +102,15 @@ impl PlannerProjectionStore {
             request_status: db
                 .open_tree(TREE_PROJECTION_REQUEST_STATUS)
                 .map_err(to_storage_io)?,
+            request_owner_fences: db
+                .open_tree(TREE_PROJECTION_REQUEST_OWNER_FENCES)
+                .map_err(to_storage_io)?,
+            prepared_requests: db
+                .open_tree(TREE_PREPARED_PROJECTION_REQUESTS)
+                .map_err(to_storage_io)?,
+            request_views: db
+                .open_tree(TREE_PROJECTION_REQUEST_VIEWS)
+                .map_err(to_storage_io)?,
             #[cfg(test)]
             flush_probe: Arc::new(Mutex::new(FlushProbe::default())),
             db,
@@ -71,6 +121,170 @@ impl PlannerProjectionStore {
 
     /// Atomically persist one pending request or replay its exact identity.
     pub fn put_pending(
+        &self,
+        request: PlannerProjectionRequest,
+        created_at_seq: u64,
+    ) -> Result<PlannerProjectionRequestRecord, StorageError> {
+        request.validate().map_err(to_contract_error)?;
+        if request.attested_belief.is_some() {
+            return Err(StorageError::InvalidPath(
+                "attested planner requests require the hydration submission command".to_string(),
+            ));
+        }
+        self.put_initial_request(request, created_at_seq)
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn put_fenced_pending_for_fuzz(
+        &self,
+        request: PlannerProjectionRequest,
+        created_at_seq: u64,
+        capability: &AgentHydrationFenceCapability,
+    ) -> Result<PlannerProjectionRequestRecord, StorageError> {
+        request.validate().map_err(to_contract_error)?;
+        if request.attested_belief.is_none() {
+            return Err(StorageError::InvalidPath(
+                "fuzz planner request requires an attested snapshot".to_string(),
+            ));
+        }
+        let record = PlannerProjectionRequestRecord {
+            request,
+            status: PlannerProjectionRequestStatus::Pending,
+            frame_id: None,
+            last_error: None,
+            created_at_seq,
+            updated_at_seq: created_at_seq.checked_add(2).ok_or_else(|| {
+                StorageError::InvalidPath("fuzz planner request sequence overflow".to_string())
+            })?,
+        };
+        record.validate().map_err(to_contract_error)?;
+        validate_store_record_sequence(&record)?;
+        let request_bytes = serde_json::to_vec(&record).map_err(to_storage_data)?;
+        let fence_bytes = capability.snapshot_bytes()?;
+        let status_key = request_status_key(&record);
+        (
+            &self.requests,
+            &self.request_status,
+            &self.request_owner_fences,
+        )
+            .transaction(|(requests, request_status, owner_fences)| {
+                insert_exact_transaction_value(
+                    requests,
+                    record.request.request_id.as_bytes(),
+                    &request_bytes,
+                    "fuzz fenced planner request",
+                )?;
+                insert_exact_transaction_value(
+                    request_status,
+                    status_key.as_bytes(),
+                    record.request.request_id.as_bytes(),
+                    "fuzz fenced planner status",
+                )?;
+                insert_exact_transaction_value(
+                    owner_fences,
+                    record.request.request_id.as_bytes(),
+                    &fence_bytes,
+                    "fuzz planner owner fence",
+                )
+            })
+            .map_err(|error| match error {
+                sled::transaction::TransactionError::Abort(message) => {
+                    StorageError::Backpressure(message)
+                }
+                sled::transaction::TransactionError::Storage(error) => to_storage_io(error),
+            })?;
+        self.flush_durable("fuzz fenced planner request")?;
+        Ok(record)
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn has_owner_fence_for_fuzz(&self, request_id: &str) -> Result<bool, StorageError> {
+        self.request_owner_fences
+            .contains_key(request_id.as_bytes())
+            .map_err(to_storage_io)
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn complete_attested_for_fuzz(
+        &self,
+        request_id: &str,
+        expected_updated_at_seq: u64,
+        frame: PlannerProjectionFrame,
+        completed_at_seq: u64,
+    ) -> Result<PlannerProjectionRequestRecord, StorageError> {
+        let pending = self.require_request(request_id)?;
+        let capability = self.terminal_capability_for_actor(&pending)?;
+        self.complete_attested_for_actor(
+            &capability,
+            request_id,
+            expected_updated_at_seq,
+            frame,
+            completed_at_seq,
+        )
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn fail_attested_for_fuzz(
+        &self,
+        request_id: &str,
+        expected_updated_at_seq: u64,
+        error: impl Into<String>,
+        failed_at_seq: u64,
+    ) -> Result<PlannerProjectionRequestRecord, StorageError> {
+        let pending = self.require_request(request_id)?;
+        let capability = self.terminal_capability_for_actor(&pending)?;
+        self.fail_attested_for_actor(
+            &capability,
+            request_id,
+            expected_updated_at_seq,
+            error,
+            failed_at_seq,
+        )
+    }
+
+    /// Prepare a non-actionable request bound to one exact agent owner snapshot.
+    pub(crate) fn put_prepared_fenced(
+        &self,
+        request: PlannerProjectionRequest,
+        snapshot: &BeliefReadinessSnapshot,
+        created_at_seq: u64,
+        owner_fence_hash: &str,
+    ) -> Result<PreparedPlannerProjectionRequest, StorageError> {
+        validate_attested_request_snapshot(&request, snapshot, created_at_seq)?;
+        validate_planner_owner_fence_hash(owner_fence_hash)?;
+        let prepared = PreparedPlannerProjectionRequest {
+            request,
+            created_at_seq,
+            owner_fence_hash: owner_fence_hash.to_string(),
+        };
+        let key = prepared.request.request_id.as_bytes();
+        let encoded = serde_json::to_vec(&prepared).map_err(to_storage_data)?;
+        let view_bytes = serde_json::to_vec(&snapshot.view).map_err(to_storage_data)?;
+        use sled::transaction::TransactionError;
+        (&self.prepared_requests, &self.request_views)
+            .transaction(|(prepared_requests, request_views)| {
+                insert_exact_transaction_value(
+                    prepared_requests,
+                    key,
+                    &encoded,
+                    "prepared planner request",
+                )?;
+                insert_exact_transaction_value(
+                    request_views,
+                    key,
+                    &view_bytes,
+                    "planner request belief snapshot",
+                )
+            })
+            .map_err(|error| match error {
+                TransactionError::Abort(message) => StorageError::Backpressure(message),
+                TransactionError::Storage(error) => to_storage_io(error),
+            })?;
+        self.flush_durable("prepared planner request")?;
+        Ok(prepared)
+    }
+
+    fn put_initial_request(
         &self,
         request: PlannerProjectionRequest,
         created_at_seq: u64,
@@ -123,6 +337,164 @@ impl PlannerProjectionStore {
         Ok(pending)
     }
 
+    pub(crate) fn get_prepared_request(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<PreparedPlannerProjectionRequest>, StorageError> {
+        let prepared: Option<PreparedPlannerProjectionRequest> = decode_optional(
+            self.prepared_requests
+                .get(request_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )?;
+        if let Some(prepared) = prepared.as_ref() {
+            validate_prepared_request(prepared)?;
+            if prepared.request.request_id != request_id {
+                return Err(StorageError::InvalidPath(
+                    "prepared planner request tree key conflicts with embedded request identity"
+                        .to_string(),
+                ));
+            }
+        }
+        Ok(prepared)
+    }
+
+    /// Issue an opaque terminal authority for one exact attested pending request.
+    pub(super) fn terminal_capability_for_actor(
+        &self,
+        expected: &PlannerProjectionRequestRecord,
+    ) -> Result<PlannerProjectionTerminalCapability, StorageError> {
+        expected.validate().map_err(to_contract_error)?;
+        validate_store_record_sequence(expected)?;
+        if expected.status != PlannerProjectionRequestStatus::Pending
+            || expected.request.attested_belief.is_none()
+        {
+            return Err(StorageError::InvalidPath(
+                "planner terminal capability requires an attested pending request".to_string(),
+            ));
+        }
+        if self.get_request(&expected.request.request_id)?.as_ref() != Some(expected) {
+            return Err(StorageError::Backpressure(
+                "planner request changed before terminal capability issuance".to_string(),
+            ));
+        }
+        let owner_fence_bytes = self
+            .request_owner_fences
+            .get(expected.request.request_id.as_bytes())
+            .map_err(to_storage_io)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(
+                    "attested planner request is missing its hydration owner fence".to_string(),
+                )
+            })?
+            .to_vec();
+        let hydration_fence = AgentHydrationFenceCapability::reopen(&self.db, &owner_fence_bytes)?;
+        hydration_fence.validate_planner_terminal_scope(
+            &expected.request.request_id,
+            &expected.request.agent_id,
+            expected.updated_at_seq,
+        )?;
+        Ok(PlannerProjectionTerminalCapability {
+            pending: expected.clone(),
+            owner_fence_bytes,
+            hydration_fence,
+        })
+    }
+
+    /// Activate one prepared request under an exact agent owner fence.
+    pub(crate) fn activate_prepared(
+        &self,
+        expected: &PreparedPlannerProjectionRequest,
+        activated_at_seq: u64,
+        fence: &AgentHydrationFenceCapability,
+    ) -> Result<PlannerProjectionRequestRecord, StorageError> {
+        expected.request.validate().map_err(to_contract_error)?;
+        if activated_at_seq != expected.created_at_seq.checked_add(2).unwrap_or(0) {
+            return Err(StorageError::InvalidPath(
+                "planner request activation requires a prepared record and advancing sequence"
+                    .to_string(),
+            ));
+        }
+        let activated = PlannerProjectionRequestRecord {
+            request: expected.request.clone(),
+            status: PlannerProjectionRequestStatus::Pending,
+            frame_id: None,
+            last_error: None,
+            created_at_seq: expected.created_at_seq,
+            updated_at_seq: activated_at_seq,
+        };
+        activated.validate().map_err(to_contract_error)?;
+        let expected_bytes = serde_json::to_vec(expected).map_err(to_storage_data)?;
+        let activated_bytes = serde_json::to_vec(&activated).map_err(to_storage_data)?;
+        let fence_snapshot_bytes = fence.snapshot_bytes()?;
+        let pending_status_key = request_status_key(&activated);
+        fence.transaction_four(
+            &self.prepared_requests,
+            &self.requests,
+            &self.request_status,
+            &self.request_owner_fences,
+            |prepared_requests, requests, request_status, owner_fences| {
+                if expected.owner_fence_hash != fence.owner_hash() {
+                    return Err(sled::transaction::ConflictableTransactionError::Abort(
+                        "prepared planner request owner fence changed".to_string(),
+                    ));
+                }
+                let current_request = requests.get(expected.request.request_id.as_bytes())?;
+                if current_request.as_deref() == Some(activated_bytes.as_slice()) {
+                    require_transaction_value(
+                        request_status,
+                        pending_status_key.as_bytes(),
+                        expected.request.request_id.as_bytes(),
+                        "planner request status index",
+                    )?;
+                    require_transaction_value(
+                        owner_fences,
+                        expected.request.request_id.as_bytes(),
+                        &fence_snapshot_bytes,
+                        "planner request owner fence",
+                    )?;
+                    if prepared_requests
+                        .get(expected.request.request_id.as_bytes())?
+                        .is_some()
+                    {
+                        return Err(sled::transaction::ConflictableTransactionError::Abort(
+                            "activated planner request retained its prepared intent".to_string(),
+                        ));
+                    }
+                    return Ok(());
+                }
+                if current_request.is_some() {
+                    return Err(sled::transaction::ConflictableTransactionError::Abort(
+                        "planner request became visible before activation".to_string(),
+                    ));
+                }
+                require_transaction_value(
+                    prepared_requests,
+                    expected.request.request_id.as_bytes(),
+                    &expected_bytes,
+                    "prepared planner request",
+                )?;
+                requests.insert(
+                    expected.request.request_id.as_bytes(),
+                    activated_bytes.as_slice(),
+                )?;
+                request_status.insert(
+                    pending_status_key.as_bytes(),
+                    expected.request.request_id.as_bytes(),
+                )?;
+                insert_exact_transaction_value(
+                    owner_fences,
+                    expected.request.request_id.as_bytes(),
+                    &fence_snapshot_bytes,
+                    "planner request owner fence",
+                )?;
+                prepared_requests.remove(expected.request.request_id.as_bytes())?;
+                Ok(())
+            },
+        )?;
+        self.flush_durable("activated planner request")?;
+        Ok(activated)
+    }
+
     /// Atomically complete one exact pending request with one durable frame.
     pub fn complete(
         &self,
@@ -130,6 +502,41 @@ impl PlannerProjectionStore {
         expected_updated_at_seq: u64,
         frame: PlannerProjectionFrame,
         completed_at_seq: u64,
+    ) -> Result<PlannerProjectionRequestRecord, StorageError> {
+        self.complete_inner(
+            request_id,
+            expected_updated_at_seq,
+            frame,
+            completed_at_seq,
+            None,
+        )
+    }
+
+    /// Complete one attested request through actor-only terminal authority.
+    pub(super) fn complete_attested_for_actor(
+        &self,
+        capability: &PlannerProjectionTerminalCapability,
+        request_id: &str,
+        expected_updated_at_seq: u64,
+        frame: PlannerProjectionFrame,
+        completed_at_seq: u64,
+    ) -> Result<PlannerProjectionRequestRecord, StorageError> {
+        self.complete_inner(
+            request_id,
+            expected_updated_at_seq,
+            frame,
+            completed_at_seq,
+            Some(capability),
+        )
+    }
+
+    fn complete_inner(
+        &self,
+        request_id: &str,
+        expected_updated_at_seq: u64,
+        frame: PlannerProjectionFrame,
+        completed_at_seq: u64,
+        capability: Option<&PlannerProjectionTerminalCapability>,
     ) -> Result<PlannerProjectionRequestRecord, StorageError> {
         frame.validate().map_err(to_contract_error)?;
         let expected_terminal_seq = expected_updated_at_seq.checked_add(1).ok_or_else(|| {
@@ -143,10 +550,27 @@ impl PlannerProjectionStore {
             ));
         }
         let current = self.require_request(request_id)?;
+        match (current.request.attested_belief.is_some(), capability) {
+            (true, Some(capability)) => {
+                capability.validate_call(&current, request_id, expected_updated_at_seq)?;
+            }
+            (true, None) => {
+                return Err(StorageError::InvalidPath(
+                    "attested planner completion requires actor terminal authority".to_string(),
+                ));
+            }
+            (false, Some(_)) => {
+                return Err(StorageError::InvalidPath(
+                    "attested planner terminal authority cannot complete a public request"
+                        .to_string(),
+                ));
+            }
+            (false, None) => {}
+        }
         if current.status == PlannerProjectionRequestStatus::Completed {
             let durable_frame = self.get_frame(&frame.identity.frame_id)?;
             if current.updated_at_seq == completed_at_seq
-                && current.updated_at_seq == current.created_at_seq.checked_add(1).unwrap_or(0)
+                && current.updated_at_seq > current.created_at_seq
                 && frame.completed_at_seq == current.updated_at_seq
                 && current.frame_id.as_deref() == Some(frame.identity.frame_id.as_str())
                 && durable_frame.as_ref() == Some(&frame)
@@ -160,7 +584,6 @@ impl PlannerProjectionStore {
         }
         if current.status != PlannerProjectionRequestStatus::Pending
             || current.updated_at_seq != expected_updated_at_seq
-            || current.updated_at_seq != current.created_at_seq
             || frame.identity.request_id != current.request.request_id
             || frame.identity.source_request_hash != current.request.source_request_hash
         {
@@ -180,6 +603,64 @@ impl PlannerProjectionStore {
         use sled::transaction::{ConflictableTransactionError, TransactionError};
         let current_status_key = request_status_key(&current);
         let completed_status_key = request_status_key(&completed);
+        if let Some(capability) = capability {
+            let retained = capability.hydration_fence.transaction_four_checked(
+                &self.requests,
+                &self.frames,
+                &self.request_status,
+                &self.request_owner_fences,
+                |requests, frames, request_status, owner_fences, fence_current| {
+                    require_transaction_value(
+                        requests,
+                        request_id.as_bytes(),
+                        &expected,
+                        "planner request",
+                    )?;
+                    require_transaction_value(
+                        owner_fences,
+                        request_id.as_bytes(),
+                        &capability.owner_fence_bytes,
+                        "planner request owner fence",
+                    )?;
+                    require_transaction_value(
+                        request_status,
+                        current_status_key.as_bytes(),
+                        request_id.as_bytes(),
+                        "planner request status index",
+                    )?;
+                    if !fence_current {
+                        requests.remove(request_id.as_bytes())?;
+                        request_status.remove(current_status_key.as_bytes())?;
+                        owner_fences.remove(request_id.as_bytes())?;
+                        return Ok(false);
+                    }
+                    if let Some(existing) = frames.get(frame.identity.frame_id.as_bytes())? {
+                        if existing.as_ref() != frame_bytes.as_slice() {
+                            return Err(ConflictableTransactionError::Abort(
+                                "planner frame identity conflicts with durable state".to_string(),
+                            ));
+                        }
+                    } else {
+                        frames
+                            .insert(frame.identity.frame_id.as_bytes(), frame_bytes.as_slice())?;
+                    }
+                    requests.insert(request_id.as_bytes(), completed_bytes.as_slice())?;
+                    request_status.remove(current_status_key.as_bytes())?;
+                    request_status
+                        .insert(completed_status_key.as_bytes(), request_id.as_bytes())?;
+                    Ok(true)
+                },
+            )?;
+            if !retained {
+                self.flush_durable("revoked stale planner request")?;
+                return Err(StorageError::Backpressure(
+                    "planner request owner fence changed and the stale request was revoked"
+                        .to_string(),
+                ));
+            }
+            self.flush_durable("completed fenced planner request")?;
+            return Ok(completed);
+        }
         // The immutable frame, request CAS, and status-index move commit as one
         // unit so a selector cannot rediscover a terminal request.
         (&self.requests, &self.frames, &self.request_status)
@@ -226,7 +707,41 @@ impl PlannerProjectionStore {
         error: impl Into<String>,
         failed_at_seq: u64,
     ) -> Result<PlannerProjectionRequestRecord, StorageError> {
-        let error = error.into();
+        self.fail_inner(
+            request_id,
+            expected_updated_at_seq,
+            error.into(),
+            failed_at_seq,
+            None,
+        )
+    }
+
+    /// Fail one attested request through actor-only terminal authority.
+    pub(super) fn fail_attested_for_actor(
+        &self,
+        capability: &PlannerProjectionTerminalCapability,
+        request_id: &str,
+        expected_updated_at_seq: u64,
+        error: impl Into<String>,
+        failed_at_seq: u64,
+    ) -> Result<PlannerProjectionRequestRecord, StorageError> {
+        self.fail_inner(
+            request_id,
+            expected_updated_at_seq,
+            error.into(),
+            failed_at_seq,
+            Some(capability),
+        )
+    }
+
+    fn fail_inner(
+        &self,
+        request_id: &str,
+        expected_updated_at_seq: u64,
+        error: String,
+        failed_at_seq: u64,
+        capability: Option<&PlannerProjectionTerminalCapability>,
+    ) -> Result<PlannerProjectionRequestRecord, StorageError> {
         if error.trim().is_empty() || error.len() > 1024 {
             return Err(StorageError::InvalidPath(
                 "planner failure detail must contain at most 1024 bytes".to_string(),
@@ -241,9 +756,25 @@ impl PlannerProjectionStore {
             ));
         }
         let current = self.require_request(request_id)?;
+        match (current.request.attested_belief.is_some(), capability) {
+            (true, Some(capability)) => {
+                capability.validate_call(&current, request_id, expected_updated_at_seq)?;
+            }
+            (true, None) => {
+                return Err(StorageError::InvalidPath(
+                    "attested planner failure requires actor terminal authority".to_string(),
+                ));
+            }
+            (false, Some(_)) => {
+                return Err(StorageError::InvalidPath(
+                    "attested planner terminal authority cannot fail a public request".to_string(),
+                ));
+            }
+            (false, None) => {}
+        }
         if current.status == PlannerProjectionRequestStatus::Failed {
             if current.updated_at_seq == failed_at_seq
-                && current.updated_at_seq == current.created_at_seq.checked_add(1).unwrap_or(0)
+                && current.updated_at_seq > current.created_at_seq
                 && current.last_error.as_deref() == Some(error.as_str())
             {
                 self.flush_durable("failed planner request replay")?;
@@ -255,7 +786,6 @@ impl PlannerProjectionStore {
         }
         if current.status != PlannerProjectionRequestStatus::Pending
             || current.updated_at_seq != expected_updated_at_seq
-            || current.updated_at_seq != current.created_at_seq
         {
             return Err(StorageError::Backpressure(
                 "planner request failure fence changed".to_string(),
@@ -271,6 +801,53 @@ impl PlannerProjectionStore {
         use sled::transaction::TransactionError;
         let current_status_key = request_status_key(&current);
         let failed_status_key = request_status_key(&failed);
+        if let Some(capability) = capability {
+            let retained = capability.hydration_fence.transaction_four_checked(
+                &self.requests,
+                &self.frames,
+                &self.request_status,
+                &self.request_owner_fences,
+                |requests, _frames, request_status, owner_fences, fence_current| {
+                    require_transaction_value(
+                        requests,
+                        request_id.as_bytes(),
+                        &expected,
+                        "planner request",
+                    )?;
+                    require_transaction_value(
+                        owner_fences,
+                        request_id.as_bytes(),
+                        &capability.owner_fence_bytes,
+                        "planner request owner fence",
+                    )?;
+                    require_transaction_value(
+                        request_status,
+                        current_status_key.as_bytes(),
+                        request_id.as_bytes(),
+                        "planner request status index",
+                    )?;
+                    if !fence_current {
+                        requests.remove(request_id.as_bytes())?;
+                        request_status.remove(current_status_key.as_bytes())?;
+                        owner_fences.remove(request_id.as_bytes())?;
+                        return Ok(false);
+                    }
+                    requests.insert(request_id.as_bytes(), failed_bytes.as_slice())?;
+                    request_status.remove(current_status_key.as_bytes())?;
+                    request_status.insert(failed_status_key.as_bytes(), request_id.as_bytes())?;
+                    Ok(true)
+                },
+            )?;
+            if !retained {
+                self.flush_durable("revoked stale planner request")?;
+                return Err(StorageError::Backpressure(
+                    "planner request owner fence changed and the stale request was revoked"
+                        .to_string(),
+                ));
+            }
+            self.flush_durable("failed fenced planner request")?;
+            return Ok(failed);
+        }
         // Failure removes pending visibility in the same CAS transaction that
         // records the diagnostic, preserving retry and reopen ordering.
         (&self.requests, &self.request_status)
@@ -313,8 +890,45 @@ impl PlannerProjectionStore {
         if let Some(record) = record.as_ref() {
             record.validate().map_err(to_contract_error)?;
             validate_store_record_sequence(record)?;
+            if record.request.request_id != request_id {
+                return Err(StorageError::InvalidPath(
+                    "planner request tree key conflicts with embedded request identity".to_string(),
+                ));
+            }
         }
         Ok(record)
+    }
+
+    /// Read the exact planner-safe view frozen by an attested request.
+    pub(crate) fn attested_view_for_request(
+        &self,
+        request: &PlannerProjectionRequest,
+    ) -> Result<Option<BeliefView>, StorageError> {
+        let Some(snapshot) = request.attested_belief.as_ref() else {
+            return Ok(None);
+        };
+        let view: BeliefView = decode_optional(
+            self.request_views
+                .get(request.request_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )?
+        .ok_or_else(|| {
+            StorageError::InvalidPath(
+                "attested planner request is missing its frozen belief view".to_string(),
+            )
+        })?;
+        if view.view_id != snapshot.view_id
+            || view.current_revision_id.as_deref() != Some(snapshot.revision_id.as_str())
+            || view.key.subject != request.subject
+            || view.key.perspective != request.perspective
+            || view.key.branch_scope != request.branch_scope
+            || hash_readiness_view(&view)? != snapshot.view_hash
+        {
+            return Err(StorageError::InvalidPath(
+                "attested planner request view conflicts with its frozen boundary".to_string(),
+            ));
+        }
+        Ok(Some(view))
     }
 
     /// Read one completed planner projection frame by identity.
@@ -322,11 +936,20 @@ impl PlannerProjectionStore {
         &self,
         frame_id: &str,
     ) -> Result<Option<PlannerProjectionFrame>, StorageError> {
-        decode_optional(
+        let frame: Option<PlannerProjectionFrame> = decode_optional(
             self.frames
                 .get(frame_id.as_bytes())
                 .map_err(to_storage_io)?,
-        )
+        )?;
+        if let Some(frame) = frame.as_ref() {
+            frame.validate().map_err(to_contract_error)?;
+            if frame.identity.frame_id != frame_id {
+                return Err(StorageError::InvalidPath(
+                    "planner frame tree key conflicts with embedded frame identity".to_string(),
+                ));
+            }
+        }
+        Ok(frame)
     }
 
     /// Select pending requests in stable creation and identity order.
@@ -382,8 +1005,7 @@ impl PlannerProjectionStore {
                 != Some(expected_frame.identity.frame_id.as_str())
             || expected_request.request.request_id != expected_frame.identity.request_id
             || expected_request.updated_at_seq != expected_frame.completed_at_seq
-            || expected_request.updated_at_seq
-                != expected_request.created_at_seq.checked_add(1).unwrap_or(0)
+            || expected_request.updated_at_seq <= expected_request.created_at_seq
         {
             return Err(StorageError::InvalidPath(
                 "planner readiness products do not form one completed projection".to_string(),
@@ -399,7 +1021,7 @@ impl PlannerProjectionStore {
                 "planner readiness products changed or are missing".to_string(),
             ));
         }
-        self.flush_durable("planner readiness verification")
+        Ok(())
     }
 
     /// Flush pending planner projection writes.
@@ -523,9 +1145,19 @@ fn validate_store_record_sequence(
     record: &PlannerProjectionRequestRecord,
 ) -> Result<(), StorageError> {
     let valid = match record.status {
-        PlannerProjectionRequestStatus::Pending => record.updated_at_seq == record.created_at_seq,
+        PlannerProjectionRequestStatus::Pending => {
+            if record.request.attested_belief.is_some() {
+                record.updated_at_seq == record.created_at_seq.checked_add(2).unwrap_or(0)
+            } else {
+                record.updated_at_seq == record.created_at_seq
+            }
+        }
         PlannerProjectionRequestStatus::Completed | PlannerProjectionRequestStatus::Failed => {
-            record.updated_at_seq == record.created_at_seq.checked_add(1).unwrap_or(0)
+            if record.request.attested_belief.is_some() {
+                record.updated_at_seq == record.created_at_seq.checked_add(3).unwrap_or(0)
+            } else {
+                record.updated_at_seq == record.created_at_seq.checked_add(1).unwrap_or(0)
+            }
         }
     };
     if valid {
@@ -535,6 +1167,70 @@ fn validate_store_record_sequence(
             "planner request durable sequence does not match its lifecycle".to_string(),
         ))
     }
+}
+
+fn validate_prepared_request(
+    prepared: &PreparedPlannerProjectionRequest,
+) -> Result<(), StorageError> {
+    prepared.request.validate().map_err(to_contract_error)?;
+    if prepared.request.attested_belief.is_none() {
+        return Err(StorageError::InvalidPath(
+            "prepared planner request requires an attested belief boundary".to_string(),
+        ));
+    }
+    if prepared.created_at_seq == 0 {
+        return Err(StorageError::InvalidPath(
+            "prepared planner request creation sequence must be greater than zero".to_string(),
+        ));
+    }
+    validate_planner_owner_fence_hash(&prepared.owner_fence_hash)
+}
+
+fn validate_planner_owner_fence_hash(owner_fence_hash: &str) -> Result<(), StorageError> {
+    if owner_fence_hash.len() != 64
+        || !owner_fence_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(StorageError::InvalidPath(
+            "planner request owner fence must be a lowercase BLAKE3 digest".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_attested_request_snapshot(
+    request: &PlannerProjectionRequest,
+    snapshot: &BeliefReadinessSnapshot,
+    created_at_seq: u64,
+) -> Result<(), StorageError> {
+    request.validate().map_err(to_contract_error)?;
+    snapshot.validate()?;
+    let frozen = request.attested_belief.as_ref().ok_or_else(|| {
+        StorageError::InvalidPath(
+            "hydration planner request must freeze an attested belief snapshot".to_string(),
+        )
+    })?;
+    if frozen.attestation_id != snapshot.attestation.attestation_id
+        || frozen.revision_id != snapshot.attestation.belief_revision_id
+        || frozen.revision_hash != snapshot.attestation.belief_revision_hash
+        || frozen.view_id != snapshot.attestation.belief_view_id
+        || frozen.view_hash != snapshot.attestation.belief_view_hash
+        || frozen.source_cursor_start != snapshot.attestation.source_cursor_start
+        || frozen.source_cursor_end != snapshot.attestation.source_cursor_end
+        || hash_readiness_view(&snapshot.view)? != frozen.view_hash
+        || created_at_seq
+            != snapshot
+                .attestation
+                .attested_at_seq
+                .checked_add(2)
+                .unwrap_or(0)
+    {
+        return Err(StorageError::InvalidPath(
+            "planner request does not preserve its exact attested belief snapshot".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn require_transaction_value(
@@ -549,6 +1245,26 @@ fn require_transaction_value(
         ));
     }
     Ok(())
+}
+
+fn insert_exact_transaction_value(
+    tree: &sled::transaction::TransactionalTree,
+    key: &[u8],
+    value: &[u8],
+    product: &str,
+) -> Result<(), sled::transaction::ConflictableTransactionError<String>> {
+    match tree.get(key)? {
+        Some(current) if current.as_ref() != value => {
+            Err(sled::transaction::ConflictableTransactionError::Abort(
+                format!("{product} conflicts with durable state"),
+            ))
+        }
+        Some(_) => Ok(()),
+        None => {
+            tree.insert(key, value)?;
+            Ok(())
+        }
+    }
 }
 
 fn decode_optional<T: serde::de::DeserializeOwned>(
@@ -578,8 +1294,8 @@ mod tests {
     use crate::belief::BranchScope;
     use crate::events::DomainObjectRef;
     use crate::planner::{
-        PlannerHydrationRefs, PlannerProjectionFrameIdentity, PlannerProjectionOutput,
-        PlannerSourceRef, PLANNER_PROJECTION_VERSION,
+        PlannerAttestedBeliefSnapshot, PlannerHydrationRefs, PlannerProjectionFrameIdentity,
+        PlannerProjectionOutput, PlannerSourceRef, PLANNER_PROJECTION_VERSION,
     };
     use crate::world_state::graph::PerspectiveKey;
 
@@ -605,6 +1321,28 @@ mod tests {
             BranchScope::main(),
             vec!["docs_freshness".to_string()],
             Vec::new(),
+        )
+        .unwrap()
+    }
+
+    fn attested_request() -> PlannerProjectionRequest {
+        PlannerProjectionRequest::identified_attested(
+            "execution-request-hash",
+            "agent-docs",
+            DomainObjectRef::new("workspace_fs", "node", "readme").unwrap(),
+            PerspectiveKey::new("agent", "docs").unwrap(),
+            BranchScope::main(),
+            vec!["docs_freshness".to_string()],
+            Vec::new(),
+            PlannerAttestedBeliefSnapshot {
+                attestation_id: "attestation-a".to_string(),
+                revision_id: "revision-a".to_string(),
+                revision_hash: "revision-hash-a".to_string(),
+                view_id: "view-a".to_string(),
+                view_hash: "view-hash-a".to_string(),
+                source_cursor_start: 1,
+                source_cursor_end: 1,
+            },
         )
         .unwrap()
     }
@@ -654,15 +1392,154 @@ mod tests {
             store.get_request(&request.request_id).unwrap(),
             Some(completed.clone())
         );
+        store.fail_next_flush();
         store
             .verify_completed_projection(&completed, &durable_frame)
             .unwrap();
+        assert!(store.flush().is_err());
 
         let mut missing_frame = durable_frame;
         missing_frame.identity.frame_id = "missing-frame".to_string();
         assert!(store
             .verify_completed_projection(&completed, &missing_frame)
             .is_err());
+    }
+
+    #[test]
+    fn public_product_getters_reject_alias_keys_and_malformed_content() {
+        let store =
+            PlannerProjectionStore::new(sled::Config::new().temporary(true).open().unwrap())
+                .unwrap();
+        let request = request();
+        let record = store.put_pending(request.clone(), 3).unwrap();
+        store
+            .requests
+            .insert(b"request-alias", serde_json::to_vec(&record).unwrap())
+            .unwrap();
+        store.fail_next_flush();
+        assert!(matches!(
+            store.get_request("request-alias"),
+            Err(StorageError::InvalidPath(message))
+                if message.contains("key conflicts with embedded request identity")
+        ));
+
+        let mut malformed_record = record;
+        malformed_record.request.source_request_hash.clear();
+        store
+            .requests
+            .insert(
+                request.request_id.as_bytes(),
+                serde_json::to_vec(&malformed_record).unwrap(),
+            )
+            .unwrap();
+        assert!(store.get_request(&request.request_id).is_err());
+
+        let frame = frame(&request, 4);
+        store
+            .frames
+            .insert(b"frame-alias", serde_json::to_vec(&frame).unwrap())
+            .unwrap();
+        assert!(matches!(
+            store.get_frame("frame-alias"),
+            Err(StorageError::InvalidPath(message))
+                if message.contains("key conflicts with embedded frame identity")
+        ));
+
+        let mut malformed_frame = frame;
+        malformed_frame.completed_at_seq = 0;
+        store
+            .frames
+            .insert(
+                malformed_frame.identity.frame_id.as_bytes(),
+                serde_json::to_vec(&malformed_frame).unwrap(),
+            )
+            .unwrap();
+        assert!(store.get_frame(&malformed_frame.identity.frame_id).is_err());
+        assert!(store.flush().is_err());
+    }
+
+    #[test]
+    fn prepared_request_getter_rejects_alias_keys_and_malformed_content_without_flushing() {
+        let store =
+            PlannerProjectionStore::new(sled::Config::new().temporary(true).open().unwrap())
+                .unwrap();
+        let attested = attested_request();
+        let prepared = PreparedPlannerProjectionRequest {
+            request: attested.clone(),
+            created_at_seq: 3,
+            owner_fence_hash: "a".repeat(64),
+        };
+        store
+            .prepared_requests
+            .insert(b"prepared-alias", serde_json::to_vec(&prepared).unwrap())
+            .unwrap();
+        store.fail_next_flush();
+        assert!(matches!(
+            store.get_prepared_request("prepared-alias"),
+            Err(StorageError::InvalidPath(message))
+                if message.contains("key conflicts with embedded request identity")
+        ));
+
+        let mut noncanonical_request = prepared.clone();
+        noncanonical_request.request.source_request_hash.clear();
+        store
+            .prepared_requests
+            .insert(
+                attested.request_id.as_bytes(),
+                serde_json::to_vec(&noncanonical_request).unwrap(),
+            )
+            .unwrap();
+        assert!(store.get_prepared_request(&attested.request_id).is_err());
+
+        let unattested_request = request();
+        let missing_attestation = PreparedPlannerProjectionRequest {
+            request: unattested_request.clone(),
+            created_at_seq: 3,
+            owner_fence_hash: "b".repeat(64),
+        };
+        store
+            .prepared_requests
+            .insert(
+                unattested_request.request_id.as_bytes(),
+                serde_json::to_vec(&missing_attestation).unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            store.get_prepared_request(&unattested_request.request_id),
+            Err(StorageError::InvalidPath(message))
+                if message.contains("requires an attested belief boundary")
+        ));
+
+        let mut zero_sequence = prepared.clone();
+        zero_sequence.created_at_seq = 0;
+        store
+            .prepared_requests
+            .insert(
+                attested.request_id.as_bytes(),
+                serde_json::to_vec(&zero_sequence).unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            store.get_prepared_request(&attested.request_id),
+            Err(StorageError::InvalidPath(message))
+                if message.contains("sequence must be greater than zero")
+        ));
+
+        let mut invalid_owner = prepared;
+        invalid_owner.owner_fence_hash = "A".repeat(64);
+        store
+            .prepared_requests
+            .insert(
+                attested.request_id.as_bytes(),
+                serde_json::to_vec(&invalid_owner).unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            store.get_prepared_request(&attested.request_id),
+            Err(StorageError::InvalidPath(message))
+                if message.contains("lowercase BLAKE3 digest")
+        ));
+        assert!(store.flush().is_err());
     }
 
     #[test]
@@ -684,6 +1561,51 @@ mod tests {
         assert!(store
             .complete(&request.request_id, 3, frame(&request, 4), 4)
             .is_err());
+    }
+
+    #[test]
+    fn public_terminal_transition_rejects_attested_request() {
+        let store =
+            PlannerProjectionStore::new(sled::Config::new().temporary(true).open().unwrap())
+                .unwrap();
+        let request = attested_request();
+        let pending = PlannerProjectionRequestRecord {
+            request: request.clone(),
+            status: PlannerProjectionRequestStatus::Pending,
+            frame_id: None,
+            last_error: None,
+            created_at_seq: 3,
+            updated_at_seq: 5,
+        };
+        store
+            .requests
+            .insert(
+                request.request_id.as_bytes(),
+                serde_json::to_vec(&pending).unwrap(),
+            )
+            .unwrap();
+        store
+            .request_status
+            .insert(
+                request_status_key(&pending).as_bytes(),
+                request.request_id.as_bytes(),
+            )
+            .unwrap();
+
+        for result in [
+            store.complete(&request.request_id, 5, frame(&request, 6), 6),
+            store.fail(&request.request_id, 5, "terminal failure", 6),
+        ] {
+            assert!(matches!(
+                result,
+                Err(StorageError::InvalidPath(message))
+                    if message.contains("actor terminal authority")
+            ));
+        }
+        assert_eq!(
+            store.get_request(&request.request_id).unwrap(),
+            Some(pending)
+        );
     }
 
     #[test]

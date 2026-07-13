@@ -11,10 +11,54 @@ use crate::activation::{
     BeliefActivationReceipt, WorldModelActivationIdentity, WorldModelActivationInput,
 };
 use crate::belief::BeliefConfigLoader;
+use crate::error::StorageError;
 
 const TREE_CONFIG_SNAPSHOTS: &str = "belief_config_snapshots";
 const TREE_CONFIG_BY_FAMILY: &str = "belief_config_by_family";
 const TREE_ACTIVATION_RECEIPTS: &str = "belief_activation_receipts";
+
+/// Exact immutable configuration snapshot used by a cross-domain activation fence.
+#[derive(Debug, Clone)]
+pub(crate) struct BeliefConfigSnapshotFence {
+    pub(crate) tree: Tree,
+    pub(crate) hash: String,
+    pub(crate) json: String,
+}
+
+impl BeliefConfigSnapshotFence {
+    /// Open the belief-owned snapshot tree for one validated fence identity.
+    pub(crate) fn open(db: &Db, hash: String, json: String) -> Result<Self, StorageError> {
+        if hash.trim().is_empty() || json.trim().is_empty() {
+            return Err(StorageError::InvalidPath(
+                "belief config fence requires an identity and serialized snapshot".to_string(),
+            ));
+        }
+        Ok(Self {
+            tree: db
+                .open_tree(TREE_CONFIG_SNAPSHOTS)
+                .map_err(|error| StorageError::IoError(std::io::Error::other(error.to_string())))?,
+            hash,
+            json,
+        })
+    }
+
+    /// Reopen and verify one exact durable belief-owned configuration snapshot.
+    pub(crate) fn reopen(db: &Db, hash: String, json: String) -> Result<Self, StorageError> {
+        let fence = Self::open(db, hash, json)?;
+        if fence
+            .tree
+            .get(fence.hash.as_bytes())
+            .map_err(|error| StorageError::IoError(std::io::Error::other(error.to_string())))?
+            .as_deref()
+            != Some(fence.json.as_bytes())
+        {
+            return Err(StorageError::Backpressure(
+                "durable belief config snapshot changed or is missing".to_string(),
+            ));
+        }
+        Ok(fence)
+    }
+}
 
 /// Failure returned while binding one belief family activation.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -8,11 +8,10 @@ use meld_world_model::agent::{
     curate_goal_satisfaction, curate_threshold_rule, ActiveGoalSummary, AgentActiveGoalQueryError,
     AgentAuthoredCommand, AgentCommandOutcomeQueryError, AgentCuration, AgentCurationDecision,
     AgentCurationRuleConfig, AgentGoalCommand, AgentGoalCurationRuntime, AgentGoalMutationCommand,
-    AgentHydrationCheckpoint, AgentHydrationCheckpointStage, AgentQuery, AgentRegistration,
-    AgentSatisfactionCurationRuntime, AgentSatisfactionReviewSelection, AgentSelectedGoalTick,
-    AgentSemanticSelector, AgentSinkError, AgentSinkReceipt, AgentSinkReceiptKind,
-    AgentSinkSubmission, AgentStatus, AgentStore, AgentSubscription, AgentSubscriptionRecord,
-    SeedAgentRegistration, StartAgentHydrationCommand, SubscribeAgentCommand,
+    AgentQuery, AgentRegistration, AgentSatisfactionCurationRuntime,
+    AgentSatisfactionReviewSelection, AgentSelectedGoalTick, AgentSemanticSelector, AgentSinkError,
+    AgentSinkReceipt, AgentSinkReceiptKind, AgentSinkSubmission, AgentStatus, AgentStore,
+    AgentSubscription, AgentSubscriptionRecord, SeedAgentRegistration, SubscribeAgentCommand,
     BELIEF_REVISION_REVIEW_SOURCE,
 };
 use meld_world_model::belief::{
@@ -1054,85 +1053,6 @@ fn selected_mutation_resumes_from_receipt_before_cursor() {
     assert!(report.fatal_errors.is_empty());
     assert_eq!(report.output_sequence, 8);
     assert_eq!(report.sink_submission_count, 0);
-}
-
-#[test]
-fn hydration_checkpoint_requires_adjacent_stages_and_reopens_exactly() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let path = temp.path().to_path_buf();
-    let completed;
-    {
-        let db = sled::open(&path).expect("database");
-        let store = AgentStore::new(db.clone()).expect("agent store");
-        let subscription = register_operational_agent(&db, &store, "agent-a", 1);
-        let start = StartAgentHydrationCommand {
-            hydration_id: "hydration-semantic-1".to_string(),
-            agent_id: "agent-a".to_string(),
-            expected_prior_attempt_epoch: 0,
-            attempt_epoch: 1,
-            lease_id: "semantic-lease-1".to_string(),
-            started_at_seq: 10,
-        };
-        AgentRegistration::new(&store)
-            .start_hydration(&start)
-            .expect("start hydration");
-        let selected = AgentHydrationCheckpoint {
-            hydration_id: start.hydration_id.clone(),
-            agent_id: start.agent_id.clone(),
-            attempt_epoch: start.attempt_epoch,
-            lease_id: start.lease_id.clone(),
-            subscription_id: subscription.subscription_id,
-            selected_revision_id: "revision-7".to_string(),
-            selected_revision_seq: 7,
-            stage: AgentHydrationCheckpointStage::Selected,
-            attestation_id: None,
-            planner_request_id: None,
-            updated_at_seq: 10,
-        };
-        assert_eq!(
-            store
-                .put_hydration_checkpoint(&selected)
-                .expect("create checkpoint"),
-            selected
-        );
-        let mut skipped = selected.clone();
-        skipped.stage = AgentHydrationCheckpointStage::ProjectionRequested;
-        skipped.attestation_id = Some("attestation-1".to_string());
-        skipped.planner_request_id = Some("planner-request-1".to_string());
-        skipped.updated_at_seq = 12;
-        assert!(store
-            .advance_hydration_checkpoint_cas(&selected, &skipped)
-            .is_err());
-
-        let mut attested = selected.clone();
-        attested.stage = AgentHydrationCheckpointStage::Attested;
-        attested.attestation_id = Some("attestation-1".to_string());
-        attested.updated_at_seq = 11;
-        store
-            .advance_hydration_checkpoint_cas(&selected, &attested)
-            .expect("advance to attested");
-        let mut replaced_attestation = skipped.clone();
-        replaced_attestation.attestation_id = Some("attestation-replaced".to_string());
-        assert!(store
-            .advance_hydration_checkpoint_cas(&attested, &replaced_attestation)
-            .is_err());
-        completed = skipped;
-        assert_eq!(
-            store
-                .advance_hydration_checkpoint_cas(&attested, &completed)
-                .expect("advance to projection requested"),
-            completed
-        );
-        store.flush().expect("flush checkpoint");
-    }
-
-    let reopened = AgentStore::new(reopen_database(&path)).expect("reopen agent store");
-    assert_eq!(
-        AgentQuery::new(&reopened)
-            .hydration_checkpoint(&completed.hydration_id)
-            .expect("query checkpoint"),
-        Some(completed)
-    );
 }
 
 #[test]

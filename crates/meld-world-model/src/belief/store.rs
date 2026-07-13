@@ -17,6 +17,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
+use std::ops::Bound;
 use std::sync::{Arc, OnceLock, Weak};
 
 #[cfg(test)]
@@ -26,6 +27,7 @@ use sled::transaction::Transactional;
 use sled::{Db, Tree};
 use uuid::Uuid;
 
+use crate::agent::AgentHydrationFenceCapability;
 use crate::belief::contracts::{
     AssessmentAssignmentCursor, AssessmentLease, AssessmentLeaseCasIntent,
     BeliefAuthorityMigrationIdentity, BeliefAuthorityMigrationMarker,
@@ -36,7 +38,11 @@ use crate::belief::contracts::{
     EvidenceItem, EvidenceRejection, FreshnessReason, HydrationRefs, LeaseStatus,
     LegacyBeliefCompatibilityPosture, ObservationOpportunity, ObservationReason,
 };
-use crate::belief::readiness::{BeliefReadinessAttestation, BeliefReadinessAttestationRequest};
+use crate::belief::readiness::{
+    hash_readiness_view, BeliefReadinessAttestation, BeliefReadinessAttestationRequest,
+    BeliefReadinessSnapshot,
+};
+use crate::belief::BeliefConfigSnapshotFence;
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
 use crate::world_state::graph::{PerspectiveKey, TraversalQuery};
@@ -66,6 +72,13 @@ const TREE_COMMIT_INTENT_BY_LEASE: &str = "belief_commit_intent_by_lease";
 const TREE_COMMIT_RECEIPTS: &str = "belief_commit_receipts";
 const TREE_LEGACY_ASSESSMENT_RECEIPTS: &str = "belief_legacy_assessment_receipts";
 const TREE_READINESS_ATTESTATIONS: &str = "belief_readiness_attestations";
+const TREE_READINESS_ATTESTATION_INTENTS: &str = "belief_readiness_attestation_intents";
+const TREE_READINESS_ATTESTATION_OWNER_FENCES: &str = "belief_readiness_attestation_owner_fences";
+const TREE_READINESS_ATTESTATION_SNAPSHOTS: &str = "belief_readiness_attestation_snapshots";
+const TREE_READINESS_SCHEMA: &str = "belief_readiness_schema";
+const KEY_READINESS_SCHEMA_STATE: &[u8] = b"state";
+const READINESS_SCHEMA_VERSION: u16 = 2;
+const READINESS_MIGRATION_BATCH: usize = 128;
 const KEY_PRODUCT_AUTHORITY_ID: &[u8] = b"product_authority_id";
 const KEY_AUTHORITY_MIGRATION_MARKER: &[u8] = b"marker";
 const KEY_LEGACY_WRITE_FENCE: &[u8] = b"legacy_write_fence";
@@ -79,6 +92,51 @@ const KEY_ASSESSMENT_LEASE_CLOCK: &[u8] = b"assessment_lease_clock";
 const KEY_ASSESSMENT_DIRTY_CURSOR: &[u8] = b"assessment_dirty_cursor";
 const LEGACY_ASSESSMENT_RECEIPT_SCHEMA_VERSION: u32 = 1;
 const LEGACY_ASSESSMENT_MIGRATION_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ReadinessMigrationPhase {
+    Intents,
+    Visible,
+    Complete,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadinessMigrationState {
+    schema_version: u16,
+    phase: ReadinessMigrationPhase,
+    cursor: Option<Vec<u8>>,
+}
+
+impl ReadinessMigrationState {
+    fn initial() -> Self {
+        Self {
+            schema_version: READINESS_SCHEMA_VERSION,
+            phase: ReadinessMigrationPhase::Intents,
+            cursor: None,
+        }
+    }
+
+    fn complete() -> Self {
+        Self {
+            schema_version: READINESS_SCHEMA_VERSION,
+            phase: ReadinessMigrationPhase::Complete,
+            cursor: None,
+        }
+    }
+
+    fn validate(&self) -> Result<(), StorageError> {
+        if self.schema_version != READINESS_SCHEMA_VERSION
+            || self.phase == ReadinessMigrationPhase::Complete && self.cursor.is_some()
+        {
+            return Err(StorageError::MigrationConflict(
+                "belief readiness schema marker is invalid".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
 
 static WRITE_GATES: OnceLock<Mutex<BTreeMap<String, Weak<RwLock<()>>>>> = OnceLock::new();
 
@@ -183,6 +241,10 @@ pub struct BeliefStore {
     commit_receipts: Tree,
     legacy_assessment_receipts: Tree,
     readiness_attestations: Tree,
+    readiness_attestation_intents: Tree,
+    readiness_attestation_owner_fences: Tree,
+    readiness_attestation_snapshots: Tree,
+    readiness_schema: Tree,
     write_gate: Arc<RwLock<()>>,
     #[cfg(any(test, feature = "test-support"))]
     flush_probe: Arc<Mutex<FlushProbe>>,
@@ -260,6 +322,7 @@ impl BeliefStore {
         }
         let store = Self::open_unreconciled(db, authority_meta, authority_migration)?;
         store.reconcile_exclusively_on_open()?;
+        store.migrate_legacy_readiness_attestations()?;
         Ok(store)
     }
 
@@ -298,8 +361,8 @@ impl BeliefStore {
         authority_meta: Tree,
         authority_migration: Tree,
     ) -> Result<Self, StorageError> {
-        let store_instance_id = load_or_create_store_instance_id(&db, &authority_meta)?;
-        let write_gate = shared_write_gate(&write_gate_identity(&db, &store_instance_id));
+        let write_gate_identity = load_or_create_store_instance_id(&db, &authority_meta)?;
+        let write_gate = shared_write_gate(&write_gate_identity);
         Ok(Self {
             evidence: db.open_tree(TREE_EVIDENCE).map_err(to_storage_io)?,
             assignments: db.open_tree(TREE_ASSIGNMENTS).map_err(to_storage_io)?,
@@ -344,6 +407,16 @@ impl BeliefStore {
             readiness_attestations: db
                 .open_tree(TREE_READINESS_ATTESTATIONS)
                 .map_err(to_storage_io)?,
+            readiness_attestation_intents: db
+                .open_tree(TREE_READINESS_ATTESTATION_INTENTS)
+                .map_err(to_storage_io)?,
+            readiness_attestation_owner_fences: db
+                .open_tree(TREE_READINESS_ATTESTATION_OWNER_FENCES)
+                .map_err(to_storage_io)?,
+            readiness_attestation_snapshots: db
+                .open_tree(TREE_READINESS_ATTESTATION_SNAPSHOTS)
+                .map_err(to_storage_io)?,
+            readiness_schema: db.open_tree(TREE_READINESS_SCHEMA).map_err(to_storage_io)?,
             write_gate,
             #[cfg(any(test, feature = "test-support"))]
             flush_probe: Arc::new(Mutex::new(FlushProbe::default())),
@@ -1369,6 +1442,20 @@ impl BeliefStore {
         Ok(Some(
             String::from_utf8(raw.to_vec()).map_err(to_storage_utf8)?,
         ))
+    }
+
+    /// Capture one exact immutable configuration snapshot for a cross-domain fence.
+    pub(crate) fn config_snapshot_fence(
+        &self,
+        hash: &str,
+    ) -> Result<Option<BeliefConfigSnapshotFence>, StorageError> {
+        Ok(self
+            .get_config_snapshot(hash)?
+            .map(|json| BeliefConfigSnapshotFence {
+                tree: self.config_snapshots.clone(),
+                hash: hash.to_string(),
+                json,
+            }))
     }
 
     /// Acquire the only active assessment lease for a belief key.
@@ -3004,7 +3091,17 @@ impl BeliefStore {
             return Ok(None);
         };
         let revision_id = String::from_utf8(raw.to_vec()).map_err(to_storage_utf8)?;
-        self.get_revision(&revision_id)
+        let revision = self.get_revision(&revision_id)?.ok_or_else(|| {
+            StorageError::InvalidPath(format!(
+                "belief revision head references missing revision '{revision_id}'"
+            ))
+        })?;
+        if revision.revision_id != revision_id || revision.belief_key != *key {
+            return Err(StorageError::InvalidPath(format!(
+                "belief revision head conflicts with revision '{revision_id}'"
+            )));
+        }
+        Ok(Some(revision))
     }
 
     /// Read one revision by id.
@@ -3189,14 +3286,20 @@ impl BeliefStore {
         )
     }
 
-    /// Durably attest the exact current view and revision read by hydration.
-    ///
-    /// The revision head, revision record, and complete view participate in the
-    /// same transaction as the attestation. An exact retry always flushes again,
-    /// which resolves an earlier indeterminate flush without accepting drift.
-    pub fn attest_current_view(
+    /// Prepare an attestation intent bound to one exact agent owner snapshot.
+    pub(crate) fn prepare_readiness_attestation_fenced(
         &self,
         request: &BeliefReadinessAttestationRequest,
+        owner_fence_hash: &str,
+    ) -> Result<BeliefReadinessAttestation, StorageError> {
+        validate_readiness_owner_hash(owner_fence_hash)?;
+        self.prepare_readiness_attestation_inner(request, owner_fence_hash)
+    }
+
+    fn prepare_readiness_attestation_inner(
+        &self,
+        request: &BeliefReadinessAttestationRequest,
+        owner_fence_hash: &str,
     ) -> Result<BeliefReadinessAttestation, StorageError> {
         request.validate()?;
         let _write = self.writable_guard()?;
@@ -3249,58 +3352,327 @@ impl BeliefStore {
                 "persisted belief view does not match the readiness revision".to_string(),
             ));
         }
-        let attestation = BeliefReadinessAttestation::identified(request, &view)?;
+        let attestation = BeliefReadinessAttestation::identified(request, &revision, &view)?;
+        let snapshot = BeliefReadinessSnapshot {
+            attestation: attestation.clone(),
+            revision,
+            view,
+        };
+        snapshot.validate()?;
         let attestation_bytes = serde_json::to_vec(&attestation).map_err(to_storage_data)?;
+        let snapshot_bytes = serde_json::to_vec(&snapshot).map_err(to_storage_data)?;
 
         use sled::transaction::{ConflictableTransactionError, TransactionError};
         (
             &self.revision_head,
             &self.revisions,
             &self.views,
-            &self.readiness_attestations,
+            &self.readiness_attestation_intents,
+            &self.readiness_attestation_owner_fences,
+            &self.readiness_attestation_snapshots,
         )
-            .transaction(|(heads, revisions, views, attestations)| {
-                require_belief_transaction_value(
-                    heads,
-                    key.as_bytes(),
-                    request.expected_revision_id.as_bytes(),
-                    "belief revision head",
-                )?;
-                require_belief_transaction_value(
-                    revisions,
-                    request.expected_revision_id.as_bytes(),
-                    revision_raw.as_ref(),
-                    "belief revision",
-                )?;
-                require_belief_transaction_value(
-                    views,
-                    key.as_bytes(),
-                    view_raw.as_ref(),
-                    "belief current view",
-                )?;
-                if let Some(existing) = attestations.get(attestation.attestation_id.as_bytes())? {
-                    if existing.as_ref() != attestation_bytes.as_slice() {
-                        return Err(ConflictableTransactionError::Abort(
-                            "belief readiness attestation identity conflict".to_string(),
-                        ));
-                    }
-                } else {
-                    attestations.insert(
-                        attestation.attestation_id.as_bytes(),
-                        attestation_bytes.as_slice(),
+            .transaction(
+                |(heads, revisions, views, intents, owner_fences, snapshots)| {
+                    require_belief_transaction_value(
+                        heads,
+                        key.as_bytes(),
+                        request.expected_revision_id.as_bytes(),
+                        "belief revision head",
                     )?;
-                }
-                Ok(())
-            })
+                    require_belief_transaction_value(
+                        revisions,
+                        request.expected_revision_id.as_bytes(),
+                        revision_raw.as_ref(),
+                        "belief revision",
+                    )?;
+                    require_belief_transaction_value(
+                        views,
+                        key.as_bytes(),
+                        view_raw.as_ref(),
+                        "belief current view",
+                    )?;
+                    let intent_was_present = if let Some(existing) =
+                        intents.get(attestation.attestation_id.as_bytes())?
+                    {
+                        if existing.as_ref() != attestation_bytes.as_slice() {
+                            return Err(ConflictableTransactionError::Abort(
+                                "belief readiness attestation identity conflict".to_string(),
+                            ));
+                        }
+                        true
+                    } else {
+                        intents.insert(
+                            attestation.attestation_id.as_bytes(),
+                            attestation_bytes.as_slice(),
+                        )?;
+                        false
+                    };
+                    match owner_fences.get(attestation.attestation_id.as_bytes())? {
+                        Some(existing) if existing.as_ref() == owner_fence_hash.as_bytes() => {}
+                        Some(_) => {
+                            return Err(ConflictableTransactionError::Abort(
+                                "belief readiness attestation owner fence conflict".to_string(),
+                            ));
+                        }
+                        None if intent_was_present => {
+                            return Err(ConflictableTransactionError::Abort(
+                                "readiness attestation is missing its owner fence".to_string(),
+                            ));
+                        }
+                        None => {
+                            owner_fences.insert(
+                                attestation.attestation_id.as_bytes(),
+                                owner_fence_hash.as_bytes(),
+                            )?;
+                        }
+                    }
+                    match snapshots.get(attestation.attestation_id.as_bytes())? {
+                        Some(existing) if existing.as_ref() != snapshot_bytes.as_slice() => {
+                            return Err(ConflictableTransactionError::Abort(
+                                "belief readiness snapshot identity conflict".to_string(),
+                            ));
+                        }
+                        Some(_) => {}
+                        None => {
+                            snapshots.insert(
+                                attestation.attestation_id.as_bytes(),
+                                snapshot_bytes.as_slice(),
+                            )?;
+                        }
+                    }
+                    Ok(())
+                },
+            )
             .map_err(|error| match error {
                 TransactionError::Abort(message) => StorageError::Backpressure(message),
                 TransactionError::Storage(error) => to_storage_io(error),
             })?;
         self.flush().map_err(|error| {
             StorageError::DurabilityIndeterminate(format!(
-                "belief readiness attestation flush failed: {error}"
+                "belief readiness attestation intent flush failed: {error}"
             ))
         })?;
+        Ok(attestation)
+    }
+
+    // TODO compat-shim: remove this rejected one-call surface after downstream
+    // callers compile against capability-fenced hydration and the public API
+    // compatibility test no longer requires the historical method to exist.
+    /// Reject the legacy one-call surface because it carries no owner capability.
+    pub fn attest_current_view(
+        &self,
+        request: &BeliefReadinessAttestationRequest,
+    ) -> Result<BeliefReadinessAttestation, StorageError> {
+        request.validate()?;
+        Err(StorageError::InvalidPath(
+            "belief readiness attestation requires an exact agent hydration capability".to_string(),
+        ))
+    }
+
+    /// Make one prepared attestation visible under an exact agent owner fence.
+    pub(crate) fn activate_prepared_readiness_attestation(
+        &self,
+        expected: &BeliefReadinessAttestation,
+        fence: &AgentHydrationFenceCapability,
+    ) -> Result<BeliefReadinessAttestation, StorageError> {
+        expected.validate()?;
+        let _write = self.writable_guard()?;
+        let encoded = serde_json::to_vec(expected).map_err(to_storage_data)?;
+        use sled::transaction::ConflictableTransactionError;
+        fence.transaction_three(
+            &self.readiness_attestation_intents,
+            &self.readiness_attestation_owner_fences,
+            &self.readiness_attestations,
+            |intents, owner_fences, attestations| {
+                if !fence.matches_readiness_scope(
+                    &expected.agent_id,
+                    &expected.subscription_id,
+                    &expected.belief_key,
+                ) {
+                    return Err(ConflictableTransactionError::Abort(
+                        "readiness attestation scope conflicts with its owner capability"
+                            .to_string(),
+                    ));
+                }
+                require_belief_transaction_value(
+                    intents,
+                    expected.attestation_id.as_bytes(),
+                    &encoded,
+                    "belief readiness attestation intent",
+                )?;
+                require_belief_transaction_value(
+                    owner_fences,
+                    expected.attestation_id.as_bytes(),
+                    fence.owner_hash().as_bytes(),
+                    "belief readiness attestation owner fence",
+                )?;
+                if let Some(existing) = attestations.get(expected.attestation_id.as_bytes())? {
+                    if existing.as_ref() != encoded.as_slice() {
+                        return Err(ConflictableTransactionError::Abort(
+                            "belief readiness attestation identity conflict".to_string(),
+                        ));
+                    }
+                } else {
+                    attestations.insert(expected.attestation_id.as_bytes(), encoded.as_slice())?;
+                }
+                Ok(())
+            },
+        )?;
+        self.flush().map_err(|error| {
+            StorageError::DurabilityIndeterminate(format!(
+                "belief readiness attestation activation flush failed: {error}"
+            ))
+        })?;
+        Ok(expected.clone())
+    }
+
+    /// Claim one migrated or legacy-visible attestation under an exact owner capability.
+    pub(crate) fn claim_readiness_attestation_fenced(
+        &self,
+        expected: &BeliefReadinessAttestation,
+        fence: &AgentHydrationFenceCapability,
+    ) -> Result<BeliefReadinessAttestation, StorageError> {
+        expected.validate()?;
+        let _write = self.writable_guard()?;
+        if expected.requires_legacy_upgrade() {
+            return Err(StorageError::MigrationConflict(
+                "legacy readiness attestation was not upgraded before owner claim".to_string(),
+            ));
+        }
+        let encoded = serde_json::to_vec(expected).map_err(to_storage_data)?;
+        let snapshot = self
+            .readiness_snapshot(&expected.attestation_id)?
+            .ok_or_else(|| {
+                StorageError::MigrationConflict(
+                    "readiness owner claim requires an upgraded immutable snapshot".to_string(),
+                )
+            })?;
+        let snapshot_bytes = serde_json::to_vec(&snapshot).map_err(to_storage_data)?;
+        let visible_raw = self
+            .readiness_attestations
+            .get(expected.attestation_id.as_bytes())
+            .map_err(to_storage_io)?;
+        if visible_raw
+            .as_ref()
+            .is_some_and(|raw| raw.as_ref() != encoded.as_slice())
+        {
+            return Err(StorageError::MigrationConflict(
+                "readiness owner claim found divergent visible content".to_string(),
+            ));
+        }
+        let visible_expected = visible_raw.as_ref().map(|raw| raw.as_ref());
+        use sled::transaction::ConflictableTransactionError;
+        fence.transaction_four(
+            &self.readiness_attestation_intents,
+            &self.readiness_attestation_owner_fences,
+            &self.readiness_attestation_snapshots,
+            &self.readiness_attestations,
+            |intents, owner_fences, snapshots, attestations| {
+                if !fence.matches_readiness_scope(
+                    &expected.agent_id,
+                    &expected.subscription_id,
+                    &expected.belief_key,
+                ) {
+                    return Err(ConflictableTransactionError::Abort(
+                        "readiness attestation scope conflicts with its owner capability"
+                            .to_string(),
+                    ));
+                }
+                require_belief_transaction_value(
+                    intents,
+                    expected.attestation_id.as_bytes(),
+                    &encoded,
+                    "belief readiness attestation intent",
+                )?;
+                require_belief_transaction_value(
+                    snapshots,
+                    expected.attestation_id.as_bytes(),
+                    &snapshot_bytes,
+                    "belief readiness attestation snapshot",
+                )?;
+                require_optional_belief_transaction_value(
+                    attestations,
+                    expected.attestation_id.as_bytes(),
+                    visible_expected,
+                    "belief readiness attestation",
+                )?;
+                // TODO compat-shim: remove the sentinel claim branch after all
+                // accepted W3A identities have exact capability claims and the
+                // legacy reopen fixture remains green without it.
+                match owner_fences.get(expected.attestation_id.as_bytes())? {
+                    Some(existing)
+                        if existing.as_ref() == b"legacy-unfenced"
+                            || existing.as_ref() == fence.owner_hash().as_bytes() =>
+                    {
+                        if existing.as_ref() == b"legacy-unfenced"
+                            && !expected.has_legacy_identity()
+                        {
+                            return Err(ConflictableTransactionError::Abort(
+                                "current readiness attestation has no exact owner fence"
+                                    .to_string(),
+                            ));
+                        }
+                        owner_fences.insert(
+                            expected.attestation_id.as_bytes(),
+                            fence.owner_hash().as_bytes(),
+                        )?;
+                    }
+                    Some(_) => {
+                        return Err(ConflictableTransactionError::Abort(
+                            "belief readiness attestation owner fence conflict".to_string(),
+                        ));
+                    }
+                    None => {
+                        return Err(ConflictableTransactionError::Abort(
+                            "readiness attestation is missing its owner fence".to_string(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        self.flush().map_err(|error| {
+            StorageError::DurabilityIndeterminate(format!(
+                "belief readiness owner claim flush failed: {error}"
+            ))
+        })?;
+        Ok(expected.clone())
+    }
+
+    /// Read one prepared but not necessarily visible readiness attestation.
+    pub(crate) fn get_prepared_readiness_attestation(
+        &self,
+        attestation_id: &str,
+    ) -> Result<Option<BeliefReadinessAttestation>, StorageError> {
+        let mut attestation: Option<BeliefReadinessAttestation> = decode_optional(
+            self.readiness_attestation_intents
+                .get(attestation_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )?;
+        if attestation
+            .as_ref()
+            .is_some_and(BeliefReadinessAttestation::requires_legacy_upgrade)
+        {
+            // TODO compat-shim: remove this lazy v1 rewrite after late-inserted W3A
+            // fixture coverage is retired and all supported stores carry a complete
+            // readiness schema marker produced after the final v1-capable release.
+            let _migration = self.write_gate.write();
+            self.migrate_readiness_identity(attestation_id.as_bytes())?;
+            attestation = decode_optional(
+                self.readiness_attestation_intents
+                    .get(attestation_id.as_bytes())
+                    .map_err(to_storage_io)?,
+            )?;
+        }
+        if let Some(attestation) = attestation.as_ref() {
+            attestation.validate()?;
+            if attestation.attestation_id != attestation_id {
+                return Err(StorageError::MigrationConflict(
+                    "prepared readiness attestation key conflicts with its identity".to_string(),
+                ));
+            }
+            self.validate_readiness_products(attestation, false)?;
+        }
         Ok(attestation)
     }
 
@@ -3309,11 +3681,138 @@ impl BeliefStore {
         &self,
         attestation_id: &str,
     ) -> Result<Option<BeliefReadinessAttestation>, StorageError> {
-        decode_optional(
+        let mut attestation: Option<BeliefReadinessAttestation> = decode_optional(
             self.readiness_attestations
                 .get(attestation_id.as_bytes())
                 .map_err(to_storage_io)?,
-        )
+        )?;
+        if attestation
+            .as_ref()
+            .is_some_and(BeliefReadinessAttestation::requires_legacy_upgrade)
+        {
+            // TODO compat-shim: remove this lazy v1 rewrite after late-inserted W3A
+            // fixture coverage is retired and all supported stores carry a complete
+            // readiness schema marker produced after the final v1-capable release.
+            let _migration = self.write_gate.write();
+            self.migrate_readiness_identity(attestation_id.as_bytes())?;
+            attestation = decode_optional(
+                self.readiness_attestations
+                    .get(attestation_id.as_bytes())
+                    .map_err(to_storage_io)?,
+            )?;
+        }
+        if let Some(attestation) = attestation.as_ref() {
+            attestation.validate()?;
+            if attestation.attestation_id != attestation_id {
+                return Err(StorageError::MigrationConflict(
+                    "readiness attestation key conflicts with its identity".to_string(),
+                ));
+            }
+            self.validate_readiness_products(attestation, true)?;
+        }
+        Ok(attestation)
+    }
+
+    fn validate_readiness_products(
+        &self,
+        expected: &BeliefReadinessAttestation,
+        require_visible: bool,
+    ) -> Result<(), StorageError> {
+        expected.validate()?;
+        let key = expected.attestation_id.as_bytes();
+        let encoded = serde_json::to_vec(expected).map_err(to_storage_data)?;
+        let intent = self
+            .readiness_attestation_intents
+            .get(key)
+            .map_err(to_storage_io)?
+            .ok_or_else(|| {
+                StorageError::MigrationConflict(
+                    "readiness attestation is missing its durable intent".to_string(),
+                )
+            })?;
+        if intent.as_ref() != encoded.as_slice() {
+            return Err(StorageError::MigrationConflict(
+                "readiness attestation intent diverges from its visible product".to_string(),
+            ));
+        }
+        let snapshot_raw = self
+            .readiness_attestation_snapshots
+            .get(key)
+            .map_err(to_storage_io)?
+            .ok_or_else(|| {
+                StorageError::MigrationConflict(
+                    "readiness attestation is missing its immutable snapshot".to_string(),
+                )
+            })?;
+        let snapshot: BeliefReadinessSnapshot =
+            serde_json::from_slice(&snapshot_raw).map_err(to_storage_data)?;
+        snapshot.validate()?;
+        if snapshot.attestation != *expected {
+            return Err(StorageError::MigrationConflict(
+                "readiness attestation snapshot diverges from its identity".to_string(),
+            ));
+        }
+        let owner = self
+            .readiness_attestation_owner_fences
+            .get(key)
+            .map_err(to_storage_io)?
+            .ok_or_else(|| {
+                StorageError::MigrationConflict(
+                    "readiness attestation is missing its owner fence".to_string(),
+                )
+            })?;
+        if owner.as_ref() == b"legacy-unfenced" {
+            // TODO compat-shim: remove sentinel acceptance after all accepted W3A
+            // identities have exact capability claims and reopen migration tests
+            // remain green without legacy owner products.
+            if !expected.has_legacy_identity() {
+                return Err(StorageError::MigrationConflict(
+                    "current readiness attestation has no exact owner fence".to_string(),
+                ));
+            }
+        } else {
+            let owner = std::str::from_utf8(owner.as_ref()).map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "readiness owner fence is not UTF-8: {error}"
+                ))
+            })?;
+            validate_readiness_owner_hash(owner)?;
+        }
+        if require_visible
+            && self
+                .readiness_attestations
+                .get(key)
+                .map_err(to_storage_io)?
+                .as_deref()
+                != Some(encoded.as_slice())
+        {
+            return Err(StorageError::MigrationConflict(
+                "readiness attestation visible product diverges from its identity".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Read and verify the exact immutable snapshot behind one attestation.
+    pub fn readiness_snapshot(
+        &self,
+        attestation_id: &str,
+    ) -> Result<Option<BeliefReadinessSnapshot>, StorageError> {
+        let snapshot: Option<BeliefReadinessSnapshot> = decode_optional(
+            self.readiness_attestation_snapshots
+                .get(attestation_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )?;
+        if let Some(snapshot) = snapshot.as_ref() {
+            snapshot.validate()?;
+            if snapshot.attestation.attestation_id != attestation_id {
+                return Err(StorageError::InvalidPath(
+                    "readiness snapshot tree key conflicts with embedded attestation identity"
+                        .to_string(),
+                ));
+            }
+        }
+        Ok(snapshot)
     }
 
     /// Verify that one exact immutable readiness attestation is durable.
@@ -3332,11 +3831,271 @@ impl BeliefStore {
                 expected.attestation_id
             )));
         }
+        let snapshot = self
+            .readiness_snapshot(&expected.attestation_id)?
+            .ok_or_else(|| {
+                StorageError::Backpressure(format!(
+                    "belief readiness snapshot '{}' is missing",
+                    expected.attestation_id
+                ))
+            })?;
+        if snapshot.attestation != *expected {
+            return Err(StorageError::Backpressure(format!(
+                "belief readiness snapshot '{}' changed",
+                expected.attestation_id
+            )));
+        }
+        Ok(())
+    }
+
+    fn migrate_legacy_readiness_attestations(&self) -> Result<(), StorageError> {
+        let _migration = self.write_gate.write();
+        let mut state = match self
+            .readiness_schema
+            .get(KEY_READINESS_SCHEMA_STATE)
+            .map_err(to_storage_io)?
+        {
+            Some(raw) => serde_json::from_slice(&raw).map_err(to_storage_data)?,
+            None => {
+                let initial = if self.readiness_attestation_intents.is_empty()
+                    && self.readiness_attestations.is_empty()
+                {
+                    ReadinessMigrationState::complete()
+                } else {
+                    ReadinessMigrationState::initial()
+                };
+                self.put_readiness_migration_state(&initial)?;
+                initial
+            }
+        };
+        state.validate()?;
+        while state.phase != ReadinessMigrationPhase::Complete {
+            state = self.advance_readiness_migration(state)?;
+        }
+        Ok(())
+    }
+
+    fn advance_readiness_migration(
+        &self,
+        mut state: ReadinessMigrationState,
+    ) -> Result<ReadinessMigrationState, StorageError> {
+        state.validate()?;
+        let tree = match state.phase {
+            ReadinessMigrationPhase::Intents => &self.readiness_attestation_intents,
+            ReadinessMigrationPhase::Visible => &self.readiness_attestations,
+            ReadinessMigrationPhase::Complete => return Ok(state),
+        };
+        let mut keys = Vec::with_capacity(READINESS_MIGRATION_BATCH);
+        match state.cursor.as_deref() {
+            Some(cursor) => {
+                for item in tree
+                    .range::<&[u8], _>((Bound::Excluded(cursor), Bound::Unbounded))
+                    .take(READINESS_MIGRATION_BATCH)
+                {
+                    let (key, _) = item.map_err(to_storage_io)?;
+                    keys.push(key.to_vec());
+                }
+            }
+            None => {
+                for item in tree.iter().take(READINESS_MIGRATION_BATCH) {
+                    let (key, _) = item.map_err(to_storage_io)?;
+                    keys.push(key.to_vec());
+                }
+            }
+        }
+        if keys.is_empty() {
+            state.phase = match state.phase {
+                ReadinessMigrationPhase::Intents => ReadinessMigrationPhase::Visible,
+                ReadinessMigrationPhase::Visible => ReadinessMigrationPhase::Complete,
+                ReadinessMigrationPhase::Complete => ReadinessMigrationPhase::Complete,
+            };
+            state.cursor = None;
+        } else {
+            for key in &keys {
+                self.migrate_readiness_identity(key)?;
+            }
+            state.cursor = keys.last().cloned();
+        }
+        self.put_readiness_migration_state(&state)?;
+        Ok(state)
+    }
+
+    fn put_readiness_migration_state(
+        &self,
+        state: &ReadinessMigrationState,
+    ) -> Result<(), StorageError> {
+        state.validate()?;
+        self.readiness_schema
+            .insert(
+                KEY_READINESS_SCHEMA_STATE,
+                serde_json::to_vec(state).map_err(to_storage_data)?,
+            )
+            .map_err(to_storage_io)?;
         self.flush().map_err(|error| {
             StorageError::DurabilityIndeterminate(format!(
-                "belief readiness verification flush failed: {error}"
+                "belief readiness schema migration flush failed: {error}"
             ))
         })
+    }
+
+    fn migrate_readiness_identity(&self, key: &[u8]) -> Result<(), StorageError> {
+        let intent_raw = self
+            .readiness_attestation_intents
+            .get(key)
+            .map_err(to_storage_io)?;
+        let visible_raw = self
+            .readiness_attestations
+            .get(key)
+            .map_err(to_storage_io)?;
+        let source_raw = visible_raw
+            .as_ref()
+            .or(intent_raw.as_ref())
+            .ok_or_else(|| {
+                StorageError::MigrationConflict(
+                    "readiness migration identity disappeared during scan".to_string(),
+                )
+            })?;
+        let legacy: BeliefReadinessAttestation =
+            serde_json::from_slice(source_raw).map_err(to_storage_data)?;
+        legacy.validate()?;
+        if key != legacy.attestation_id.as_bytes() {
+            return Err(StorageError::MigrationConflict(
+                "readiness attestation tree key conflicts with its identity".to_string(),
+            ));
+        }
+        if !legacy.requires_legacy_upgrade() {
+            return self.validate_readiness_products(&legacy, visible_raw.is_some());
+        }
+        for raw in [intent_raw.as_ref(), visible_raw.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let decoded: BeliefReadinessAttestation =
+                serde_json::from_slice(raw).map_err(to_storage_data)?;
+            if decoded != legacy {
+                return Err(StorageError::MigrationConflict(
+                    "legacy readiness intent and visible record diverge".to_string(),
+                ));
+            }
+        }
+        let revision_raw = self
+            .revisions
+            .get(legacy.belief_revision_id.as_bytes())
+            .map_err(to_storage_io)?
+            .ok_or_else(|| {
+                StorageError::MigrationConflict(
+                    "legacy readiness attestation references a missing revision".to_string(),
+                )
+            })?;
+        let revision: BeliefRevision =
+            serde_json::from_slice(&revision_raw).map_err(to_storage_data)?;
+        let view = self.legacy_readiness_view(&legacy, &revision)?;
+        let upgraded = legacy.clone().upgrade_legacy(&revision, &view)?;
+        let snapshot = BeliefReadinessSnapshot {
+            attestation: upgraded.clone(),
+            revision,
+            view,
+        };
+        snapshot.validate()?;
+        let upgraded_bytes = serde_json::to_vec(&upgraded).map_err(to_storage_data)?;
+        let snapshot_bytes = serde_json::to_vec(&snapshot).map_err(to_storage_data)?;
+        let intent_expected = intent_raw.as_ref().map(|raw| raw.as_ref());
+        let visible_expected = visible_raw.as_ref().map(|raw| raw.as_ref());
+        use sled::transaction::{ConflictableTransactionError, TransactionError};
+        (
+            &self.revisions,
+            &self.readiness_attestation_intents,
+            &self.readiness_attestation_owner_fences,
+            &self.readiness_attestation_snapshots,
+            &self.readiness_attestations,
+        )
+            .transaction(
+                |(revisions, intents, owner_fences, snapshots, attestations)| {
+                    require_belief_transaction_value(
+                        revisions,
+                        legacy.belief_revision_id.as_bytes(),
+                        revision_raw.as_ref(),
+                        "legacy readiness revision",
+                    )?;
+                    require_optional_belief_transaction_value(
+                        intents,
+                        key,
+                        intent_expected,
+                        "legacy readiness intent",
+                    )?;
+                    require_optional_belief_transaction_value(
+                        attestations,
+                        key,
+                        visible_expected,
+                        "legacy readiness attestation",
+                    )?;
+                    match snapshots.get(key)? {
+                        Some(existing) if existing.as_ref() != snapshot_bytes.as_slice() => {
+                            return Err(ConflictableTransactionError::Abort(
+                                "legacy readiness snapshot conflicts with migration".to_string(),
+                            ));
+                        }
+                        Some(_) => {}
+                        None => {
+                            snapshots.insert(key, snapshot_bytes.as_slice())?;
+                        }
+                    }
+                    match owner_fences.get(key)? {
+                        Some(existing) if existing.as_ref() != b"legacy-unfenced" => {
+                            validate_readiness_owner_hash_transaction(existing.as_ref())?;
+                        }
+                        Some(_) => {}
+                        None => {
+                            // TODO compat-shim: remove the v1 owner sentinel only after every
+                            // accepted W3A record has an exact capability claim and migration,
+                            // reopen, and stale-owner tests remain green without this branch.
+                            owner_fences.insert(key, b"legacy-unfenced")?;
+                        }
+                    }
+                    if intent_expected.is_some() || visible_expected.is_some() {
+                        intents.insert(key, upgraded_bytes.as_slice())?;
+                    }
+                    if visible_expected.is_some() {
+                        attestations.insert(key, upgraded_bytes.as_slice())?;
+                    }
+                    Ok(())
+                },
+            )
+            .map_err(|error| match error {
+                TransactionError::Abort(message) => StorageError::MigrationConflict(message),
+                TransactionError::Storage(error) => to_storage_io(error),
+            })?;
+        self.validate_readiness_products(&upgraded, visible_expected.is_some())
+    }
+
+    fn legacy_readiness_view(
+        &self,
+        legacy: &BeliefReadinessAttestation,
+        revision: &BeliefRevision,
+    ) -> Result<BeliefView, StorageError> {
+        if let Some(view) = self.current_view(&legacy.belief_key)? {
+            if view.view_id == legacy.belief_view_id
+                && hash_readiness_view(&view)? == legacy.belief_view_hash
+            {
+                return Ok(view);
+            }
+        }
+        let hydration = HydrationRefs {
+            evidence_ids: revision.evidence_ids.clone(),
+            source_fact_ids: revision.provenance.source_fact_ids.clone(),
+            graph_anchor_ids: revision.provenance.graph_anchor_ids.clone(),
+            revision_id: Some(revision.revision_id.clone()),
+        };
+        let projected = self.project_view(revision, hydration);
+        if projected.view_id == legacy.belief_view_id
+            && hash_readiness_view(&projected)? == legacy.belief_view_hash
+        {
+            Ok(projected)
+        } else {
+            Err(StorageError::MigrationConflict(
+                "legacy readiness view cannot be reconstructed with hash parity".to_string(),
+            ))
+        }
     }
 
     /// Read current views for a subject and perspective.
@@ -4258,7 +5017,10 @@ impl BeliefStore {
     }
 }
 
-fn load_or_create_store_instance_id(db: &Db, meta: &Tree) -> Result<String, StorageError> {
+pub(super) fn load_or_create_store_instance_id(
+    db: &Db,
+    meta: &Tree,
+) -> Result<String, StorageError> {
     loop {
         let current = meta.get(KEY_STORE_INSTANCE_ID).map_err(to_storage_io)?;
         if let Some(raw) = current.as_deref() {
@@ -4268,7 +5030,7 @@ fn load_or_create_store_instance_id(db: &Db, meta: &Tree) -> Result<String, Stor
                     "belief store identity must be non-empty".to_string(),
                 ));
             }
-            return Ok(identity);
+            return Ok(write_gate_identity(db, &identity));
         }
         let candidate = format!("belief-store-{}", Uuid::new_v4());
         match meta
@@ -4281,7 +5043,7 @@ fn load_or_create_store_instance_id(db: &Db, meta: &Tree) -> Result<String, Stor
         {
             Ok(()) => {
                 db.flush().map_err(to_storage_io)?;
-                return Ok(candidate);
+                return Ok(write_gate_identity(db, &candidate));
             }
             Err(_) => continue,
         }
@@ -4292,7 +5054,7 @@ fn write_gate_identity(db: &Db, store_instance_id: &str) -> String {
     format!("{store_instance_id}::live-db-{:p}", &*db.context.pagecache)
 }
 
-fn shared_write_gate(identity: &str) -> Arc<RwLock<()>> {
+pub(super) fn shared_write_gate(identity: &str) -> Arc<RwLock<()>> {
     let registry = WRITE_GATES.get_or_init(|| Mutex::new(BTreeMap::new()));
     let mut registry = registry.lock();
     registry.retain(|_, gate| gate.strong_count() > 0);
@@ -4710,6 +5472,48 @@ fn require_belief_transaction_value(
     Ok(())
 }
 
+fn require_optional_belief_transaction_value(
+    tree: &sled::transaction::TransactionalTree,
+    key: &[u8],
+    expected: Option<&[u8]>,
+    product: &str,
+) -> Result<(), sled::transaction::ConflictableTransactionError<String>> {
+    if tree.get(key)?.as_deref() != expected {
+        return Err(sled::transaction::ConflictableTransactionError::Abort(
+            format!("{product} changed during legacy readiness migration"),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_readiness_owner_hash(owner_fence_hash: &str) -> Result<(), StorageError> {
+    if owner_fence_hash.len() != 64
+        || !owner_fence_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(StorageError::InvalidPath(
+            "belief readiness owner fence must be a lowercase BLAKE3 digest".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_readiness_owner_hash_transaction(
+    owner_fence_hash: &[u8],
+) -> Result<(), sled::transaction::ConflictableTransactionError<String>> {
+    if owner_fence_hash.len() != 64
+        || !owner_fence_hash
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(sled::transaction::ConflictableTransactionError::Abort(
+            "legacy readiness owner fence is not a lowercase BLAKE3 digest".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn evidence_cursor_key(cursor: &EvidenceConsumerCursor) -> Result<Vec<u8>, StorageError> {
     serde_json::to_vec(&(
         &cursor.consumer_id,
@@ -5070,12 +5874,27 @@ mod tests {
             .collect()
     }
 
+    fn seed_readiness_request(store: &BeliefStore) -> BeliefReadinessAttestationRequest {
+        let belief_key = key();
+        store.mark_dirty(&belief_key, 1).unwrap();
+        let lease = store.acquire_lease(queued_lease()).unwrap();
+        let revision = revision(&belief_key, "revision-readiness", 1);
+        store.commit_revision(&lease, &revision).unwrap();
+        BeliefReadinessAttestationRequest {
+            agent_id: "agent-a".to_string(),
+            subscription_id: "subscription-a".to_string(),
+            belief_key,
+            expected_revision_id: revision.revision_id,
+            attested_at_seq: 2,
+        }
+    }
     #[test]
-    fn readiness_attestation_exact_retry_reflushes_and_reopens() {
+    fn readiness_fenced_prepare_exact_retry_reflushes_and_reopens() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("belief-readiness");
         let request;
         let attestation;
+        let owner_hash = "a".repeat(64);
         {
             let store = BeliefStore::new(open_test_database(&path)).unwrap();
             let belief_key = key();
@@ -5087,26 +5906,47 @@ mod tests {
                 agent_id: "agent-a".to_string(),
                 subscription_id: "subscription-a".to_string(),
                 belief_key,
-                expected_revision_id: revision.revision_id,
+                expected_revision_id: revision.revision_id.clone(),
                 attested_at_seq: 2,
             };
+            let expected = BeliefReadinessAttestation::identified(
+                &request,
+                &revision,
+                &store.current_view(&request.belief_key).unwrap().unwrap(),
+            )
+            .unwrap();
             let calls_before_attestation = flush_calls(&store);
             fail_next_flush(&store);
             assert!(matches!(
-                store.attest_current_view(&request),
+                store.prepare_readiness_attestation_fenced(&request, &owner_hash),
                 Err(StorageError::DurabilityIndeterminate(_))
             ));
-            attestation = store.attest_current_view(&request).unwrap();
+            assert_eq!(
+                store
+                    .get_prepared_readiness_attestation(&expected.attestation_id)
+                    .unwrap(),
+                Some(expected.clone())
+            );
+            assert!(store
+                .get_readiness_attestation(&expected.attestation_id)
+                .unwrap()
+                .is_none());
+            attestation = store
+                .prepare_readiness_attestation_fenced(&request, &owner_hash)
+                .unwrap();
+            assert_eq!(attestation, expected);
             assert_eq!(flush_calls(&store), calls_before_attestation + 2);
         }
         let reopened = BeliefStore::new(open_test_database(&path)).unwrap();
         assert_eq!(
             reopened
-                .get_readiness_attestation(&attestation.attestation_id)
+                .get_prepared_readiness_attestation(&attestation.attestation_id)
                 .unwrap(),
             Some(attestation.clone())
         );
-        reopened.verify_readiness_attestation(&attestation).unwrap();
+        let calls_before_verification = flush_calls(&reopened);
+        assert!(reopened.verify_readiness_attestation(&attestation).is_err());
+        assert_eq!(flush_calls(&reopened), calls_before_verification);
 
         let mut missing_request = request;
         missing_request.subscription_id = "subscription-missing".to_string();
@@ -5114,7 +5954,12 @@ mod tests {
             .current_view(&missing_request.belief_key)
             .unwrap()
             .unwrap();
-        let missing = BeliefReadinessAttestation::identified(&missing_request, &view).unwrap();
+        let revision = reopened
+            .get_revision(&missing_request.expected_revision_id)
+            .unwrap()
+            .unwrap();
+        let missing =
+            BeliefReadinessAttestation::identified(&missing_request, &revision, &view).unwrap();
         assert!(reopened.verify_readiness_attestation(&missing).is_err());
     }
 
@@ -6240,6 +7085,325 @@ mod tests {
         );
     }
 
+    #[test]
+    fn readiness_public_one_call_surface_rejects_without_writes() {
+        let store = BeliefStore::new(
+            sled::Config::new()
+                .temporary(true)
+                .open()
+                .expect("temporary belief database"),
+        )
+        .unwrap();
+        let request = seed_readiness_request(&store);
+        let revision = store
+            .get_revision(&request.expected_revision_id)
+            .unwrap()
+            .unwrap();
+        let view = store.current_view(&request.belief_key).unwrap().unwrap();
+        let expected = BeliefReadinessAttestation::identified(&request, &revision, &view).unwrap();
+
+        assert!(matches!(
+            store.attest_current_view(&request),
+            Err(StorageError::InvalidPath(message))
+                if message.contains("exact agent hydration capability")
+        ));
+        for tree in [
+            &store.readiness_attestation_intents,
+            &store.readiness_attestation_owner_fences,
+            &store.readiness_attestation_snapshots,
+            &store.readiness_attestations,
+        ] {
+            assert!(tree
+                .get(expected.attestation_id.as_bytes())
+                .unwrap()
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn readiness_fenced_prepare_is_atomic_and_rejects_stale_owner() {
+        let store = BeliefStore::new(
+            sled::Config::new()
+                .temporary(true)
+                .open()
+                .expect("temporary belief database"),
+        )
+        .unwrap();
+        let request = seed_readiness_request(&store);
+        let owner_hash = "b".repeat(64);
+        let stale_owner_hash = "c".repeat(64);
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let first_store = store.clone();
+        let first_request = request.clone();
+        let first_owner_hash = owner_hash.clone();
+        let first_barrier = Arc::clone(&barrier);
+        let first = std::thread::spawn(move || {
+            first_barrier.wait();
+            first_store.prepare_readiness_attestation_fenced(&first_request, &first_owner_hash)
+        });
+        let second_store = store.clone();
+        let second_request = request.clone();
+        let second_owner_hash = stale_owner_hash.clone();
+        let second_barrier = Arc::clone(&barrier);
+        let second = std::thread::spawn(move || {
+            second_barrier.wait();
+            second_store.prepare_readiness_attestation_fenced(&second_request, &second_owner_hash)
+        });
+        barrier.wait();
+        let first = first.join().unwrap();
+        let second = second.join().unwrap();
+        assert_ne!(first.is_ok(), second.is_ok());
+        let winner = first.as_ref().or(second.as_ref()).unwrap();
+        let winning_owner = if first.is_ok() {
+            owner_hash.as_bytes()
+        } else {
+            stale_owner_hash.as_bytes()
+        };
+        assert_eq!(
+            store
+                .readiness_attestation_owner_fences
+                .get(winner.attestation_id.as_bytes())
+                .unwrap()
+                .as_deref(),
+            Some(winning_owner)
+        );
+        let loser = first.err().or_else(|| second.err()).unwrap();
+        assert!(matches!(
+            loser,
+            StorageError::Backpressure(message) if message.contains("owner fence conflict")
+        ));
+    }
+
+    #[test]
+    fn readiness_current_owner_sentinel_fails_closed() {
+        let store = BeliefStore::new(
+            sled::Config::new()
+                .temporary(true)
+                .open()
+                .expect("temporary belief database"),
+        )
+        .unwrap();
+        let request = seed_readiness_request(&store);
+        let owner_hash = "d".repeat(64);
+        let attestation = store
+            .prepare_readiness_attestation_fenced(&request, &owner_hash)
+            .unwrap();
+        store
+            .readiness_attestation_owner_fences
+            .insert(attestation.attestation_id.as_bytes(), b"legacy-unfenced")
+            .unwrap();
+        assert!(matches!(
+            store.get_prepared_readiness_attestation(&attestation.attestation_id),
+            Err(StorageError::MigrationConflict(message))
+                if message.contains("no exact owner fence")
+        ));
+        assert!(matches!(
+            store.prepare_readiness_attestation_fenced(&request, &owner_hash),
+            Err(StorageError::Backpressure(message))
+                if message.contains("owner fence conflict")
+        ));
+    }
+
+    #[test]
+    fn readiness_getters_reject_alias_keys_and_malformed_current_content() {
+        let store = BeliefStore::new(
+            sled::Config::new()
+                .temporary(true)
+                .open()
+                .expect("temporary belief database"),
+        )
+        .unwrap();
+        let request = seed_readiness_request(&store);
+        let attestation = store
+            .prepare_readiness_attestation_fenced(&request, &"f".repeat(64))
+            .unwrap();
+        let encoded = serde_json::to_vec(&attestation).unwrap();
+        store
+            .readiness_attestation_intents
+            .insert(b"prepared-alias", encoded.clone())
+            .unwrap();
+        assert!(matches!(
+            store.get_prepared_readiness_attestation("prepared-alias"),
+            Err(StorageError::MigrationConflict(message))
+                if message.contains("key conflicts with its identity")
+        ));
+
+        store
+            .readiness_attestations
+            .insert(attestation.attestation_id.as_bytes(), encoded.clone())
+            .unwrap();
+        store
+            .readiness_attestations
+            .insert(b"visible-alias", encoded)
+            .unwrap();
+        assert!(matches!(
+            store.get_readiness_attestation("visible-alias"),
+            Err(StorageError::MigrationConflict(message))
+                if message.contains("key conflicts with its identity")
+        ));
+
+        let mut malformed = attestation;
+        malformed.belief_view_hash = "malformed-view-hash".to_string();
+        store
+            .readiness_attestations
+            .insert(
+                malformed.attestation_id.as_bytes(),
+                serde_json::to_vec(&malformed).unwrap(),
+            )
+            .unwrap();
+        assert!(store
+            .get_readiness_attestation(&malformed.attestation_id)
+            .is_err());
+    }
+
+    #[test]
+    fn readiness_snapshot_getter_rejects_alias_keys_and_malformed_content() {
+        let store = BeliefStore::new(
+            sled::Config::new()
+                .temporary(true)
+                .open()
+                .expect("temporary belief database"),
+        )
+        .unwrap();
+        let request = seed_readiness_request(&store);
+        let attestation = store
+            .prepare_readiness_attestation_fenced(&request, &"b".repeat(64))
+            .unwrap();
+        let snapshot = store
+            .readiness_snapshot(&attestation.attestation_id)
+            .unwrap()
+            .unwrap();
+        store
+            .readiness_attestation_snapshots
+            .insert(b"snapshot-alias", serde_json::to_vec(&snapshot).unwrap())
+            .unwrap();
+        fail_next_flush(&store);
+        assert!(matches!(
+            store.readiness_snapshot("snapshot-alias"),
+            Err(StorageError::InvalidPath(message))
+                if message.contains("key conflicts with embedded attestation identity")
+        ));
+
+        let mut malformed_snapshot = snapshot;
+        malformed_snapshot.view.view_id = "malformed-view".to_string();
+        store
+            .readiness_attestation_snapshots
+            .insert(
+                attestation.attestation_id.as_bytes(),
+                serde_json::to_vec(&malformed_snapshot).unwrap(),
+            )
+            .unwrap();
+        assert!(store
+            .readiness_snapshot(&attestation.attestation_id)
+            .is_err());
+        assert!(store.flush().is_err());
+    }
+
+    #[test]
+    fn readiness_fenced_prepare_rejects_missing_current_owner_without_repair() {
+        let store = BeliefStore::new(
+            sled::Config::new()
+                .temporary(true)
+                .open()
+                .expect("temporary belief database"),
+        )
+        .unwrap();
+        let request = seed_readiness_request(&store);
+        let owner_hash = "e".repeat(64);
+        let attestation = store
+            .prepare_readiness_attestation_fenced(&request, &owner_hash)
+            .unwrap();
+        store
+            .readiness_attestation_owner_fences
+            .remove(attestation.attestation_id.as_bytes())
+            .unwrap();
+
+        assert!(matches!(
+            store.prepare_readiness_attestation_fenced(&request, &owner_hash),
+            Err(StorageError::Backpressure(message))
+                if message.contains("missing its owner fence")
+        ));
+        assert!(store
+            .readiness_attestation_owner_fences
+            .get(attestation.attestation_id.as_bytes())
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn readiness_schema_migration_is_batched_once_and_complete_replay_is_flush_free() {
+        let store = BeliefStore::new(
+            sled::Config::new()
+                .temporary(true)
+                .open()
+                .expect("temporary belief database"),
+        )
+        .unwrap();
+        let request = seed_readiness_request(&store);
+        let revision = store
+            .get_revision(&request.expected_revision_id)
+            .unwrap()
+            .unwrap();
+        let view = store.current_view(&request.belief_key).unwrap().unwrap();
+        for index in 0..300_u64 {
+            let mut request = request.clone();
+            request.agent_id = format!("migration-agent-{index:03}");
+            request.subscription_id = format!("migration-subscription-{index:03}");
+            request.attested_at_seq = 10 + index;
+            let attestation =
+                BeliefReadinessAttestation::identified(&request, &revision, &view).unwrap();
+            let snapshot = BeliefReadinessSnapshot {
+                attestation: attestation.clone(),
+                revision: revision.clone(),
+                view: view.clone(),
+            };
+            let encoded = serde_json::to_vec(&attestation).unwrap();
+            store
+                .readiness_attestation_intents
+                .insert(attestation.attestation_id.as_bytes(), encoded.clone())
+                .unwrap();
+            store
+                .readiness_attestations
+                .insert(attestation.attestation_id.as_bytes(), encoded)
+                .unwrap();
+            store
+                .readiness_attestation_snapshots
+                .insert(
+                    attestation.attestation_id.as_bytes(),
+                    serde_json::to_vec(&snapshot).unwrap(),
+                )
+                .unwrap();
+            store
+                .readiness_attestation_owner_fences
+                .insert(
+                    attestation.attestation_id.as_bytes(),
+                    "a".repeat(64).as_bytes(),
+                )
+                .unwrap();
+        }
+        store
+            .readiness_schema
+            .remove(KEY_READINESS_SCHEMA_STATE)
+            .unwrap();
+        let before = flush_calls(&store);
+        store.migrate_legacy_readiness_attestations().unwrap();
+        let migrated = flush_calls(&store);
+        assert_eq!(migrated - before, 9);
+        let state: ReadinessMigrationState = serde_json::from_slice(
+            &store
+                .readiness_schema
+                .get(KEY_READINESS_SCHEMA_STATE)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(state.phase, ReadinessMigrationPhase::Complete);
+        assert!(state.cursor.is_none());
+
+        store.migrate_legacy_readiness_attestations().unwrap();
+        assert_eq!(flush_calls(&store), migrated);
+    }
+
     fn revision(key: &BeliefKey, revision_id: &str, end: u64) -> BeliefRevision {
         BeliefRevision {
             revision_id: revision_id.to_string(),
@@ -6400,6 +7564,26 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn independent_databases_have_distinct_migration_drain_gates() {
+        let first = BeliefStore::new(
+            sled::Config::new()
+                .temporary(true)
+                .open()
+                .expect("first temporary belief database"),
+        )
+        .unwrap();
+        let second = BeliefStore::new(
+            sled::Config::new()
+                .temporary(true)
+                .open()
+                .expect("second temporary belief database"),
+        )
+        .unwrap();
+
+        assert!(!Arc::ptr_eq(&first.write_gate, &second.write_gate));
     }
 
     #[test]

@@ -70,11 +70,12 @@ pub mod ingestion;
 pub mod ports;
 pub mod query;
 pub mod readiness;
+mod readiness_reopen;
 pub mod runtime;
 pub mod store;
 mod task_evidence;
 
-pub(crate) use activation::{BeliefActivation, BeliefActivationError};
+pub(crate) use activation::{BeliefActivation, BeliefActivationError, BeliefConfigSnapshotFence};
 pub use assessment_actor::{
     BeliefAssessmentActor, BeliefAssessmentRequest, BeliefDirtyKeyTickRequest, BeliefRuntimeIssue,
     BeliefRuntimeTickReport, BELIEF_ASSESSMENT_ACTOR_ID, MAX_BELIEF_ASSESSMENT_ITEMS,
@@ -108,8 +109,10 @@ pub use ingestion::{
 pub use ports::BeliefGraphQuery;
 pub use query::BeliefQuery;
 pub use readiness::{
-    hash_readiness_view, BeliefReadinessAttestation, BeliefReadinessAttestationRequest,
+    hash_readiness_revision, hash_readiness_view, BeliefReadinessAttestation,
+    BeliefReadinessAttestationRequest, BeliefReadinessSnapshot,
 };
+pub(crate) use readiness_reopen::BeliefReadinessReopenContract;
 pub use runtime::{BeliefRuntime, RuntimeAssessmentResult, MAX_BELIEF_EVIDENCE_WINDOW_ITEMS};
 pub use store::BeliefStore;
 pub use task_evidence::{

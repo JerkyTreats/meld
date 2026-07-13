@@ -12,24 +12,17 @@ use meld_world_model::agent::{
     AgentActivationStatus, AgentCuration, AgentCurationDedupeKey, AgentCurationInput,
     AgentCurationInputRefs, AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery,
     AgentGoalCommand, AgentGoalCurationRuntime, AgentGoalMutationCommand, AgentGoalMutationKind,
-    AgentGoalSatisfactionInput, AgentProcessHydrationStatus, AgentQuery, AgentReadinessProof,
-    AgentReadinessSignal, AgentRegistration, AgentSatisfactionCurationRuntime,
+    AgentGoalSatisfactionInput, AgentQuery, AgentRegistration, AgentSatisfactionCurationRuntime,
     AgentSatisfactionReview, AgentSinkError, AgentSinkReceiptKind, AgentSinkSubmission,
     AgentStatus, AgentStore, AgentSubscription, AgentSubscriptionRecord, AgentSubscriptionStatus,
-    FailAgentHydrationCommand, MarkAgentOperationalCommand, SeedAgentRegistration,
-    StartAgentHydrationCommand, SubscribeAgentCommand,
+    SeedAgentRegistration, SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
-    AssessmentLease, BeliefProvenanceSummary, BeliefQuery, BeliefReadinessAttestationRequest,
-    BeliefRevision, BeliefStore, BranchScope, ContradictionState, FreshnessState, HydrationRefs,
-    LeaseStatus, PlannerProjectionSummary, PosteriorSummary,
+    BeliefProvenanceSummary, BeliefQuery, BeliefStore, BranchScope, ContradictionState,
+    FreshnessState, HydrationRefs, PlannerProjectionSummary, PosteriorSummary,
 };
 use meld_world_model::events::{DomainObjectRef, EventRelation};
-use meld_world_model::planner::{
-    PlannerHydrationRefs, PlannerProjectionFrame, PlannerProjectionFrameIdentity,
-    PlannerProjectionOutput, PlannerProjectionRequest, PlannerProjectionStore, PlannerQuery,
-    PlannerSourceRef, PLANNER_PROJECTION_VERSION,
-};
+use meld_world_model::planner::{PlannerQuery, PLANNER_PROJECTION_VERSION};
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::{
     AnchorSelectionRecord, BeliefStatus, BeliefView, PerspectiveKey, TraversalFactRecord,
@@ -215,144 +208,6 @@ fn setup_agent(
     (agent, subscription)
 }
 
-fn readiness_goal() -> Goal {
-    Goal {
-        goal_id: "goal-readiness".to_string(),
-        agent_id: AGENT_ID.to_string(),
-        target: Proposition::Holds {
-            subject: Term::Object(subject()),
-            dimension: Term::Dimension(DIMENSION_ID.to_string()),
-            condition: Condition::Present,
-        },
-        priority: GoalPriority {
-            urgency: 1,
-            cost_ceiling: None,
-        },
-        source: GoalSource::Maintenance {
-            invariant_description: "docs remain current".to_string(),
-        },
-        lifecycle: GoalLifecycle::Proposed,
-    }
-}
-
-fn persist_readiness_proof(
-    db: &sled::Db,
-    subscription_id: &str,
-    expected_agent_updated_at_seq: u64,
-) -> AgentReadinessProof {
-    let key = belief_key();
-    let belief_store = BeliefStore::new(db.clone()).unwrap();
-    belief_store.mark_dirty(&key, 7).unwrap();
-    let lease = belief_store
-        .acquire_lease(AssessmentLease {
-            lease_id: "belief-readiness-lease".to_string(),
-            belief_key: key.clone(),
-            epoch: 1,
-            owner_id: "hydration-worker".to_string(),
-            input_cursor_start: 7,
-            input_cursor_end: 7,
-            assignment_cursor_start: None,
-            assignment_cursor_end: None,
-            assignment_window_complete: true,
-            started_at_seq: 7,
-            expires_at_seq: 20,
-            comparator_engine_id: "weighted_bayesian".to_string(),
-            config_snapshot_hash: "readiness-config".to_string(),
-            status: LeaseStatus::Queued,
-        })
-        .unwrap();
-    let revision = BeliefRevision {
-        revision_id: "revision-ready".to_string(),
-        belief_key: key.clone(),
-        prior_revision_id: None,
-        comparator_engine_id: "weighted_bayesian".to_string(),
-        comparator_engine_version: "1".to_string(),
-        config_snapshot_hash: "readiness-config".to_string(),
-        evidence_ids: Vec::new(),
-        supporting_evidence_ids: Vec::new(),
-        contradicted_evidence_ids: Vec::new(),
-        source_cursor_start: 7,
-        source_cursor_end: 7,
-        posterior: PosteriorSummary {
-            probability: 0.9,
-            meaning: "probability".to_string(),
-        },
-        planner_projection: PlannerProjectionSummary {
-            confidence_field: "confidence".to_string(),
-            confidence: 0.9,
-            threshold: THRESHOLD,
-        },
-        uncertainty: 0.1,
-        precision: 1.0,
-        freshness: FreshnessState {
-            stale: false,
-            reasons: Vec::new(),
-            high_water_seq: 7,
-        },
-        contradiction: ContradictionState {
-            contradicted: false,
-            reasons: Vec::new(),
-            supporting_evidence_ids: Vec::new(),
-            contradicted_evidence_ids: Vec::new(),
-        },
-        status: BeliefStatus::Settled,
-        observation: None,
-        provenance: BeliefProvenanceSummary::empty(),
-    };
-    belief_store.commit_revision(&lease, &revision).unwrap();
-    let attestation = belief_store
-        .attest_current_view(&BeliefReadinessAttestationRequest {
-            agent_id: AGENT_ID.to_string(),
-            subscription_id: subscription_id.to_string(),
-            belief_key: key.clone(),
-            expected_revision_id: revision.revision_id.clone(),
-            attested_at_seq: 8,
-        })
-        .unwrap();
-
-    let planner_store = PlannerProjectionStore::new(db.clone()).unwrap();
-    let request = PlannerProjectionRequest::identified(
-        "execution-request-readiness",
-        AGENT_ID,
-        subject(),
-        key.perspective.clone(),
-        key.branch_scope.clone(),
-        vec![DIMENSION_ID.to_string()],
-        Vec::new(),
-    )
-    .unwrap();
-    planner_store.put_pending(request.clone(), 8).unwrap();
-    let output = PlannerProjectionOutput {
-        world_state: world_state_with_confidence(0.9),
-        projection_version: PLANNER_PROJECTION_VERSION.to_string(),
-        source_refs: vec![PlannerSourceRef::BeliefRevision {
-            revision_id: revision.revision_id,
-        }],
-        hydration_refs: PlannerHydrationRefs {
-            revision_ids: vec!["revision-ready".to_string()],
-            ..PlannerHydrationRefs::default()
-        },
-        warnings: Vec::new(),
-    };
-    let frame = PlannerProjectionFrame {
-        identity: PlannerProjectionFrameIdentity::identified(&request, &output).unwrap(),
-        output,
-        completed_at_seq: 9,
-    };
-    let planner_request = planner_store
-        .complete(&request.request_id, 8, frame.clone(), 9)
-        .unwrap();
-
-    AgentReadinessProof::identified(
-        expected_agent_updated_at_seq,
-        AgentReadinessSignal::identified(attestation).unwrap(),
-        planner_request,
-        frame,
-        readiness_goal(),
-    )
-    .unwrap()
-}
-
 fn curation_input(confidence: f64) -> AgentCurationInput {
     let (_temp_dir, store) = agent_store();
     let (agent, subscription) = setup_agent(&store);
@@ -523,6 +378,8 @@ fn agent_source_scans_reject_execution_internals_and_private_store_imports() {
         "src/agent/bootstrap/store.rs",
         "src/agent/contracts.rs",
         "src/agent/curation.rs",
+        "src/agent/hydration.rs",
+        "src/agent/hydration/runtime.rs",
         "src/agent/query.rs",
         "src/agent/registration.rs",
         "src/agent/runtime.rs",
@@ -549,6 +406,38 @@ fn agent_source_scans_reject_execution_internals_and_private_store_imports() {
     assert!(!store_source.contains("crate::planner::store"));
     assert!(!store_source.contains("pub fn put_agent"));
     assert!(!store_source.contains("pub fn put_subscription"));
+    let hydration_source =
+        std::fs::read_to_string(manifest_dir.join("src/agent/hydration/runtime.rs")).unwrap();
+    assert!(!hydration_source.contains("crate::belief::store"));
+    assert!(!hydration_source.contains("crate::planner::store"));
+}
+
+#[test]
+fn hydration_authority_has_no_public_terminal_bypass() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let registration_source =
+        std::fs::read_to_string(manifest_dir.join("src/agent/registration.rs")).unwrap();
+    let agent_store_source =
+        std::fs::read_to_string(manifest_dir.join("src/agent/store.rs")).unwrap();
+    let planner_store_source =
+        std::fs::read_to_string(manifest_dir.join("src/planner/store.rs")).unwrap();
+
+    for forbidden in ["pub fn mark_operational", "pub fn start_hydration"] {
+        assert!(!registration_source.contains(forbidden));
+    }
+    for forbidden in [
+        "pub fn start_process_hydration",
+        "pub fn put_hydration_checkpoint",
+        "pub fn advance_hydration_checkpoint_cas",
+        "pub fn mark_agent_operational",
+    ] {
+        assert!(!agent_store_source.contains(forbidden));
+    }
+    assert!(!planner_store_source.contains("pub fn put_completed_attested"));
+    assert!(!planner_store_source.contains("pub fn complete_attested_for_actor"));
+    assert!(!planner_store_source.contains("pub fn fail_attested_for_actor"));
+    assert!(planner_store_source.contains("pub(super) fn complete_attested_for_actor"));
+    assert!(planner_store_source.contains("pub(super) fn fail_attested_for_actor"));
 }
 
 #[test]
@@ -953,342 +842,6 @@ fn agent_seed_registration_rejects_divergent_replay() {
 }
 
 #[test]
-fn operational_transition_is_atomic_idempotent_and_durable() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let path = temp_dir.path().join("agent");
-    let command;
-    {
-        let db = sled::open(&path).unwrap();
-        let store = AgentStore::new(db.clone()).unwrap();
-        let registration = AgentRegistration::new(&store);
-        let mut request = seed_agent_registration();
-        request.created_at_seq = 5;
-        registration.register_seed_agent(request).unwrap();
-        let subscription = AgentSubscription::new(&store)
-            .subscribe(SubscribeAgentCommand {
-                agent_id: AGENT_ID.to_string(),
-                belief_key: belief_key(),
-                created_at_seq: 6,
-            })
-            .unwrap();
-
-        let hydration_id = "hydration-docs-1".to_string();
-        let start = StartAgentHydrationCommand {
-            hydration_id: hydration_id.clone(),
-            agent_id: AGENT_ID.to_string(),
-            expected_prior_attempt_epoch: 0,
-            attempt_epoch: 1,
-            lease_id: "lease-docs-1".to_string(),
-            started_at_seq: 7,
-        };
-        assert_eq!(
-            registration.start_hydration(&start).unwrap(),
-            registration.start_hydration(&start).unwrap()
-        );
-
-        let readiness = persist_readiness_proof(&db, &subscription.subscription_id, 5);
-        command = MarkAgentOperationalCommand {
-            hydration_id,
-            attempt_epoch: 1,
-            lease_id: "lease-docs-1".to_string(),
-            expected_hydration_updated_at_seq: 7,
-            readiness,
-            updated_at_seq: 10,
-        };
-
-        let mut stale = command.clone();
-        stale.readiness.signal.attestation.subscription_id = "subscription-stale".to_string();
-        assert!(registration.mark_operational(&stale).is_err());
-        assert!(store
-            .get_readiness_proof(&command.readiness.proof_id)
-            .unwrap()
-            .is_none());
-        assert_eq!(
-            store
-                .get_process_hydration(&command.hydration_id)
-                .unwrap()
-                .unwrap()
-                .status,
-            AgentProcessHydrationStatus::Started
-        );
-
-        let operational = registration.mark_operational(&command).unwrap();
-        assert_eq!(operational.status, AgentStatus::Operational);
-        assert_eq!(operational.updated_at_seq, 10);
-        let pending_delivery = store
-            .get_subscription(&subscription.subscription_id)
-            .unwrap()
-            .unwrap();
-        assert_eq!(pending_delivery.last_delivered_seq, 0);
-        assert!(pending_delivery.last_delivered_revision_id.is_none());
-        assert_eq!(
-            registration.mark_operational(&command).unwrap(),
-            operational
-        );
-
-        let mut divergent = command.clone();
-        divergent.updated_at_seq = 11;
-        assert!(registration.mark_operational(&divergent).is_err());
-        assert_eq!(store.get_agent(AGENT_ID).unwrap().unwrap(), operational);
-        assert_eq!(
-            store
-                .get_process_hydration(&command.hydration_id)
-                .unwrap()
-                .unwrap()
-                .status,
-            AgentProcessHydrationStatus::Ready
-        );
-        assert_eq!(
-            store
-                .get_activation(&command.hydration_id)
-                .unwrap()
-                .unwrap()
-                .status,
-            AgentActivationStatus::Activated
-        );
-        assert_eq!(
-            store
-                .get_readiness_proof(&command.readiness.proof_id)
-                .unwrap(),
-            Some(command.readiness.clone())
-        );
-        store.flush().unwrap();
-    }
-
-    let store = AgentStore::new(reopen_sled_after_close(&path).unwrap()).unwrap();
-    let operational = AgentRegistration::new(&store)
-        .mark_operational(&command)
-        .unwrap();
-    assert_eq!(operational.status, AgentStatus::Operational);
-    assert_eq!(
-        store
-            .get_readiness_proof(&command.readiness.proof_id)
-            .unwrap(),
-        Some(command.readiness)
-    );
-}
-
-#[test]
-fn operational_agent_rehydrates_under_a_new_epoch_and_lease() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let path = temp_dir.path().join("agent-rehydrate");
-    let second_command;
-    {
-        let db = sled::open(&path).unwrap();
-        let store = AgentStore::new(db.clone()).unwrap();
-        let registration = AgentRegistration::new(&store);
-        let mut request = seed_agent_registration();
-        request.created_at_seq = 5;
-        registration.register_seed_agent(request).unwrap();
-        let subscription = AgentSubscription::new(&store)
-            .subscribe(SubscribeAgentCommand {
-                agent_id: AGENT_ID.to_string(),
-                belief_key: belief_key(),
-                created_at_seq: 6,
-            })
-            .unwrap();
-
-        let first_start = StartAgentHydrationCommand {
-            hydration_id: "hydration-docs-first".to_string(),
-            agent_id: AGENT_ID.to_string(),
-            expected_prior_attempt_epoch: 0,
-            attempt_epoch: 1,
-            lease_id: "lease-docs-first".to_string(),
-            started_at_seq: 7,
-        };
-        registration.start_hydration(&first_start).unwrap();
-        let first_command = MarkAgentOperationalCommand {
-            hydration_id: first_start.hydration_id.clone(),
-            attempt_epoch: first_start.attempt_epoch,
-            lease_id: first_start.lease_id.clone(),
-            expected_hydration_updated_at_seq: first_start.started_at_seq,
-            readiness: persist_readiness_proof(&db, &subscription.subscription_id, 5),
-            updated_at_seq: 10,
-        };
-        registration.mark_operational(&first_command).unwrap();
-        assert_eq!(
-            store
-                .get_subscription(&subscription.subscription_id)
-                .unwrap()
-                .unwrap()
-                .last_delivered_seq,
-            0
-        );
-        AgentSubscription::new(&store)
-            .advance_subscription(meld_world_model::AdvanceSubscriptionCommand {
-                agent_id: AGENT_ID.to_string(),
-                subscription_id: subscription.subscription_id.clone(),
-                delivered_revision_id: "revision-ready".to_string(),
-                delivered_seq: 8,
-            })
-            .unwrap();
-
-        let second_start = StartAgentHydrationCommand {
-            hydration_id: "hydration-docs-second".to_string(),
-            agent_id: AGENT_ID.to_string(),
-            expected_prior_attempt_epoch: 1,
-            attempt_epoch: 2,
-            lease_id: "lease-docs-second".to_string(),
-            started_at_seq: 11,
-        };
-        registration.start_hydration(&second_start).unwrap();
-        second_command = MarkAgentOperationalCommand {
-            hydration_id: second_start.hydration_id.clone(),
-            attempt_epoch: second_start.attempt_epoch,
-            lease_id: second_start.lease_id.clone(),
-            expected_hydration_updated_at_seq: second_start.started_at_seq,
-            readiness: AgentReadinessProof::identified(
-                10,
-                first_command.readiness.signal.clone(),
-                first_command.readiness.planner_request.clone(),
-                first_command.readiness.planner_frame.clone(),
-                readiness_goal(),
-            )
-            .unwrap(),
-            updated_at_seq: 12,
-        };
-        let rehydrated = registration.mark_operational(&second_command).unwrap();
-
-        assert_eq!(rehydrated.status, AgentStatus::Operational);
-        assert_eq!(rehydrated.updated_at_seq, 12);
-        assert_eq!(
-            store
-                .get_subscription(&subscription.subscription_id)
-                .unwrap()
-                .unwrap()
-                .last_delivered_seq,
-            8
-        );
-        assert_eq!(
-            store
-                .get_process_hydration(&first_start.hydration_id)
-                .unwrap()
-                .unwrap()
-                .status,
-            AgentProcessHydrationStatus::Ready
-        );
-        assert_eq!(
-            store
-                .get_process_hydration(&second_start.hydration_id)
-                .unwrap()
-                .unwrap()
-                .status,
-            AgentProcessHydrationStatus::Ready
-        );
-        assert_eq!(
-            store.agents_by_status(AgentStatus::Operational).unwrap(),
-            vec![rehydrated.clone()]
-        );
-        assert_eq!(
-            registration.mark_operational(&second_command).unwrap(),
-            rehydrated
-        );
-        store.flush().unwrap();
-    }
-
-    let store = AgentStore::new(reopen_sled_after_close(&path).unwrap()).unwrap();
-    let replayed = AgentRegistration::new(&store)
-        .mark_operational(&second_command)
-        .unwrap();
-    assert_eq!(replayed.status, AgentStatus::Operational);
-    assert_eq!(replayed.updated_at_seq, 12);
-    assert_eq!(
-        store.agents_by_status(AgentStatus::Operational).unwrap(),
-        vec![replayed]
-    );
-}
-
-#[test]
-fn hydration_epochs_fence_stale_attempts_and_failure_reopens() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let path = temp_dir.path().join("agent");
-    let first = StartAgentHydrationCommand {
-        hydration_id: "hydration-first".to_string(),
-        agent_id: AGENT_ID.to_string(),
-        expected_prior_attempt_epoch: 0,
-        attempt_epoch: 1,
-        lease_id: "lease-first".to_string(),
-        started_at_seq: 3,
-    };
-    let second = StartAgentHydrationCommand {
-        hydration_id: "hydration-second".to_string(),
-        agent_id: AGENT_ID.to_string(),
-        expected_prior_attempt_epoch: 1,
-        attempt_epoch: 2,
-        lease_id: "lease-second".to_string(),
-        started_at_seq: 4,
-    };
-    let failure = FailAgentHydrationCommand {
-        hydration_id: second.hydration_id.clone(),
-        attempt_epoch: 2,
-        lease_id: second.lease_id.clone(),
-        expected_updated_at_seq: 4,
-        failed_at_seq: 5,
-        error: "planner unavailable".to_string(),
-    };
-    {
-        let store = AgentStore::new(sled::open(&path).unwrap()).unwrap();
-        let registration = AgentRegistration::new(&store);
-        registration
-            .register_seed_agent(seed_agent_registration())
-            .unwrap();
-        assert_eq!(
-            registration.start_hydration(&first).unwrap(),
-            registration.start_hydration(&first).unwrap()
-        );
-        registration.start_hydration(&second).unwrap();
-        let superseded = store
-            .get_process_hydration(&first.hydration_id)
-            .unwrap()
-            .unwrap();
-        assert_eq!(superseded.status, AgentProcessHydrationStatus::Failed);
-        assert!(superseded
-            .last_error
-            .as_deref()
-            .is_some_and(|error| error.contains("superseded")));
-        assert_eq!(
-            store
-                .get_activation(&first.hydration_id)
-                .unwrap()
-                .unwrap()
-                .status,
-            AgentActivationStatus::Failed
-        );
-
-        let stale_failure = FailAgentHydrationCommand {
-            hydration_id: first.hydration_id.clone(),
-            attempt_epoch: 1,
-            lease_id: first.lease_id.clone(),
-            expected_updated_at_seq: 3,
-            failed_at_seq: 5,
-            error: "stale worker".to_string(),
-        };
-        assert!(registration.fail_hydration(&stale_failure).is_err());
-        let failed = registration.fail_hydration(&failure).unwrap();
-        assert_eq!(failed.status, AgentProcessHydrationStatus::Failed);
-        assert_eq!(registration.fail_hydration(&failure).unwrap(), failed);
-        store.flush().unwrap();
-    }
-    let store = AgentStore::new(reopen_sled_after_close(&path).unwrap()).unwrap();
-    assert_eq!(
-        store
-            .get_process_hydration(&second.hydration_id)
-            .unwrap()
-            .unwrap()
-            .status,
-        AgentProcessHydrationStatus::Failed
-    );
-    assert_eq!(
-        AgentRegistration::new(&store)
-            .fail_hydration(&failure)
-            .unwrap()
-            .last_error
-            .as_deref(),
-        Some("planner unavailable")
-    );
-}
-
-#[test]
 fn agent_subscription_rejects_missing_agent() {
     let (_temp_dir, store) = agent_store();
     let result = AgentSubscription::new(&store).subscribe(SubscribeAgentCommand {
@@ -1306,16 +859,6 @@ fn agent_store_query_ordering_and_reopen() {
     {
         let store = AgentStore::new(sled::open(&path).unwrap()).unwrap();
         let (agent, subscription) = setup_agent(&store);
-        AgentRegistration::new(&store)
-            .start_hydration(&StartAgentHydrationCommand {
-                hydration_id: "activation-a".to_string(),
-                agent_id: AGENT_ID.to_string(),
-                expected_prior_attempt_epoch: 0,
-                attempt_epoch: 1,
-                lease_id: "lease-a".to_string(),
-                started_at_seq: 4,
-            })
-            .unwrap();
         let outcome = curate_threshold_rule(curation_input(0.1)).unwrap();
         store.put_decision(&outcome.decision).unwrap();
         store.flush().unwrap();
@@ -1331,7 +874,6 @@ fn agent_store_query_ordering_and_reopen() {
     assert!(query.agent(AGENT_ID).unwrap().is_some());
     assert_eq!(query.subscriptions(AGENT_ID).unwrap().len(), 1);
     assert_eq!(query.recent_decisions(AGENT_ID, 10).unwrap().len(), 1);
-    assert_eq!(reopened.activations_for_agent(AGENT_ID).unwrap().len(), 1);
 }
 
 #[test]

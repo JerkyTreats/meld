@@ -41,6 +41,14 @@ impl<'a> BeliefQuery<'a> {
         self.store.current_view(key)
     }
 
+    /// Read the revision named by the exact durable head for one belief key.
+    pub fn current_revision(
+        &self,
+        key: &BeliefKey,
+    ) -> Result<Option<BeliefRevision>, StorageError> {
+        self.store.current_revision(key)
+    }
+
     /// Read current views for one subject and perspective.
     pub fn current_views_for_subject(
         &self,

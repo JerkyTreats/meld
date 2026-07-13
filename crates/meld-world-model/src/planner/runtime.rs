@@ -13,7 +13,7 @@ use crate::planner::contracts::{
     PlannerProjectionRequest, PLANNER_PROJECTION_VERSION,
 };
 use crate::planner::projection::project_world_state;
-use crate::planner::store::PlannerProjectionStore;
+use crate::planner::store::{PlannerProjectionStore, PlannerProjectionTerminalCapability};
 use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::TraversalQuery;
 
@@ -138,6 +138,17 @@ impl PlannerProjectionActor {
         report.output_request_sequence = report.input_request_sequence;
 
         for record in selection.records {
+            let terminal_capability = if record.request.attested_belief.is_some() {
+                match self.projection_store.terminal_capability_for_actor(&record) {
+                    Ok(capability) => Some(capability),
+                    Err(error) => {
+                        push_storage_issue(&mut report, Some(record.request.request_id), error);
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
             let Some(transition_sequence) = record.updated_at_seq.checked_add(1) else {
                 report.fatal_errors.push(issue(
                     Some(record.request.request_id),
@@ -160,6 +171,7 @@ impl PlannerProjectionActor {
                                 record.updated_at_seq,
                                 transition_sequence,
                                 error.to_string(),
+                                terminal_capability.as_ref(),
                             );
                             continue;
                         }
@@ -169,7 +181,8 @@ impl PlannerProjectionActor {
                         output,
                         completed_at_seq: transition_sequence,
                     };
-                    let completion = self.projection_store.complete(
+                    let completion = self.complete_projection(
+                        terminal_capability.as_ref(),
                         &record.request.request_id,
                         record.updated_at_seq,
                         frame.clone(),
@@ -177,7 +190,8 @@ impl PlannerProjectionActor {
                     );
                     let completion =
                         if matches!(&completion, Err(StorageError::DurabilityIndeterminate(_))) {
-                            self.projection_store.complete(
+                            self.complete_projection(
+                                terminal_capability.as_ref(),
                                 &record.request.request_id,
                                 record.updated_at_seq,
                                 frame,
@@ -206,10 +220,36 @@ impl PlannerProjectionActor {
                     record.updated_at_seq,
                     transition_sequence,
                     error.to_string(),
+                    terminal_capability.as_ref(),
                 ),
             }
         }
         report
+    }
+
+    fn complete_projection(
+        &self,
+        capability: Option<&PlannerProjectionTerminalCapability>,
+        request_id: &str,
+        expected_updated_at_seq: u64,
+        frame: PlannerProjectionFrame,
+        completed_at_seq: u64,
+    ) -> Result<crate::planner::PlannerProjectionRequestRecord, StorageError> {
+        match capability {
+            Some(capability) => self.projection_store.complete_attested_for_actor(
+                capability,
+                request_id,
+                expected_updated_at_seq,
+                frame,
+                completed_at_seq,
+            ),
+            None => self.projection_store.complete(
+                request_id,
+                expected_updated_at_seq,
+                frame,
+                completed_at_seq,
+            ),
+        }
     }
 
     fn project_request(
@@ -218,8 +258,12 @@ impl PlannerProjectionActor {
     ) -> Result<PlannerProjectionOutput, PlannerProjectionError> {
         let belief_query = BeliefQuery::new(self.belief_store.as_ref());
         let traversal_query = TraversalQuery::new(self.traversal_store.as_ref());
-        let views =
-            belief_query.current_views_for_subject(&request.subject, &request.perspective)?;
+        let views = match self.projection_store.attested_view_for_request(request)? {
+            Some(view) => vec![view],
+            None => {
+                belief_query.current_views_for_subject(&request.subject, &request.perspective)?
+            }
+        };
         let anchors = traversal_query.current_anchors_for_subject(&request.subject)?;
         let graph_scope = if anchors.is_empty() {
             None
@@ -303,21 +347,27 @@ impl PlannerProjectionActor {
         expected_updated_at_seq: u64,
         failed_at_seq: u64,
         message: String,
+        capability: Option<&PlannerProjectionTerminalCapability>,
     ) {
         let message = bounded_message(message);
-        let failure = self.projection_store.fail(
-            request_id,
-            expected_updated_at_seq,
-            message.clone(),
-            failed_at_seq,
-        );
-        let failure = if matches!(&failure, Err(StorageError::DurabilityIndeterminate(_))) {
-            self.projection_store.fail(
+        let fail = || match capability {
+            Some(capability) => self.projection_store.fail_attested_for_actor(
+                capability,
                 request_id,
                 expected_updated_at_seq,
                 message.clone(),
                 failed_at_seq,
-            )
+            ),
+            None => self.projection_store.fail(
+                request_id,
+                expected_updated_at_seq,
+                message.clone(),
+                failed_at_seq,
+            ),
+        };
+        let failure = fail();
+        let failure = if matches!(&failure, Err(StorageError::DurabilityIndeterminate(_))) {
+            fail()
         } else {
             failure
         };

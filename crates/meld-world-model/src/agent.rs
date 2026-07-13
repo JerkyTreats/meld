@@ -19,5 +19,6 @@ pub use query::AgentQuery;
 pub use registration::AgentRegistration;
 pub use runtime::*;
 pub use selection::AgentSemanticSelector;
+pub(crate) use store::AgentHydrationFenceCapability;
 pub use store::AgentStore;
 pub use subscription::AgentSubscription;

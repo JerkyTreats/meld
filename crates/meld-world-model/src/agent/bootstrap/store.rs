@@ -29,6 +29,7 @@ const TREE_DIRECTIVES: &str = "agent_directives";
 const TREE_CURATION_RULES: &str = "agent_curation_rules";
 const TREE_BOOTSTRAP_PROGRESS: &str = "agent_bootstrap_progress";
 const TREE_BOOTSTRAP_RECEIPTS: &str = "agent_bootstrap_receipts";
+const TREE_BOOTSTRAP_RECEIPTS_BY_AGENT: &str = "agent_bootstrap_receipts_by_agent";
 const TREE_LEGACY_MIGRATION_RECEIPTS: &str = "agent_legacy_directive_migration_receipts";
 const TREE_BOOTSTRAP_SEQUENCE: &str = "agent_bootstrap_sequence";
 const KEY_NEXT_SEQUENCE: &[u8] = b"next";
@@ -45,6 +46,7 @@ pub(super) struct BootstrapStore {
     curation_rules: Tree,
     progress: Tree,
     receipts: Tree,
+    receipts_by_agent: Tree,
     migration_receipts: Tree,
     sequence: Tree,
 }
@@ -61,6 +63,7 @@ impl BootstrapStore {
             curation_rules: open(&db, TREE_CURATION_RULES)?,
             progress: open(&db, TREE_BOOTSTRAP_PROGRESS)?,
             receipts: open(&db, TREE_BOOTSTRAP_RECEIPTS)?,
+            receipts_by_agent: open(&db, TREE_BOOTSTRAP_RECEIPTS_BY_AGENT)?,
             migration_receipts: open(&db, TREE_LEGACY_MIGRATION_RECEIPTS)?,
             sequence: open(&db, TREE_BOOTSTRAP_SEQUENCE)?,
             db,
@@ -474,52 +477,76 @@ impl BootstrapStore {
             &self.sequence,
             &self.progress,
             &self.receipts,
+            &self.receipts_by_agent,
             &self.agents,
             &self.subscriptions,
         )
-            .transaction(|(sequence, progress, receipts, agents, subscriptions)| {
-                let current = load_progress_tx(progress, bootstrap_id, identity)?;
-                if let Some(raw) = receipts.get(bootstrap_id)? {
-                    let receipt: AgentBootstrapReceipt = decode_tx(&raw)?;
-                    require_receipt_identity(&receipt, input, identity, &belief, &subscription_id)?;
-                    return Ok((current, receipt));
-                }
-                if !stage_at_least(current.stage, AgentBootstrapStage::ProductsConfirmed) {
-                    return Err(abort_storage(
-                        "bootstrap receipt requires confirmed seed products",
-                    ));
-                }
-                let raw = agents
-                    .get(input.seed_agent.agent_id.as_bytes())?
-                    .ok_or_else(|| abort_storage("configured agent is missing"))?;
-                let agent: AgentRecord = decode_tx(&raw)?;
-                require_canonical_agent_matches(&agent, input)?;
-                let raw = subscriptions
-                    .get(subscription_id.as_bytes())?
-                    .ok_or_else(|| abort_storage("configured subscription is missing"))?;
-                let subscription: AgentSubscriptionRecord = decode_tx(&raw)?;
-                require_subscription_matches(&subscription, input, &subscription_id)?;
-                let floor = durable_product_sequence_floor_tx(&agent, &subscription)?
-                    .max(current.updated_at_seq);
-                let seq = allocate_sequence_after(sequence, floor)?;
-                let receipt = AgentBootstrapReceipt {
-                    receipt_id: deterministic_id("agent-bootstrap-receipt", &identity.bootstrap_id),
-                    bootstrap_id: identity.bootstrap_id.clone(),
-                    activation_hash: identity.activation_hash.clone(),
-                    activation_id: identity.activation_id.clone(),
-                    input_hash: identity.input_hash.clone(),
-                    belief: belief.clone(),
-                    directive_id: input.directive.directive_id.clone(),
-                    agent_id: input.seed_agent.agent_id.clone(),
-                    rule_id: input.curation_rule.rule_id.clone(),
-                    subscription_id: subscription_id.clone(),
-                    completed_at_seq: seq,
-                };
-                let next = next_progress(&current, AgentBootstrapStage::Completed, seq);
-                receipts.insert(bootstrap_id, encode_tx(&receipt)?.as_slice())?;
-                progress.insert(bootstrap_id, encode_tx(&next)?.as_slice())?;
-                Ok((next, receipt))
-            })
+            .transaction(
+                |(sequence, progress, receipts, receipts_by_agent, agents, subscriptions)| {
+                    let current = load_progress_tx(progress, bootstrap_id, identity)?;
+                    if let Some(raw) = receipts.get(bootstrap_id)? {
+                        let receipt: AgentBootstrapReceipt = decode_tx(&raw)?;
+                        require_receipt_identity(
+                            &receipt,
+                            input,
+                            identity,
+                            &belief,
+                            &subscription_id,
+                        )?;
+                        confirm_index_tx(
+                            receipts_by_agent,
+                            &input.seed_agent.agent_id,
+                            &identity.bootstrap_id,
+                            "bootstrap_receipt.agent_index",
+                        )?;
+                        return Ok((current, receipt));
+                    }
+                    if !stage_at_least(current.stage, AgentBootstrapStage::ProductsConfirmed) {
+                        return Err(abort_storage(
+                            "bootstrap receipt requires confirmed seed products",
+                        ));
+                    }
+                    let raw = agents
+                        .get(input.seed_agent.agent_id.as_bytes())?
+                        .ok_or_else(|| abort_storage("configured agent is missing"))?;
+                    let agent: AgentRecord = decode_tx(&raw)?;
+                    require_canonical_agent_matches(&agent, input)?;
+                    let raw = subscriptions
+                        .get(subscription_id.as_bytes())?
+                        .ok_or_else(|| abort_storage("configured subscription is missing"))?;
+                    let subscription: AgentSubscriptionRecord = decode_tx(&raw)?;
+                    require_subscription_matches(&subscription, input, &subscription_id)?;
+                    let floor = durable_product_sequence_floor_tx(&agent, &subscription)?
+                        .max(current.updated_at_seq);
+                    let seq = allocate_sequence_after(sequence, floor)?;
+                    let receipt = AgentBootstrapReceipt {
+                        receipt_id: deterministic_id(
+                            "agent-bootstrap-receipt",
+                            &identity.bootstrap_id,
+                        ),
+                        bootstrap_id: identity.bootstrap_id.clone(),
+                        activation_hash: identity.activation_hash.clone(),
+                        activation_id: identity.activation_id.clone(),
+                        input_hash: identity.input_hash.clone(),
+                        belief: belief.clone(),
+                        directive_id: input.directive.directive_id.clone(),
+                        agent_id: input.seed_agent.agent_id.clone(),
+                        rule_id: input.curation_rule.rule_id.clone(),
+                        subscription_id: subscription_id.clone(),
+                        completed_at_seq: seq,
+                    };
+                    let next = next_progress(&current, AgentBootstrapStage::Completed, seq);
+                    receipts.insert(bootstrap_id, encode_tx(&receipt)?.as_slice())?;
+                    confirm_index_tx(
+                        receipts_by_agent,
+                        &input.seed_agent.agent_id,
+                        &identity.bootstrap_id,
+                        "bootstrap_receipt.agent_index",
+                    )?;
+                    progress.insert(bootstrap_id, encode_tx(&next)?.as_slice())?;
+                    Ok((next, receipt))
+                },
+            )
             .map_err(map_transaction)
     }
 
@@ -877,6 +904,26 @@ fn confirm_exact_tx<T: Serialize + serde::de::DeserializeOwned + PartialEq>(
         return Ok(());
     }
     tree.insert(key.as_bytes(), encode_tx(configured)?.as_slice())?;
+    Ok(())
+}
+
+fn confirm_index_tx(
+    tree: &TransactionalTree,
+    key: &str,
+    value: &str,
+    field: &str,
+) -> Result<(), ConflictableTransactionError<BootstrapAbort>> {
+    if let Some(durable) = tree.get(key.as_bytes())? {
+        if durable.as_ref() != value.as_bytes() {
+            return Err(abort_conflict_bytes(
+                field,
+                value.as_bytes(),
+                durable.as_ref(),
+            ));
+        }
+        return Ok(());
+    }
+    tree.insert(key.as_bytes(), value.as_bytes())?;
     Ok(())
 }
 

@@ -1,14 +1,13 @@
 //! Agent registration commands.
 
+use crate::agent::contracts::AgentHydrationCheckpoint;
 use crate::agent::contracts::{AgentRecord, AgentStatus, SeedAgentRegistration};
 use crate::agent::hydration::{
     AgentProcessHydrationRecord, FailAgentHydrationCommand, MarkAgentOperationalCommand,
     StartAgentHydrationCommand,
 };
-use crate::agent::store::AgentStore;
-use crate::belief::BeliefStore;
+use crate::agent::store::{AgentHydrationOwnerFence, AgentStore};
 use crate::error::StorageError;
-use crate::planner::PlannerProjectionStore;
 
 /// Write facade for seed agent registration and readiness transitions.
 pub struct AgentRegistration<'a> {
@@ -58,34 +57,31 @@ impl<'a> AgentRegistration<'a> {
         Ok(record)
     }
 
-    /// Mark one exact registered agent operational after durable readiness proof.
-    pub fn mark_operational(
+    pub(crate) fn mark_operational_fenced(
         &self,
         command: &MarkAgentOperationalCommand,
+        owner: &AgentHydrationOwnerFence,
+        checkpoint: &AgentHydrationCheckpoint,
     ) -> Result<AgentRecord, StorageError> {
-        let db = self.store.shared_database();
-        BeliefStore::new(db.clone())?
-            .verify_readiness_attestation(&command.readiness.signal.attestation)?;
-        PlannerProjectionStore::new(db)?.verify_completed_projection(
-            &command.readiness.planner_request,
-            &command.readiness.planner_frame,
-        )?;
-        self.store.mark_agent_operational(command)
+        self.store
+            .mark_agent_operational_fenced(command, owner, checkpoint)
     }
 
-    /// Begin one fenced process-hydration attempt.
-    pub fn start_hydration(
+    pub(crate) fn start_hydration_fenced(
         &self,
         command: &StartAgentHydrationCommand,
+        owner: &AgentHydrationOwnerFence,
     ) -> Result<AgentProcessHydrationRecord, StorageError> {
-        self.store.start_process_hydration(command)
+        self.store.start_process_hydration_fenced(command, owner)
     }
 
-    /// Fail one exact current process-hydration attempt.
-    pub fn fail_hydration(
+    pub(crate) fn fail_hydration_fenced(
         &self,
         command: &FailAgentHydrationCommand,
+        owner: &AgentHydrationOwnerFence,
+        checkpoint: &AgentHydrationCheckpoint,
     ) -> Result<AgentProcessHydrationRecord, StorageError> {
-        self.store.fail_process_hydration(command)
+        self.store
+            .fail_process_hydration_fenced(command, owner, checkpoint)
     }
 }
