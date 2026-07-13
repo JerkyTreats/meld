@@ -357,7 +357,7 @@ model = "test-model"
         assert!(
             output.contains("Activation source, owner packages, and execution assets validated")
         );
-        assert!(output.contains("Application ready: yes"));
+        assert!(output.contains("Application ready: no"));
         assert!(workspace.path().read_dir().unwrap().next().is_none());
     }
 

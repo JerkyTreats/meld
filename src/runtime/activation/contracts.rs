@@ -374,11 +374,14 @@ pub struct ValidatedProductActivationPreflight {
 }
 
 impl ValidatedProductActivationPreflight {
-    /// Create the application-ready description used by early CLI routing.
+    /// Create the store-free validation description used by early CLI routing.
+    ///
+    /// Execution assets are retained and validated, but application readiness
+    /// remains false until root assembly verifies every enabled runtime id and
+    /// provides the concrete bootstrap factory.
     pub fn passive_description(&self) -> PassiveActivationDescription {
         let mut description = self.activation.passive_description();
         description.validation_scope = "source_owner_packages_and_execution_assets".to_string();
-        description.application_ready = true;
         description
     }
 }

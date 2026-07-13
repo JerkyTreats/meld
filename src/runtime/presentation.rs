@@ -18,7 +18,7 @@ pub fn format_runtime_activation_description(
             ))
         }),
         "text" => Ok([
-            if description.application_ready {
+            if description.validation_scope == "source_owner_packages_and_execution_assets" {
                 "Activation source, owner packages, and execution assets validated".to_string()
             } else {
                 "Activation source and owner packages validated".to_string()

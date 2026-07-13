@@ -1063,7 +1063,7 @@ model = "test-model"
                 .unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
 
-        assert_eq!(value["application_ready"], true);
+        assert_eq!(value["application_ready"], false);
         assert_eq!(
             value["validation_scope"],
             "source_owner_packages_and_execution_assets"

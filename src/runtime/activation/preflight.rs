@@ -137,7 +137,23 @@ mod tests {
             result.execution_receipt.activation_hash,
             result.activation.activation_hash.as_str()
         );
-        assert!(result.passive_description().application_ready);
+        assert!(!result.passive_description().application_ready);
+    }
+
+    #[test]
+    fn execution_preflight_waits_for_bootstrap_factory_before_application_readiness() {
+        let result = preflight_validated_activation(
+            activation(),
+            &config_with_provider("docs-writer", None),
+        )
+        .unwrap();
+        let description = result.passive_description();
+
+        assert_eq!(
+            description.validation_scope,
+            "source_owner_packages_and_execution_assets"
+        );
+        assert!(!description.application_ready);
     }
 
     #[test]
