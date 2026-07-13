@@ -235,8 +235,8 @@ Focused evidence:
 - `cargo test --locked --test integration_tests runtime_cli`
 - `cargo clippy --locked --workspace --all-targets -- -D warnings`
 
-Commit state: fresh review passed, commit pending
-Next ready set: W0C1 through W0C4 after review and commit gate
+Commit state: accepted as `0819dbf`
+Next ready set: W0C1 through W0C4
 
 ## Gate Evidence
 
@@ -244,7 +244,7 @@ Next ready set: W0C1 through W0C4 after review and commit gate
 | --- | --- | --- | --- | --- |
 | baseline | full locked workspace ladder | passed | `1f6dc1d` | implementation-ready checkpoint before program branch |
 | W0A | source truth and documentation checks | passed | `642af1c` | fresh reviewer withdrew all findings |
-| W0B | runtime contract focused ladder and workspace clippy | passed | pending | fresh review passed after two fix loops |
+| W0B | runtime contract focused ladder and workspace clippy | passed | `0819dbf` | fresh review passed after two fix loops |
 
 ## Review Findings
 
@@ -259,8 +259,12 @@ The final reviewer approved W0B for commit and W0C fanout with no remaining high
 | Packet | Status | Implementation Evidence | Test Evidence | Review |
 | --- | --- | --- | --- | --- |
 | W0A | complete | source classification and reconciled docs | Markdown, links, diff, boundaries | passed after fix loop |
-| W0B | review | canonical identity, truthful roles, cache freeze, contender safety | focused runtime suites and workspace clippy | passed after two fix loops |
-| W0C1 through W6G | blocked | none | none | none |
+| W0B | accepted | canonical identity, truthful roles, cache freeze, contender safety | focused runtime suites and workspace clippy | passed after two fix loops |
+| W0C1 | active | cache host | pending | pending |
+| W0C2 | active | passive status route helper | pending | pending |
+| W0C3 | blocked by W0C1 and W0C2 | process isolation proof | none | none |
+| W0C4 | ready | documentation truth evidence | none | none |
+| W0D through W6G | blocked | none | none | none |
 
 ## Risks And Exceptions
 
@@ -270,7 +274,7 @@ The final reviewer approved W0B for commit and W0C fanout with no remaining high
 ### W0B Runtime Contract Freeze
 
 Initial state: blocked by W0A
-Current state: review
+Current state: accepted
 Thread: zero
 Strength: highest available
 Write scope: central runtime contracts, assembly registry, supervisor contract adapter, compatibility tests
@@ -286,6 +290,8 @@ Required output:
 
 Gate: runtime contract tests, supervisor characterization, compatibility review, and boundary scan.
 
+Accepted commit: `0819dbf`
+
 ### W0C Parallel Implementation
 
 Initial state: blocked by W0B
@@ -300,6 +306,21 @@ Initial state: blocked by W0B
 Thread zero integrates route changes in `src/bin/meld.rs`, CLI parsing, runtime assembly, and test registration after builder commits are reviewed.
 
 Gate: focused tests, root integration, full wave ladder, two fresh review lenses, and accepted documentation evidence.
+
+### W0C Allowed Files
+
+W0C1 cache host:
+
+- new `src/runtime/status_cache.rs`
+- focused unit tests inside the new module
+
+W0C2 passive route helper:
+
+- new `src/runtime/passive_status.rs`
+- focused unit tests inside the new module
+
+Thread zero exclusively owns registration in `src/runtime.rs`, CLI routing, shared contracts, and any integration test registration.
+W0C3 and W0C4 receive exact allowed files only after W0C1 and W0C2 expose their reviewed seams.
 
 ### W0D Wave Closeout
 
