@@ -27,13 +27,13 @@ The domain model is:
 
 The world model owns belief updates and conflict resolution.
 `events` owns durability, ordering, replay, and subscription.
-`execution` owns task-triggered observation use cases that already exist today.
+`execution` owns task-triggered observation use cases.
 
-## Current Anchors
+## Integration Anchors
 
-- `workspace_scan_batch` already shows the right diff-first publication shape
-- [Await Observation Semantics](../execution/planning/observation_wait_semantics.md) already defines the deliberate observation-and-branch pattern inside `execution`
-- the current system is stronger at task-triggered observation than continuous background sensing
+- `workspace_scan_batch` is the reference diff-first publication shape
+- [Await Observation Semantics](../execution/planning/observation_wait_semantics.md) defines the deliberate observation-and-branch pattern inside `execution`
+- continuous sensors and task-triggered observations share event contracts without sharing scheduling authority
 
 ## Substrate
 

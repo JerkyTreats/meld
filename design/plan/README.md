@@ -10,7 +10,8 @@ This directory defines implementation readiness, dependency order, scope cuts, a
 
 Durable architecture intent lives under [design/cognitive_architecture](../cognitive_architecture/README.md). That directory is canonical for declarative design intent. This plan states what can be built, what must be built first, and what remains blocked.
 
-Each assessment is current truth. It names the exact slice that is ready, the exact contracts it depends on, and the exact work that is deferred.
+Assessments are dated implementation snapshots and may become partially applicable as code and governing programs advance.
+The active program ledger classifies source freshness before implementation consumes an older claim.
 
 When this plan conflicts with `design/cognitive_architecture`, treat the architecture document as intent and this plan as an implementation readiness snapshot that needs reconciliation.
 
@@ -155,25 +156,27 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - closed event foundation closeout
 - [integration/production_cognitive_runtime_closure_program.md](integration/production_cognitive_runtime_closure_program.md) - design-ready production runtime closure and buildout orchestration
 - [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - executable packet, thread, review, and rollback ledger
+- [integration/runtime_operator_visibility_program_ledger.md](integration/runtime_operator_visibility_program_ledger.md) - active child ledger with parent-controlled sequencing
+- [integration/runtime_assembly_program_ledger.md](integration/runtime_assembly_program_ledger.md) - historical runtime assembly evidence
 - [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — template
-- [integration/durable_runtime_first_slice.md](integration/durable_runtime_first_slice.md) - proposed durable flywheel runtime design
-- [integration/durable_runtime_pre_implementation_gaps.md](integration/durable_runtime_pre_implementation_gaps.md) - proposed pre assembly gap requirements
-- [integration/durable_flywheel_runtime_phase_design.md](integration/durable_flywheel_runtime_phase_design.md) - proposed flywheel runtime phase design
-- [integration/flywheel_runtime_code_assessment.md](integration/flywheel_runtime_code_assessment.md) - proposed flywheel runtime code assessment
-- [integration/runtime_supervisor_domain_plan.md](integration/runtime_supervisor_domain_plan.md) - proposed runtime supervisor domain plan
-- [integration/runtime_requirements.md](integration/runtime_requirements.md) - proposed detailed runtime requirements index
+- [integration/durable_runtime_first_slice.md](integration/durable_runtime_first_slice.md) - partially applicable predecessor design
+- [integration/durable_runtime_pre_implementation_gaps.md](integration/durable_runtime_pre_implementation_gaps.md) - historical gap inventory
+- [integration/durable_flywheel_runtime_phase_design.md](integration/durable_flywheel_runtime_phase_design.md) - partially applicable predecessor sequencing
+- [integration/flywheel_runtime_code_assessment.md](integration/flywheel_runtime_code_assessment.md) - dated implementation assessment
+- [integration/runtime_supervisor_domain_plan.md](integration/runtime_supervisor_domain_plan.md) - partially applicable supervisor plan
+- [integration/runtime_requirements.md](integration/runtime_requirements.md) - current target requirements with parent-controlled sequencing
 - [integration/runtime_phase_design_detail_audit.md](integration/runtime_phase_design_detail_audit.md) - implemented runtime phase detail audit
-- [integration/product_runtime_assembly_requirements.md](integration/product_runtime_assembly_requirements.md) - proposed product runtime assembly requirements
+- [integration/product_runtime_assembly_requirements.md](integration/product_runtime_assembly_requirements.md) - partially applicable assembly requirements
 - [integration/product_event_authority_cutover.md](integration/product_event_authority_cutover.md) - complete E5 CLI and product event authority cutover
-- [integration/docs_freshness_physical_configuration_requirements.md](integration/docs_freshness_physical_configuration_requirements.md) - proposed docs freshness physical configuration requirements
-- [integration/docs_freshness_flywheel_next_iteration_report.md](integration/docs_freshness_flywheel_next_iteration_report.md) - proposed docs freshness flywheel next iteration report
-- [integration/docs_freshness_flywheel_domain_spec_skeleton.md](integration/docs_freshness_flywheel_domain_spec_skeleton.md) - proposed docs freshness domain spec skeleton
-- [integration/docs_freshness_flywheel_implementation_guide.md](integration/docs_freshness_flywheel_implementation_guide.md) - proposed docs freshness implementation guide
-- [integration/world_model_runtime_requirements.md](integration/world_model_runtime_requirements.md) - proposed world model runtime requirements
-- [integration/execution_runtime_requirements.md](integration/execution_runtime_requirements.md) - proposed execution runtime requirements
-- [integration/event_runtime_requirements.md](integration/event_runtime_requirements.md) - proposed event runtime requirements
-- [integration/supervisor_runtime_requirements.md](integration/supervisor_runtime_requirements.md) - proposed supervisor runtime requirements
-- [integration/durable_flywheel_vertical_proof_requirements.md](integration/durable_flywheel_vertical_proof_requirements.md) - proposed vertical proof requirements
+- [integration/docs_freshness_physical_configuration_requirements.md](integration/docs_freshness_physical_configuration_requirements.md) - current target configuration requirements for Wave 2
+- [integration/docs_freshness_flywheel_next_iteration_report.md](integration/docs_freshness_flywheel_next_iteration_report.md) - dated assessment input
+- [integration/docs_freshness_flywheel_domain_spec_skeleton.md](integration/docs_freshness_flywheel_domain_spec_skeleton.md) - partially applicable predecessor specification
+- [integration/docs_freshness_flywheel_implementation_guide.md](integration/docs_freshness_flywheel_implementation_guide.md) - partially applicable predecessor guide
+- [integration/world_model_runtime_requirements.md](integration/world_model_runtime_requirements.md) - current target requirements with parent-controlled ids and sequencing
+- [integration/execution_runtime_requirements.md](integration/execution_runtime_requirements.md) - current target requirements with parent-controlled sequencing
+- [integration/event_runtime_requirements.md](integration/event_runtime_requirements.md) - implemented foundation plus current hosting requirements
+- [integration/supervisor_runtime_requirements.md](integration/supervisor_runtime_requirements.md) - current target requirements with parent-controlled role and status contracts
+- [integration/durable_flywheel_vertical_proof_requirements.md](integration/durable_flywheel_vertical_proof_requirements.md) - partially applicable proof requirements superseded where the parent is stricter
 
 ## Assessment Inventory
 

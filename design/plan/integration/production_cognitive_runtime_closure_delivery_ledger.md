@@ -1,7 +1,7 @@
 # Production Cognitive Runtime Closure Delivery Ledger
 
 Date: 2026-07-12
-Status: design ready for phased delivery
+Status: implementation in progress
 Program: [Production Cognitive Runtime Closure Program](production_cognitive_runtime_closure_program.md)
 Base branch: `event-foundation-closeout`
 Integration branch: `production-cognitive-runtime-closure`
@@ -86,6 +86,7 @@ Every handoff reports:
 ### W0A Truth Gate
 
 Initial state: ready
+Current state: complete
 Thread: zero with thread six as documentation analyst
 Strength: highest available for reconciliation, strong for mechanical evidence
 Write scope: parent program, this ledger, `design/plan/README.md`, runtime visibility ledger, affected current assessments
@@ -100,6 +101,137 @@ Required output:
 - leave canonical intent changes for a separately reviewed design amendment
 
 Gate: plan links, Markdown policy, diff check, and fresh source-coverage review.
+
+Completion evidence: source classification, canonical hygiene inventory, plan index reconciliation, Markdown checks, boundary scan, and fresh review passed.
+
+### W0A Active Assignment
+
+Program branch: `production-cognitive-runtime-closure`
+Root owner: thread zero
+Analyst lanes: source classification and runtime contract baseline
+Strength selector: unavailable in the active orchestration surface
+Strength handling: packet scopes are narrowed by reasoning risk and record the intended relative strength
+Started from checkpoint: `1f6dc1d`
+
+### W0A Source Classification
+
+| Source | Classification | Controlling Use |
+| --- | --- | --- |
+| parent closure program | current | architecture, outcomes, gates, precedence |
+| delivery ledger | current | packet state and execution evidence |
+| cognitive architecture index and domain roots | partially applicable | declarative ownership and invariants only, hygiene candidates tracked below |
+| runtime requirements index | partially applicable | shared ownership rules, parent controls order |
+| supervisor runtime requirements | partially applicable | lifecycle baseline, parent controls ids, roles, status, and order |
+| world model runtime requirements | partially applicable | actor ownership, parent controls ids and activation order |
+| execution runtime requirements | partially applicable | actor ownership and effects, parent controls activation order |
+| event runtime requirements | partially applicable | foundation truth plus downstream hosting, older order superseded |
+| physical configuration requirements | partially applicable | Wave 2 configuration and bootstrap ownership |
+| runtime visibility ledger | partially applicable | current cache and process scope, parent controls sequencing |
+| runtime assembly ledger | historical | closed evidence, not current acceptance |
+| plan index and dated assessments | partially applicable | discovery only until reconciled against code and parent |
+
+### W0A Controlling Requirements
+
+| Packet | Controlling Contract |
+| --- | --- |
+| W0B | parent runtime taxonomy, canonical id registry, alias migration, cache bounds, contender truth, and health eligibility |
+| W0C1 | parent bounded cache persistence, tolerant reads, lifecycle publication, and truncation rules |
+| W0C2 | parent passive early status route with no `RunContext` or product database open |
+| W0C3 | parent separate-process lock-isolation proof |
+| W0C4 | parent evidence, source freshness, canonical hygiene, and plan reconciliation gates |
+| W0D | parent full ladder, fresh reviews, commit gate, and truthful closeout |
+
+### W0A Canonical Hygiene Inventory
+
+Immediate corrections remove current implementation assessment from the world model and sensory domain roots.
+The following confirmed historical or implementation-shaped documents remain scheduled for W0C4 relocation or declarative cleanup:
+
+- `design/cognitive_architecture/meld-lang/PLAN.md`
+- `design/cognitive_architecture/execution/GAPS.md`
+- implementation-status preface in `design/cognitive_architecture/world_model/planner/spec.md`
+- landed-slice wording in `design/cognitive_architecture/world_model/belief/README.md`
+- implementation location wording in `design/cognitive_architecture/execution/task_network.md`
+- implementation comparison wording in `design/cognitive_architecture/meld-lang/README.md`
+- current implementation wording in `design/cognitive_architecture/world_model/graph/README.md`
+- current capability wording in `design/cognitive_architecture/world_model/agent/README.md`
+- current public-surface wording in `design/cognitive_architecture/world_model/public_interface.md`
+- implementation sequencing in `design/cognitive_architecture/world_model/belief/curation.md`
+- current implementation wording in `design/cognitive_architecture/execution/planning/planning_pipeline.md`
+
+W0C4 must also adjudicate every static candidate returned by this scan before Wave 0 closes:
+
+```sh
+rg -l "implemented|implementation status|landed|current implementation|not yet implemented|already exists|exists today|current code|currently implemented|first slice" design/cognitive_architecture -g '*.md'
+```
+
+The current candidate set includes:
+
+- `design/cognitive_architecture/core/CRATE.md`
+- `design/cognitive_architecture/execution/examples/bayesian_evaluation.md`
+- `design/cognitive_architecture/execution/goals/README.md`
+- `design/cognitive_architecture/execution/planning/htn/README.md`
+- `design/cognitive_architecture/execution/planning/htn/lineage_model.md`
+- `design/cognitive_architecture/execution/research/htn_turing.md`
+- `design/cognitive_architecture/meld-lang/primitives.md`
+- `design/cognitive_architecture/meld-lang/requirements.md`
+- `design/cognitive_architecture/meld-lang/world_state.md`
+- `design/cognitive_architecture/world_model/agent/genesis_and_activation.md`
+- `design/cognitive_architecture/world_model/agent/goal_curation.md`
+- `design/cognitive_architecture/world_model/agent/runtime_surface.md`
+- `design/cognitive_architecture/world_model/belief/belief_families.md`
+- `design/cognitive_architecture/world_model/belief/comparator_model.md`
+- `design/cognitive_architecture/world_model/belief/fact_to_belief.md`
+- `design/cognitive_architecture/world_model/belief/microarchitecture.md`
+- `design/cognitive_architecture/world_model/belief/requirements.md`
+- `design/cognitive_architecture/world_model/belief/substrate.md`
+- `design/cognitive_architecture/world_model/causation/README.md`
+- `design/cognitive_architecture/world_model/causation/requirements.md`
+- `design/cognitive_architecture/world_model/planner/README.md`
+- `design/cognitive_architecture/world_model/regime/README.md`
+
+### W0B Contract Inputs Frozen By W0A
+
+- current registry has 12 ids, 11 default-enabled roles, nine enabled inert handles, one diagnostics-only passive observer, one concrete graph worker, and one disabled inert role
+- assembly and supervisor validators disagree on uppercase acceptance
+- supervisor persistence embeds runtime ids across desired state, leases, heartbeats, health, restarts, and lifecycle records
+- alias migration must characterize every tree, reject collisions, accept legacy ids only at ingress, and emit canonical ids
+- contender health keyed only by runtime id can overwrite active-owner truth
+- cache schema traits exist without a concrete filesystem host, lifecycle invocation, bounds enforcement, or passive route
+- W0B must freeze identity and migration before cache and route fanout
+
+## Wave Execution Log
+
+### 2026-07-12 Program Start
+
+Ready items: W0A only
+Parallelization: two read-only analysts beside root reconciliation
+Workers: `w0a_source_truth` and `w0a_runtime_baseline`
+Commits accepted: W0A packet commit pending id insertion
+Gate state: W0A checks and fresh review passed
+Next ready set: W0B after the W0A commit gate
+
+## Gate Evidence
+
+| Wave | Gate | Result | Commit | Notes |
+| --- | --- | --- | --- | --- |
+| baseline | full locked workspace ladder | passed | `1f6dc1d` | implementation-ready checkpoint before program branch |
+| W0A | source truth and documentation checks | passed | pending id insertion | fresh reviewer withdrew all findings |
+
+## Review Findings
+
+W0A findings for incomplete hygiene inventory and missing plan-index ledgers were fixed and withdrawn by the fresh reviewer.
+
+## Phase Completion Matrix
+
+| Packet | Status | Implementation Evidence | Test Evidence | Review |
+| --- | --- | --- | --- | --- |
+| W0A | complete | source classification and reconciled docs | Markdown, links, diff, boundaries | passed after fix loop |
+| W0B through W6G | blocked | none | none | none |
+
+## Risks And Exceptions
+
+- The orchestration surface does not expose model selection, so relative strength is enforced through packet scope and review depth.
+- A separate dirty T3 worktree remains outside this program and must not be reused or modified.
 
 ### W0B Runtime Contract Freeze
 
