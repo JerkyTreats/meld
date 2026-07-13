@@ -140,6 +140,8 @@ impl ResponseAuthentication {
 ///
 /// The authority constructs this receipt from paired request and response
 /// records after validating their exact durable binding.
+/// Consumers may use it as proof that a particular request hash reached a
+/// terminal outcome without treating the receipt as execution commitment state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutcomeReceipt {
     command_id: String,
@@ -169,6 +171,9 @@ impl OutcomeReceipt {
     }
 
     /// Borrow the stored request identity hash.
+    ///
+    /// Modern records use the canonical request hash. Characterized legacy
+    /// records retain their historical hash after semantic replay validation.
     pub fn request_hash(&self) -> &str {
         &self.request_hash
     }

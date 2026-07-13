@@ -5,11 +5,23 @@ use meld_lang::{Goal, Proposition, Term};
 use serde::{Deserialize, Serialize};
 
 const WORLD_STATE_HASH_DOMAIN: &[u8] = b"meld.planner-world-state.v1";
+const PROJECTION_REQUEST_HASH_DOMAIN: &[u8] = b"meld.planner-projection-request.v1";
+const PROJECTION_FRAME_HASH_DOMAIN: &[u8] = b"meld.planner-projection-frame.v1";
+const MAX_PROJECTION_IDENTITY_COMPONENT_BYTES: usize = 256;
+const MAX_CANONICAL_PROJECTION_REQUEST_BYTES: usize = 256 * 1024;
+const MAX_PROJECTION_SOURCE_REF_BYTES: usize = 1024;
+const MAX_PROJECTION_SOURCE_REFS: usize = 256;
 
 /// Canonical world-model frame identity retained for planning replay.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "PlanningProjectionIdentityInputsWire")]
 pub struct PlanningProjectionIdentityInputs {
+    /// Execution goal that scoped the authoritative projection request.
+    goal_id: String,
+    /// Exact durable goal sequence carried by the projection request.
+    goal_updated_at_seq: u64,
+    /// Canonical complete execution request whose hash crossed the authority boundary.
+    canonical_request: String,
     /// Durable frame id assigned by the world-model projection authority.
     frame_id: String,
     /// Durable world-model request completed by the frame.
@@ -34,6 +46,9 @@ pub struct PlanningProjectionIdentityInputs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct PlanningProjectionIdentityInputsWire {
+    goal_id: String,
+    goal_updated_at_seq: u64,
+    canonical_request: String,
     frame_id: String,
     request_id: String,
     source_request_hash: String,
@@ -53,7 +68,11 @@ impl PlanningProjectionIdentityInputs {
         world_state: &meld_lang::WorldState,
         frame: &PlanningWorldStateFrameRef,
     ) -> Result<Self, String> {
+        let canonical_request = canonical_projection_request(request)?;
         let inputs = Self {
+            goal_id: request.goal_id.clone(),
+            goal_updated_at_seq: request.source_seq,
+            canonical_request,
             frame_id: frame.frame_id.clone(),
             request_id: frame.request_id.clone(),
             source_request_hash: frame.source_request_hash.clone(),
@@ -72,25 +91,101 @@ impl PlanningProjectionIdentityInputs {
 
     /// Validate canonical ordering and required identity components.
     pub fn validate(&self) -> Result<(), String> {
+        validate_projection_text("projection goal id", &self.goal_id)?;
+        if self.goal_updated_at_seq == 0 {
+            return Err("projection goal update sequence must be positive".to_string());
+        }
+        let canonical_request = self.canonical_request()?;
+        if canonical_request.goal_id != self.goal_id
+            || canonical_request.source_seq != self.goal_updated_at_seq
+            || canonical_request.perspective.perspective_kind != self.perspective_kind
+            || canonical_request.perspective.perspective_id != self.perspective_id
+            || canonical_request.branch_id != self.branch_id
+            || canonical_request.canonical_hash()? != self.source_request_hash
+        {
+            return Err(
+                "projection identity does not match its canonical execution request".to_string(),
+            );
+        }
+        for (label, value) in [
+            ("projection frame id", self.frame_id.as_str()),
+            ("projection request id", self.request_id.as_str()),
+            ("projection version", self.projection_version.as_str()),
+            (
+                "projection perspective kind",
+                self.perspective_kind.as_str(),
+            ),
+            ("projection perspective id", self.perspective_id.as_str()),
+            ("projection branch id", self.branch_id.as_str()),
+        ] {
+            validate_projection_text(label, value)?;
+        }
+        for (label, digest) in [
+            (
+                "projection source request",
+                self.source_request_hash.as_str(),
+            ),
+            ("projection output", self.projection_hash.as_str()),
+            ("projection world state", self.world_state_hash.as_str()),
+        ] {
+            validate_projection_digest(label, digest)?;
+        }
+        if self.source_refs.len() > MAX_PROJECTION_SOURCE_REFS {
+            return Err(format!(
+                "projection identity source refs may contain at most {MAX_PROJECTION_SOURCE_REFS} items"
+            ));
+        }
+        for source_ref in &self.source_refs {
+            if source_ref.trim().is_empty() || source_ref.len() > MAX_PROJECTION_SOURCE_REF_BYTES {
+                return Err(format!(
+                    "projection identity source ref must contain at most {MAX_PROJECTION_SOURCE_REF_BYTES} bytes"
+                ));
+            }
+        }
         let mut canonical_sources = self.source_refs.clone();
         canonical_sources.sort();
         canonical_sources.dedup();
         if canonical_sources != self.source_refs {
             return Err("projection identity source refs must be sorted and unique".to_string());
         }
-        if self.frame_id.trim().is_empty()
-            || self.request_id.trim().is_empty()
-            || self.source_request_hash.trim().is_empty()
-            || self.projection_version.trim().is_empty()
-            || self.projection_hash.trim().is_empty()
-            || self.world_state_hash.trim().is_empty()
-            || self.perspective_kind.trim().is_empty()
-            || self.perspective_id.trim().is_empty()
-            || self.branch_id.trim().is_empty()
-        {
-            return Err("projection identity components must be non-empty".to_string());
+        if self.request_id != canonical_planner_request_id(&canonical_request)? {
+            return Err(
+                "projection request id does not match the canonical execution request".to_string(),
+            );
+        }
+        if self.frame_id != canonical_planner_frame_id(self)? {
+            return Err("projection frame id does not match its authority identity".to_string());
         }
         Ok(())
+    }
+
+    /// Borrow the execution goal id bound into the authoritative projection.
+    pub fn goal_id(&self) -> &str {
+        &self.goal_id
+    }
+
+    /// Return the durable execution goal sequence bound into the projection.
+    pub fn goal_updated_at_seq(&self) -> u64 {
+        self.goal_updated_at_seq
+    }
+
+    /// Borrow the exact durable world-model frame identifier.
+    pub fn frame_id(&self) -> &str {
+        &self.frame_id
+    }
+
+    fn canonical_request(&self) -> Result<PlanningWorldStateRequest, String> {
+        if self.canonical_request.len() > MAX_CANONICAL_PROJECTION_REQUEST_BYTES {
+            return Err(format!(
+                "canonical projection request may contain at most {MAX_CANONICAL_PROJECTION_REQUEST_BYTES} bytes"
+            ));
+        }
+        let request: PlanningWorldStateRequest =
+            serde_json::from_str(&self.canonical_request).map_err(|error| error.to_string())?;
+        if canonical_projection_request(&request)? != self.canonical_request {
+            return Err("projection request identity is not canonically encoded".to_string());
+        }
+        Ok(request)
     }
 
     /// Rebuild the exact authoritative frame reference retained by these inputs.
@@ -118,7 +213,10 @@ impl PlanningProjectionIdentityInputs {
         world_state: &meld_lang::WorldState,
     ) -> Result<(), String> {
         self.validate()?;
-        if self.source_request_hash != request.canonical_hash()?
+        if self.canonical_request != canonical_projection_request(request)?
+            || self.goal_id != request.goal_id
+            || self.goal_updated_at_seq != request.source_seq
+            || self.source_request_hash != request.canonical_hash()?
             || self.world_state_hash != canonical_world_state_hash(world_state)?
             || self.perspective_kind != request.perspective.perspective_kind
             || self.perspective_id != request.perspective.perspective_id
@@ -137,6 +235,9 @@ impl TryFrom<PlanningProjectionIdentityInputsWire> for PlanningProjectionIdentit
 
     fn try_from(value: PlanningProjectionIdentityInputsWire) -> Result<Self, Self::Error> {
         let inputs = Self {
+            goal_id: value.goal_id,
+            goal_updated_at_seq: value.goal_updated_at_seq,
+            canonical_request: value.canonical_request,
             frame_id: value.frame_id,
             request_id: value.request_id,
             source_request_hash: value.source_request_hash,
@@ -151,6 +252,136 @@ impl TryFrom<PlanningProjectionIdentityInputsWire> for PlanningProjectionIdentit
         inputs.validate()?;
         Ok(inputs)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+enum CanonicalPlannerSourceRef {
+    BeliefRevision { revision_id: String },
+    Evidence { evidence_id: String },
+    SourceFact { source_fact_id: String },
+    GraphAnchor { anchor_id: String },
+    ProjectionRule { rule_id: String },
+}
+
+fn canonical_projection_request(request: &PlanningWorldStateRequest) -> Result<String, String> {
+    request.validate()?;
+    let mut canonical = request.clone();
+    canonical.requested_dimensions.sort();
+    canonical.requested_dimensions.dedup();
+    canonicalize_propositions(&mut canonical.required_preconditions)?;
+    let encoded = serde_json::to_string(&canonical).map_err(|error| error.to_string())?;
+    if encoded.len() > MAX_CANONICAL_PROJECTION_REQUEST_BYTES {
+        return Err(format!(
+            "canonical projection request may contain at most {MAX_CANONICAL_PROJECTION_REQUEST_BYTES} bytes"
+        ));
+    }
+    Ok(encoded)
+}
+
+fn canonical_planner_request_id(request: &PlanningWorldStateRequest) -> Result<String, String> {
+    #[derive(Serialize)]
+    struct BranchScope<'a> {
+        branch_id: &'a str,
+    }
+
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        source_request_hash: &'a str,
+        agent_id: &'a str,
+        subject: &'a DomainObjectRef,
+        perspective: &'a PlanningPerspectiveRef,
+        branch_scope: BranchScope<'a>,
+        requested_dimensions: &'a [String],
+        required_preconditions: &'a [Proposition],
+    }
+
+    let canonical: PlanningWorldStateRequest =
+        serde_json::from_str(&canonical_projection_request(request)?)
+            .map_err(|error| error.to_string())?;
+    hash_serializable(
+        PROJECTION_REQUEST_HASH_DOMAIN,
+        &Identity {
+            source_request_hash: &canonical.canonical_hash()?,
+            agent_id: &canonical.agent_id,
+            subject: &canonical.subject,
+            perspective: &canonical.perspective,
+            branch_scope: BranchScope {
+                branch_id: &canonical.branch_id,
+            },
+            requested_dimensions: &canonical.requested_dimensions,
+            required_preconditions: &canonical.required_preconditions,
+        },
+    )
+}
+
+fn canonical_planner_frame_id(
+    identity: &PlanningProjectionIdentityInputs,
+) -> Result<String, String> {
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        request_id: &'a str,
+        source_request_hash: &'a str,
+        projection_version: &'a str,
+        projection_hash: &'a str,
+        world_state_hash: &'a str,
+        source_refs: &'a [CanonicalPlannerSourceRef],
+    }
+
+    let mut source_refs = identity
+        .source_refs
+        .iter()
+        .map(|source_ref| {
+            let parsed =
+                serde_json::from_str::<CanonicalPlannerSourceRef>(source_ref).map_err(|error| {
+                    format!("projection source ref is not authoritative JSON: {error}")
+                })?;
+            if serde_json::to_string(&parsed).map_err(|error| error.to_string())? != *source_ref {
+                return Err("projection source ref is not canonically encoded".to_string());
+            }
+            Ok(parsed)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    source_refs.sort();
+    source_refs.dedup();
+    hash_serializable(
+        PROJECTION_FRAME_HASH_DOMAIN,
+        &Identity {
+            request_id: &identity.request_id,
+            source_request_hash: &identity.source_request_hash,
+            projection_version: &identity.projection_version,
+            projection_hash: &identity.projection_hash,
+            world_state_hash: &identity.world_state_hash,
+            source_refs: &source_refs,
+        },
+    )
+}
+
+fn hash_serializable(domain: &[u8], value: &impl Serialize) -> Result<String, String> {
+    let encoded = serde_json::to_vec(value).map_err(|error| error.to_string())?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(domain);
+    hasher.update(&encoded);
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn validate_projection_text(label: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() || value.len() > MAX_PROJECTION_IDENTITY_COMPONENT_BYTES {
+        return Err(format!(
+            "{label} must contain at most {MAX_PROJECTION_IDENTITY_COMPONENT_BYTES} bytes"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_projection_digest(label: &str, digest: &str) -> Result<(), String> {
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(format!("{label} digest must be lowercase BLAKE3 hex"));
+    }
+    Ok(())
 }
 
 /// Hash one projected world state under the shared world-model boundary domain.
@@ -378,6 +609,55 @@ pub struct PlanningWorldStateFrameRef {
 }
 
 impl PlanningWorldStateFrameRef {
+    /// Independently derive the authority request and frame identities from exact output.
+    #[allow(clippy::too_many_arguments)]
+    pub fn identified_from_authority(
+        projection_version: impl Into<String>,
+        projection_hash: impl Into<String>,
+        world_state_hash: impl Into<String>,
+        request: &PlanningWorldStateRequest,
+        world_state: &meld_lang::WorldState,
+        source_refs: Vec<String>,
+        warnings: Vec<String>,
+    ) -> Result<Self, String> {
+        let projection_version = projection_version.into();
+        let projection_hash = projection_hash.into();
+        let world_state_hash = world_state_hash.into();
+        let source_request_hash = request.canonical_hash()?;
+        let request_id = canonical_planner_request_id(request)?;
+        let mut identity = PlanningProjectionIdentityInputs {
+            goal_id: request.goal_id.clone(),
+            goal_updated_at_seq: request.source_seq,
+            canonical_request: canonical_projection_request(request)?,
+            frame_id: String::new(),
+            request_id: request_id.clone(),
+            source_request_hash: source_request_hash.clone(),
+            projection_version: projection_version.clone(),
+            projection_hash: projection_hash.clone(),
+            world_state_hash: world_state_hash.clone(),
+            perspective_kind: request.perspective.perspective_kind.clone(),
+            perspective_id: request.perspective.perspective_id.clone(),
+            branch_id: request.branch_id.clone(),
+            source_refs: source_refs.clone(),
+        };
+        identity.frame_id = canonical_planner_frame_id(&identity)?;
+        let frame = Self {
+            frame_id: identity.frame_id,
+            request_id,
+            source_request_hash,
+            projection_version,
+            projection_hash,
+            world_state_hash,
+            perspective_kind: request.perspective.perspective_kind.clone(),
+            perspective_id: request.perspective.perspective_id.clone(),
+            branch_id: request.branch_id.clone(),
+            source_refs,
+            warnings,
+        };
+        PlanningProjectionIdentityInputs::from_projection(request, world_state, &frame)?;
+        Ok(frame)
+    }
+
     /// Map one world-model-owned frame identity into the execution boundary.
     #[allow(clippy::too_many_arguments)]
     pub fn from_authority(
@@ -431,16 +711,16 @@ mod contract_freeze_tests {
             required_preconditions: Vec::new(),
         };
         let world_state = meld_lang::WorldState::empty();
-        let frame = PlanningWorldStateFrameRef::from_authority(
-            "world-model-frame-a",
-            "world-model-request-a",
-            request.canonical_hash().unwrap(),
+        let frame = PlanningWorldStateFrameRef::identified_from_authority(
             "projection-v1",
-            "projection-hash-a",
+            blake3::hash(b"projection-a").to_hex().to_string(),
             canonical_world_state_hash(&world_state).unwrap(),
             &request,
             &world_state,
-            vec!["source-a".to_string(), "source-b".to_string()],
+            vec![
+                serde_json::json!({"ProjectionRule": {"rule_id": "source-a"}}).to_string(),
+                serde_json::json!({"ProjectionRule": {"rule_id": "source-b"}}).to_string(),
+            ],
             Vec::new(),
         )
         .unwrap();
@@ -448,24 +728,113 @@ mod contract_freeze_tests {
             PlanningProjectionIdentityInputs::from_projection(&request, &world_state, &frame)
                 .unwrap();
 
-        assert_eq!(inputs.source_refs, vec!["source-a", "source-b"]);
+        assert_eq!(inputs.source_refs.len(), 2);
         assert!(inputs
             .validate_for_projection(&request, &world_state)
             .is_ok());
         let first = inputs.frame_ref(Vec::new()).unwrap();
         let second = inputs.frame_ref(Vec::new()).unwrap();
-        assert_eq!(first.frame_id, "world-model-frame-a");
         assert_eq!(first.frame_id, second.frame_id);
         assert_eq!(first.source_refs, inputs.source_refs);
         let encoded = serde_json::to_vec(&inputs).unwrap();
         let decoded: PlanningProjectionIdentityInputs = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(decoded, inputs);
+
+        let mut rebound_request = request.clone();
+        rebound_request.goal_id = "goal-b".to_string();
+        rebound_request.source_seq += 1;
+        assert!(PlanningProjectionIdentityInputs::from_projection(
+            &rebound_request,
+            &world_state,
+            &frame,
+        )
+        .is_err());
+
+        let mut retained_source: serde_json::Value = serde_json::to_value(&inputs).unwrap();
+        retained_source["goal_id"] = serde_json::json!(rebound_request.goal_id);
+        retained_source["goal_updated_at_seq"] = serde_json::json!(rebound_request.source_seq);
+        retained_source["canonical_request"] =
+            serde_json::json!(canonical_projection_request(&rebound_request).unwrap());
+        assert!(
+            serde_json::from_value::<PlanningProjectionIdentityInputs>(retained_source).is_err()
+        );
+
+        let rebound_frame = PlanningWorldStateFrameRef::identified_from_authority(
+            frame.projection_version.clone(),
+            frame.projection_hash.clone(),
+            frame.world_state_hash.clone(),
+            &rebound_request,
+            &world_state,
+            frame.source_refs.clone(),
+            Vec::new(),
+        )
+        .unwrap();
+        let rebound_identity = PlanningProjectionIdentityInputs::from_projection(
+            &rebound_request,
+            &world_state,
+            &rebound_frame,
+        )
+        .unwrap();
+        let mut retained_frame = serde_json::to_value(rebound_identity).unwrap();
+        retained_frame["frame_id"] = serde_json::json!(frame.frame_id);
+        assert!(
+            serde_json::from_value::<PlanningProjectionIdentityInputs>(retained_frame).is_err()
+        );
+
         assert!(PlanningProjectionIdentityInputs::from_projection(
             &request,
             &meld_lang::WorldState::new(vec![meld_lang::Proposition::All(Vec::new())]).unwrap(),
             &frame,
         )
         .is_err());
+    }
+
+    #[test]
+    fn projection_identity_rejects_malformed_or_unbounded_products_on_build_and_decode() {
+        let subject = DomainObjectRef::new("workspace", "node", "readme").unwrap();
+        let request = PlanningWorldStateRequest {
+            goal_id: "goal-a".to_string(),
+            agent_id: "agent-a".to_string(),
+            subject: subject.clone(),
+            source_seq: 7,
+            target: Proposition::Accessible {
+                scope: Term::Object(subject),
+            },
+            perspective: PlanningPerspectiveRef::new("agent", "agent-a").unwrap(),
+            branch_id: "main".to_string(),
+            requested_dimensions: Vec::new(),
+            required_preconditions: Vec::new(),
+        };
+        let world_state = meld_lang::WorldState::empty();
+        let mut frame = PlanningWorldStateFrameRef::identified_from_authority(
+            "projection-v1",
+            blake3::hash(b"projection-a").to_hex().to_string(),
+            canonical_world_state_hash(&world_state).unwrap(),
+            &request,
+            &world_state,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        let identity =
+            PlanningProjectionIdentityInputs::from_projection(&request, &world_state, &frame)
+                .unwrap();
+
+        frame.projection_hash = "not-a-digest".to_string();
+        assert!(
+            PlanningProjectionIdentityInputs::from_projection(&request, &world_state, &frame)
+                .is_err()
+        );
+        frame.projection_hash = blake3::hash(b"projection-a").to_hex().to_string();
+        frame.frame_id = "x".repeat(MAX_PROJECTION_IDENTITY_COMPONENT_BYTES + 1);
+        assert!(
+            PlanningProjectionIdentityInputs::from_projection(&request, &world_state, &frame)
+                .is_err()
+        );
+
+        let mut encoded = serde_json::to_value(identity).unwrap();
+        encoded["world_state_hash"] = serde_json::json!("not-a-digest");
+        assert!(serde_json::from_value::<PlanningProjectionIdentityInputs>(encoded).is_err());
     }
 
     #[test]

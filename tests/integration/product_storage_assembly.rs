@@ -31,6 +31,10 @@ fn product_storage_layout_derives_required_paths() {
         layout.root.join("execution").join("goals.sled")
     );
     assert_eq!(
+        layout.execution_planning_attempts_db,
+        layout.root.join("execution").join("planning_attempts.sled")
+    );
+    assert_eq!(
         layout.task_artifacts_db,
         layout.root.join("execution").join("task_artifacts.sled")
     );
@@ -72,6 +76,7 @@ fn product_storage_open_creates_dirs_and_opens_stores() {
     assert!(layout.workspace_db.exists());
     assert!(layout.world_model_db.exists());
     assert!(layout.execution_goals_db.exists());
+    assert!(layout.execution_planning_attempts_db.exists());
     assert!(layout.task_artifacts_db.exists());
     assert!(layout.task_networks_root.exists());
     assert!(layout.frame_blob_root.exists());

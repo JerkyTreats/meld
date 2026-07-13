@@ -15,7 +15,10 @@ use meld_execution::task_network::store::{
 };
 use meld_execution::task_network::AttributedOutcome;
 use proptest::prelude::*;
+use serde::Deserialize;
 use serde_json::json;
+
+const COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_KEY: &[u8] = b"\xffmeld.task_network.command_auth.v1";
 
 fn open_store(db: &sled::Db) -> SledTaskNetworkStore {
     SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap()
@@ -27,6 +30,30 @@ fn open_db() -> sled::Db {
 
 fn assert_decode_error(error: TaskNetworkStoreError) {
     assert!(matches!(error, TaskNetworkStoreError::Decode(_)));
+}
+
+#[derive(Deserialize)]
+struct ImmediatePredecessorCommandResponse {
+    command_id: String,
+    request_hash: String,
+    response: Response,
+}
+
+fn immediate_predecessor_response_scan(db: &sled::Db) -> Result<(), String> {
+    let responses = db
+        .open_tree("task_network_command_responses")
+        .map_err(|error| error.to_string())?;
+    for item in &responses {
+        let (key, raw) = item.map_err(|error| error.to_string())?;
+        let command_id = String::from_utf8(key.to_vec()).map_err(|error| error.to_string())?;
+        let stored: ImmediatePredecessorCommandResponse =
+            serde_json::from_slice(&raw).map_err(|error| error.to_string())?;
+        if stored.command_id != command_id || stored.request_hash.trim().is_empty() {
+            return Err("predecessor response identity mismatch".to_string());
+        }
+        let _ = stored.response;
+    }
+    Ok(())
 }
 
 fn commit_single_task_for_store(store: &mut SledTaskNetworkStore, task_instance_id: &str) {
@@ -569,6 +596,9 @@ fn downgrade_command_outcomes_to_immediate_pre_auth_schema(db: &sled::Db) {
         .clear()
         .unwrap();
     let responses = db.open_tree("task_network_command_responses").unwrap();
+    responses
+        .remove(COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_KEY)
+        .unwrap();
     let entries = responses
         .iter()
         .map(|item| item.unwrap())
@@ -580,6 +610,10 @@ fn downgrade_command_outcomes_to_immediate_pre_auth_schema(db: &sled::Db) {
             .insert(key, serde_json::to_vec(&response).unwrap())
             .unwrap();
     }
+    db.open_tree("task_network_authority_lifecycle")
+        .unwrap()
+        .remove("command_authentication_schema")
+        .unwrap();
     db.flush().unwrap();
 }
 
@@ -682,6 +716,173 @@ fn immediate_pre_auth_rejected_outcome_migrates_and_reopens_exactly() {
 }
 
 #[test]
+fn immediate_predecessor_compact_outcomes_migrate_authentication_and_reopen() {
+    let db = open_db();
+    let rejected_request;
+    {
+        let mut store = open_store(&db);
+        task_network_support::commit_single_task_sled(&mut store, "task-alpha");
+        rejected_request = task_network_support::command_for_state(
+            "different-network",
+            store.state().revision,
+            &store.state().state_hash,
+            "command-pre-auth-rejected",
+            Command::ApplyMutationSet(Set::empty(
+                "different-network",
+                "composition-empty",
+                "empty",
+            )),
+        );
+        assert!(matches!(
+            store.submit(rejected_request.clone()).unwrap(),
+            Response::Rejected(Rejection::InvalidGraph(_))
+        ));
+    }
+
+    let requests = db.open_tree("task_network_command_requests").unwrap();
+    let responses = db.open_tree("task_network_command_responses").unwrap();
+    for item in &requests {
+        let (_, raw) = item.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert!(value.get("command_id").is_none());
+    }
+    downgrade_command_outcomes_to_immediate_pre_auth_schema(&db);
+
+    let mut reopened = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+    assert_eq!(reopened.state().revision, 1);
+    assert!(reopened.state().tasks.contains_key("task-alpha"));
+    assert!(matches!(
+        reopened.submit(rejected_request).unwrap(),
+        Response::Rejected(Rejection::InvalidGraph(_))
+    ));
+    drop(reopened);
+
+    for item in &responses {
+        let (key, raw) = item.unwrap();
+        if key.as_ref() == COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_KEY {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert!(value.get("authentication").is_some());
+    }
+    assert_eq!(
+        responses
+            .get(COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_KEY)
+            .unwrap()
+            .unwrap()
+            .as_ref(),
+        b"task_network.command_auth.v1.predecessor_rejected"
+    );
+    assert_eq!(
+        db.open_tree("task_network_authority_lifecycle")
+            .unwrap()
+            .get("command_authentication_schema")
+            .unwrap()
+            .unwrap()
+            .as_ref(),
+        b"task_network.command_auth.v1"
+    );
+    assert!(immediate_predecessor_response_scan(&db).is_err());
+    SledTaskNetworkStore::open(db, "network-docs").unwrap();
+}
+
+#[test]
+fn authentication_marker_fences_predecessor_reopen_even_without_command_history() {
+    let db = open_db();
+    drop(open_store(&db));
+
+    assert!(immediate_predecessor_response_scan(&db).is_err());
+    SledTaskNetworkStore::open(db, "network-docs").unwrap();
+}
+
+#[test]
+fn authentication_marker_and_downgrade_fence_require_exact_parity() {
+    let db = open_db();
+    drop(open_store(&db));
+    let responses = db.open_tree("task_network_command_responses").unwrap();
+    let lifecycle = db.open_tree("task_network_authority_lifecycle").unwrap();
+
+    responses
+        .remove(COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_KEY)
+        .unwrap();
+    db.flush().unwrap();
+    assert_decode_error(SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap_err());
+
+    responses
+        .insert(
+            COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_KEY,
+            &b"task_network.command_auth.v1.predecessor_rejected"[..],
+        )
+        .unwrap();
+    lifecycle.remove("command_authentication_schema").unwrap();
+    db.flush().unwrap();
+    assert_decode_error(SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap_err());
+
+    lifecycle
+        .insert(
+            "command_authentication_schema",
+            b"task_network.command_auth.v1",
+        )
+        .unwrap();
+    responses
+        .insert(
+            COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_KEY,
+            &b"invalid-downgrade-fence"[..],
+        )
+        .unwrap();
+    db.flush().unwrap();
+    assert_decode_error(SledTaskNetworkStore::open(db, "network-docs").unwrap_err());
+}
+
+#[test]
+fn authenticated_store_rejects_an_authless_predecessor_append() {
+    let db = open_db();
+    drop(open_store(&db));
+    let state = meld_execution::task_network::state::NetworkState::empty("network-docs");
+    let request = task_network_support::command_for_state(
+        "different-network",
+        state.revision,
+        &state.state_hash,
+        "command-downgrade-append",
+        Command::ApplyMutationSet(Set::empty(
+            "different-network",
+            "composition-empty",
+            "empty",
+        )),
+    );
+    let mut predecessor = InMemoryTaskNetworkStore::new("network-docs");
+    let response = predecessor.submit(request.clone());
+    let request_hash = meld_execution::task_network::command::request_hash(&request);
+    let command_key = request.command_id.clone();
+    db.open_tree("task_network_command_requests")
+        .unwrap()
+        .insert(
+            command_key.as_bytes(),
+            serde_json::to_vec(&json!({
+                "request_hash": request_hash.clone(),
+                "request": request,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    db.open_tree("task_network_command_responses")
+        .unwrap()
+        .insert(
+            "command-downgrade-append",
+            serde_json::to_vec(&json!({
+                "command_id": "command-downgrade-append",
+                "request_hash": request_hash,
+                "response": response,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    assert_decode_error(SledTaskNetworkStore::open(db, "network-docs").unwrap_err());
+}
+
+#[test]
 fn new_durable_record_shapes_omit_duplicate_identity_and_state_fields() {
     let db = open_db();
     {
@@ -702,6 +903,19 @@ fn new_durable_record_shapes_omit_duplicate_identity_and_state_fields() {
         request_value["request"]["command_id"],
         json!("command-commit-task-alpha")
     );
+
+    let response_tree = db.open_tree("task_network_command_responses").unwrap();
+    let response_value: serde_json::Value = serde_json::from_slice(
+        &response_tree
+            .get("command-commit-task-alpha")
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(response_value.get("authentication").is_some());
+    assert!(response_value["authentication"]
+        .get("response_digest")
+        .is_some());
 
     let journal_tree = db.open_tree("task_network_journal_by_revision").unwrap();
     let (_, journal_bytes) = journal_tree.iter().next().unwrap().unwrap();
@@ -754,6 +968,77 @@ fn new_durable_record_shapes_omit_duplicate_identity_and_state_fields() {
         authentication_value["response_authentication"],
         response_value["authentication"]
     );
+}
+
+#[test]
+fn modified_accepted_response_payload_fails_authentication_on_reopen() {
+    let db = open_db();
+    {
+        let mut store = open_store(&db);
+        task_network_support::commit_single_task_sled(&mut store, "task-alpha");
+    }
+    let responses = db.open_tree("task_network_command_responses").unwrap();
+    let key = "command-commit-task-alpha";
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&responses.get(key).unwrap().unwrap()).unwrap();
+    let modified = Response::Accepted {
+        revision: 1,
+        state_hash: "0".repeat(64),
+    };
+    let request_hash = stored["request_hash"].as_str().unwrap();
+    stored["authentication"] =
+        serde_json::to_value(ResponseAuthentication::bind(key, request_hash, &modified).unwrap())
+            .unwrap();
+    stored["response"] = serde_json::to_value(modified).unwrap();
+    responses
+        .insert(key, serde_json::to_vec(&stored).unwrap())
+        .unwrap();
+    db.flush().unwrap();
+
+    assert_decode_error(SledTaskNetworkStore::open(db, "network-docs").unwrap_err());
+}
+
+#[test]
+fn substituted_rejection_fails_authentication_on_reopen() {
+    let db = open_db();
+    let request = task_network_support::command_for_state(
+        "different-network",
+        0,
+        &meld_execution::task_network::state::NetworkState::empty("network-docs").state_hash,
+        "command-rejected-auth",
+        Command::ApplyMutationSet(Set::empty(
+            "different-network",
+            "composition-empty",
+            "empty",
+        )),
+    );
+    {
+        let mut store = open_store(&db);
+        assert!(matches!(
+            store.submit(request).unwrap(),
+            Response::Rejected(Rejection::InvalidGraph(_))
+        ));
+    }
+    let responses = db.open_tree("task_network_command_responses").unwrap();
+    let key = "command-rejected-auth";
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&responses.get(key).unwrap().unwrap()).unwrap();
+    let substituted = Response::Rejected(Rejection::StaleBase {
+        expected: 0,
+        actual: 1,
+    });
+    let request_hash = stored["request_hash"].as_str().unwrap();
+    stored["authentication"] = serde_json::to_value(
+        ResponseAuthentication::bind(key, request_hash, &substituted).unwrap(),
+    )
+    .unwrap();
+    stored["response"] = serde_json::to_value(substituted).unwrap();
+    responses
+        .insert(key, serde_json::to_vec(&stored).unwrap())
+        .unwrap();
+    db.flush().unwrap();
+
+    assert_decode_error(SledTaskNetworkStore::open(db, "network-docs").unwrap_err());
 }
 
 #[test]

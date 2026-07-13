@@ -104,6 +104,13 @@ fuzz_target!(|data: &[u8]| {
             .clear()
             .unwrap();
         let responses = db.open_tree("task_network_command_responses").unwrap();
+        responses
+            .remove(b"\xffmeld.task_network.command_auth.v1")
+            .unwrap();
+        db.open_tree("task_network_authority_lifecycle")
+            .unwrap()
+            .remove("command_authentication_schema")
+            .unwrap();
         let raw = responses.get("command-fuzz").unwrap().unwrap();
         let mut stored: serde_json::Value = serde_json::from_slice(&raw).unwrap();
         stored.as_object_mut().unwrap().remove("authentication");

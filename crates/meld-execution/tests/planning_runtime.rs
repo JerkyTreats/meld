@@ -64,16 +64,15 @@ fn derived_frame(
     request: &PlanningWorldStateRequest,
     world_state: &WorldState,
 ) -> PlanningWorldStateFrameRef {
-    PlanningWorldStateFrameRef::from_authority(
-        format!("frame-{}", request.goal_id),
-        format!("projection-request-{}", request.goal_id),
-        request.canonical_hash().unwrap(),
+    PlanningWorldStateFrameRef::identified_from_authority(
         "world_model.planner.v1",
-        format!("projection-hash-{}", request.goal_id),
+        blake3::hash(format!("projection-hash-{}", request.goal_id).as_bytes())
+            .to_hex()
+            .to_string(),
         meld_execution::planning::world_state::canonical_world_state_hash(world_state).unwrap(),
         request,
         world_state,
-        vec!["source".to_string()],
+        vec![serde_json::json!({"ProjectionRule": {"rule_id": "source"}}).to_string()],
         Vec::new(),
     )
     .unwrap()

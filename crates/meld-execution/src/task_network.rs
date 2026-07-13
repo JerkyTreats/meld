@@ -46,6 +46,7 @@ pub use authority::{
     TaskNetworkAuthoritySnapshot, TaskNetworkCommandPort, TaskNetworkHead,
     TaskNetworkMaterialization, TaskNetworkQueryPort,
 };
+pub use command::OutcomeReceipt as CommandOutcomeReceipt;
 pub use command::{
     Command, OutcomeReceipt, Request as CommandRequest, Response, ResponseAuthentication,
 };

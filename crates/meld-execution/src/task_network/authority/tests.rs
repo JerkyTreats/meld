@@ -1,5 +1,7 @@
 use super::*;
 use crate::task_network::mutation::Set;
+use crate::task_network::store::InMemoryTaskNetworkStore;
+use serde_json::json;
 
 const LIFECYCLE_TREE: &str = "task_network_authority_lifecycle";
 const EPOCH_KEY: &[u8] = b"epoch";
@@ -70,8 +72,10 @@ fn stale_epoch_poisons_worker_without_advancing_semantic_state() {
     drop(authority);
     drop(db);
 
-    let factory = TaskNetworkStoreFactory::new(temp.path());
-    let mut reopened = TaskNetworkAuthority::open(&factory, "network-docs", 4).unwrap();
+    let reopened_db = sled::open(temp.path()).unwrap();
+    let reopened_store = SledTaskNetworkStore::open(reopened_db.clone(), "network-docs").unwrap();
+    let mut reopened =
+        TaskNetworkAuthority::spawn_store(reopened_store, "network-docs".to_string(), 4).unwrap();
     assert_eq!(reopened.query_port().state().unwrap().revision, 0);
     reopened.shutdown().unwrap();
 }
@@ -170,6 +174,149 @@ fn query_port_rejects_a_superseded_durable_epoch() {
             kind: TaskNetworkAuthorityPoisonKind::StaleEpoch,
             ..
         })
+    ));
+    assert!(authority.shutdown().unwrap().was_poisoned);
+}
+
+#[test]
+fn command_outcome_query_returns_the_original_exact_receipt_after_reopen() {
+    let (db, temp, mut authority) = spawn_with_retained_db();
+    let request = empty_command("command-receipt");
+    let query = authority.query_port();
+    assert!(query
+        .command_outcome(&request.command_id)
+        .unwrap()
+        .is_none());
+
+    let response = authority
+        .command_port()
+        .try_submit(request.clone())
+        .unwrap();
+    assert!(matches!(response, command::Response::Accepted { .. }));
+    let receipt = query.command_outcome(&request.command_id).unwrap().unwrap();
+    assert_eq!(receipt.command_id(), request.command_id.as_str());
+    assert_eq!(receipt.request_hash(), command::request_hash(&request));
+    assert_eq!(receipt.request(), &request);
+    assert_eq!(receipt.response(), &response);
+    assert!(matches!(
+        authority
+            .command_port()
+            .try_submit(request.clone())
+            .unwrap(),
+        command::Response::Duplicate { .. }
+    ));
+    assert_eq!(
+        query.command_outcome(&request.command_id).unwrap(),
+        Some(receipt.clone())
+    );
+
+    authority.shutdown().unwrap();
+    drop(authority);
+    drop(db);
+    let reopened_db = sled::open(temp.path()).unwrap();
+    let reopened_store = SledTaskNetworkStore::open(reopened_db.clone(), "network-docs").unwrap();
+    let mut reopened =
+        TaskNetworkAuthority::spawn_store(reopened_store, "network-docs".to_string(), 4).unwrap();
+    assert_eq!(
+        reopened
+            .query_port()
+            .command_outcome(&request.command_id)
+            .unwrap(),
+        Some(receipt)
+    );
+    reopened.shutdown().unwrap();
+    drop(reopened_db);
+}
+
+#[test]
+fn legacy_command_outcome_query_preserves_historical_request_hash() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = sled::open(temp.path()).unwrap();
+    let request = empty_command("command-legacy-receipt");
+    let mut memory = InMemoryTaskNetworkStore::new("network-docs");
+    let response = memory.submit(request.clone());
+    let request_hash = "legacy-arbitrary-request-hash";
+    db.open_tree("task_network_command_requests")
+        .unwrap()
+        .insert(
+            request.command_id.as_bytes(),
+            serde_json::to_vec(&json!({
+                "command_id": request.command_id.clone(),
+                "request_hash": request_hash,
+                "request": request.clone(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    db.open_tree("task_network_command_responses")
+        .unwrap()
+        .insert(
+            "command-legacy-receipt",
+            serde_json::to_vec(&json!({
+                "command_id": "command-legacy-receipt",
+                "request_hash": request_hash,
+                "response": response.clone(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    db.open_tree("task_network_journal_by_revision")
+        .unwrap()
+        .insert(
+            1_u64.to_be_bytes(),
+            serde_json::to_vec(&json!({
+                "network_id": "network-docs",
+                "revision": 1,
+                "state_hash": memory.state().state_hash.clone(),
+                "record": memory.journal()[0].clone(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    let store = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+    let mut authority =
+        TaskNetworkAuthority::spawn_store(store, "network-docs".to_string(), 4).unwrap();
+    let receipt = authority
+        .query_port()
+        .command_outcome("command-legacy-receipt")
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.request_hash(), request_hash);
+    assert_eq!(receipt.request(), &request);
+    assert_eq!(receipt.response(), &response);
+    authority.shutdown().unwrap();
+}
+
+#[test]
+fn command_outcome_query_refuses_a_tampered_response_before_issuance() {
+    let (db, _temp, mut authority) = spawn_with_retained_db();
+    let request = empty_command("command-tampered-receipt");
+    authority
+        .command_port()
+        .try_submit(request.clone())
+        .unwrap();
+    let responses = db.open_tree("task_network_command_responses").unwrap();
+    let mut stored: serde_json::Value = serde_json::from_slice(
+        &responses
+            .get(request.command_id.as_bytes())
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    stored["response"]["Accepted"]["state_hash"] = json!("tampered");
+    responses
+        .insert(
+            request.command_id.as_bytes(),
+            serde_json::to_vec(&stored).unwrap(),
+        )
+        .unwrap();
+    db.flush().unwrap();
+
+    assert!(matches!(
+        authority.query_port().command_outcome(&request.command_id),
+        Err(TaskNetworkAuthorityError::Poisoned { .. })
     ));
     assert!(authority.shutdown().unwrap().was_poisoned);
 }

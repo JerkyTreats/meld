@@ -230,6 +230,9 @@ pub struct TaskNetworkQueryPort {
 
 impl TaskNetworkQueryPort {
     /// Return the exact durable outcome receipt for one command id.
+    ///
+    /// The receipt is built from the authority-owned paired request and
+    /// response records. An unknown command returns `None`.
     pub fn command_outcome(
         &self,
         command_id: impl Into<String>,

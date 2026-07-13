@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use meld_execution::goals::PersistentGoalSetStore;
+use meld_execution::planning::PlanningAttemptStore;
 use meld_execution::task::TaskArtifactRepoFactory;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use meld_world_model::agent::AgentStore;
@@ -45,6 +46,8 @@ pub struct ProductStorageLayout {
     pub world_model_db: PathBuf,
     /// Execution goal set database owned by `meld-execution`.
     pub execution_goals_db: PathBuf,
+    /// Execution planning attempt audit database owned by `meld-execution`.
+    pub execution_planning_attempts_db: PathBuf,
     /// Shared task artifact database opened through execution-owned repo factories.
     pub task_artifacts_db: PathBuf,
     /// Directory containing one task network database per network storage key.
@@ -71,6 +74,8 @@ pub struct OpenProductStores {
     pub legacy_world_state_store: Arc<WorldStateStore>,
     /// Execution-owned goal set store.
     pub goal_store: Arc<PersistentGoalSetStore>,
+    /// Execution-owned append-only planning attempt audit authority.
+    pub planning_attempt_store: Arc<PlanningAttemptStore>,
     // TODO compat-shim: remove after W3B planning and publication consume
     // TaskNetworkAuthorityHostPort command and query capabilities and the
     // direct-store characterization tests have equivalent authority coverage.
@@ -128,6 +133,7 @@ impl ProductStorageLayout {
             workspace_db: root.join("workspace.sled"),
             world_model_db: root.join("world_model.sled"),
             execution_goals_db: root.join("execution").join("goals.sled"),
+            execution_planning_attempts_db: root.join("execution").join("planning_attempts.sled"),
             task_artifacts_db: root.join("execution").join("task_artifacts.sled"),
             task_networks_root: root.join("execution").join("task_networks"),
             frame_blob_root: root.join("context").join("frames"),
@@ -168,6 +174,7 @@ impl OpenProductStores {
         let workspace_db = open_db(&layout.workspace_db)?;
         let world_model_db = open_db(&layout.world_model_db)?;
         let execution_goals_db = open_db(&layout.execution_goals_db)?;
+        let execution_planning_attempts_db = open_db(&layout.execution_planning_attempts_db)?;
         let task_artifacts_db = open_db(&layout.task_artifacts_db)?;
 
         Ok(Self {
@@ -188,6 +195,9 @@ impl OpenProductStores {
             goal_store: Arc::new(
                 PersistentGoalSetStore::open_deferred_planning_validation(execution_goals_db)
                     .map_err(to_execution)?,
+            ),
+            planning_attempt_store: Arc::new(
+                PlanningAttemptStore::new(execution_planning_attempts_db).map_err(to_execution)?,
             ),
             task_networks: TaskNetworkStoreFactory::new(layout.task_networks_root.clone()),
             task_artifacts: TaskArtifactRepoFactory::new(task_artifacts_db),
@@ -220,6 +230,7 @@ impl OpenProductStores {
             .flush()
             .map_err(to_world_model)?;
         self.goal_store.flush().map_err(to_execution)?;
+        self.planning_attempt_store.flush().map_err(to_execution)?;
         self.task_artifacts.flush().map_err(to_execution)?;
         self.frame_storage.flush().map_err(to_context)?;
         self.prompt_artifacts.flush().map_err(to_context)?;
@@ -387,6 +398,10 @@ mod tests {
         assert_eq!(
             layout.execution_goals_db,
             PathBuf::from("/tmp/meld-runtime/execution/goals.sled")
+        );
+        assert_eq!(
+            layout.execution_planning_attempts_db,
+            PathBuf::from("/tmp/meld-runtime/execution/planning_attempts.sled")
         );
         assert_eq!(
             layout.task_artifacts_db,

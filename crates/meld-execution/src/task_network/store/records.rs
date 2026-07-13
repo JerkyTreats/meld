@@ -31,6 +31,12 @@ impl CommandSchemaMarker {
         }
     }
 }
+pub(super) const KEY_COMMAND_AUTHENTICATION_SCHEMA: &[u8] = b"command_authentication_schema";
+pub(super) const COMMAND_AUTHENTICATION_SCHEMA_V1: &[u8] = b"task_network.command_auth.v1";
+pub(super) const KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE: &[u8] =
+    b"\xffmeld.task_network.command_auth.v1";
+pub(super) const COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_V1: &[u8] =
+    b"task_network.command_auth.v1.predecessor_rejected";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct StoredCommandRequest {

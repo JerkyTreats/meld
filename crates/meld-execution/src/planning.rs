@@ -4,6 +4,8 @@
 //! execution composition artifact. Task lowering and dispatch stay outside this
 //! domain.
 
+/// Durable append-only planning attempt audit authority.
+pub mod attempts;
 /// Planning request, result, diagnostic, and composition contracts.
 pub mod contracts;
 /// Lowering from execution compositions into task network mutation proposals.
@@ -15,6 +17,18 @@ pub mod runtime;
 /// Execution-side world state projection request contracts.
 pub mod world_state;
 
+pub use attempts::{
+    planning_task_network_command_id, PlanningAttemptCommandOutcome, PlanningAttemptContinuation,
+    PlanningAttemptDecisionAudit, PlanningAttemptDiagnosticDisposition, PlanningAttemptErrorClass,
+    PlanningAttemptHead, PlanningAttemptHistory, PlanningAttemptIdentity,
+    PlanningAttemptOwnerFence, PlanningAttemptQuery, PlanningAttemptRecord,
+    PlanningAttemptRecordKind, PlanningAttemptRecovery, PlanningAttemptRecoverySelection,
+    PlanningAttemptResultSummary, PlanningAttemptSelection, PlanningAttemptState,
+    PlanningAttemptStorageError, PlanningAttemptStore, PlanningAttemptTerminalDiagnostic,
+    PlanningPreparedCommand, PlanningProjectionFailureIdentityInputs,
+    MAX_PLANNING_ATTEMPT_QUERY_ITEMS, PLANNING_ATTEMPT_DECISION_SCHEMA_VERSION,
+    PLANNING_ATTEMPT_SCHEMA_VERSION,
+};
 pub use contracts::{
     CandidateStatus, ExecutionComposition, IdentifiedPlanningRequest, InvalidMethodReport,
     MethodCandidateReport, NoApplicableMethod, OperatorResolutionReport, OperatorResolutionStatus,

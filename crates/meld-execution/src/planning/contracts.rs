@@ -380,16 +380,13 @@ mod contract_freeze_tests {
             required_preconditions: Vec::new(),
         };
         let world_state = meld_lang::WorldState::empty();
-        let frame = PlanningWorldStateFrameRef::from_authority(
-            "frame-a",
-            "projection-request-a",
-            projection_request.canonical_hash().unwrap(),
+        let frame = PlanningWorldStateFrameRef::identified_from_authority(
             "projection-v1",
-            "projection-hash-a",
+            blake3::hash(b"projection-a").to_hex().to_string(),
             crate::planning::world_state::canonical_world_state_hash(&world_state).unwrap(),
             &projection_request,
             &world_state,
-            vec!["source-a".to_string()],
+            vec![serde_json::json!({"ProjectionRule": {"rule_id": "source-a"}}).to_string()],
             Vec::new(),
         )
         .unwrap();
@@ -450,16 +447,13 @@ mod contract_freeze_tests {
         let mut other_request = request.clone();
         other_request.branch_id = "other".to_string();
         let world_state = meld_lang::WorldState::empty();
-        let frame = PlanningWorldStateFrameRef::from_authority(
-            "frame-other",
-            "projection-request-other",
-            other_request.canonical_hash().unwrap(),
+        let frame = PlanningWorldStateFrameRef::identified_from_authority(
             "projection-v1",
-            "projection-hash-other",
+            blake3::hash(b"projection-other").to_hex().to_string(),
             crate::planning::world_state::canonical_world_state_hash(&world_state).unwrap(),
             &other_request,
             &world_state,
-            vec!["source-a".to_string()],
+            vec![serde_json::json!({"ProjectionRule": {"rule_id": "source-a"}}).to_string()],
             Vec::new(),
         )
         .unwrap();

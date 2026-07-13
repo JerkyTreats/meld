@@ -10,14 +10,13 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
+blake3 = "1.5"
 libfuzzer-sys = "0.4"
+meld-events = { path = "../../meld-events" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sled = "0.34"
 tempfile = "3.10"
-
-[dependencies.meld-events]
-path = "../../meld-events"
 
 [dependencies.meld-execution]
 path = ".."
@@ -105,6 +104,13 @@ bench = false
 [[bin]]
 name = "fuzz_task_network_response_reopen"
 path = "fuzz_targets/fuzz_task_network_response_reopen.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_planning_attempt_contracts"
+path = "fuzz_targets/fuzz_planning_attempt_contracts.rs"
 test = false
 doc = false
 bench = false

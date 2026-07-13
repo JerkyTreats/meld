@@ -13,10 +13,13 @@ use crate::task_network::{
         records::{
             revision_key, CommandSchemaMarker, StoredCommandAuthentication, StoredCommandRequest,
             StoredCommandResponse, StoredJournalRecord, StoredStateSnapshot,
-            COMMAND_SCHEMA_VERSION, KEY_AUTHORITY_EPOCH, KEY_COMMAND_SCHEMA, KEY_LATEST_STATE,
-            PRE_AUTH_COMMAND_SCHEMA_VERSION, TREE_AUTHORITY_LIFECYCLE,
-            TREE_COMMAND_AUTHENTICATIONS, TREE_COMMAND_REQUESTS, TREE_COMMAND_RESPONSES,
-            TREE_COMMAND_SCHEMA, TREE_JOURNAL_BY_REVISION, TREE_LATEST_STATE,
+            COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_V1, COMMAND_AUTHENTICATION_SCHEMA_V1,
+            COMMAND_SCHEMA_VERSION, KEY_AUTHORITY_EPOCH,
+            KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE, KEY_COMMAND_AUTHENTICATION_SCHEMA,
+            KEY_COMMAND_SCHEMA, KEY_LATEST_STATE, PRE_AUTH_COMMAND_SCHEMA_VERSION,
+            TREE_AUTHORITY_LIFECYCLE, TREE_COMMAND_AUTHENTICATIONS, TREE_COMMAND_REQUESTS,
+            TREE_COMMAND_RESPONSES, TREE_COMMAND_SCHEMA, TREE_JOURNAL_BY_REVISION,
+            TREE_LATEST_STATE,
         },
     },
 };
@@ -25,6 +28,9 @@ use sled::{
     Tree,
 };
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
+
+static COMMAND_SCHEMA_GATES: OnceLock<Mutex<BTreeMap<String, Weak<Mutex<()>>>>> = OnceLock::new();
 
 const MAX_DURABLE_COMMAND_REQUEST_BYTES: usize = 16 * 1_048_576;
 const MAX_DURABLE_COMMAND_RESPONSE_BYTES: usize = 1_048_576;
@@ -42,6 +48,7 @@ pub struct SledTaskNetworkStore {
     command_schema: Tree,
     latest_state: Tree,
     authority_lifecycle: Tree,
+    command_schema_gate: Arc<Mutex<()>>,
     inner: InMemoryTaskNetworkStore,
     // This derived index is reconstructed during open and advanced only from
     // journal records that crossed the durable acknowledgement barrier.
@@ -57,6 +64,25 @@ impl SledTaskNetworkStore {
         db: sled::Db,
         network_id: impl Into<String>,
     ) -> Result<Self, TaskNetworkStoreError> {
+        Self::open_with_migration_hooks(db, network_id, || {}, || {})
+    }
+
+    fn open_with_migration_hooks<F, G>(
+        db: sled::Db,
+        network_id: impl Into<String>,
+        after_scan: F,
+        after_parity: G,
+    ) -> Result<Self, TaskNetworkStoreError>
+    where
+        F: FnOnce(),
+        G: FnOnce(),
+    {
+        // Sled excludes a predecessor process with its database lock. This
+        // gate serializes every handle that can coexist in the live process so
+        // no retained writer crosses migration scan, parity, or acknowledgement.
+        let command_schema_gate = shared_command_schema_gate(&db)?;
+        let gate = Arc::clone(&command_schema_gate);
+        let _schema_guard = lock_command_schema_gate(&gate)?;
         let network_id = network_id.into();
         let journal_by_revision = db.open_tree(TREE_JOURNAL_BY_REVISION).map_err(to_storage)?;
         let command_requests = db.open_tree(TREE_COMMAND_REQUESTS).map_err(to_storage)?;
@@ -67,6 +93,23 @@ impl SledTaskNetworkStore {
         let command_schema = db.open_tree(TREE_COMMAND_SCHEMA).map_err(to_storage)?;
         let latest_state = db.open_tree(TREE_LATEST_STATE).map_err(to_storage)?;
         let authority_lifecycle = db.open_tree(TREE_AUTHORITY_LIFECYCLE).map_err(to_storage)?;
+        validate_optional_command_schema_marker(&command_schema)?;
+        let authentication_schema = authority_lifecycle
+            .get(KEY_COMMAND_AUTHENTICATION_SCHEMA)
+            .map_err(to_storage)?;
+        let require_response_authentication = match authentication_schema.as_deref() {
+            Some(COMMAND_AUTHENTICATION_SCHEMA_V1) => true,
+            Some(_) => {
+                return Err(decode_error(
+                    "unsupported task network command authentication schema",
+                ));
+            }
+            None => false,
+        };
+        validate_command_authentication_downgrade_fence(
+            &command_responses,
+            require_response_authentication,
+        )?;
         let mut inner = InMemoryTaskNetworkStore::new(network_id.clone());
 
         for item in journal_by_revision.iter() {
@@ -75,6 +118,29 @@ impl SledTaskNetworkStore {
             let stored: StoredJournalRecord = serde_json::from_slice(&value).map_err(to_decode)?;
             inner.apply_journal_record_for_replay(revision, &stored)?;
         }
+
+        // Verify the predecessor semantically before adding either current
+        // authentication marker. The live database gate keeps every retained
+        // writer behind this verification and both migration barriers.
+        let mut predecessor_verification = inner.clone();
+        load_command_identity_with_policy(
+            &mut predecessor_verification,
+            &command_requests,
+            &command_responses,
+            &command_authentications,
+            true,
+        )?;
+
+        if !require_response_authentication {
+            migrate_command_response_authentication_with_hooks(
+                &db,
+                &command_responses,
+                &authority_lifecycle,
+                after_scan,
+                after_parity,
+            )?;
+        }
+        validate_command_authentication_downgrade_fence(&command_responses, true)?;
 
         initialize_command_schema(
             &inner,
@@ -107,6 +173,7 @@ impl SledTaskNetworkStore {
             command_schema,
             latest_state,
             authority_lifecycle,
+            command_schema_gate,
             inner,
             incoming_edges_by_task,
             durability_indeterminate: false,
@@ -278,6 +345,8 @@ impl SledTaskNetworkStore {
         if self.durability_indeterminate {
             return Err(durability_indeterminate().into());
         }
+        let schema_gate = Arc::clone(&self.command_schema_gate);
+        let _schema_guard = lock_command_schema_gate(&schema_gate)?;
         validate_command_schema_marker(&self.command_schema)?;
         if request.command_id.trim().is_empty()
             || request.command_id.len() > MAX_DURABLE_COMMAND_ID_BYTES
@@ -498,6 +567,7 @@ impl SledTaskNetworkStore {
                         authentications,
                         snapshots,
                     )| {
+                        validate_transaction_authentication_schema(lifecycle)?;
                         validate_transaction_epoch(lifecycle, expected_epoch)?;
                         validate_transaction_command_schema(schema)?;
                         requests.insert(command_key.clone(), request_value.clone())?;
@@ -513,6 +583,7 @@ impl SledTaskNetworkStore {
         } else {
             // Compatibility callers retain the original atomic store API.
             (
+                &self.authority_lifecycle,
                 &self.command_schema,
                 &self.command_requests,
                 &self.journal_by_revision,
@@ -521,7 +592,16 @@ impl SledTaskNetworkStore {
                 &self.latest_state,
             )
                 .transaction(
-                    |(schema, requests, journal_tree, responses, authentications, snapshots)| {
+                    |(
+                        lifecycle,
+                        schema,
+                        requests,
+                        journal_tree,
+                        responses,
+                        authentications,
+                        snapshots,
+                    )| {
+                        validate_transaction_authentication_schema(lifecycle)?;
                         validate_transaction_command_schema(schema)?;
                         requests.insert(command_key.clone(), request_value.clone())?;
                         journal_tree.insert(journal_key.clone(), journal_value.clone())?;
@@ -565,6 +645,7 @@ impl SledTaskNetworkStore {
             )
                 .transaction(
                     |(lifecycle, schema, requests, responses, authentications)| {
+                        validate_transaction_authentication_schema(lifecycle)?;
                         validate_transaction_epoch(lifecycle, expected_epoch)?;
                         validate_transaction_command_schema(schema)?;
                         requests.insert(command_key.clone(), request_value.clone())?;
@@ -579,18 +660,23 @@ impl SledTaskNetworkStore {
             // Rejected commands still need atomic idempotency records so
             // replay is stable after restart.
             (
+                &self.authority_lifecycle,
                 &self.command_schema,
                 &self.command_requests,
                 &self.command_responses,
                 &self.command_authentications,
             )
-                .transaction(|(schema, requests, responses, authentications)| {
-                    validate_transaction_command_schema(schema)?;
-                    requests.insert(command_key.clone(), request_value.clone())?;
-                    responses.insert(command_key.clone(), response_value.clone())?;
-                    authentications.insert(command_key.clone(), authentication_value.clone())?;
-                    Ok(())
-                })
+                .transaction(
+                    |(lifecycle, schema, requests, responses, authentications)| {
+                        validate_transaction_authentication_schema(lifecycle)?;
+                        validate_transaction_command_schema(schema)?;
+                        requests.insert(command_key.clone(), request_value.clone())?;
+                        responses.insert(command_key.clone(), response_value.clone())?;
+                        authentications
+                            .insert(command_key.clone(), authentication_value.clone())?;
+                        Ok(())
+                    },
+                )
                 .map_err(to_authority_transaction)?;
         }
         Ok(())
@@ -599,6 +685,7 @@ impl SledTaskNetworkStore {
 
 #[derive(Debug)]
 enum AuthorityTransactionAbort {
+    InvalidAuthenticationSchema(String),
     InvalidEpoch(String),
     InvalidSchema(String),
     Stale { expected: u64, actual: u64 },
@@ -630,6 +717,24 @@ fn validate_transaction_command_schema(
         ));
     }
     Ok(())
+}
+
+fn validate_transaction_authentication_schema(
+    lifecycle: &sled::transaction::TransactionalTree,
+) -> Result<(), ConflictableTransactionError<AuthorityTransactionAbort>> {
+    match lifecycle.get(KEY_COMMAND_AUTHENTICATION_SCHEMA)?.as_deref() {
+        Some(COMMAND_AUTHENTICATION_SCHEMA_V1) => Ok(()),
+        Some(_) => Err(ConflictableTransactionError::Abort(
+            AuthorityTransactionAbort::InvalidAuthenticationSchema(
+                "unsupported task network command authentication schema".to_string(),
+            ),
+        )),
+        None => Err(ConflictableTransactionError::Abort(
+            AuthorityTransactionAbort::InvalidAuthenticationSchema(
+                "task network command authentication schema marker is missing".to_string(),
+            ),
+        )),
+    }
 }
 
 fn validate_transaction_epoch(
@@ -796,13 +901,9 @@ fn initialize_command_schema_with_hook(
     // fence before it can add any key after this verified snapshot.
     after_snapshot();
     let immediate_predecessor = !requests.is_empty()
-        && requests.values().all(|request| {
-            request.legacy_command_id.is_none()
-                && request.request_hash == command::request_hash(&request.request)
-        })
         && responses
             .values()
-            .all(|response| response.authentication.is_none())
+            .all(|response| response.authentication.is_some())
         && authentications.is_empty();
 
     let mut verification = replayed.clone();
@@ -818,11 +919,10 @@ fn initialize_command_schema_with_hook(
         immediate_predecessor.then_some(PRE_AUTH_COMMAND_SCHEMA_VERSION),
     );
     let marker_value = serde_json::to_vec(&marker).map_err(to_decode)?;
-    let mut migrated_requests = Vec::new();
     let mut migrated_responses = Vec::new();
     let mut migrated_authentications = Vec::new();
     if immediate_predecessor {
-        for (command_id, request) in &requests {
+        for command_id in requests.keys() {
             let response = responses
                 .get(command_id)
                 .expect("predecessor outcome key sets were verified");
@@ -834,10 +934,6 @@ fn initialize_command_schema_with_hook(
             .map_err(decode_error)?;
             let witness =
                 StoredCommandAuthentication::for_response(&authenticated).map_err(decode_error)?;
-            migrated_requests.push((
-                command_id.as_bytes().to_vec(),
-                serde_json::to_vec(request).map_err(to_decode)?,
-            ));
             migrated_responses.push((
                 command_id.as_bytes().to_vec(),
                 serde_json::to_vec(&authenticated).map_err(to_decode)?,
@@ -866,9 +962,6 @@ fn initialize_command_schema_with_hook(
                 validate_transaction_tree_snapshot(requests, &raw_requests)?;
                 validate_transaction_tree_snapshot(responses, &raw_responses)?;
                 validate_transaction_tree_snapshot(authentications, &raw_authentications)?;
-                for (key, value) in &migrated_requests {
-                    requests.insert(key.clone(), value.clone())?;
-                }
                 for (key, value) in &migrated_responses {
                     responses.insert(key.clone(), value.clone())?;
                 }
@@ -904,6 +997,19 @@ fn validate_command_schema_marker(command_schema: &Tree) -> Result<(), TaskNetwo
         )));
     }
     Ok(())
+}
+
+fn validate_optional_command_schema_marker(
+    command_schema: &Tree,
+) -> Result<(), TaskNetworkStoreError> {
+    if command_schema
+        .get(KEY_COMMAND_SCHEMA)
+        .map_err(to_storage)?
+        .is_none()
+    {
+        return Ok(());
+    }
+    validate_command_schema_marker(command_schema)
 }
 
 fn raw_tree_entries(tree: &Tree) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, TaskNetworkStoreError> {
@@ -964,6 +1070,15 @@ fn validate_command_outcome_binding(
                 ));
             }
         }
+        (Some(authentication), None) if allow_verified_pre_auth => {
+            authentication
+                .validate(
+                    &response.command_id,
+                    &response.request_hash,
+                    &response.response,
+                )
+                .map_err(decode_error)?;
+        }
         (Some(_), None) => {
             return Err(decode_error(
                 "modern command authentication witness is missing",
@@ -1009,6 +1124,201 @@ fn command_outcome_replay_revision(
         command::Response::Rejected(_) => request.request.base_revision,
     };
     Ok(replay_revision)
+}
+
+fn validate_command_authentication_downgrade_fence(
+    command_responses: &Tree,
+    authentication_required: bool,
+) -> Result<(), TaskNetworkStoreError> {
+    let fence = command_responses
+        .get(KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE)
+        .map_err(to_storage)?;
+    match (authentication_required, fence.as_deref()) {
+        (true, Some(COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_V1)) | (false, None) => Ok(()),
+        (true, None) => Err(decode_error(
+            "task network command authentication downgrade fence is missing",
+        )),
+        (false, Some(_)) => Err(decode_error(
+            "task network command authentication downgrade fence has no schema marker",
+        )),
+        (true, Some(_)) => Err(decode_error(
+            "task network command authentication downgrade fence is invalid",
+        )),
+    }
+}
+
+// TODO compat-shim: remove the pre-auth response decoder, live migration gate,
+// transaction marker check, and invalid-UTF-8 predecessor fence after every
+// supported store has crossed the v1 marker. The shim preserves immediate-
+// predecessor accepted and rejected outcomes, fences retained live handles
+// until migration acknowledges success, and prevents predecessor reopen. Keep
+// migration parity, late-writer, and downgrade-refusal tests green before removal.
+fn migrate_command_response_authentication_with_hooks<F, G>(
+    db: &sled::Db,
+    command_responses: &Tree,
+    authority_lifecycle: &Tree,
+    after_scan: F,
+    after_parity: G,
+) -> Result<(), TaskNetworkStoreError>
+where
+    F: FnOnce(),
+    G: FnOnce(),
+{
+    let mut upgrades = Vec::new();
+    for item in command_responses {
+        let (key, raw) = item.map_err(to_storage)?;
+        let stored: StoredCommandResponse = serde_json::from_slice(&raw).map_err(to_decode)?;
+        let upgraded = if stored.authentication.is_some() {
+            stored
+        } else {
+            StoredCommandResponse::authenticated(
+                stored.command_id,
+                stored.request_hash,
+                stored.response,
+            )
+            .map_err(decode_error)?
+        };
+        upgrades.push((
+            key.to_vec(),
+            raw.to_vec(),
+            serde_json::to_vec(&upgraded).map_err(to_decode)?,
+        ));
+    }
+    after_scan();
+
+    (command_responses, authority_lifecycle)
+        .transaction(|(responses, lifecycle)| {
+            for (key, prior, upgraded) in &upgrades {
+                match responses.get(key.as_slice())? {
+                    Some(current) if current.as_ref() == upgraded.as_slice() => {}
+                    Some(current) if current.as_ref() == prior.as_slice() => {
+                        responses.insert(key.as_slice(), upgraded.as_slice())?;
+                    }
+                    _ => return Err(ConflictableTransactionError::Abort(())),
+                }
+            }
+            match responses.get(KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE)? {
+                Some(current) if current.as_ref() == COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_V1 => {}
+                None => {
+                    responses.insert(
+                        KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE,
+                        COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_V1,
+                    )?;
+                }
+                Some(_) => return Err(ConflictableTransactionError::Abort(())),
+            }
+            match lifecycle.get(KEY_COMMAND_AUTHENTICATION_SCHEMA)? {
+                Some(current) if current.as_ref() == COMMAND_AUTHENTICATION_SCHEMA_V1 => {}
+                None => {
+                    lifecycle.insert(
+                        KEY_COMMAND_AUTHENTICATION_SCHEMA,
+                        COMMAND_AUTHENTICATION_SCHEMA_V1,
+                    )?;
+                }
+                Some(_) => return Err(ConflictableTransactionError::Abort(())),
+            }
+            Ok(())
+        })
+        .map_err(|error| match error {
+            TransactionError::Abort(()) => {
+                decode_error("task network command authentication migration changed concurrently")
+            }
+            TransactionError::Storage(error) => to_storage(error),
+        })?;
+    db.flush().map_err(to_storage)?;
+    if !command_authentication_migration_matches(command_responses, &upgrades)? {
+        rollback_command_authentication_marker(command_responses, authority_lifecycle)?;
+        db.flush().map_err(to_storage)?;
+        return Err(decode_error(
+            "task network command authentication migration changed concurrently",
+        ));
+    }
+    after_parity();
+    Ok(())
+}
+
+fn command_authentication_migration_matches(
+    command_responses: &Tree,
+    upgrades: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
+) -> Result<bool, TaskNetworkStoreError> {
+    let expected = upgrades
+        .iter()
+        .map(|(key, _, upgraded)| (key.as_slice(), upgraded.as_slice()))
+        .collect::<BTreeMap<_, _>>();
+    let mut observed = 0usize;
+    for item in command_responses {
+        let (key, raw) = item.map_err(to_storage)?;
+        if key.as_ref() == KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE {
+            if raw.as_ref() != COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_V1 {
+                return Ok(false);
+            }
+            continue;
+        }
+        let Some(expected) = expected.get(key.as_ref()) else {
+            return Ok(false);
+        };
+        if raw.as_ref() != *expected {
+            return Ok(false);
+        }
+        observed = observed.saturating_add(1);
+    }
+    Ok(observed == expected.len())
+}
+
+fn rollback_command_authentication_marker(
+    command_responses: &Tree,
+    authority_lifecycle: &Tree,
+) -> Result<(), TaskNetworkStoreError> {
+    (command_responses, authority_lifecycle)
+        .transaction(|(responses, lifecycle)| {
+            if responses
+                .get(KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE)?
+                .as_deref()
+                != Some(COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_V1)
+                || lifecycle.get(KEY_COMMAND_AUTHENTICATION_SCHEMA)?.as_deref()
+                    != Some(COMMAND_AUTHENTICATION_SCHEMA_V1)
+            {
+                return Err(ConflictableTransactionError::Abort(()));
+            }
+            responses.remove(KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE)?;
+            lifecycle.remove(KEY_COMMAND_AUTHENTICATION_SCHEMA)?;
+            Ok(())
+        })
+        .map_err(|error| match error {
+            TransactionError::Abort(()) => {
+                decode_error("task network command authentication rollback changed concurrently")
+            }
+            TransactionError::Storage(error) => to_storage(error),
+        })?;
+    Ok(())
+}
+
+fn shared_command_schema_gate(db: &sled::Db) -> Result<Arc<Mutex<()>>, TaskNetworkStoreError> {
+    let identity = format!(
+        "task-network-command-schema-live-db-{:p}",
+        &*db.context.pagecache
+    );
+    let registry = COMMAND_SCHEMA_GATES.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut registry = registry.lock().map_err(|_| {
+        TaskNetworkStoreError::Storage(
+            "task network command schema gate registry is poisoned".to_string(),
+        )
+    })?;
+    registry.retain(|_, gate| gate.strong_count() > 0);
+    if let Some(gate) = registry.get(&identity).and_then(Weak::upgrade) {
+        return Ok(gate);
+    }
+    let gate = Arc::new(Mutex::new(()));
+    registry.insert(identity, Arc::downgrade(&gate));
+    Ok(gate)
+}
+
+fn lock_command_schema_gate(
+    gate: &Arc<Mutex<()>>,
+) -> Result<MutexGuard<'_, ()>, TaskNetworkStoreError> {
+    gate.lock().map_err(|_| {
+        TaskNetworkStoreError::Storage("task network command schema gate is poisoned".to_string())
+    })
 }
 
 fn load_command_identity(
@@ -1217,6 +1527,9 @@ fn load_command_responses(
     let mut responses = BTreeMap::new();
     for item in command_responses.iter() {
         let (key, value) = item.map_err(to_storage)?;
+        if key.as_ref() == KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE {
+            continue;
+        }
         if value.len() > MAX_DURABLE_COMMAND_RESPONSE_BYTES {
             return Err(decode_error(format!(
                 "durable command response exceeds {MAX_DURABLE_COMMAND_RESPONSE_BYTES} bytes"
@@ -1306,7 +1619,8 @@ fn to_authority_transaction(
 ) -> AuthorityStoreError {
     match error {
         TransactionError::Abort(
-            AuthorityTransactionAbort::InvalidEpoch(message)
+            AuthorityTransactionAbort::InvalidAuthenticationSchema(message)
+            | AuthorityTransactionAbort::InvalidEpoch(message)
             | AuthorityTransactionAbort::InvalidSchema(message),
         ) => TaskNetworkStoreError::Decode(message).into(),
         TransactionError::Abort(AuthorityTransactionAbort::Stale { expected, actual }) => {
@@ -1320,7 +1634,8 @@ fn to_authority_transaction(
 mod tests {
     use super::*;
     use crate::task_network::mutation::Set;
-    use std::sync::{Arc, Barrier};
+    use std::sync::{mpsc, Arc, Barrier};
+    use std::time::Duration;
 
     fn empty_command(state: &NetworkState, command_id: &str) -> command::Request {
         command::Request {
@@ -1337,24 +1652,17 @@ mod tests {
         }
     }
 
-    fn replayed_journal(store: &SledTaskNetworkStore) -> InMemoryTaskNetworkStore {
-        let mut replayed = InMemoryTaskNetworkStore::new(store.state().network_id.clone());
-        for (index, record) in store.journal().iter().enumerate() {
-            replayed
-                .apply_journal_record_for_replay(
-                    u64::try_from(index).unwrap() + 1,
-                    &StoredJournalRecord::new(record.clone()),
-                )
-                .unwrap();
-        }
-        replayed
-    }
-
-    fn downgrade_to_pre_auth_schema(db: &sled::Db) {
+    fn downgrade_to_pre_authentication_schema(db: &sled::Db) {
         let responses = db.open_tree(TREE_COMMAND_RESPONSES).unwrap();
-        let entries = raw_tree_entries(&responses).unwrap();
-        for (key, value) in entries {
-            let mut response: StoredCommandResponse = serde_json::from_slice(&value).unwrap();
+        responses
+            .remove(KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE)
+            .unwrap();
+        let entries = responses
+            .iter()
+            .map(|item| item.unwrap())
+            .collect::<Vec<_>>();
+        for (key, raw) in entries {
+            let mut response: StoredCommandResponse = serde_json::from_slice(&raw).unwrap();
             response.authentication = None;
             responses
                 .insert(key, serde_json::to_vec(&response).unwrap())
@@ -1368,55 +1676,264 @@ mod tests {
             .unwrap()
             .remove(KEY_COMMAND_SCHEMA)
             .unwrap();
+        db.open_tree(TREE_AUTHORITY_LIFECYCLE)
+            .unwrap()
+            .remove(KEY_COMMAND_AUTHENTICATION_SCHEMA)
+            .unwrap();
         db.flush().unwrap();
     }
 
-    fn migrate_while_public_writer_attempts_insert(rejected: bool) {
+    #[derive(Clone, Copy)]
+    enum DurableOrigin {
+        PlanningOnly,
+        ExecutionOnly,
+    }
+
+    fn reopen_cross_origin(origin: DurableOrigin, rejected: bool) {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let mut store = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+        let mut request = empty_command(
+            store.state(),
+            if rejected {
+                "command-origin-rejected"
+            } else {
+                "command-origin-accepted"
+            },
+        );
+        if rejected {
+            request.base_revision = request.base_revision.saturating_add(7);
+        }
+        let response = store.submit(request.clone()).unwrap();
+        assert_eq!(rejected, matches!(response, command::Response::Rejected(_)));
+        drop(store);
+
+        match origin {
+            DurableOrigin::PlanningOnly => {
+                db.open_tree(TREE_COMMAND_AUTHENTICATIONS)
+                    .unwrap()
+                    .clear()
+                    .unwrap();
+                db.open_tree(TREE_COMMAND_SCHEMA)
+                    .unwrap()
+                    .remove(KEY_COMMAND_SCHEMA)
+                    .unwrap();
+            }
+            DurableOrigin::ExecutionOnly => {
+                db.open_tree(TREE_COMMAND_RESPONSES)
+                    .unwrap()
+                    .remove(KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE)
+                    .unwrap();
+                db.open_tree(TREE_AUTHORITY_LIFECYCLE)
+                    .unwrap()
+                    .remove(KEY_COMMAND_AUTHENTICATION_SCHEMA)
+                    .unwrap();
+            }
+        }
+        db.flush().unwrap();
+
+        let reopened = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+        let receipt = reopened
+            .command_outcome_receipt(&request.command_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.request(), &request);
+        assert_eq!(receipt.response(), &response);
+        assert!(db
+            .open_tree(TREE_COMMAND_AUTHENTICATIONS)
+            .unwrap()
+            .contains_key(request.command_id.as_bytes())
+            .unwrap());
+        assert!(db
+            .open_tree(TREE_COMMAND_SCHEMA)
+            .unwrap()
+            .contains_key(KEY_COMMAND_SCHEMA)
+            .unwrap());
+        assert_eq!(
+            db.open_tree(TREE_AUTHORITY_LIFECYCLE)
+                .unwrap()
+                .get(KEY_COMMAND_AUTHENTICATION_SCHEMA)
+                .unwrap()
+                .unwrap()
+                .as_ref(),
+            COMMAND_AUTHENTICATION_SCHEMA_V1
+        );
+        assert_eq!(
+            db.open_tree(TREE_COMMAND_RESPONSES)
+                .unwrap()
+                .get(KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE)
+                .unwrap()
+                .unwrap()
+                .as_ref(),
+            COMMAND_AUTHENTICATION_DOWNGRADE_FENCE_V1
+        );
+    }
+
+    #[test]
+    fn planning_and_execution_origin_stores_converge_for_accepted_and_rejected_outcomes() {
+        for origin in [DurableOrigin::PlanningOnly, DurableOrigin::ExecutionOnly] {
+            for rejected in [false, true] {
+                reopen_cross_origin(origin, rejected);
+            }
+        }
+    }
+
+    #[test]
+    fn unsupported_execution_schema_rejects_before_authentication_migration_mutates_store() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let mut store = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+        let request = empty_command(store.state(), "command-future-schema");
+        store.submit(request.clone()).unwrap();
+        drop(store);
+
+        let responses = db.open_tree(TREE_COMMAND_RESPONSES).unwrap();
+        responses
+            .remove(KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE)
+            .unwrap();
+        let lifecycle = db.open_tree(TREE_AUTHORITY_LIFECYCLE).unwrap();
+        lifecycle.remove(KEY_COMMAND_AUTHENTICATION_SCHEMA).unwrap();
+        let schema = db.open_tree(TREE_COMMAND_SCHEMA).unwrap();
+        let unsupported = serde_json::to_vec(&CommandSchemaMarker {
+            schema_version: COMMAND_SCHEMA_VERSION.saturating_add(1),
+            migrated_from: None,
+        })
+        .unwrap();
+        schema
+            .insert(KEY_COMMAND_SCHEMA, unsupported.clone())
+            .unwrap();
+        db.flush().unwrap();
+
+        let response_before = responses
+            .get(request.command_id.as_bytes())
+            .unwrap()
+            .unwrap();
+        let witness_tree = db.open_tree(TREE_COMMAND_AUTHENTICATIONS).unwrap();
+        let witness_before = witness_tree
+            .get(request.command_id.as_bytes())
+            .unwrap()
+            .unwrap();
+
+        let error = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("unsupported task network command schema"));
+        assert_eq!(
+            responses
+                .get(request.command_id.as_bytes())
+                .unwrap()
+                .unwrap(),
+            response_before
+        );
+        assert_eq!(
+            witness_tree
+                .get(request.command_id.as_bytes())
+                .unwrap()
+                .unwrap(),
+            witness_before
+        );
+        assert_eq!(
+            schema.get(KEY_COMMAND_SCHEMA).unwrap().unwrap().as_ref(),
+            unsupported
+        );
+        assert!(lifecycle
+            .get(KEY_COMMAND_AUTHENTICATION_SCHEMA)
+            .unwrap()
+            .is_none());
+        assert!(responses
+            .get(KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE)
+            .unwrap()
+            .is_none());
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum MigrationHook {
+        AfterScan,
+        AfterParity,
+    }
+
+    fn migration_fences_late_writer(hook: MigrationHook, rejected: bool) {
         let db = sled::Config::new().temporary(true).open().unwrap();
         let mut writer = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
-        let predecessor = empty_command(writer.state(), "command-predecessor");
+        let seed = empty_command(writer.state(), "command-schema-seed");
         assert!(matches!(
-            writer.submit(predecessor).unwrap(),
+            writer.submit(seed).unwrap(),
             command::Response::Accepted { revision: 1, .. }
         ));
-        downgrade_to_pre_auth_schema(&db);
+        downgrade_to_pre_authentication_schema(&db);
 
-        let mut candidate = empty_command(writer.state(), "command-concurrent");
+        let mut candidate = empty_command(
+            writer.state(),
+            if rejected {
+                "command-late-rejected"
+            } else {
+                "command-late-accepted"
+            },
+        );
         if rejected {
             candidate.base_revision = candidate.base_revision.saturating_add(7);
         }
-        let replayed = replayed_journal(&writer);
-        let requests = db.open_tree(TREE_COMMAND_REQUESTS).unwrap();
-        let responses = db.open_tree(TREE_COMMAND_RESPONSES).unwrap();
-        let authentications = db.open_tree(TREE_COMMAND_AUTHENTICATIONS).unwrap();
-        let schema = db.open_tree(TREE_COMMAND_SCHEMA).unwrap();
-        let snapshot_ready = Arc::new(Barrier::new(2));
-        let continue_migration = Arc::new(Barrier::new(2));
-        let migration = {
-            let snapshot_ready = Arc::clone(&snapshot_ready);
-            let continue_migration = Arc::clone(&continue_migration);
-            std::thread::spawn(move || {
-                initialize_command_schema_with_hook(
-                    &replayed,
-                    &requests,
-                    &responses,
-                    &authentications,
-                    &schema,
-                    || {
-                        snapshot_ready.wait();
-                        continue_migration.wait();
-                    },
-                )
-            })
-        };
 
-        snapshot_ready.wait();
-        let fenced = writer.submit(candidate.clone()).unwrap_err();
-        assert!(fenced.to_string().contains("schema marker is missing"));
-        continue_migration.wait();
-        migration.join().unwrap().unwrap();
+        let reached = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let scan_reached = Arc::clone(&reached);
+        let scan_release = Arc::clone(&release);
+        let parity_reached = Arc::clone(&reached);
+        let parity_release = Arc::clone(&release);
+        let migration_db = db.clone();
+        let migration = std::thread::spawn(move || {
+            SledTaskNetworkStore::open_with_migration_hooks(
+                migration_db,
+                "network-docs",
+                || {
+                    if hook == MigrationHook::AfterScan {
+                        scan_reached.wait();
+                        scan_release.wait();
+                    }
+                },
+                || {
+                    if hook == MigrationHook::AfterParity {
+                        parity_reached.wait();
+                        parity_release.wait();
+                    }
+                },
+            )
+        });
+        reached.wait();
 
-        let response = writer.submit(candidate.clone()).unwrap();
+        let lifecycle = db.open_tree(TREE_AUTHORITY_LIFECYCLE).unwrap();
+        if hook == MigrationHook::AfterScan {
+            assert!(lifecycle
+                .get(KEY_COMMAND_AUTHENTICATION_SCHEMA)
+                .unwrap()
+                .is_none());
+        } else {
+            assert_eq!(
+                lifecycle
+                    .get(KEY_COMMAND_AUTHENTICATION_SCHEMA)
+                    .unwrap()
+                    .unwrap()
+                    .as_ref(),
+                COMMAND_AUTHENTICATION_SCHEMA_V1
+            );
+        }
+
+        let candidate_for_writer = candidate.clone();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let late_writer = std::thread::spawn(move || {
+            entered_tx.send(()).unwrap();
+            let result = writer.submit(candidate_for_writer);
+            finished_tx.send(()).unwrap();
+            (writer, result)
+        });
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(finished_rx.recv_timeout(Duration::from_millis(50)).is_err());
+
+        release.wait();
+        let migrated = migration.join().unwrap().unwrap();
+        finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let (writer, response) = late_writer.join().unwrap();
+        let response = response.unwrap();
         if rejected {
             assert!(matches!(
                 &response,
@@ -1428,28 +1945,180 @@ mod tests {
                 command::Response::Accepted { revision: 2, .. }
             ));
         }
+        assert!(Arc::ptr_eq(
+            &writer.command_schema_gate,
+            &migrated.command_schema_gate
+        ));
         drop(writer);
+        drop(migrated);
 
-        let mut reopened = SledTaskNetworkStore::open(db, "network-docs").unwrap();
+        let responses = db.open_tree(TREE_COMMAND_RESPONSES).unwrap();
+        let stored: StoredCommandResponse = serde_json::from_slice(
+            &responses
+                .get(candidate.command_id.as_bytes())
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(stored.authentication.is_some());
+        stored
+            .authentication
+            .as_ref()
+            .unwrap()
+            .validate(&stored.command_id, &stored.request_hash, &stored.response)
+            .unwrap();
+
+        let mut reopened = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+        let receipt = reopened
+            .command_outcome_receipt(&candidate.command_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.response(), &response);
         let replay = reopened.submit(candidate).unwrap();
-        if rejected {
-            assert_eq!(replay, response);
-        } else {
-            assert!(matches!(
-                replay,
-                command::Response::Duplicate { revision: 2, .. }
-            ));
+        match &response {
+            command::Response::Accepted {
+                revision,
+                state_hash,
+            } => {
+                assert_eq!(
+                    replay,
+                    command::Response::Duplicate {
+                        revision: *revision,
+                        state_hash: state_hash.clone()
+                    }
+                );
+                assert_eq!(reopened.state().revision, 2);
+            }
+            command::Response::Rejected(_) => {
+                assert_eq!(replay, response);
+                assert_eq!(reopened.state().revision, 1);
+            }
+            command::Response::Duplicate { .. } => unreachable!(),
         }
+        drop(reopened);
+        SledTaskNetworkStore::open(db, "network-docs").unwrap();
     }
 
     #[test]
-    fn pre_auth_migration_fences_concurrent_public_accepted_insert_and_reopens() {
-        migrate_while_public_writer_attempts_insert(false);
+    fn accepted_writer_waits_when_migration_has_passed_its_scan() {
+        migration_fences_late_writer(MigrationHook::AfterScan, false);
     }
 
     #[test]
-    fn pre_auth_migration_fences_concurrent_public_rejected_insert_and_reopens() {
-        migrate_while_public_writer_attempts_insert(true);
+    fn rejected_writer_waits_when_migration_has_passed_its_scan() {
+        migration_fences_late_writer(MigrationHook::AfterScan, true);
+    }
+
+    #[test]
+    fn accepted_writer_waits_after_parity_until_migration_acknowledges_success() {
+        migration_fences_late_writer(MigrationHook::AfterParity, false);
+    }
+
+    #[test]
+    fn rejected_writer_waits_after_parity_until_migration_acknowledges_success() {
+        migration_fences_late_writer(MigrationHook::AfterParity, true);
+    }
+
+    #[test]
+    fn every_command_persistence_path_requires_the_durable_schema_marker() {
+        for authentication_marker in [false, true] {
+            for authority_owned in [false, true] {
+                for rejected in [false, true] {
+                    let db = sled::Config::new().temporary(true).open().unwrap();
+                    let mut store = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+                    let epoch = authority_owned.then(|| store.acquire_authority_epoch().unwrap());
+                    let mut request = empty_command(
+                        store.state(),
+                        &format!(
+                            "command-marker-{authentication_marker}-{authority_owned}-{rejected}"
+                        ),
+                    );
+                    if rejected {
+                        request.base_revision = request.base_revision.saturating_add(7);
+                    }
+                    if authentication_marker {
+                        db.open_tree(TREE_AUTHORITY_LIFECYCLE)
+                            .unwrap()
+                            .remove(KEY_COMMAND_AUTHENTICATION_SCHEMA)
+                            .unwrap();
+                    } else {
+                        db.open_tree(TREE_COMMAND_SCHEMA)
+                            .unwrap()
+                            .remove(KEY_COMMAND_SCHEMA)
+                            .unwrap();
+                    }
+                    db.flush().unwrap();
+
+                    let error = if let Some(epoch) = epoch {
+                        store
+                            .submit_at_authority_epoch(epoch, request.clone())
+                            .unwrap_err()
+                            .into_store_error()
+                            .to_string()
+                    } else {
+                        store.submit(request.clone()).unwrap_err().to_string()
+                    };
+                    let expected_error = if authentication_marker {
+                        "authentication schema marker is missing"
+                    } else {
+                        "command schema marker is missing"
+                    };
+                    assert!(error.contains(expected_error));
+                    assert!(db
+                        .open_tree(TREE_COMMAND_REQUESTS)
+                        .unwrap()
+                        .get(request.command_id.as_bytes())
+                        .unwrap()
+                        .is_none());
+                    assert!(db
+                        .open_tree(TREE_COMMAND_RESPONSES)
+                        .unwrap()
+                        .get(request.command_id.as_bytes())
+                        .unwrap()
+                        .is_none());
+
+                    if authentication_marker {
+                        db.open_tree(TREE_AUTHORITY_LIFECYCLE)
+                            .unwrap()
+                            .insert(
+                                KEY_COMMAND_AUTHENTICATION_SCHEMA,
+                                COMMAND_AUTHENTICATION_SCHEMA_V1,
+                            )
+                            .unwrap();
+                    } else {
+                        let marker =
+                            serde_json::to_vec(&CommandSchemaMarker::current(None)).unwrap();
+                        db.open_tree(TREE_COMMAND_SCHEMA)
+                            .unwrap()
+                            .insert(KEY_COMMAND_SCHEMA, marker)
+                            .unwrap();
+                    }
+                    db.flush().unwrap();
+                    let response = if let Some(epoch) = epoch {
+                        store
+                            .submit_at_authority_epoch(epoch, request.clone())
+                            .unwrap()
+                    } else {
+                        store.submit(request.clone()).unwrap()
+                    };
+                    assert_eq!(rejected, matches!(response, command::Response::Rejected(_)));
+                    let stored: StoredCommandResponse = serde_json::from_slice(
+                        &db.open_tree(TREE_COMMAND_RESPONSES)
+                            .unwrap()
+                            .get(request.command_id.as_bytes())
+                            .unwrap()
+                            .unwrap(),
+                    )
+                    .unwrap();
+                    assert!(stored.authentication.is_some());
+                    assert!(db
+                        .open_tree(TREE_COMMAND_AUTHENTICATIONS)
+                        .unwrap()
+                        .contains_key(request.command_id.as_bytes())
+                        .unwrap());
+                }
+            }
+        }
     }
 
     #[test]
@@ -1491,6 +2160,120 @@ mod tests {
 
         assert!(matches!(transient, TaskNetworkStoreError::Storage(_)));
         assert!(matches!(corrupt, TaskNetworkStoreError::CorruptStorage(_)));
+    }
+
+    #[test]
+    fn migration_aborts_unmarked_when_predecessor_outcomes_arrive_after_scan() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let responses = db.open_tree(TREE_COMMAND_RESPONSES).unwrap();
+        let lifecycle = db.open_tree(TREE_AUTHORITY_LIFECYCLE).unwrap();
+        let prior = StoredCommandResponse {
+            command_id: "command-prior".to_string(),
+            request_hash: blake3::hash(b"prior").to_hex().to_string(),
+            response: command::Response::Accepted {
+                revision: 1,
+                state_hash: blake3::hash(b"state").to_hex().to_string(),
+            },
+            authentication: None,
+        };
+        responses
+            .insert(
+                prior.command_id.as_bytes(),
+                serde_json::to_vec(&prior).unwrap(),
+            )
+            .unwrap();
+
+        let scanned = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let migration_db = db.clone();
+        let migration_responses = responses.clone();
+        let migration_lifecycle = lifecycle.clone();
+        let migration_scanned = Arc::clone(&scanned);
+        let migration_release = Arc::clone(&release);
+        let migration = std::thread::spawn(move || {
+            migrate_command_response_authentication_with_hooks(
+                &migration_db,
+                &migration_responses,
+                &migration_lifecycle,
+                || {
+                    migration_scanned.wait();
+                    migration_release.wait();
+                },
+                || {},
+            )
+        });
+        scanned.wait();
+
+        for (command_id, response) in [
+            (
+                "command-overlap-accepted",
+                command::Response::Accepted {
+                    revision: 2,
+                    state_hash: blake3::hash(b"overlap-state").to_hex().to_string(),
+                },
+            ),
+            (
+                "command-overlap-rejected",
+                command::Response::Rejected(Rejection::InvalidGraph(
+                    "predecessor rejection".to_string(),
+                )),
+            ),
+        ] {
+            let predecessor = StoredCommandResponse {
+                command_id: command_id.to_string(),
+                request_hash: blake3::hash(command_id.as_bytes()).to_hex().to_string(),
+                response,
+                authentication: None,
+            };
+            responses
+                .insert(
+                    command_id.as_bytes(),
+                    serde_json::to_vec(&predecessor).unwrap(),
+                )
+                .unwrap();
+        }
+        release.wait();
+
+        assert!(migration.join().unwrap().is_err());
+        assert!(lifecycle
+            .get(KEY_COMMAND_AUTHENTICATION_SCHEMA)
+            .unwrap()
+            .is_none());
+        assert!(responses
+            .get(KEY_COMMAND_AUTHENTICATION_DOWNGRADE_FENCE)
+            .unwrap()
+            .is_none());
+        for command_id in ["command-overlap-accepted", "command-overlap-rejected"] {
+            let stored: StoredCommandResponse =
+                serde_json::from_slice(&responses.get(command_id).unwrap().unwrap()).unwrap();
+            assert!(stored.authentication.is_none());
+        }
+
+        migrate_command_response_authentication_with_hooks(
+            &db,
+            &responses,
+            &lifecycle,
+            || {},
+            || {},
+        )
+        .unwrap();
+        for command_id in [
+            "command-prior",
+            "command-overlap-accepted",
+            "command-overlap-rejected",
+        ] {
+            let stored: StoredCommandResponse =
+                serde_json::from_slice(&responses.get(command_id).unwrap().unwrap()).unwrap();
+            assert!(stored.authentication.is_some());
+        }
+        assert_eq!(
+            lifecycle
+                .get(KEY_COMMAND_AUTHENTICATION_SCHEMA)
+                .unwrap()
+                .unwrap()
+                .as_ref(),
+            COMMAND_AUTHENTICATION_SCHEMA_V1
+        );
     }
 
     #[test]

@@ -208,16 +208,13 @@ fn planning_request(goal: meld_lang::Goal, world_state: WorldState) -> PlanningR
         Vec::new(),
     )
     .unwrap();
-    let world_state_frame = PlanningWorldStateFrameRef::from_authority(
-        "frame-1",
-        "projection-request-1",
-        world_state_request.canonical_hash().unwrap(),
+    let world_state_frame = PlanningWorldStateFrameRef::identified_from_authority(
         PLANNER_PROJECTION_VERSION,
-        "projection-hash-1",
+        blake3::hash(b"projection-hash-1").to_hex().to_string(),
         meld_execution::planning::world_state::canonical_world_state_hash(&world_state).unwrap(),
         &world_state_request,
         &world_state,
-        vec!["source".to_string()],
+        vec![serde_json::json!({"ProjectionRule": {"rule_id": "source"}}).to_string()],
         Vec::new(),
     )
     .unwrap();
