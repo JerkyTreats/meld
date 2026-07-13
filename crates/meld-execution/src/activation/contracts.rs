@@ -151,6 +151,8 @@ pub struct ExecutionActivationValidationReceipt {
     pub input_hash: String,
     /// Explicit method-to-package binding identity.
     pub method_binding_id: String,
+    /// Semantic digest of the complete method-to-package binding.
+    pub method_binding_digest: String,
     /// Selected method identifier.
     pub method_id: String,
     /// Semantic method-library digest that excludes source provenance.
@@ -170,6 +172,10 @@ pub struct ExecutionActivationValidationReceipt {
     pub task_network_identity_digest: String,
     /// Digest of the required artifact contract.
     pub artifact_contract_digest: String,
+    /// Digest of the exact workspace scan capability contract reference.
+    pub workspace_scan_contract_digest: String,
+    /// Digest of provider, frame, force, and canonical target coordinates.
+    pub execution_coordinates_digest: String,
     /// Stable publication mapping identifier.
     pub publication_mapping_id: String,
     /// Digest of the complete publication mapping.

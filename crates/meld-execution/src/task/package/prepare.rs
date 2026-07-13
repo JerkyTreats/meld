@@ -651,6 +651,7 @@ mod tests {
                     },
                 },
             )],
+            output_artifacts: vec![],
         }
     }
 

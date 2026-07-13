@@ -1,0 +1,143 @@
+{
+  "method_id": "refresh_docs_v1",
+  "trigger": {
+    "Holds": {
+      "subject": { "Variable": "?node" },
+      "dimension": { "Dimension": "docs_freshness" },
+      "condition": { "Above": { "Literal": { "Number": 0.7 } } }
+    }
+  },
+  "preconditions": [
+    {
+      "Accessible": {
+        "scope": { "Variable": "?node" }
+      }
+    }
+  ],
+  "composition": {
+    "steps": [
+      {
+        "step_id": "scan_workspace",
+        "kind": {
+          "Op": {
+            "operator_id": "scan_workspace",
+            "preconditions": [],
+            "effects": [
+              {
+                "Assert": {
+                  "Exists": {
+                    "scope": { "Variable": "?node" },
+                    "artifact_type": { "ArtifactType": "workspace_snapshot_ref" }
+                  }
+                }
+              }
+            ],
+            "cost": {
+              "time_ms": 1000,
+              "money_microdollars": 0,
+              "provider_calls": 0
+            },
+            "resolution": {
+              "requires_inputs": [],
+              "requires_outputs": [
+                {
+                  "artifact_type": { "ArtifactType": "workspace_snapshot_ref" },
+                  "required": true
+                }
+              ],
+              "scope_kind": "workspace",
+              "tags": ["scan", "workspace"],
+              "specific": {
+                "capability_type_id": "workspace_scan",
+                "capability_version": 1
+              }
+            }
+          }
+        }
+      },
+      {
+        "step_id": "run_docs_writer",
+        "kind": {
+          "Op": {
+            "operator_id": "run_docs_writer",
+            "preconditions": [
+              {
+                "Accessible": {
+                  "scope": { "Variable": "?node" }
+                }
+              }
+            ],
+            "effects": [
+              {
+                "Assert": {
+                  "Exists": {
+                    "scope": { "Variable": "?node" },
+                    "artifact_type": { "ArtifactType": "docs_patch" }
+                  }
+                }
+              },
+              {
+                "Update": {
+                  "subject": { "Variable": "?node" },
+                  "dimension": { "Dimension": "docs_freshness" },
+                  "value": { "Literal": { "Number": 0.95 } }
+                }
+              }
+            ],
+            "cost": {
+              "time_ms": 10000,
+              "money_microdollars": 25000,
+              "provider_calls": 1
+            },
+            "resolution": {
+              "requires_inputs": [
+                {
+                  "artifact_type": { "ArtifactType": "workspace_snapshot_ref" },
+                  "required": true
+                }
+              ],
+              "requires_outputs": [
+                {
+                  "artifact_type": { "ArtifactType": "docs_patch" },
+                  "required": true
+                }
+              ],
+              "scope_kind": "filesystem",
+              "tags": ["task_package", "docs"],
+              "specific": {
+                "capability_type_id": "task_package.docs_writer",
+                "capability_version": 1
+              }
+            }
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "scan_workspace",
+        "to": "run_docs_writer",
+        "kind": {
+          "DataFlow": {
+            "artifact_type": { "ArtifactType": "workspace_snapshot_ref" }
+          }
+        }
+      }
+    ]
+  },
+  "net_effects": [
+    {
+      "Update": {
+        "subject": { "Variable": "?node" },
+        "dimension": { "Dimension": "docs_freshness" },
+        "value": { "Literal": { "Number": 0.95 } }
+      }
+    }
+  ],
+  "cost": {
+    "time_ms": 11000,
+    "money_microdollars": 25000,
+    "provider_calls": 1
+  },
+  "preference": 1
+}

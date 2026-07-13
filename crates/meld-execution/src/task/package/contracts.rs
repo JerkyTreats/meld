@@ -25,6 +25,9 @@ pub struct TaskPackageSpec {
     pub seed: InitialSeedSpec,
     /// Expansion entries authored by this package.
     pub expansions: Vec<PackageExpansionSpec>,
+    /// Typed mappings from workflow outputs into package result artifacts.
+    #[serde(default)]
+    pub output_artifacts: Vec<TaskPackageOutputArtifactSpec>,
 }
 
 impl TaskPackageSpec {
@@ -34,6 +37,18 @@ impl TaskPackageSpec {
             .expect("task package must remain serializable for activation identity");
         blake3::hash(&encoded).to_hex().to_string()
     }
+}
+
+/// Typed mapping from one authored workflow output into a task artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskPackageOutputArtifactSpec {
+    /// Workflow turn output type consumed by this mapping.
+    pub source_output_type: String,
+    /// Artifact type emitted by successful package execution.
+    pub artifact_type_id: String,
+    /// Exact schema version for the emitted artifact.
+    pub schema_version: u32,
 }
 
 /// Package-authored traversal prerequisite expansion entry.

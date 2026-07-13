@@ -3,12 +3,14 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
+use std::path::{Component, Path};
 
 use meld_lang::{Composition, StepKind, Term};
 use serde::Serialize;
 
 use super::{ExecutionActivationInput, ExecutionActivationValidationReceipt};
 use crate::planning::OperatorResolutionStatus;
+use crate::task::package::{PackageExpansionSpec, TargetSelectorKind};
 use crate::task_network::store::network_storage_key;
 
 const SUCCESS_EVENT_TYPE: &str = "execution.task.succeeded";
@@ -18,6 +20,15 @@ const WORKSPACE_SCAN_CAPABILITY_TYPE_ID: &str = "workspace_scan";
 const WORKSPACE_SCAN_CAPABILITY_VERSION: u32 = 1;
 const DOCS_WRITER_PACKAGE_ID: &str = "docs_writer";
 const DOCS_WRITER_WORKFLOW_ID: &str = "docs_writer_thread_v1";
+const REFRESH_DOCS_METHOD_ID: &str = "refresh_docs_v1";
+const WORKSPACE_SCAN_STEP_ID: &str = "scan_workspace";
+const DOCS_WRITER_STEP_ID: &str = "run_docs_writer";
+const DOCS_WRITER_BINDING_ID: &str = "binding.refresh_docs_v1.docs_writer";
+const DOCS_WRITER_CAPABILITY_TYPE_ID: &str = "task_package.docs_writer";
+const DOCS_WRITER_CAPABILITY_VERSION: u32 = 1;
+const DOCS_PATCH_ARTIFACT_TYPE_ID: &str = "docs_patch";
+const DOCS_PATCH_SCHEMA_VERSION: u32 = 1;
+const WORKSPACE_SNAPSHOT_ARTIFACT_TYPE_ID: &str = "workspace_snapshot_ref";
 const DOCS_WRITER_REQUIRED_FIELDS: [&str; 4] =
     ["agent_id", "provider_binding", "frame_type", "force"];
 
@@ -66,6 +77,12 @@ pub fn validate_execution_activation(
         "selection.target.canonical_value",
         &input.selection.target.canonical_value,
     )?;
+    require_structural_id(
+        "selection.provider_binding_ref",
+        &input.selection.provider_binding_ref,
+    )?;
+    require_structural_id("selection.frame_type", &input.selection.frame_type)?;
+    validate_target(input)?;
     require_text(
         "method_binding.binding_id",
         &input.method_binding.binding_id,
@@ -87,6 +104,10 @@ pub fn validate_execution_activation(
         "selection.task_network_id",
         &input.selection.task_network_id,
     )?;
+    require_structural_id(
+        "selection.task_network_id",
+        &input.selection.task_network_id,
+    )?;
     require_text(
         "selection.required_artifact.artifact_type_id",
         &input.selection.required_artifact.artifact_type_id,
@@ -104,9 +125,26 @@ pub fn validate_execution_activation(
     let task_network_storage_key = network_storage_key(&input.selection.task_network_id)
         .map_err(|error| invalid("selection.task_network_id", error.to_string()))?;
     let method_library_digest = input.method_library.semantic_digest();
+    let method_binding_digest = semantic_digest(&input.method_binding)?;
     let task_package_digest = input.task_package.semantic_digest();
     let artifact_contract_digest = semantic_digest(&input.selection.required_artifact)?;
+    let workspace_scan_contract_digest = semantic_digest(&input.selection.workspace_scan)?;
     let publication_mapping_digest = semantic_digest(&input.selection.publication)?;
+
+    #[derive(Serialize)]
+    struct ExecutionCoordinatesProjection<'a> {
+        provider_binding_ref: &'a str,
+        frame_type: &'a str,
+        force_policy: &'a super::ExecutionForcePolicy,
+        target: &'a super::ExecutionTargetSelector,
+    }
+
+    let execution_coordinates_digest = semantic_digest(&ExecutionCoordinatesProjection {
+        provider_binding_ref: &input.selection.provider_binding_ref,
+        frame_type: &input.selection.frame_type,
+        force_policy: &input.selection.force_policy,
+        target: &input.selection.target,
+    })?;
 
     #[derive(Serialize)]
     struct TaskNetworkIdentityProjection<'a> {
@@ -142,6 +180,7 @@ pub fn validate_execution_activation(
         activation_id: input.selection.activation_id.clone(),
         input_hash,
         method_binding_id: input.method_binding.binding_id.clone(),
+        method_binding_digest,
         method_id: input.method_binding.method_id.clone(),
         method_library_digest,
         task_package_id: input.task_package.package_id.clone(),
@@ -150,6 +189,8 @@ pub fn validate_execution_activation(
         task_network_storage_key,
         task_network_identity_digest,
         artifact_contract_digest,
+        workspace_scan_contract_digest,
+        execution_coordinates_digest,
         publication_mapping_id: input.selection.publication.mapping_id.clone(),
         publication_mapping_digest,
     })
@@ -158,6 +199,18 @@ pub fn validate_execution_activation(
 fn validate_package(
     input: &ExecutionActivationInput,
 ) -> Result<(), ExecutionActivationValidationError> {
+    if input.selection.required_artifact.artifact_type_id != DOCS_PATCH_ARTIFACT_TYPE_ID {
+        return Err(invalid(
+            "selection.required_artifact.artifact_type_id",
+            format!("must equal {DOCS_PATCH_ARTIFACT_TYPE_ID}"),
+        ));
+    }
+    if input.selection.required_artifact.schema_version != DOCS_PATCH_SCHEMA_VERSION {
+        return Err(invalid(
+            "selection.required_artifact.schema_version",
+            format!("must equal {DOCS_PATCH_SCHEMA_VERSION}"),
+        ));
+    }
     if input.selection.task_package_id != DOCS_WRITER_PACKAGE_ID {
         return Err(invalid(
             "selection.task_package_id",
@@ -168,6 +221,18 @@ fn validate_package(
         return Err(invalid(
             "task_package.workflow_id",
             format!("must equal {DOCS_WRITER_WORKFLOW_ID}"),
+        ));
+    }
+    if input.selection.workflow_id != DOCS_WRITER_WORKFLOW_ID {
+        return Err(invalid(
+            "selection.workflow_id",
+            format!("must equal {DOCS_WRITER_WORKFLOW_ID}"),
+        ));
+    }
+    if input.task_package.package_id != DOCS_WRITER_PACKAGE_ID {
+        return Err(invalid(
+            "task_package.package_id",
+            format!("must equal {DOCS_WRITER_PACKAGE_ID}"),
         ));
     }
     if input.method_binding.package_id != input.task_package.package_id {
@@ -200,19 +265,68 @@ fn validate_package(
             "must contain at least one authored expansion",
         ));
     }
-    for field in DOCS_WRITER_REQUIRED_FIELDS {
-        if !input
-            .task_package
-            .trigger
-            .required_runtime_fields
-            .iter()
-            .any(|candidate| candidate == field)
-        {
-            return Err(invalid(
-                "task_package.trigger.required_runtime_fields",
-                format!("must contain {field}"),
-            ));
-        }
+    let required_fields = input
+        .task_package
+        .trigger
+        .required_runtime_fields
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if required_fields.len() != input.task_package.trigger.required_runtime_fields.len()
+        || required_fields != BTreeSet::from(DOCS_WRITER_REQUIRED_FIELDS)
+    {
+        return Err(invalid(
+            "task_package.trigger.required_runtime_fields",
+            "must equal the canonical docs-writer runtime field set",
+        ));
+    }
+
+    let accepted_target = match input.selection.target.kind {
+        super::ExecutionTargetKind::Path => TargetSelectorKind::Path,
+        super::ExecutionTargetKind::NodeId => TargetSelectorKind::NodeId,
+    };
+    if !input
+        .task_package
+        .trigger
+        .accepted_targets
+        .contains(&accepted_target)
+    {
+        return Err(invalid(
+            "selection.target.kind",
+            "must be accepted by the docs-writer task package",
+        ));
+    }
+
+    let output_mappings = input
+        .task_package
+        .output_artifacts
+        .iter()
+        .filter(|mapping| {
+            mapping.artifact_type_id == input.selection.required_artifact.artifact_type_id
+                && mapping.schema_version == input.selection.required_artifact.schema_version
+        })
+        .collect::<Vec<_>>();
+    if input.task_package.output_artifacts.len() != 1 || output_mappings.len() != 1 {
+        return Err(invalid(
+            "task_package.output_artifacts",
+            "must contain exactly one mapping for the required artifact and schema",
+        ));
+    }
+    let source_output_type = output_mappings[0].source_output_type.as_str();
+    let source_turns = input
+        .task_package
+        .expansions
+        .iter()
+        .flat_map(|expansion| match expansion {
+            PackageExpansionSpec::TraversalPrerequisite(spec) => spec.repeated_region.turns.iter(),
+        })
+        .filter(|turn| turn.output_type == source_output_type && turn.output_policy.persist_frame)
+        .count();
+    if source_turns != 1 {
+        return Err(invalid(
+            "task_package.output_artifacts.source_output_type",
+            "must identify exactly one persisted authored workflow output",
+        ));
     }
     Ok(())
 }
@@ -220,10 +334,40 @@ fn validate_package(
 fn validate_method(
     input: &ExecutionActivationInput,
 ) -> Result<(), ExecutionActivationValidationError> {
+    if input.selection.method_id != REFRESH_DOCS_METHOD_ID {
+        return Err(invalid(
+            "selection.method_id",
+            format!("must equal {REFRESH_DOCS_METHOD_ID}"),
+        ));
+    }
+    if input.selection.workspace_scan_step_id != WORKSPACE_SCAN_STEP_ID {
+        return Err(invalid(
+            "selection.workspace_scan_step_id",
+            format!("must equal {WORKSPACE_SCAN_STEP_ID}"),
+        ));
+    }
+    if input.method_binding.binding_id != DOCS_WRITER_BINDING_ID {
+        return Err(invalid(
+            "method_binding.binding_id",
+            format!("must equal {DOCS_WRITER_BINDING_ID}"),
+        ));
+    }
+    if input.method_binding.package_step_id != DOCS_WRITER_STEP_ID {
+        return Err(invalid(
+            "method_binding.package_step_id",
+            format!("must equal {DOCS_WRITER_STEP_ID}"),
+        ));
+    }
     if !input.method_library.invalid.is_empty() {
         return Err(invalid(
             "method_library.invalid",
             "must be empty for product activation",
+        ));
+    }
+    if input.method_library.entries.len() != 1 {
+        return Err(invalid(
+            "method_library.entries",
+            "must contain exactly one product activation method",
         ));
     }
     let matching = input
@@ -263,6 +407,43 @@ fn validate_method(
             "must select an operator step",
         ));
     };
+    if package_operator
+        .resolution
+        .specific
+        .as_ref()
+        .map(|reference| {
+            (
+                reference.capability_type_id.as_str(),
+                reference.capability_version,
+            )
+        })
+        != Some((
+            DOCS_WRITER_CAPABILITY_TYPE_ID,
+            DOCS_WRITER_CAPABILITY_VERSION,
+        ))
+    {
+        return Err(invalid(
+            "method_binding.package_step_id",
+            "must resolve the canonical docs-writer package capability",
+        ));
+    }
+    let package_resolutions = entry
+        .verification
+        .operator_resolutions
+        .iter()
+        .filter(|report| report.operator_id == package_operator.operator_id)
+        .collect::<Vec<_>>();
+    if package_resolutions.len() != 1
+        || package_resolutions[0].status != OperatorResolutionStatus::Resolved
+        || package_resolutions[0].capability_type_id.as_deref()
+            != Some(DOCS_WRITER_CAPABILITY_TYPE_ID)
+        || package_resolutions[0].capability_version != Some(DOCS_WRITER_CAPABILITY_VERSION)
+    {
+        return Err(invalid(
+            "method_binding.package_step_id",
+            "package step must have one normalized docs-writer capability resolution",
+        ));
+    }
     let required_artifact =
         Term::ArtifactType(input.selection.required_artifact.artifact_type_id.clone());
     if !package_operator
@@ -308,6 +489,44 @@ fn validate_method(
             "must select an operator step",
         ));
     };
+    if scan_operator.resolution.specific.as_ref().map(|reference| {
+        (
+            reference.capability_type_id.as_str(),
+            reference.capability_version,
+        )
+    }) != Some((
+        WORKSPACE_SCAN_CAPABILITY_TYPE_ID,
+        WORKSPACE_SCAN_CAPABILITY_VERSION,
+    )) {
+        return Err(invalid(
+            "selection.workspace_scan_step_id",
+            "must name an operator authored against workspace_scan version one",
+        ));
+    }
+    let produces_snapshot = scan_operator
+        .resolution
+        .requires_outputs
+        .iter()
+        .any(|slot| {
+            slot.required
+                && slot.artifact_type
+                    == Term::ArtifactType(WORKSPACE_SNAPSHOT_ARTIFACT_TYPE_ID.to_string())
+        });
+    let consumes_snapshot = package_operator
+        .resolution
+        .requires_inputs
+        .iter()
+        .any(|slot| {
+            slot.required
+                && slot.artifact_type
+                    == Term::ArtifactType(WORKSPACE_SNAPSHOT_ARTIFACT_TYPE_ID.to_string())
+        });
+    if !produces_snapshot || !consumes_snapshot {
+        return Err(invalid(
+            "selection.workspace_scan_step_id",
+            "scan output must feed the package through workspace_snapshot_ref",
+        ));
+    }
     let matching_resolutions = entry
         .verification
         .operator_resolutions
@@ -345,6 +564,31 @@ fn validate_method(
     Ok(())
 }
 
+fn validate_target(
+    input: &ExecutionActivationInput,
+) -> Result<(), ExecutionActivationValidationError> {
+    match input.selection.target.kind {
+        super::ExecutionTargetKind::Path => {
+            let path = Path::new(&input.selection.target.canonical_value);
+            if !path.is_absolute()
+                || path
+                    .components()
+                    .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+            {
+                return Err(invalid(
+                    "selection.target.canonical_value",
+                    "path targets must be absolute and lexically canonical",
+                ));
+            }
+        }
+        super::ExecutionTargetKind::NodeId => require_structural_id(
+            "selection.target.canonical_value",
+            &input.selection.target.canonical_value,
+        )?,
+    }
+    Ok(())
+}
+
 fn has_dependency_path(composition: &Composition, from: &str, to: &str) -> bool {
     let mut pending = VecDeque::from([from]);
     let mut visited = BTreeSet::new();
@@ -367,6 +611,10 @@ fn validate_publication_mapping(
     input: &ExecutionActivationInput,
 ) -> Result<(), ExecutionActivationValidationError> {
     require_text(
+        "selection.publication.mapping_id",
+        &input.selection.publication.mapping_id,
+    )?;
+    require_structural_id(
         "selection.publication.mapping_id",
         &input.selection.publication.mapping_id,
     )?;
@@ -424,6 +672,28 @@ fn require_text(field: &str, value: &str) -> Result<(), ExecutionActivationValid
     }
 }
 
+fn require_structural_id(
+    field: &str,
+    value: &str,
+) -> Result<(), ExecutionActivationValidationError> {
+    let bytes = value.as_bytes();
+    let valid = !bytes.is_empty()
+        && bytes.len() <= 128
+        && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes.iter().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        });
+    if valid {
+        Ok(())
+    } else {
+        Err(invalid(
+            field,
+            "must be a lowercase structural identifier of at most 128 bytes",
+        ))
+    }
+}
+
 fn invalid(
     field: impl Into<String>,
     message: impl Into<String>,
@@ -436,153 +706,51 @@ fn invalid(
 
 #[cfg(test)]
 mod tests {
-    use meld_lang::{
-        CapabilityRef, Composition, CostEstimate, Edge, EdgeKind, Method, Operator, Proposition,
-        Resolution, SlotConstraint, Step, Term,
-    };
+    use meld_lang::{CostEstimate, Edge, EdgeKind, Operator, Resolution, Step};
 
     use super::*;
     use crate::activation::{
-        CapabilityContractRef, ExecutionActivationSelection, ExecutionForcePolicy,
-        ExecutionTargetKind, ExecutionTargetSelector, MethodTaskPackageBinding, PublicationMapping,
+        bind_builtin_execution_activation, CapabilityContractRef, ExecutionActivationSelection,
+        ExecutionForcePolicy, ExecutionTargetKind, ExecutionTargetSelector, PublicationMapping,
         RequiredArtifactContract,
     };
-    use crate::capability::{
-        CapabilityCatalog, CapabilityTypeContract, ExecutionClass, ExecutionContract, ScopeContract,
-    };
-    use crate::planning::{MethodLibrary, MethodSourceRef};
-    use crate::task::package::load_builtin_task_package_spec;
+    use crate::planning::MethodSourceRef;
 
-    fn method() -> Method {
-        let scope = Term::Variable("?node".to_string());
-        Method {
+    fn selection() -> ExecutionActivationSelection {
+        ExecutionActivationSelection {
+            activation_hash: "a".repeat(64),
+            activation_id: "activation.docs_freshness".to_string(),
             method_id: "refresh_docs_v1".to_string(),
-            trigger: Proposition::Accessible {
-                scope: scope.clone(),
-            },
-            preconditions: Vec::new(),
-            composition: Composition {
-                steps: vec![
-                    Step {
-                        step_id: "scan".to_string(),
-                        kind: StepKind::Op(Operator {
-                            operator_id: "scan".to_string(),
-                            preconditions: Vec::new(),
-                            effects: Vec::new(),
-                            cost: CostEstimate::zero(),
-                            resolution: Resolution {
-                                requires_inputs: Vec::new(),
-                                requires_outputs: Vec::new(),
-                                scope_kind: Some("workspace".to_string()),
-                                tags: Vec::new(),
-                                specific: Some(CapabilityRef {
-                                    capability_type_id: "workspace_scan".to_string(),
-                                    capability_version: 1,
-                                }),
-                            },
-                        }),
-                    },
-                    Step {
-                        step_id: "write".to_string(),
-                        kind: StepKind::Op(Operator {
-                            operator_id: "write".to_string(),
-                            preconditions: Vec::new(),
-                            effects: Vec::new(),
-                            cost: CostEstimate::zero(),
-                            resolution: Resolution {
-                                requires_inputs: Vec::new(),
-                                requires_outputs: vec![SlotConstraint {
-                                    artifact_type: Term::ArtifactType("docs_patch".to_string()),
-                                    required: true,
-                                }],
-                                scope_kind: Some("filesystem".to_string()),
-                                tags: Vec::new(),
-                                specific: None,
-                            },
-                        }),
-                    },
-                ],
-                edges: vec![Edge {
-                    from: "scan".to_string(),
-                    to: "write".to_string(),
-                    kind: EdgeKind::Ordering,
-                }],
-            },
-            net_effects: Vec::new(),
-            cost: CostEstimate::zero(),
-            preference: 1,
-        }
-    }
-
-    fn catalog() -> CapabilityCatalog {
-        let mut catalog = CapabilityCatalog::new();
-        catalog
-            .register(CapabilityTypeContract {
+            task_package_id: "docs_writer".to_string(),
+            workflow_id: "docs_writer_thread_v1".to_string(),
+            workspace_scan_step_id: "scan_workspace".to_string(),
+            workspace_scan: CapabilityContractRef {
                 capability_type_id: "workspace_scan".to_string(),
                 capability_version: 1,
-                owning_domain: "workspace".to_string(),
-                scope_contract: ScopeContract {
-                    scope_kind: "workspace".to_string(),
-                    scope_ref_kind: "workspace_root".to_string(),
-                    allow_fan_out: false,
-                },
-                binding_contract: Vec::new(),
-                input_contract: Vec::new(),
-                output_contract: Vec::new(),
-                effect_contract: Vec::new(),
-                execution_contract: ExecutionContract {
-                    execution_class: ExecutionClass::Inline,
-                    completion_semantics: "artifacts".to_string(),
-                    retry_class: "workspace_io".to_string(),
-                    cancellation_supported: false,
-                },
-            })
-            .unwrap();
-        catalog
+            },
+            task_network_id: "network-docs".to_string(),
+            required_artifact: RequiredArtifactContract {
+                artifact_type_id: "docs_patch".to_string(),
+                schema_version: 1,
+            },
+            provider_binding_ref: "provider.docs".to_string(),
+            frame_type: "analysis".to_string(),
+            force_policy: ExecutionForcePolicy::ReuseExisting,
+            target: ExecutionTargetSelector {
+                kind: ExecutionTargetKind::Path,
+                canonical_value: "/workspace".to_string(),
+            },
+            publication: PublicationMapping {
+                mapping_id: "publication.docs_freshness".to_string(),
+                success_event_type: "execution.task.succeeded".to_string(),
+                failure_event_type: "execution.task.failed".to_string(),
+                content_source_kind: "content_written".to_string(),
+            },
+        }
     }
 
     fn input() -> ExecutionActivationInput {
-        ExecutionActivationInput {
-            selection: ExecutionActivationSelection {
-                activation_hash: "a".repeat(64),
-                activation_id: "activation.docs_freshness".to_string(),
-                method_id: "refresh_docs_v1".to_string(),
-                task_package_id: "docs_writer".to_string(),
-                workflow_id: "docs_writer_thread_v1".to_string(),
-                workspace_scan_step_id: "scan".to_string(),
-                workspace_scan: CapabilityContractRef {
-                    capability_type_id: "workspace_scan".to_string(),
-                    capability_version: 1,
-                },
-                task_network_id: "network-docs".to_string(),
-                required_artifact: RequiredArtifactContract {
-                    artifact_type_id: "docs_patch".to_string(),
-                    schema_version: 1,
-                },
-                provider_binding_ref: "provider.docs".to_string(),
-                frame_type: "analysis".to_string(),
-                force_policy: ExecutionForcePolicy::ReuseExisting,
-                target: ExecutionTargetSelector {
-                    kind: ExecutionTargetKind::Path,
-                    canonical_value: "/workspace".to_string(),
-                },
-                publication: PublicationMapping {
-                    mapping_id: "publication.docs_freshness".to_string(),
-                    success_event_type: "execution.task.succeeded".to_string(),
-                    failure_event_type: "execution.task.failed".to_string(),
-                    content_source_kind: "content_written".to_string(),
-                },
-            },
-            method_library: MethodLibrary::from_methods(vec![method()], &catalog()),
-            method_binding: MethodTaskPackageBinding {
-                binding_id: "binding.refresh_docs".to_string(),
-                method_id: "refresh_docs_v1".to_string(),
-                package_step_id: "write".to_string(),
-                package_id: "docs_writer".to_string(),
-                workflow_id: "docs_writer_thread_v1".to_string(),
-            },
-            task_package: load_builtin_task_package_spec("docs_writer").unwrap(),
-        }
+        bind_builtin_execution_activation(selection()).unwrap()
     }
 
     #[test]
@@ -644,7 +812,7 @@ mod tests {
             .verification
             .operator_resolutions
             .iter_mut()
-            .find(|report| report.operator_id == "scan")
+            .find(|report| report.operator_id == "scan_workspace")
             .unwrap();
         scan_resolution.status = OperatorResolutionStatus::Unresolved;
 
@@ -660,7 +828,7 @@ mod tests {
             .verification
             .operator_resolutions
             .iter_mut()
-            .find(|report| report.operator_id == "scan")
+            .find(|report| report.operator_id == "scan_workspace")
             .unwrap();
         scan_resolution.capability_type_id = Some("workspace_scan_other".to_string());
         assert_ne!(type_drift.method_library.semantic_digest(), baseline);
@@ -670,7 +838,7 @@ mod tests {
             .verification
             .operator_resolutions
             .iter_mut()
-            .find(|report| report.operator_id == "scan")
+            .find(|report| report.operator_id == "scan_workspace")
             .unwrap();
         scan_resolution.capability_version = Some(2);
         assert_ne!(version_drift.method_library.semantic_digest(), baseline);
@@ -703,9 +871,11 @@ mod tests {
     #[test]
     fn validation_rejects_a_disconnected_workspace_scan_step() {
         let mut value = input();
-        let mut disconnected_method = method();
-        disconnected_method.composition.edges.clear();
-        value.method_library = MethodLibrary::from_methods(vec![disconnected_method], &catalog());
+        value.method_library.entries[0]
+            .method
+            .composition
+            .edges
+            .clear();
 
         let error = validate_execution_activation(&value).unwrap_err();
         assert_eq!(error.field, "selection.workspace_scan_step_id");
@@ -715,9 +885,11 @@ mod tests {
     #[test]
     fn validation_rejects_a_decoy_scan_step() {
         let mut value = input();
-        let mut decoy_method = method();
-        decoy_method.composition.steps.push(Step {
-            step_id: "decoy".to_string(),
+        let composition = &mut value.method_library.entries[0].method.composition;
+        composition.steps[0].step_id = "actual_scan".to_string();
+        composition.edges[0].from = "actual_scan".to_string();
+        composition.steps.push(Step {
+            step_id: "scan_workspace".to_string(),
             kind: StepKind::Op(Operator {
                 operator_id: "decoy".to_string(),
                 preconditions: Vec::new(),
@@ -732,17 +904,15 @@ mod tests {
                 },
             }),
         });
-        decoy_method.composition.edges.push(Edge {
-            from: "decoy".to_string(),
-            to: "write".to_string(),
+        composition.edges.push(Edge {
+            from: "scan_workspace".to_string(),
+            to: "run_docs_writer".to_string(),
             kind: EdgeKind::Ordering,
         });
-        value.method_library = MethodLibrary::from_methods(vec![decoy_method], &catalog());
-        value.selection.workspace_scan_step_id = "decoy".to_string();
 
         let error = validate_execution_activation(&value).unwrap_err();
         assert_eq!(error.field, "selection.workspace_scan_step_id");
-        assert!(error.message.contains("selected step"));
+        assert!(error.message.contains("workspace_scan version one"));
     }
 
     #[test]
