@@ -14,7 +14,7 @@ use meld_world_model::belief::{
     HydrationRefs, ObservationOpportunity, ObservationReason, PlannerProjectionSummary,
     PosteriorSummary, PromotedEvidenceRecord,
 };
-use meld_world_model::events::{DomainObjectRef, EventRelation};
+use meld_world_model::events::{DomainObjectRef, EventRecordRef, EventRelation, LedgerCursor};
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::{
     AnchorSelectionRecord, BeliefStatus, EvidenceValue, PerspectiveKey, TraversalFactRecord,
@@ -27,8 +27,8 @@ fn reopen_sled_after_close(path: &Path) -> sled::Result<sled::Db> {
     loop {
         match sled::open(path) {
             Ok(db) => return Ok(db),
-            Err(sled::Error::Io(error))
-                if error.kind() == std::io::ErrorKind::WouldBlock
+            Err(error)
+                if error.to_string().contains("could not acquire lock")
                     && std::time::Instant::now() < deadline =>
             {
                 std::thread::sleep(Duration::from_millis(10));
@@ -1420,6 +1420,227 @@ fn belief_store_persists_runtime_meta() {
     );
 }
 
+fn migration_identity() -> meld_world_model::belief::contracts::BeliefAuthorityMigrationIdentity {
+    meld_world_model::belief::contracts::BeliefAuthorityMigrationIdentity::try_new(
+        "belief-migration-a",
+        "legacy-belief-a",
+        "product-belief-a",
+        1,
+    )
+    .unwrap()
+}
+
+#[test]
+fn belief_authority_migrates_legacy_state_with_parity_and_repeat_safety() {
+    use meld_world_model::belief::contracts::LegacyBeliefCompatibilityPosture;
+
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let product_dir = tempfile::tempdir().unwrap();
+    let legacy = BeliefStore::new(sled::open(legacy_dir.path().join("belief")).unwrap()).unwrap();
+    legacy.put_runtime_meta("legacy_seq", "42").unwrap();
+    legacy.flush().unwrap();
+    let product = BeliefStore::new(sled::open(product_dir.path().join("belief")).unwrap()).unwrap();
+
+    assert_eq!(
+        product
+            .migrate_legacy_authority(&legacy, migration_identity())
+            .unwrap(),
+        LegacyBeliefCompatibilityPosture::ProductAuthoritative
+    );
+    assert_eq!(
+        product.authority_snapshot().unwrap(),
+        legacy.authority_snapshot().unwrap()
+    );
+    assert_eq!(
+        product.get_runtime_meta("legacy_seq").unwrap().as_deref(),
+        Some("42")
+    );
+    assert_eq!(
+        product
+            .migrate_legacy_authority(&legacy, migration_identity())
+            .unwrap(),
+        LegacyBeliefCompatibilityPosture::ProductAuthoritative
+    );
+    assert_eq!(
+        product.product_authority_id().unwrap().as_deref(),
+        Some("product-belief-a")
+    );
+    product.put_runtime_meta("product_seq", "43").unwrap();
+    assert_eq!(
+        product
+            .migrate_legacy_authority(&legacy, migration_identity())
+            .unwrap(),
+        LegacyBeliefCompatibilityPosture::ForwardRepairOnly
+    );
+}
+
+#[test]
+fn empty_belief_authority_migration_persists_cutover_marker() {
+    use meld_world_model::belief::contracts::{
+        BeliefAuthorityMigrationProgress, LegacyBeliefCompatibilityPosture,
+    };
+
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let product_dir = tempfile::tempdir().unwrap();
+    let legacy = BeliefStore::new(sled::open(legacy_dir.path().join("belief")).unwrap()).unwrap();
+    let product = BeliefStore::new(sled::open(product_dir.path().join("belief")).unwrap()).unwrap();
+
+    assert_eq!(
+        product
+            .migrate_legacy_authority(&legacy, migration_identity())
+            .unwrap(),
+        LegacyBeliefCompatibilityPosture::NoLegacyState
+    );
+    assert!(matches!(
+        product
+            .authority_migration_marker()
+            .unwrap()
+            .unwrap()
+            .progress(),
+        BeliefAuthorityMigrationProgress::Cutover { .. }
+    ));
+}
+
+#[test]
+fn belief_authority_marker_rejects_snapshot_replacement_and_regression() {
+    use meld_world_model::belief::contracts::{
+        BeliefAuthorityMigrationMarker, BeliefAuthorityMigrationProgress, BeliefAuthoritySnapshot,
+    };
+
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let product_dir = tempfile::tempdir().unwrap();
+    let legacy = BeliefStore::new(sled::open(legacy_dir.path().join("belief")).unwrap()).unwrap();
+    legacy.put_runtime_meta("legacy_seq", "1").unwrap();
+    let product = BeliefStore::new(sled::open(product_dir.path().join("belief")).unwrap()).unwrap();
+    product
+        .advance_legacy_authority_migration(&legacy, migration_identity())
+        .unwrap();
+    let replacement = BeliefAuthorityMigrationMarker::try_new(
+        migration_identity(),
+        BeliefAuthorityMigrationProgress::Prepared {
+            source: BeliefAuthoritySnapshot::try_new("b".repeat(64), 1).unwrap(),
+        },
+    )
+    .unwrap();
+    assert!(product
+        .put_authority_migration_marker(&replacement)
+        .is_err());
+    let copying = product
+        .advance_legacy_authority_migration(&legacy, migration_identity())
+        .unwrap();
+    let prepared = BeliefAuthorityMigrationMarker::try_new(
+        migration_identity(),
+        match copying.progress() {
+            BeliefAuthorityMigrationProgress::Copying { source, .. } => {
+                BeliefAuthorityMigrationProgress::Prepared {
+                    source: source.clone(),
+                }
+            }
+            _ => unreachable!(),
+        },
+    )
+    .unwrap();
+    assert!(product.put_authority_migration_marker(&prepared).is_err());
+}
+
+#[test]
+fn belief_authority_fence_rejects_concurrent_source_mutation() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let product_dir = tempfile::tempdir().unwrap();
+    let legacy = BeliefStore::new(sled::open(legacy_dir.path().join("belief")).unwrap()).unwrap();
+    legacy.put_runtime_meta("legacy_seq", "1").unwrap();
+    let writer = legacy.clone();
+    let attempts = Arc::new(AtomicU64::new(2));
+    let writer_attempts = attempts.clone();
+    let writer_thread = std::thread::spawn(move || loop {
+        let seq = writer_attempts.fetch_add(1, Ordering::Relaxed);
+        if writer
+            .put_runtime_meta("legacy_seq", &seq.to_string())
+            .is_err()
+        {
+            return seq;
+        }
+    });
+    let product = BeliefStore::new(sled::open(product_dir.path().join("belief")).unwrap()).unwrap();
+    let marker = product
+        .advance_legacy_authority_migration(&legacy, migration_identity())
+        .unwrap();
+    let rejected_seq = writer_thread.join().unwrap();
+
+    assert!(rejected_seq >= 2);
+    assert!(legacy.put_runtime_meta("legacy_seq", "late").is_err());
+    let frozen = match marker.progress() {
+        meld_world_model::belief::contracts::BeliefAuthorityMigrationProgress::Prepared {
+            source,
+        } => source,
+        other => panic!("expected prepared marker, got {other:?}"),
+    };
+    assert_eq!(&legacy.authority_snapshot().unwrap(), frozen);
+}
+
+#[test]
+fn belief_authority_migration_resumes_after_reopen_from_every_marker_state() {
+    use meld_world_model::belief::contracts::{
+        BeliefAuthorityMigrationMarker, BeliefAuthorityMigrationProgress,
+        LegacyBeliefCompatibilityPosture,
+    };
+
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let product_dir = tempfile::tempdir().unwrap();
+    let legacy_path = legacy_dir.path().join("belief");
+    let product_path = product_dir.path().join("belief");
+    let legacy = BeliefStore::new(sled::open(&legacy_path).unwrap()).unwrap();
+    legacy.put_runtime_meta("legacy_seq", "42").unwrap();
+    let mut product = BeliefStore::new(sled::open(&product_path).unwrap()).unwrap();
+    let expected_states = ["prepared", "copying", "verified", "cutover"];
+    for expected in expected_states {
+        let marker = product
+            .advance_legacy_authority_migration(&legacy, migration_identity())
+            .unwrap();
+        let actual = match marker.progress() {
+            BeliefAuthorityMigrationProgress::Prepared { .. } => "prepared",
+            BeliefAuthorityMigrationProgress::Copying { .. } => "copying",
+            BeliefAuthorityMigrationProgress::Verified { .. } => "verified",
+            BeliefAuthorityMigrationProgress::Cutover { .. } => "cutover",
+            BeliefAuthorityMigrationProgress::ForwardRepairOnly { .. } => "forward_repair_only",
+        };
+        assert_eq!(actual, expected);
+        drop(product);
+        product = BeliefStore::new(reopen_sled_after_close(&product_path).unwrap()).unwrap();
+    }
+    product.put_runtime_meta("product_seq", "43").unwrap();
+    let marker = product
+        .advance_legacy_authority_migration(&legacy, migration_identity())
+        .unwrap();
+    assert!(matches!(
+        marker.progress(),
+        BeliefAuthorityMigrationProgress::ForwardRepairOnly { .. }
+    ));
+    let cutover = BeliefAuthorityMigrationMarker::try_new(
+        migration_identity(),
+        match marker.progress() {
+            BeliefAuthorityMigrationProgress::ForwardRepairOnly { parity } => {
+                BeliefAuthorityMigrationProgress::Cutover {
+                    parity: parity.clone(),
+                }
+            }
+            _ => unreachable!(),
+        },
+    )
+    .unwrap();
+    assert!(product.put_authority_migration_marker(&cutover).is_err());
+    drop(product);
+    let reopened = BeliefStore::new(reopen_sled_after_close(&product_path).unwrap()).unwrap();
+    assert_eq!(
+        reopened
+            .migrate_legacy_authority(&legacy, migration_identity())
+            .unwrap(),
+        LegacyBeliefCompatibilityPosture::ForwardRepairOnly
+    );
+}
+
 #[test]
 fn belief_store_returns_open_observation_opportunities() {
     let (_graph_dir, graph, node) = seeded_graph();
@@ -1711,6 +1932,7 @@ fn belief_public_records_round_trip_through_serde() {
         belief_key: view.key.clone(),
         dirty_since_seq: 2,
         latest_seq: 2,
+        mutation_generation: 1,
         active_lease_id: None,
         reason: meld_world_model::DirtyReason::NewEvidence,
     };
@@ -1824,6 +2046,215 @@ fn test_lease(
         config_snapshot_hash: "hash".to_string(),
         status: meld_world_model::LeaseStatus::Queued,
     }
+}
+
+#[test]
+fn belief_open_reconciles_an_interrupted_atomic_commit_intent() {
+    let (_graph_dir, graph, node) = seeded_graph();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let path = belief_dir.path().join("belief");
+    let revision_id;
+    let lease_id;
+    let key;
+    {
+        let store = Arc::new(BeliefStore::new(sled::open(&path).unwrap()).unwrap());
+        let runtime = BeliefRuntime::from_json_config(store.clone(), graph, config_json()).unwrap();
+        runtime
+            .assess_subject(&node, "frame_type", "analysis", "worker-a")
+            .unwrap();
+        let prior_view = BeliefQuery::new(store.as_ref())
+            .current_views_for_subject(&node, &PerspectiveKey::new("default", "default").unwrap())
+            .unwrap()
+            .remove(0);
+        key = prior_view.key.clone();
+        store.mark_dirty(&key, 2).unwrap();
+        let lease = store
+            .acquire_lease(test_lease(&prior_view, "lease-interrupted", 2, 2))
+            .unwrap();
+        lease_id = lease.lease_id.clone();
+        let revision = test_revision(&prior_view, 2, 2);
+        revision_id = revision.revision_id.clone();
+        let view = store.project_view(
+            &revision,
+            HydrationRefs {
+                evidence_ids: Vec::new(),
+                source_fact_ids: Vec::new(),
+                graph_anchor_ids: Vec::new(),
+                revision_id: Some(revision.revision_id.clone()),
+            },
+        );
+        let mut completed = lease.clone();
+        completed.status = LeaseStatus::Completed;
+        let intent = meld_world_model::belief::contracts::BeliefCommitIntent::try_new(
+            "commit-interrupted",
+            lease,
+            completed,
+            store.dirty_state(&key).unwrap().unwrap(),
+            revision,
+            view,
+        )
+        .unwrap();
+        store.prepare_belief_commit(&intent).unwrap();
+    }
+
+    let reopened = BeliefStore::new(reopen_sled_after_close(&path).unwrap()).unwrap();
+    assert_eq!(
+        reopened
+            .current_revision(&key)
+            .unwrap()
+            .unwrap()
+            .revision_id,
+        revision_id
+    );
+    assert_eq!(
+        reopened
+            .current_view(&key)
+            .unwrap()
+            .unwrap()
+            .current_revision_id
+            .as_deref(),
+        Some(revision_id.as_str())
+    );
+    assert_eq!(
+        reopened.get_lease(&lease_id).unwrap().unwrap().status,
+        LeaseStatus::Completed
+    );
+    assert!(reopened.dirty_state(&key).unwrap().is_none());
+}
+
+fn evidence_cursor(
+    ledger_id: meld_world_model::events::LedgerIdentity,
+    seq: u64,
+) -> meld_world_model::belief::contracts::EvidenceConsumerCursor {
+    meld_world_model::belief::contracts::EvidenceConsumerCursor {
+        consumer_id: "belief.evidence.default".to_string(),
+        ledger_cursor: LedgerCursor {
+            ledger_id,
+            after_seq: seq,
+        },
+        family_config_hash: "family-hash".to_string(),
+        source_mapping_hash: "mapping-hash".to_string(),
+        perspective: PerspectiveKey::new("agent", "default").unwrap(),
+        branch_scope: BranchScope::main(),
+    }
+}
+
+fn evidence_receipt(
+    cursor: &meld_world_model::belief::contracts::EvidenceConsumerCursor,
+    disposition: meld_world_model::belief::contracts::EvidenceIngestionReceiptDisposition,
+) -> meld_world_model::belief::contracts::EvidenceIngestionReceipt {
+    meld_world_model::belief::contracts::EvidenceIngestionReceipt {
+        identity: meld_world_model::belief::contracts::EvidenceIngestionReceiptIdentity {
+            consumer_id: cursor.consumer_id.clone(),
+            source_record: EventRecordRef {
+                ledger_id: cursor.ledger_cursor.ledger_id,
+                seq: cursor.ledger_cursor.after_seq,
+            },
+            family_config_hash: cursor.family_config_hash.clone(),
+            source_mapping_hash: cursor.source_mapping_hash.clone(),
+            perspective: cursor.perspective.clone(),
+            branch_scope: cursor.branch_scope.clone(),
+        },
+        disposition,
+        evidence_ids: Vec::new(),
+    }
+}
+
+#[test]
+fn evidence_receipt_flushes_with_cursor_and_replays_exactly_after_reopen() {
+    use meld_world_model::belief::contracts::{
+        EvidenceIngestionReceiptDisposition, EvidenceIngestionReceiptWriteDisposition,
+    };
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("belief");
+    let ledger_id = "00000000-0000-0000-0000-000000000123".parse().unwrap();
+    let cursor = evidence_cursor(ledger_id, 1);
+    let receipt = evidence_receipt(&cursor, EvidenceIngestionReceiptDisposition::Irrelevant);
+    {
+        let store = BeliefStore::new(sled::open(&path).unwrap()).unwrap();
+        assert_eq!(
+            store
+                .record_evidence_receipt_and_advance(None, &receipt, &cursor)
+                .unwrap(),
+            EvidenceIngestionReceiptWriteDisposition::Inserted
+        );
+    }
+    let reopened = BeliefStore::new(reopen_sled_after_close(&path).unwrap()).unwrap();
+    assert_eq!(
+        reopened.evidence_consumer_cursor(&cursor).unwrap(),
+        Some(cursor.clone())
+    );
+    assert_eq!(
+        reopened.evidence_ingestion_receipt(&receipt).unwrap(),
+        Some(receipt.clone())
+    );
+    assert_eq!(
+        reopened
+            .record_evidence_receipt_and_advance(None, &receipt, &cursor)
+            .unwrap(),
+        EvidenceIngestionReceiptWriteDisposition::ExactReplay
+    );
+}
+
+#[test]
+fn evidence_cursor_rejects_receipt_conflict_foreign_ledger_and_stale_ordering() {
+    use meld_world_model::belief::contracts::EvidenceIngestionReceiptDisposition;
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = BeliefStore::new(sled::open(temp.path().join("belief")).unwrap()).unwrap();
+    let ledger_a = "00000000-0000-0000-0000-000000000123".parse().unwrap();
+    let ledger_b = "00000000-0000-0000-0000-000000000456".parse().unwrap();
+    let first = evidence_cursor(ledger_a, 1);
+    let first_receipt = evidence_receipt(&first, EvidenceIngestionReceiptDisposition::Promoted);
+    store
+        .record_evidence_receipt_and_advance(None, &first_receipt, &first)
+        .unwrap();
+
+    let conflict = evidence_receipt(&first, EvidenceIngestionReceiptDisposition::Rejected);
+    assert!(store
+        .record_evidence_receipt_and_advance(None, &conflict, &first)
+        .is_err());
+
+    let foreign = evidence_cursor(ledger_b, 2);
+    let foreign_receipt =
+        evidence_receipt(&foreign, EvidenceIngestionReceiptDisposition::Irrelevant);
+    assert!(store
+        .record_evidence_receipt_and_advance(Some(&first), &foreign_receipt, &foreign)
+        .is_err());
+
+    let gap = evidence_cursor(ledger_a, 3);
+    let gap_receipt = evidence_receipt(&gap, EvidenceIngestionReceiptDisposition::Irrelevant);
+    assert!(store
+        .record_evidence_receipt_and_advance(Some(&first), &gap_receipt, &gap)
+        .is_err());
+
+    let second = evidence_cursor(ledger_a, 2);
+    let second_receipt = evidence_receipt(&second, EvidenceIngestionReceiptDisposition::Irrelevant);
+    store
+        .record_evidence_receipt_and_advance(Some(&first), &second_receipt, &second)
+        .unwrap();
+    assert_eq!(
+        store
+            .record_evidence_receipt_and_advance(None, &second_receipt, &second)
+            .unwrap(),
+        meld_world_model::belief::contracts::EvidenceIngestionReceiptWriteDisposition::ExactReplay
+    );
+    assert_eq!(
+        store
+            .record_evidence_receipt_and_advance(None, &first_receipt, &first)
+            .unwrap(),
+        meld_world_model::belief::contracts::EvidenceIngestionReceiptWriteDisposition::ExactReplay
+    );
+    assert_eq!(
+        store.evidence_consumer_cursor(&second).unwrap(),
+        Some(second.clone())
+    );
+    let third = evidence_cursor(ledger_a, 3);
+    let third_receipt = evidence_receipt(&third, EvidenceIngestionReceiptDisposition::Irrelevant);
+    assert!(store
+        .record_evidence_receipt_and_advance(Some(&first), &third_receipt, &third)
+        .is_err());
 }
 
 proptest! {

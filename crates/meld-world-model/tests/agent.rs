@@ -1595,6 +1595,51 @@ fn agent_cursor_regression_is_rejected() {
 }
 
 #[test]
+fn agent_subscription_cursor_cas_rejects_a_concurrent_stale_writer() {
+    let (_temp_dir, store) = agent_store();
+    let (_agent, subscription) = setup_agent(&store);
+    let first = meld_world_model::agent::contracts::AgentSubscriptionCursorCasIntent::try_new(
+        None,
+        0,
+        meld_world_model::AdvanceSubscriptionCommand {
+            agent_id: AGENT_ID.to_string(),
+            subscription_id: subscription.subscription_id.clone(),
+            delivered_revision_id: "revision-a".to_string(),
+            delivered_seq: 10,
+        },
+    )
+    .unwrap();
+    let second = meld_world_model::agent::contracts::AgentSubscriptionCursorCasIntent::try_new(
+        None,
+        0,
+        meld_world_model::AdvanceSubscriptionCommand {
+            agent_id: AGENT_ID.to_string(),
+            subscription_id: subscription.subscription_id.clone(),
+            delivered_revision_id: "revision-b".to_string(),
+            delivered_seq: 11,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        store
+            .advance_subscription_cursor_cas(&first)
+            .unwrap()
+            .last_delivered_revision_id
+            .as_deref(),
+        Some("revision-a")
+    );
+    assert!(store.advance_subscription_cursor_cas(&second).is_err());
+    assert_eq!(
+        store
+            .advance_subscription_cursor_cas(&first)
+            .unwrap()
+            .last_delivered_seq,
+        10
+    );
+}
+
+#[test]
 fn agent_replay_recomputes_same_decision() {
     let input = curation_input(0.2);
     let first = curate_threshold_rule(input.clone()).unwrap();

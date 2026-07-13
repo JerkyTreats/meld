@@ -1,8 +1,8 @@
 //! Agent subscription commands and cursor rules.
 
 use crate::agent::contracts::{
-    deterministic_id, AdvanceSubscriptionCommand, AgentSubscriptionRecord, AgentSubscriptionStatus,
-    SubscribeAgentCommand,
+    deterministic_id, AdvanceSubscriptionCommand, AgentSubscriptionCursorCasIntent,
+    AgentSubscriptionRecord, AgentSubscriptionStatus, SubscribeAgentCommand,
 };
 use crate::agent::store::AgentStore;
 use crate::error::StorageError;
@@ -72,7 +72,7 @@ impl<'a> AgentSubscription<'a> {
         command: AdvanceSubscriptionCommand,
     ) -> Result<AgentSubscriptionRecord, StorageError> {
         command.validate()?;
-        let Some(mut subscription) = self.store.get_subscription(&command.subscription_id)? else {
+        let Some(subscription) = self.store.get_subscription(&command.subscription_id)? else {
             return Err(StorageError::InvalidPath(format!(
                 "unknown subscription '{}'",
                 command.subscription_id
@@ -92,10 +92,11 @@ impl<'a> AgentSubscription<'a> {
         if command.delivered_seq == subscription.last_delivered_seq {
             return Ok(subscription);
         }
-        subscription.last_delivered_revision_id = Some(command.delivered_revision_id);
-        subscription.last_delivered_seq = command.delivered_seq;
-        subscription.updated_at_seq = command.delivered_seq;
-        self.store.put_subscription(&subscription)?;
-        Ok(subscription)
+        let intent = AgentSubscriptionCursorCasIntent::try_new(
+            subscription.last_delivered_revision_id.clone(),
+            subscription.last_delivered_seq,
+            command,
+        )?;
+        self.store.advance_subscription_cursor_cas(&intent)
     }
 }

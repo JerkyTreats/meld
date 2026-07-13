@@ -146,10 +146,20 @@ impl BeliefRuntime {
             .max()
             .unwrap_or(anchor.selected_at_seq);
         let prior = self.belief_store.current_revision(&key)?;
+        let mutation_generation = self
+            .belief_store
+            .dirty_state(&key)?
+            .map(|dirty| dirty.mutation_generation.max(1))
+            .unwrap_or(1);
         let lease = AssessmentLease {
-            lease_id: format!("lease-{}-{}", source_cursor_end, key.index_key()),
+            lease_id: format!(
+                "lease-{}-{}-{}",
+                mutation_generation,
+                source_cursor_end,
+                key.index_key()
+            ),
             belief_key: key.clone(),
-            epoch: source_cursor_end,
+            epoch: mutation_generation,
             owner_id: owner_id.to_string(),
             input_cursor_start: source_cursor_start,
             input_cursor_end: source_cursor_end,
@@ -168,13 +178,14 @@ impl BeliefRuntime {
             source_cursor_start,
             source_cursor_end,
         })?;
-        self.belief_store
-            .commit_revision(&lease, &output.revision)?;
         let view = self
             .belief_store
             .project_view(&output.revision, output.view_hydration);
-        self.belief_store.put_view(&view)?;
-        self.belief_store.complete_lease(&lease)?;
+        self.belief_store.commit_belief_assessment(
+            &lease,
+            output.revision.clone(),
+            view.clone(),
+        )?;
         self.belief_store.flush()?;
         Ok(RuntimeAssessmentResult {
             evidence_count: evidence.len(),
@@ -205,9 +216,14 @@ impl BeliefRuntime {
             .min(dirty.dirty_since_seq);
         let source_cursor_end = dirty.latest_seq;
         let lease = AssessmentLease {
-            lease_id: format!("lease-{}-{}", source_cursor_end, key.index_key()),
+            lease_id: format!(
+                "lease-{}-{}-{}",
+                dirty.mutation_generation.max(1),
+                source_cursor_end,
+                key.index_key()
+            ),
             belief_key: key.clone(),
-            epoch: source_cursor_end,
+            epoch: dirty.mutation_generation.max(1),
             owner_id: owner_id.to_string(),
             input_cursor_start: source_cursor_start,
             input_cursor_end: source_cursor_end,
@@ -222,15 +238,13 @@ impl BeliefRuntime {
             Err(StorageError::Backpressure(_)) => return Ok(None),
             Err(err) => return Err(err),
         };
-        let evidence: Vec<_> = self
-            .belief_store
-            .evidence_for_key(key)?
-            .into_iter()
-            .filter(|item| {
-                item.source_cursor_end >= source_cursor_start
-                    && item.source_cursor_end <= source_cursor_end
-            })
-            .collect();
+        let evidence = self.belief_store.evidence_for_dirty_assessment(
+            key,
+            &dirty,
+            lease.epoch,
+            source_cursor_start,
+            source_cursor_end,
+        )?;
         if evidence.is_empty() {
             self.belief_store.complete_lease(&lease)?;
             return Ok(None);
@@ -243,13 +257,14 @@ impl BeliefRuntime {
             source_cursor_start,
             source_cursor_end,
         })?;
-        self.belief_store
-            .commit_revision(&lease, &output.revision)?;
         let view = self
             .belief_store
             .project_view(&output.revision, output.view_hydration);
-        self.belief_store.put_view(&view)?;
-        self.belief_store.complete_lease(&lease)?;
+        self.belief_store.commit_belief_assessment(
+            &lease,
+            output.revision.clone(),
+            view.clone(),
+        )?;
         self.belief_store.flush()?;
         Ok(Some(RuntimeAssessmentResult {
             evidence_count: evidence.len(),

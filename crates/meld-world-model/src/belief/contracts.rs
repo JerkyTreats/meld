@@ -1039,6 +1039,9 @@ pub struct DirtyKeyState {
     pub belief_key: BeliefKey,
     pub dirty_since_seq: u64,
     pub latest_seq: u64,
+    /// Monotonic mutation generation used to detect work admitted after leasing.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub mutation_generation: u64,
     pub active_lease_id: Option<String>,
     pub reason: DirtyReason,
 }
@@ -1247,6 +1250,10 @@ pub fn require_non_empty(label: &str, value: &str) -> Result<(), StorageError> {
         )));
     }
     Ok(())
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[cfg(test)]

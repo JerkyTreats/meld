@@ -12,6 +12,7 @@ default = []
 test-support = ["meld-events/test-support"]
 
 [dependencies]
+blake3 = "1.5"
 meld-events = { path = "../meld-events", version = "2.7.0" }
 meld-lang = { path = "../meld-lang", version = "2.7.0" }
 parking_lot = "0.12"

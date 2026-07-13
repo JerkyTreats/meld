@@ -115,6 +115,7 @@
 
 use crate::belief::{
     BeliefEvidenceNormalizer, BeliefKey, BeliefRuntime, BeliefStore, BranchScope, ConfigSnapshot,
+    EvidenceConsumerCursor, EvidenceIngestionReceipt, EvidenceIngestionReceiptWriteDisposition,
     PromotedEvidenceRecord, RuntimeAssessmentResult,
 };
 use crate::error::StorageError;
@@ -197,6 +198,16 @@ pub fn ingest_promoted_evidence(
         committed,
         rejected: false,
     })
+}
+
+/// Durably bind one evidence receipt to its owner-scoped cursor advancement.
+pub fn persist_evidence_receipt_and_advance(
+    store: &BeliefStore,
+    expected: Option<&EvidenceConsumerCursor>,
+    receipt: &EvidenceIngestionReceipt,
+    next: &EvidenceConsumerCursor,
+) -> Result<EvidenceIngestionReceiptWriteDisposition, StorageError> {
+    store.record_evidence_receipt_and_advance(expected, receipt, next)
 }
 
 fn sort_dedup_keys(keys: &mut Vec<BeliefKey>) {

@@ -7,8 +7,8 @@ use sled::{Db, Tree};
 
 use crate::agent::contracts::{
     AgentActivationRecord, AgentCurationDecision, AgentCurationDedupeKey, AgentRecord,
-    AgentSatisfactionReview, AgentSinkReceipt, AgentStatus, AgentSubscriptionRecord,
-    AgentSubscriptionStatus,
+    AgentSatisfactionReview, AgentSinkReceipt, AgentStatus, AgentSubscriptionCursorCasIntent,
+    AgentSubscriptionRecord, AgentSubscriptionStatus,
 };
 use crate::error::StorageError;
 
@@ -184,6 +184,60 @@ impl AgentStore {
                 .get(subscription_id.as_bytes())
                 .map_err(to_storage_io)?,
         )
+    }
+
+    /// Atomically advance one subscription from its exact observed cursor.
+    pub fn advance_subscription_cursor_cas(
+        &self,
+        intent: &AgentSubscriptionCursorCasIntent,
+    ) -> Result<AgentSubscriptionRecord, StorageError> {
+        let command = intent.command();
+        let key = command.subscription_id.as_bytes();
+        let Some(raw) = self.subscriptions.get(key).map_err(to_storage_io)? else {
+            return Err(StorageError::InvalidPath(format!(
+                "unknown subscription '{}'",
+                command.subscription_id
+            )));
+        };
+        let current: AgentSubscriptionRecord =
+            serde_json::from_slice(&raw).map_err(to_storage_data)?;
+        if current.agent_id != command.agent_id {
+            return Err(StorageError::InvalidPath(format!(
+                "subscription '{}' does not belong to agent '{}'",
+                command.subscription_id, command.agent_id
+            )));
+        }
+        if current.last_delivered_revision_id.as_deref()
+            == Some(command.delivered_revision_id.as_str())
+            && current.last_delivered_seq == command.delivered_seq
+        {
+            return Ok(current);
+        }
+        if current.last_delivered_revision_id.as_deref() != intent.expected_delivered_revision_id()
+            || current.last_delivered_seq != intent.expected_delivered_seq()
+        {
+            return Err(StorageError::Backpressure(format!(
+                "subscription cursor changed for '{}'",
+                command.subscription_id
+            )));
+        }
+
+        let mut updated = current;
+        updated.last_delivered_revision_id = Some(command.delivered_revision_id.clone());
+        updated.last_delivered_seq = command.delivered_seq;
+        updated.updated_at_seq = command.delivered_seq;
+        let encoded = serde_json::to_vec(&updated).map_err(to_storage_data)?;
+        match self
+            .subscriptions
+            .compare_and_swap(key, Some(raw), Some(encoded))
+            .map_err(to_storage_io)?
+        {
+            Ok(()) => Ok(updated),
+            Err(_) => Err(StorageError::Backpressure(format!(
+                "subscription cursor changed for '{}'",
+                command.subscription_id
+            ))),
+        }
     }
 
     /// Read the idempotent subscription for one agent and belief key.
