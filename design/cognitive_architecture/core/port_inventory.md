@@ -1,42 +1,57 @@
-# Initial Port Inventory
+# Execution Port Inventory
 
 Date: 2026-04-25
-Status: frozen for migration start
-Scope: execution owned ports and root adapter responsibilities
+Status: active
+Scope: execution-owned ports and root adapter responsibilities
 
 ## Purpose
 
-Phase 0 freezes the first port list before execution boundary work starts.
-Later phases may refine names, but new responsibilities should not appear without updating this inventory and the plan.
+This inventory defines the contracts that let execution consume product capabilities without depending on root crate internals.
+
+Execution owns each port trait and its request and response types. The root product crate owns concrete adapters, dependency injection, storage discovery, and product configuration.
 
 ## Execution Owned Ports
 
-| Port | Purpose | Expected root adapter home |
+| Port | Contract | Root adapter owner |
 | --- | --- | --- |
-| `ContextReadPort` | read node context, frame heads, and frame composition needed by execution | `src/context` and root adapter wiring |
-| `ContextWritePort` | write frames and head mutations needed by execution outcomes | `src/context` and root adapter wiring |
-| `PromptArtifactReadPort` | load prompt context artifacts and prompt templates | `src/prompt_context` |
-| `NodeResolutionPort` | resolve workspace rooted node paths and identifiers | `src/workspace` and CLI routing |
-| `ProviderExecutionPort` | execute provider backed generation requests | `src/provider` |
+| `ContextReadPort` | read node context, frame heads, and frame composition needed by execution | `src/context` |
+| `ContextWritePort` | write frames and head mutations produced by execution outcomes | `src/context` |
+| `PromptArtifactReadPort` | read and persist prompt context artifacts used by execution | `src/prompt_context` |
+| `SystemPromptPort` | load the configured system prompt for an agent | context and agent adapters |
+| `NodeResolutionPort` | resolve workspace-rooted node paths and identifiers | `src/workspace` and CLI routing |
+| `ProviderExecutionPort` | execute provider-backed generation requests | `src/provider` |
 | `ProviderValidationPort` | validate configured providers and provider bindings | `src/provider` and config adapters |
-| `EventPublicationPort` | publish canonical event envelopes and idempotent derived facts | `src/events` through progress or event runtime adapters |
-| `WorldModelQueryPort` | read traversal anchors, provenance, and legacy claim compatibility views | `src/world_state` query services |
-| `WorkflowProfileLoadPort` | load workflow profiles and command facing workflow definitions | `src/workflow` and config adapters |
+| `PromptLineagePort` | construct and persist prompt lineage for generation requests | prompt context and generation adapters |
+| `GeneratedMetadataPort` | read prior generation metadata and build validated output metadata | context generation adapters |
+| `EventPublicationPort` | publish canonical event envelopes and idempotent factual outcomes | `src/events` through the product event authority |
+| `ExecutionProgressPort` | emit interactive progress without becoming durable event authority | CLI progress adapters |
+| `WorkspaceScanPort` | execute workspace scans through the workspace domain boundary | `src/workspace` |
+| `WorldModelQueryPort` | read current artifact anchors for task runs | world model query adapters |
+| `BeliefContextReadPort` | read planner-safe belief signals for context assembly | world model query adapters |
+| `WorkflowProfileLoadPort` | load workflow profiles and command-facing workflow definitions | `src/workflow` and config adapters |
+| `PlanningProjectionPort` | project goal-scoped `WorldState` with durable frame provenance | world model planner adapters |
 
-## Root Adapter Rules
+## Adapter Invariants
 
-- root owns concrete adapters that implement these ports
-- execution owns the traits and request contracts that consume these ports
-- `ContextApi` may wrap multiple adapters during migration, but it is not the target port surface
+- Root adapters implement execution-owned traits without exposing root internals.
+- Execution request types express the complete cross-domain contract.
+- Adapters parse product storage and route formats, then delegate to the owning domain.
+- Event publication uses the product event authority and never opens a second canonical writer.
+- World model reads and planning projections use public contracts and never reach into graph or belief storage internals.
+- Context, provider, workflow, and workspace adapters do not own execution policy.
+- Cross-domain failures are translated into explicit port errors at the boundary.
 
-## Phase Links
+## Composition
 
-- Phase 3 extracts the traits and request contracts
-- Phase 4 moves workflow runtime onto explicit adapter wiring
-- Phase 5 removes remaining ambient root facade reach through
+The root product crate assembles these adapters and provides them to execution through explicit dependency injection. An adapter may coordinate more than one product service only when the execution port contract names that coordination as one semantic operation.
+
+The product shell remains responsible for user-facing route parsing, configuration, and storage location. Execution remains responsible for planning, task network commands, task and capability dispatch, and outcome publication intent.
 
 ## Read With
 
-- [PLAN](../PLAN.md)
-- [Core Migration](MIGRATION.md)
-- [Execution Contract Extraction](../completed/execution_contract_extraction.md)
+- [Cognitive Architecture](../README.md)
+- [Core Crate](CRATE.md)
+- [Execution Domain](../execution/README.md)
+- [Execution Integration Contracts](../execution/GAPS.md)
+- [World Model Public Interface](../world_model/public_interface.md)
+- [Events Domain](../events/README.md)

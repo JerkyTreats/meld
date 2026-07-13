@@ -32,7 +32,7 @@ The shared typed language [`meld-lang`](../../meld-lang/README.md) provides the 
 ## Read With
 
 - [Execution Domain](../README.md)
-- [Execution Gaps](../GAPS.md)
+- [Execution Integration Contracts](../GAPS.md)
 - [Goals](../goals/README.md)
 - [HTN Model](htn/README.md)
 - [HTN Lineage Model](htn/lineage_model.md)

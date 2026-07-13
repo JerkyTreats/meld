@@ -38,7 +38,7 @@ At each level, the execution model is identical: compute the ready set, dispatch
 - dispatch through task and capability execution
 - publication of outcomes, failures, and learned facts back into events
 - synthesis escalation when the current capability catalog cannot satisfy a goal
-- workflow runtime as compatibility layer where cognitive subsystems are not yet built
+- workflow compatibility contracts at the execution boundary
 
 `goals` owns the goal set data structure, lifecycle state machine, and curation API.
 `planning` owns HTN decomposition, graph mutation proposals, task network command construction, cost-aware plan transitions, guard and observation semantics.
@@ -91,10 +91,10 @@ flowchart TD
 - [Execution Crate](CRATE.md)
   `meld-execution` crate boundary, owned modules, workflow runtime, task/capability authority
 
-### Open Gaps
+### Integration Contracts
 
-- [Execution Gaps](GAPS.md)
-  open contracts and undefined seams — world model read interface, outcome publication, workflow integration
+- [Execution Integration Contracts](GAPS.md)
+  goal authority, planning, world model reads, outcome publication, and workflow compatibility
 
 ### Examples
 

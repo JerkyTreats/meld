@@ -181,9 +181,9 @@ Execution composition lowering is all or nothing for executable operator steps.
 
 The lowerer inspects every concrete operator step in the composition. If any executable operator step cannot resolve to a capability contract, cannot compile into a task node, or references an invalid edge, the lowerer reports diagnostics and produces no executable graph mutation for that composition.
 
-Recursive goal steps and conditional edges may be preserved as deferred diagnostics. They do not permit partial executable graph commit in the expanded execution slice.
+Recursive goal steps and conditional edges must lower completely into valid graph mutations. A lowerer that surfaces either construct as a diagnostic produces no executable graph mutation for that composition.
 
-This rule keeps the accepted task network graph coherent until plan diffing, preserve, relink, cancel, and prune mature.
+This rule keeps the accepted task network graph coherent across plan diffing, preserve, relink, cancel, and prune operations.
 
 ### Task Init Sources
 
@@ -329,32 +329,21 @@ Synthesis is a task in the network, not a special-case pipeline. Graphs lower gr
 
 ## Layer Responsibilities
 
-### Baseline surfaces
-
 - **task compiler**: transforms a task definition into a compiled task record
 - **task executor**: executes one task capability graph at the lower level of the fractal
 - **capability catalog**: provides versioned capability lookup
-- **task events**: carry task lifecycle state
+- **task events**: carry factual task lifecycle outcomes
 - **readiness computation**: computes ready capabilities within a task
 - **goal store**: stores execution-owned goals and lifecycle command outcomes
-- **method library**: loads and verifies serialized methods
-- **planning runtime**: turns one active goal and one projected world state into an `ExecutionComposition`
-- **expanded execution contract**: lowers multi node compositions, materializes task inputs, dispatches task runs, and replays accepted graph state
-
-### Target deepening
-
-- **recursive HTN decomposition**: later planning recurses through sub-goal steps and preserves broader lineage
-- **guard expressions**: fully specified in [Guard Expression Semantics](guard_expression_semantics.md), applicable as conditional dependency edges
-- **observation wait semantics**: fully specified in [Observation Wait Semantics](observation_wait_semantics.md), applicable as data-flow dependencies from observation tasks
-- **task network first slice**: specified in [Phase 7 Task Network Plan](../../../plan/execution/task_network/PLAN.md), covering one inject mutation, one ready task, one dispatch, and one publication handoff
-
-### Later contract scope
-
-- **planning loop**: continuous operation, world-model reads, cost-aware mutation proposal decisions
-- **task network deepening**: recursive sub-goal lowering, cancel, relink, preserve, and prune
-- **sensory runtime**: diff native observation remains deferred until task network deepening has the required runtime hooks
-- **switching cost model**: cleanup estimation, sunk cost calculation, benefit comparison
-- **plan diffing**: identifying affected subtrees from belief changes, computing minimal mutations
+- **method library**: loads, indexes, and verifies serialized methods
+- **planning runtime**: turns active goals and projected world state into execution compositions
+- **HTN decomposition**: recursively lowers sub-goals while preserving method and task lineage
+- **guard evaluation**: evaluates conditional dependency edges under [Guard Expression Semantics](guard_expression_semantics.md)
+- **observation waiting**: models observation tasks as data-flow dependencies under [Observation Wait Semantics](observation_wait_semantics.md)
+- **task network command boundary**: accepts graph mutation sets and lifecycle outcomes through one writer
+- **task network runtime**: materializes task inputs, dispatches task runs, and replays accepted graph state
+- **switching cost policy**: compares cleanup cost, sunk cost, disruption, and expected benefit
+- **plan diffing**: identifies affected subtrees and constructs minimal mutation sets
 
 ## Contract Map
 
@@ -363,8 +352,8 @@ Synthesis is a task in the network, not a special-case pipeline. Graphs lower gr
 | `goals/` | goal set curated by world model agent, consumed by planning loop |
 | `planning/htn/` | decomposition records and lineage — vocabulary for the planning loop |
 | `planning/htn/lineage_model.md` | lineage preservation — used for scoping changes and guiding reselection |
-| `planning/guard_expression_semantics.md` | conditional dependency edge evaluation relocated from dissolved `program/` |
-| `planning/observation_wait_semantics.md` | data-flow dependency from observation tasks relocated from dissolved `program/` |
+| `planning/guard_expression_semantics.md` | conditional dependency edge evaluation |
+| `planning/observation_wait_semantics.md` | data-flow dependency from observation tasks |
 | `task_network.md` | the execution substrate — event-driven graph executor |
 | `synthesis/` | tasks in the network, triggered by planning loop on missing capability |
 
@@ -375,17 +364,17 @@ The compatibility workflow route may short-circuit the planning loop. On that ro
 In the graphs-lower-graphs model, workflow integration becomes clearer:
 
 - a workflow profile lowers into a task network graph through task package lowering
-- the graph is initially linear because tasks depend on their predecessor in sequential workflows
-- as the planning loop matures, it can produce graphs with parallelism, branching, and observation points
+- sequential workflow turns produce a linear dependency graph
+- workflow profiles may also produce graphs with parallelism, branching, and observation points
 - the task network executor handles both linear and complex graphs identically — the execution model doesn't change
 
 The workflow executor role maps onto the task network graph executor role. Workflow advances through turns, evaluates gates, and persists state. Task network execution advances through the ready set, evaluates conditional edges, and persists task network state. The workflow executor is a specialized instance of the general pattern.
 
-## Extension Contracts
+## Detailed Contracts
 
-### Method Library Deepening
+### Method Library
 
-The baseline method library contract supports serialized `meld-lang::Method` values. The `Method` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md) with:
+The method library owns serialized `meld-lang::Method` values. The `Method` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md) with:
 
 - `trigger`: a `Proposition` pattern with `Term::Variable` for unification against goals
 - `preconditions`: `Vec<Proposition>` checked against `WorldState` after trigger unification
@@ -394,22 +383,13 @@ The baseline method library contract supports serialized `meld-lang::Method` val
 - `cost`: `CostEstimate` for comparison and ceiling checks
 - `preference`: ordering among alternative methods for the same goal
 
-The baseline contract covers method values, matching, loading, verification, and a `docs_freshness` fixture. Deeper scope includes:
+The library validates methods on load, indexes them by trigger shape, invalidates changed catalog entries, and returns deterministic candidate ordering for the same catalog state and query.
 
-- **method authoring**: concrete methods beyond docs freshness, such as test status and course generation
-- **method library operations**: indexing by trigger shape and cache invalidation on file change
-- **method learning**: whether methods can be derived from successful compositions, deferred
+### Task Network
 
-### Task Network Deepening
+The task network contract covers mutation acceptance, reduced state, ready-set computation, dispatch claim fencing, multi-node graph execution, conditional edge evaluation, task input materialization, task runtime bridging, durable publication handoff, and replay.
 
-The baseline task network contract covers inject mutation, reduced state, ready set computation, dispatch claim fencing, multi node graph execution, task input materialization, task runtime bridging, durable publication handoff, and replay.
-
-Later work still requires:
-
-- conditional edge evaluation with guard expressions on dependency edges
-- recursive sub-goal lowering
-- cancel, relink, preserve, and prune mutation behavior
-- task equivalence and shared-task reuse across goals
+Graph mutations include inject, cancel, relink, preserve, and prune. Recursive lowering preserves HTN lineage. Task equivalence permits shared-task reuse only when identity, inputs, scope, and lifecycle fencing match.
 
 ### Switching cost model
 
@@ -418,7 +398,7 @@ Cost-aware plan transitions require cost estimates on tasks and a model for comp
 ## Read With
 
 - [Execution Domain](../README.md)
-- [Execution Gaps](../GAPS.md)
+- [Execution Integration Contracts](../GAPS.md)
 - [Goals](../goals/README.md)
 - [HTN Model](htn/README.md)
 - [HTN Lineage Model](htn/lineage_model.md)

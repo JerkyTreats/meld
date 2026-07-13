@@ -57,11 +57,11 @@ This area may describe action relevance, but it must not drift into execution po
 
 ### WorldState as the Downstream Contract
 
-The planner-facing projection's downstream output is `WorldState` — a set of ground `Proposition` values in the shared language [`meld-lang`](../../meld-lang/README.md). This is the concrete contract that resolves the world-model-to-execution seam named as Gap 3 in [Execution Gaps](../../execution/GAPS.md).
+The planner-facing projection's downstream output is `WorldState` — a set of ground `Proposition` values in the shared language [`meld-lang`](../../meld-lang/README.md). This is the concrete world-model-to-execution read contract defined in [Execution Integration Contracts](../../execution/GAPS.md).
 
-The baseline projection maps `BeliefView` plus graph scope into `WorldState` through `project_world_state` and `PlannerQuery::project_current_world_state`.
+The projection maps `BeliefView` plus graph scope into `WorldState` through `project_world_state` and `PlannerQuery::project_current_world_state`.
 
-The broader planner architecture still expects `WorldModelView` from lower-layer inputs. That future projection then translates this richer view into `WorldState` for execution consumption:
+`WorldModelView` retains richer planner-facing state from lower-layer inputs and projects the execution-facing subset into `WorldState`:
 
 ```
 WorldModelView (internal planner-facing richness)
@@ -76,7 +76,7 @@ WorldState (ground propositions in meld-lang)
 evaluate(world_state, goal.target) → EvalResult
 ```
 
-The `WorldModelView` types defined below retain their full richness for future internal planner operations such as precondition assessment, observation opportunity scoring, and abstention evaluation. `WorldState` is the subset projected outward. It carries the belief states, freshness, artifact existence, scope accessibility, and relationships that execution can evaluate mechanically. See [World State and Evaluation](../../meld-lang/world_state.md) for the concrete construction example.
+The `WorldModelView` types defined below retain their full richness for internal planner operations such as precondition assessment, observation opportunity scoring, and abstention evaluation. `WorldState` is the subset projected outward. It carries the belief states, freshness, artifact existence, scope accessibility, and relationships that execution can evaluate mechanically. See [World State and Evaluation](../../meld-lang/world_state.md) for the concrete construction example.
 
 ## Relationship To Belief, Causation, And Regime
 
@@ -200,7 +200,7 @@ PlannerGraphInput {
 }
 ```
 
-Planner uses graph input for identity, scope, provenance, explanation, branch presence, and later hydration.
+Planner uses graph input for identity, scope, provenance, explanation, branch presence, and hydration.
 It must not infer belief confidence or causal effect from graph input alone.
 
 ### Belief Input
@@ -343,4 +343,4 @@ Planner projection design is defined in:
 - [Lang World State and Evaluation](../../meld-lang/world_state.md)
 - [Lang Primitives](../../meld-lang/primitives.md)
 - [Execution Domain](../../execution/README.md)
-- [Execution Gaps](../../execution/GAPS.md)
+- [Execution Integration Contracts](../../execution/GAPS.md)

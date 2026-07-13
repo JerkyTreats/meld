@@ -17,11 +17,11 @@ Goals live inside execution because they are execution's data — the planning l
 The Goal Set is a data structure inside execution. It holds the current goals, their lifecycle state, their priority, and their satisfaction criteria. Execution exposes a public curation API over this set:
 
 - **add**: propose a new goal with desired state, priority, and satisfaction criteria
-- **modify**: adjust priority, cost ceiling, or preemption policy of an existing goal
-- **remove**: abandon a goal (with reason)
-- **satisfy**: mark a goal as satisfied (with evidence)
+- **modify**: adjust priority or cost ceiling of an existing goal
+- **remove**: abandon a goal and record the reason
+- **satisfy**: mark a goal as satisfied and record the evidence
 - **suspend / resume**: hold or release a goal
-- **read**: query the current goal set (active, proposed, satisfied, all)
+- **read**: query active, proposed, satisfied, or all goals
 
 The planning loop reads the active goal set and the world model view, then maintains the task network. Execution is indifferent to *why* a goal was added, removed, or reprioritized. It reacts to the current set.
 
@@ -36,7 +36,7 @@ The agent decides:
 - "The desired belief state is now achieved — satisfy the goal"
 - "This belief divergence is too minor to warrant action — do nothing"
 
-The normative judgment — "this matters, act on it" vs "this is tolerable, ignore it" — lives in the agent. The agent's normative framework (what states it cares about, what thresholds trigger action, what priorities apply) is agent-specific. Different agents curating different goal sets is the "En Masse and At Will" pattern applied to execution.
+The normative judgment — "this matters, act on it" versus "this is tolerable, ignore it" — lives in the agent. Its framework defines relevant states, action thresholds, and priorities. Different agents curating different goal sets is the "En Masse and At Will" pattern applied to execution.
 
 ### Seed Agents And Agent Creation Goals
 
@@ -77,7 +77,7 @@ flowchart LR
 
 The cycle closes through the spine. Execution outcomes become facts. Facts become evidence. Evidence revises belief. The world model agent evaluates revised belief against its normative framework and curates the goal set. The planning loop reacts to the updated goal set.
 
-The world model agent is the only entity that crosses the boundary. It reads beliefs (its own domain) and curates goals (execution's domain, through the public API). No other component needs to span both.
+The world model agent is the only entity that crosses the boundary. It reads beliefs from its own domain and curates goals in execution through the public API. No other component needs to span both.
 
 ## World Model Knowledge of Active Goals
 
@@ -96,11 +96,11 @@ This connects to the belief layer's "bidirectional inference where higher-level 
 
 ### Informing the normative framework
 
-Knowledge of active goals helps the agent avoid redundant goal generation. If a goal to fix tests already exists and is active, the agent does not need to generate another one when the next test failure observation arrives. The agent's normative evaluation includes "is someone already working on this?"
+Knowledge of active goals helps the agent avoid redundant goal generation. If an active test-fixing goal is present, the agent does not generate another one when the next test failure observation arrives. The agent's normative evaluation includes whether work is already in progress.
 
 ### Satisfaction from any source
 
-Because the world model agent evaluates satisfaction (by comparing belief against the goal's desired state), goals can be satisfied by any means:
+Because the world model agent evaluates satisfaction by comparing belief against the goal's desired state, goals can be satisfied by any means:
 
 - The system's own execution fixed the tests → belief revises → agent satisfies the goal
 - A human fixed the tests independently → sensory observation → belief revises → agent satisfies the goal
@@ -127,7 +127,7 @@ Goal {
 
 ### Desired state
 
-The desired state is a `Proposition` in the shared language. The system can never know the actual world state (foundational assumption from observe-merge-push). It can only know what it believes. Therefore goals are propositions about belief:
+The desired state is a `Proposition` in the shared language. Under the foundational assumption from observe-merge-push, the system can never know the actual world state. It can only know what it believes. Therefore goals are propositions about belief:
 
 ```
 // In meld-lang terms:
@@ -138,7 +138,7 @@ Proposition::Holds {
 }
 ```
 
-The prior design used `DesiredState { subject, predicate: BeliefPredicate }` as a bespoke type. This is now subsumed by `Proposition::Holds`, which serves the same role but uses the shared language that both world model and execution speak natively. `BeliefPredicate` becomes `Proposition`. `DomainObjectRef` subjects become `Term::Object`. Confidence thresholds become `Condition::Above`.
+Desired state uses `Proposition::Holds` in the shared language that both world model and execution speak natively. Belief predicates use `Proposition`. Domain object subjects use `Term::Object`. Confidence thresholds use `Condition::Above`.
 
 Examples in the shared language:
 
@@ -180,7 +180,7 @@ enum GoalSource {
 
 **Maintenance**: the agent holds a standing invariant and monitors belief continuously. When the invariant is violated, the agent reactivates the goal. Maintenance goals may cycle between `Active` and `Satisfied` as belief moves relative to the invariant.
 
-**Decomposed**: the agent (or the planning loop, through the agent) decomposed a parent goal into sub-goals. Each sub-goal has its own target proposition and lifecycle. The parent goal tracks its children. The `Decomposed` source in `meld-lang` replaces the prior `GoalDecomposition` variant.
+**Decomposed**: the agent or the planning loop acting through the agent decomposed a parent goal into sub-goals. Each sub-goal has its own target proposition and lifecycle. The parent goal tracks its children. The `Decomposed` source records this relationship.
 
 ### Goal lifecycle
 
@@ -200,13 +200,13 @@ enum GoalLifecycle {
 
 **Active**: the planning loop is maintaining task network state toward this goal.
 
-**Suspended**: the goal is valid but cannot be pursued right now. The agent suspends goals when: insufficient belief to plan (observation needed first), resource contention with higher-priority goals, or dependency on another goal's completion.
+**Suspended**: the goal is valid but cannot be pursued right now. The agent suspends goals for insufficient belief, resource contention with higher-priority goals, or dependency on another goal's completion.
 
 **Satisfied**: the goal's target proposition holds in the world state. The world model agent curates satisfaction when `evaluate(world_state, goal.target)` returns `EvalResult::Satisfied`, and execution persists the transition only through its public satisfy API. The `at_seq` field records the event sequence number at which satisfaction was confirmed. Maintenance goals may cycle back to `Active` if the agent later detects invariant violation.
 
 **Abandoned**: the goal is no longer relevant. The agent removes goals when: user cancels, regime shift invalidates premises, or cost exceeds remaining value.
 
-The prior `Superseded { by: GoalId }` variant is absorbed into `Abandoned` — supersession is an abandonment reason, not a distinct lifecycle state.
+Supersession is an `Abandoned` reason that names the replacement goal, not a distinct lifecycle state.
 
 Lifecycle transitions are initiated by the world model agent and persisted by execution through public goal APIs. Planning may observe that a target is satisfied, but it does not own the `Active` to `Satisfied` lifecycle mutation. The planning loop may also propose suspension when it determines that a goal cannot be planned against with the current capability catalog. Even then, the suspension is communicated back to the agent for confirmation.
 
@@ -221,11 +221,11 @@ GoalPriority {
 }
 ```
 
-**Urgency**: lower number = higher urgency. 0 is most urgent. Set by the agent based on belief context — the value-to-cost ratio from the agent's cost-benefit evaluation (see [Goal Curation](../../world_model/agent/goal_curation.md)) determines the urgency level. This replaces the prior separate `urgency`/`importance` fields — importance is now expressed through urgency ordering, which is itself derived from the agent's cost-benefit posterior.
+**Urgency**: lower number means higher urgency. Zero is most urgent. The agent derives urgency from belief context and the value-to-cost ratio defined by [Goal Curation](../../world_model/agent/goal_curation.md). Importance is expressed through this urgency ordering.
 
-**Cost ceiling**: optional upper bound on effort expressed as a `CostEstimate` (time_ms, money_microdollars, provider_calls). If the planning loop estimates that a composition's aggregated cost exceeds the ceiling on any dimension, it rejects that composition and signals the agent. The agent may adjust the ceiling, suspend, or abandon.
+**Cost ceiling**: optional upper bound on effort expressed as a `CostEstimate` across time, money, and provider call dimensions. If the planning loop estimates that a composition's aggregated cost exceeds the ceiling on any dimension, it rejects that composition and signals the agent. The agent may adjust the ceiling, suspend, or abandon.
 
-The prior `preemption_policy` field is deferred. Preemption behavior will be derived from urgency ordering and cost-aware plan transition logic as those mechanisms mature.
+`GoalPriority` does not carry a separate preemption policy. Preemption derives from urgency ordering and cost-aware plan transition rules.
 
 ## Satisfaction Checking
 
@@ -247,7 +247,7 @@ match evaluate(&world_state, &goal.target) {
 }
 ```
 
-The prior `SatisfactionCriteria` type (predicate, confidence_threshold, freshness_requirement, stability_requirement) is subsumed by the `Proposition` target itself. Confidence thresholds become `Condition::Above`. Freshness requirements become `Condition::Within` on a freshness dimension. Stability requirements become a separate dimension the world model projects when it has sufficient history.
+The `Proposition` target carries satisfaction criteria directly. Confidence thresholds use `Condition::Above`. Freshness requirements use `Condition::Within` on a freshness dimension. Stability uses a separate dimension projected by the world model.
 
 The satisfaction boundary is split by ownership:
 
@@ -291,7 +291,7 @@ active goal: tests_pass = true (confidence: ≥ 0.9)
 → execution cleans up associated task network state
 ```
 
-Satisfaction can occur through execution (the system fixed the tests) or through external action (someone else fixed the tests). The agent detects it the same way — through belief revision.
+Satisfaction can occur through execution or external action. The agent detects both through belief revision.
 
 ### Pattern 4: Agent detects regime shift, curates goal set
 
@@ -328,7 +328,7 @@ The agent is one entity with two faces:
 
 In a multi-agent system, each agent has its own normative framework and its own goal set. Two agents observing the same repository may curate different goals because they have different perspectives, different priorities, or different tolerance thresholds for divergence.
 
-The agent's normative framework — what states it cares about, what thresholds trigger action, how it prioritizes — is the agent-specific policy that the earlier design called "goal generation policy." This lives in the world model agent definition, not in execution.
+The agent's normative framework defines relevant states, action thresholds, and priority policy. This lives in the world model agent definition, not in execution.
 
 ## Relationship to Planning
 
@@ -342,7 +342,7 @@ When the goal set changes because an agent adds, removes, or reprioritizes goals
 
 ## Goal Decomposition
 
-Some goals are too abstract to plan against directly. The agent may decompose a goal into sub-goals before adding them to the goal set, or the planning loop may signal that a goal needs decomposition (it cannot find methods to address it directly).
+Some goals are too abstract to plan against directly. The agent may decompose a goal into sub-goals before adding them to the goal set, or the planning loop may signal that no method addresses it directly.
 
 ```
 goal: "repository is well-documented"
@@ -353,44 +353,28 @@ goal: "repository is well-documented"
 
 Each sub-goal is a separate entry in the goal set with its own desired state, satisfaction criteria, and lifecycle. The parent goal tracks its children. The agent satisfies the parent when all children are satisfied.
 
-Goal decomposition is the agent's concern (deciding what to want). Task decomposition is the planning loop's concern (deciding what to do). The two are related but distinct — a goal decomposition may not map 1:1 to an HTN decomposition.
+Goal decomposition is the agent's decision about what to want. Task decomposition is the planning loop's decision about what to do. The two are related but distinct, and a goal decomposition may not map one-to-one to an HTN decomposition.
 
-## Resolving the GAPS.md Tension
+## Goal And Trigger Distinction
 
-GAPS.md identified a tension: goals as world-state propositions vs goals as operational triggers.
+Goals are propositions about desired belief states and are owned as data by execution. Operational triggers are belief evaluations made by the world model agent that result in goal set mutations.
 
-The resolution: goals are propositions about desired belief states, owned as data by execution. Operational triggers (task failure, belief divergence, regime shift) are events that cause the world model agent to curate the goal set. The agent is the translator between "something changed in belief" and "this goal should now exist/change/retire."
+The world model agent translates belief changes into goal commands. Task failure, belief divergence, and regime shift can prompt curation, but they do not become goal records unless the agent issues an accepted mutation.
 
-Repair becomes: a task fails, the planning loop signals the failure, the agent evaluates whether the threatened goal is still worth pursuing and whether the plan should change. If yes, execution's planning loop handles it through HTN lineage and task network commands. If the agent decides the goal is no longer worth the cost, it abandons it. The decision is the agent's. The mechanics are execution's.
+Repair follows the same authority split. A task failure enters the planning loop, and the agent evaluates whether the threatened goal remains worth pursuing. Execution uses HTN lineage and task network commands when the goal remains active. The agent abandons a goal that is no longer worth its cost. The decision is the agent's and the mechanics are execution's.
 
-## What This Design Does Not Cover
+## Goal Policy Boundaries
 
-### Agent normative framework
+The agent's normative framework owns watched belief keys, regime-scoped priors, cost-benefit comparison, tolerance, and urgency selection. See [Goal Curation](../../world_model/agent/goal_curation.md) for the full mechanism.
 
-The agent's normative framework — what it cares about, what thresholds trigger action, how it prioritizes — is defined as cost-benefit evaluation over belief. The framework reduces to: which belief keys the agent watches (subscription filter), and what regime-scoped priors it carries for a cost-benefit comparison on each concern class. Divergence thresholds, tolerance, and priority are derived from cost and value beliefs rather than configured separately. See [Goal Curation](../../world_model/agent/goal_curation.md) for the full mechanism.
+Authorized agents resolve contradictory desired states through goal curation. Execution applies accepted goal commands and deterministic resource policy without choosing which semantic objective should prevail.
 
-Residual gaps in the normative framework:
-
-- cost-benefit comparator specification (factors, weights, decision boundary)
-- value measurement methodology (how to measure downstream value of goal achievement)
-- subscription filter design (static vs learned concern declarations)
-
-### Goal conflict resolution
-
-When multiple goals compete for resources or have contradictory desired states, the agent must resolve the conflict before (or while) curating the goal set. Priority and preemption policy provide mechanisms, but the resolution strategy is not fully specified.
-
-### Multi-agent goal coordination
-
-When multiple agents curate overlapping goal sets (shared resources, complementary or conflicting objectives), coordination is needed. The shared graph substrate and perspective-scoped beliefs provide the foundation, but the coordination protocol is not designed.
-
-### Goal learning
-
-Can the agent learn which goals are productive from outcomes? Can it refine its normative framework based on which goals led to successful belief revision? This connects to the belief layer's calibration mechanisms but is not addressed here.
+Agents with overlapping concerns retain perspective-scoped belief and goal identity. Coordination enters execution through authorized goal commands and shared task equivalence rules rather than direct mutation of another agent's goal state.
 
 ## Read With
 
 - [Execution Domain](../README.md)
-- [Execution Gaps](../GAPS.md)
+- [Execution Integration Contracts](../GAPS.md)
 - [Planning Pipeline](../planning/planning_pipeline.md)
 - [Task Network](../task_network.md)
 - [Lang Domain](../../meld-lang/README.md)
