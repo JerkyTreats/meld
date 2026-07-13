@@ -798,7 +798,7 @@ fn agent_seed_registration_rejects_divergent_replay() {
 }
 
 #[test]
-fn agent_operational_transition_rejects_sequence_regression() {
+fn legacy_operational_transition_requires_subscription_and_sequence() {
     let (_temp_dir, store) = agent_store();
     let registration = AgentRegistration::new(&store);
     let mut request = seed_agent_registration();

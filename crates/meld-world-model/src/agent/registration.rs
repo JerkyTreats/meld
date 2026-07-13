@@ -52,7 +52,9 @@ impl<'a> AgentRegistration<'a> {
         Ok(record)
     }
 
-    /// Mark an agent operational after it has at least one active subscription.
+    // TODO compat-shim: remove when W3B routes every operational transition
+    // through MarkAgentOperationalCommand and readiness parity tests are green.
+    /// Mark an agent operational through the pre-hydration compatibility path.
     pub fn mark_operational(
         &self,
         agent_id: &str,

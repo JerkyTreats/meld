@@ -269,3 +269,463 @@ pub(crate) fn sort_dedup<T: Ord>(items: &mut Vec<T>) {
     items.sort();
     items.dedup();
 }
+
+const PROJECTION_REQUEST_HASH_DOMAIN: &[u8] = b"meld.planner-projection-request.v1";
+const PROJECTION_FRAME_HASH_DOMAIN: &[u8] = b"meld.planner-projection-frame.v1";
+
+/// Durable world-model request for one planner-facing projection frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannerProjectionRequest {
+    /// Deterministic world-model request identity.
+    pub request_id: String,
+    /// Opaque hash of the complete execution-owned source request.
+    pub source_request_hash: String,
+    /// Agent perspective requesting projection.
+    pub agent_id: String,
+    /// Subject projected into planner world state.
+    pub subject: DomainObjectRef,
+    /// Full perspective identity rather than one unscoped id.
+    pub perspective: PerspectiveKey,
+    /// Branch-local world-model scope.
+    pub branch_scope: BranchScope,
+    /// Canonically sorted requested dimensions.
+    pub requested_dimensions: Vec<String>,
+    /// Canonically ordered extra planner preconditions.
+    pub required_preconditions: Vec<meld_lang::Proposition>,
+}
+
+impl PlannerProjectionRequest {
+    /// Canonicalize and identify a complete projection request.
+    #[allow(clippy::too_many_arguments)]
+    pub fn identified(
+        source_request_hash: impl Into<String>,
+        agent_id: impl Into<String>,
+        subject: DomainObjectRef,
+        perspective: PerspectiveKey,
+        branch_scope: BranchScope,
+        mut requested_dimensions: Vec<String>,
+        mut required_preconditions: Vec<meld_lang::Proposition>,
+    ) -> Result<Self, PlannerProjectionContractError> {
+        requested_dimensions.sort();
+        requested_dimensions.dedup();
+        canonicalize_propositions(&mut required_preconditions)?;
+        let mut request = Self {
+            request_id: String::new(),
+            source_request_hash: source_request_hash.into(),
+            agent_id: agent_id.into(),
+            subject,
+            perspective,
+            branch_scope,
+            requested_dimensions,
+            required_preconditions,
+        };
+        request.request_id = request.derive_id()?;
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// Validate scope, canonical ordering, and deterministic identity.
+    pub fn validate(&self) -> Result<(), PlannerProjectionContractError> {
+        projection_required("source request hash", &self.source_request_hash)?;
+        projection_required("projection agent id", &self.agent_id)?;
+        self.subject
+            .validate()
+            .map_err(|error| PlannerProjectionContractError::Invalid(error.to_string()))?;
+        self.perspective
+            .validate()
+            .map_err(|error| PlannerProjectionContractError::Invalid(error.to_string()))?;
+        projection_required("projection branch id", &self.branch_scope.branch_id)?;
+        if self.requested_dimensions.is_empty()
+            || self
+                .requested_dimensions
+                .iter()
+                .any(|dimension| dimension.trim().is_empty())
+        {
+            return Err(PlannerProjectionContractError::Invalid(
+                "projection request dimensions must be non-empty".to_string(),
+            ));
+        }
+        let mut dimensions = self.requested_dimensions.clone();
+        dimensions.sort();
+        dimensions.dedup();
+        let mut preconditions = self.required_preconditions.clone();
+        canonicalize_propositions(&mut preconditions)?;
+        if dimensions != self.requested_dimensions || preconditions != self.required_preconditions {
+            return Err(PlannerProjectionContractError::NonCanonicalRequest);
+        }
+        if self.request_id != self.derive_id()? {
+            return Err(PlannerProjectionContractError::IdentityMismatch(
+                "projection request id".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn derive_id(&self) -> Result<String, PlannerProjectionContractError> {
+        #[derive(Serialize)]
+        struct Identity<'a> {
+            source_request_hash: &'a str,
+            agent_id: &'a str,
+            subject: &'a DomainObjectRef,
+            perspective: &'a PerspectiveKey,
+            branch_scope: &'a BranchScope,
+            requested_dimensions: &'a [String],
+            required_preconditions: &'a [meld_lang::Proposition],
+        }
+        planner_contract_hash(
+            PROJECTION_REQUEST_HASH_DOMAIN,
+            &Identity {
+                source_request_hash: &self.source_request_hash,
+                agent_id: &self.agent_id,
+                subject: &self.subject,
+                perspective: &self.perspective,
+                branch_scope: &self.branch_scope,
+                requested_dimensions: &self.requested_dimensions,
+                required_preconditions: &self.required_preconditions,
+            },
+        )
+    }
+}
+
+/// Durable lifecycle of one planner projection request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlannerProjectionRequestStatus {
+    /// Request is awaiting bounded projection work.
+    Pending,
+    /// One durable frame completed the request.
+    Completed,
+    /// Projection failed with a bounded diagnostic.
+    Failed,
+}
+
+/// Durable projection request plus its terminal products.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannerProjectionRequestRecord {
+    /// Complete immutable request.
+    pub request: PlannerProjectionRequest,
+    /// Current durable request state.
+    pub status: PlannerProjectionRequestStatus,
+    /// Completed frame identity when successful.
+    pub frame_id: Option<String>,
+    /// Bounded failure detail when failed.
+    pub last_error: Option<String>,
+    /// Sequence assigned on first persistence.
+    pub created_at_seq: u64,
+    /// Last durable transition sequence.
+    pub updated_at_seq: u64,
+}
+
+impl PlannerProjectionRequestRecord {
+    /// Validate request identity, monotonic sequence, and status products.
+    pub fn validate(&self) -> Result<(), PlannerProjectionContractError> {
+        self.request.validate()?;
+        if self.updated_at_seq < self.created_at_seq {
+            return Err(PlannerProjectionContractError::SequenceRegression);
+        }
+        let products_valid = match self.status {
+            PlannerProjectionRequestStatus::Pending => {
+                self.frame_id.is_none() && self.last_error.is_none()
+            }
+            PlannerProjectionRequestStatus::Completed => {
+                self.frame_id
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                    && self.last_error.is_none()
+            }
+            PlannerProjectionRequestStatus::Failed => {
+                self.frame_id.is_none()
+                    && self
+                        .last_error
+                        .as_deref()
+                        .is_some_and(|value| !value.is_empty())
+            }
+        };
+        if !products_valid {
+            return Err(PlannerProjectionContractError::InvalidStatusProducts);
+        }
+        Ok(())
+    }
+}
+
+/// Deterministic identity inputs for one completed world-model planner frame.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannerProjectionFrameIdentity {
+    /// Frame id derived from every following field.
+    pub frame_id: String,
+    /// World-model request completed by this frame.
+    pub request_id: String,
+    /// Opaque execution source request retained for adapter validation.
+    pub source_request_hash: String,
+    /// Projection schema or algorithm version.
+    pub projection_version: String,
+    /// Canonical digest of the complete projection output.
+    pub projection_hash: String,
+    /// Canonically sorted source provenance.
+    pub source_refs: Vec<PlannerSourceRef>,
+}
+
+impl PlannerProjectionFrameIdentity {
+    /// Identify one completed output for one exact request.
+    pub fn identified(
+        request: &PlannerProjectionRequest,
+        output: &PlannerProjectionOutput,
+    ) -> Result<Self, PlannerProjectionContractError> {
+        request.validate()?;
+        let mut source_refs = output.source_refs.clone();
+        source_refs.sort();
+        source_refs.dedup();
+        if source_refs != output.source_refs {
+            return Err(PlannerProjectionContractError::NonCanonicalFrame);
+        }
+        let projection_hash = planner_contract_hash(b"meld.planner-projection-output.v1", output)?;
+        let mut identity = Self {
+            frame_id: String::new(),
+            request_id: request.request_id.clone(),
+            source_request_hash: request.source_request_hash.clone(),
+            projection_version: output.projection_version.clone(),
+            projection_hash,
+            source_refs,
+        };
+        identity.frame_id = identity.derive_id()?;
+        identity.validate()?;
+        Ok(identity)
+    }
+
+    /// Validate canonical provenance and deterministic frame identity.
+    pub fn validate(&self) -> Result<(), PlannerProjectionContractError> {
+        for (field, value) in [
+            ("frame request id", self.request_id.as_str()),
+            (
+                "frame source request hash",
+                self.source_request_hash.as_str(),
+            ),
+            ("frame projection version", self.projection_version.as_str()),
+            ("frame projection hash", self.projection_hash.as_str()),
+        ] {
+            projection_required(field, value)?;
+        }
+        let mut refs = self.source_refs.clone();
+        refs.sort();
+        refs.dedup();
+        if refs != self.source_refs {
+            return Err(PlannerProjectionContractError::NonCanonicalFrame);
+        }
+        if self.frame_id != self.derive_id()? {
+            return Err(PlannerProjectionContractError::IdentityMismatch(
+                "planner frame id".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn derive_id(&self) -> Result<String, PlannerProjectionContractError> {
+        #[derive(Serialize)]
+        struct Identity<'a> {
+            request_id: &'a str,
+            source_request_hash: &'a str,
+            projection_version: &'a str,
+            projection_hash: &'a str,
+            source_refs: &'a [PlannerSourceRef],
+        }
+        planner_contract_hash(
+            PROJECTION_FRAME_HASH_DOMAIN,
+            &Identity {
+                request_id: &self.request_id,
+                source_request_hash: &self.source_request_hash,
+                projection_version: &self.projection_version,
+                projection_hash: &self.projection_hash,
+                source_refs: &self.source_refs,
+            },
+        )
+    }
+}
+
+/// Durable planner frame owned by the world-model projection domain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannerProjectionFrame {
+    /// Deterministic identity and cross-domain correlation fields.
+    pub identity: PlannerProjectionFrameIdentity,
+    /// Complete projected world state and provenance.
+    pub output: PlannerProjectionOutput,
+    /// Durable completion sequence.
+    pub completed_at_seq: u64,
+}
+
+impl PlannerProjectionFrame {
+    /// Validate output digest, version, provenance, and frame identity.
+    pub fn validate(&self) -> Result<(), PlannerProjectionContractError> {
+        self.identity.validate()?;
+        if self.output.projection_version != self.identity.projection_version
+            || self.output.source_refs != self.identity.source_refs
+            || planner_contract_hash(b"meld.planner-projection-output.v1", &self.output)?
+                != self.identity.projection_hash
+        {
+            return Err(PlannerProjectionContractError::FrameOutputMismatch);
+        }
+        Ok(())
+    }
+}
+
+/// Invalid durable planner projection contract.
+#[derive(Debug, thiserror::Error)]
+pub enum PlannerProjectionContractError {
+    /// Required identity or scope content is absent.
+    #[error("invalid planner projection contract: {0}")]
+    Invalid(String),
+    /// Request fields were not stored in canonical order.
+    #[error("planner projection request is not canonical")]
+    NonCanonicalRequest,
+    /// Frame provenance was not stored in canonical order.
+    #[error("planner projection frame is not canonical")]
+    NonCanonicalFrame,
+    /// A deterministic id diverged from its fields.
+    #[error("planner projection identity mismatch for {0}")]
+    IdentityMismatch(String),
+    /// A record sequence moved backwards.
+    #[error("planner projection record sequence would regress")]
+    SequenceRegression,
+    /// Request status does not match its frame or failure products.
+    #[error("planner projection request status products are inconsistent")]
+    InvalidStatusProducts,
+    /// Durable frame content diverged from its identity.
+    #[error("planner projection frame output does not match its identity")]
+    FrameOutputMismatch,
+    /// A deterministic identity projection could not be encoded.
+    #[error("planner projection identity encoding failed: {0}")]
+    Encoding(String),
+}
+
+fn projection_required(field: &str, value: &str) -> Result<(), PlannerProjectionContractError> {
+    if value.trim().is_empty() {
+        return Err(PlannerProjectionContractError::Invalid(format!(
+            "{field} must be non-empty"
+        )));
+    }
+    Ok(())
+}
+
+fn canonicalize_propositions(
+    propositions: &mut Vec<meld_lang::Proposition>,
+) -> Result<(), PlannerProjectionContractError> {
+    let mut keyed = propositions
+        .drain(..)
+        .map(|proposition| {
+            serde_json::to_string(&proposition)
+                .map(|key| (key, proposition))
+                .map_err(|error| PlannerProjectionContractError::Encoding(error.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    keyed.sort_by(|left, right| left.0.cmp(&right.0));
+    keyed.dedup_by(|left, right| left.0 == right.0);
+    propositions.extend(keyed.into_iter().map(|(_, proposition)| proposition));
+    Ok(())
+}
+
+fn planner_contract_hash(
+    domain: &[u8],
+    value: &impl Serialize,
+) -> Result<String, PlannerProjectionContractError> {
+    let encoded = serde_json::to_vec(value)
+        .map_err(|error| PlannerProjectionContractError::Encoding(error.to_string()))?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(domain);
+    hasher.update(&encoded);
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+#[cfg(test)]
+mod durable_contract_tests {
+    use super::*;
+
+    fn request() -> PlannerProjectionRequest {
+        PlannerProjectionRequest::identified(
+            "execution-request-hash",
+            "agent-docs",
+            DomainObjectRef::new("workspace_fs", "node", "readme").unwrap(),
+            PerspectiveKey::new("agent", "docs").unwrap(),
+            BranchScope::main(),
+            vec!["freshness".to_string(), "docs".to_string()],
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    fn output() -> PlannerProjectionOutput {
+        PlannerProjectionOutput {
+            world_state: WorldState::new(Vec::new()).unwrap(),
+            projection_version: PLANNER_PROJECTION_VERSION.to_string(),
+            source_refs: vec![PlannerSourceRef::ProjectionRule {
+                rule_id: "readiness".to_string(),
+            }],
+            hydration_refs: PlannerHydrationRefs::default(),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn durable_projection_request_and_frame_bind_complete_identity() {
+        let request = request();
+        assert_eq!(request.requested_dimensions, vec!["docs", "freshness"]);
+        let identity = PlannerProjectionFrameIdentity::identified(&request, &output()).unwrap();
+        let frame = PlannerProjectionFrame {
+            identity: identity.clone(),
+            output: output(),
+            completed_at_seq: 7,
+        };
+
+        assert!(frame.validate().is_ok());
+        assert_eq!(identity.request_id, request.request_id);
+        assert_eq!(identity.source_request_hash, "execution-request-hash");
+        let encoded = serde_json::to_vec(&frame).unwrap();
+        let decoded: PlannerProjectionFrame = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn durable_projection_frame_rejects_content_drift_under_one_id() {
+        let request = request();
+        let output = output();
+        let identity = PlannerProjectionFrameIdentity::identified(&request, &output).unwrap();
+        let mut frame = PlannerProjectionFrame {
+            identity,
+            output,
+            completed_at_seq: 7,
+        };
+        frame
+            .output
+            .warnings
+            .push(PlannerProjectionWarning::MissingGraphScope {
+                subject: request.subject,
+            });
+
+        assert!(matches!(
+            frame.validate(),
+            Err(PlannerProjectionContractError::FrameOutputMismatch)
+        ));
+    }
+
+    #[test]
+    fn projection_request_status_requires_exact_terminal_products() {
+        let completed = PlannerProjectionRequestRecord {
+            request: request(),
+            status: PlannerProjectionRequestStatus::Completed,
+            frame_id: Some("frame-1".to_string()),
+            last_error: None,
+            created_at_seq: 1,
+            updated_at_seq: 2,
+        };
+        assert!(completed.validate().is_ok());
+
+        let mut invalid = completed;
+        invalid.last_error = Some("failed".to_string());
+        assert!(matches!(
+            invalid.validate(),
+            Err(PlannerProjectionContractError::InvalidStatusProducts)
+        ));
+    }
+}
