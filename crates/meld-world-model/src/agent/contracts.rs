@@ -24,6 +24,9 @@ pub type AgentGoalMutationCommandId = String;
 /// Stable durable identifier for an accepted agent sink receipt.
 pub type AgentSinkReceiptId = String;
 
+/// Stable review source used by belief-revision satisfaction selection.
+pub const BELIEF_REVISION_REVIEW_SOURCE: &str = "belief_revision";
+
 /// Lifecycle status for an agent record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentStatus {
@@ -400,6 +403,33 @@ impl AgentCurationDecision {
         self.dedupe_key.validate()?;
         self.input_refs.validate()?;
         require_non_empty("decision reason", &self.reason)?;
+        if self.agent_id != self.dedupe_key.agent_id {
+            return Err(StorageError::InvalidPath(
+                "decision agent and dedupe key agent disagree".to_string(),
+            ));
+        }
+        let command_fields_match = match self.decision {
+            AgentDecisionKind::GoalCommand => {
+                self.goal_command_id
+                    .as_deref()
+                    .is_some_and(|id| !id.is_empty())
+                    && self.goal_mutation_command_id.is_none()
+            }
+            AgentDecisionKind::GoalMutationCommand => {
+                self.goal_mutation_command_id
+                    .as_deref()
+                    .is_some_and(|id| !id.is_empty())
+                    && self.goal_command_id.is_none()
+            }
+            AgentDecisionKind::Absorbed | AgentDecisionKind::Indeterminate => {
+                self.goal_command_id.is_none() && self.goal_mutation_command_id.is_none()
+            }
+        };
+        if !command_fields_match {
+            return Err(StorageError::InvalidPath(
+                "decision kind and command identifiers disagree".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -459,6 +489,151 @@ pub struct AgentSinkReceipt {
     pub recorded_at_seq: u64,
 }
 
+/// Exact command payload retained beside a command-producing decision.
+///
+/// The agent domain owns this outbox value. Execution remains authoritative for
+/// command acceptance and goal lifecycle state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "command", rename_all = "snake_case")]
+pub enum AgentAuthoredCommand {
+    /// Proposed goal command emitted by goal curation.
+    Goal(Box<AgentGoalCommand>),
+    /// Goal lifecycle mutation emitted by satisfaction curation.
+    GoalMutation(Box<AgentGoalMutationCommand>),
+}
+
+impl AgentAuthoredCommand {
+    /// Return the stable execution command identifier.
+    pub fn command_id(&self) -> &str {
+        match self {
+            Self::Goal(command) => &command.command_id,
+            Self::GoalMutation(command) => &command.command_id,
+        }
+    }
+
+    /// Return the execution goal named by the command.
+    pub fn goal_id(&self) -> &str {
+        match self {
+            Self::Goal(command) => &command.goal.goal_id,
+            Self::GoalMutation(command) => &command.goal_id,
+        }
+    }
+
+    /// Validate the command at the world-model to execution boundary.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        match self {
+            Self::Goal(command) => command.validate(),
+            Self::GoalMutation(command) => command.validate(),
+        }
+    }
+}
+
+/// Durable outbox record written atomically with one curation decision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentDecisionOutboxRecord {
+    /// Decision that owns the command.
+    pub decision_id: AgentDecisionId,
+    /// Exact payload that may be safely replayed after reopen.
+    pub command: AgentAuthoredCommand,
+    /// Agent-domain sequence copied from the owning decision.
+    pub recorded_at_seq: u64,
+}
+
+impl AgentDecisionOutboxRecord {
+    /// Build and validate an outbox record from one complete curation outcome.
+    pub fn from_outcome(outcome: &AgentCurationOutcome) -> Result<Option<Self>, StorageError> {
+        outcome.decision.validate()?;
+        let command = match outcome.decision.decision {
+            AgentDecisionKind::GoalCommand => {
+                let command = outcome.goal_command.clone().ok_or_else(|| {
+                    StorageError::InvalidPath(
+                        "goal-command decision requires an exact outbox payload".to_string(),
+                    )
+                })?;
+                if outcome.goal_mutation_command.is_some()
+                    || outcome.decision.goal_command_id.as_deref()
+                        != Some(command.command_id.as_str())
+                {
+                    return Err(StorageError::InvalidPath(
+                        "goal-command decision and outbox identity disagree".to_string(),
+                    ));
+                }
+                Some(AgentAuthoredCommand::Goal(Box::new(command)))
+            }
+            AgentDecisionKind::GoalMutationCommand => {
+                let command = outcome.goal_mutation_command.clone().ok_or_else(|| {
+                    StorageError::InvalidPath(
+                        "goal-mutation decision requires an exact outbox payload".to_string(),
+                    )
+                })?;
+                if outcome.goal_command.is_some()
+                    || outcome.decision.goal_mutation_command_id.as_deref()
+                        != Some(command.command_id.as_str())
+                {
+                    return Err(StorageError::InvalidPath(
+                        "goal-mutation decision and outbox identity disagree".to_string(),
+                    ));
+                }
+                Some(AgentAuthoredCommand::GoalMutation(Box::new(command)))
+            }
+            AgentDecisionKind::Absorbed | AgentDecisionKind::Indeterminate => {
+                if outcome.goal_command.is_some() || outcome.goal_mutation_command.is_some() {
+                    return Err(StorageError::InvalidPath(
+                        "command-free decision cannot carry an outbox payload".to_string(),
+                    ));
+                }
+                None
+            }
+        };
+        Ok(command.map(|command| Self {
+            decision_id: outcome.decision.decision_id.clone(),
+            command,
+            recorded_at_seq: outcome.decision.created_at_seq,
+        }))
+    }
+
+    /// Validate decision identity, sequence, and command kind.
+    pub fn validate_for(&self, decision: &AgentCurationDecision) -> Result<(), StorageError> {
+        require_non_empty("outbox decision id", &self.decision_id)?;
+        self.command.validate()?;
+        if self.decision_id != decision.decision_id
+            || self.recorded_at_seq != decision.created_at_seq
+        {
+            return Err(StorageError::InvalidPath(
+                "outbox record does not match its decision".to_string(),
+            ));
+        }
+        let matches = match &self.command {
+            AgentAuthoredCommand::Goal(command) => {
+                decision.decision == AgentDecisionKind::GoalCommand
+                    && decision.goal_command_id.as_deref() == Some(command.command_id.as_str())
+                    && decision.goal_mutation_command_id.is_none()
+                    && decision.agent_id == command.goal.agent_id
+                    && decision.dedupe_key == command.dedupe_key
+            }
+            AgentAuthoredCommand::GoalMutation(command) => {
+                decision.decision == AgentDecisionKind::GoalMutationCommand
+                    && decision.goal_mutation_command_id.as_deref()
+                        == Some(command.command_id.as_str())
+                    && decision.goal_command_id.is_none()
+                    && decision.agent_id == command.agent_id
+                    && decision.dedupe_key == command.dedupe_key
+                    && decision.created_at_seq == command.review_seq
+                    && decision.input_refs.planner_projection_version == command.projection_version
+                    && decision.input_refs.planner_source_refs == command.planner_source_refs
+                    && decision.input_refs.planner_warnings == command.planner_warnings
+            }
+        };
+        if !matches {
+            return Err(StorageError::InvalidPath(
+                "outbox command kind or identity does not match its decision".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl AgentSinkReceipt {
     /// Build a receipt from a persisted decision and accepted submission.
     pub fn new(
@@ -483,6 +658,15 @@ impl AgentSinkReceipt {
         require_non_empty("sink receipt id", &self.receipt_id)?;
         require_non_empty("sink receipt decision id", &self.decision_id)?;
         self.submission.validate()?;
+        let expected_id = deterministic_id(
+            "agent-sink-receipt",
+            &format!("{}::{}", self.decision_id, self.submission.command_id),
+        );
+        if self.receipt_id != expected_id || self.recorded_at_seq == 0 {
+            return Err(StorageError::InvalidPath(
+                "sink receipt identity or sequence is not canonical".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -890,6 +1074,325 @@ impl AgentDelivery {
     }
 }
 
+/// Exact agent-owned records observed while selecting one belief delivery.
+///
+/// The token prevents a selected item from committing after agent lifecycle or
+/// subscription progress changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentDeliverySelection {
+    /// Delivery selected from the current durable belief head.
+    pub delivery: AgentDelivery,
+    /// Belief stream that produced the selected revision.
+    pub belief_key: BeliefKey,
+    /// Exact agent update sequence observed during selection.
+    pub expected_agent_updated_at_seq: u64,
+    /// Exact subscription update sequence observed during selection.
+    pub expected_subscription_updated_at_seq: u64,
+    /// Revision id at the subscription cursor during selection.
+    pub expected_delivered_revision_id: Option<String>,
+    /// Sequence at the subscription cursor during selection.
+    pub expected_delivered_seq: u64,
+}
+
+impl AgentDeliverySelection {
+    /// Validate the immutable delivery and the selected cursor shape.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        self.delivery.validate()?;
+        self.belief_key.validate()?;
+        if self.delivery.revision_seq == 0
+            || self.delivery.revision_seq <= self.expected_delivered_seq
+            || self.expected_agent_updated_at_seq == 0
+            || self.expected_subscription_updated_at_seq == 0
+        {
+            return Err(StorageError::InvalidPath(
+                "delivery selection must strictly advance valid durable fences".to_string(),
+            ));
+        }
+        validate_optional_cursor(
+            self.expected_delivered_revision_id.as_deref(),
+            self.expected_delivered_seq,
+            "delivery selection",
+        )
+    }
+}
+
+/// Stable identity of one independent satisfaction-review consumer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSatisfactionCursorIdentity {
+    /// Agent that owns the satisfaction judgment.
+    pub agent_id: AgentId,
+    /// Subscription that scopes the reviewed belief stream.
+    pub subscription_id: AgentSubscriptionId,
+    /// Branch reviewed by this consumer.
+    pub branch_id: String,
+    /// Stable source family that advances this cursor.
+    pub review_source: String,
+}
+
+impl AgentSatisfactionCursorIdentity {
+    /// Build the first-slice belief-revision review identity.
+    pub fn belief_revision(
+        agent_id: impl Into<String>,
+        subscription_id: impl Into<String>,
+        branch_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            agent_id: agent_id.into(),
+            subscription_id: subscription_id.into(),
+            branch_id: branch_id.into(),
+            review_source: BELIEF_REVISION_REVIEW_SOURCE.to_string(),
+        }
+    }
+
+    /// Validate every component used by the durable cursor key.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        require_non_empty("satisfaction cursor agent id", &self.agent_id)?;
+        require_non_empty("satisfaction cursor subscription id", &self.subscription_id)?;
+        require_non_empty("satisfaction cursor branch id", &self.branch_id)?;
+        require_non_empty("satisfaction cursor review source", &self.review_source)
+    }
+
+    /// Return the stable primary key for this cursor.
+    pub fn index_key(&self) -> String {
+        format!(
+            "{}::{}::{}::{}",
+            self.agent_id, self.subscription_id, self.branch_id, self.review_source
+        )
+    }
+}
+
+/// Durable progress for one satisfaction-review consumer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSatisfactionReviewCursor {
+    /// Consumer identity whose progress this record owns.
+    pub identity: AgentSatisfactionCursorIdentity,
+    /// Last belief revision reviewed after decision and sink completion.
+    pub last_reviewed_revision_id: Option<String>,
+    /// Monotonic source sequence of the last reviewed revision.
+    pub last_reviewed_seq: u64,
+    /// Agent-domain sequence of the last cursor write.
+    pub updated_at_seq: u64,
+}
+
+impl AgentSatisfactionReviewCursor {
+    /// Return an empty cursor for a consumer with no completed review.
+    pub fn empty(identity: AgentSatisfactionCursorIdentity) -> Self {
+        Self {
+            identity,
+            last_reviewed_revision_id: None,
+            last_reviewed_seq: 0,
+            updated_at_seq: 0,
+        }
+    }
+
+    /// Validate consumer identity and cursor consistency.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        self.identity.validate()?;
+        validate_optional_cursor(
+            self.last_reviewed_revision_id.as_deref(),
+            self.last_reviewed_seq,
+            "satisfaction review",
+        )?;
+        if self.updated_at_seq < self.last_reviewed_seq {
+            return Err(StorageError::InvalidPath(
+                "satisfaction cursor update sequence cannot trail review progress".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Exact satisfaction-review item and every fence observed by its selector.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSatisfactionReviewSelection {
+    /// Review envelope supplied to pure satisfaction curation.
+    pub review: AgentSatisfactionReview,
+    /// Exact belief stream selected for the review.
+    pub belief_key: BeliefKey,
+    /// Exact current belief revision selected for the review.
+    pub belief_revision_id: String,
+    /// Source sequence of the selected belief revision.
+    pub belief_revision_seq: u64,
+    /// Independent cursor consumed by this review actor.
+    pub cursor_identity: AgentSatisfactionCursorIdentity,
+    /// Exact agent update sequence observed during selection.
+    pub expected_agent_updated_at_seq: u64,
+    /// Exact subscription update sequence observed during selection.
+    pub expected_subscription_updated_at_seq: u64,
+    /// Cursor revision observed during selection.
+    pub expected_reviewed_revision_id: Option<String>,
+    /// Cursor sequence observed during selection.
+    pub expected_reviewed_seq: u64,
+    /// Cursor update sequence observed during selection.
+    pub expected_cursor_updated_at_seq: u64,
+}
+
+impl AgentSatisfactionReviewSelection {
+    /// Validate review identity and strict cursor advancement.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        self.review.validate()?;
+        self.belief_key.validate()?;
+        self.cursor_identity.validate()?;
+        require_non_empty("selected belief revision id", &self.belief_revision_id)?;
+        if self.review.agent_id != self.cursor_identity.agent_id
+            || self.review.subscription_id != self.cursor_identity.subscription_id
+            || self.review.review_seq != self.belief_revision_seq
+            || self.belief_key.branch_scope.branch_id != self.cursor_identity.branch_id
+            || self.belief_revision_seq == 0
+            || self.belief_revision_seq <= self.expected_reviewed_seq
+            || self.expected_agent_updated_at_seq == 0
+            || self.expected_subscription_updated_at_seq == 0
+        {
+            return Err(StorageError::InvalidPath(
+                "satisfaction selection identities or durable fences disagree".to_string(),
+            ));
+        }
+        validate_optional_cursor(
+            self.expected_reviewed_revision_id.as_deref(),
+            self.expected_reviewed_seq,
+            "satisfaction selection",
+        )
+    }
+}
+
+/// Compare-and-swap intent for advancing one satisfaction review cursor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSatisfactionCursorCasIntent {
+    /// Complete selection whose durable fences must still hold.
+    pub selection: AgentSatisfactionReviewSelection,
+    /// Agent-domain sequence assigned to the cursor write.
+    pub advanced_at_seq: u64,
+}
+
+impl AgentSatisfactionCursorCasIntent {
+    /// Validate strict advancement and the selected cursor expectation.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        self.selection.validate()?;
+        if self.advanced_at_seq < self.selection.belief_revision_seq
+            || self.advanced_at_seq <= self.selection.expected_cursor_updated_at_seq
+        {
+            return Err(StorageError::InvalidPath(
+                "satisfaction cursor advancement sequence must move forward".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Durable stage of one resumable agent hydration orchestration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentHydrationCheckpointStage {
+    /// A subscription and exact belief revision have been selected.
+    Selected,
+    /// The belief authority has durably attested the selected current view.
+    Attested,
+    /// A durable planner request has been submitted.
+    ProjectionRequested,
+}
+
+/// Durable semantic checkpoint for an in-progress hydration attempt.
+///
+/// Process hydration remains fenced by `AgentProcessHydrationRecord`. This
+/// record retains the exact cross-domain products needed to resume its work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentHydrationCheckpoint {
+    /// Hydration attempt that owns this checkpoint.
+    pub hydration_id: String,
+    /// Agent being hydrated.
+    pub agent_id: AgentId,
+    /// Agent-owned hydration epoch.
+    pub attempt_epoch: u64,
+    /// Exact supervisor lease hosting the process-local attempt.
+    pub lease_id: String,
+    /// Selected active subscription.
+    pub subscription_id: AgentSubscriptionId,
+    /// Exact belief revision selected before cross-domain work.
+    pub selected_revision_id: String,
+    /// Source sequence of the selected belief revision.
+    pub selected_revision_seq: u64,
+    /// Current durable orchestration stage.
+    pub stage: AgentHydrationCheckpointStage,
+    /// Belief-owned attestation retained after the attested stage.
+    pub attestation_id: Option<String>,
+    /// Planner-owned request retained after projection submission.
+    pub planner_request_id: Option<String>,
+    /// Last agent-domain update sequence.
+    pub updated_at_seq: u64,
+}
+
+impl AgentHydrationCheckpoint {
+    /// Validate identity and stage-specific durable products.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        require_non_empty("hydration checkpoint id", &self.hydration_id)?;
+        require_non_empty("hydration checkpoint agent id", &self.agent_id)?;
+        require_non_empty("hydration checkpoint lease id", &self.lease_id)?;
+        require_non_empty(
+            "hydration checkpoint subscription id",
+            &self.subscription_id,
+        )?;
+        require_non_empty(
+            "hydration checkpoint selected revision id",
+            &self.selected_revision_id,
+        )?;
+        if self.attempt_epoch == 0
+            || self.selected_revision_seq == 0
+            || self.updated_at_seq < self.selected_revision_seq
+        {
+            return Err(StorageError::InvalidPath(
+                "hydration checkpoint epoch and sequences must be positive and monotonic"
+                    .to_string(),
+            ));
+        }
+        let products_valid = match self.stage {
+            AgentHydrationCheckpointStage::Selected => {
+                self.attestation_id.is_none() && self.planner_request_id.is_none()
+            }
+            AgentHydrationCheckpointStage::Attested => {
+                self.attestation_id
+                    .as_deref()
+                    .is_some_and(|id| !id.is_empty())
+                    && self.planner_request_id.is_none()
+            }
+            AgentHydrationCheckpointStage::ProjectionRequested => {
+                self.attestation_id
+                    .as_deref()
+                    .is_some_and(|id| !id.is_empty())
+                    && self
+                        .planner_request_id
+                        .as_deref()
+                        .is_some_and(|id| !id.is_empty())
+            }
+        };
+        if !products_valid {
+            return Err(StorageError::InvalidPath(
+                "hydration checkpoint stage products are inconsistent".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Result of auditing whether durable agent state may enable recurring actors.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSemanticEnablementAudit {
+    /// Runtime schema version verified by the audit.
+    pub schema_version: u16,
+    /// Total primary decision records inspected.
+    pub decision_count: usize,
+    /// Command decisions backed by an exact durable outbox payload.
+    pub command_outbox_count: usize,
+    /// Durable sink receipts inspected.
+    pub sink_receipt_count: usize,
+}
+
 /// Result of one curation pass after persistence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentCurationOutcome {
@@ -900,6 +1403,20 @@ pub struct AgentCurationOutcome {
     /// Optional goal mutation command returned to the execution boundary.
     #[serde(default)]
     pub goal_mutation_command: Option<AgentGoalMutationCommand>,
+}
+
+fn validate_optional_cursor(
+    revision_id: Option<&str>,
+    sequence: u64,
+    label: &str,
+) -> Result<(), StorageError> {
+    match revision_id {
+        None if sequence == 0 => Ok(()),
+        Some(revision_id) if sequence > 0 => require_non_empty(label, revision_id),
+        _ => Err(StorageError::InvalidPath(format!(
+            "{label} cursor revision and sequence must be empty together"
+        ))),
+    }
 }
 
 pub(crate) fn require_non_empty(label: &str, value: &str) -> Result<(), StorageError> {

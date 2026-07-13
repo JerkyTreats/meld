@@ -1,6 +1,6 @@
 //! Durable agent storage.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::sync::Arc;
 
@@ -17,9 +17,13 @@ use crate::activation::{
 };
 use crate::agent::bootstrap::AgentBootstrapProgress;
 use crate::agent::contracts::{
-    AgentActivationRecord, AgentActivationStatus, AgentCurationDecision, AgentCurationDedupeKey,
-    AgentRecord, AgentSatisfactionReview, AgentSinkReceipt, AgentStatus,
-    AgentSubscriptionCursorCasIntent, AgentSubscriptionRecord, AgentSubscriptionStatus,
+    AgentActivationRecord, AgentActivationStatus, AgentAuthoredCommand, AgentCurationDecision,
+    AgentCurationDedupeKey, AgentCurationOutcome, AgentDecisionKind, AgentDecisionOutboxRecord,
+    AgentDeliverySelection, AgentHydrationCheckpoint, AgentHydrationCheckpointStage, AgentRecord,
+    AgentSatisfactionCursorCasIntent, AgentSatisfactionCursorIdentity, AgentSatisfactionReview,
+    AgentSatisfactionReviewCursor, AgentSatisfactionReviewSelection, AgentSemanticEnablementAudit,
+    AgentSinkReceipt, AgentSinkReceiptKind, AgentStatus, AgentSubscriptionCursorCasIntent,
+    AgentSubscriptionRecord, AgentSubscriptionStatus,
 };
 use crate::agent::hydration::{
     AgentProcessHydrationRecord, AgentProcessHydrationStatus, AgentReadinessProof,
@@ -41,6 +45,10 @@ const TREE_DECISIONS_BY_REVISION: &str = "agent_decisions_by_revision";
 const TREE_SATISFACTION_DECISIONS_BY_REVIEW: &str = "agent_satisfaction_decisions_by_review";
 const TREE_SINK_RECEIPTS: &str = "agent_sink_receipts";
 const TREE_SINK_RECEIPTS_BY_COMMAND: &str = "agent_sink_receipts_by_command";
+const TREE_DECISION_OUTBOX: &str = "agent_decision_outbox";
+const TREE_SATISFACTION_REVIEW_CURSORS: &str = "agent_satisfaction_review_cursors";
+const TREE_HYDRATION_CHECKPOINTS: &str = "agent_hydration_checkpoints";
+const TREE_RUNTIME_SCHEMA: &str = "agent_runtime_schema";
 const TREE_DIRECTIVES: &str = "agent_directives";
 const TREE_CURATION_RULES: &str = "agent_curation_rules";
 const TREE_BOOTSTRAP_PROGRESS: &str = "agent_bootstrap_progress";
@@ -51,6 +59,8 @@ const TREE_PROCESS_HYDRATIONS_BY_AGENT: &str = "agent_process_hydrations_by_agen
 const TREE_HYDRATION_EPOCHS: &str = "agent_hydration_epochs";
 const TREE_CURRENT_HYDRATIONS: &str = "agent_current_hydrations";
 const TREE_READINESS_PROOFS: &str = "agent_readiness_proofs";
+const RUNTIME_SCHEMA_VERSION_KEY: &[u8] = b"semantic_runtime";
+const RUNTIME_SCHEMA_VERSION: u16 = 1;
 const KEY_PAD: usize = 20;
 
 #[cfg(test)]
@@ -77,6 +87,10 @@ pub struct AgentStore {
     satisfaction_decisions_by_review: Tree,
     sink_receipts: Tree,
     sink_receipts_by_command: Tree,
+    decision_outbox: Tree,
+    satisfaction_review_cursors: Tree,
+    hydration_checkpoints: Tree,
+    runtime_schema: Tree,
     directives: Tree,
     curation_rules: Tree,
     bootstrap_progress: Tree,
@@ -94,7 +108,7 @@ pub struct AgentStore {
 impl AgentStore {
     /// Open all agent trees from the shared world model database.
     pub fn new(db: Db) -> Result<Self, StorageError> {
-        Ok(Self {
+        let store = Self {
             agents: db.open_tree(TREE_AGENT_RECORDS).map_err(to_storage_io)?,
             agent_by_status: db.open_tree(TREE_AGENT_BY_STATUS).map_err(to_storage_io)?,
             subscriptions: db.open_tree(TREE_SUBSCRIPTIONS).map_err(to_storage_io)?,
@@ -125,6 +139,14 @@ impl AgentStore {
             sink_receipts_by_command: db
                 .open_tree(TREE_SINK_RECEIPTS_BY_COMMAND)
                 .map_err(to_storage_io)?,
+            decision_outbox: db.open_tree(TREE_DECISION_OUTBOX).map_err(to_storage_io)?,
+            satisfaction_review_cursors: db
+                .open_tree(TREE_SATISFACTION_REVIEW_CURSORS)
+                .map_err(to_storage_io)?,
+            hydration_checkpoints: db
+                .open_tree(TREE_HYDRATION_CHECKPOINTS)
+                .map_err(to_storage_io)?,
+            runtime_schema: db.open_tree(TREE_RUNTIME_SCHEMA).map_err(to_storage_io)?,
             directives: db.open_tree(TREE_DIRECTIVES).map_err(to_storage_io)?,
             curation_rules: db.open_tree(TREE_CURATION_RULES).map_err(to_storage_io)?,
             bootstrap_progress: db
@@ -150,7 +172,9 @@ impl AgentStore {
             #[cfg(test)]
             flush_probe: Arc::new(Mutex::new(FlushProbe::default())),
             db,
-        })
+        };
+        store.migrate_runtime_schema()?;
+        Ok(store)
     }
 
     /// Open the store behind a shared pointer for facade wiring.
@@ -391,6 +415,101 @@ impl AgentStore {
                 command.subscription_id
             ))),
         }
+    }
+
+    /// Advance a selected delivery only after its decision and sink work are durable.
+    pub fn advance_selected_delivery_cursor(
+        &self,
+        selection: &AgentDeliverySelection,
+        decision_id: &str,
+    ) -> Result<AgentSubscriptionRecord, StorageError> {
+        selection.validate()?;
+        let agent = self.require_selected_agent(
+            &selection.delivery.agent_id,
+            selection.expected_agent_updated_at_seq,
+        )?;
+        let subscription = self.require_selected_subscription(
+            &selection.delivery.subscription_id,
+            &selection.delivery.agent_id,
+            &selection.belief_key,
+            selection.expected_subscription_updated_at_seq,
+        )?;
+        if subscription.last_delivered_revision_id != selection.expected_delivered_revision_id
+            || subscription.last_delivered_seq != selection.expected_delivered_seq
+        {
+            return Err(StorageError::Backpressure(
+                "subscription cursor changed before selected advancement".to_string(),
+            ));
+        }
+        let decision = self.get_decision(decision_id)?.ok_or_else(|| {
+            StorageError::Backpressure(
+                "selected delivery cursor cannot advance before its decision".to_string(),
+            )
+        })?;
+        if self
+            .satisfaction_review_index_map()?
+            .contains_key(decision_id)
+        {
+            return Err(StorageError::InvalidPath(
+                "satisfaction decision cannot advance the delivery cursor".to_string(),
+            ));
+        }
+        if decision.agent_id != selection.delivery.agent_id
+            || decision.subscription_id != selection.delivery.subscription_id
+            || decision.input_refs.belief_key != selection.belief_key
+            || decision.input_refs.belief_revision_id.as_deref()
+                != Some(selection.delivery.belief_revision_id.as_str())
+        {
+            return Err(StorageError::InvalidPath(
+                "selected delivery decision identity mismatch".to_string(),
+            ));
+        }
+        if matches!(decision.decision, AgentDecisionKind::GoalCommand) {
+            let receipt = self.sink_receipt_by_decision(decision_id)?.ok_or_else(|| {
+                StorageError::Backpressure(
+                    "selected delivery cursor cannot advance before its sink receipt".to_string(),
+                )
+            })?;
+            let outbox = self.decision_outbox(decision_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(
+                    "selected delivery command has no exact outbox".to_string(),
+                )
+            })?;
+            outbox.validate_for(&decision)?;
+            validate_sink_receipt_for_decision(&receipt, &decision, Some(&outbox))?;
+        }
+
+        let mut updated = subscription.clone();
+        updated.last_delivered_revision_id = Some(selection.delivery.belief_revision_id.clone());
+        updated.last_delivered_seq = selection.delivery.revision_seq;
+        updated.updated_at_seq = selection.delivery.revision_seq;
+        updated.validate()?;
+        let agent_bytes = serde_json::to_vec(&agent).map_err(to_storage_data)?;
+        let subscription_bytes = serde_json::to_vec(&subscription).map_err(to_storage_data)?;
+        let updated_bytes = serde_json::to_vec(&updated).map_err(to_storage_data)?;
+        (&self.agents, &self.subscriptions)
+            .transaction(|(agents, subscriptions)| {
+                require_transaction_value(
+                    agents,
+                    agent.agent_id.as_bytes(),
+                    &agent_bytes,
+                    "selected agent",
+                )?;
+                require_transaction_value(
+                    subscriptions,
+                    subscription.subscription_id.as_bytes(),
+                    &subscription_bytes,
+                    "selected subscription",
+                )?;
+                subscriptions.insert(
+                    subscription.subscription_id.as_bytes(),
+                    updated_bytes.as_slice(),
+                )?;
+                Ok(())
+            })
+            .map_err(to_agent_transition_error)?;
+        self.flush_durable("selected delivery cursor advancement")?;
+        Ok(updated)
     }
 
     /// Read the idempotent subscription for one agent and belief key.
@@ -1128,7 +1247,192 @@ impl AgentStore {
         )))
     }
 
+    /// Persist one complete decision and exact command outbox atomically.
+    ///
+    /// This is the durable boundary used by recurring curation actors. Command
+    /// decisions cannot become visible without the payload needed after reopen.
+    pub fn put_curation_outcome(
+        &self,
+        outcome: &AgentCurationOutcome,
+    ) -> Result<AgentCurationOutcome, StorageError> {
+        if outcome.decision.decision == AgentDecisionKind::GoalMutationCommand {
+            return Err(StorageError::InvalidPath(
+                "goal mutation outcome requires an exact selected satisfaction review".to_string(),
+            ));
+        }
+        let outbox = AgentDecisionOutboxRecord::from_outcome(outcome)?;
+        self.persist_outcome_transaction(outcome, outbox.as_ref(), None)?;
+        self.flush_durable("agent curation outcome")?;
+        self.outcome_for_decision(&outcome.decision.decision_id)
+    }
+
+    /// Persist one selected delivery outcome under exact lifecycle and cursor fences.
+    pub fn put_selected_delivery_outcome(
+        &self,
+        selection: &AgentDeliverySelection,
+        outcome: &AgentCurationOutcome,
+    ) -> Result<AgentCurationOutcome, StorageError> {
+        selection.validate()?;
+        validate_delivery_outcome(selection, outcome)?;
+        let outbox = AgentDecisionOutboxRecord::from_outcome(outcome)?;
+        let agent = self.require_selected_agent(
+            &selection.delivery.agent_id,
+            selection.expected_agent_updated_at_seq,
+        )?;
+        let subscription = self.require_selected_subscription(
+            &selection.delivery.subscription_id,
+            &selection.delivery.agent_id,
+            &selection.belief_key,
+            selection.expected_subscription_updated_at_seq,
+        )?;
+        if subscription.last_delivered_revision_id != selection.expected_delivered_revision_id
+            || subscription.last_delivered_seq != selection.expected_delivered_seq
+        {
+            return Err(StorageError::Backpressure(
+                "subscription cursor changed before decision commit".to_string(),
+            ));
+        }
+        self.persist_outcome_with_owner_fences(
+            outcome,
+            outbox.as_ref(),
+            &agent,
+            &subscription,
+            None,
+            None,
+        )?;
+        self.flush_durable("selected delivery outcome")?;
+        self.outcome_for_decision(&outcome.decision.decision_id)
+    }
+
+    /// Persist one selected satisfaction outcome under exact owner and cursor fences.
+    pub fn put_selected_satisfaction_outcome(
+        &self,
+        selection: &AgentSatisfactionReviewSelection,
+        outcome: &AgentCurationOutcome,
+    ) -> Result<AgentCurationOutcome, StorageError> {
+        selection.validate()?;
+        validate_satisfaction_outcome(selection, outcome)?;
+        let outbox = AgentDecisionOutboxRecord::from_outcome(outcome)?;
+        let agent = self.require_selected_agent(
+            &selection.review.agent_id,
+            selection.expected_agent_updated_at_seq,
+        )?;
+        let subscription = self.require_selected_subscription(
+            &selection.review.subscription_id,
+            &selection.review.agent_id,
+            &selection.belief_key,
+            selection.expected_subscription_updated_at_seq,
+        )?;
+        let cursor = self
+            .satisfaction_review_cursor(&selection.cursor_identity)?
+            .unwrap_or_else(|| {
+                AgentSatisfactionReviewCursor::empty(selection.cursor_identity.clone())
+            });
+        if cursor.last_reviewed_revision_id != selection.expected_reviewed_revision_id
+            || cursor.last_reviewed_seq != selection.expected_reviewed_seq
+            || cursor.updated_at_seq != selection.expected_cursor_updated_at_seq
+        {
+            return Err(StorageError::Backpressure(
+                "satisfaction cursor changed before decision commit".to_string(),
+            ));
+        }
+        self.persist_outcome_with_owner_fences(
+            outcome,
+            outbox.as_ref(),
+            &agent,
+            &subscription,
+            Some(&selection.review),
+            Some((
+                &selection.cursor_identity,
+                (cursor.last_reviewed_seq != 0).then_some(&cursor),
+            )),
+        )?;
+        self.flush_durable("selected satisfaction outcome")?;
+        self.outcome_for_decision(&outcome.decision.decision_id)
+    }
+
+    /// Read one exact persisted outcome including its durable command payload.
+    pub fn outcome_for_decision(
+        &self,
+        decision_id: &str,
+    ) -> Result<AgentCurationOutcome, StorageError> {
+        let decision = self.get_decision(decision_id)?.ok_or_else(|| {
+            StorageError::InvalidPath(format!("unknown agent decision '{decision_id}'"))
+        })?;
+        let outbox = self.decision_outbox(decision_id)?;
+        outcome_from_durable(decision, outbox)
+    }
+
+    /// Read the complete durable outcome for one exact selected delivery.
+    pub fn outcome_for_selected_delivery(
+        &self,
+        selection: &AgentDeliverySelection,
+    ) -> Result<Option<AgentCurationOutcome>, StorageError> {
+        selection.validate()?;
+        let prefix = format!("{}::", selection.delivery.belief_revision_id);
+        let satisfaction_reviews = self.satisfaction_review_index_map()?;
+        let mut matching = Vec::new();
+        for item in self.decisions_by_revision.scan_prefix(prefix.as_bytes()) {
+            let (_, value) = item.map_err(to_storage_io)?;
+            let decision_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
+            let decision = self.get_decision(&decision_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "selected delivery index references missing decision '{decision_id}'"
+                ))
+            })?;
+            if !satisfaction_reviews.contains_key(&decision.decision_id)
+                && decision.agent_id == selection.delivery.agent_id
+                && decision.subscription_id == selection.delivery.subscription_id
+                && decision.input_refs.belief_key == selection.belief_key
+                && decision.input_refs.belief_revision_id.as_deref()
+                    == Some(selection.delivery.belief_revision_id.as_str())
+                && decision.created_at_seq == selection.delivery.revision_seq
+            {
+                matching.push(decision);
+            }
+        }
+        if matching.len() > 1 {
+            return Err(StorageError::MigrationConflict(
+                "selected delivery has multiple durable decisions".to_string(),
+            ));
+        }
+        matching
+            .pop()
+            .map(|decision| {
+                let outbox = self.decision_outbox(&decision.decision_id)?;
+                outcome_from_durable(decision, outbox)
+            })
+            .transpose()
+    }
+
+    /// Read the complete durable outcome for one exact satisfaction review.
+    pub fn outcome_for_satisfaction_review(
+        &self,
+        review: &AgentSatisfactionReview,
+    ) -> Result<Option<AgentCurationOutcome>, StorageError> {
+        let Some(decision) = self.decision_by_satisfaction_review(review)? else {
+            return Ok(None);
+        };
+        let outbox = self.decision_outbox(&decision.decision_id)?;
+        outcome_from_durable(decision, outbox).map(Some)
+    }
+
+    /// Read the exact command outbox retained for one decision.
+    pub fn decision_outbox(
+        &self,
+        decision_id: &str,
+    ) -> Result<Option<AgentDecisionOutboxRecord>, StorageError> {
+        decode_optional(
+            self.decision_outbox
+                .get(decision_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
     /// Persist a curation decision unless the dedupe and revision key already exists.
+    ///
+    /// This compatibility operation may create a legacy command decision without
+    /// an outbox. The semantic enablement audit rejects such state.
     pub fn put_decision(
         &self,
         decision: &AgentCurationDecision,
@@ -1183,15 +1487,10 @@ impl AgentStore {
                     "satisfaction decision id conflict".to_string(),
                 ));
             }
-            self.index_satisfaction_dedupe(review, decision)?;
-            self.index_satisfaction_review(review, &existing.decision_id)?;
-            return Ok(existing);
         }
         let dedupe_index_key =
             decision_dedupe_satisfaction_review_key(&decision.dedupe_key, review);
-        let persisted = self.insert_decision_record(decision, &dedupe_index_key)?;
-        self.index_satisfaction_review(review, &persisted.decision_id)?;
-        Ok(persisted)
+        self.insert_legacy_decision_transaction(decision, &dedupe_index_key, Some(review))
     }
 
     /// Read one curation decision by id.
@@ -1289,35 +1588,334 @@ impl AgentStore {
         self.get_decision(&decision_id)
     }
 
+    /// Read the independent cursor for one satisfaction-review consumer.
+    pub fn satisfaction_review_cursor(
+        &self,
+        identity: &AgentSatisfactionCursorIdentity,
+    ) -> Result<Option<AgentSatisfactionReviewCursor>, StorageError> {
+        identity.validate()?;
+        decode_optional(
+            self.satisfaction_review_cursors
+                .get(identity.index_key().as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
+    /// Advance a satisfaction cursor after its decision and sink receipt are durable.
+    pub fn advance_satisfaction_cursor_cas(
+        &self,
+        intent: &AgentSatisfactionCursorCasIntent,
+    ) -> Result<AgentSatisfactionReviewCursor, StorageError> {
+        intent.validate()?;
+        let selection = &intent.selection;
+        let agent = self.require_selected_agent(
+            &selection.review.agent_id,
+            selection.expected_agent_updated_at_seq,
+        )?;
+        let subscription = self.require_selected_subscription(
+            &selection.review.subscription_id,
+            &selection.review.agent_id,
+            &selection.belief_key,
+            selection.expected_subscription_updated_at_seq,
+        )?;
+        let decision = self
+            .decision_by_satisfaction_review(&selection.review)?
+            .ok_or_else(|| {
+                StorageError::Backpressure(
+                    "satisfaction cursor cannot advance before its decision".to_string(),
+                )
+            })?;
+        if matches!(decision.decision, AgentDecisionKind::GoalMutationCommand) {
+            let receipt = self
+                .sink_receipt_by_decision(&decision.decision_id)?
+                .ok_or_else(|| {
+                    StorageError::Backpressure(
+                        "satisfaction cursor cannot advance before its sink receipt".to_string(),
+                    )
+                })?;
+            let outbox = self
+                .decision_outbox(&decision.decision_id)?
+                .ok_or_else(|| {
+                    StorageError::MigrationConflict(
+                        "satisfaction mutation has no exact outbox".to_string(),
+                    )
+                })?;
+            outbox.validate_for(&decision)?;
+            validate_sink_receipt_for_decision(&receipt, &decision, Some(&outbox))?;
+        }
+        let expected = self
+            .satisfaction_review_cursor(&selection.cursor_identity)?
+            .unwrap_or_else(|| {
+                AgentSatisfactionReviewCursor::empty(selection.cursor_identity.clone())
+            });
+        if expected.last_reviewed_revision_id != selection.expected_reviewed_revision_id
+            || expected.last_reviewed_seq != selection.expected_reviewed_seq
+            || expected.updated_at_seq != selection.expected_cursor_updated_at_seq
+        {
+            return Err(StorageError::Backpressure(
+                "satisfaction cursor changed before advancement".to_string(),
+            ));
+        }
+        let advanced = AgentSatisfactionReviewCursor {
+            identity: selection.cursor_identity.clone(),
+            last_reviewed_revision_id: Some(selection.belief_revision_id.clone()),
+            last_reviewed_seq: selection.belief_revision_seq,
+            updated_at_seq: intent.advanced_at_seq,
+        };
+        advanced.validate()?;
+        let key = selection.cursor_identity.index_key();
+        let expected_bytes = if expected.last_reviewed_seq == 0 {
+            None
+        } else {
+            Some(serde_json::to_vec(&expected).map_err(to_storage_data)?)
+        };
+        let advanced_bytes = serde_json::to_vec(&advanced).map_err(to_storage_data)?;
+        let agent_bytes = serde_json::to_vec(&agent).map_err(to_storage_data)?;
+        let subscription_bytes = serde_json::to_vec(&subscription).map_err(to_storage_data)?;
+        (
+            &self.agents,
+            &self.subscriptions,
+            &self.satisfaction_review_cursors,
+        )
+            .transaction(|(agents, subscriptions, cursors)| {
+                require_transaction_value(
+                    agents,
+                    selection.review.agent_id.as_bytes(),
+                    &agent_bytes,
+                    "selected agent",
+                )?;
+                require_transaction_value(
+                    subscriptions,
+                    selection.review.subscription_id.as_bytes(),
+                    &subscription_bytes,
+                    "selected subscription",
+                )?;
+                require_optional_transaction_value(
+                    cursors,
+                    key.as_bytes(),
+                    expected_bytes.as_deref(),
+                    "satisfaction cursor",
+                )?;
+                cursors.insert(key.as_bytes(), advanced_bytes.as_slice())?;
+                Ok(())
+            })
+            .map_err(to_agent_transition_error)?;
+        self.flush_durable("satisfaction cursor advancement")?;
+        Ok(advanced)
+    }
+
+    /// Create one hydration checkpoint or replay its exact durable value.
+    pub fn put_hydration_checkpoint(
+        &self,
+        checkpoint: &AgentHydrationCheckpoint,
+    ) -> Result<AgentHydrationCheckpoint, StorageError> {
+        checkpoint.validate()?;
+        let hydration = self
+            .get_process_hydration(&checkpoint.hydration_id)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(format!(
+                    "unknown process hydration '{}'",
+                    checkpoint.hydration_id
+                ))
+            })?;
+        if hydration.agent_id != checkpoint.agent_id
+            || hydration.attempt_epoch != checkpoint.attempt_epoch
+            || hydration.lease_id != checkpoint.lease_id
+            || hydration.status != AgentProcessHydrationStatus::Started
+        {
+            return Err(StorageError::Backpressure(
+                "hydration checkpoint lost its process-hydration fence".to_string(),
+            ));
+        }
+        let subscription = self
+            .get_subscription(&checkpoint.subscription_id)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(format!(
+                    "unknown hydration subscription '{}'",
+                    checkpoint.subscription_id
+                ))
+            })?;
+        if subscription.agent_id != checkpoint.agent_id
+            || subscription.status != AgentSubscriptionStatus::Active
+        {
+            return Err(StorageError::Backpressure(
+                "hydration checkpoint lost its active subscription fence".to_string(),
+            ));
+        }
+        let key = checkpoint.hydration_id.as_bytes();
+        let encoded = serde_json::to_vec(checkpoint).map_err(to_storage_data)?;
+        let hydration_bytes = serde_json::to_vec(&hydration).map_err(to_storage_data)?;
+        let subscription_bytes = serde_json::to_vec(&subscription).map_err(to_storage_data)?;
+        (
+            &self.process_hydrations,
+            &self.subscriptions,
+            &self.hydration_checkpoints,
+        )
+            .transaction(|(hydrations, subscriptions, checkpoints)| {
+                require_transaction_value(hydrations, key, &hydration_bytes, "process hydration")?;
+                require_transaction_value(
+                    subscriptions,
+                    checkpoint.subscription_id.as_bytes(),
+                    &subscription_bytes,
+                    "hydration subscription",
+                )?;
+                insert_exact_transaction_value(checkpoints, key, &encoded, "hydration checkpoint")
+            })
+            .map_err(to_agent_transition_error)?;
+        self.flush_durable("hydration checkpoint creation")?;
+        Ok(checkpoint.clone())
+    }
+
+    /// Advance one hydration checkpoint under exact stage and lease fencing.
+    pub fn advance_hydration_checkpoint_cas(
+        &self,
+        expected: &AgentHydrationCheckpoint,
+        advanced: &AgentHydrationCheckpoint,
+    ) -> Result<AgentHydrationCheckpoint, StorageError> {
+        expected.validate()?;
+        advanced.validate()?;
+        if expected.hydration_id != advanced.hydration_id
+            || expected.agent_id != advanced.agent_id
+            || expected.attempt_epoch != advanced.attempt_epoch
+            || expected.lease_id != advanced.lease_id
+            || expected.subscription_id != advanced.subscription_id
+            || expected.selected_revision_id != advanced.selected_revision_id
+            || expected.selected_revision_seq != advanced.selected_revision_seq
+            || (expected.stage == AgentHydrationCheckpointStage::Attested
+                && expected.attestation_id != advanced.attestation_id)
+            || advanced.updated_at_seq <= expected.updated_at_seq
+        {
+            return Err(StorageError::InvalidPath(
+                "hydration checkpoint advancement must preserve identity and advance stage"
+                    .to_string(),
+            ));
+        }
+        let adjacent_stage = matches!(
+            (expected.stage, advanced.stage),
+            (
+                AgentHydrationCheckpointStage::Selected,
+                AgentHydrationCheckpointStage::Attested
+            ) | (
+                AgentHydrationCheckpointStage::Attested,
+                AgentHydrationCheckpointStage::ProjectionRequested
+            )
+        );
+        if !adjacent_stage {
+            return Err(StorageError::InvalidPath(
+                "hydration checkpoint must advance exactly one stage".to_string(),
+            ));
+        }
+        let hydration = self
+            .get_process_hydration(&expected.hydration_id)?
+            .ok_or_else(|| {
+                StorageError::Backpressure("process hydration disappeared".to_string())
+            })?;
+        if hydration.agent_id != expected.agent_id
+            || hydration.attempt_epoch != expected.attempt_epoch
+            || hydration.lease_id != expected.lease_id
+            || hydration.status != AgentProcessHydrationStatus::Started
+        {
+            return Err(StorageError::Backpressure(
+                "hydration checkpoint lost its active epoch or lease".to_string(),
+            ));
+        }
+        let subscription = self
+            .get_subscription(&expected.subscription_id)?
+            .ok_or_else(|| {
+                StorageError::Backpressure("hydration subscription disappeared".to_string())
+            })?;
+        if subscription.agent_id != expected.agent_id
+            || subscription.status != AgentSubscriptionStatus::Active
+        {
+            return Err(StorageError::Backpressure(
+                "hydration checkpoint lost its active subscription fence".to_string(),
+            ));
+        }
+        let key = expected.hydration_id.as_bytes();
+        let expected_bytes = serde_json::to_vec(expected).map_err(to_storage_data)?;
+        let advanced_bytes = serde_json::to_vec(advanced).map_err(to_storage_data)?;
+        let hydration_bytes = serde_json::to_vec(&hydration).map_err(to_storage_data)?;
+        let subscription_bytes = serde_json::to_vec(&subscription).map_err(to_storage_data)?;
+        (
+            &self.process_hydrations,
+            &self.subscriptions,
+            &self.hydration_checkpoints,
+        )
+            .transaction(|(hydrations, subscriptions, checkpoints)| {
+                require_transaction_value(hydrations, key, &hydration_bytes, "process hydration")?;
+                require_transaction_value(
+                    subscriptions,
+                    expected.subscription_id.as_bytes(),
+                    &subscription_bytes,
+                    "hydration subscription",
+                )?;
+                require_transaction_value(
+                    checkpoints,
+                    key,
+                    &expected_bytes,
+                    "hydration checkpoint",
+                )?;
+                checkpoints.insert(key, advanced_bytes.as_slice())?;
+                Ok(())
+            })
+            .map_err(to_agent_transition_error)?;
+        self.flush_durable("hydration checkpoint advancement")?;
+        Ok(advanced.clone())
+    }
+
+    /// Read one durable hydration orchestration checkpoint.
+    pub fn hydration_checkpoint(
+        &self,
+        hydration_id: &str,
+    ) -> Result<Option<AgentHydrationCheckpoint>, StorageError> {
+        decode_optional(
+            self.hydration_checkpoints
+                .get(hydration_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
+    }
+
     /// Persist a sink receipt unless the decision already has one.
     pub fn put_sink_receipt(
         &self,
         receipt: &AgentSinkReceipt,
     ) -> Result<AgentSinkReceipt, StorageError> {
         receipt.validate()?;
+        let decision = self.get_decision(&receipt.decision_id)?.ok_or_else(|| {
+            StorageError::InvalidPath("sink receipt references an unknown decision".to_string())
+        })?;
+        let outbox = self.decision_outbox(&receipt.decision_id)?;
+        if let Some(outbox) = &outbox {
+            outbox.validate_for(&decision)?;
+        }
+        validate_sink_receipt_for_decision(receipt, &decision, outbox.as_ref())?;
         if let Some(existing) = self.sink_receipt_by_decision(&receipt.decision_id)? {
-            if existing.submission.command_id != receipt.submission.command_id
-                || existing.submission.goal_id != receipt.submission.goal_id
-            {
+            if existing != *receipt {
                 return Err(StorageError::InvalidPath(
                     "sink receipt decision conflict".to_string(),
                 ));
             }
             return Ok(existing);
         }
-        self.sink_receipts
-            .insert(
-                receipt.decision_id.as_bytes(),
-                serde_json::to_vec(receipt).map_err(to_storage_data)?,
-            )
-            .map_err(to_storage_io)?;
-        self.sink_receipts_by_command
-            .insert(
-                sink_receipt_command_key(&receipt.submission.command_id, &receipt.decision_id)
-                    .as_bytes(),
-                receipt.decision_id.as_bytes(),
-            )
-            .map_err(to_storage_io)?;
+        let receipt_bytes = serde_json::to_vec(receipt).map_err(to_storage_data)?;
+        let command_key =
+            sink_receipt_command_key(&receipt.submission.command_id, &receipt.decision_id);
+        (&self.sink_receipts, &self.sink_receipts_by_command)
+            .transaction(|(receipts, by_command)| {
+                insert_exact_transaction_value(
+                    receipts,
+                    receipt.decision_id.as_bytes(),
+                    &receipt_bytes,
+                    "sink receipt",
+                )?;
+                insert_exact_transaction_value(
+                    by_command,
+                    command_key.as_bytes(),
+                    receipt.decision_id.as_bytes(),
+                    "sink receipt command index",
+                )
+            })
+            .map_err(to_agent_transition_error)?;
         Ok(receipt.clone())
     }
 
@@ -1351,6 +1949,100 @@ impl AgentStore {
         Ok(out)
     }
 
+    /// Audit durable state before recurring semantic agent actors are enabled.
+    ///
+    /// Legacy command decisions without exact outbox payloads fail closed. The
+    /// audit never reconstructs commands from current beliefs or goal state.
+    pub fn audit_semantic_enablement(&self) -> Result<AgentSemanticEnablementAudit, StorageError> {
+        let schema_version = self.runtime_schema_version()?;
+        if schema_version != RUNTIME_SCHEMA_VERSION {
+            return Err(StorageError::Backpressure(format!(
+                "agent runtime schema {schema_version} is not enableable"
+            )));
+        }
+        let mut decision_count = 0usize;
+        let mut command_outbox_count = 0usize;
+        for item in &self.decisions {
+            let (_, value) = item.map_err(to_storage_io)?;
+            let decision: AgentCurationDecision =
+                serde_json::from_slice(&value).map_err(to_storage_data)?;
+            decision.validate()?;
+            decision_count += 1;
+            let outbox = self.decision_outbox(&decision.decision_id)?;
+            if matches!(
+                decision.decision,
+                AgentDecisionKind::GoalCommand | AgentDecisionKind::GoalMutationCommand
+            ) {
+                let outbox = outbox.ok_or_else(|| {
+                    StorageError::MigrationConflict(format!(
+                        "command decision '{}' has no exact durable outbox",
+                        decision.decision_id
+                    ))
+                })?;
+                outbox.validate_for(&decision)?;
+                command_outbox_count += 1;
+            } else if outbox.is_some() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "command-free decision '{}' has an outbox",
+                    decision.decision_id
+                )));
+            }
+            if decision.decision == AgentDecisionKind::GoalMutationCommand {
+                let review_key = AgentSatisfactionReview {
+                    agent_id: decision.agent_id.clone(),
+                    subscription_id: decision.subscription_id.clone(),
+                    review_seq: decision.created_at_seq,
+                }
+                .index_key();
+                let indexed_decision = self
+                    .satisfaction_decisions_by_review
+                    .get(review_key.as_bytes())
+                    .map_err(to_storage_io)?;
+                if indexed_decision.as_deref() != Some(decision.decision_id.as_bytes()) {
+                    return Err(StorageError::MigrationConflict(format!(
+                        "mutation decision '{}' has no exact satisfaction review identity",
+                        decision.decision_id
+                    )));
+                }
+            }
+        }
+        let mut sink_receipt_count = 0usize;
+        for item in &self.sink_receipts {
+            let (_, value) = item.map_err(to_storage_io)?;
+            let receipt: AgentSinkReceipt =
+                serde_json::from_slice(&value).map_err(to_storage_data)?;
+            receipt.validate()?;
+            let decision = self.get_decision(&receipt.decision_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "sink receipt '{}' references a missing decision",
+                    receipt.receipt_id
+                ))
+            })?;
+            let outbox = self.decision_outbox(&receipt.decision_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "sink receipt '{}' has no exact command outbox",
+                    receipt.receipt_id
+                ))
+            })?;
+            outbox.validate_for(&decision)?;
+            validate_sink_receipt_for_decision(&receipt, &decision, Some(&outbox)).map_err(
+                |error| {
+                    StorageError::MigrationConflict(format!(
+                        "sink receipt '{}' is invalid: {error}",
+                        receipt.receipt_id
+                    ))
+                },
+            )?;
+            sink_receipt_count += 1;
+        }
+        Ok(AgentSemanticEnablementAudit {
+            schema_version,
+            decision_count,
+            command_outbox_count,
+            sink_receipt_count,
+        })
+    }
+
     /// Flush all sled writes for this store.
     pub fn flush(&self) -> Result<(), StorageError> {
         #[cfg(test)]
@@ -1376,6 +2068,456 @@ impl AgentStore {
     #[cfg(test)]
     fn fail_next_flush(&self) {
         self.flush_probe.lock().fail_next = true;
+    }
+
+    fn runtime_schema_version(&self) -> Result<u16, StorageError> {
+        let Some(raw) = self
+            .runtime_schema
+            .get(RUNTIME_SCHEMA_VERSION_KEY)
+            .map_err(to_storage_io)?
+        else {
+            return Ok(0);
+        };
+        let encoded: [u8; 2] = raw.as_ref().try_into().map_err(|_| {
+            StorageError::MigrationConflict(
+                "agent runtime schema version must contain two bytes".to_string(),
+            )
+        })?;
+        Ok(u16::from_be_bytes(encoded))
+    }
+
+    fn migrate_runtime_schema(&self) -> Result<(), StorageError> {
+        let version = self.runtime_schema_version()?;
+        if version > RUNTIME_SCHEMA_VERSION {
+            return Err(StorageError::MigrationConflict(format!(
+                "agent runtime schema version {version} is newer than supported version {RUNTIME_SCHEMA_VERSION}"
+            )));
+        }
+
+        let satisfaction_reviews = self.satisfaction_review_index_map()?;
+
+        // Primary records are authoritative during the additive migration. Every
+        // reconstructable index is repaired exactly before the version is enabled.
+        for item in &self.decisions {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let decision: AgentCurationDecision =
+                serde_json::from_slice(&value).map_err(to_storage_data)?;
+            decision.validate()?;
+            if key.as_ref() != decision.decision_id.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "decision primary key diverges for '{}'",
+                    decision.decision_id
+                )));
+            }
+            if decision.decision == AgentDecisionKind::GoalMutationCommand
+                && !satisfaction_reviews.contains_key(&decision.decision_id)
+            {
+                return Err(StorageError::MigrationConflict(format!(
+                    "mutation decision '{}' has no exact satisfaction review identity",
+                    decision.decision_id
+                )));
+            }
+            repair_exact_tree_value(
+                &self.decisions_by_agent,
+                decision_agent_key(
+                    &decision.agent_id,
+                    decision.created_at_seq,
+                    &decision.decision_id,
+                )
+                .as_bytes(),
+                decision.decision_id.as_bytes(),
+                "decision agent index",
+            )?;
+            repair_exact_tree_value(
+                &self.decisions_by_dedupe,
+                satisfaction_reviews
+                    .get(&decision.decision_id)
+                    .map(|review_key| {
+                        format!(
+                            "{}::satisfaction-review::{review_key}",
+                            decision.dedupe_key.index_key()
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        decision_dedupe_revision_key(
+                            &decision.dedupe_key,
+                            decision.input_refs.belief_revision_id.as_deref(),
+                        )
+                    })
+                    .as_bytes(),
+                decision.decision_id.as_bytes(),
+                "decision dedupe index",
+            )?;
+            if let Some(revision_id) = &decision.input_refs.belief_revision_id {
+                repair_exact_tree_value(
+                    &self.decisions_by_revision,
+                    decision_revision_key(revision_id, &decision.decision_id).as_bytes(),
+                    decision.decision_id.as_bytes(),
+                    "decision revision index",
+                )?;
+            }
+        }
+        self.validate_decision_indexes()?;
+
+        for item in &self.sink_receipts {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let receipt: AgentSinkReceipt =
+                serde_json::from_slice(&value).map_err(to_storage_data)?;
+            receipt.validate()?;
+            if key.as_ref() != receipt.decision_id.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "sink receipt primary key diverges for '{}'",
+                    receipt.receipt_id
+                )));
+            }
+            repair_exact_tree_value(
+                &self.sink_receipts_by_command,
+                sink_receipt_command_key(&receipt.submission.command_id, &receipt.decision_id)
+                    .as_bytes(),
+                receipt.decision_id.as_bytes(),
+                "sink receipt command index",
+            )?;
+        }
+        self.validate_sink_receipt_indexes()?;
+
+        repair_exact_tree_value(
+            &self.runtime_schema,
+            RUNTIME_SCHEMA_VERSION_KEY,
+            &RUNTIME_SCHEMA_VERSION.to_be_bytes(),
+            "agent runtime schema version",
+        )?;
+        self.flush_durable("agent runtime schema migration")
+    }
+
+    fn satisfaction_review_index_map(&self) -> Result<BTreeMap<String, String>, StorageError> {
+        let mut by_decision = BTreeMap::new();
+        for item in &self.satisfaction_decisions_by_review {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let review_key = String::from_utf8(key.to_vec()).map_err(to_storage_utf8)?;
+            let decision_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
+            if let Some(existing) = by_decision.insert(decision_id.clone(), review_key.clone()) {
+                if existing != review_key {
+                    return Err(StorageError::MigrationConflict(format!(
+                        "decision '{decision_id}' has divergent satisfaction review indexes"
+                    )));
+                }
+            }
+        }
+        Ok(by_decision)
+    }
+
+    fn validate_decision_indexes(&self) -> Result<(), StorageError> {
+        let satisfaction_reviews = self.satisfaction_review_index_map()?;
+        for item in &self.decisions_by_agent {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let decision_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
+            let decision = self.get_decision(&decision_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "decision agent index references missing decision '{decision_id}'"
+                ))
+            })?;
+            let expected = decision_agent_key(
+                &decision.agent_id,
+                decision.created_at_seq,
+                &decision.decision_id,
+            );
+            if key.as_ref() != expected.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "decision agent index diverges for '{decision_id}'"
+                )));
+            }
+        }
+        for item in &self.decisions_by_dedupe {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let decision_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
+            let decision = self.get_decision(&decision_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "decision dedupe index references missing decision '{decision_id}'"
+                ))
+            })?;
+            let expected = satisfaction_reviews
+                .get(&decision_id)
+                .map(|review_key| {
+                    format!(
+                        "{}::satisfaction-review::{review_key}",
+                        decision.dedupe_key.index_key()
+                    )
+                })
+                .unwrap_or_else(|| {
+                    decision_dedupe_revision_key(
+                        &decision.dedupe_key,
+                        decision.input_refs.belief_revision_id.as_deref(),
+                    )
+                });
+            if key.as_ref() != expected.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "decision dedupe index diverges for '{decision_id}'"
+                )));
+            }
+        }
+        for item in &self.decisions_by_revision {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let decision_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
+            let decision = self.get_decision(&decision_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "decision revision index references missing decision '{decision_id}'"
+                ))
+            })?;
+            let revision_id = decision
+                .input_refs
+                .belief_revision_id
+                .as_deref()
+                .ok_or_else(|| {
+                    StorageError::MigrationConflict(format!(
+                        "decision revision index references revision-free decision '{decision_id}'"
+                    ))
+                })?;
+            let expected = decision_revision_key(revision_id, &decision_id);
+            if key.as_ref() != expected.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "decision revision index diverges for '{decision_id}'"
+                )));
+            }
+        }
+        for item in &self.satisfaction_decisions_by_review {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let decision_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
+            let decision = self.get_decision(&decision_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "satisfaction review index references missing decision '{decision_id}'"
+                ))
+            })?;
+            if decision.decision == AgentDecisionKind::GoalCommand {
+                return Err(StorageError::MigrationConflict(format!(
+                    "satisfaction review index references goal decision '{decision_id}'"
+                )));
+            }
+            let expected = AgentSatisfactionReview {
+                agent_id: decision.agent_id,
+                subscription_id: decision.subscription_id,
+                review_seq: decision.created_at_seq,
+            }
+            .index_key();
+            if key.as_ref() != expected.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "satisfaction review index diverges for '{decision_id}'"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_sink_receipt_indexes(&self) -> Result<(), StorageError> {
+        for item in &self.sink_receipts_by_command {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let decision_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
+            let receipt = self
+                .sink_receipt_by_decision(&decision_id)?
+                .ok_or_else(|| {
+                    StorageError::MigrationConflict(format!(
+                        "sink receipt command index references missing decision '{decision_id}'"
+                    ))
+                })?;
+            let expected = sink_receipt_command_key(&receipt.submission.command_id, &decision_id);
+            if key.as_ref() != expected.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "sink receipt command index diverges for '{decision_id}'"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn require_selected_agent(
+        &self,
+        agent_id: &str,
+        expected_updated_at_seq: u64,
+    ) -> Result<AgentRecord, StorageError> {
+        let agent = self
+            .get_agent(agent_id)?
+            .ok_or_else(|| StorageError::Backpressure("selected agent disappeared".to_string()))?;
+        if agent.status != AgentStatus::Operational
+            || agent.updated_at_seq != expected_updated_at_seq
+        {
+            return Err(StorageError::Backpressure(
+                "selected agent lifecycle changed".to_string(),
+            ));
+        }
+        Ok(agent)
+    }
+
+    fn require_selected_subscription(
+        &self,
+        subscription_id: &str,
+        agent_id: &str,
+        belief_key: &crate::belief::BeliefKey,
+        expected_updated_at_seq: u64,
+    ) -> Result<AgentSubscriptionRecord, StorageError> {
+        let subscription = self.get_subscription(subscription_id)?.ok_or_else(|| {
+            StorageError::Backpressure("selected subscription disappeared".to_string())
+        })?;
+        if subscription.agent_id != agent_id
+            || subscription.status != AgentSubscriptionStatus::Active
+            || subscription.belief_key != *belief_key
+            || subscription.updated_at_seq != expected_updated_at_seq
+        {
+            return Err(StorageError::Backpressure(
+                "selected subscription changed".to_string(),
+            ));
+        }
+        Ok(subscription)
+    }
+
+    fn persist_outcome_transaction(
+        &self,
+        outcome: &AgentCurationOutcome,
+        outbox: Option<&AgentDecisionOutboxRecord>,
+        review: Option<&AgentSatisfactionReview>,
+    ) -> Result<(), StorageError> {
+        outcome.decision.validate()?;
+        if let Some(outbox) = outbox {
+            outbox.validate_for(&outcome.decision)?;
+        }
+        if let Some(review) = review {
+            review.validate()?;
+        }
+        let data = DecisionPersistenceData::new(outcome, outbox, review)?;
+        (
+            &self.decisions,
+            &self.decisions_by_agent,
+            &self.decisions_by_dedupe,
+            &self.decisions_by_revision,
+            &self.satisfaction_decisions_by_review,
+            &self.decision_outbox,
+        )
+            .transaction(
+                |(decisions, by_agent, by_dedupe, by_revision, by_review, outboxes)| {
+                    persist_decision_values(
+                        decisions,
+                        by_agent,
+                        by_dedupe,
+                        by_revision,
+                        by_review,
+                        outboxes,
+                        &data,
+                    )
+                },
+            )
+            .map_err(to_agent_transition_error)
+    }
+
+    fn persist_outcome_with_owner_fences(
+        &self,
+        outcome: &AgentCurationOutcome,
+        outbox: Option<&AgentDecisionOutboxRecord>,
+        agent: &AgentRecord,
+        subscription: &AgentSubscriptionRecord,
+        review: Option<&AgentSatisfactionReview>,
+        cursor_fence: Option<(
+            &AgentSatisfactionCursorIdentity,
+            Option<&AgentSatisfactionReviewCursor>,
+        )>,
+    ) -> Result<(), StorageError> {
+        outcome.decision.validate()?;
+        if let Some(outbox) = outbox {
+            outbox.validate_for(&outcome.decision)?;
+        }
+        let data = DecisionPersistenceData::new(outcome, outbox, review)?;
+        let agent_bytes = serde_json::to_vec(agent).map_err(to_storage_data)?;
+        let subscription_bytes = serde_json::to_vec(subscription).map_err(to_storage_data)?;
+        let cursor_key = cursor_fence.map(|fence| fence.0.index_key());
+        let cursor_bytes = cursor_fence
+            .and_then(|fence| fence.1)
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(to_storage_data)?;
+        (
+            &self.agents,
+            &self.subscriptions,
+            &self.satisfaction_review_cursors,
+            &self.decisions,
+            &self.decisions_by_agent,
+            &self.decisions_by_dedupe,
+            &self.decisions_by_revision,
+            &self.satisfaction_decisions_by_review,
+            &self.decision_outbox,
+        )
+            .transaction(
+                |(
+                    agents,
+                    subscriptions,
+                    cursors,
+                    decisions,
+                    by_agent,
+                    by_dedupe,
+                    by_revision,
+                    by_review,
+                    outboxes,
+                )| {
+                    require_transaction_value(
+                        agents,
+                        agent.agent_id.as_bytes(),
+                        &agent_bytes,
+                        "selected agent",
+                    )?;
+                    require_transaction_value(
+                        subscriptions,
+                        subscription.subscription_id.as_bytes(),
+                        &subscription_bytes,
+                        "selected subscription",
+                    )?;
+                    if let Some(cursor_key) = &cursor_key {
+                        require_optional_transaction_value(
+                            cursors,
+                            cursor_key.as_bytes(),
+                            cursor_bytes.as_deref(),
+                            "satisfaction cursor",
+                        )?;
+                    }
+                    persist_decision_values(
+                        decisions,
+                        by_agent,
+                        by_dedupe,
+                        by_revision,
+                        by_review,
+                        outboxes,
+                        &data,
+                    )
+                },
+            )
+            .map_err(to_agent_transition_error)
+    }
+
+    fn insert_legacy_decision_transaction(
+        &self,
+        decision: &AgentCurationDecision,
+        dedupe_index_key: &str,
+        review: Option<&AgentSatisfactionReview>,
+    ) -> Result<AgentCurationDecision, StorageError> {
+        let data = DecisionPersistenceData::legacy(decision, dedupe_index_key, review)?;
+        (
+            &self.decisions,
+            &self.decisions_by_agent,
+            &self.decisions_by_dedupe,
+            &self.decisions_by_revision,
+            &self.satisfaction_decisions_by_review,
+            &self.decision_outbox,
+        )
+            .transaction(
+                |(decisions, by_agent, by_dedupe, by_revision, by_review, outboxes)| {
+                    persist_decision_values(
+                        decisions,
+                        by_agent,
+                        by_dedupe,
+                        by_revision,
+                        by_review,
+                        outboxes,
+                        &data,
+                    )
+                },
+            )
+            .map_err(to_agent_transition_error)?;
+        Ok(decision.clone())
     }
 
     fn current_hydration_epoch(&self, agent_id: &str) -> Result<u64, StorageError> {
@@ -1512,61 +2654,265 @@ impl AgentStore {
         decision: &AgentCurationDecision,
         dedupe_index_key: &str,
     ) -> Result<AgentCurationDecision, StorageError> {
-        self.decisions
-            .insert(
-                decision.decision_id.as_bytes(),
-                serde_json::to_vec(decision).map_err(to_storage_data)?,
-            )
-            .map_err(to_storage_io)?;
-        self.decisions_by_agent
-            .insert(
-                decision_agent_key(
-                    &decision.agent_id,
-                    decision.created_at_seq,
-                    &decision.decision_id,
-                )
-                .as_bytes(),
-                decision.decision_id.as_bytes(),
-            )
-            .map_err(to_storage_io)?;
-        self.decisions_by_dedupe
-            .insert(dedupe_index_key.as_bytes(), decision.decision_id.as_bytes())
-            .map_err(to_storage_io)?;
-        if let Some(revision_id) = &decision.input_refs.belief_revision_id {
-            self.decisions_by_revision
-                .insert(
-                    decision_revision_key(revision_id, &decision.decision_id).as_bytes(),
-                    decision.decision_id.as_bytes(),
-                )
-                .map_err(to_storage_io)?;
-        }
-        Ok(decision.clone())
+        self.insert_legacy_decision_transaction(decision, dedupe_index_key, None)
+    }
+}
+
+struct DecisionPersistenceData {
+    decision_id: Vec<u8>,
+    decision: Vec<u8>,
+    agent_index_key: Vec<u8>,
+    dedupe_index_key: Vec<u8>,
+    revision_index_key: Option<Vec<u8>>,
+    review_index_key: Option<Vec<u8>>,
+    outbox: Option<Vec<u8>>,
+}
+
+impl DecisionPersistenceData {
+    fn new(
+        outcome: &AgentCurationOutcome,
+        outbox: Option<&AgentDecisionOutboxRecord>,
+        review: Option<&AgentSatisfactionReview>,
+    ) -> Result<Self, StorageError> {
+        let dedupe_index_key = match review {
+            Some(review) => {
+                decision_dedupe_satisfaction_review_key(&outcome.decision.dedupe_key, review)
+            }
+            None => decision_dedupe_revision_key(
+                &outcome.decision.dedupe_key,
+                outcome.decision.input_refs.belief_revision_id.as_deref(),
+            ),
+        };
+        Self::build(&outcome.decision, &dedupe_index_key, review, outbox)
     }
 
-    fn index_satisfaction_review(
-        &self,
-        review: &AgentSatisfactionReview,
-        decision_id: &str,
-    ) -> Result<(), StorageError> {
-        self.satisfaction_decisions_by_review
-            .insert(review.index_key().as_bytes(), decision_id.as_bytes())
-            .map_err(to_storage_io)?;
-        Ok(())
-    }
-
-    fn index_satisfaction_dedupe(
-        &self,
-        review: &AgentSatisfactionReview,
+    fn legacy(
         decision: &AgentCurationDecision,
-    ) -> Result<(), StorageError> {
-        self.decisions_by_dedupe
-            .insert(
-                decision_dedupe_satisfaction_review_key(&decision.dedupe_key, review).as_bytes(),
-                decision.decision_id.as_bytes(),
-            )
-            .map_err(to_storage_io)?;
-        Ok(())
+        dedupe_index_key: &str,
+        review: Option<&AgentSatisfactionReview>,
+    ) -> Result<Self, StorageError> {
+        Self::build(decision, dedupe_index_key, review, None)
     }
+
+    fn build(
+        decision: &AgentCurationDecision,
+        dedupe_index_key: &str,
+        review: Option<&AgentSatisfactionReview>,
+        outbox: Option<&AgentDecisionOutboxRecord>,
+    ) -> Result<Self, StorageError> {
+        decision.validate()?;
+        if let Some(review) = review {
+            review.validate()?;
+        }
+        Ok(Self {
+            decision_id: decision.decision_id.as_bytes().to_vec(),
+            decision: serde_json::to_vec(decision).map_err(to_storage_data)?,
+            agent_index_key: decision_agent_key(
+                &decision.agent_id,
+                decision.created_at_seq,
+                &decision.decision_id,
+            )
+            .into_bytes(),
+            dedupe_index_key: dedupe_index_key.as_bytes().to_vec(),
+            revision_index_key: decision
+                .input_refs
+                .belief_revision_id
+                .as_deref()
+                .map(|revision_id| decision_revision_key(revision_id, &decision.decision_id))
+                .map(String::into_bytes),
+            review_index_key: review
+                .map(AgentSatisfactionReview::index_key)
+                .map(String::into_bytes),
+            outbox: outbox
+                .map(serde_json::to_vec)
+                .transpose()
+                .map_err(to_storage_data)?,
+        })
+    }
+}
+
+fn persist_decision_values(
+    decisions: &sled::transaction::TransactionalTree,
+    by_agent: &sled::transaction::TransactionalTree,
+    by_dedupe: &sled::transaction::TransactionalTree,
+    by_revision: &sled::transaction::TransactionalTree,
+    by_review: &sled::transaction::TransactionalTree,
+    outboxes: &sled::transaction::TransactionalTree,
+    data: &DecisionPersistenceData,
+) -> Result<(), ConflictableTransactionError<String>> {
+    insert_exact_transaction_value(
+        decisions,
+        &data.decision_id,
+        &data.decision,
+        "agent decision",
+    )?;
+    insert_exact_transaction_value(
+        by_agent,
+        &data.agent_index_key,
+        &data.decision_id,
+        "decision agent index",
+    )?;
+    insert_exact_transaction_value(
+        by_dedupe,
+        &data.dedupe_index_key,
+        &data.decision_id,
+        "decision dedupe index",
+    )?;
+    if let Some(key) = &data.revision_index_key {
+        insert_exact_transaction_value(
+            by_revision,
+            key,
+            &data.decision_id,
+            "decision revision index",
+        )?;
+    }
+    if let Some(key) = &data.review_index_key {
+        insert_exact_transaction_value(
+            by_review,
+            key,
+            &data.decision_id,
+            "satisfaction review index",
+        )?;
+    }
+    match &data.outbox {
+        Some(outbox) => {
+            insert_exact_transaction_value(outboxes, &data.decision_id, outbox, "decision outbox")
+        }
+        None => {
+            require_optional_transaction_value(outboxes, &data.decision_id, None, "decision outbox")
+        }
+    }
+}
+
+fn validate_delivery_outcome(
+    selection: &AgentDeliverySelection,
+    outcome: &AgentCurationOutcome,
+) -> Result<(), StorageError> {
+    let decision = &outcome.decision;
+    if matches!(decision.decision, AgentDecisionKind::GoalMutationCommand)
+        || decision.agent_id != selection.delivery.agent_id
+        || decision.subscription_id != selection.delivery.subscription_id
+        || decision.input_refs.belief_key != selection.belief_key
+        || decision.input_refs.belief_revision_id.as_deref()
+            != Some(selection.delivery.belief_revision_id.as_str())
+        || decision.created_at_seq != selection.delivery.revision_seq
+    {
+        return Err(StorageError::InvalidPath(
+            "selected delivery and curation outcome disagree".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_satisfaction_outcome(
+    selection: &AgentSatisfactionReviewSelection,
+    outcome: &AgentCurationOutcome,
+) -> Result<(), StorageError> {
+    let decision = &outcome.decision;
+    if matches!(decision.decision, AgentDecisionKind::GoalCommand)
+        || decision.agent_id != selection.review.agent_id
+        || decision.subscription_id != selection.review.subscription_id
+        || decision.input_refs.belief_key != selection.belief_key
+        || decision.input_refs.belief_revision_id.as_deref()
+            != Some(selection.belief_revision_id.as_str())
+        || decision.created_at_seq != selection.belief_revision_seq
+    {
+        return Err(StorageError::InvalidPath(
+            "selected satisfaction review and curation outcome disagree".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sink_receipt_for_decision(
+    receipt: &AgentSinkReceipt,
+    decision: &AgentCurationDecision,
+    outbox: Option<&AgentDecisionOutboxRecord>,
+) -> Result<(), StorageError> {
+    let (expected_command_id, expected_kind) = match &decision.decision {
+        AgentDecisionKind::GoalCommand => (
+            decision.goal_command_id.as_deref(),
+            AgentSinkReceiptKind::GoalCommand,
+        ),
+        AgentDecisionKind::GoalMutationCommand => (
+            decision.goal_mutation_command_id.as_deref(),
+            AgentSinkReceiptKind::GoalMutationCommand,
+        ),
+        AgentDecisionKind::Absorbed | AgentDecisionKind::Indeterminate => {
+            return Err(StorageError::InvalidPath(
+                "sink receipt decision did not emit a command".to_string(),
+            ));
+        }
+    };
+    let expected_command_id = expected_command_id.ok_or_else(|| {
+        StorageError::InvalidPath("sink receipt decision did not emit a command".to_string())
+    })?;
+    if receipt.kind != expected_kind
+        || receipt.recorded_at_seq != decision.created_at_seq
+        || receipt.submission.command_id != expected_command_id
+    {
+        return Err(StorageError::InvalidPath(
+            "sink receipt kind, sequence, or command does not match its decision".to_string(),
+        ));
+    }
+    if let Some(outbox) = outbox {
+        if outbox.command.command_id() != receipt.submission.command_id
+            || outbox.command.goal_id() != receipt.submission.goal_id
+        {
+            return Err(StorageError::InvalidPath(
+                "sink receipt does not match the durable command outbox".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn outcome_from_durable(
+    decision: AgentCurationDecision,
+    outbox: Option<AgentDecisionOutboxRecord>,
+) -> Result<AgentCurationOutcome, StorageError> {
+    decision.validate()?;
+    if let Some(outbox) = &outbox {
+        outbox.validate_for(&decision)?;
+    }
+    let (goal_command, goal_mutation_command) = match (&decision.decision, outbox) {
+        (AgentDecisionKind::GoalCommand, Some(outbox)) => match outbox.command {
+            AgentAuthoredCommand::Goal(command) => (Some(*command), None),
+            AgentAuthoredCommand::GoalMutation(_) => {
+                return Err(StorageError::MigrationConflict(format!(
+                    "decision '{}' has the wrong command outbox kind",
+                    decision.decision_id
+                )));
+            }
+        },
+        (AgentDecisionKind::GoalMutationCommand, Some(outbox)) => match outbox.command {
+            AgentAuthoredCommand::GoalMutation(command) => (None, Some(*command)),
+            AgentAuthoredCommand::Goal(_) => {
+                return Err(StorageError::MigrationConflict(format!(
+                    "decision '{}' has the wrong command outbox kind",
+                    decision.decision_id
+                )));
+            }
+        },
+        (AgentDecisionKind::GoalCommand | AgentDecisionKind::GoalMutationCommand, None) => {
+            return Err(StorageError::MigrationConflict(format!(
+                "command decision '{}' has no exact durable outbox",
+                decision.decision_id
+            )));
+        }
+        (AgentDecisionKind::Absorbed | AgentDecisionKind::Indeterminate, Some(_)) => {
+            return Err(StorageError::MigrationConflict(format!(
+                "command-free decision '{}' has a durable outbox",
+                decision.decision_id
+            )));
+        }
+        (AgentDecisionKind::Absorbed | AgentDecisionKind::Indeterminate, None) => (None, None),
+    };
+    Ok(AgentCurationOutcome {
+        decision,
+        goal_command,
+        goal_mutation_command,
+    })
 }
 
 fn agent_status_key(status: &str, seq: u64, agent_id: &str) -> String {
@@ -1600,6 +2946,24 @@ fn require_transaction_value(
     Ok(())
 }
 
+fn insert_exact_transaction_value(
+    tree: &sled::transaction::TransactionalTree,
+    key: &[u8],
+    value: &[u8],
+    product: &str,
+) -> Result<(), ConflictableTransactionError<String>> {
+    match tree.get(key)? {
+        Some(current) if current.as_ref() != value => Err(ConflictableTransactionError::Abort(
+            format!("{product} conflicts with its durable value"),
+        )),
+        Some(_) => Ok(()),
+        None => {
+            tree.insert(key, value)?;
+            Ok(())
+        }
+    }
+}
+
 fn require_optional_transaction_value(
     tree: &sled::transaction::TransactionalTree,
     key: &[u8],
@@ -1608,10 +2972,28 @@ fn require_optional_transaction_value(
 ) -> Result<(), ConflictableTransactionError<String>> {
     if tree.get(key)?.as_deref() != expected {
         return Err(ConflictableTransactionError::Abort(format!(
-            "{product} changed during hydration transition"
+            "{product} changed during fenced transition"
         )));
     }
     Ok(())
+}
+
+fn repair_exact_tree_value(
+    tree: &Tree,
+    key: &[u8],
+    value: &[u8],
+    product: &str,
+) -> Result<(), StorageError> {
+    match tree.get(key).map_err(to_storage_io)? {
+        Some(current) if current.as_ref() != value => Err(StorageError::MigrationConflict(
+            format!("{product} conflicts with its primary record"),
+        )),
+        Some(_) => Ok(()),
+        None => {
+            tree.insert(key, value).map_err(to_storage_io)?;
+            Ok(())
+        }
+    }
 }
 
 fn encode_epoch(epoch: u64) -> [u8; 8] {

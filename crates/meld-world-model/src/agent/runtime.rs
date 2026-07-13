@@ -5,14 +5,18 @@
 //! owns curation persistence and subscription cursor ordering.
 
 use crate::agent::contracts::{
-    ActiveGoalSummary, AdvanceSubscriptionCommand, AgentCurationOutcome, AgentCurationRuleConfig,
-    AgentDecisionKind, AgentDelivery, AgentGoalCommand, AgentGoalMutationCommand,
-    AgentSatisfactionReview, AgentSinkReceipt, AgentSinkReceiptKind, AgentSinkSubmission,
+    ActiveGoalSummary, AdvanceSubscriptionCommand, AgentAuthoredCommand, AgentCurationDecision,
+    AgentCurationOutcome, AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery,
+    AgentDeliverySelection, AgentGoalCommand, AgentGoalMutationCommand,
+    AgentSatisfactionCursorCasIntent, AgentSatisfactionReview, AgentSatisfactionReviewSelection,
+    AgentSinkReceipt, AgentSinkReceiptKind, AgentSinkSubmission,
 };
 use crate::agent::curation::{curate_goal_satisfaction, curate_threshold_rule, AgentCuration};
+use crate::agent::selection::AgentSemanticSelector;
 use crate::agent::store::AgentStore;
 use crate::agent::subscription::AgentSubscription;
 use crate::belief::BeliefQuery;
+use crate::error::StorageError;
 use crate::planner::PlannerQuery;
 
 /// Error returned by an execution-owned sink.
@@ -69,6 +73,59 @@ where
         agent_id: &str,
     ) -> Result<ActiveGoalSummary, AgentActiveGoalQueryError> {
         self(agent_id)
+    }
+}
+
+/// Error returned by an execution-owned durable command outcome query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentCommandOutcomeQueryError {
+    /// Human-readable error for runtime diagnostics.
+    pub message: String,
+    /// Whether the runtime should classify the failure as retryable.
+    pub retryable: bool,
+}
+
+impl AgentCommandOutcomeQueryError {
+    /// Create a retryable command outcome query error.
+    pub fn retryable(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: true,
+        }
+    }
+
+    /// Create a fatal command outcome query error.
+    pub fn fatal(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: false,
+        }
+    }
+}
+
+/// Execution-owned port for recovering a durable command acceptance outcome.
+pub trait AgentCommandOutcomeQuery {
+    /// Return the committed submission for one exact decision and command.
+    fn committed_submission(
+        &mut self,
+        decision: &AgentCurationDecision,
+        command: &AgentAuthoredCommand,
+    ) -> Result<Option<AgentSinkSubmission>, AgentCommandOutcomeQueryError>;
+}
+
+impl<F> AgentCommandOutcomeQuery for F
+where
+    F: FnMut(
+        &AgentCurationDecision,
+        &AgentAuthoredCommand,
+    ) -> Result<Option<AgentSinkSubmission>, AgentCommandOutcomeQueryError>,
+{
+    fn committed_submission(
+        &mut self,
+        decision: &AgentCurationDecision,
+        command: &AgentAuthoredCommand,
+    ) -> Result<Option<AgentSinkSubmission>, AgentCommandOutcomeQueryError> {
+        self(decision, command)
     }
 }
 
@@ -187,6 +244,18 @@ pub struct AgentGoalCurationRuntime<'a> {
     store: &'a AgentStore,
 }
 
+/// Immutable inputs for one selector-issued goal curation tick.
+pub struct AgentSelectedGoalTick<'a> {
+    /// Exact selector token for the pending belief revision.
+    pub selection: AgentDeliverySelection,
+    /// Public belief query bound to the current world-model authority.
+    pub belief_query: &'a BeliefQuery<'a>,
+    /// Public planner projection query used by pure curation.
+    pub planner_query: &'a PlannerQuery<'a>,
+    /// Durable rule configuration selected for the agent.
+    pub rule_config: AgentCurationRuleConfig,
+}
+
 impl<'a> AgentGoalCurationRuntime<'a> {
     /// Bind the runtime facade to durable agent storage.
     pub fn new(store: &'a AgentStore) -> Self {
@@ -244,6 +313,184 @@ impl<'a> AgentGoalCurationRuntime<'a> {
             rule_config,
             sink,
         )
+    }
+
+    /// Curate one selector-issued delivery with exact recovery and cursor fences.
+    pub fn handle_selected_delivery<Q, O, S>(
+        &self,
+        tick: AgentSelectedGoalTick<'_>,
+        goal_query: &mut Q,
+        outcome_query: &mut O,
+        sink: &mut S,
+    ) -> AgentRuntimeReport
+    where
+        Q: AgentActiveGoalQuery,
+        O: AgentCommandOutcomeQuery,
+        S: AgentGoalCommandSink,
+    {
+        let selection = tick.selection;
+        let delivery = selection.delivery.clone();
+        let mut report =
+            AgentRuntimeReport::new(delivery.agent_id.clone(), delivery.revision_seq, 0);
+        let selector = AgentSemanticSelector::new(self.store);
+        if let Err(error) = selector.revalidate_delivery(&selection, tick.belief_query) {
+            push_storage_error(&mut report, error);
+            return report;
+        }
+        match self.store.outcome_for_selected_delivery(&selection) {
+            Ok(Some(outcome)) => {
+                report.delivered_count = 1;
+                report.decision_count = 1;
+                return self.finish_selected_delivery(
+                    &selection,
+                    &outcome,
+                    outcome_query,
+                    sink,
+                    report,
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                push_storage_error(&mut report, error);
+                return report;
+            }
+        }
+        let active_goals = match goal_query.active_goals_for_agent(&delivery.agent_id) {
+            Ok(active_goals) => active_goals,
+            Err(error) => {
+                push_goal_query_error(&mut report, error);
+                return report;
+            }
+        };
+        report.delivered_count = 1;
+        let curation = AgentCuration::new(self.store);
+        let input = match curation.assemble_input(
+            &delivery,
+            tick.belief_query,
+            tick.planner_query,
+            active_goals,
+            tick.rule_config,
+        ) {
+            Ok(input) => input,
+            Err(error) => {
+                report.fatal_error(error.to_string());
+                return report;
+            }
+        };
+        let outcome = match curate_threshold_rule(input) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                report.fatal_error(error.to_string());
+                return report;
+            }
+        };
+        // Pure cross-domain reads may take time, so the selector token is checked
+        // again immediately before the atomic owner-fenced decision commit.
+        if let Err(error) = selector.revalidate_delivery(&selection, tick.belief_query) {
+            push_storage_error(&mut report, error);
+            return report;
+        }
+        let outcome = match self
+            .store
+            .put_selected_delivery_outcome(&selection, &outcome)
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                push_storage_error(&mut report, error);
+                return report;
+            }
+        };
+        report.decision_count = 1;
+        self.finish_selected_delivery(&selection, &outcome, outcome_query, sink, report)
+    }
+
+    fn finish_selected_delivery<O, S>(
+        &self,
+        selection: &AgentDeliverySelection,
+        outcome: &AgentCurationOutcome,
+        outcome_query: &mut O,
+        sink: &mut S,
+        mut report: AgentRuntimeReport,
+    ) -> AgentRuntimeReport
+    where
+        O: AgentCommandOutcomeQuery,
+        S: AgentGoalCommandSink,
+    {
+        if !self.complete_selected_goal_command(outcome, outcome_query, sink, &mut report) {
+            return report;
+        }
+        match self
+            .store
+            .advance_selected_delivery_cursor(selection, &outcome.decision.decision_id)
+        {
+            Ok(updated) => report.output_sequence = updated.last_delivered_seq,
+            Err(error) => push_storage_error(&mut report, error),
+        }
+        report
+    }
+
+    fn complete_selected_goal_command<O, S>(
+        &self,
+        outcome: &AgentCurationOutcome,
+        outcome_query: &mut O,
+        sink: &mut S,
+        report: &mut AgentRuntimeReport,
+    ) -> bool
+    where
+        O: AgentCommandOutcomeQuery,
+        S: AgentGoalCommandSink,
+    {
+        match existing_sink_receipt(self.store, &outcome.decision) {
+            Ok(Some(receipt)) => {
+                report.sink_receipts.push(receipt);
+                return true;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                push_storage_error(report, error);
+                return false;
+            }
+        }
+        let Some(command) = &outcome.goal_command else {
+            if outcome.decision.decision == AgentDecisionKind::GoalCommand {
+                report.fatal_error("durable goal decision has no exact command outbox");
+                return false;
+            }
+            return true;
+        };
+        let authored = AgentAuthoredCommand::Goal(Box::new(command.clone()));
+        match outcome_query.committed_submission(&outcome.decision, &authored) {
+            Ok(Some(submission)) => {
+                return record_sink_receipt(
+                    self.store,
+                    &outcome.decision,
+                    AgentSinkReceiptKind::GoalCommand,
+                    submission,
+                    &command.command_id,
+                    report,
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                push_outcome_query_error(report, error);
+                return false;
+            }
+        }
+        report.sink_submission_count += 1;
+        match sink.submit_goal_command(command) {
+            Ok(submission) => record_sink_receipt(
+                self.store,
+                &outcome.decision,
+                AgentSinkReceiptKind::GoalCommand,
+                submission,
+                &command.command_id,
+                report,
+            ),
+            Err(error) => {
+                push_sink_error(report, error);
+                false
+            }
+        }
     }
 
     fn handle_delivery_core<Q, S>(
@@ -416,9 +663,16 @@ impl<'a> AgentGoalCurationRuntime<'a> {
     where
         S: AgentGoalCommandSink,
     {
-        if let Some(receipt) = existing_sink_receipt(self.store, &outcome.decision, report) {
-            report.sink_receipts.push(receipt);
-            return true;
+        match existing_sink_receipt(self.store, &outcome.decision) {
+            Ok(Some(receipt)) => {
+                report.sink_receipts.push(receipt);
+                return true;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                push_storage_error(report, error);
+                return false;
+            }
         }
 
         let Some(command) = &outcome.goal_command else {
@@ -518,6 +772,191 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
         S: AgentGoalMutationSink,
     {
         self.handle_review_core(review, belief_query, planner_query, goal_query, sink)
+    }
+
+    /// Curate one selector-issued review with independent cursor recovery.
+    pub fn handle_selected_review<Q, O, S>(
+        &self,
+        selection: AgentSatisfactionReviewSelection,
+        belief_query: &BeliefQuery<'_>,
+        planner_query: &PlannerQuery<'_>,
+        goal_query: &mut Q,
+        outcome_query: &mut O,
+        sink: &mut S,
+    ) -> AgentRuntimeReport
+    where
+        Q: AgentActiveGoalQuery,
+        O: AgentCommandOutcomeQuery,
+        S: AgentGoalMutationSink,
+    {
+        let review = selection.review.clone();
+        let mut report =
+            AgentRuntimeReport::new(review.agent_id.clone(), selection.belief_revision_seq, 0);
+        let selector = AgentSemanticSelector::new(self.store);
+        if let Err(error) = selector.revalidate_satisfaction(&selection, belief_query) {
+            push_storage_error(&mut report, error);
+            return report;
+        }
+        match self
+            .store
+            .outcome_for_satisfaction_review(&selection.review)
+        {
+            Ok(Some(outcome)) => {
+                report.delivered_count = 1;
+                report.decision_count = 1;
+                return self.finish_selected_review(
+                    selection,
+                    &outcome,
+                    outcome_query,
+                    sink,
+                    report,
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                push_storage_error(&mut report, error);
+                return report;
+            }
+        }
+        let active_goals = match goal_query.active_goals_for_agent(&review.agent_id) {
+            Ok(active_goals) => active_goals,
+            Err(error) => {
+                push_goal_query_error(&mut report, error);
+                return report;
+            }
+        };
+        report.delivered_count = 1;
+        let curation = AgentCuration::new(self.store);
+        let input = match curation.assemble_satisfaction_input(
+            &review,
+            belief_query,
+            planner_query,
+            active_goals,
+        ) {
+            Ok(input) => input,
+            Err(error) => {
+                report.fatal_error(error.to_string());
+                return report;
+            }
+        };
+        let outcome = match curate_goal_satisfaction(input) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                report.fatal_error(error.to_string());
+                return report;
+            }
+        };
+        if let Err(error) = selector.revalidate_satisfaction(&selection, belief_query) {
+            push_storage_error(&mut report, error);
+            return report;
+        }
+        let outcome = match self
+            .store
+            .put_selected_satisfaction_outcome(&selection, &outcome)
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                push_storage_error(&mut report, error);
+                return report;
+            }
+        };
+        report.decision_count = 1;
+        self.finish_selected_review(selection, &outcome, outcome_query, sink, report)
+    }
+
+    fn finish_selected_review<O, S>(
+        &self,
+        selection: AgentSatisfactionReviewSelection,
+        outcome: &AgentCurationOutcome,
+        outcome_query: &mut O,
+        sink: &mut S,
+        mut report: AgentRuntimeReport,
+    ) -> AgentRuntimeReport
+    where
+        O: AgentCommandOutcomeQuery,
+        S: AgentGoalMutationSink,
+    {
+        if !self.complete_selected_goal_mutation(outcome, outcome_query, sink, &mut report) {
+            return report;
+        }
+        let advanced_at_seq = selection
+            .expected_cursor_updated_at_seq
+            .saturating_add(1)
+            .max(selection.belief_revision_seq);
+        match self
+            .store
+            .advance_satisfaction_cursor_cas(&AgentSatisfactionCursorCasIntent {
+                selection,
+                advanced_at_seq,
+            }) {
+            Ok(cursor) => report.output_sequence = cursor.last_reviewed_seq,
+            Err(error) => push_storage_error(&mut report, error),
+        }
+        report
+    }
+
+    fn complete_selected_goal_mutation<O, S>(
+        &self,
+        outcome: &AgentCurationOutcome,
+        outcome_query: &mut O,
+        sink: &mut S,
+        report: &mut AgentRuntimeReport,
+    ) -> bool
+    where
+        O: AgentCommandOutcomeQuery,
+        S: AgentGoalMutationSink,
+    {
+        match existing_sink_receipt(self.store, &outcome.decision) {
+            Ok(Some(receipt)) => {
+                report.sink_receipts.push(receipt);
+                return true;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                push_storage_error(report, error);
+                return false;
+            }
+        }
+        let Some(command) = &outcome.goal_mutation_command else {
+            if outcome.decision.decision == AgentDecisionKind::GoalMutationCommand {
+                report.fatal_error("durable mutation decision has no exact command outbox");
+                return false;
+            }
+            return true;
+        };
+        let authored = AgentAuthoredCommand::GoalMutation(Box::new(command.clone()));
+        match outcome_query.committed_submission(&outcome.decision, &authored) {
+            Ok(Some(submission)) => {
+                return record_sink_receipt(
+                    self.store,
+                    &outcome.decision,
+                    AgentSinkReceiptKind::GoalMutationCommand,
+                    submission,
+                    &command.command_id,
+                    report,
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                push_outcome_query_error(report, error);
+                return false;
+            }
+        }
+        report.sink_submission_count += 1;
+        match sink.submit_goal_mutation(command) {
+            Ok(submission) => record_sink_receipt(
+                self.store,
+                &outcome.decision,
+                AgentSinkReceiptKind::GoalMutationCommand,
+                submission,
+                &command.command_id,
+                report,
+            ),
+            Err(error) => {
+                push_sink_error(report, error);
+                false
+            }
+        }
     }
 
     fn handle_review_core<Q, S>(
@@ -626,9 +1065,16 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
     where
         S: AgentGoalMutationSink,
     {
-        if let Some(receipt) = existing_sink_receipt(self.store, &outcome.decision, report) {
-            report.sink_receipts.push(receipt);
-            return true;
+        match existing_sink_receipt(self.store, &outcome.decision) {
+            Ok(Some(receipt)) => {
+                report.sink_receipts.push(receipt);
+                return true;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                push_storage_error(report, error);
+                return false;
+            }
         }
 
         let Some(command) = &outcome.goal_mutation_command else {
@@ -685,15 +1131,8 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
 fn existing_sink_receipt(
     store: &AgentStore,
     decision: &crate::agent::contracts::AgentCurationDecision,
-    report: &mut AgentRuntimeReport,
-) -> Option<AgentSinkReceipt> {
-    match store.sink_receipt_by_decision(&decision.decision_id) {
-        Ok(receipt) => receipt,
-        Err(error) => {
-            report.fatal_error(error.to_string());
-            None
-        }
-    }
+) -> Result<Option<AgentSinkReceipt>, StorageError> {
+    store.sink_receipt_by_decision(&decision.decision_id)
 }
 
 fn record_sink_receipt(
@@ -743,5 +1182,26 @@ fn push_goal_query_error(report: &mut AgentRuntimeReport, error: AgentActiveGoal
         report.retryable_error(error.message);
     } else {
         report.fatal_error(error.message);
+    }
+}
+
+fn push_outcome_query_error(report: &mut AgentRuntimeReport, error: AgentCommandOutcomeQueryError) {
+    if error.retryable {
+        report.retryable_error(error.message);
+    } else {
+        report.fatal_error(error.message);
+    }
+}
+
+fn push_storage_error(report: &mut AgentRuntimeReport, error: StorageError) {
+    match error {
+        StorageError::Backpressure(_)
+        | StorageError::Unavailable(_)
+        | StorageError::DurabilityIndeterminate(_)
+        | StorageError::IoError(_) => report.retryable_error(error.to_string()),
+        StorageError::InvalidPath(_)
+        | StorageError::MigrationConflict(_)
+        | StorageError::IdentityMismatch { .. }
+        | StorageError::RetentionGap { .. } => report.fatal_error(error.to_string()),
     }
 }

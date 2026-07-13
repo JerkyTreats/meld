@@ -1,7 +1,9 @@
 //! Read-only agent query facade.
 
 use crate::agent::contracts::{
-    AgentCurationDecision, AgentCurationDedupeKey, AgentRecord, AgentSatisfactionReview,
+    AgentCurationDecision, AgentCurationDedupeKey, AgentCurationOutcome, AgentDecisionOutboxRecord,
+    AgentHydrationCheckpoint, AgentRecord, AgentSatisfactionCursorIdentity,
+    AgentSatisfactionReview, AgentSatisfactionReviewCursor, AgentSemanticEnablementAudit,
     AgentStatus, AgentSubscriptionRecord,
 };
 use crate::agent::store::AgentStore;
@@ -75,5 +77,42 @@ impl<'a> AgentQuery<'a> {
         review: &AgentSatisfactionReview,
     ) -> Result<Option<AgentCurationDecision>, StorageError> {
         self.store.decision_by_satisfaction_review(review)
+    }
+
+    /// Return one complete durable outcome including its exact command payload.
+    pub fn curation_outcome(
+        &self,
+        decision_id: &str,
+    ) -> Result<AgentCurationOutcome, StorageError> {
+        self.store.outcome_for_decision(decision_id)
+    }
+
+    /// Return the durable command outbox for one decision.
+    pub fn decision_outbox(
+        &self,
+        decision_id: &str,
+    ) -> Result<Option<AgentDecisionOutboxRecord>, StorageError> {
+        self.store.decision_outbox(decision_id)
+    }
+
+    /// Read one independent satisfaction-review cursor.
+    pub fn satisfaction_review_cursor(
+        &self,
+        identity: &AgentSatisfactionCursorIdentity,
+    ) -> Result<Option<AgentSatisfactionReviewCursor>, StorageError> {
+        self.store.satisfaction_review_cursor(identity)
+    }
+
+    /// Read one resumable hydration checkpoint.
+    pub fn hydration_checkpoint(
+        &self,
+        hydration_id: &str,
+    ) -> Result<Option<AgentHydrationCheckpoint>, StorageError> {
+        self.store.hydration_checkpoint(hydration_id)
+    }
+
+    /// Audit durable state before recurring semantic actors are enabled.
+    pub fn semantic_enablement_audit(&self) -> Result<AgentSemanticEnablementAudit, StorageError> {
+        self.store.audit_semantic_enablement()
     }
 }

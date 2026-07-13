@@ -523,6 +523,7 @@ fn agent_source_scans_reject_execution_internals_and_private_store_imports() {
         "src/agent/query.rs",
         "src/agent/registration.rs",
         "src/agent/runtime.rs",
+        "src/agent/selection.rs",
         "src/agent/subscription.rs",
     ] {
         let source = std::fs::read_to_string(manifest_dir.join(path)).unwrap();

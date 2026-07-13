@@ -7,6 +7,7 @@ pub mod hydration;
 pub mod query;
 pub mod registration;
 pub mod runtime;
+pub mod selection;
 pub mod store;
 pub mod subscription;
 
@@ -17,5 +18,6 @@ pub use hydration::*;
 pub use query::AgentQuery;
 pub use registration::AgentRegistration;
 pub use runtime::*;
+pub use selection::AgentSemanticSelector;
 pub use store::AgentStore;
 pub use subscription::AgentSubscription;
