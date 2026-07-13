@@ -1955,7 +1955,7 @@ mod tests {
         assert_eq!(status.instance_id, "instance-a");
         assert_eq!(status.product_root, temp.path());
         assert_eq!(status.instance_status, RuntimeInstanceStatus::Running);
-        assert_eq!(status.runtimes.len(), 12);
+        assert_eq!(status.runtimes.len(), 13);
         assert_eq!(
             status
                 .runtimes

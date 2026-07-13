@@ -11,6 +11,7 @@ use crate::activation::{
     validate_world_model_activation, BeliefActivationReceipt, WorldModelActivationIdentity,
     WorldModelActivationInput,
 };
+use crate::agent::AgentStore;
 use crate::belief::{BeliefActivation, BeliefActivationError};
 
 /// One-shot world-model runtime that durably activates configured seed state.
@@ -21,11 +22,20 @@ pub struct AgentBootstrapRuntime {
 
 impl AgentBootstrapRuntime {
     /// Open bootstrap and belief activation state on one world-model database.
-    pub fn new(db: Db) -> Result<Self, AgentBootstrapError> {
+    pub(crate) fn new(db: Db) -> Result<Self, AgentBootstrapError> {
         Ok(Self {
             belief: BeliefActivation::new(db.clone()).map_err(map_belief_error)?,
             store: BootstrapStore::new(db)?,
         })
+    }
+
+    /// Build the bootstrap facade from an already-open shared agent store.
+    ///
+    /// This keeps physical database ownership inside the world-model crate and
+    /// lets root runtime assembly share the product world-model authority
+    /// without reopening the path or receiving a raw database handle.
+    pub fn from_agent_store(store: &AgentStore) -> Result<Self, AgentBootstrapError> {
+        Self::new(store.shared_database())
     }
 
     /// Run or recover one configured bootstrap through its final durable receipt.

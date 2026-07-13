@@ -14,9 +14,9 @@ pub use contracts::{
     DocsFreshnessBranchScopeConfig, DocsFreshnessCurationRuleConfig, DocsFreshnessDirectiveConfig,
     DocsFreshnessExecutionConfig, DocsFreshnessPerspectiveConfig, DocsFreshnessPublicationConfig,
     DocsFreshnessRuntimeConfig, DocsFreshnessSeedAgentConfig, DocsFreshnessSubjectConfig,
-    ExecutionActivationPreflight, PassiveActivationDescription, StrictComparatorConfig,
-    StrictComparatorFactorConfig, StrictEvidenceSchemaConfig, StrictEvidenceSourceMapping,
-    StrictPlannerProjectionConfig, ValidatedDocsFreshnessActivation,
+    ExecutionActivationPreflight, PassiveActivationDescription, PreparedProductActivation,
+    StrictComparatorConfig, StrictComparatorFactorConfig, StrictEvidenceSchemaConfig,
+    StrictEvidenceSourceMapping, StrictPlannerProjectionConfig, ValidatedDocsFreshnessActivation,
     ValidatedProductActivationPreflight, DOCS_FRESHNESS_ACTIVATION_SCHEMA_VERSION,
     MAX_ACTIVATION_SOURCE_BYTES,
 };
@@ -28,7 +28,9 @@ pub use packages::{ProductActivationRuntimeInputs, RuntimeActivationInput};
 pub use preflight::{
     preflight_execution_activation, preflight_validated_activation, ActivationPreflightError,
 };
-pub use service::{load_and_preflight_activation, load_and_validate_activation};
+pub use service::{
+    load_and_preflight_activation, load_and_prepare_activation, load_and_validate_activation,
+};
 
 #[cfg(test)]
 mod tests {

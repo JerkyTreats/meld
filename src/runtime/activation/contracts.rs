@@ -373,6 +373,25 @@ pub struct ValidatedProductActivationPreflight {
     pub execution_receipt: ExecutionActivationValidationReceipt,
 }
 
+/// One merged repository configuration snapshot paired with its activation preflight.
+///
+/// Root apply orchestration retains this value so provider validation, storage
+/// resolution, and runtime assembly all consume the same merged snapshot.
+#[derive(Debug, Clone)]
+pub struct PreparedProductActivation {
+    /// Merged repository configuration used by execution preflight.
+    pub repository_config: crate::config::MerkleConfig,
+    /// Store-free activation and owner validation result.
+    pub preflight: ValidatedProductActivationPreflight,
+}
+
+impl PreparedProductActivation {
+    /// Create the passive description used by dry-run output.
+    pub fn passive_description(&self) -> PassiveActivationDescription {
+        self.preflight.passive_description()
+    }
+}
+
 impl ValidatedProductActivationPreflight {
     /// Create the store-free validation description used by early CLI routing.
     ///

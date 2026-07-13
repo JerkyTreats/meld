@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -33,6 +33,7 @@ use crate::runtime::supervisor::{
 
 static CTRL_C_TARGET: OnceLock<Mutex<Option<Weak<AtomicBool>>>> = OnceLock::new();
 static CTRL_C_HANDLER_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
+static ACTIVATION_INSTANCE_NONCE: AtomicU64 = AtomicU64::new(1);
 
 /// Validate one explicit activation before product stores or `RunContext` open.
 pub fn handle_cli_activation(
@@ -42,19 +43,218 @@ pub fn handle_cli_activation(
     dry_run: bool,
     format: &str,
 ) -> Result<String, ApiError> {
-    if !dry_run {
-        return Err(ApiError::ConfigError(
-            "runtime activation apply is unavailable until the bootstrap runtime is installed; use --dry-run"
-                .to_string(),
-        ));
-    }
-    let preflight = crate::runtime::activation::load_and_preflight_activation(
+    validate_format(format)?;
+    let prepared = crate::runtime::activation::load_and_prepare_activation(
         workspace_root,
         activation_path,
         config_path,
     )
     .map_err(|error| ApiError::ConfigError(error.to_string()))?;
-    format_runtime_activation_description(&preflight.passive_description(), format)
+    if dry_run {
+        return format_runtime_activation_description(&prepared.passive_description(), format);
+    }
+    prepared
+        .repository_config
+        .system
+        .storage
+        .resolve_product_root(workspace_root)?;
+    ProductRuntimeAssembly::validate_activated_inputs(
+        &prepared.preflight.activation.runtime_inputs.runtime,
+        &prepared.preflight.activation.runtime_inputs.world_model,
+        &prepared.preflight.execution_input,
+        &prepared.preflight.execution_receipt,
+    )
+    .map_err(runtime_error)?;
+
+    let description = apply_prepared_activation(workspace_root, prepared)?;
+    format_runtime_activation_description(&description, format)
+}
+
+fn apply_prepared_activation(
+    workspace_root: &std::path::Path,
+    prepared: crate::runtime::activation::PreparedProductActivation,
+) -> Result<crate::runtime::activation::PassiveActivationDescription, ApiError> {
+    let mut description = prepared.passive_description();
+    let config = prepared.repository_config;
+    let preflight = prepared.preflight;
+    let runtime_inputs = preflight.activation.runtime_inputs;
+    let world_identity =
+        meld_world_model::activation::validate_world_model_activation(&runtime_inputs.world_model)
+            .map_err(runtime_error)?;
+
+    let (legacy_store_path, _, _) = config.system.storage.resolve_paths(workspace_root)?;
+    let product_root = config.system.storage.resolve_product_root(workspace_root)?;
+    let product_layout = crate::runtime::storage::ProductStorageLayout::from_root(product_root);
+    let branch_runtime = crate::branches::BranchRuntime::new();
+    let active_branch = branch_runtime.resolve_active_branch(workspace_root)?;
+    branch_runtime.ensure_active_branch_registered(&active_branch)?;
+    let resolved = crate::events::binding::resolve_product_event_authority(
+        active_branch.resolved(),
+        &product_layout.ledger_db,
+        &legacy_store_path,
+    )
+    .map_err(runtime_error)?;
+    crate::runtime::storage::migrate_legacy_belief_authority(
+        &product_layout,
+        &legacy_store_path,
+        &resolved.binding,
+    )
+    .map_err(runtime_error)?;
+
+    let assembly = ProductRuntimeAssembly::load_activated_with_authority(
+        workspace_root,
+        &config,
+        resolved.authority,
+        runtime_inputs.runtime,
+        runtime_inputs.world_model.clone(),
+        preflight.execution_input,
+        preflight.execution_receipt,
+    )
+    .map_err(runtime_error)?;
+    let started_at_ms = current_time_ms()?;
+    let nonce = ACTIVATION_INSTANCE_NONCE.fetch_add(1, Ordering::Relaxed);
+    let instance_id = format!(
+        "runtime-activation-{}-{started_at_ms}-{nonce}",
+        std::process::id()
+    );
+    let mut supervisor = RuntimeSupervisor::start(
+        assembly.supervisor_startup_package(),
+        SupervisorStartCommand::new(instance_id, started_at_ms),
+    )
+    .map_err(runtime_error)?;
+    let tick_at_ms = started_at_ms.saturating_add(1);
+    let tick_result = supervisor
+        .tick(tick_at_ms)
+        .map_err(runtime_error)
+        .and_then(|tick| {
+            verify_bootstrap_application(
+                &assembly,
+                &tick,
+                &runtime_inputs.world_model,
+                &world_identity,
+            )
+        });
+    let shutdown_result = supervisor
+        .request_shutdown(tick_at_ms.saturating_add(1))
+        .map_err(runtime_error);
+
+    let shutdown = match (tick_result, shutdown_result) {
+        (Err(error), Err(shutdown_error)) => {
+            return Err(runtime_message(format!(
+                "activation failed before shutdown: {error}; shutdown also failed: {shutdown_error}"
+            )));
+        }
+        (Err(error), Ok(_)) => return Err(error),
+        (Ok(_), Err(error)) => return Err(error),
+        (Ok(_), Ok(shutdown)) => shutdown,
+    };
+    let expected_stopped = assembly
+        .desired_runtime_state()
+        .iter()
+        .filter(|state| state.enabled)
+        .map(|state| state.runtime_id.clone())
+        .collect::<BTreeSet<_>>();
+    let stopped = shutdown
+        .stopped_runtime_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if stopped != expected_stopped {
+        return Err(runtime_message(
+            "clean shutdown did not stop every activation-enabled runtime",
+        ));
+    }
+    assembly.flush_supervisor_store().map_err(runtime_error)?;
+
+    description.validation_scope =
+        "source_owner_packages_execution_assets_and_durable_bootstrap".to_string();
+    description.application_ready = true;
+    description.diagnostics.entries.extend([
+        crate::runtime::activation::ActivationDiagnostic {
+            code: "runtime_factories_verified".to_string(),
+            field: "runtime.enabled_runtime_ids".to_string(),
+            message: "all enabled runtime ids resolved to concrete actor factories".to_string(),
+        },
+        crate::runtime::activation::ActivationDiagnostic {
+            code: "supervised_bootstrap_verified".to_string(),
+            field: "world_model.agent.bootstrap.docs_freshness".to_string(),
+            message: "supervisor action and durable bootstrap receipt verified".to_string(),
+        },
+        crate::runtime::activation::ActivationDiagnostic {
+            code: "clean_shutdown_verified".to_string(),
+            field: "runtime_supervisor".to_string(),
+            message: "enabled runtime leases stopped and stores flushed cleanly".to_string(),
+        },
+    ]);
+    Ok(description)
+}
+
+fn verify_bootstrap_application(
+    assembly: &ProductRuntimeAssembly,
+    tick: &SupervisorTickReport,
+    input: &meld_world_model::activation::WorldModelActivationInput,
+    identity: &meld_world_model::activation::WorldModelActivationIdentity,
+) -> Result<(), ApiError> {
+    let runtime_id = "world_model.agent.bootstrap.docs_freshness";
+    let desired = assembly
+        .desired_runtime_state()
+        .iter()
+        .find(|state| state.runtime_id == runtime_id)
+        .ok_or_else(|| runtime_message("bootstrap desired state is missing"))?;
+    if !desired.enabled
+        || !desired.factory_available
+        || desired.role_class != RuntimeRoleClass::Actor
+        || desired.implementation_state != RuntimeImplementationState::Concrete
+    {
+        return Err(runtime_message(
+            "bootstrap desired state is not a concrete enabled actor",
+        ));
+    }
+    for enabled in assembly
+        .desired_runtime_state()
+        .iter()
+        .filter(|state| state.enabled)
+    {
+        let action = tick
+            .actions
+            .iter()
+            .find(|action| action.runtime_id == enabled.runtime_id)
+            .ok_or_else(|| {
+                runtime_message(format!(
+                    "enabled runtime '{}' produced no supervisor action",
+                    enabled.runtime_id
+                ))
+            })?;
+        if action.metrics.fatal_issue_count != 0 || action.metrics.retryable_issue_count != 0 {
+            return Err(runtime_message(format!(
+                "enabled runtime '{}' reported a failed supervisor action",
+                enabled.runtime_id
+            )));
+        }
+        if enabled.runtime_id == runtime_id
+            && (action.actor_id != runtime_id || action.metrics.attempted != 1)
+        {
+            return Err(runtime_message(
+                "bootstrap supervisor action did not report its bounded domain attempt",
+            ));
+        }
+    }
+    let receipt = assembly
+        .stores()
+        .agent_store
+        .get_bootstrap_receipt(&input.bootstrap_id)
+        .map_err(runtime_error)?
+        .ok_or_else(|| runtime_message("durable bootstrap receipt is missing"))?;
+    if receipt.bootstrap_id != identity.bootstrap_id
+        || receipt.activation_id != identity.activation_id
+        || receipt.activation_hash != identity.activation_hash
+        || receipt.input_hash != identity.input_hash
+    {
+        return Err(runtime_message(
+            "durable bootstrap receipt does not match activated world-model input",
+        ));
+    }
+    Ok(())
 }
 
 /// CLI status DTO for runtime supervisor commands.

@@ -117,6 +117,10 @@ impl AgentStore {
         Ok(Arc::new(Self::new(db)?))
     }
 
+    pub(super) fn shared_database(&self) -> Db {
+        self.db.clone()
+    }
+
     /// Write an agent record and its status index.
     pub fn put_agent(&self, record: &AgentRecord) -> Result<(), StorageError> {
         record.validate()?;

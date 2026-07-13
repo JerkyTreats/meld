@@ -18,10 +18,15 @@ pub fn format_runtime_activation_description(
             ))
         }),
         "text" => Ok([
-            if description.validation_scope == "source_owner_packages_and_execution_assets" {
-                "Activation source, owner packages, and execution assets validated".to_string()
-            } else {
-                "Activation source and owner packages validated".to_string()
+            match description.validation_scope.as_str() {
+                "source_owner_packages_and_execution_assets" => {
+                    "Activation source, owner packages, and execution assets validated".to_string()
+                }
+                "source_owner_packages_execution_assets_and_durable_bootstrap" => {
+                    "Activation source, owner packages, execution assets, and durable bootstrap validated"
+                        .to_string()
+                }
+                _ => "Activation source and owner packages validated".to_string(),
             },
             format!("Activation: {}", description.activation_id),
             format!("Hash: {}", description.activation_hash.as_str()),

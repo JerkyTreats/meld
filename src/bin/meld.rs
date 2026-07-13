@@ -59,7 +59,7 @@ fn main() {
     if let Some(result) = try_execute_runtime_activation(&cli) {
         match result {
             Ok(output) => {
-                info!("Runtime activation source validated successfully");
+                info!("Runtime activation completed successfully");
                 println!("{}", output);
             }
             Err(e) => {

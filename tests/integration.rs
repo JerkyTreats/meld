@@ -27,6 +27,7 @@ mod logging_default;
 mod model_providers;
 mod node_deletion;
 mod outcome_evidence;
+mod product_activation;
 mod product_event_authority_cutover;
 mod product_storage_assembly;
 mod progress_observability;

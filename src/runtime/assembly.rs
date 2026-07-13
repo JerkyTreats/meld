@@ -7,9 +7,15 @@ use std::sync::Arc;
 use meld_events::EventAuthority;
 #[cfg(test)]
 use meld_events::EventAuthorityOpenOptions;
+use meld_execution::activation::{
+    validate_execution_activation, ExecutionActivationInput, ExecutionActivationValidationReceipt,
+};
+use meld_world_model::activation::{validate_world_model_activation, WorldModelActivationInput};
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
+use meld_world_model::AgentBootstrapRuntime;
 
 use crate::config::MerkleConfig;
+use crate::runtime::activation::RuntimeActivationInput;
 use crate::runtime::contracts::{
     RuntimeImplementationState, RuntimeRoleClass, WorkBudget, WorkerTickReport,
 };
@@ -38,6 +44,16 @@ pub struct ProductRuntimeAssembly {
     default_work_budget: WorkBudget,
     process_services: RuntimeProcessServices,
     diagnostics: Vec<AssemblyDiagnostic>,
+    activation_execution: Option<ExecutionActivationState>,
+}
+
+/// Pure execution activation products retained without opening execution stores.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExecutionActivationState {
+    /// Execution-owned source-neutral validated input.
+    pub input: ExecutionActivationInput,
+    /// Pure deterministic execution validation receipt.
+    pub receipt: ExecutionActivationValidationReceipt,
 }
 
 /// Read-only product runtime description for operator CLI commands.
@@ -197,17 +213,27 @@ enum RuntimeSemanticHandleFactory {
     EventAppend {
         port: crate::runtime::ports::ProductEventAppendPort,
     },
+    AgentBootstrap {
+        runtime: Arc<AgentBootstrapRuntime>,
+        input: Arc<WorldModelActivationInput>,
+    },
 }
 
 enum RuntimeSemanticHandle {
     None,
     GraphReplay(GraphReplayRuntimeHandle),
     EventAppend(EventAppendRuntimeHandle),
+    AgentBootstrap(AgentBootstrapRuntimeHandle),
 }
 
 #[derive(Clone)]
 struct GraphReplayRuntimeHandle {
     graph_runtime: Arc<GraphRuntime>,
+}
+
+struct AgentBootstrapRuntimeHandle {
+    runtime: Arc<AgentBootstrapRuntime>,
+    input: Arc<WorldModelActivationInput>,
 }
 
 /// Diagnostics-only handle publishing ledger ingress health through the
@@ -360,6 +386,105 @@ impl Default for RuntimeProcessServices {
 }
 
 impl ProductRuntimeAssembly {
+    /// Validate activated owner inputs and concrete semantic factory support.
+    ///
+    /// This boundary is store-free and must complete before event binding,
+    /// compatibility migration, or product store construction.
+    pub fn validate_activated_inputs(
+        runtime: &RuntimeActivationInput,
+        world_model: &WorldModelActivationInput,
+        execution: &ExecutionActivationInput,
+        execution_receipt: &ExecutionActivationValidationReceipt,
+    ) -> Result<(), RuntimeAssemblyError> {
+        validate_world_model_activation(world_model).map_err(|error| {
+            RuntimeAssemblyError::Config(format!(
+                "world-model activation validation failed at '{}': {}",
+                error.field, error.message
+            ))
+        })?;
+        let derived_execution_receipt =
+            validate_execution_activation(execution).map_err(|error| {
+                RuntimeAssemblyError::Config(format!(
+                    "execution activation validation failed: {error}"
+                ))
+            })?;
+        if &derived_execution_receipt != execution_receipt {
+            return Err(RuntimeAssemblyError::Config(
+                "execution activation receipt does not match validated owner input".to_string(),
+            ));
+        }
+        if runtime.activation_id != world_model.activation_id
+            || runtime.activation_id != execution.selection.activation_id
+            || runtime.activation_id != execution_receipt.activation_id
+        {
+            return Err(RuntimeAssemblyError::Config(
+                "activated owner packages disagree on activation id".to_string(),
+            ));
+        }
+        if runtime.activation_hash != world_model.activation_hash
+            || runtime.activation_hash != execution.selection.activation_hash
+            || runtime.activation_hash != execution_receipt.activation_hash
+        {
+            return Err(RuntimeAssemblyError::Config(
+                "activated owner packages disagree on activation hash".to_string(),
+            ));
+        }
+        if runtime.bootstrap_runtime_id != world_model.bootstrap_id {
+            return Err(RuntimeAssemblyError::Config(
+                "runtime and world-model bootstrap ids disagree".to_string(),
+            ));
+        }
+        if runtime.bootstrap_runtime_id != "world_model.agent.bootstrap.docs_freshness" {
+            return Err(RuntimeAssemblyError::Config(
+                "activation selected an unsupported bootstrap runtime id".to_string(),
+            ));
+        }
+        if !runtime
+            .enabled_runtime_ids
+            .contains(&runtime.bootstrap_runtime_id)
+        {
+            return Err(RuntimeAssemblyError::Config(
+                "bootstrap runtime id must be enabled by activation".to_string(),
+            ));
+        }
+
+        validate_runtime_selection(&runtime.enabled_runtime_ids)?;
+        let registry = RuntimeFactoryRegistry::first_proof_registry()?;
+        let enabled = runtime
+            .enabled_runtime_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let supported = BTreeSet::from([
+            "world_model.agent.bootstrap.docs_freshness",
+            "world_model.graph_replay",
+        ]);
+        if enabled != supported {
+            return Err(RuntimeAssemblyError::Config(
+                "activation must enable only graph replay and docs freshness bootstrap".to_string(),
+            ));
+        }
+        for runtime_id in &runtime.enabled_runtime_ids {
+            let descriptor = registry
+                .get(runtime_id)
+                .ok_or_else(|| RuntimeAssemblyError::UnsupportedRuntimeId(runtime_id.clone()))?;
+            if registry.canonical_id(runtime_id) != Some(runtime_id.as_str()) {
+                return Err(RuntimeAssemblyError::Config(format!(
+                    "activated runtime id '{runtime_id}' is not canonical"
+                )));
+            }
+            if descriptor.role_class != RuntimeRoleClass::Actor
+                || descriptor.implementation_state != RuntimeImplementationState::Concrete
+                || !RuntimeSemanticHandleFactory::supports_activated_runtime(runtime_id)
+            {
+                return Err(RuntimeAssemblyError::RuntimeHandleConstruction(format!(
+                    "activated runtime '{runtime_id}' has no concrete semantic factory"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Describe runtime infrastructure from a workspace without opening stores.
     pub fn describe_for_workspace(
         workspace_root: &Path,
@@ -425,6 +550,36 @@ impl ProductRuntimeAssembly {
         )
     }
 
+    /// Open an activation-selected product runtime over one supplied authority.
+    #[allow(clippy::too_many_arguments)]
+    pub fn load_activated_with_authority(
+        workspace_root: &Path,
+        config: &MerkleConfig,
+        event_authority: Arc<EventAuthority>,
+        runtime: RuntimeActivationInput,
+        world_model: WorldModelActivationInput,
+        execution: ExecutionActivationInput,
+        execution_receipt: ExecutionActivationValidationReceipt,
+    ) -> Result<Self, RuntimeAssemblyError> {
+        Self::validate_activated_inputs(&runtime, &world_model, &execution, &execution_receipt)?;
+        let product_root = config
+            .system
+            .storage
+            .resolve_product_root(workspace_root)
+            .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
+        let mut product_config = ProductRuntimeConfig::for_product_root(product_root);
+        product_config.enabled_runtime_ids = runtime.enabled_runtime_ids.clone();
+        Self::load_with_authority_inner(
+            product_config,
+            event_authority,
+            Some((runtime, world_model)),
+            Some(ExecutionActivationState {
+                input: execution,
+                receipt: execution_receipt,
+            }),
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn load_for_product_root(
         product_root: impl Into<PathBuf>,
@@ -434,11 +589,7 @@ impl ProductRuntimeAssembly {
 
     #[cfg(test)]
     pub(crate) fn load(config: ProductRuntimeConfig) -> Result<Self, RuntimeAssemblyError> {
-        if config.product_root.as_os_str().is_empty() {
-            return Err(RuntimeAssemblyError::Config(
-                "product root must not be empty".to_string(),
-            ));
-        }
+        prevalidate_runtime_assembly_config(&config, false)?;
         let layout = ProductStorageLayout::from_root(config.product_root.clone());
         layout.create_dirs()?;
         let db = sled::open(&layout.ledger_db)
@@ -455,26 +606,23 @@ impl ProductRuntimeAssembly {
         config: ProductRuntimeConfig,
         event_authority: Arc<EventAuthority>,
     ) -> Result<Self, RuntimeAssemblyError> {
-        if config.product_root.as_os_str().is_empty() {
-            return Err(RuntimeAssemblyError::Config(
-                "product root must not be empty".to_string(),
-            ));
-        }
+        Self::load_with_authority_inner(config, event_authority, None, None)
+    }
 
+    fn load_with_authority_inner(
+        config: ProductRuntimeConfig,
+        event_authority: Arc<EventAuthority>,
+        activation: Option<(RuntimeActivationInput, WorldModelActivationInput)>,
+        activation_execution: Option<ExecutionActivationState>,
+    ) -> Result<Self, RuntimeAssemblyError> {
+        let (registry, desired_runtime_state) =
+            prevalidate_runtime_assembly_config(&config, activation.is_some())?;
         let product_root = ProductStorageRoot::new(config.product_root);
         let layout = product_root.layout();
-        let stores = Arc::new(OpenProductStores::open(&layout)?);
         let supervisor_store_path = config
             .supervisor_store_path
             .unwrap_or_else(|| layout.root.join("supervisor.sled"));
-        let registry = RuntimeFactoryRegistry::first_proof_registry()?;
-        validate_runtime_selection(&config.enabled_runtime_ids)?;
-        validate_runtime_selection(&config.disabled_runtime_ids)?;
-        let desired_runtime_state = desired_runtime_state(
-            &registry,
-            config.enabled_runtime_ids,
-            config.disabled_runtime_ids,
-        )?;
+        let stores = Arc::new(OpenProductStores::open(&layout)?);
         let mut provider = config.provider;
         provider.provider_required = provider_required(&registry, &desired_runtime_state);
         let supervisor_store = SupervisorStore::open(supervisor_store_path)?;
@@ -492,8 +640,17 @@ impl ProductRuntimeAssembly {
             )
             .map_err(|error| RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string()))?,
         );
-        let handle_factories =
-            RuntimeHandleFactoryRegistry::from_registry(&registry, &ports, &graph_runtime)?;
+        let handle_factories = match activation {
+            Some((runtime, world_model)) => RuntimeHandleFactoryRegistry::from_activated_registry(
+                &registry,
+                &ports,
+                &graph_runtime,
+                stores.agent_store.as_ref(),
+                runtime,
+                world_model,
+            )?,
+            None => RuntimeHandleFactoryRegistry::from_registry(&registry, &ports, &graph_runtime)?,
+        };
 
         Ok(Self {
             product_root,
@@ -510,6 +667,7 @@ impl ProductRuntimeAssembly {
             default_work_budget: config.default_work_budget,
             process_services: config.process_services,
             diagnostics: Vec::new(),
+            activation_execution,
         })
     }
 
@@ -566,6 +724,11 @@ impl ProductRuntimeAssembly {
     /// Return assembly diagnostics captured before supervisor handoff.
     pub fn diagnostics(&self) -> &[AssemblyDiagnostic] {
         &self.diagnostics
+    }
+
+    /// Return retained pure execution activation products when configured.
+    pub fn activation_execution(&self) -> Option<&ExecutionActivationState> {
+        self.activation_execution.as_ref()
     }
 
     /// Build the passive startup package handed to the supervisor.
@@ -735,6 +898,14 @@ impl RuntimeFactoryRegistry {
                 vec![EventAppend, EventReplay, EventConsumerRegistry],
             )?,
             RuntimeFactoryDescriptor::classified(
+                "world_model.agent.bootstrap.docs_freshness",
+                &[],
+                Actor,
+                Concrete,
+                false,
+                vec![],
+            )?,
+            RuntimeFactoryDescriptor::classified(
                 "world_model.belief_assessment",
                 &["world_model.belief.assessment"],
                 Actor,
@@ -876,6 +1047,43 @@ impl RuntimeHandleFactoryRegistry {
                             descriptor,
                             ports,
                             graph_runtime,
+                        )?,
+                    },
+                ))
+            })
+            .collect::<Result<_, RuntimeAssemblyError>>()?;
+        Ok(Self { factories })
+    }
+
+    fn from_activated_registry(
+        registry: &RuntimeFactoryRegistry,
+        ports: &ProductRuntimePorts,
+        graph_runtime: &Arc<GraphRuntime>,
+        agent_store: &meld_world_model::AgentStore,
+        runtime_input: RuntimeActivationInput,
+        world_model_input: WorldModelActivationInput,
+    ) -> Result<Self, RuntimeAssemblyError> {
+        let bootstrap_runtime = Arc::new(
+            AgentBootstrapRuntime::from_agent_store(agent_store).map_err(|error| {
+                RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+            })?,
+        );
+        let bootstrap_runtime_id = runtime_input.bootstrap_runtime_id;
+        let world_model_input = Arc::new(world_model_input);
+        let factories = registry
+            .descriptors()
+            .map(|descriptor| {
+                Ok((
+                    descriptor.runtime_id.clone(),
+                    RuntimeHandleFactory {
+                        descriptor: descriptor.clone(),
+                        semantic: RuntimeSemanticHandleFactory::for_activated_descriptor(
+                            descriptor,
+                            ports,
+                            graph_runtime,
+                            &bootstrap_runtime_id,
+                            &bootstrap_runtime,
+                            &world_model_input,
                         )?,
                     },
                 ))
@@ -1027,6 +1235,13 @@ impl InertRuntimeHandle {
 }
 
 impl RuntimeSemanticHandleFactory {
+    fn supports_activated_runtime(runtime_id: &str) -> bool {
+        matches!(
+            runtime_id,
+            "world_model.graph_replay" | "world_model.agent.bootstrap.docs_freshness"
+        )
+    }
+
     fn for_descriptor(
         descriptor: &RuntimeFactoryDescriptor,
         ports: &ProductRuntimePorts,
@@ -1043,6 +1258,23 @@ impl RuntimeSemanticHandleFactory {
         }
     }
 
+    fn for_activated_descriptor(
+        descriptor: &RuntimeFactoryDescriptor,
+        ports: &ProductRuntimePorts,
+        graph_runtime: &Arc<GraphRuntime>,
+        bootstrap_runtime_id: &str,
+        bootstrap_runtime: &Arc<AgentBootstrapRuntime>,
+        world_model_input: &Arc<WorldModelActivationInput>,
+    ) -> Result<Self, RuntimeAssemblyError> {
+        if descriptor.runtime_id == bootstrap_runtime_id {
+            return Ok(Self::AgentBootstrap {
+                runtime: Arc::clone(bootstrap_runtime),
+                input: Arc::clone(world_model_input),
+            });
+        }
+        Self::for_descriptor(descriptor, ports, graph_runtime)
+    }
+
     fn build_handle(&self) -> RuntimeSemanticHandle {
         match self {
             Self::None => RuntimeSemanticHandle::None,
@@ -1057,6 +1289,12 @@ impl RuntimeSemanticHandleFactory {
                     last: None,
                 })
             }
+            Self::AgentBootstrap { runtime, input } => {
+                RuntimeSemanticHandle::AgentBootstrap(AgentBootstrapRuntimeHandle {
+                    runtime: Arc::clone(runtime),
+                    input: Arc::clone(input),
+                })
+            }
         }
     }
 }
@@ -1067,6 +1305,7 @@ impl RuntimeSemanticHandle {
             Self::None => None,
             Self::GraphReplay(handle) => Some(handle.tick(budget)),
             Self::EventAppend(handle) => Some(handle.tick()),
+            Self::AgentBootstrap(handle) => Some(handle.tick(budget)),
         }
     }
 
@@ -1159,6 +1398,150 @@ impl GraphReplayRuntimeHandle {
                 )
             })
     }
+}
+
+fn prevalidate_runtime_assembly_config(
+    config: &ProductRuntimeConfig,
+    has_activation: bool,
+) -> Result<(RuntimeFactoryRegistry, Vec<DesiredRuntimeState>), RuntimeAssemblyError> {
+    if config.product_root.as_os_str().is_empty() {
+        return Err(RuntimeAssemblyError::Config(
+            "product root must not be empty".to_string(),
+        ));
+    }
+    let registry = RuntimeFactoryRegistry::first_proof_registry()?;
+    validate_runtime_selection(&config.enabled_runtime_ids)?;
+    validate_runtime_selection(&config.disabled_runtime_ids)?;
+    let desired_runtime_state = desired_runtime_state(
+        &registry,
+        config.enabled_runtime_ids.clone(),
+        config.disabled_runtime_ids.clone(),
+    )?;
+    if !has_activation
+        && desired_runtime_state.iter().any(|state| {
+            state.enabled && state.runtime_id == "world_model.agent.bootstrap.docs_freshness"
+        })
+    {
+        return Err(RuntimeAssemblyError::RuntimeHandleConstruction(
+            "bootstrap runtime requires activated world-model owner input".to_string(),
+        ));
+    }
+    Ok((registry, desired_runtime_state))
+}
+
+impl AgentBootstrapRuntimeHandle {
+    fn tick(&self, budget: WorkBudget) -> WorkerTickReport {
+        let prior_progress = self.runtime.progress(&self.input.bootstrap_id);
+        let input_sequence = prior_progress
+            .as_ref()
+            .ok()
+            .and_then(|progress| progress.as_ref())
+            .map(|progress| progress.updated_at_seq)
+            .unwrap_or(0);
+        if budget.max_items == 0 {
+            return self.report(input_sequence, input_sequence, 0, 0, Vec::new(), true);
+        }
+        if let Err(error) = prior_progress {
+            return self.failure_report(input_sequence, error);
+        }
+
+        match self.runtime.bootstrap(&self.input) {
+            Ok(report) => self.report(
+                input_sequence,
+                report.progress.updated_at_seq,
+                1,
+                usize::from(report.work_performed),
+                Vec::new(),
+                false,
+            ),
+            Err(error) => self.failure_report(input_sequence, error),
+        }
+    }
+
+    fn failure_report(
+        &self,
+        input_checkpoint: u64,
+        error: meld_world_model::AgentBootstrapError,
+    ) -> WorkerTickReport {
+        let output_checkpoint = self
+            .runtime
+            .progress(&self.input.bootstrap_id)
+            .ok()
+            .flatten()
+            .map(|progress| progress.updated_at_seq)
+            .unwrap_or(input_checkpoint);
+        self.report(
+            input_checkpoint,
+            output_checkpoint,
+            1,
+            0,
+            vec![crate::runtime::contracts::WorkerTickIssue {
+                item_id: Some(self.input.bootstrap_id.clone()),
+                code: "agent_bootstrap_failed".to_string(),
+                message: bounded_bootstrap_error(error),
+            }],
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn report(
+        &self,
+        input_sequence: u64,
+        output_sequence: u64,
+        items_attempted: usize,
+        items_committed: usize,
+        fatal_errors: Vec<crate::runtime::contracts::WorkerTickIssue>,
+        budget_exhausted: bool,
+    ) -> WorkerTickReport {
+        WorkerTickReport {
+            actor_id: "world_model.agent.bootstrap.docs_freshness".to_string(),
+            scope: crate::runtime::contracts::WorkerScope {
+                domain_id: "world_model".to_string(),
+                stream_id: None,
+                work_key: Some(self.input.bootstrap_id.clone()),
+                agent_id: Some(self.input.seed_agent.agent_id.clone()),
+                perspective_key: Some(format!(
+                    "{}:{}",
+                    self.input.seed_agent.perspective_key.perspective_kind,
+                    self.input.seed_agent.perspective_key.perspective_id
+                )),
+                branch_id: Some(self.input.seed_agent.branch_scope.branch_id.clone()),
+                subject_key: Some(format!(
+                    "{}:{}:{}",
+                    self.input.seed_agent.subject.domain_id,
+                    self.input.seed_agent.subject.object_kind,
+                    self.input.seed_agent.subject.object_id
+                )),
+            },
+            input_checkpoint: crate::runtime::contracts::WorkerCheckpoint {
+                name: "agent_bootstrap_sequence".to_string(),
+                value: input_sequence,
+            },
+            output_checkpoint: crate::runtime::contracts::WorkerCheckpoint {
+                name: "agent_bootstrap_sequence".to_string(),
+                value: output_sequence,
+            },
+            items_attempted,
+            items_committed,
+            retryable_errors: Vec::new(),
+            fatal_errors,
+            budget_exhausted,
+        }
+    }
+}
+
+fn bounded_bootstrap_error(error: meld_world_model::AgentBootstrapError) -> String {
+    const MAX_BYTES: usize = 512;
+    let message = error.to_string();
+    if message.len() <= MAX_BYTES {
+        return message;
+    }
+    let mut boundary = MAX_BYTES;
+    while !message.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    format!("{}...", &message[..boundary])
 }
 
 fn validate_runtime_selection(runtime_ids: &[String]) -> Result<(), RuntimeAssemblyError> {
@@ -1300,7 +1683,7 @@ mod tests {
             assembly.supervisor_store().path(),
             temp.path().join("supervisor.sled")
         );
-        assert_eq!(assembly.registry().len(), 12);
+        assert_eq!(assembly.registry().len(), 13);
         assert!(assembly
             .registry()
             .contains("world_model.agent_goal_curation"));
@@ -1338,7 +1721,7 @@ mod tests {
             description.supervisor_store_path,
             expected_root.join("supervisor.sled")
         );
-        assert_eq!(description.desired_runtime_state.len(), 12);
+        assert_eq!(description.desired_runtime_state.len(), 13);
         assert!(!description.product_root.exists());
         assert!(!description.supervisor_store_path.exists());
     }
@@ -1355,7 +1738,7 @@ mod tests {
 
         assert_eq!(second.product_root(), temp.path());
         assert!(second.registry().contains("execution.publication"));
-        assert_eq!(second.desired_runtime_state().len(), 12);
+        assert_eq!(second.desired_runtime_state().len(), 13);
     }
 
     #[test]
@@ -1397,6 +1780,29 @@ mod tests {
         };
 
         assert!(matches!(error, RuntimeAssemblyError::Config(_)));
+    }
+
+    #[test]
+    fn ordinary_assembly_rejects_enabled_bootstrap_before_store_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let product_root = temp.path().join("product");
+        let mut config = ProductRuntimeConfig::for_product_root(&product_root);
+        config.enabled_runtime_ids = vec![
+            "world_model.graph_replay".to_string(),
+            "world_model.agent.bootstrap.docs_freshness".to_string(),
+        ];
+
+        let error = match ProductRuntimeAssembly::load(config) {
+            Ok(_) => panic!("bootstrap without activation input should fail"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            RuntimeAssemblyError::RuntimeHandleConstruction(message)
+                if message.contains("requires activated world-model owner input")
+        ));
+        assert!(!product_root.exists());
     }
 
     #[test]
@@ -1676,7 +2082,7 @@ mod tests {
         let package = assembly.supervisor_startup_package();
 
         assert_eq!(package.product_root, temp.path());
-        assert_eq!(package.handle_factories.len(), 12);
+        assert_eq!(package.handle_factories.len(), 13);
         assert_eq!(package.default_work_budget.max_items, 64);
         assert_eq!(package.lifecycle_config.heartbeat_interval_ms, 1_000);
         assert_eq!(package.process_services.clock_source, "system");
@@ -1727,7 +2133,7 @@ mod tests {
             .filter(|descriptor| descriptor.default_enabled)
             .collect::<Vec<_>>();
 
-        assert_eq!(registry.len(), 12);
+        assert_eq!(registry.len(), 13);
         assert_eq!(default_actors.len(), 1);
         assert_eq!(default_actors[0].runtime_id, "world_model.graph_replay");
         assert_eq!(default_actors[0].role_class, RuntimeRoleClass::Actor);
@@ -1735,6 +2141,15 @@ mod tests {
             default_actors[0].implementation_state,
             RuntimeImplementationState::Concrete
         );
+        let bootstrap = registry
+            .get("world_model.agent.bootstrap.docs_freshness")
+            .unwrap();
+        assert_eq!(bootstrap.role_class, RuntimeRoleClass::Actor);
+        assert_eq!(
+            bootstrap.implementation_state,
+            RuntimeImplementationState::Concrete
+        );
+        assert!(!bootstrap.default_enabled);
     }
 
     #[test]
@@ -1878,7 +2293,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(desired.len(), 12);
+        assert_eq!(desired.len(), 13);
         assert!(desired
             .iter()
             .any(|state| state.runtime_id == "execution.task_dispatch" && state.enabled));
