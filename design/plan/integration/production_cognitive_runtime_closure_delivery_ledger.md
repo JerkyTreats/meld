@@ -311,8 +311,11 @@ Contract scope:
 - typed event ingress validation, shared fence state, and final identity-bearing barrier
 - enforced restart eligibility and durable replacement ordering
 
-Implementation state: active
-Next gate: focused contract tests, compatibility review, and accepted W1A commits
+Implementation state: accepted
+Accepted commits: `7d01ba2`, `23d0c92`, `80ae62e`, `a9033eb`, `d9f8a43`
+Gate evidence: focused contract suites, locked workspace check, locked workspace clippy with warnings denied, formatting, and diff validation passed
+Review evidence: three independent correction loops closed every critical and high finding
+Next ready set: W1B1 through W1B4
 
 ## Gate Evidence
 
@@ -326,6 +329,7 @@ Next gate: focused contract tests, compatibility review, and accepted W1A commit
 | W0C3 | separate-process lock isolation | passed | `fcac040` | foreground host remained active while status succeeded |
 | W0C4 | canonical document truth | passed | `355f244` | all candidates and retained matches adjudicated |
 | W0D | integrated Wave 0 ladder | passed | `00e0b23` | full locked workspace gate and fresh integrated review passed |
+| W1A | authority recovery contract freeze | passed | `7d01ba2`, `23d0c92`, `80ae62e`, `a9033eb`, `d9f8a43` | focused suites and workspace static gates passed after three review loops |
 
 ## Review Findings
 
@@ -347,6 +351,12 @@ W0D fresh review found no explicit restart publication seam and incomplete persi
 The closeout fix added distinct restart snapshot publication and a resumable collision-detecting migration for every supervisor record family that stores a runtime id.
 The final review approved the integrated Wave 0 state with no high or critical findings.
 
+W1A review first found missing parity proof, belief commit intent, complete goal and planning identities, event identifier grammar, final barrier coherence, and replacement ordering.
+The second loop found freely mismatched parity, incomplete commit invariants, arbitrary projection frame identity, unchecked lease and subscription transitions, and replacement acquisition before restart eligibility.
+The final loop found malformed migration states, projection identity detached from the canonical request, incomplete assessment lease validity, and inaccessible commit recovery products.
+Commits `80ae62e`, `a9033eb`, and `d9f8a43` closed the findings.
+The final reviewer approved W1A with no remaining critical or high blockers.
+
 ## Phase Completion Matrix
 
 | Packet | Status | Implementation Evidence | Test Evidence | Review |
@@ -358,8 +368,11 @@ The final review approved the integrated Wave 0 state with no high or critical f
 | W0C3 | accepted | process isolation proof | separate-process test | passed |
 | W0C4 | accepted | canonical hygiene register and current visibility truth | documentation scope, links, prose, scans, and diff | passed |
 | W0D | accepted | restart publication, alias migration, and integrated closeout | full locked workspace ladder | passed after fix loop |
-| W1A | ready | contract freeze packet | pending | pending |
-| W1B through W6G | blocked | none | none | none |
+| W1A | accepted | authority, replay, identity, validation, restart, and shutdown contracts | focused contract suites and full workspace static ladder | passed after three fix loops |
+| W1B1 | active | isolated belief authority lane | pending | pending |
+| W1B2 | active | isolated goal durability lane | pending | pending |
+| W1B3 through W1B4 | ready | domain packets may start | pending | pending |
+| W1B5 through W6G | blocked | none | none | none |
 
 ## Risks And Exceptions
 
@@ -432,7 +445,7 @@ Gate result: passed
 ### W1A Authority Contract Freeze
 
 Initial state: ready
-Current state: active
+Current state: accepted
 Thread: zero
 Strength: highest available
 Write scope: central compatibility contracts and public domain amendment integration
@@ -440,9 +453,13 @@ Expected commit: `fix(runtime): freeze cognitive authority recovery contracts`
 
 Freeze belief migration, evidence cursor identity, goal request hashes, projection frame identity, planning inputs, object lineage, event fence, contender state, and shutdown ordering.
 
+Accepted commits: `7d01ba2`, `23d0c92`, `80ae62e`, `a9033eb`, `d9f8a43`
+Gate result: passed
+Next ready set: W1B1 through W1B4
+
 ### W1B Domain Correctness Batch
 
-Initial state: blocked by W1A
+Initial state: ready after accepted W1A
 
 | Packet | Thread | Strength | Exclusive Builder Scope | Expected Commit |
 | --- | ---: | --- | --- | --- |
