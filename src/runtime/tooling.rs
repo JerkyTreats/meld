@@ -26,7 +26,7 @@ use crate::runtime::supervisor::{
     RestartCause, RestartPolicy, RuntimeHealthStatus, RuntimeId, RuntimeInstance,
     RuntimeInstanceStatus, RuntimeLeaseStatus, RuntimeSupervisor, SupervisorLifecycleEventType,
     SupervisorRuntimeError, SupervisorRuntimeStatus, SupervisorStartCommand,
-    SupervisorStatusSnapshot, SupervisorStore,
+    SupervisorStatusSnapshot, SupervisorStore, SupervisorTickReport,
 };
 
 static CTRL_C_TARGET: OnceLock<Mutex<Option<Weak<AtomicBool>>>> = OnceLock::new();
@@ -201,10 +201,10 @@ impl<'a> RuntimeStatusCacheSession<'a> {
     fn publish_tick(
         &mut self,
         status: &SupervisorStatusSnapshot,
-        actions: &[RuntimeActionRecord],
+        report: &SupervisorTickReport,
         now_ms: u64,
     ) -> Result<(), ApiError> {
-        for action in actions {
+        for action in &report.actions {
             self.publisher
                 .publish_action(action)
                 .map_err(runtime_error)?;
@@ -215,9 +215,17 @@ impl<'a> RuntimeStatusCacheSession<'a> {
             self.recent_actions.drain(..remove);
         }
         let record = self.record(status, now_ms, RuntimeLaunchStatus::Ready, None)?;
-        self.publisher
-            .publish_tick_snapshot(&record)
-            .map_err(runtime_error)
+        if report.restart_evaluation.expired_runtime_ids.is_empty()
+            && report.restart_evaluation.restarted_runtime_ids.is_empty()
+        {
+            self.publisher
+                .publish_tick_snapshot(&record)
+                .map_err(runtime_error)
+        } else {
+            self.publisher
+                .publish_restart_snapshot(&record)
+                .map_err(runtime_error)
+        }
     }
 
     fn publish_shutdown(
@@ -637,7 +645,7 @@ fn run_tick_loop(
         *last_supervisor_time_ms = (*last_supervisor_time_ms).max(now_ms);
         let report = supervisor.tick(now_ms).map_err(runtime_error)?;
         let status = supervisor.status_snapshot(now_ms).map_err(runtime_error)?;
-        cache_session.publish_tick(&status, &report.actions, now_ms)?;
+        cache_session.publish_tick(&status, &report, now_ms)?;
         *tick_count += 1;
 
         // Promote threshold crossings after the tick; a failed health read

@@ -1530,7 +1530,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_runtime_alias_persists_only_canonical_non_worker_records() {
+    fn legacy_runtime_alias_resolves_to_canonical_non_worker_records() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
         config.enabled_runtime_ids = vec!["events.ledger".to_string()];
@@ -1542,6 +1542,8 @@ mod tests {
         .unwrap();
         let canonical = RuntimeId::new("event.append").unwrap();
         let legacy = RuntimeId::new("events.ledger").unwrap();
+
+        assert_eq!(legacy, canonical);
 
         assert_eq!(
             assembly
@@ -1557,11 +1559,6 @@ mod tests {
             .get_desired_runtime_state(&canonical)
             .unwrap()
             .is_some());
-        assert!(assembly
-            .supervisor_store()
-            .get_desired_runtime_state(&legacy)
-            .unwrap()
-            .is_none());
         assert!(assembly
             .supervisor_store()
             .get_active_runtime_lease(&canonical)

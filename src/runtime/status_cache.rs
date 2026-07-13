@@ -209,6 +209,13 @@ impl RuntimeStatusPublisher for FilesystemRuntimeStatusPublisher {
         self.publish_snapshot(record)
     }
 
+    fn publish_restart_snapshot(
+        &mut self,
+        record: &RuntimeStatusCacheRecord,
+    ) -> Result<(), Self::Error> {
+        self.publish_snapshot(record)
+    }
+
     fn publish_action(&mut self, action: &RuntimeActionRecord) -> Result<(), Self::Error> {
         let mut next = self.actions.clone();
         next.push(normalize_action(action.clone()));

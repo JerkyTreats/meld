@@ -1711,6 +1711,17 @@ mod tests {
     fn ingress_aliases_resolve_to_canonical_persisted_ids() {
         let registry = RuntimeFactoryRegistry::first_proof_registry().unwrap();
 
+        for descriptor in registry.descriptors() {
+            for alias in &descriptor.aliases {
+                assert_eq!(
+                    crate::runtime::supervisor::RuntimeId::new(alias.clone())
+                        .unwrap()
+                        .as_str(),
+                    descriptor.runtime_id
+                );
+            }
+        }
+
         assert_eq!(
             registry.canonical_id("world_model.graph.replay"),
             Some("world_model.graph_replay")

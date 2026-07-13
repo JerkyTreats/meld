@@ -7,8 +7,8 @@ use sled::transaction::{ConflictableTransactionError, TransactionError, Transact
 use thiserror::Error;
 
 use super::contracts::{
-    RuntimeDesiredState, RuntimeHealthSnapshot, RuntimeHeartbeat, RuntimeId, RuntimeInstance,
-    RuntimeLease, RuntimeLeaseOwner, RuntimeLeaseStatus, RuntimeRestartRecord,
+    canonical_runtime_id, RuntimeDesiredState, RuntimeHealthSnapshot, RuntimeHeartbeat, RuntimeId,
+    RuntimeInstance, RuntimeLease, RuntimeLeaseOwner, RuntimeLeaseStatus, RuntimeRestartRecord,
     RuntimeShutdownState, SupervisorContractError, SupervisorLifecycleEvent,
 };
 
@@ -113,7 +113,7 @@ impl SupervisorStore {
         let restarts = db.open_tree(TREE_RESTARTS).map_err(to_sled)?;
         let shutdowns = db.open_tree(TREE_SHUTDOWNS).map_err(to_sled)?;
         let lifecycle_events = db.open_tree(TREE_LIFECYCLE_EVENTS).map_err(to_sled)?;
-        Ok(Self {
+        let store = Self {
             path,
             db,
             instances,
@@ -125,7 +125,9 @@ impl SupervisorStore {
             restarts,
             shutdowns,
             lifecycle_events,
-        })
+        };
+        store.migrate_requirement_era_runtime_ids()?;
+        Ok(store)
     }
 
     /// Open supervisor lifecycle storage only when the store path already exists.
@@ -145,6 +147,31 @@ impl SupervisorStore {
     /// Flush supervisor lifecycle records separately from product stores.
     pub fn flush(&self) -> Result<(), SupervisorStoreError> {
         self.db.flush().map_err(to_sled)?;
+        Ok(())
+    }
+
+    fn migrate_requirement_era_runtime_ids(&self) -> Result<(), SupervisorStoreError> {
+        let mut changed = false;
+        changed |= migrate_record_tree::<RuntimeDesiredState, _>(&self.desired, |record| {
+            record.runtime_id.as_str().as_bytes().to_vec()
+        })?;
+        changed |= migrate_record_tree::<RuntimeLease, _>(&self.leases, |record| {
+            lease_key(&record.runtime_id, &record.lease_id)
+        })?;
+        changed |= migrate_active_lease_index(&self.active_leases)?;
+        changed |= migrate_record_tree::<RuntimeHeartbeat, _>(&self.heartbeats, |record| {
+            record.runtime_id.as_str().as_bytes().to_vec()
+        })?;
+        changed |= migrate_record_tree::<RuntimeHealthSnapshot, _>(&self.health, |record| {
+            record.runtime_id.as_str().as_bytes().to_vec()
+        })?;
+        changed |= migrate_record_tree::<RuntimeRestartRecord, _>(&self.restarts, |record| {
+            restart_key(&record.runtime_id, &record.restart_id)
+        })?;
+        changed |= normalize_record_values::<SupervisorLifecycleEvent>(&self.lifecycle_events)?;
+        if changed {
+            self.db.flush().map_err(to_sled)?;
+        }
         Ok(())
     }
 
@@ -718,6 +745,135 @@ fn read_all<T: DeserializeOwned>(tree: &sled::Tree) -> Result<Vec<T>, Supervisor
         .collect()
 }
 
+fn migrate_record_tree<T, F>(
+    tree: &sled::Tree,
+    canonical_key: F,
+) -> Result<bool, SupervisorStoreError>
+where
+    T: DeserializeOwned + Serialize,
+    F: Fn(&T) -> Vec<u8>,
+{
+    let entries = tree
+        .iter()
+        .map(|entry| {
+            entry
+                .map(|(key, value)| (key.to_vec(), value.to_vec()))
+                .map_err(to_sled)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut changed = false;
+    for (source_key, raw) in entries {
+        let record: T = decode(&raw)?;
+        let target_key = canonical_key(&record);
+        let normalized = encode(&record)?;
+        if let Some(target_raw) = tree.get(&target_key).map_err(to_sled)? {
+            let target_record: T = decode(&target_raw)?;
+            let normalized_target = encode(&target_record)?;
+            if normalized_target != normalized {
+                return Err(runtime_id_migration_collision(&source_key, &target_key));
+            }
+        }
+        if source_key != target_key || raw != normalized {
+            tree.insert(&target_key, normalized).map_err(to_sled)?;
+            if source_key != target_key {
+                tree.remove(&source_key).map_err(to_sled)?;
+            }
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+fn migrate_active_lease_index(tree: &sled::Tree) -> Result<bool, SupervisorStoreError> {
+    let entries = tree
+        .iter()
+        .map(|entry| {
+            entry
+                .map(|(key, value)| (key.to_vec(), value.to_vec()))
+                .map_err(to_sled)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut changed = false;
+    for (source_key, source_value) in entries {
+        let target_key = canonicalize_runtime_key(&source_key)?;
+        let target_value = canonicalize_joined_runtime_key(&source_value)?;
+        if let Some(existing) = tree.get(&target_key).map_err(to_sled)? {
+            let normalized_existing = canonicalize_joined_runtime_key(&existing)?;
+            if normalized_existing != target_value {
+                return Err(runtime_id_migration_collision(&source_key, &target_key));
+            }
+        }
+        if source_key != target_key || source_value != target_value {
+            tree.insert(&target_key, target_value).map_err(to_sled)?;
+            if source_key != target_key {
+                tree.remove(&source_key).map_err(to_sled)?;
+            }
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+fn normalize_record_values<T>(tree: &sled::Tree) -> Result<bool, SupervisorStoreError>
+where
+    T: DeserializeOwned + Serialize,
+{
+    let entries = tree
+        .iter()
+        .map(|entry| {
+            entry
+                .map(|(key, value)| (key.to_vec(), value.to_vec()))
+                .map_err(to_sled)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut changed = false;
+    for (key, raw) in entries {
+        let record: T = decode(&raw)?;
+        let normalized = encode(&record)?;
+        if raw != normalized {
+            tree.insert(key, normalized).map_err(to_sled)?;
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+fn canonicalize_runtime_key(key: &[u8]) -> Result<Vec<u8>, SupervisorStoreError> {
+    let value = std::str::from_utf8(key).map_err(|_| {
+        SupervisorStoreError::InvalidRecord(format!(
+            "runtime id key '{}' is not UTF-8",
+            key_debug(key)
+        ))
+    })?;
+    Ok(canonical_runtime_id(value).as_bytes().to_vec())
+}
+
+fn canonicalize_joined_runtime_key(key: &[u8]) -> Result<Vec<u8>, SupervisorStoreError> {
+    let Some(separator) = key.iter().position(|byte| *byte == 0) else {
+        return Err(SupervisorStoreError::InvalidRecord(format!(
+            "runtime composite key '{}' has no separator",
+            key_debug(key)
+        )));
+    };
+    let runtime_id = std::str::from_utf8(&key[..separator]).map_err(|_| {
+        SupervisorStoreError::InvalidRecord(format!(
+            "runtime composite key '{}' has a non-UTF-8 runtime id",
+            key_debug(key)
+        ))
+    })?;
+    let mut normalized = canonical_runtime_id(runtime_id).as_bytes().to_vec();
+    normalized.extend_from_slice(&key[separator..]);
+    Ok(normalized)
+}
+
+fn runtime_id_migration_collision(source: &[u8], target: &[u8]) -> SupervisorStoreError {
+    SupervisorStoreError::InvalidRecord(format!(
+        "runtime id migration from '{}' conflicts with canonical key '{}'",
+        key_debug(source),
+        key_debug(target)
+    ))
+}
+
 fn read_lease_in_transaction(
     leases: &sled::transaction::TransactionalTree,
     key: &[u8],
@@ -810,6 +966,193 @@ mod tests {
 
     use super::super::contracts::*;
     use super::*;
+
+    const LEGACY_GRAPH_RUNTIME_ID: &str = "world_model.graph.replay";
+    const CANONICAL_GRAPH_RUNTIME_ID: &str = "world_model.graph_replay";
+
+    fn legacy_encoded<T: Serialize>(record: &T) -> Vec<u8> {
+        let mut encoded = encode(record).unwrap();
+        let position = encoded
+            .windows(CANONICAL_GRAPH_RUNTIME_ID.len())
+            .position(|window| window == CANONICAL_GRAPH_RUNTIME_ID.as_bytes())
+            .expect("encoded record contains the canonical runtime id");
+        encoded[position..position + LEGACY_GRAPH_RUNTIME_ID.len()]
+            .copy_from_slice(LEGACY_GRAPH_RUNTIME_ID.as_bytes());
+        encoded
+    }
+
+    #[test]
+    fn open_migrates_requirement_era_ids_across_lifecycle_families() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("supervisor.sled");
+        let db = sled::open(&path).unwrap();
+        let runtime_id = runtime_id(CANONICAL_GRAPH_RUNTIME_ID);
+        let desired = RuntimeDesiredState {
+            runtime_id: runtime_id.clone(),
+            enabled: true,
+            restart_policy: RestartPolicy::OnHeartbeatExpiry,
+        };
+        let lease = RuntimeLease {
+            runtime_id: runtime_id.clone(),
+            lease_id: "lease-a".to_string(),
+            instance_id: "instance-a".to_string(),
+            acquired_at_ms: 10,
+            renewed_at_ms: None,
+            released_at_ms: None,
+            expires_at_ms: 100,
+            status: RuntimeLeaseStatus::Active,
+        };
+        let heartbeat = RuntimeHeartbeat {
+            runtime_id: runtime_id.clone(),
+            lease_id: "lease-a".to_string(),
+            instance_id: "instance-a".to_string(),
+            observed_at_ms: 20,
+            health: healthy(),
+            diagnostic: None,
+        };
+        let health = RuntimeHealthSnapshot {
+            runtime_id: runtime_id.clone(),
+            lease_id: Some("lease-a".to_string()),
+            observed_at_ms: 20,
+            status: RuntimeHealthStatus::Healthy,
+            last_heartbeat_at_ms: Some(20),
+            retryable_error_count: 0,
+            fatal_error_count: 0,
+            budget_exhausted: false,
+            restart_count: 0,
+            last_restart_cause: None,
+        };
+        let restart = RuntimeRestartRecord {
+            restart_id: "restart-a".to_string(),
+            runtime_id: runtime_id.clone(),
+            instance_id: "instance-a".to_string(),
+            previous_lease_id: Some("lease-old".to_string()),
+            cause: RestartCause::HeartbeatExpired,
+            attempt: 1,
+            requested_at_ms: 30,
+            backoff_ms: 10,
+        };
+        let event = SupervisorLifecycleEvent {
+            event_id: "event-a".to_string(),
+            instance_id: "instance-a".to_string(),
+            runtime_id: Some(runtime_id.clone()),
+            lease_id: Some("lease-a".to_string()),
+            occurred_at_ms: 20,
+            event_type: SupervisorLifecycleEventType::HeartbeatAccepted,
+            message: None,
+        };
+
+        db.open_tree(TREE_DESIRED)
+            .unwrap()
+            .insert(LEGACY_GRAPH_RUNTIME_ID, legacy_encoded(&desired))
+            .unwrap();
+        db.open_tree(TREE_LEASES)
+            .unwrap()
+            .insert(
+                joined_key(LEGACY_GRAPH_RUNTIME_ID, "lease-a"),
+                legacy_encoded(&lease),
+            )
+            .unwrap();
+        db.open_tree(TREE_ACTIVE_LEASES)
+            .unwrap()
+            .insert(
+                LEGACY_GRAPH_RUNTIME_ID,
+                joined_key(LEGACY_GRAPH_RUNTIME_ID, "lease-a"),
+            )
+            .unwrap();
+        db.open_tree(TREE_HEARTBEATS)
+            .unwrap()
+            .insert(LEGACY_GRAPH_RUNTIME_ID, legacy_encoded(&heartbeat))
+            .unwrap();
+        db.open_tree(TREE_HEALTH)
+            .unwrap()
+            .insert(LEGACY_GRAPH_RUNTIME_ID, legacy_encoded(&health))
+            .unwrap();
+        db.open_tree(TREE_RESTARTS)
+            .unwrap()
+            .insert(
+                joined_key(LEGACY_GRAPH_RUNTIME_ID, "restart-a"),
+                legacy_encoded(&restart),
+            )
+            .unwrap();
+        db.open_tree(TREE_LIFECYCLE_EVENTS)
+            .unwrap()
+            .insert("event-a", legacy_encoded(&event))
+            .unwrap();
+        db.flush().unwrap();
+        drop(db);
+
+        let store = SupervisorStore::open(&path).unwrap();
+
+        assert_eq!(
+            store.get_desired_runtime_state(&runtime_id).unwrap(),
+            Some(desired)
+        );
+        assert_eq!(
+            store.get_runtime_lease(&runtime_id, "lease-a").unwrap(),
+            Some(lease.clone())
+        );
+        assert_eq!(
+            store.get_active_runtime_lease(&runtime_id).unwrap(),
+            Some(lease)
+        );
+        assert_eq!(
+            store.get_runtime_heartbeat(&runtime_id).unwrap(),
+            Some(heartbeat)
+        );
+        assert_eq!(
+            store.get_health_snapshot(&runtime_id).unwrap(),
+            Some(health)
+        );
+        assert_eq!(
+            store.get_restart_record(&runtime_id, "restart-a").unwrap(),
+            Some(restart)
+        );
+        assert_eq!(store.get_lifecycle_event("event-a").unwrap(), Some(event));
+        for tree in [
+            &store.desired,
+            &store.leases,
+            &store.active_leases,
+            &store.heartbeats,
+            &store.health,
+            &store.restarts,
+        ] {
+            assert!(tree.iter().all(|entry| !entry
+                .unwrap()
+                .0
+                .starts_with(LEGACY_GRAPH_RUNTIME_ID.as_bytes())));
+        }
+    }
+
+    #[test]
+    fn open_rejects_divergent_alias_and_canonical_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("supervisor.sled");
+        let db = sled::open(&path).unwrap();
+        let tree = db.open_tree(TREE_DESIRED).unwrap();
+        let canonical = RuntimeDesiredState {
+            runtime_id: runtime_id(CANONICAL_GRAPH_RUNTIME_ID),
+            enabled: true,
+            restart_policy: RestartPolicy::OnHeartbeatExpiry,
+        };
+        let mut legacy = canonical.clone();
+        legacy.enabled = false;
+        tree.insert(CANONICAL_GRAPH_RUNTIME_ID, encode(&canonical).unwrap())
+            .unwrap();
+        tree.insert(LEGACY_GRAPH_RUNTIME_ID, legacy_encoded(&legacy))
+            .unwrap();
+        db.flush().unwrap();
+        drop(tree);
+        drop(db);
+
+        let error = match SupervisorStore::open(&path) {
+            Ok(_) => panic!("divergent runtime aliases must fail migration"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, SupervisorStoreError::InvalidRecord(_)));
+        assert!(error.to_string().contains("conflicts with canonical key"));
+    }
 
     #[test]
     fn supervisor_records_round_trip_through_sled_trees() {

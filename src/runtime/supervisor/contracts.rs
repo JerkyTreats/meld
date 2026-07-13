@@ -339,7 +339,7 @@ impl RuntimeId {
     pub fn new(value: impl Into<String>) -> Result<Self, SupervisorContractError> {
         let value = value.into();
         validate_runtime_id(&value)?;
-        Ok(Self(value))
+        Ok(Self(canonical_runtime_id(&value).to_string()))
     }
 
     /// Borrow the runtime id as a string slice.
@@ -350,6 +350,23 @@ impl RuntimeId {
     /// Consume the runtime id as a string.
     pub fn into_string(self) -> String {
         self.0
+    }
+}
+
+/// Translate requirement-era runtime ids at ingress.
+pub fn canonical_runtime_id(value: &str) -> &str {
+    match value {
+        "events.ledger" => "event.append",
+        "world_model.graph.replay" => "world_model.graph_replay",
+        "world_model.belief.assessment" => "world_model.belief_assessment",
+        "world_model.agent.goal_curation" => "world_model.agent_goal_curation",
+        "world_model.belief.event_evidence_ingestion" => "world_model.evidence_ingestion",
+        "world_model.agent.satisfaction_curation" => "world_model.satisfaction_curation",
+        "execution.goal.set" => "execution.goal_set",
+        "execution.task_network.command" => "execution.task_network_command",
+        "execution.task.dispatch" => "execution.task_dispatch",
+        "execution.task_network.publication" => "execution.publication",
+        _ => value,
     }
 }
 
@@ -458,8 +475,25 @@ mod tests {
             "execution.task_network.network-docs",
             "execution.publication.network_docs",
         ] {
-            assert_eq!(RuntimeId::new(runtime_id).unwrap().as_str(), runtime_id);
+            assert_eq!(
+                RuntimeId::new(runtime_id).unwrap().as_str(),
+                canonical_runtime_id(runtime_id)
+            );
         }
+    }
+
+    #[test]
+    fn requirement_era_runtime_ids_normalize_at_ingress() {
+        assert_eq!(
+            RuntimeId::new("events.ledger").unwrap().as_str(),
+            "event.append"
+        );
+        assert_eq!(
+            RuntimeId::new("world_model.agent.goal_curation")
+                .unwrap()
+                .as_str(),
+            "world_model.agent_goal_curation"
+        );
     }
 
     #[test]

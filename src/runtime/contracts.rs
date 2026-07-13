@@ -1123,6 +1123,12 @@ pub trait RuntimeStatusPublisher {
         record: &RuntimeStatusCacheRecord,
     ) -> Result<(), Self::Error>;
 
+    /// Publish a snapshot immediately after restart policy changes ownership.
+    fn publish_restart_snapshot(
+        &mut self,
+        record: &RuntimeStatusCacheRecord,
+    ) -> Result<(), Self::Error>;
+
     /// Publish one runtime action.
     fn publish_action(&mut self, action: &RuntimeActionRecord) -> Result<(), Self::Error>;
 
