@@ -1,13 +1,15 @@
 # Production Cognitive Runtime Closure Delivery Ledger
 
 Date: 2026-07-13
-Status: implementation in progress
+Status: superseded after accepted W3A work
 Program: [Production Cognitive Runtime Closure Program](production_cognitive_runtime_closure_program.md)
 Base branch: `event-foundation-closeout`
 Integration branch: `production-cognitive-runtime-closure`
 Thread ceiling: eight
 
 ## Purpose
+
+The [Docs Freshness Flywheel Validation Program](docs_freshness_flywheel_validation_program.md) has completed the first working vertical. This ledger remains authoritative for accepted historical commits through W3A. Its unfinished W3B through W6 packets are a deferred reliability backlog rather than current acceptance gates or an automatic next program.
 
 This ledger converts the program waves into schedulable delivery packets.
 It is the implementation control plane for `phased-program-delivery`.

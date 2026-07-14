@@ -6,8 +6,9 @@ use meld_execution::planning::PlanningRuntimeActorReport;
 use meld_execution::task_network::{PublicationBridgeReport, PublicationRuntimeReport};
 use meld_world_model::world_state::graph::runtime::GraphCatchUpReport;
 use meld_world_model::{
-    AgentHydrationTickReport, AgentRuntimeReport, BeliefRuntimeTickReport,
-    DocsTaskEvidenceReplayReport, EvidenceIngestionActorReport, PlannerProjectionTickReport,
+    AgentCurationActorReport, AgentHydrationTickReport, AgentRuntimeReport,
+    BeliefRuntimeTickReport, DocsTaskEvidenceReplayReport, EvidenceIngestionActorReport,
+    PlannerProjectionTickReport,
 };
 use serde::{Deserialize, Serialize};
 
@@ -1670,6 +1671,54 @@ impl From<AgentRuntimeReport> for WorkerTickReport {
                 .map(string_issue)
                 .collect(),
             fatal_errors: report.fatal_errors.into_iter().map(string_issue).collect(),
+            budget_exhausted: report.budget_exhausted,
+        }
+    }
+}
+
+impl From<AgentCurationActorReport> for WorkerTickReport {
+    fn from(report: AgentCurationActorReport) -> Self {
+        Self {
+            actor_id: report.actor_id,
+            scope: WorkerScope {
+                domain_id: "world_model".to_string(),
+                stream_id: None,
+                work_key: Some("agent_curation".to_string()),
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "agent_input_sequence".to_string(),
+                value: report.input_sequence,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "agent_output_sequence".to_string(),
+                value: report.output_sequence,
+            },
+            items_attempted: report.selected_count,
+            items_committed: report.decision_count
+                + report.sink_receipt_count
+                + report.cursor_advanced_count,
+            retryable_errors: report
+                .retryable_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.item_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            fatal_errors: report
+                .fatal_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.item_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
             budget_exhausted: report.budget_exhausted,
         }
     }

@@ -20,6 +20,7 @@ const SELECTION_HASH_DOMAIN: &[u8] = b"meld.semantic-runtime-selection.v1";
 const DOCS_FRESHNESS_ACTORS: &[&str] = &[
     "execution.planning",
     "execution.publication",
+    "execution.task_dispatch",
     "world_model.agent_goal_curation",
     "world_model.agent_hydration",
     "world_model.belief_assessment",

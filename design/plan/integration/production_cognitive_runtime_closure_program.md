@@ -1,13 +1,15 @@
 # Production Cognitive Runtime Closure Program
 
 Date: 2026-07-13
-Status: active, W3A accepted and W3B ready
-Scope: turn the completed event foundation and library-level cognitive flywheel into one honest, restart-safe, operator-visible product runtime
+Status: superseded after accepted W3A work
+Scope: historical production-hardening program and deferred reliability backlog
 Base branch: `event-foundation-closeout`
 Recommended program branch: `production-cognitive-runtime-closure`
 Complex workflow: inactive unless separately requested
 
 ## Objective
+
+Delivery after W3A was redirected through the [Docs Freshness Flywheel Validation Program](docs_freshness_flywheel_validation_program.md), which has now completed the first working vertical. The unfinished Wave 3 through Wave 6 gates below are retained as historical planning and a deferred reliability backlog. They are not current acceptance gates or an automatic next program.
 
 Deliver one product-visible `docs_freshness` flywheel that starts from validated activation configuration, runs through supervised domain actors, executes real task work, publishes through the event authority, revises belief, satisfies the goal, survives reopen at every durable handoff, and reports truthful operator state.
 

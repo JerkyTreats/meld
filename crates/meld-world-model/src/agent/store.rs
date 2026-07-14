@@ -22,9 +22,10 @@ use crate::agent::bootstrap::{
 use crate::agent::contracts::{
     deterministic_id, AgentActivationRecord, AgentActivationStatus, AgentAuthoredCommand,
     AgentCurationDecision, AgentCurationDedupeKey, AgentCurationOutcome, AgentDecisionKind,
-    AgentDecisionOutboxRecord, AgentDeliverySelection, AgentGoalCommand, AgentHydrationCheckpoint,
-    AgentHydrationCheckpointStage, AgentRecord, AgentSatisfactionCursorCasIntent,
-    AgentSatisfactionCursorIdentity, AgentSatisfactionReview, AgentSatisfactionReviewCursor,
+    AgentDecisionOutboxRecord, AgentDeliverySelection, AgentGoalCommand,
+    AgentGoalRecoverySelection, AgentHydrationCheckpoint, AgentHydrationCheckpointStage,
+    AgentRecord, AgentSatisfactionCursorCasIntent, AgentSatisfactionCursorIdentity,
+    AgentSatisfactionRecoverySelection, AgentSatisfactionReview, AgentSatisfactionReviewCursor,
     AgentSatisfactionReviewSelection, AgentSemanticEnablementAudit, AgentSinkReceipt,
     AgentSinkReceiptKind, AgentStatus, AgentSubscriptionCursorCasIntent, AgentSubscriptionRecord,
     AgentSubscriptionStatus,
@@ -55,6 +56,9 @@ const TREE_SINK_RECEIPTS: &str = "agent_sink_receipts";
 const TREE_SINK_RECEIPTS_BY_COMMAND: &str = "agent_sink_receipts_by_command";
 const TREE_DECISION_OUTBOX: &str = "agent_decision_outbox";
 const TREE_SATISFACTION_REVIEW_CURSORS: &str = "agent_satisfaction_review_cursors";
+const TREE_GOAL_RECOVERY: &str = "agent_goal_curation_recovery";
+const TREE_SATISFACTION_RECOVERY: &str = "agent_satisfaction_curation_recovery";
+const TREE_CURATION_RUNTIME_STATE: &str = "agent_curation_runtime_state";
 const TREE_HYDRATION_CHECKPOINTS: &str = "agent_hydration_checkpoints";
 const TREE_RUNTIME_SCHEMA: &str = "agent_runtime_schema";
 const TREE_DIRECTIVES: &str = "agent_directives";
@@ -75,10 +79,68 @@ const KEY_READINESS_SCHEMA_STATE: &[u8] = b"state";
 const READINESS_SCHEMA_VERSION: u16 = 2;
 const READINESS_MIGRATION_BATCH: usize = 128;
 const HYDRATION_CONTINUATION_KEY: &[u8] = b"registered_continuation";
+const GOAL_SUBSCRIPTION_CONTINUATION_KEY: &[u8] = b"goal_subscription_continuation";
+const SATISFACTION_SUBSCRIPTION_CONTINUATION_KEY: &[u8] = b"satisfaction_subscription_continuation";
+const GOAL_RECOVERY_CONTINUATION_KEY: &[u8] = b"goal_recovery_continuation";
+const SATISFACTION_RECOVERY_CONTINUATION_KEY: &[u8] = b"satisfaction_recovery_continuation";
 const RUNTIME_SCHEMA_VERSION_KEY: &[u8] = b"semantic_runtime";
 const GOAL_COMMAND_SEQUENCE_MIGRATION_KEY: &[u8] = b"goal_command_sequence_migration";
 const RUNTIME_SCHEMA_VERSION: u16 = 2;
 const KEY_PAD: usize = 20;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentCurationContinuation {
+    generation: u64,
+    last_index_key: Vec<u8>,
+}
+
+impl AgentCurationContinuation {
+    fn validate(&self) -> Result<(), StorageError> {
+        if self.generation == 0 || self.last_index_key.is_empty() {
+            return Err(StorageError::MigrationConflict(
+                "agent curation continuation is malformed".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub(crate) struct AgentSubscriptionCandidate {
+    pub(crate) agent: AgentRecord,
+    pub(crate) subscription: AgentSubscriptionRecord,
+}
+
+pub(crate) struct AgentBoundedSelection<T> {
+    pub(crate) items: Vec<T>,
+    pub(crate) budget_exhausted: bool,
+}
+
+type AgentIndexRow = (Vec<u8>, Vec<u8>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentCurationSelectionStream {
+    Goal,
+    Satisfaction,
+}
+
+enum AgentRecoveryPersistence<'a> {
+    Goal(&'a AgentGoalRecoverySelection),
+    Satisfaction(&'a AgentSatisfactionRecoverySelection),
+}
+
+struct AgentOutcomeOwnerFences<'a> {
+    outcome: &'a AgentCurationOutcome,
+    outbox: Option<&'a AgentDecisionOutboxRecord>,
+    agent: &'a AgentRecord,
+    subscription: &'a AgentSubscriptionRecord,
+    review: Option<&'a AgentSatisfactionReview>,
+    cursor_fence: Option<(
+        &'a AgentSatisfactionCursorIdentity,
+        Option<&'a AgentSatisfactionReviewCursor>,
+    )>,
+    recovery: AgentRecoveryPersistence<'a>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -684,6 +746,9 @@ pub struct AgentStore {
     sink_receipts_by_command: Tree,
     decision_outbox: Tree,
     satisfaction_review_cursors: Tree,
+    goal_recovery: Tree,
+    satisfaction_recovery: Tree,
+    curation_runtime_state: Tree,
     hydration_checkpoints: Tree,
     runtime_schema: Tree,
     directives: Tree,
@@ -743,6 +808,13 @@ impl AgentStore {
                 decision_outbox: db.open_tree(TREE_DECISION_OUTBOX).map_err(to_storage_io)?,
                 satisfaction_review_cursors: db
                     .open_tree(TREE_SATISFACTION_REVIEW_CURSORS)
+                    .map_err(to_storage_io)?,
+                goal_recovery: db.open_tree(TREE_GOAL_RECOVERY).map_err(to_storage_io)?,
+                satisfaction_recovery: db
+                    .open_tree(TREE_SATISFACTION_RECOVERY)
+                    .map_err(to_storage_io)?,
+                curation_runtime_state: db
+                    .open_tree(TREE_CURATION_RUNTIME_STATE)
                     .map_err(to_storage_io)?,
                 hydration_checkpoints: db
                     .open_tree(TREE_HYDRATION_CHECKPOINTS)
@@ -1039,27 +1111,35 @@ impl AgentStore {
         })
     }
 
-    /// Advance the exact durable hydration continuation and reflush exact replay.
+    /// Advance the exact durable hydration continuation without replay drift.
     pub(crate) fn advance_hydration_continuation(
         &self,
         expected: Option<&AgentHydrationContinuation>,
         advanced: &AgentHydrationContinuation,
     ) -> Result<(), StorageError> {
         validate_hydration_continuation(advanced)?;
+        if let Some(expected) =
+            expected.filter(|expected| expected.last_status_key == advanced.last_status_key)
+        {
+            let expected_bytes = serde_json::to_vec(expected).map_err(to_storage_data)?;
+            if self
+                .hydration_runtime_state
+                .get(HYDRATION_CONTINUATION_KEY)
+                .map_err(to_storage_io)?
+                .as_deref()
+                == Some(expected_bytes.as_slice())
+            {
+                return Ok(());
+            }
+            return Err(StorageError::Backpressure(
+                "agent hydration continuation changed during replay".to_string(),
+            ));
+        }
         let expected_bytes = expected
             .map(serde_json::to_vec)
             .transpose()
             .map_err(to_storage_data)?;
         let advanced_bytes = serde_json::to_vec(advanced).map_err(to_storage_data)?;
-        if self
-            .hydration_runtime_state
-            .get(HYDRATION_CONTINUATION_KEY)
-            .map_err(to_storage_io)?
-            .as_deref()
-            == Some(advanced_bytes.as_slice())
-        {
-            return self.flush_durable("agent hydration continuation replay");
-        }
         self.hydration_runtime_state
             .compare_and_swap(
                 HYDRATION_CONTINUATION_KEY,
@@ -1201,7 +1281,7 @@ impl AgentStore {
         let mut updated = current;
         updated.last_delivered_revision_id = Some(command.delivered_revision_id.clone());
         updated.last_delivered_seq = command.delivered_seq;
-        updated.updated_at_seq = command.delivered_seq;
+        updated.updated_at_seq = updated.updated_at_seq.max(command.delivered_seq);
         let encoded = serde_json::to_vec(&updated).map_err(to_storage_data)?;
         match self
             .subscriptions
@@ -1281,13 +1361,20 @@ impl AgentStore {
         let mut updated = subscription.clone();
         updated.last_delivered_revision_id = Some(selection.delivery.belief_revision_id.clone());
         updated.last_delivered_seq = selection.delivery.revision_seq;
-        updated.updated_at_seq = selection.delivery.revision_seq;
+        updated.updated_at_seq = updated.updated_at_seq.max(selection.delivery.revision_seq);
         updated.validate()?;
         let agent_bytes = serde_json::to_vec(&agent).map_err(to_storage_data)?;
         let subscription_bytes = serde_json::to_vec(&subscription).map_err(to_storage_data)?;
         let updated_bytes = serde_json::to_vec(&updated).map_err(to_storage_data)?;
-        (&self.agents, &self.subscriptions)
-            .transaction(|(agents, subscriptions)| {
+        let recovery = AgentGoalRecoverySelection {
+            decision_id: decision_id.to_string(),
+            selection: selection.clone(),
+        };
+        recovery.validate()?;
+        let recovery_key = recovery_index_key(selection.delivery.revision_seq, decision_id);
+        let recovery_bytes = serde_json::to_vec(&recovery).map_err(to_storage_data)?;
+        (&self.agents, &self.subscriptions, &self.goal_recovery)
+            .transaction(|(agents, subscriptions, recoveries)| {
                 require_transaction_value(
                     agents,
                     agent.agent_id.as_bytes(),
@@ -1300,10 +1387,17 @@ impl AgentStore {
                     &subscription_bytes,
                     "selected subscription",
                 )?;
+                require_transaction_value(
+                    recoveries,
+                    recovery_key.as_bytes(),
+                    &recovery_bytes,
+                    "goal curation recovery",
+                )?;
                 subscriptions.insert(
                     subscription.subscription_id.as_bytes(),
                     updated_bytes.as_slice(),
                 )?;
+                recoveries.remove(recovery_key.as_bytes())?;
                 Ok(())
             })
             .map_err(to_agent_transition_error)?;
@@ -1349,6 +1443,227 @@ impl AgentStore {
                 .then_with(|| left.subscription_id.cmp(&right.subscription_id))
         });
         Ok(out)
+    }
+
+    /// Select a fixed number of subscription-index candidates with durable rotation.
+    pub(crate) fn curation_subscription_candidates_bounded(
+        &self,
+        stream: AgentCurationSelectionStream,
+        max_items: usize,
+    ) -> Result<AgentBoundedSelection<AgentSubscriptionCandidate>, StorageError> {
+        let continuation_key = match stream {
+            AgentCurationSelectionStream::Goal => GOAL_SUBSCRIPTION_CONTINUATION_KEY,
+            AgentCurationSelectionStream::Satisfaction => {
+                SATISFACTION_SUBSCRIPTION_CONTINUATION_KEY
+            }
+        };
+        let rows =
+            self.bounded_index_rows(&self.subscriptions_by_agent, continuation_key, max_items)?;
+        let mut candidates = Vec::with_capacity(rows.items.len());
+        for (index_key, value) in rows.items {
+            let subscription_id = String::from_utf8(value).map_err(to_storage_utf8)?;
+            let subscription = self.get_subscription(&subscription_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "subscription index references missing subscription '{subscription_id}'"
+                ))
+            })?;
+            subscription.validate()?;
+            let expected_index_key = subscription_agent_key(
+                &subscription.agent_id,
+                subscription.created_at_seq,
+                &subscription.subscription_id,
+            );
+            if index_key != expected_index_key.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "subscription index diverges for '{subscription_id}'"
+                )));
+            }
+            let agent = self.get_agent(&subscription.agent_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "subscription '{subscription_id}' references missing agent '{}'",
+                    subscription.agent_id
+                ))
+            })?;
+            agent.validate()?;
+            candidates.push(AgentSubscriptionCandidate {
+                agent,
+                subscription,
+            });
+        }
+        Ok(AgentBoundedSelection {
+            items: candidates,
+            budget_exhausted: rows.budget_exhausted,
+        })
+    }
+
+    /// Select exact incomplete goal outcomes in durable fair order.
+    pub(crate) fn goal_recoveries_bounded(
+        &self,
+        max_items: usize,
+    ) -> Result<AgentBoundedSelection<AgentGoalRecoverySelection>, StorageError> {
+        let rows = self.bounded_index_rows(
+            &self.goal_recovery,
+            GOAL_RECOVERY_CONTINUATION_KEY,
+            max_items,
+        )?;
+        let mut recoveries = Vec::with_capacity(rows.items.len());
+        for (key, value) in rows.items {
+            let recovery: AgentGoalRecoverySelection =
+                serde_json::from_slice(&value).map_err(to_storage_data)?;
+            recovery.validate()?;
+            if key
+                != recovery_index_key(
+                    recovery.selection.delivery.revision_seq,
+                    &recovery.decision_id,
+                )
+                .as_bytes()
+            {
+                return Err(StorageError::MigrationConflict(format!(
+                    "goal recovery index diverges for '{}'",
+                    recovery.decision_id
+                )));
+            }
+            self.goal_recovery_outcome(&recovery)?;
+            recoveries.push(recovery);
+        }
+        Ok(AgentBoundedSelection {
+            items: recoveries,
+            budget_exhausted: rows.budget_exhausted,
+        })
+    }
+
+    /// Select exact incomplete satisfaction outcomes in durable fair order.
+    pub(crate) fn satisfaction_recoveries_bounded(
+        &self,
+        max_items: usize,
+    ) -> Result<AgentBoundedSelection<AgentSatisfactionRecoverySelection>, StorageError> {
+        let rows = self.bounded_index_rows(
+            &self.satisfaction_recovery,
+            SATISFACTION_RECOVERY_CONTINUATION_KEY,
+            max_items,
+        )?;
+        let mut recoveries = Vec::with_capacity(rows.items.len());
+        for (key, value) in rows.items {
+            let recovery: AgentSatisfactionRecoverySelection =
+                serde_json::from_slice(&value).map_err(to_storage_data)?;
+            recovery.validate()?;
+            if key
+                != recovery_index_key(
+                    recovery.selection.belief_revision_seq,
+                    &recovery.decision_id,
+                )
+                .as_bytes()
+            {
+                return Err(StorageError::MigrationConflict(format!(
+                    "satisfaction recovery index diverges for '{}'",
+                    recovery.decision_id
+                )));
+            }
+            self.satisfaction_recovery_outcome(&recovery)?;
+            recoveries.push(recovery);
+        }
+        Ok(AgentBoundedSelection {
+            items: recoveries,
+            budget_exhausted: rows.budget_exhausted,
+        })
+    }
+
+    fn bounded_index_rows(
+        &self,
+        index: &Tree,
+        continuation_key: &[u8],
+        max_items: usize,
+    ) -> Result<AgentBoundedSelection<AgentIndexRow>, StorageError> {
+        if max_items == 0 {
+            return Err(StorageError::InvalidPath(
+                "agent curation selection budget must be greater than zero".to_string(),
+            ));
+        }
+        let continuation = self.curation_continuation(continuation_key)?;
+        let desired = max_items.saturating_add(1);
+        let mut rows = Vec::with_capacity(desired);
+        let mut seen = BTreeSet::new();
+        match continuation.as_ref() {
+            Some(continuation) => {
+                append_bounded_rows(
+                    &mut rows,
+                    &mut seen,
+                    index.range::<Vec<u8>, _>((
+                        Bound::Excluded(continuation.last_index_key.clone()),
+                        Bound::Unbounded,
+                    )),
+                    desired,
+                )?;
+                if rows.len() < desired {
+                    append_bounded_rows(
+                        &mut rows,
+                        &mut seen,
+                        index.range::<Vec<u8>, _>((
+                            Bound::Unbounded,
+                            Bound::Included(continuation.last_index_key.clone()),
+                        )),
+                        desired,
+                    )?;
+                }
+            }
+            None => append_bounded_rows(&mut rows, &mut seen, index.iter(), desired)?,
+        }
+        let budget_exhausted = rows.len() > max_items;
+        rows.truncate(max_items);
+        if let Some((last_key, _)) = rows.last() {
+            self.advance_curation_continuation(
+                continuation_key,
+                continuation.as_ref(),
+                last_key.clone(),
+            )?;
+        }
+        Ok(AgentBoundedSelection {
+            items: rows,
+            budget_exhausted,
+        })
+    }
+
+    fn curation_continuation(
+        &self,
+        key: &[u8],
+    ) -> Result<Option<AgentCurationContinuation>, StorageError> {
+        let continuation: Option<AgentCurationContinuation> = decode_optional(
+            self.curation_runtime_state
+                .get(key)
+                .map_err(to_storage_io)?,
+        )?;
+        if let Some(continuation) = continuation.as_ref() {
+            continuation.validate()?;
+        }
+        Ok(continuation)
+    }
+
+    fn advance_curation_continuation(
+        &self,
+        key: &[u8],
+        expected: Option<&AgentCurationContinuation>,
+        last_index_key: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        let next = AgentCurationContinuation {
+            generation: expected
+                .map_or(1, |continuation| continuation.generation.saturating_add(1)),
+            last_index_key,
+        };
+        next.validate()?;
+        let expected_bytes = expected
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(to_storage_data)?;
+        let next_bytes = serde_json::to_vec(&next).map_err(to_storage_data)?;
+        self.curation_runtime_state
+            .compare_and_swap(key, expected_bytes, Some(next_bytes))
+            .map_err(to_storage_io)?
+            .map_err(|_| {
+                StorageError::Backpressure(
+                    "agent curation continuation changed during bounded selection".to_string(),
+                )
+            })?;
+        self.flush_durable("agent curation continuation advancement")
     }
 
     /// List active subscriptions for an agent.
@@ -2401,14 +2716,20 @@ impl AgentStore {
                 "subscription cursor changed before decision commit".to_string(),
             ));
         }
-        self.persist_outcome_with_owner_fences(
+        let recovery = AgentGoalRecoverySelection {
+            decision_id: outcome.decision.decision_id.clone(),
+            selection: selection.clone(),
+        };
+        recovery.validate()?;
+        self.persist_outcome_with_owner_fences(AgentOutcomeOwnerFences {
             outcome,
-            outbox.as_ref(),
-            &agent,
-            &subscription,
-            None,
-            None,
-        )?;
+            outbox: outbox.as_ref(),
+            agent: &agent,
+            subscription: &subscription,
+            review: None,
+            cursor_fence: None,
+            recovery: AgentRecoveryPersistence::Goal(&recovery),
+        })?;
         self.flush_durable("selected delivery outcome")?;
         self.outcome_for_decision(&outcome.decision.decision_id)
     }
@@ -2445,17 +2766,23 @@ impl AgentStore {
                 "satisfaction cursor changed before decision commit".to_string(),
             ));
         }
-        self.persist_outcome_with_owner_fences(
+        let recovery = AgentSatisfactionRecoverySelection {
+            decision_id: outcome.decision.decision_id.clone(),
+            selection: selection.clone(),
+        };
+        recovery.validate()?;
+        self.persist_outcome_with_owner_fences(AgentOutcomeOwnerFences {
             outcome,
-            outbox.as_ref(),
-            &agent,
-            &subscription,
-            Some(&selection.review),
-            Some((
+            outbox: outbox.as_ref(),
+            agent: &agent,
+            subscription: &subscription,
+            review: Some(&selection.review),
+            cursor_fence: Some((
                 &selection.cursor_identity,
                 (cursor.last_reviewed_seq != 0).then_some(&cursor),
             )),
-        )?;
+            recovery: AgentRecoveryPersistence::Satisfaction(&recovery),
+        })?;
         self.flush_durable("selected satisfaction outcome")?;
         self.outcome_for_decision(&outcome.decision.decision_id)
     }
@@ -2524,6 +2851,170 @@ impl AgentStore {
         };
         let outbox = self.decision_outbox(&decision.decision_id)?;
         outcome_from_durable(decision, outbox).map(Some)
+    }
+
+    /// Revalidate and load one exact historical goal outcome for recovery.
+    pub(crate) fn goal_recovery_outcome(
+        &self,
+        recovery: &AgentGoalRecoverySelection,
+    ) -> Result<AgentCurationOutcome, StorageError> {
+        recovery.validate()?;
+        let key = recovery_index_key(
+            recovery.selection.delivery.revision_seq,
+            &recovery.decision_id,
+        );
+        let durable: AgentGoalRecoverySelection = decode_optional(
+            self.goal_recovery
+                .get(key.as_bytes())
+                .map_err(to_storage_io)?,
+        )?
+        .ok_or_else(|| {
+            StorageError::Backpressure(format!(
+                "goal recovery '{}' is no longer pending",
+                recovery.decision_id
+            ))
+        })?;
+        if durable != *recovery {
+            return Err(StorageError::MigrationConflict(format!(
+                "goal recovery '{}' conflicts with durable state",
+                recovery.decision_id
+            )));
+        }
+        self.require_selected_agent(
+            &recovery.selection.delivery.agent_id,
+            recovery.selection.expected_agent_updated_at_seq,
+        )?;
+        let subscription = self.require_selected_subscription(
+            &recovery.selection.delivery.subscription_id,
+            &recovery.selection.delivery.agent_id,
+            &recovery.selection.belief_key,
+            recovery.selection.expected_subscription_updated_at_seq,
+        )?;
+        if subscription.last_delivered_revision_id
+            != recovery.selection.expected_delivered_revision_id
+            || subscription.last_delivered_seq != recovery.selection.expected_delivered_seq
+        {
+            return Err(StorageError::Backpressure(
+                "goal recovery lost its subscription cursor fence".to_string(),
+            ));
+        }
+        let decision = self.get_decision(&recovery.decision_id)?.ok_or_else(|| {
+            StorageError::MigrationConflict(format!(
+                "goal recovery '{}' references a missing decision",
+                recovery.decision_id
+            ))
+        })?;
+        let review_key = AgentSatisfactionReview {
+            agent_id: decision.agent_id.clone(),
+            subscription_id: decision.subscription_id.clone(),
+            review_seq: decision.created_at_seq,
+        }
+        .index_key();
+        if self
+            .satisfaction_decisions_by_review
+            .get(review_key.as_bytes())
+            .map_err(to_storage_io)?
+            .as_deref()
+            == Some(decision.decision_id.as_bytes())
+        {
+            return Err(StorageError::MigrationConflict(format!(
+                "goal recovery '{}' references a satisfaction decision",
+                recovery.decision_id
+            )));
+        }
+        let outcome = self.outcome_for_decision(&recovery.decision_id)?;
+        validate_delivery_outcome(&recovery.selection, &outcome)?;
+        self.validate_recovery_receipt(&decision)?;
+        Ok(outcome)
+    }
+
+    /// Revalidate and load one exact historical satisfaction outcome for recovery.
+    pub(crate) fn satisfaction_recovery_outcome(
+        &self,
+        recovery: &AgentSatisfactionRecoverySelection,
+    ) -> Result<AgentCurationOutcome, StorageError> {
+        recovery.validate()?;
+        let key = recovery_index_key(
+            recovery.selection.belief_revision_seq,
+            &recovery.decision_id,
+        );
+        let durable: AgentSatisfactionRecoverySelection = decode_optional(
+            self.satisfaction_recovery
+                .get(key.as_bytes())
+                .map_err(to_storage_io)?,
+        )?
+        .ok_or_else(|| {
+            StorageError::Backpressure(format!(
+                "satisfaction recovery '{}' is no longer pending",
+                recovery.decision_id
+            ))
+        })?;
+        if durable != *recovery {
+            return Err(StorageError::MigrationConflict(format!(
+                "satisfaction recovery '{}' conflicts with durable state",
+                recovery.decision_id
+            )));
+        }
+        self.require_selected_agent(
+            &recovery.selection.review.agent_id,
+            recovery.selection.expected_agent_updated_at_seq,
+        )?;
+        self.require_selected_subscription(
+            &recovery.selection.review.subscription_id,
+            &recovery.selection.review.agent_id,
+            &recovery.selection.belief_key,
+            recovery.selection.expected_subscription_updated_at_seq,
+        )?;
+        let cursor = self
+            .satisfaction_review_cursor(&recovery.selection.cursor_identity)?
+            .unwrap_or_else(|| {
+                AgentSatisfactionReviewCursor::empty(recovery.selection.cursor_identity.clone())
+            });
+        if cursor.last_reviewed_revision_id != recovery.selection.expected_reviewed_revision_id
+            || cursor.last_reviewed_seq != recovery.selection.expected_reviewed_seq
+            || cursor.updated_at_seq != recovery.selection.expected_cursor_updated_at_seq
+        {
+            return Err(StorageError::Backpressure(
+                "satisfaction recovery lost its cursor fence".to_string(),
+            ));
+        }
+        let decision = self
+            .decision_by_satisfaction_review(&recovery.selection.review)?
+            .ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "satisfaction recovery '{}' references a missing review decision",
+                    recovery.decision_id
+                ))
+            })?;
+        if decision.decision_id != recovery.decision_id {
+            return Err(StorageError::MigrationConflict(format!(
+                "satisfaction recovery '{}' conflicts with its review index",
+                recovery.decision_id
+            )));
+        }
+        let outcome = self.outcome_for_decision(&recovery.decision_id)?;
+        validate_satisfaction_outcome(&recovery.selection, &outcome)?;
+        self.validate_recovery_receipt(&decision)?;
+        Ok(outcome)
+    }
+
+    fn validate_recovery_receipt(
+        &self,
+        decision: &AgentCurationDecision,
+    ) -> Result<(), StorageError> {
+        let outbox = self.decision_outbox(&decision.decision_id)?;
+        if let Some(outbox) = outbox.as_ref() {
+            outbox.validate_for(decision)?;
+        }
+        if let Some(receipt) = self.sink_receipt_by_decision(&decision.decision_id)? {
+            let outbox = outbox.as_ref().ok_or_else(|| {
+                StorageError::MigrationConflict(
+                    "recovery sink receipt has no exact command outbox".to_string(),
+                )
+            })?;
+            validate_sink_receipt_for_decision(&receipt, decision, Some(outbox))?;
+        }
+        Ok(())
     }
 
     /// Read the exact command outbox retained for one decision.
@@ -2781,12 +3272,20 @@ impl AgentStore {
         let advanced_bytes = serde_json::to_vec(&advanced).map_err(to_storage_data)?;
         let agent_bytes = serde_json::to_vec(&agent).map_err(to_storage_data)?;
         let subscription_bytes = serde_json::to_vec(&subscription).map_err(to_storage_data)?;
+        let recovery = AgentSatisfactionRecoverySelection {
+            decision_id: decision.decision_id.clone(),
+            selection: selection.clone(),
+        };
+        recovery.validate()?;
+        let recovery_key = recovery_index_key(selection.belief_revision_seq, &decision.decision_id);
+        let recovery_bytes = serde_json::to_vec(&recovery).map_err(to_storage_data)?;
         (
             &self.agents,
             &self.subscriptions,
             &self.satisfaction_review_cursors,
+            &self.satisfaction_recovery,
         )
-            .transaction(|(agents, subscriptions, cursors)| {
+            .transaction(|(agents, subscriptions, cursors, recoveries)| {
                 require_transaction_value(
                     agents,
                     selection.review.agent_id.as_bytes(),
@@ -2799,6 +3298,12 @@ impl AgentStore {
                     &subscription_bytes,
                     "selected subscription",
                 )?;
+                require_transaction_value(
+                    recoveries,
+                    recovery_key.as_bytes(),
+                    &recovery_bytes,
+                    "satisfaction curation recovery",
+                )?;
                 require_optional_transaction_value(
                     cursors,
                     key.as_bytes(),
@@ -2806,6 +3311,7 @@ impl AgentStore {
                     "satisfaction cursor",
                 )?;
                 cursors.insert(key.as_bytes(), advanced_bytes.as_slice())?;
+                recoveries.remove(recovery_key.as_bytes())?;
                 Ok(())
             })
             .map_err(to_agent_transition_error)?;
@@ -4007,7 +4513,220 @@ impl AgentStore {
             version,
             goal_sequence_checkpoint,
             goal_sequence_plans,
-        )
+        )?;
+        self.reconcile_curation_recovery_indexes(&satisfaction_reviews)
+    }
+
+    fn reconcile_curation_recovery_indexes(
+        &self,
+        satisfaction_reviews: &BTreeMap<String, String>,
+    ) -> Result<(), StorageError> {
+        let mut expected_goal = BTreeSet::new();
+        let mut expected_satisfaction = BTreeSet::new();
+        for item in &self.decisions {
+            let (_, value) = item.map_err(to_storage_io)?;
+            let decision: AgentCurationDecision =
+                serde_json::from_slice(&value).map_err(to_storage_data)?;
+            let Some(revision_id) = decision.input_refs.belief_revision_id.as_deref() else {
+                continue;
+            };
+            if matches!(
+                decision.decision,
+                AgentDecisionKind::GoalCommand | AgentDecisionKind::GoalMutationCommand
+            ) && self.decision_outbox(&decision.decision_id)?.is_none()
+            {
+                continue;
+            }
+            self.outcome_for_decision(&decision.decision_id)?;
+            self.validate_recovery_receipt(&decision)?;
+            if satisfaction_reviews.contains_key(&decision.decision_id) {
+                let identity = AgentSatisfactionCursorIdentity::belief_revision(
+                    decision.agent_id.clone(),
+                    decision.subscription_id.clone(),
+                    decision
+                        .input_refs
+                        .belief_key
+                        .branch_scope
+                        .branch_id
+                        .clone(),
+                );
+                let cursor = self
+                    .satisfaction_review_cursor(&identity)?
+                    .unwrap_or_else(|| AgentSatisfactionReviewCursor::empty(identity.clone()));
+                if recovery_cursor_complete(
+                    "satisfaction recovery",
+                    cursor.last_reviewed_revision_id.as_deref(),
+                    cursor.last_reviewed_seq,
+                    revision_id,
+                    decision.created_at_seq,
+                )? {
+                    continue;
+                }
+                let key = recovery_index_key(decision.created_at_seq, &decision.decision_id);
+                let recovery = match decode_optional(
+                    self.satisfaction_recovery
+                        .get(key.as_bytes())
+                        .map_err(to_storage_io)?,
+                )? {
+                    Some(recovery) => recovery,
+                    None => {
+                        let agent = self.recovery_owner(&decision)?;
+                        let subscription = self.recovery_subscription(&decision)?;
+                        AgentSatisfactionRecoverySelection {
+                            decision_id: decision.decision_id.clone(),
+                            selection: AgentSatisfactionReviewSelection {
+                                review: AgentSatisfactionReview {
+                                    agent_id: decision.agent_id.clone(),
+                                    subscription_id: decision.subscription_id.clone(),
+                                    review_seq: decision.created_at_seq,
+                                },
+                                belief_key: decision.input_refs.belief_key.clone(),
+                                belief_revision_id: revision_id.to_string(),
+                                belief_revision_seq: decision.created_at_seq,
+                                cursor_identity: identity,
+                                expected_agent_updated_at_seq: agent.updated_at_seq,
+                                expected_subscription_updated_at_seq: subscription.updated_at_seq,
+                                expected_reviewed_revision_id: cursor
+                                    .last_reviewed_revision_id
+                                    .clone(),
+                                expected_reviewed_seq: cursor.last_reviewed_seq,
+                                expected_cursor_updated_at_seq: cursor.updated_at_seq,
+                            },
+                        }
+                    }
+                };
+                recovery.validate()?;
+                if recovery.decision_id != decision.decision_id {
+                    return Err(StorageError::MigrationConflict(format!(
+                        "satisfaction recovery index aliases decision '{}'",
+                        decision.decision_id
+                    )));
+                }
+                validate_satisfaction_outcome(
+                    &recovery.selection,
+                    &self.outcome_for_decision(&decision.decision_id)?,
+                )?;
+                repair_exact_tree_value(
+                    &self.satisfaction_recovery,
+                    key.as_bytes(),
+                    serde_json::to_vec(&recovery)
+                        .map_err(to_storage_data)?
+                        .as_slice(),
+                    "satisfaction curation recovery index",
+                )?;
+                expected_satisfaction.insert(key);
+            } else {
+                let subscription = self.recovery_subscription(&decision)?;
+                if recovery_cursor_complete(
+                    "goal recovery",
+                    subscription.last_delivered_revision_id.as_deref(),
+                    subscription.last_delivered_seq,
+                    revision_id,
+                    decision.created_at_seq,
+                )? {
+                    continue;
+                }
+                let key = recovery_index_key(decision.created_at_seq, &decision.decision_id);
+                let recovery = match decode_optional(
+                    self.goal_recovery
+                        .get(key.as_bytes())
+                        .map_err(to_storage_io)?,
+                )? {
+                    Some(recovery) => recovery,
+                    None => {
+                        let agent = self.recovery_owner(&decision)?;
+                        AgentGoalRecoverySelection {
+                            decision_id: decision.decision_id.clone(),
+                            selection: AgentDeliverySelection {
+                                delivery: crate::agent::AgentDelivery {
+                                    agent_id: decision.agent_id.clone(),
+                                    subscription_id: decision.subscription_id.clone(),
+                                    belief_revision_id: revision_id.to_string(),
+                                    revision_seq: decision.created_at_seq,
+                                },
+                                belief_key: decision.input_refs.belief_key.clone(),
+                                expected_agent_updated_at_seq: agent.updated_at_seq,
+                                expected_subscription_updated_at_seq: subscription.updated_at_seq,
+                                expected_delivered_revision_id: subscription
+                                    .last_delivered_revision_id
+                                    .clone(),
+                                expected_delivered_seq: subscription.last_delivered_seq,
+                            },
+                        }
+                    }
+                };
+                recovery.validate()?;
+                if recovery.decision_id != decision.decision_id {
+                    return Err(StorageError::MigrationConflict(format!(
+                        "goal recovery index aliases decision '{}'",
+                        decision.decision_id
+                    )));
+                }
+                validate_delivery_outcome(
+                    &recovery.selection,
+                    &self.outcome_for_decision(&decision.decision_id)?,
+                )?;
+                repair_exact_tree_value(
+                    &self.goal_recovery,
+                    key.as_bytes(),
+                    serde_json::to_vec(&recovery)
+                        .map_err(to_storage_data)?
+                        .as_slice(),
+                    "goal curation recovery index",
+                )?;
+                expected_goal.insert(key);
+            }
+        }
+        validate_recovery_index_keys(&self.goal_recovery, &expected_goal, "goal")?;
+        validate_recovery_index_keys(
+            &self.satisfaction_recovery,
+            &expected_satisfaction,
+            "satisfaction",
+        )?;
+        self.flush_durable("agent curation recovery index reconciliation")
+    }
+
+    fn recovery_owner(
+        &self,
+        decision: &AgentCurationDecision,
+    ) -> Result<AgentRecord, StorageError> {
+        let agent = self.get_agent(&decision.agent_id)?.ok_or_else(|| {
+            StorageError::MigrationConflict(format!(
+                "pending decision '{}' has no recovery owner",
+                decision.decision_id
+            ))
+        })?;
+        if agent.status != AgentStatus::Operational {
+            return Err(StorageError::MigrationConflict(format!(
+                "pending decision '{}' has no operational recovery owner",
+                decision.decision_id
+            )));
+        }
+        Ok(agent)
+    }
+
+    fn recovery_subscription(
+        &self,
+        decision: &AgentCurationDecision,
+    ) -> Result<AgentSubscriptionRecord, StorageError> {
+        let subscription = self
+            .get_subscription(&decision.subscription_id)?
+            .ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "pending decision '{}' has no recovery subscription",
+                    decision.decision_id
+                ))
+            })?;
+        if subscription.agent_id != decision.agent_id
+            || subscription.status != AgentSubscriptionStatus::Active
+            || subscription.belief_key != decision.input_refs.belief_key
+        {
+            return Err(StorageError::MigrationConflict(format!(
+                "pending decision '{}' has divergent recovery ownership",
+                decision.decision_id
+            )));
+        }
+        Ok(subscription)
     }
 
     fn migrate_legacy_readiness_proofs(
@@ -4582,16 +5301,17 @@ impl AgentStore {
 
     fn persist_outcome_with_owner_fences(
         &self,
-        outcome: &AgentCurationOutcome,
-        outbox: Option<&AgentDecisionOutboxRecord>,
-        agent: &AgentRecord,
-        subscription: &AgentSubscriptionRecord,
-        review: Option<&AgentSatisfactionReview>,
-        cursor_fence: Option<(
-            &AgentSatisfactionCursorIdentity,
-            Option<&AgentSatisfactionReviewCursor>,
-        )>,
+        fences: AgentOutcomeOwnerFences<'_>,
     ) -> Result<(), StorageError> {
+        let AgentOutcomeOwnerFences {
+            outcome,
+            outbox,
+            agent,
+            subscription,
+            review,
+            cursor_fence,
+            recovery,
+        } = fences;
         outcome.decision.validate()?;
         if let Some(outbox) = outbox {
             outbox.validate_for(&outcome.decision)?;
@@ -4605,6 +5325,30 @@ impl AgentStore {
             .map(serde_json::to_vec)
             .transpose()
             .map_err(to_storage_data)?;
+        let (recovery_tree, recovery_key, recovery_bytes) = match recovery {
+            AgentRecoveryPersistence::Goal(recovery) => {
+                recovery.validate()?;
+                (
+                    &self.goal_recovery,
+                    recovery_index_key(
+                        recovery.selection.delivery.revision_seq,
+                        &recovery.decision_id,
+                    ),
+                    serde_json::to_vec(recovery).map_err(to_storage_data)?,
+                )
+            }
+            AgentRecoveryPersistence::Satisfaction(recovery) => {
+                recovery.validate()?;
+                (
+                    &self.satisfaction_recovery,
+                    recovery_index_key(
+                        recovery.selection.belief_revision_seq,
+                        &recovery.decision_id,
+                    ),
+                    serde_json::to_vec(recovery).map_err(to_storage_data)?,
+                )
+            }
+        };
         (
             &self.agents,
             &self.subscriptions,
@@ -4615,6 +5359,7 @@ impl AgentStore {
             &self.decisions_by_revision,
             &self.satisfaction_decisions_by_review,
             &self.decision_outbox,
+            recovery_tree,
         )
             .transaction(
                 |(
@@ -4627,6 +5372,7 @@ impl AgentStore {
                     by_revision,
                     by_review,
                     outboxes,
+                    recoveries,
                 )| {
                     require_transaction_value(
                         agents,
@@ -4656,6 +5402,12 @@ impl AgentStore {
                         by_review,
                         outboxes,
                         &data,
+                    )?;
+                    insert_exact_transaction_value(
+                        recoveries,
+                        recovery_key.as_bytes(),
+                        &recovery_bytes,
+                        "agent curation recovery",
                     )
                 },
             )
@@ -5199,6 +5951,70 @@ fn agent_status_key(status: &str, seq: u64, agent_id: &str) -> String {
 
 fn subscription_agent_key(agent_id: &str, seq: u64, subscription_id: &str) -> String {
     format!("{agent_id}::{seq:0KEY_PAD$}::{subscription_id}")
+}
+
+fn recovery_index_key(sequence: u64, decision_id: &str) -> String {
+    format!("{sequence:0KEY_PAD$}::{decision_id}")
+}
+
+fn recovery_cursor_complete(
+    label: &str,
+    cursor_revision_id: Option<&str>,
+    cursor_sequence: u64,
+    decision_revision_id: &str,
+    decision_sequence: u64,
+) -> Result<bool, StorageError> {
+    if cursor_sequence > decision_sequence {
+        return Ok(true);
+    }
+    if cursor_sequence < decision_sequence {
+        return Ok(false);
+    }
+    if cursor_revision_id == Some(decision_revision_id) {
+        return Ok(true);
+    }
+    Err(StorageError::MigrationConflict(format!(
+        "{label} cursor conflicts with its decision revision"
+    )))
+}
+
+fn validate_recovery_index_keys(
+    tree: &Tree,
+    expected: &BTreeSet<String>,
+    label: &str,
+) -> Result<(), StorageError> {
+    for item in tree {
+        let (key, _) = item.map_err(to_storage_io)?;
+        let key = String::from_utf8(key.to_vec()).map_err(to_storage_utf8)?;
+        if !expected.contains(&key) {
+            return Err(StorageError::MigrationConflict(format!(
+                "{label} recovery index contains unexpected work '{key}'"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn append_bounded_rows<I>(
+    rows: &mut Vec<(Vec<u8>, Vec<u8>)>,
+    seen: &mut BTreeSet<Vec<u8>>,
+    iter: I,
+    desired: usize,
+) -> Result<(), StorageError>
+where
+    I: IntoIterator<Item = Result<(sled::IVec, sled::IVec), sled::Error>>,
+{
+    for item in iter {
+        let (key, value) = item.map_err(to_storage_io)?;
+        let key = key.to_vec();
+        if seen.insert(key.clone()) {
+            rows.push((key, value.to_vec()));
+            if rows.len() == desired {
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn activation_agent_key(agent_id: &str, seq: u64, activation_id: &str) -> String {

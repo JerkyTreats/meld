@@ -783,10 +783,7 @@ fn publication_runtime_actor_publishes_through_event_append_sink() {
             .unwrap()
     });
 
-    assert_eq!(
-        report.actor_id,
-        "execution.task_network.publication.runtime"
-    );
+    assert_eq!(report.actor_id, "execution.publication");
     assert_eq!(report.scope.network_id, "network-docs");
     assert_eq!(report.attempted, 1);
     assert_eq!(report.committed, 1);

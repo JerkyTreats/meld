@@ -4,6 +4,7 @@
 //! without moving command reduction, publication selection, or event append
 //! semantics out of their owning modules.
 
+use crate::activation::ExecutionActivationSelection;
 use crate::task_network::{
     authority::{TaskNetworkCommandPort, TaskNetworkQueryPort},
     publication::{
@@ -13,7 +14,49 @@ use crate::task_network::{
     },
 };
 
-const PUBLICATION_RUNTIME_ACTOR_ID: &str = "execution.task_network.publication.runtime";
+const PUBLICATION_RUNTIME_ACTOR_ID: &str = "execution.publication";
+const PUBLICATION_SESSION_DOMAIN: &[u8] = b"meld.execution.publication-session.v1";
+
+/// Stable publication scope derived by the execution domain from activation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicationRuntimeScope {
+    /// Task network whose durable publication outbox is consumed.
+    pub network_id: String,
+    /// Stable event-ledger session reused across actor replacement.
+    pub session_id: String,
+}
+
+impl PublicationRuntimeScope {
+    /// Derive a replacement-stable scope from accepted execution activation.
+    pub fn from_activation(
+        selection: &ExecutionActivationSelection,
+    ) -> Result<Self, PublicationBridgeError> {
+        if selection.activation_id.trim().is_empty()
+            || selection.activation_hash.trim().is_empty()
+            || selection.task_network_id.trim().is_empty()
+            || selection.publication.mapping_id.trim().is_empty()
+        {
+            return Err(PublicationBridgeError::InvalidRequest(
+                "publication activation identity must be complete".to_string(),
+            ));
+        }
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(PUBLICATION_SESSION_DOMAIN);
+        for field in [
+            selection.activation_id.as_bytes(),
+            selection.activation_hash.as_bytes(),
+            selection.task_network_id.as_bytes(),
+            selection.publication.mapping_id.as_bytes(),
+        ] {
+            hasher.update(&(field.len() as u64).to_be_bytes());
+            hasher.update(field);
+        }
+        Ok(Self {
+            network_id: selection.task_network_id.clone(),
+            session_id: format!("publication-{}", hasher.finalize().to_hex()),
+        })
+    }
+}
 
 /// Bounded actor facade for retryable task network publication outbox work.
 #[derive(Debug, Clone)]

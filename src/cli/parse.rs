@@ -371,6 +371,10 @@ pub enum RuntimeCommands {
     },
     /// Run the foreground runtime supervisor
     Run {
+        /// Product activation TOML used to run the cognitive flywheel
+        #[arg(long)]
+        activation: Option<PathBuf>,
+
         /// Supervisor instance id
         #[arg(long)]
         instance_id: Option<String>,
@@ -1004,6 +1008,7 @@ mod tests {
             Commands::Runtime {
                 command:
                     RuntimeCommands::Run {
+                        activation,
                         instance_id,
                         tick_ms,
                         duration_ms,
@@ -1013,6 +1018,7 @@ mod tests {
                         restart_backoff_ms,
                     },
             } => {
+                assert!(activation.is_none());
                 assert_eq!(instance_id.as_deref(), Some("instance-a"));
                 assert_eq!(tick_ms, 10);
                 assert_eq!(duration_ms, Some(20));
@@ -1022,6 +1028,37 @@ mod tests {
                 assert_eq!(restart_backoff_ms, 7);
             }
             _ => panic!("expected runtime run command"),
+        }
+    }
+
+    #[test]
+    fn parses_runtime_run_with_activation() {
+        let cli = Cli::try_parse_from([
+            "meld",
+            "runtime",
+            "run",
+            "--activation",
+            "config/docs-freshness.toml",
+            "--duration-ms",
+            "20",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Runtime {
+                command:
+                    RuntimeCommands::Run {
+                        activation,
+                        duration_ms,
+                        ..
+                    },
+            } => {
+                assert_eq!(
+                    activation.as_deref(),
+                    Some(std::path::Path::new("config/docs-freshness.toml"))
+                );
+                assert_eq!(duration_ms, Some(20));
+            }
+            _ => panic!("expected activated runtime run command"),
         }
     }
 

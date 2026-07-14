@@ -7,9 +7,9 @@
 use crate::agent::contracts::{
     ActiveGoalSummary, AdvanceSubscriptionCommand, AgentAuthoredCommand, AgentCurationDecision,
     AgentCurationOutcome, AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery,
-    AgentDeliverySelection, AgentGoalCommand, AgentGoalMutationCommand,
-    AgentSatisfactionCursorCasIntent, AgentSatisfactionReview, AgentSatisfactionReviewSelection,
-    AgentSinkReceipt, AgentSinkReceiptKind, AgentSinkSubmission,
+    AgentDeliverySelection, AgentGoalCommand, AgentGoalMutationCommand, AgentGoalRecoverySelection,
+    AgentSatisfactionCursorCasIntent, AgentSatisfactionRecoverySelection, AgentSatisfactionReview,
+    AgentSatisfactionReviewSelection, AgentSinkReceipt, AgentSinkReceiptKind, AgentSinkSubmission,
 };
 use crate::agent::curation::{curate_goal_satisfaction, curate_threshold_rule, AgentCuration};
 use crate::agent::selection::AgentSemanticSelector;
@@ -348,6 +348,7 @@ impl<'a> AgentGoalCurationRuntime<'a> {
                 return self.finish_selected_delivery(
                     &selection,
                     &outcome,
+                    None,
                     outcome_query,
                     sink,
                     report,
@@ -405,13 +406,49 @@ impl<'a> AgentGoalCurationRuntime<'a> {
             }
         };
         report.decision_count = 1;
-        self.finish_selected_delivery(&selection, &outcome, outcome_query, sink, report)
+        self.finish_selected_delivery(&selection, &outcome, None, outcome_query, sink, report)
+    }
+
+    /// Complete one exact historical outcome without consulting the current belief head.
+    pub fn handle_recovered_delivery<O, S>(
+        &self,
+        recovery: AgentGoalRecoverySelection,
+        outcome_query: &mut O,
+        sink: &mut S,
+    ) -> AgentRuntimeReport
+    where
+        O: AgentCommandOutcomeQuery,
+        S: AgentGoalCommandSink,
+    {
+        let mut report = AgentRuntimeReport::new(
+            recovery.selection.delivery.agent_id.clone(),
+            recovery.selection.delivery.revision_seq,
+            0,
+        );
+        let outcome = match self.store.goal_recovery_outcome(&recovery) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                push_storage_error(&mut report, error);
+                return report;
+            }
+        };
+        report.delivered_count = 1;
+        report.decision_count = 1;
+        self.finish_selected_delivery(
+            &recovery.selection,
+            &outcome,
+            Some(&recovery),
+            outcome_query,
+            sink,
+            report,
+        )
     }
 
     fn finish_selected_delivery<O, S>(
         &self,
         selection: &AgentDeliverySelection,
         outcome: &AgentCurationOutcome,
+        recovery: Option<&AgentGoalRecoverySelection>,
         outcome_query: &mut O,
         sink: &mut S,
         mut report: AgentRuntimeReport,
@@ -420,7 +457,8 @@ impl<'a> AgentGoalCurationRuntime<'a> {
         O: AgentCommandOutcomeQuery,
         S: AgentGoalCommandSink,
     {
-        if !self.complete_selected_goal_command(outcome, outcome_query, sink, &mut report) {
+        if !self.complete_selected_goal_command(outcome, recovery, outcome_query, sink, &mut report)
+        {
             return report;
         }
         match self
@@ -436,6 +474,7 @@ impl<'a> AgentGoalCurationRuntime<'a> {
     fn complete_selected_goal_command<O, S>(
         &self,
         outcome: &AgentCurationOutcome,
+        recovery: Option<&AgentGoalRecoverySelection>,
         outcome_query: &mut O,
         sink: &mut S,
         report: &mut AgentRuntimeReport,
@@ -465,6 +504,9 @@ impl<'a> AgentGoalCurationRuntime<'a> {
         let authored = AgentAuthoredCommand::Goal(Box::new(command.clone()));
         match outcome_query.committed_submission(&outcome.decision, &authored) {
             Ok(Some(submission)) => {
+                if !self.revalidate_goal_recovery(recovery, report) {
+                    return false;
+                }
                 return record_sink_receipt(
                     self.store,
                     &outcome.decision,
@@ -480,6 +522,9 @@ impl<'a> AgentGoalCurationRuntime<'a> {
                 return false;
             }
         }
+        if !self.revalidate_goal_recovery(recovery, report) {
+            return false;
+        }
         report.sink_submission_count += 1;
         match sink.submit_goal_command(command) {
             Ok(submission) => record_sink_receipt(
@@ -492,6 +537,23 @@ impl<'a> AgentGoalCurationRuntime<'a> {
             ),
             Err(error) => {
                 push_sink_error(report, error);
+                false
+            }
+        }
+    }
+
+    fn revalidate_goal_recovery(
+        &self,
+        recovery: Option<&AgentGoalRecoverySelection>,
+        report: &mut AgentRuntimeReport,
+    ) -> bool {
+        let Some(recovery) = recovery else {
+            return true;
+        };
+        match self.store.goal_recovery_outcome(recovery) {
+            Ok(_) => true,
+            Err(error) => {
+                push_storage_error(report, error);
                 false
             }
         }
@@ -819,6 +881,7 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
                 return self.finish_selected_review(
                     selection,
                     &outcome,
+                    None,
                     outcome_query,
                     sink,
                     report,
@@ -873,13 +936,49 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
             }
         };
         report.decision_count = 1;
-        self.finish_selected_review(selection, &outcome, outcome_query, sink, report)
+        self.finish_selected_review(selection, &outcome, None, outcome_query, sink, report)
+    }
+
+    /// Complete one exact historical review without consulting the current belief head.
+    pub fn handle_recovered_review<O, S>(
+        &self,
+        recovery: AgentSatisfactionRecoverySelection,
+        outcome_query: &mut O,
+        sink: &mut S,
+    ) -> AgentRuntimeReport
+    where
+        O: AgentCommandOutcomeQuery,
+        S: AgentGoalMutationSink,
+    {
+        let mut report = AgentRuntimeReport::new(
+            recovery.selection.review.agent_id.clone(),
+            recovery.selection.belief_revision_seq,
+            0,
+        );
+        let outcome = match self.store.satisfaction_recovery_outcome(&recovery) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                push_storage_error(&mut report, error);
+                return report;
+            }
+        };
+        report.delivered_count = 1;
+        report.decision_count = 1;
+        self.finish_selected_review(
+            recovery.selection.clone(),
+            &outcome,
+            Some(&recovery),
+            outcome_query,
+            sink,
+            report,
+        )
     }
 
     fn finish_selected_review<O, S>(
         &self,
         selection: AgentSatisfactionReviewSelection,
         outcome: &AgentCurationOutcome,
+        recovery: Option<&AgentSatisfactionRecoverySelection>,
         outcome_query: &mut O,
         sink: &mut S,
         mut report: AgentRuntimeReport,
@@ -888,7 +987,13 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
         O: AgentCommandOutcomeQuery,
         S: AgentGoalMutationSink,
     {
-        if !self.complete_selected_goal_mutation(outcome, outcome_query, sink, &mut report) {
+        if !self.complete_selected_goal_mutation(
+            outcome,
+            recovery,
+            outcome_query,
+            sink,
+            &mut report,
+        ) {
             return report;
         }
         let advanced_at_seq = selection
@@ -910,6 +1015,7 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
     fn complete_selected_goal_mutation<O, S>(
         &self,
         outcome: &AgentCurationOutcome,
+        recovery: Option<&AgentSatisfactionRecoverySelection>,
         outcome_query: &mut O,
         sink: &mut S,
         report: &mut AgentRuntimeReport,
@@ -939,6 +1045,9 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
         let authored = AgentAuthoredCommand::GoalMutation(Box::new(command.clone()));
         match outcome_query.committed_submission(&outcome.decision, &authored) {
             Ok(Some(submission)) => {
+                if !self.revalidate_satisfaction_recovery(recovery, report) {
+                    return false;
+                }
                 return record_sink_receipt(
                     self.store,
                     &outcome.decision,
@@ -954,6 +1063,9 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
                 return false;
             }
         }
+        if !self.revalidate_satisfaction_recovery(recovery, report) {
+            return false;
+        }
         report.sink_submission_count += 1;
         match sink.submit_goal_mutation(command) {
             Ok(submission) => record_sink_receipt(
@@ -966,6 +1078,23 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
             ),
             Err(error) => {
                 push_sink_error(report, error);
+                false
+            }
+        }
+    }
+
+    fn revalidate_satisfaction_recovery(
+        &self,
+        recovery: Option<&AgentSatisfactionRecoverySelection>,
+        report: &mut AgentRuntimeReport,
+    ) -> bool {
+        let Some(recovery) = recovery else {
+            return true;
+        };
+        match self.store.satisfaction_recovery_outcome(recovery) {
+            Ok(_) => true,
+            Err(error) => {
+                push_storage_error(report, error);
                 false
             }
         }

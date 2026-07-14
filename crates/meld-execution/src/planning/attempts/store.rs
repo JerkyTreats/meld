@@ -30,6 +30,7 @@ const TREE_RECOVERY_INDEX: &str = "execution_planning_attempt_recovery_index";
 const TREE_OWNER: &str = "execution_planning_attempt_owner";
 const KEY_SCHEMA: &[u8] = b"__schema";
 const KEY_ACTIVE_OWNER: &[u8] = b"active";
+const KEY_RECOVERY_CURSOR: &[u8] = b"recovery_cursor";
 const SCHEMA_V1: &[u8] = b"execution_planning_attempts.v1";
 const GOAL_INDEX_HASH_DOMAIN: &[u8] = b"meld.execution.planning-attempt-goal-index.v1";
 
@@ -321,6 +322,50 @@ impl PlanningAttemptStore {
                     "planning attempt opening committed without a durable head".to_string(),
                 )
             })
+    }
+
+    /// Durably establish a child attempt after validating its rejected parent.
+    pub fn open_rebase_attempt(
+        &self,
+        identity: PlanningAttemptIdentity,
+    ) -> Result<PlanningAttemptHead, PlanningAttemptStorageError> {
+        let parent_attempt_id = identity
+            .rebase_parent_attempt_id()
+            .ok_or_else(|| {
+                PlanningAttemptStorageError::InvalidInput(
+                    "planning rebase opening requires a child identity".to_string(),
+                )
+            })?
+            .to_string();
+        let (rejected_command_id, rejected_response_hash) =
+            identity.rebase_parent_outcome().ok_or_else(|| {
+                PlanningAttemptStorageError::InvalidInput(
+                    "planning rebase identity omits its parent outcome".to_string(),
+                )
+            })?;
+        {
+            let _visibility = self.query_visibility_guard()?;
+            let parent = self.require_head(&parent_attempt_id)?;
+            if parent.state != PlanningAttemptState::CommandCompleted
+                || parent.identity.planning_request() != identity.planning_request()
+            {
+                return Err(PlanningAttemptStorageError::InvalidInput(
+                    "planning rebase parent is not a completed attempt for the same request"
+                        .to_string(),
+                ));
+            }
+            let outcome = self.require_command_outcome(&parent_attempt_id)?;
+            if outcome.command_id != rejected_command_id
+                || outcome.response_hash != rejected_response_hash
+                || !retryable_rebase_response(&outcome.response)
+            {
+                return Err(PlanningAttemptStorageError::InvalidInput(
+                    "planning rebase parent outcome is not the exact retryable rejection"
+                        .to_string(),
+                ));
+            }
+        }
+        self.open_attempt(identity)
     }
 
     /// Durably append the bounded non-authoritative decision audit.
@@ -699,6 +744,105 @@ impl PlanningAttemptStore {
         })
     }
 
+    /// Claim one fair bounded recovery page and durably advance its cyclic cursor.
+    pub fn claim_recoverable_commands_bounded(
+        &self,
+        max_items: usize,
+    ) -> Result<PlanningAttemptRecoverySelection, PlanningAttemptStorageError> {
+        let _visibility = self.lock_durable_visibility()?;
+        validate_query_limit(max_items)?;
+        let owner_bytes = encode(self.require_bound_owner()?)?;
+        let cursor: Option<PlanningAttemptContinuation> = decode_optional(
+            self.owner
+                .get(KEY_RECOVERY_CURSOR)
+                .map_err(to_unavailable)?,
+        )?;
+        let after_key = cursor
+            .as_ref()
+            .map(PlanningAttemptContinuation::validate_recovery)
+            .transpose()
+            .map_err(PlanningAttemptStorageError::Corrupt)?;
+        let (mut recoveries, mut keys) = self.collect_recoveries_after(after_key, max_items)?;
+        if recoveries.is_empty() && after_key.is_some() {
+            (recoveries, keys) = self.collect_recoveries_after(None, max_items)?;
+        }
+        let total_recoveries = self.recovery_index.len().saturating_sub(1);
+        let budget_exhausted = total_recoveries > recoveries.len();
+        let durable_cursor = keys
+            .last()
+            .map(|key| PlanningAttemptContinuation::for_recovery(key.clone()))
+            .transpose()
+            .map_err(PlanningAttemptStorageError::Corrupt)?;
+        let cursor_bytes = durable_cursor.as_ref().map(encode).transpose()?;
+        self.owner
+            .transaction(|owner| {
+                require_transaction_owner(owner, &owner_bytes)?;
+                if let Some(cursor_bytes) = cursor_bytes.as_ref() {
+                    owner.insert(KEY_RECOVERY_CURSOR, cursor_bytes.as_slice())?;
+                } else {
+                    owner.remove(KEY_RECOVERY_CURSOR)?;
+                }
+                Ok(())
+            })
+            .map_err(map_transaction_error)?;
+        self.flush_durable("planning recovery cursor advancement")?;
+        let continuation = if budget_exhausted {
+            durable_cursor
+        } else {
+            None
+        };
+        Ok(PlanningAttemptRecoverySelection {
+            recoveries,
+            budget_exhausted,
+            continuation,
+        })
+    }
+
+    fn collect_recoveries_after(
+        &self,
+        after_key: Option<&str>,
+        max_items: usize,
+    ) -> Result<(Vec<PlanningAttemptRecovery>, Vec<String>), PlanningAttemptStorageError> {
+        let mut recoveries = Vec::new();
+        let mut keys = Vec::new();
+        let iterator = if let Some(after_key) = after_key {
+            self.recovery_index
+                .range((Excluded(after_key.as_bytes().to_vec()), Unbounded))
+        } else {
+            self.recovery_index.scan_prefix(b"prepared::")
+        };
+        for item in iterator {
+            let (key, attempt_id) = item.map_err(to_unavailable)?;
+            if !key.starts_with(b"prepared::") {
+                break;
+            }
+            let attempt_id = std::str::from_utf8(attempt_id.as_ref()).map_err(|error| {
+                PlanningAttemptStorageError::Corrupt(format!(
+                    "planning recovery index contains invalid identity bytes: {error}"
+                ))
+            })?;
+            let head = self.require_head(attempt_id)?;
+            if head.state != PlanningAttemptState::CommandPrepared {
+                return Err(PlanningAttemptStorageError::Corrupt(
+                    "planning recovery index names a non-prepared attempt".to_string(),
+                ));
+            }
+            recoveries.push(PlanningAttemptRecovery {
+                prepared: self.require_prepared(attempt_id)?,
+                head,
+            });
+            keys.push(String::from_utf8(key.to_vec()).map_err(|error| {
+                PlanningAttemptStorageError::Corrupt(format!(
+                    "planning recovery index key is not UTF-8: {error}"
+                ))
+            })?);
+            if recoveries.len() == max_items {
+                break;
+            }
+        }
+        Ok((recoveries, keys))
+    }
+
     pub(crate) fn terminal_diagnostic(
         &self,
         attempt_id: &str,
@@ -1063,6 +1207,8 @@ impl PlanningAttemptStore {
         let mut expected_heads = BTreeMap::new();
         let mut expected_goal_index = BTreeMap::new();
         let mut expected_recovery_index = BTreeMap::new();
+        let mut validated_heads = BTreeMap::new();
+        let mut validated_outcomes = BTreeMap::new();
         for (attempt_id, records) in chains {
             let first = records.get(&1).ok_or_else(|| {
                 PlanningAttemptStorageError::Corrupt(format!(
@@ -1073,6 +1219,7 @@ impl PlanningAttemptStore {
                 .map_err(PlanningAttemptStorageError::Corrupt)?;
             let mut decision = None;
             let mut prepared = None;
+            let mut outcome = None;
             for expected_ordinal in 2..=records.len() as u32 {
                 let record = records.get(&expected_ordinal).ok_or_else(|| {
                     PlanningAttemptStorageError::Corrupt(format!(
@@ -1087,9 +1234,11 @@ impl PlanningAttemptStore {
                     PlanningAttemptRecordKind::CommandPrepared { prepared: command } => {
                         prepared = Some(command.as_ref().clone());
                     }
+                    PlanningAttemptRecordKind::CommandOutcome {
+                        outcome: command_outcome,
+                    } => outcome = Some(command_outcome.clone()),
                     PlanningAttemptRecordKind::Opened { .. }
-                    | PlanningAttemptRecordKind::TerminalDiagnostic { .. }
-                    | PlanningAttemptRecordKind::CommandOutcome { .. } => {}
+                    | PlanningAttemptRecordKind::TerminalDiagnostic { .. } => {}
                 }
                 head = head
                     .advance(record)
@@ -1106,6 +1255,40 @@ impl PlanningAttemptStore {
                     recovery_index_key(&head.identity),
                     attempt_id.as_bytes().to_vec(),
                 );
+            }
+            if let Some(outcome) = outcome {
+                validated_outcomes.insert(attempt_id.clone(), outcome);
+            }
+            validated_heads.insert(attempt_id, head);
+        }
+        for head in validated_heads.values() {
+            let Some(parent_attempt_id) = head.identity.rebase_parent_attempt_id() else {
+                continue;
+            };
+            let parent = validated_heads.get(parent_attempt_id).ok_or_else(|| {
+                PlanningAttemptStorageError::Corrupt(
+                    "planning rebase child names an unknown parent attempt".to_string(),
+                )
+            })?;
+            let outcome = validated_outcomes.get(parent_attempt_id).ok_or_else(|| {
+                PlanningAttemptStorageError::Corrupt(
+                    "planning rebase parent has no durable command outcome".to_string(),
+                )
+            })?;
+            let Some((command_id, response_hash)) = head.identity.rebase_parent_outcome() else {
+                return Err(PlanningAttemptStorageError::Corrupt(
+                    "planning rebase child omits its parent outcome".to_string(),
+                ));
+            };
+            if parent.state != PlanningAttemptState::CommandCompleted
+                || parent.identity.planning_request() != head.identity.planning_request()
+                || outcome.command_id != command_id
+                || outcome.response_hash != response_hash
+                || !retryable_rebase_response(&outcome.response)
+            {
+                return Err(PlanningAttemptStorageError::Corrupt(
+                    "planning rebase child does not match its retryable parent outcome".to_string(),
+                ));
             }
         }
 
@@ -1213,6 +1396,17 @@ fn validate_owner_tree(owner: &Tree) -> Result<(), PlanningAttemptStorageError> 
                     ));
                 }
             }
+            KEY_RECOVERY_CURSOR => {
+                let cursor: PlanningAttemptContinuation = decode(&raw)?;
+                cursor
+                    .validate_recovery()
+                    .map_err(PlanningAttemptStorageError::Corrupt)?;
+                if encode(&cursor)?.as_slice() != raw.as_ref() {
+                    return Err(PlanningAttemptStorageError::Corrupt(
+                        "planning recovery cursor is not canonically encoded".to_string(),
+                    ));
+                }
+            }
             _ => {
                 return Err(PlanningAttemptStorageError::Corrupt(
                     "planning owner tree contains an unknown record".to_string(),
@@ -1221,6 +1415,17 @@ fn validate_owner_tree(owner: &Tree) -> Result<(), PlanningAttemptStorageError> 
         }
     }
     Ok(())
+}
+
+fn retryable_rebase_response(response: &command::Response) -> bool {
+    matches!(
+        response,
+        command::Response::Rejected(
+            crate::task_network::mutation::Rejection::StaleBase { .. }
+                | crate::task_network::mutation::Rejection::StateHashMismatch { .. }
+                | crate::task_network::mutation::Rejection::FailedPrecondition(_)
+        )
+    )
 }
 
 fn validate_record_against_chain(

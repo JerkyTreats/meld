@@ -5,6 +5,13 @@ use crate::goals::{
     ExecutionGoalRecord, GoalPlanningSelectionError, GoalPlanningSelectionPort,
     MAX_PLANNING_SELECTION_LIMIT,
 };
+use crate::planning::attempts::{
+    planning_task_network_command_id, PlanningAttemptDecisionAudit,
+    PlanningAttemptDiagnosticDisposition, PlanningAttemptIdentity, PlanningAttemptQuery,
+    PlanningAttemptRecovery, PlanningAttemptResultSummary, PlanningAttemptStorageError,
+    PlanningAttemptStore, PlanningAttemptTerminalDiagnostic, PlanningPreparedCommand,
+    PlanningProjectionFailureIdentityInputs,
+};
 use crate::planning::contracts::{
     CandidateStatus, ExecutionComposition, IdentifiedPlanningRequest, InvalidMethodReport,
     MethodCandidateReport, NoApplicableMethod, PlanningDiagnostic, PlanningDiagnosticCode,
@@ -33,8 +40,9 @@ use meld_lang::{
 };
 use serde::Serialize;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
-const PLANNING_ACTOR_ID: &str = "execution.planning.runtime";
+const PLANNING_ACTOR_ID: &str = "execution.planning";
 const PLANNING_IDENTITY_VERSION: &str = "execution.planning.v1";
 const DEFAULT_PLANNING_GOAL_LIMIT: usize = 64;
 const MAX_PLANNING_TASKS_PER_GOAL: usize = 1_024;
@@ -203,6 +211,28 @@ pub enum PlanningRuntimeActorGoalResult {
         /// Persisted command response.
         response: command::Response,
     },
+    /// A previously prepared command reached a durable authority outcome.
+    Recovered {
+        /// Goal bound to the recovered planning attempt.
+        goal_id: String,
+        /// Stable planning attempt id.
+        attempt_id: String,
+        /// Exact prepared task network command id.
+        command_id: String,
+        /// Persisted command response authenticated by the authority query.
+        response: command::Response,
+    },
+    /// Durable planning attempt authority rejected or could not persist progress.
+    AttemptFailed {
+        /// Goal id associated with the attempt when known.
+        goal_id: Option<String>,
+        /// Stable attempt id when identity construction completed.
+        attempt_id: Option<String>,
+        /// Durable authority failure summary.
+        error: String,
+        /// True when the exact operation may safely be retried.
+        retryable: bool,
+    },
 }
 
 /// Report returned by one bounded planning actor pass.
@@ -232,7 +262,7 @@ pub struct PlanningRuntimeActorReport {
     pub retryable_errors: Vec<PlanningRuntimeActorIssue>,
     /// Fatal diagnostics observed during the pass.
     pub fatal_errors: Vec<PlanningRuntimeActorIssue>,
-    /// True when more active goals remain after the configured limit.
+    /// True when recovery or active-goal work consumed the configured item budget.
     pub budget_exhausted: bool,
     /// Per-goal results in deterministic planning selection order.
     pub results: Vec<PlanningRuntimeActorGoalResult>,
@@ -260,6 +290,14 @@ pub enum PlanningRuntimeActorError {
         /// True when supervisor replacement or later admission may recover.
         retryable: bool,
     },
+    /// Durable planning attempt authority failed before a report could be produced.
+    #[error("planning runtime actor attempt authority failed: {message}")]
+    PlanningAttemptAuthority {
+        /// Stable persistence diagnostic.
+        message: String,
+        /// True when a later bounded pass may safely retry.
+        retryable: bool,
+    },
 }
 
 impl PlanningRuntimeActorError {
@@ -273,6 +311,9 @@ impl PlanningRuntimeActorError {
             } | Self::TaskNetworkAuthority {
                 retryable: true,
                 ..
+            } | Self::PlanningAttemptAuthority {
+                retryable: true,
+                ..
             }
         )
     }
@@ -283,19 +324,68 @@ pub struct PlanningRuntimeActor<C> {
     actor_id: String,
     runtime: PlanningRuntime,
     lowerer: ExecutionCompositionLowerer<C>,
+    attempt_store: Option<Arc<PlanningAttemptStore>>,
+    bound_attempt_store: Option<Arc<PlanningAttemptStore>>,
 }
 
 impl<C> PlanningRuntimeActor<C>
 where
     C: TaskDefinitionCompiler,
 {
-    /// Create an actor facade over an existing planner and composition lowerer.
+    /// Create the legacy actor facade without durable planning attempt authority.
+    ///
+    /// This compatibility path preserves callers that have not yet supplied the
+    /// execution-owned attempt store. Production runtime assembly must use
+    /// `new_durable` and bind a supervisor lease before ticking.
     pub fn new(runtime: PlanningRuntime, lowerer: ExecutionCompositionLowerer<C>) -> Self {
         Self {
             actor_id: PLANNING_ACTOR_ID.to_string(),
             runtime,
             lowerer,
+            attempt_store: None,
+            bound_attempt_store: None,
         }
+    }
+
+    /// Create the production actor with an unbound durable attempt authority.
+    pub fn new_durable(
+        runtime: PlanningRuntime,
+        lowerer: ExecutionCompositionLowerer<C>,
+        attempt_store: Arc<PlanningAttemptStore>,
+    ) -> Self {
+        Self {
+            actor_id: PLANNING_ACTOR_ID.to_string(),
+            runtime,
+            lowerer,
+            attempt_store: Some(attempt_store),
+            bound_attempt_store: None,
+        }
+    }
+
+    /// Bind planning writes to the current supervisor lease generation.
+    pub fn bind_owner(
+        &mut self,
+        lease_id: impl Into<String>,
+    ) -> Result<(), PlanningAttemptStorageError> {
+        let store = self.attempt_store.as_ref().ok_or_else(|| {
+            PlanningAttemptStorageError::InvalidInput(
+                "compatibility planning actor has no durable attempt authority".to_string(),
+            )
+        })?;
+        let expected = store.active_owner_fence()?;
+        let bound = store.bind_owner(expected.as_ref(), self.actor_id.clone(), lease_id)?;
+        self.bound_attempt_store = Some(Arc::new(bound));
+        Ok(())
+    }
+
+    /// Drop the in-memory writer capability when the supervisor stops this actor.
+    pub fn clear_owner_binding(&mut self) {
+        self.bound_attempt_store = None;
+    }
+
+    /// Borrow the unbound store retained for factory cloning and shutdown flush.
+    pub fn attempt_store(&self) -> Option<&Arc<PlanningAttemptStore>> {
+        self.attempt_store.as_ref()
     }
 
     /// Return the stable actor id used in reports.
@@ -316,6 +406,29 @@ where
         P: PlanningProjectionPort,
     {
         validate_actor_request(&request)?;
+        let durable_attempt_store = match (&self.attempt_store, &self.bound_attempt_store) {
+            (None, None) => None,
+            (Some(_), Some(bound)) => {
+                bound
+                    .validate_owner_fence()
+                    .map_err(planning_attempt_authority_error)?;
+                Some(Arc::clone(bound))
+            }
+            (Some(_), None) => {
+                return Err(PlanningRuntimeActorError::PlanningAttemptAuthority {
+                    message: "durable planning actor must bind a supervisor lease before ticking"
+                        .to_string(),
+                    retryable: false,
+                });
+            }
+            (None, Some(_)) => {
+                return Err(PlanningRuntimeActorError::PlanningAttemptAuthority {
+                    message: "planning actor retained a writer without its source authority"
+                        .to_string(),
+                    retryable: false,
+                });
+            }
+        };
         let authority_identity = task_network.lifecycle();
         if authority_identity.network_id != request.network_id {
             return Err(PlanningRuntimeActorError::InvalidRequest(format!(
@@ -330,16 +443,10 @@ where
             .map_err(planning_authority_error)?;
         let input_revision = input_head.revision;
         let goal_limit = request.limit.unwrap_or(DEFAULT_PLANNING_GOAL_LIMIT);
-        let selection = goals
-            .claim_active_goals(goal_limit)
-            .map_err(planning_goal_store_error)?;
-        let active_goal_count = selection.active_goal_count;
-        let budget_exhausted = selection.budget_exhausted;
-        let claim = selection.claim;
         let mut pass = PlanningActorPass {
             report: PlanningRuntimeActorReport {
                 actor_id: self.actor_id.clone(),
-                active_goal_count,
+                active_goal_count: 0,
                 input_revision,
                 output_revision: Some(input_revision),
                 last_acknowledged_revision: input_revision,
@@ -347,14 +454,52 @@ where
                 committed: 0,
                 retryable_errors: Vec::new(),
                 fatal_errors: Vec::new(),
-                budget_exhausted,
+                budget_exhausted: false,
                 results: Vec::new(),
             },
             product_budget: PlanningTickProductBudget::default(),
         };
-        for record in selection.records {
-            pass.report.attempted += 1;
-            self.process_goal(goals, task_network, projection, &request, record, &mut pass);
+
+        let mut remaining = goal_limit;
+        if let Some(store) = durable_attempt_store.as_ref() {
+            let recovery = store
+                .claim_recoverable_commands_bounded(goal_limit)
+                .map_err(planning_attempt_authority_error)?;
+            let recovered_count = recovery.recoveries.len();
+            for prepared in recovery.recoveries {
+                pass.report.attempted += 1;
+                process_prepared_recovery(
+                    store,
+                    task_network,
+                    &request,
+                    prepared,
+                    &mut pass.report,
+                );
+            }
+            remaining = remaining.saturating_sub(recovered_count);
+            pass.report.budget_exhausted = recovery.budget_exhausted || remaining == 0;
+        }
+
+        let mut claim = None;
+        if remaining > 0 && !pass.report.budget_exhausted {
+            let selection = goals
+                .claim_active_goals(remaining)
+                .map_err(planning_goal_store_error)?;
+            pass.report.active_goal_count = selection.active_goal_count;
+            pass.report.budget_exhausted |= selection.budget_exhausted;
+            claim = selection.claim;
+            for record in selection.records {
+                pass.report.attempted += 1;
+                self.process_goal(
+                    goals,
+                    task_network,
+                    projection,
+                    &request,
+                    record,
+                    durable_attempt_store.as_deref(),
+                    &mut pass,
+                );
+            }
         }
 
         match task_network.query().head() {
@@ -391,6 +536,7 @@ where
         Ok(pass.report)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_goal<G, P>(
         &self,
         goals: &G,
@@ -398,6 +544,7 @@ where
         projection: &mut P,
         request: &PlanningRuntimeActorRequest,
         record: ExecutionGoalRecord,
+        attempt_store: Option<&PlanningAttemptStore>,
         pass: &mut PlanningActorPass,
     ) where
         G: GoalPlanningSelectionPort + ?Sized,
@@ -428,6 +575,16 @@ where
         let projected = match projection.project(projection_request.clone()) {
             Ok(projected) => projected,
             Err(error) => {
+                if !error.retryable {
+                    if let Some(store) = attempt_store {
+                        self.persist_projection_failure(
+                            store,
+                            &projection_request,
+                            &error.message,
+                            report,
+                        );
+                    }
+                }
                 let issue = PlanningRuntimeActorIssue {
                     goal_id: Some(goal.goal_id.clone()),
                     code: "planning_projection_failed".to_string(),
@@ -451,6 +608,9 @@ where
         let projection_bytes = match validate_projection_bounds(&projected) {
             Ok(bytes) => bytes,
             Err(message) => {
+                if let Some(store) = attempt_store {
+                    self.persist_projection_failure(store, &projection_request, &message, report);
+                }
                 report.fatal_errors.push(PlanningRuntimeActorIssue {
                     goal_id: Some(goal.goal_id.clone()),
                     code: "planning_projection_bounds_exceeded".to_string(),
@@ -467,6 +627,9 @@ where
             }
         };
         if let Err(message) = product_budget.reserve_projection(projection_bytes) {
+            if let Some(store) = attempt_store {
+                self.persist_projection_failure(store, &projection_request, &message, report);
+            }
             report.fatal_errors.push(PlanningRuntimeActorIssue {
                 goal_id: Some(goal.goal_id.clone()),
                 code: "planning_tick_projection_budget_exhausted".to_string(),
@@ -489,6 +652,9 @@ where
         ) {
             Ok(identity) => identity,
             Err(error) => {
+                if let Some(store) = attempt_store {
+                    self.persist_projection_failure(store, &projection_request, &error, report);
+                }
                 report.fatal_errors.push(PlanningRuntimeActorIssue {
                     goal_id: Some(goal.goal_id.clone()),
                     code: "planning_projection_identity_failed".to_string(),
@@ -537,6 +703,19 @@ where
                 return;
             }
         };
+        if let Some(store) = attempt_store {
+            self.process_identified_goal_durable(
+                goals,
+                task_network,
+                request,
+                goal,
+                goal_updated_at_seq,
+                identified_request,
+                store,
+                pass,
+            );
+            return;
+        }
         let planning_result = match self.runtime.plan_goal(identified_request.request().clone()) {
             Ok(result) => result,
             Err(error) => {
@@ -837,6 +1016,1209 @@ where
         };
         record_planning_command_response(report, goal.goal_id, plan, command_id, response);
     }
+
+    fn persist_projection_failure(
+        &self,
+        store: &PlanningAttemptStore,
+        projection_request: &PlanningWorldStateRequest,
+        message: &str,
+        report: &mut PlanningRuntimeActorReport,
+    ) {
+        let identity = PlanningProjectionFailureIdentityInputs::bind(
+            projection_request.clone(),
+            self.runtime.method_library.digest(),
+            self.runtime.capability_catalog.digest(),
+            PLANNING_IDENTITY_VERSION.to_string(),
+        )
+        .and_then(PlanningAttemptIdentity::bind_projection_failure);
+        let identity = match identity {
+            Ok(identity) => identity,
+            Err(error) => {
+                push_attempt_contract_failure(
+                    report,
+                    Some(projection_request.goal_id.clone()),
+                    None,
+                    "planning_projection_attempt_identity_failed",
+                    error,
+                );
+                return;
+            }
+        };
+        if let Err(error) = store.open_attempt(identity.clone()) {
+            push_attempt_store_failure(
+                report,
+                Some(projection_request.goal_id.clone()),
+                Some(identity.attempt_id().to_string()),
+                "planning_projection_attempt_open_failed",
+                error,
+            );
+            return;
+        }
+        let decision = PlanningAttemptDecisionAudit::new(
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            PlanningAttemptResultSummary::ProjectionFailed,
+        );
+        let decision = match decision {
+            Ok(decision) => decision,
+            Err(error) => {
+                push_attempt_contract_failure(
+                    report,
+                    Some(projection_request.goal_id.clone()),
+                    Some(identity.attempt_id().to_string()),
+                    "planning_projection_attempt_audit_failed",
+                    error,
+                );
+                return;
+            }
+        };
+        persist_terminal_attempt(
+            store,
+            &identity,
+            decision,
+            PlanningAttemptDiagnosticDisposition::ProjectionFailed,
+            "planning_projection_failed",
+            message,
+            report,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn process_identified_goal_durable<G>(
+        &self,
+        goals: &G,
+        task_network: &TaskNetworkAuthorityPorts,
+        request: &PlanningRuntimeActorRequest,
+        goal: meld_lang::Goal,
+        goal_updated_at_seq: u64,
+        identified_request: IdentifiedPlanningRequest,
+        attempt_store: &PlanningAttemptStore,
+        pass: &mut PlanningActorPass,
+    ) where
+        G: GoalPlanningSelectionPort + ?Sized,
+    {
+        let report = &mut pass.report;
+        let mut identity =
+            match PlanningAttemptIdentity::bind(identified_request.identity().clone()) {
+                Ok(identity) => identity,
+                Err(error) => {
+                    push_attempt_contract_failure(
+                        report,
+                        Some(goal.goal_id.clone()),
+                        None,
+                        "planning_attempt_identity_failed",
+                        error,
+                    );
+                    return;
+                }
+            };
+        let mut attempt_id = identity.attempt_id().to_string();
+        if let Err(error) = attempt_store.open_attempt(identity.clone()) {
+            push_attempt_store_failure(
+                report,
+                Some(goal.goal_id.clone()),
+                Some(attempt_id),
+                "planning_attempt_open_failed",
+                error,
+            );
+            return;
+        }
+
+        let planning_result = match self.runtime.plan_goal(identified_request.request().clone()) {
+            Ok(result) => result,
+            Err(error) => {
+                let message = format!("{error:?}");
+                let audit = PlanningAttemptDecisionAudit::new(
+                    None,
+                    Vec::new(),
+                    identified_request
+                        .request()
+                        .world_state_frame
+                        .warnings
+                        .clone(),
+                    Vec::new(),
+                    Vec::new(),
+                    PlanningAttemptResultSummary::PlanningFailed,
+                );
+                if persist_terminal_audit_result(
+                    attempt_store,
+                    &identity,
+                    audit,
+                    PlanningAttemptDiagnosticDisposition::PlanningFailed,
+                    "planning_input_failed",
+                    &message,
+                    report,
+                ) {
+                    report.fatal_errors.push(PlanningRuntimeActorIssue {
+                        goal_id: Some(goal.goal_id.clone()),
+                        code: "planning_input_failed".to_string(),
+                        message,
+                    });
+                    report
+                        .results
+                        .push(PlanningRuntimeActorGoalResult::PlanningFailed {
+                            goal_id: goal.goal_id,
+                            error,
+                        });
+                }
+                return;
+            }
+        };
+
+        let PlanningResult::Composed(composition) = planning_result else {
+            let audit = decision_audit_for_terminal_result(&planning_result);
+            let terminal = terminal_spec_for_planning_result(&planning_result);
+            if persist_terminal_audit_result(
+                attempt_store,
+                &identity,
+                audit,
+                terminal.disposition,
+                terminal.code,
+                terminal.message,
+                report,
+            ) {
+                report
+                    .results
+                    .push(PlanningRuntimeActorGoalResult::Planned {
+                        goal_id: goal.goal_id,
+                        result: planning_result,
+                    });
+            }
+            return;
+        };
+
+        let lower_request = CompositionLoweringRequest {
+            request_id: lowering_request_id(&composition),
+            network_id: request.network_id.clone(),
+            idempotency_key: lowering_idempotency_key(&composition),
+            composition: composition.clone(),
+        };
+        let composition_id = composition.composition_id.clone();
+        let plan = match self.lowerer.lower(lower_request) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let message = error.to_string();
+                let audit = decision_audit_for_composition(
+                    &composition,
+                    Vec::new(),
+                    PlanningAttemptResultSummary::LoweringFailed {
+                        composition_id: composition_id.clone(),
+                    },
+                );
+                if persist_terminal_audit_result(
+                    attempt_store,
+                    &identity,
+                    audit,
+                    PlanningAttemptDiagnosticDisposition::LoweringFailed,
+                    "composition_lowering_failed",
+                    &message,
+                    report,
+                ) {
+                    report.fatal_errors.push(PlanningRuntimeActorIssue {
+                        goal_id: Some(goal.goal_id.clone()),
+                        code: "composition_lowering_failed".to_string(),
+                        message: message.clone(),
+                    });
+                    report
+                        .results
+                        .push(PlanningRuntimeActorGoalResult::LoweringFailed {
+                            goal_id: goal.goal_id,
+                            composition_id,
+                            error: message,
+                        });
+                }
+                return;
+            }
+        };
+
+        let retained_plan_bytes = match validate_planning_plan_bounds(&plan) {
+            Ok(bytes) => bytes,
+            Err(message) => {
+                self.persist_durable_lowering_failure(
+                    attempt_store,
+                    &identity,
+                    &composition,
+                    &plan,
+                    &goal.goal_id,
+                    "planning_plan_bounds_exceeded",
+                    message,
+                    report,
+                );
+                return;
+            }
+        };
+        if let Err(message) = pass.product_budget.reserve_plan(retained_plan_bytes) {
+            self.persist_durable_lowering_failure(
+                attempt_store,
+                &identity,
+                &composition,
+                &plan,
+                &goal.goal_id,
+                "planning_tick_plan_budget_exhausted",
+                message,
+                report,
+            );
+            return;
+        }
+
+        if plan.mutations.mutations.is_empty() {
+            let audit = decision_audit_for_composition(
+                &composition,
+                plan.diagnostics.clone(),
+                PlanningAttemptResultSummary::NoMutation {
+                    composition_id: composition_id.clone(),
+                },
+            );
+            if persist_terminal_audit_result(
+                attempt_store,
+                &identity,
+                audit,
+                PlanningAttemptDiagnosticDisposition::NoMutation,
+                "planning_lowering_no_mutation",
+                "planning lowering produced no task network mutations",
+                report,
+            ) {
+                report
+                    .results
+                    .push(PlanningRuntimeActorGoalResult::Lowered {
+                        goal_id: goal.goal_id,
+                        plan,
+                    });
+            }
+            return;
+        }
+
+        let decision = decision_audit_for_composition(
+            &composition,
+            plan.diagnostics.clone(),
+            PlanningAttemptResultSummary::Composed {
+                composition_id: composition_id.clone(),
+            },
+        );
+        let decision = match decision {
+            Ok(decision) => decision,
+            Err(error) => {
+                push_attempt_contract_failure(
+                    report,
+                    Some(goal.goal_id.clone()),
+                    Some(attempt_id.clone()),
+                    "planning_attempt_audit_failed",
+                    error,
+                );
+                return;
+            }
+        };
+        if let Err(error) = attempt_store.record_decision(&attempt_id, decision.clone()) {
+            push_attempt_store_failure(
+                report,
+                Some(goal.goal_id.clone()),
+                Some(attempt_id.clone()),
+                "planning_attempt_audit_persist_failed",
+                error,
+            );
+            return;
+        }
+
+        let query = PlanningAttemptQuery::new(Arc::new(attempt_store.clone()));
+        match query.prepared_command(&attempt_id) {
+            Ok(Some(prepared)) => {
+                if let Some(response) = authenticated_prepared_outcome(
+                    attempt_store,
+                    task_network,
+                    &goal.goal_id,
+                    &attempt_id,
+                    &prepared,
+                    report,
+                ) {
+                    let retryable_rejection = matches!(
+                        &response,
+                        command::Response::Rejected(rejection)
+                            if planning_rejection_requires_new_attempt(rejection)
+                    );
+                    record_planning_command_response(
+                        report,
+                        goal.goal_id.clone(),
+                        plan.clone(),
+                        prepared.request.command_id.clone(),
+                        response,
+                    );
+                    if !retryable_rejection {
+                        return;
+                    }
+                    let parent_outcome = match query.command_outcome(&attempt_id) {
+                        Ok(Some(outcome)) => outcome,
+                        Ok(None) => {
+                            push_attempt_contract_failure(
+                                report,
+                                Some(goal.goal_id.clone()),
+                                Some(attempt_id.clone()),
+                                "planning_rebase_parent_outcome_missing",
+                                "completed retryable command has no durable planning outcome"
+                                    .to_string(),
+                            );
+                            return;
+                        }
+                        Err(error) => {
+                            push_attempt_store_failure(
+                                report,
+                                Some(goal.goal_id.clone()),
+                                Some(attempt_id.clone()),
+                                "planning_rebase_parent_outcome_query_failed",
+                                error,
+                            );
+                            return;
+                        }
+                    };
+                    let rebase_head = match task_network.query().head() {
+                        Ok(head) => head,
+                        Err(error) => {
+                            let retryable = task_network_authority_error_is_retryable(&error);
+                            let message = error.to_string();
+                            push_authority_issue(
+                                report,
+                                Some(goal.goal_id.clone()),
+                                "planning_rebase_head_query_failed",
+                                error,
+                            );
+                            report
+                                .results
+                                .push(PlanningRuntimeActorGoalResult::CommandFailed {
+                                    goal_id: goal.goal_id,
+                                    command_id: Some(prepared.request.command_id),
+                                    error: message,
+                                    retryable,
+                                });
+                            return;
+                        }
+                    };
+                    let child = match PlanningAttemptIdentity::bind_rebase(
+                        &identity,
+                        &parent_outcome,
+                        rebase_head.revision,
+                        rebase_head.state_hash,
+                    ) {
+                        Ok(child) => child,
+                        Err(error) => {
+                            push_attempt_contract_failure(
+                                report,
+                                Some(goal.goal_id.clone()),
+                                Some(attempt_id.clone()),
+                                "planning_rebase_identity_failed",
+                                error,
+                            );
+                            return;
+                        }
+                    };
+                    if let Err(error) = attempt_store.open_rebase_attempt(child.clone()) {
+                        push_attempt_store_failure(
+                            report,
+                            Some(goal.goal_id.clone()),
+                            Some(child.attempt_id().to_string()),
+                            "planning_rebase_attempt_open_failed",
+                            error,
+                        );
+                        return;
+                    }
+                    if let Err(error) =
+                        attempt_store.record_decision(child.attempt_id(), decision.clone())
+                    {
+                        push_attempt_store_failure(
+                            report,
+                            Some(goal.goal_id.clone()),
+                            Some(child.attempt_id().to_string()),
+                            "planning_rebase_audit_persist_failed",
+                            error,
+                        );
+                        return;
+                    }
+                    identity = child;
+                    attempt_id = identity.attempt_id().to_string();
+                    match query.prepared_command(&attempt_id) {
+                        Ok(Some(prepared)) => {
+                            if let Some(response) = authenticated_prepared_outcome(
+                                attempt_store,
+                                task_network,
+                                &goal.goal_id,
+                                &attempt_id,
+                                &prepared,
+                                report,
+                            ) {
+                                record_planning_command_response(
+                                    report,
+                                    goal.goal_id,
+                                    plan,
+                                    prepared.request.command_id,
+                                    response,
+                                );
+                            }
+                            return;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            push_attempt_store_failure(
+                                report,
+                                Some(goal.goal_id.clone()),
+                                Some(attempt_id.clone()),
+                                "planning_rebase_prepared_command_query_failed",
+                                error,
+                            );
+                            return;
+                        }
+                    }
+                } else {
+                    return;
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                push_attempt_store_failure(
+                    report,
+                    Some(goal.goal_id.clone()),
+                    Some(attempt_id.clone()),
+                    "planning_prepared_command_query_failed",
+                    error,
+                );
+                return;
+            }
+        }
+
+        let command_id = match planning_task_network_command_id(&identity, &composition_id) {
+            Ok(command_id) => command_id,
+            Err(error) => {
+                push_attempt_contract_failure(
+                    report,
+                    Some(goal.goal_id.clone()),
+                    Some(attempt_id.clone()),
+                    "planning_command_identity_failed",
+                    error,
+                );
+                return;
+            }
+        };
+        let task_ids = plan
+            .mutations
+            .mutations
+            .iter()
+            .map(|mutation| {
+                let crate::task_network::mutation::Mutation::Inject(inject) = mutation;
+                inject.task_node.task_instance_id.clone()
+            })
+            .collect();
+        let materialization = match task_network.query().materialization(task_ids) {
+            Ok(materialization) => {
+                report.last_acknowledged_revision = report
+                    .last_acknowledged_revision
+                    .max(materialization.head.revision);
+                materialization
+            }
+            Err(error) => {
+                let retryable = task_network_authority_error_is_retryable(&error);
+                let message = error.to_string();
+                push_authority_issue(
+                    report,
+                    Some(goal.goal_id.clone()),
+                    "task_network_materialization_query_failed",
+                    error,
+                );
+                report
+                    .results
+                    .push(PlanningRuntimeActorGoalResult::CommandFailed {
+                        goal_id: goal.goal_id,
+                        command_id: Some(command_id),
+                        error: message,
+                        retryable,
+                    });
+                return;
+            }
+        };
+        if let Some((rebase_revision, rebase_state_hash)) = identity.rebase_base() {
+            if materialization.head.revision != rebase_revision
+                || materialization.head.state_hash != rebase_state_hash
+            {
+                let message = format!(
+                    "task network head changed after planning rebase selection: expected revision {rebase_revision} and state {rebase_state_hash}, observed revision {} and state {}",
+                    materialization.head.revision, materialization.head.state_hash
+                );
+                report.retryable_errors.push(PlanningRuntimeActorIssue {
+                    goal_id: Some(goal.goal_id.clone()),
+                    code: "planning_rebase_head_stale".to_string(),
+                    message: message.clone(),
+                });
+                report
+                    .results
+                    .push(PlanningRuntimeActorGoalResult::CommandFailed {
+                        goal_id: goal.goal_id,
+                        command_id: Some(command_id),
+                        error: message,
+                        retryable: true,
+                    });
+                return;
+            }
+        }
+        match plan_materialization(&materialization, &plan) {
+            PlanMaterialization::Absent => {}
+            PlanMaterialization::Exact => {
+                let message = format!(
+                    "planning composition '{}' is materialized without its exact durable planning attempt outcome",
+                    plan.composition_id
+                );
+                push_fatal_command_failure(
+                    report,
+                    goal.goal_id,
+                    command_id,
+                    "planning_materialization_foreign",
+                    message,
+                );
+                return;
+            }
+            PlanMaterialization::Divergent(message) => {
+                push_fatal_command_failure(
+                    report,
+                    goal.goal_id,
+                    command_id,
+                    "planning_materialization_diverged",
+                    message,
+                );
+                return;
+            }
+        }
+
+        if !revalidate_planning_goal(goals, &goal, goal_updated_at_seq, &command_id, report) {
+            return;
+        }
+
+        let base_revision = materialization.head.revision;
+        let base_state_hash = materialization.head.state_hash;
+        let command_request = command::Request {
+            command_id: command_id.clone(),
+            network_id: plan.network_id.clone(),
+            base_revision,
+            base_state_hash: base_state_hash.clone(),
+            read_preconditions: vec![
+                ReadPrecondition::RevisionIs(base_revision),
+                ReadPrecondition::StateHashIs(base_state_hash),
+            ],
+            command: TaskNetworkCommand::ApplyMutationSet(plan.mutations.clone()),
+        };
+        if let Err(message) = validate_planning_command_bounds(&command_request) {
+            push_fatal_command_failure(
+                report,
+                goal.goal_id,
+                command_id,
+                "planning_command_bounds_exceeded",
+                message,
+            );
+            return;
+        }
+        if let Err(error) = attempt_store.prepare_command(&attempt_id, command_request) {
+            push_attempt_store_failure(
+                report,
+                Some(goal.goal_id.clone()),
+                Some(attempt_id.clone()),
+                "planning_command_prepare_failed",
+                error,
+            );
+            return;
+        }
+        let prepared = match query.prepared_command(&attempt_id) {
+            Ok(Some(prepared)) => prepared,
+            Ok(None) => {
+                push_attempt_contract_failure(
+                    report,
+                    Some(goal.goal_id.clone()),
+                    Some(attempt_id),
+                    "planning_prepared_command_missing",
+                    "durable command preparation completed without a recoverable request"
+                        .to_string(),
+                );
+                return;
+            }
+            Err(error) => {
+                push_attempt_store_failure(
+                    report,
+                    Some(goal.goal_id.clone()),
+                    Some(attempt_id.clone()),
+                    "planning_prepared_command_query_failed",
+                    error,
+                );
+                return;
+            }
+        };
+        if let Some(response) = authenticated_prepared_outcome(
+            attempt_store,
+            task_network,
+            &goal.goal_id,
+            &attempt_id,
+            &prepared,
+            report,
+        ) {
+            record_planning_command_response(
+                report,
+                goal.goal_id,
+                plan,
+                prepared.request.command_id,
+                response,
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn persist_durable_lowering_failure(
+        &self,
+        store: &PlanningAttemptStore,
+        identity: &PlanningAttemptIdentity,
+        composition: &ExecutionComposition,
+        plan: &CompositionLoweringPlan,
+        goal_id: &str,
+        code: &str,
+        message: String,
+        report: &mut PlanningRuntimeActorReport,
+    ) {
+        let audit = decision_audit_for_composition(
+            composition,
+            plan.diagnostics.clone(),
+            PlanningAttemptResultSummary::LoweringFailed {
+                composition_id: composition.composition_id.clone(),
+            },
+        );
+        if persist_terminal_audit_result(
+            store,
+            identity,
+            audit,
+            PlanningAttemptDiagnosticDisposition::LoweringFailed,
+            code,
+            &message,
+            report,
+        ) {
+            report.fatal_errors.push(PlanningRuntimeActorIssue {
+                goal_id: Some(goal_id.to_string()),
+                code: code.to_string(),
+                message: message.clone(),
+            });
+            report
+                .results
+                .push(PlanningRuntimeActorGoalResult::LoweringFailed {
+                    goal_id: goal_id.to_string(),
+                    composition_id: composition.composition_id.clone(),
+                    error: message,
+                });
+        }
+    }
+}
+
+struct PlanningTerminalSpec {
+    disposition: PlanningAttemptDiagnosticDisposition,
+    code: &'static str,
+    message: &'static str,
+}
+
+fn decision_audit_for_terminal_result(
+    result: &PlanningResult,
+) -> Result<PlanningAttemptDecisionAudit, String> {
+    let (selected_method_id, candidate_reports, projection_warnings, method_diagnostics, summary) =
+        match result {
+            PlanningResult::Satisfied(satisfied) => (
+                None,
+                Vec::new(),
+                satisfied.world_state_frame.warnings.clone(),
+                satisfied.diagnostics.clone(),
+                PlanningAttemptResultSummary::Satisfied,
+            ),
+            PlanningResult::NoApplicableMethod(no_method) => (
+                None,
+                no_method.candidates.clone(),
+                no_method.world_state_frame.warnings.clone(),
+                no_method.diagnostics.clone(),
+                PlanningAttemptResultSummary::NoApplicableMethod,
+            ),
+            PlanningResult::Indeterminate(indeterminate) => (
+                None,
+                Vec::new(),
+                indeterminate.world_state_frame.warnings.clone(),
+                indeterminate.diagnostics.clone(),
+                PlanningAttemptResultSummary::Indeterminate,
+            ),
+            PlanningResult::InvalidMethod(invalid) => (
+                invalid.method_id.clone(),
+                Vec::new(),
+                Vec::new(),
+                invalid.diagnostics.clone(),
+                PlanningAttemptResultSummary::InvalidMethod,
+            ),
+            PlanningResult::Composed(_) => {
+                return Err("composed planning result requires lowering audit context".to_string());
+            }
+        };
+    PlanningAttemptDecisionAudit::new(
+        selected_method_id,
+        candidate_reports,
+        projection_warnings,
+        method_diagnostics,
+        Vec::new(),
+        summary,
+    )
+}
+
+fn decision_audit_for_composition(
+    composition: &ExecutionComposition,
+    lowering_diagnostics: Vec<crate::planning::lowering::Diagnostic>,
+    summary: PlanningAttemptResultSummary,
+) -> Result<PlanningAttemptDecisionAudit, String> {
+    PlanningAttemptDecisionAudit::new(
+        Some(composition.method_id.clone()),
+        Vec::new(),
+        composition.world_state_frame.warnings.clone(),
+        composition.diagnostics.clone(),
+        lowering_diagnostics,
+        summary,
+    )
+}
+
+fn terminal_spec_for_planning_result(result: &PlanningResult) -> PlanningTerminalSpec {
+    match result {
+        PlanningResult::Satisfied(_) => PlanningTerminalSpec {
+            disposition: PlanningAttemptDiagnosticDisposition::Satisfied,
+            code: "planning_goal_satisfied",
+            message: "projected world state already satisfies the active goal",
+        },
+        PlanningResult::NoApplicableMethod(_) => PlanningTerminalSpec {
+            disposition: PlanningAttemptDiagnosticDisposition::NoApplicableMethod,
+            code: "planning_no_applicable_method",
+            message: "no verified planning method applies to the active goal",
+        },
+        PlanningResult::Indeterminate(_) => PlanningTerminalSpec {
+            disposition: PlanningAttemptDiagnosticDisposition::Indeterminate,
+            code: "planning_indeterminate",
+            message: "projected world state cannot decide the active goal",
+        },
+        PlanningResult::InvalidMethod(_) => PlanningTerminalSpec {
+            disposition: PlanningAttemptDiagnosticDisposition::InvalidMethod,
+            code: "planning_invalid_method",
+            message: "method verification prevented deterministic planning",
+        },
+        PlanningResult::Composed(_) => unreachable!("composed results are not terminal"),
+    }
+}
+
+fn persist_terminal_audit_result(
+    store: &PlanningAttemptStore,
+    identity: &PlanningAttemptIdentity,
+    audit: Result<PlanningAttemptDecisionAudit, String>,
+    disposition: PlanningAttemptDiagnosticDisposition,
+    code: &str,
+    message: &str,
+    report: &mut PlanningRuntimeActorReport,
+) -> bool {
+    let audit = match audit {
+        Ok(audit) => audit,
+        Err(error) => {
+            push_attempt_contract_failure(
+                report,
+                Some(identity.goal_id().to_string()),
+                Some(identity.attempt_id().to_string()),
+                "planning_attempt_audit_failed",
+                error,
+            );
+            return false;
+        }
+    };
+    persist_terminal_attempt(store, identity, audit, disposition, code, message, report)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn persist_terminal_attempt(
+    store: &PlanningAttemptStore,
+    identity: &PlanningAttemptIdentity,
+    decision: PlanningAttemptDecisionAudit,
+    disposition: PlanningAttemptDiagnosticDisposition,
+    code: &str,
+    message: &str,
+    report: &mut PlanningRuntimeActorReport,
+) -> bool {
+    if let Err(error) = store.record_decision(identity.attempt_id(), decision) {
+        push_attempt_store_failure(
+            report,
+            Some(identity.goal_id().to_string()),
+            Some(identity.attempt_id().to_string()),
+            "planning_attempt_audit_persist_failed",
+            error,
+        );
+        return false;
+    }
+    let diagnostic = match PlanningAttemptTerminalDiagnostic::new(
+        disposition,
+        code,
+        bounded_diagnostic_message(message),
+    ) {
+        Ok(diagnostic) => diagnostic,
+        Err(error) => {
+            push_attempt_contract_failure(
+                report,
+                Some(identity.goal_id().to_string()),
+                Some(identity.attempt_id().to_string()),
+                "planning_terminal_diagnostic_invalid",
+                error,
+            );
+            return false;
+        }
+    };
+    if let Err(error) = store.record_terminal_diagnostic(identity.attempt_id(), diagnostic) {
+        push_attempt_store_failure(
+            report,
+            Some(identity.goal_id().to_string()),
+            Some(identity.attempt_id().to_string()),
+            "planning_terminal_diagnostic_persist_failed",
+            error,
+        );
+        return false;
+    }
+    true
+}
+
+fn bounded_diagnostic_message(message: &str) -> String {
+    const MAX_BYTES: usize = 1_024;
+    if message.len() <= MAX_BYTES {
+        return message.to_string();
+    }
+    let mut end = MAX_BYTES;
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    message[..end].to_string()
+}
+
+fn process_prepared_recovery(
+    store: &PlanningAttemptStore,
+    task_network: &TaskNetworkAuthorityPorts,
+    request: &PlanningRuntimeActorRequest,
+    recovery: PlanningAttemptRecovery,
+    report: &mut PlanningRuntimeActorReport,
+) {
+    let goal_id = recovery.head.identity.goal_id().to_string();
+    let attempt_id = recovery.head.identity.attempt_id().to_string();
+    if recovery.prepared.request.network_id != request.network_id {
+        push_fatal_command_failure(
+            report,
+            goal_id,
+            recovery.prepared.request.command_id,
+            "planning_recovery_network_mismatch",
+            "prepared planning command targets a different task network".to_string(),
+        );
+        return;
+    }
+    let command_id = recovery.prepared.request.command_id.clone();
+    if let Some(response) = authenticated_prepared_outcome(
+        store,
+        task_network,
+        &goal_id,
+        &attempt_id,
+        &recovery.prepared,
+        report,
+    ) {
+        record_recovered_command_response(report, goal_id, attempt_id, command_id, response);
+    }
+}
+
+fn authenticated_prepared_outcome(
+    store: &PlanningAttemptStore,
+    task_network: &TaskNetworkAuthorityPorts,
+    goal_id: &str,
+    attempt_id: &str,
+    prepared: &PlanningPreparedCommand,
+    report: &mut PlanningRuntimeActorReport,
+) -> Option<command::Response> {
+    let command_id = prepared.request.command_id.clone();
+    let mut receipt = match task_network.query().command_outcome(command_id.clone()) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            let retryable = task_network_authority_error_is_retryable(&error);
+            let message = error.to_string();
+            push_authority_issue(
+                report,
+                Some(goal_id.to_string()),
+                "task_network_command_outcome_query_failed",
+                error,
+            );
+            report
+                .results
+                .push(PlanningRuntimeActorGoalResult::CommandFailed {
+                    goal_id: goal_id.to_string(),
+                    command_id: Some(command_id),
+                    error: message,
+                    retryable,
+                });
+            return None;
+        }
+    };
+
+    if receipt.is_none() {
+        if let Err(error) = store.validate_owner_fence() {
+            push_attempt_store_failure(
+                report,
+                Some(goal_id.to_string()),
+                Some(attempt_id.to_string()),
+                "planning_owner_fence_stale_before_submit",
+                error,
+            );
+            return None;
+        }
+        let submit_error = task_network
+            .commands()
+            .try_submit(prepared.request.clone())
+            .err();
+        receipt = match task_network.query().command_outcome(command_id.clone()) {
+            Ok(receipt) => receipt,
+            Err(query_error) => {
+                if let Some(submit_error) = submit_error {
+                    push_authority_issue(
+                        report,
+                        Some(goal_id.to_string()),
+                        "task_network_command_failed",
+                        submit_error,
+                    );
+                }
+                let retryable = task_network_authority_error_is_retryable(&query_error);
+                let message = query_error.to_string();
+                push_authority_issue(
+                    report,
+                    Some(goal_id.to_string()),
+                    "task_network_command_outcome_query_failed",
+                    query_error,
+                );
+                report
+                    .results
+                    .push(PlanningRuntimeActorGoalResult::CommandFailed {
+                        goal_id: goal_id.to_string(),
+                        command_id: Some(command_id),
+                        error: message,
+                        retryable,
+                    });
+                return None;
+            }
+        };
+        if receipt.is_none() {
+            let message = submit_error.map_or_else(
+                || {
+                    "task network submission returned without an authenticated durable outcome"
+                        .to_string()
+                },
+                |error| error.to_string(),
+            );
+            report.retryable_errors.push(PlanningRuntimeActorIssue {
+                goal_id: Some(goal_id.to_string()),
+                code: "task_network_command_outcome_pending".to_string(),
+                message: message.clone(),
+            });
+            report
+                .results
+                .push(PlanningRuntimeActorGoalResult::CommandFailed {
+                    goal_id: goal_id.to_string(),
+                    command_id: Some(command_id),
+                    error: message,
+                    retryable: true,
+                });
+            return None;
+        }
+    }
+
+    let receipt = receipt.expect("receipt presence checked");
+    let response = receipt.response().clone();
+    if let Err(error) = store.record_command_outcome(attempt_id, receipt) {
+        push_attempt_store_failure(
+            report,
+            Some(goal_id.to_string()),
+            Some(attempt_id.to_string()),
+            "planning_command_outcome_persist_failed",
+            error,
+        );
+        return None;
+    }
+    Some(response)
+}
+
+fn record_recovered_command_response(
+    report: &mut PlanningRuntimeActorReport,
+    goal_id: String,
+    attempt_id: String,
+    command_id: String,
+    response: command::Response,
+) {
+    match &response {
+        command::Response::Accepted { revision, .. }
+        | command::Response::Duplicate { revision, .. } => {
+            report.committed += 1;
+            report.last_acknowledged_revision = report.last_acknowledged_revision.max(*revision);
+        }
+        command::Response::Rejected(rejection) => {
+            let issue = PlanningRuntimeActorIssue {
+                goal_id: Some(goal_id.clone()),
+                code: "task_network_command_rejected".to_string(),
+                message: format!("{rejection:?}"),
+            };
+            if task_network_rejection_is_retryable(rejection) {
+                report.retryable_errors.push(issue);
+            } else {
+                report.fatal_errors.push(issue);
+            }
+        }
+    }
+    report
+        .results
+        .push(PlanningRuntimeActorGoalResult::Recovered {
+            goal_id,
+            attempt_id,
+            command_id,
+            response,
+        });
+}
+
+fn revalidate_planning_goal<G>(
+    goals: &G,
+    goal: &meld_lang::Goal,
+    goal_updated_at_seq: u64,
+    command_id: &str,
+    report: &mut PlanningRuntimeActorReport,
+) -> bool
+where
+    G: GoalPlanningSelectionPort + ?Sized,
+{
+    match goals.planning_goal_record(&goal.goal_id) {
+        Ok(Some(current))
+            if current.updated_at_seq == goal_updated_at_seq
+                && current.goal == *goal
+                && matches!(current.goal.lifecycle, GoalLifecycle::Active) =>
+        {
+            true
+        }
+        Ok(current) => {
+            let message = match current {
+                Some(current) => format!(
+                    "goal '{}' changed after planning selection: expected active sequence {}, observed sequence {} with lifecycle {:?}",
+                    goal.goal_id,
+                    goal_updated_at_seq,
+                    current.updated_at_seq,
+                    current.goal.lifecycle
+                ),
+                None => format!(
+                    "goal '{}' disappeared after planning selection at sequence {}",
+                    goal.goal_id, goal_updated_at_seq
+                ),
+            };
+            report.retryable_errors.push(PlanningRuntimeActorIssue {
+                goal_id: Some(goal.goal_id.clone()),
+                code: "planning_goal_fence_stale".to_string(),
+                message: message.clone(),
+            });
+            report
+                .results
+                .push(PlanningRuntimeActorGoalResult::CommandFailed {
+                    goal_id: goal.goal_id.clone(),
+                    command_id: Some(command_id.to_string()),
+                    error: message,
+                    retryable: true,
+                });
+            false
+        }
+        Err(error) => {
+            let retryable = error.retryable();
+            let message = error.to_string();
+            let issue = PlanningRuntimeActorIssue {
+                goal_id: Some(goal.goal_id.clone()),
+                code: "planning_goal_fence_query_failed".to_string(),
+                message: message.clone(),
+            };
+            if retryable {
+                report.retryable_errors.push(issue);
+            } else {
+                report.fatal_errors.push(issue);
+            }
+            report
+                .results
+                .push(PlanningRuntimeActorGoalResult::CommandFailed {
+                    goal_id: goal.goal_id.clone(),
+                    command_id: Some(command_id.to_string()),
+                    error: message,
+                    retryable,
+                });
+            false
+        }
+    }
+}
+
+fn push_attempt_store_failure(
+    report: &mut PlanningRuntimeActorReport,
+    goal_id: Option<String>,
+    attempt_id: Option<String>,
+    code: &str,
+    error: PlanningAttemptStorageError,
+) {
+    let retryable = error.is_retryable();
+    let message = error.to_string();
+    let issue = PlanningRuntimeActorIssue {
+        goal_id: goal_id.clone(),
+        code: code.to_string(),
+        message: message.clone(),
+    };
+    if retryable {
+        report.retryable_errors.push(issue);
+    } else {
+        report.fatal_errors.push(issue);
+    }
+    report
+        .results
+        .push(PlanningRuntimeActorGoalResult::AttemptFailed {
+            goal_id,
+            attempt_id,
+            error: message,
+            retryable,
+        });
+}
+
+fn push_attempt_contract_failure(
+    report: &mut PlanningRuntimeActorReport,
+    goal_id: Option<String>,
+    attempt_id: Option<String>,
+    code: &str,
+    message: String,
+) {
+    report.fatal_errors.push(PlanningRuntimeActorIssue {
+        goal_id: goal_id.clone(),
+        code: code.to_string(),
+        message: message.clone(),
+    });
+    report
+        .results
+        .push(PlanningRuntimeActorGoalResult::AttemptFailed {
+            goal_id,
+            attempt_id,
+            error: message,
+            retryable: false,
+        });
+}
+
+fn push_fatal_command_failure(
+    report: &mut PlanningRuntimeActorReport,
+    goal_id: String,
+    command_id: String,
+    code: &str,
+    message: String,
+) {
+    report.fatal_errors.push(PlanningRuntimeActorIssue {
+        goal_id: Some(goal_id.clone()),
+        code: code.to_string(),
+        message: message.clone(),
+    });
+    report
+        .results
+        .push(PlanningRuntimeActorGoalResult::CommandFailed {
+            goal_id,
+            command_id: Some(command_id),
+            error: message,
+            retryable: false,
+        });
 }
 
 enum PlanningCommandAttemptResolution {
@@ -987,6 +2369,16 @@ fn planning_goal_store_error(error: GoalPlanningSelectionError) -> PlanningRunti
 fn planning_authority_error(error: TaskNetworkAuthorityError) -> PlanningRuntimeActorError {
     let retryable = task_network_authority_error_is_retryable(&error);
     PlanningRuntimeActorError::TaskNetworkAuthority {
+        message: error.to_string(),
+        retryable,
+    }
+}
+
+fn planning_attempt_authority_error(
+    error: PlanningAttemptStorageError,
+) -> PlanningRuntimeActorError {
+    let retryable = error.is_retryable();
+    PlanningRuntimeActorError::PlanningAttemptAuthority {
         message: error.to_string(),
         retryable,
     }

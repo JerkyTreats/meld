@@ -42,7 +42,7 @@ fn runtime_status_reports_desired_runtimes_without_supervisor_store() {
         let task_dispatch = runtime_row(&parsed, "execution.task_dispatch");
         assert_eq!(task_dispatch["desired_enabled"], false);
         assert_eq!(task_dispatch["factory_available"], true);
-        assert_eq!(task_dispatch["implementation_state"], "inert");
+        assert_eq!(task_dispatch["implementation_state"], "concrete");
     });
 }
 
@@ -268,7 +268,7 @@ fn runtime_status_text_distinguishes_role_and_implementation() {
 
         assert!(output.contains("execution.task_dispatch disabled"));
         assert!(output.contains("role=actor"));
-        assert!(output.contains("implementation=inert"));
+        assert!(output.contains("implementation=concrete"));
         assert!(output.contains("factory=available"));
         assert!(!output.contains("execution.task_dispatch disabled unavailable"));
     });
@@ -350,6 +350,7 @@ fn runtime_run_json(
 ) -> Commands {
     Commands::Runtime {
         command: RuntimeCommands::Run {
+            activation: None,
             instance_id: instance_id.map(str::to_string),
             tick_ms,
             duration_ms,

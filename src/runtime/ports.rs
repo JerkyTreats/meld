@@ -21,7 +21,7 @@ use meld_execution::planning::{
 };
 use meld_execution::task::TaskArtifactRepoFactory;
 use meld_execution::task_network::authority::{
-    TaskNetworkAuthority, TaskNetworkAuthorityLifecycleSnapshot,
+    TaskNetworkAuthority, TaskNetworkAuthorityLifecycleSnapshot, TaskNetworkAuthorityPorts,
     TaskNetworkAuthorityShutdownReceipt, TaskNetworkCommandPort, TaskNetworkQueryPort,
 };
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
@@ -323,6 +323,13 @@ impl ProductEventAppendPort {
     ) -> Result<meld_events::EventFinalBarrier, RuntimePortError> {
         self.append
             .close_and_drain()
+            .map_err(|error| RuntimePortError::EventAppend(error.to_string()))
+    }
+
+    /// Flush every append accepted before this per-handle lifecycle barrier.
+    pub(crate) fn barrier(&self) -> Result<(), RuntimePortError> {
+        self.append
+            .barrier()
             .map_err(|error| RuntimePortError::EventAppend(error.to_string()))
     }
 
@@ -832,6 +839,14 @@ impl TaskNetworkAuthorityHostPort {
     /// Return a cloneable query capability for one hosted network.
     pub fn query_port(&self, network_id: &str) -> Result<TaskNetworkQueryPort, RuntimePortError> {
         self.with_authority(network_id, TaskNetworkAuthority::query_port)
+    }
+
+    /// Return query and command capabilities from one exact hosted authority.
+    pub fn authority_ports(
+        &self,
+        network_id: &str,
+    ) -> Result<TaskNetworkAuthorityPorts, RuntimePortError> {
+        self.with_authority(network_id, TaskNetworkAuthority::ports)
     }
 
     /// Return the execution-owned lifecycle for one hosted network.

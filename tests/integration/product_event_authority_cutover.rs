@@ -303,6 +303,7 @@ fn event_tail_json() -> Commands {
 fn runtime_run_json() -> Commands {
     Commands::Runtime {
         command: RuntimeCommands::Run {
+            activation: None,
             instance_id: Some("event-authority-cutover-test".to_string()),
             tick_ms: 1,
             duration_ms: Some(1),

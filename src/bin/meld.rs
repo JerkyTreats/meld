@@ -129,6 +129,30 @@ fn try_execute_runtime_activation(cli: &Cli) -> Option<Result<String, meld::erro
             *dry_run,
             format,
         )),
+        Commands::Runtime {
+            command:
+                meld::cli::RuntimeCommands::Run {
+                    activation: Some(activation),
+                    instance_id,
+                    tick_ms,
+                    duration_ms,
+                    format,
+                    restart_policy,
+                    restart_attempt_limit,
+                    restart_backoff_ms,
+                },
+        } => Some(meld::runtime::tooling::handle_cli_activation_run(
+            &cli.workspace,
+            cli.config.as_deref(),
+            activation,
+            instance_id.clone(),
+            *tick_ms,
+            *duration_ms,
+            format,
+            restart_policy,
+            *restart_attempt_limit,
+            *restart_backoff_ms,
+        )),
         _ => None,
     }
 }

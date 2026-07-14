@@ -9,12 +9,15 @@ use meld_execution::goals::{
     PersistentGoalSetStore, SuspendGoalCommand,
 };
 use meld_execution::planning::{
-    CandidateStatus, ExecutionCompositionLowerer, MethodLibrary, MethodSourceRef,
-    MethodVerification, PlanningDiagnosticCode, PlanningInputError, PlanningPerspectiveRef,
-    PlanningProjectionError, PlanningRequest, PlanningResult, PlanningRuntime,
-    PlanningRuntimeActor, PlanningRuntimeActorGoalResult, PlanningRuntimeActorRequest,
-    PlanningWorldStateFrameRef, PlanningWorldStateProjection, PlanningWorldStateRequest,
-    VerifiedMethodEntry,
+    planning_task_network_command_id, CandidateStatus, ExecutionCompositionLowerer,
+    IdentifiedPlanningRequest, MethodLibrary, MethodSourceRef, MethodVerification,
+    PlanningAttemptDecisionAudit, PlanningAttemptIdentity, PlanningAttemptQuery,
+    PlanningAttemptRecordKind, PlanningAttemptResultSummary, PlanningAttemptState,
+    PlanningAttemptStore, PlanningDiagnosticCode, PlanningInputError, PlanningPerspectiveRef,
+    PlanningProjectionError, PlanningProjectionIdentityInputs, PlanningRequest,
+    PlanningRequestIdentityInputs, PlanningResult, PlanningRuntime, PlanningRuntimeActor,
+    PlanningRuntimeActorGoalResult, PlanningRuntimeActorRequest, PlanningWorldStateFrameRef,
+    PlanningWorldStateProjection, PlanningWorldStateRequest, VerifiedMethodEntry,
 };
 use meld_execution::task::TaskCompiler;
 use meld_execution::task_network::state::{DependencyEdge, DependencyKind};
@@ -29,6 +32,7 @@ use meld_lang::{
     Literal, Method, Operator, Proposition, Resolution, SlotConstraint, Step, StepKind, Term,
     WorldState,
 };
+use std::sync::Arc;
 
 fn node(id: &str) -> Term {
     Term::Object(DomainObjectRef::new("workspace", "node", id).unwrap())
@@ -211,6 +215,117 @@ fn planning_actor() -> PlanningRuntimeActor<TaskCompiler> {
     )
 }
 
+fn planning_attempt_store() -> Arc<PlanningAttemptStore> {
+    Arc::new(
+        PlanningAttemptStore::new(sled::Config::new().temporary(true).open().unwrap()).unwrap(),
+    )
+}
+
+fn planning_attempt_store_at(path: &std::path::Path) -> Arc<PlanningAttemptStore> {
+    Arc::new(PlanningAttemptStore::new(sled::open(path).unwrap()).unwrap())
+}
+
+fn durable_planning_actor(
+    store: Arc<PlanningAttemptStore>,
+    lease_id: &str,
+) -> PlanningRuntimeActor<TaskCompiler> {
+    let mut actor = PlanningRuntimeActor::new_durable(
+        runtime(vec![docs_method("refresh")]),
+        ExecutionCompositionLowerer::new(TaskCompiler::new(), catalog()),
+        store,
+    );
+    actor.bind_owner(lease_id).unwrap();
+    actor
+}
+
+fn prepare_attempt(
+    store: &PlanningAttemptStore,
+    goal_id: &str,
+    source_seq: u64,
+    network_id: &str,
+    composition_id: &str,
+) -> PlanningAttemptIdentity {
+    let mut goal = goal_with_ceiling(None);
+    goal.goal_id = goal_id.to_string();
+    let world_state_request = PlanningWorldStateRequest {
+        goal_id: goal.goal_id.clone(),
+        agent_id: goal.agent_id.clone(),
+        subject: DomainObjectRef::new("workspace", "node", "readme").unwrap(),
+        source_seq,
+        target: goal.target.clone(),
+        perspective: PlanningPerspectiveRef::new("agent", "default").unwrap(),
+        branch_id: "main".to_string(),
+        requested_dimensions: vec!["docs_freshness".to_string()],
+        required_preconditions: Vec::new(),
+    };
+    let world_state = unsatisfied_state();
+    let world_state_frame = derived_frame(&world_state_request, &world_state);
+    let projection_identity = PlanningProjectionIdentityInputs::from_projection(
+        &world_state_request,
+        &world_state,
+        &world_state_frame,
+    )
+    .unwrap();
+    let identified = IdentifiedPlanningRequest::bind(
+        PlanningRequest {
+            request_id: String::new(),
+            goal,
+            world_state,
+            world_state_frame,
+            world_state_request,
+        },
+        PlanningRequestIdentityInputs {
+            goal_id: goal_id.to_string(),
+            goal_updated_at_seq: source_seq,
+            projection_identity,
+            method_library_digest: blake3::hash(b"methods").to_hex().to_string(),
+            capability_catalog_digest: blake3::hash(b"capabilities").to_hex().to_string(),
+            planning_version: "execution.planning.v1".to_string(),
+        },
+    )
+    .unwrap();
+    let identity = PlanningAttemptIdentity::bind(identified.identity().clone()).unwrap();
+    store.open_attempt(identity.clone()).unwrap();
+    store
+        .record_decision(
+            identity.attempt_id(),
+            PlanningAttemptDecisionAudit::new(
+                Some("refresh".to_string()),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                PlanningAttemptResultSummary::Composed {
+                    composition_id: composition_id.to_string(),
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let base = NetworkState::empty(network_id);
+    store
+        .prepare_command(
+            identity.attempt_id(),
+            CommandRequest {
+                command_id: planning_task_network_command_id(&identity, composition_id).unwrap(),
+                network_id: network_id.to_string(),
+                base_revision: base.revision,
+                base_state_hash: base.state_hash.clone(),
+                read_preconditions: vec![
+                    ReadPrecondition::RevisionIs(base.revision),
+                    ReadPrecondition::StateHashIs(base.state_hash),
+                ],
+                command: TaskNetworkCommand::ApplyMutationSet(Set::empty(
+                    network_id,
+                    composition_id,
+                    identity.attempt_id(),
+                )),
+            },
+        )
+        .unwrap();
+    identity
+}
+
 fn actor_request(limit: Option<usize>) -> PlanningRuntimeActorRequest {
     PlanningRuntimeActorRequest {
         network_id: "network-docs".to_string(),
@@ -250,6 +365,11 @@ struct StaleRaceGoalStore<'a> {
     winner: std::sync::Mutex<Option<CommandRequest>>,
 }
 
+struct ClosingGoalStore<'a> {
+    inner: &'a PersistentGoalSetStore,
+    authority: std::cell::RefCell<Option<&'a mut TaskNetworkAuthority>>,
+}
+
 impl GoalPlanningSelectionPort for StaleRaceGoalStore<'_> {
     fn claim_active_goals(
         &self,
@@ -275,6 +395,34 @@ impl GoalPlanningSelectionPort for StaleRaceGoalStore<'_> {
                 .try_submit(winner)
                 .map_err(|error| GoalPlanningSelectionError::TransientStorage(error.to_string()))?;
             assert!(matches!(response, Response::Accepted { revision: 1, .. }));
+        }
+        self.inner.planning_goal_record(goal_id)
+    }
+}
+
+impl GoalPlanningSelectionPort for ClosingGoalStore<'_> {
+    fn claim_active_goals(
+        &self,
+        limit: usize,
+    ) -> Result<GoalPlanningSelection, GoalPlanningSelectionError> {
+        self.inner.claim_active_goals(limit)
+    }
+
+    fn release_goal_claim(
+        &self,
+        claim: &GoalPlanningClaim,
+    ) -> Result<(), GoalPlanningSelectionError> {
+        self.inner.release_goal_claim(claim)
+    }
+
+    fn planning_goal_record(
+        &self,
+        goal_id: &str,
+    ) -> Result<Option<ExecutionGoalRecord>, GoalPlanningSelectionError> {
+        if let Some(authority) = self.authority.borrow_mut().take() {
+            authority
+                .shutdown()
+                .map_err(|error| GoalPlanningSelectionError::TransientStorage(error.to_string()))?;
         }
         self.inner.planning_goal_record(goal_id)
     }
@@ -565,7 +713,7 @@ fn planning_actor_reads_active_goals_and_submits_lowered_composition() {
         projection_requests[0].subject,
         DomainObjectRef::new("workspace", "node", "readme").unwrap()
     );
-    assert_eq!(report.actor_id, "execution.planning.runtime");
+    assert_eq!(report.actor_id, "execution.planning");
     assert_eq!(report.active_goal_count, 1);
     assert_eq!(report.attempted, 1);
     assert_eq!(report.committed, 1);
@@ -1784,4 +1932,519 @@ fn planning_actor_marks_final_revision_unverified_after_partial_progress_and_rep
     let replacement = replacement.as_mut().unwrap();
     assert_eq!(replacement.ports().query().state().unwrap().revision, 1);
     replacement.shutdown().unwrap();
+}
+
+#[test]
+fn durable_planning_actor_persists_successful_attempt_and_authenticated_outcome() {
+    let goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
+    let attempt_store = planning_attempt_store();
+    let query = PlanningAttemptQuery::new(Arc::clone(&attempt_store));
+    let actor = durable_planning_actor(Arc::clone(&attempt_store), "lease-success");
+    let task_network = open_task_network_store();
+    let mut projection = |request: PlanningWorldStateRequest| {
+        let world_state = unsatisfied_state();
+        Ok(PlanningWorldStateProjection {
+            frame: derived_frame(&request, &world_state),
+            world_state,
+        })
+    };
+
+    let report = actor
+        .run_once(
+            &goal_store,
+            &task_network.ports,
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap();
+
+    let attempts = query
+        .attempts_for_goal_bounded("goal-docs", None, 1)
+        .unwrap()
+        .attempts;
+    assert_eq!(attempts.len(), 1);
+    let attempt = &attempts[0];
+    assert_eq!(attempt.state, PlanningAttemptState::CommandCompleted);
+    let decision = query
+        .decision_audit(attempt.identity.attempt_id())
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        decision.result_summary(),
+        PlanningAttemptResultSummary::Composed { .. }
+    ));
+    let prepared = query
+        .prepared_command(attempt.identity.attempt_id())
+        .unwrap()
+        .unwrap();
+    let outcome = query
+        .command_outcome(attempt.identity.attempt_id())
+        .unwrap()
+        .unwrap();
+    let authority_receipt = task_network
+        .ports
+        .query()
+        .command_outcome(&prepared.request.command_id)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(report.actor_id, "execution.planning");
+    assert_eq!(report.committed, 1);
+    assert_eq!(outcome.command_id, prepared.request.command_id);
+    assert_eq!(outcome.response, authority_receipt.response().clone());
+    assert!(matches!(
+        report.results.as_slice(),
+        [PlanningRuntimeActorGoalResult::Submitted {
+            response: Response::Accepted { .. },
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn durable_planning_actor_recovers_prepared_command_before_selecting_new_goals() {
+    let goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
+    let attempt_temp = tempfile::tempdir().unwrap();
+    let attempt_path = attempt_temp.path().join("attempts");
+    let network_temp = tempfile::tempdir().unwrap();
+    let factory = TaskNetworkStoreFactory::new(network_temp.path());
+    {
+        let attempt_store = planning_attempt_store_at(&attempt_path);
+        let query = PlanningAttemptQuery::new(Arc::clone(&attempt_store));
+        let actor = durable_planning_actor(Arc::clone(&attempt_store), "lease-first");
+        let mut first_authority = TaskNetworkAuthority::open(&factory, "network-docs", 16).unwrap();
+        let first_ports = first_authority.ports();
+        let first = {
+            let closing_goals = ClosingGoalStore {
+                inner: &goal_store,
+                authority: std::cell::RefCell::new(Some(&mut first_authority)),
+            };
+            let mut projection = |request: PlanningWorldStateRequest| {
+                let world_state = unsatisfied_state();
+                Ok(PlanningWorldStateProjection {
+                    frame: derived_frame(&request, &world_state),
+                    world_state,
+                })
+            };
+            actor
+                .run_once(
+                    &closing_goals,
+                    &first_ports,
+                    &mut projection,
+                    actor_request(None),
+                )
+                .unwrap()
+        };
+        assert!(matches!(
+            first.results.as_slice(),
+            [PlanningRuntimeActorGoalResult::CommandFailed { .. }]
+        ));
+        let recoveries = query
+            .recoverable_commands_bounded(None, 1)
+            .unwrap()
+            .recoveries;
+        assert_eq!(recoveries.len(), 1);
+        assert_eq!(
+            recoveries[0].head.state,
+            PlanningAttemptState::CommandPrepared
+        );
+        attempt_store.flush().unwrap();
+    }
+
+    let mut replacement = TaskNetworkAuthority::open(&factory, "network-docs", 16).unwrap();
+    let attempt_store = planning_attempt_store_at(&attempt_path);
+    let query = PlanningAttemptQuery::new(Arc::clone(&attempt_store));
+    let recovered_actor = durable_planning_actor(Arc::clone(&attempt_store), "lease-recovery");
+    let mut projection_called = false;
+    let mut projection = |_request: PlanningWorldStateRequest| {
+        projection_called = true;
+        Err(PlanningProjectionError::fatal(
+            "recovery must consume budget first",
+        ))
+    };
+    let report = recovered_actor
+        .run_once(
+            &goal_store,
+            &replacement.ports(),
+            &mut projection,
+            actor_request(Some(1)),
+        )
+        .unwrap();
+
+    assert!(!projection_called);
+    assert_eq!(report.attempted, 1);
+    assert_eq!(report.committed, 1);
+    assert!(matches!(
+        report.results.as_slice(),
+        [PlanningRuntimeActorGoalResult::Recovered {
+            response: Response::Accepted { .. },
+            ..
+        }]
+    ));
+    assert!(query
+        .recoverable_commands_bounded(None, 1)
+        .unwrap()
+        .recoveries
+        .is_empty());
+    replacement.shutdown().unwrap();
+}
+
+#[test]
+fn durable_planning_actor_rejects_stale_owner_before_tick_work() {
+    let goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
+    let attempt_store = planning_attempt_store();
+    let actor = durable_planning_actor(Arc::clone(&attempt_store), "lease-stale");
+    let expected = attempt_store.active_owner_fence().unwrap();
+    attempt_store
+        .bind_owner(expected.as_ref(), "execution.planning", "lease-replacement")
+        .unwrap();
+    let task_network = open_task_network_store();
+    let mut projection_called = false;
+    let mut projection = |_request: PlanningWorldStateRequest| {
+        projection_called = true;
+        Err(PlanningProjectionError::fatal(
+            "stale actor must not project",
+        ))
+    };
+
+    let error = actor
+        .run_once(
+            &goal_store,
+            &task_network.ports,
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap_err();
+
+    assert!(!projection_called);
+    assert!(matches!(
+        error,
+        meld_execution::planning::PlanningRuntimeActorError::PlanningAttemptAuthority {
+            retryable: false,
+            ..
+        }
+    ));
+    assert!(task_network.journal().is_empty());
+}
+
+#[test]
+fn durable_planning_actor_records_prepare_before_task_network_outcome() {
+    let goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
+    let attempt_store = planning_attempt_store();
+    let query = PlanningAttemptQuery::new(Arc::clone(&attempt_store));
+    let actor = durable_planning_actor(Arc::clone(&attempt_store), "lease-order");
+    let task_network = open_task_network_store();
+    let mut projection = |request: PlanningWorldStateRequest| {
+        let world_state = unsatisfied_state();
+        Ok(PlanningWorldStateProjection {
+            frame: derived_frame(&request, &world_state),
+            world_state,
+        })
+    };
+
+    actor
+        .run_once(
+            &goal_store,
+            &task_network.ports,
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap();
+
+    let attempt = query
+        .attempts_for_goal_bounded("goal-docs", None, 1)
+        .unwrap()
+        .attempts
+        .pop()
+        .unwrap();
+    let history = query
+        .history_bounded(attempt.identity.attempt_id(), None, 8)
+        .unwrap();
+    assert_eq!(history.records.len(), 4);
+    assert!(matches!(
+        history.records[0].kind,
+        PlanningAttemptRecordKind::Opened { .. }
+    ));
+    assert!(matches!(
+        history.records[1].kind,
+        PlanningAttemptRecordKind::DecisionAudited { .. }
+    ));
+    assert!(matches!(
+        history.records[2].kind,
+        PlanningAttemptRecordKind::CommandPrepared { .. }
+    ));
+    assert!(matches!(
+        history.records[3].kind,
+        PlanningAttemptRecordKind::CommandOutcome { .. }
+    ));
+    let prepared = query
+        .prepared_command(attempt.identity.attempt_id())
+        .unwrap()
+        .unwrap();
+    let authority_receipt = task_network
+        .ports
+        .query()
+        .command_outcome(&prepared.request.command_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(authority_receipt.request(), &prepared.request);
+}
+
+#[test]
+fn durable_planning_actor_rebases_retryable_rejection_after_store_and_network_reopen() {
+    let goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
+    let attempt_temp = tempfile::tempdir().unwrap();
+    let attempt_path = attempt_temp.path().join("attempts");
+    let network_temp = tempfile::tempdir().unwrap();
+    let factory = TaskNetworkStoreFactory::new(network_temp.path());
+    let parent_attempt_id;
+    let rejected_command_id;
+    {
+        let attempt_store = planning_attempt_store_at(&attempt_path);
+        let query = PlanningAttemptQuery::new(Arc::clone(&attempt_store));
+        let actor = durable_planning_actor(Arc::clone(&attempt_store), "lease-stale-parent");
+        let mut authority = TaskNetworkAuthority::open(&factory, "network-docs", 16).unwrap();
+        let ports = authority.ports();
+        let stale_state = ports.query().state().unwrap();
+        let winner = CommandRequest {
+            command_id: "durable-stale-winner".to_string(),
+            network_id: stale_state.network_id.clone(),
+            base_revision: stale_state.revision,
+            base_state_hash: stale_state.state_hash.clone(),
+            read_preconditions: vec![
+                ReadPrecondition::RevisionIs(stale_state.revision),
+                ReadPrecondition::StateHashIs(stale_state.state_hash.clone()),
+            ],
+            command: TaskNetworkCommand::ApplyMutationSet(Set::empty(
+                stale_state.network_id,
+                "durable-stale-winner",
+                "durable-stale-winner",
+            )),
+        };
+        let racing_goals = StaleRaceGoalStore {
+            inner: &goal_store,
+            command_port: ports.commands().clone(),
+            winner: std::sync::Mutex::new(Some(winner)),
+        };
+        let mut projection = |request: PlanningWorldStateRequest| {
+            let world_state = unsatisfied_state();
+            Ok(PlanningWorldStateProjection {
+                frame: derived_frame(&request, &world_state),
+                world_state,
+            })
+        };
+        let report = actor
+            .run_once(&racing_goals, &ports, &mut projection, actor_request(None))
+            .unwrap();
+        let PlanningRuntimeActorGoalResult::Submitted {
+            command_id,
+            response: Response::Rejected(Rejection::StaleBase { actual: 1, .. }),
+            ..
+        } = &report.results[0]
+        else {
+            panic!("first durable attempt must retain its stale rejection");
+        };
+        rejected_command_id = command_id.clone();
+        let attempts = query
+            .attempts_for_goal_bounded("goal-docs", None, 8)
+            .unwrap()
+            .attempts;
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].state, PlanningAttemptState::CommandCompleted);
+        parent_attempt_id = attempts[0].identity.attempt_id().to_string();
+        authority.shutdown().unwrap();
+        attempt_store.flush().unwrap();
+    }
+
+    let attempt_store = planning_attempt_store_at(&attempt_path);
+    let query = PlanningAttemptQuery::new(Arc::clone(&attempt_store));
+    let actor = durable_planning_actor(Arc::clone(&attempt_store), "lease-stale-child");
+    let mut authority = TaskNetworkAuthority::open(&factory, "network-docs", 16).unwrap();
+    let mut projection = |request: PlanningWorldStateRequest| {
+        let world_state = unsatisfied_state();
+        Ok(PlanningWorldStateProjection {
+            frame: derived_frame(&request, &world_state),
+            world_state,
+        })
+    };
+    let report = actor
+        .run_once(
+            &goal_store,
+            &authority.ports(),
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap();
+    let accepted_command_id = report
+        .results
+        .iter()
+        .find_map(|result| match result {
+            PlanningRuntimeActorGoalResult::Submitted {
+                command_id,
+                response: Response::Accepted { revision: 2, .. },
+                ..
+            } => Some(command_id.clone()),
+            _ => None,
+        })
+        .expect("rebased child must commit from the reopened authority head");
+    let attempts = query
+        .attempts_for_goal_bounded("goal-docs", None, 8)
+        .unwrap()
+        .attempts;
+    assert_eq!(attempts.len(), 2);
+    let child = attempts
+        .iter()
+        .find(|attempt| {
+            attempt.identity.rebase_parent_attempt_id() == Some(parent_attempt_id.as_str())
+        })
+        .expect("rebase child must retain its rejected parent");
+    assert_eq!(child.state, PlanningAttemptState::CommandCompleted);
+    assert_eq!(child.identity.rebase_base().map(|base| base.0), Some(1));
+    assert_ne!(accepted_command_id, rejected_command_id);
+    assert!(matches!(
+        query
+            .command_outcome(child.identity.attempt_id())
+            .unwrap()
+            .unwrap()
+            .response,
+        Response::Accepted { revision: 2, .. }
+    ));
+    authority.shutdown().unwrap();
+}
+
+#[test]
+fn durable_recovery_cursor_skips_persistent_first_entry_across_store_reopen() {
+    let attempt_temp = tempfile::tempdir().unwrap();
+    let attempt_path = attempt_temp.path().join("attempts");
+    let network = open_task_network_store();
+    let goal_store =
+        PersistentGoalSetStore::new(sled::Config::new().temporary(true).open().unwrap()).unwrap();
+    let second_attempt_id;
+    {
+        let base = planning_attempt_store_at(&attempt_path);
+        let expected = base.active_owner_fence().unwrap();
+        let owned = Arc::new(
+            base.bind_owner(expected.as_ref(), "execution.planning", "lease-seed")
+                .unwrap(),
+        );
+        prepare_attempt(
+            &owned,
+            "goal-first",
+            1,
+            "network-other",
+            "composition-first",
+        );
+        let second = prepare_attempt(
+            &owned,
+            "goal-second",
+            2,
+            "network-docs",
+            "composition-second",
+        );
+        second_attempt_id = second.attempt_id().to_string();
+        let actor = durable_planning_actor(Arc::clone(&owned), "lease-fair-first");
+        let mut projection = |_request: PlanningWorldStateRequest| {
+            Err(PlanningProjectionError::fatal(
+                "no goals should be selected",
+            ))
+        };
+        let report = actor
+            .run_once(
+                &goal_store,
+                &network.ports,
+                &mut projection,
+                actor_request(Some(1)),
+            )
+            .unwrap();
+        assert!(matches!(
+            report.results.as_slice(),
+            [PlanningRuntimeActorGoalResult::CommandFailed {
+                retryable: false,
+                ..
+            }]
+        ));
+        assert!(report.budget_exhausted);
+        owned.flush().unwrap();
+    }
+
+    let reopened = planning_attempt_store_at(&attempt_path);
+    let query = PlanningAttemptQuery::new(Arc::clone(&reopened));
+    let actor = durable_planning_actor(Arc::clone(&reopened), "lease-fair-second");
+    let mut projection = |_request: PlanningWorldStateRequest| {
+        Err(PlanningProjectionError::fatal(
+            "no goals should be selected",
+        ))
+    };
+    let report = actor
+        .run_once(
+            &goal_store,
+            &network.ports,
+            &mut projection,
+            actor_request(Some(1)),
+        )
+        .unwrap();
+
+    assert!(matches!(
+        report.results.as_slice(),
+        [PlanningRuntimeActorGoalResult::Recovered {
+            attempt_id,
+            response: Response::Accepted { .. },
+            ..
+        }] if attempt_id == &second_attempt_id
+    ));
+    let remaining = query
+        .recoverable_commands_bounded(None, 8)
+        .unwrap()
+        .recoveries;
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].head.identity.goal_id(), "goal-first");
+}
+
+#[test]
+fn durable_retryable_projection_diagnostics_can_change_without_identity_conflict() {
+    let goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
+    let attempt_store = planning_attempt_store();
+    let query = PlanningAttemptQuery::new(Arc::clone(&attempt_store));
+    let actor = durable_planning_actor(Arc::clone(&attempt_store), "lease-projection-retry");
+    let task_network = open_task_network_store();
+    let mut diagnostic = 0;
+    let mut projection = |_request: PlanningWorldStateRequest| {
+        diagnostic += 1;
+        Err(PlanningProjectionError::retryable(format!(
+            "projection retry {diagnostic}"
+        )))
+    };
+
+    let first = actor
+        .run_once(
+            &goal_store,
+            &task_network.ports,
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap();
+    let second = actor
+        .run_once(
+            &goal_store,
+            &task_network.ports,
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap();
+
+    assert!(matches!(
+        &first.results[0],
+        PlanningRuntimeActorGoalResult::ProjectionFailed { error, .. }
+            if error == "projection retry 1"
+    ));
+    assert!(matches!(
+        &second.results[0],
+        PlanningRuntimeActorGoalResult::ProjectionFailed { error, .. }
+            if error == "projection retry 2"
+    ));
+    assert!(query
+        .attempts_for_goal_bounded("goal-docs", None, 8)
+        .unwrap()
+        .attempts
+        .is_empty());
 }

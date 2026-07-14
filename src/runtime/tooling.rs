@@ -71,6 +71,142 @@ pub fn handle_cli_activation(
     format_runtime_activation_description(&description, format)
 }
 
+/// Bootstrap and run one activation-selected cognitive flywheel in the foreground.
+#[allow(clippy::too_many_arguments)]
+pub fn handle_cli_activation_run(
+    workspace_root: &std::path::Path,
+    config_path: Option<&std::path::Path>,
+    activation_path: &std::path::Path,
+    instance_id: Option<String>,
+    tick_ms: u64,
+    duration_ms: Option<u64>,
+    format: &str,
+    restart_policy: &str,
+    restart_attempt_limit: u64,
+    restart_backoff_ms: u64,
+) -> Result<String, ApiError> {
+    validate_runtime_run_options(format, tick_ms, restart_policy)?;
+    handle_cli_activation(workspace_root, config_path, activation_path, false, "json")?;
+    let prepared = crate::runtime::activation::load_and_prepare_activation(
+        workspace_root,
+        activation_path,
+        config_path,
+    )
+    .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+    let config = prepared.repository_config;
+    let preflight = prepared.preflight;
+    let owner = preflight.activation.runtime_inputs;
+    let (legacy_store_path, _, _) = config.system.storage.resolve_paths(workspace_root)?;
+    let product_root = config.system.storage.resolve_product_root(workspace_root)?;
+    let product_layout = crate::runtime::storage::ProductStorageLayout::from_root(&product_root);
+    let branch_runtime = crate::branches::BranchRuntime::new();
+    let active_branch = branch_runtime.resolve_active_branch(workspace_root)?;
+    branch_runtime.ensure_active_branch_registered(&active_branch)?;
+    let resolved = crate::events::binding::resolve_product_event_authority(
+        active_branch.resolved(),
+        &product_layout.ledger_db,
+        &legacy_store_path,
+    )
+    .map_err(runtime_error)?;
+    crate::runtime::storage::migrate_legacy_belief_authority(
+        &product_layout,
+        &legacy_store_path,
+        &resolved.binding,
+    )
+    .map_err(runtime_error)?;
+
+    let agent_store = meld_world_model::AgentStore::new(
+        sled::open(&product_layout.world_model_db).map_err(runtime_error)?,
+    )
+    .map_err(runtime_error)?;
+    let world_model_receipt = agent_store
+        .get_bootstrap_receipt(&owner.runtime.bootstrap_runtime_id)
+        .map_err(runtime_error)?
+        .ok_or_else(|| runtime_message("activation bootstrap receipt is missing"))?;
+    drop(agent_store);
+    append_activation_observation(
+        resolved.authority.as_ref(),
+        &owner.world_model,
+        &preflight.execution_input,
+    )?;
+    let selection = crate::runtime::activation::SemanticRuntimeSelection::docs_freshness_v1(
+        &owner.runtime,
+        &world_model_receipt,
+        &preflight.execution_receipt,
+    )
+    .map_err(runtime_error)?;
+    let assembly = ProductRuntimeAssembly::load_semantic_with_authority(
+        workspace_root,
+        &config,
+        resolved.authority,
+        owner.runtime,
+        owner.world_model,
+        preflight.execution_input,
+        preflight.execution_receipt,
+        world_model_receipt,
+        selection,
+    )
+    .map_err(runtime_error)?;
+    runtime_run(
+        &assembly,
+        RuntimeRunOptions {
+            instance_id,
+            tick_ms,
+            duration_ms,
+            format,
+            restart_policy,
+            restart_attempt_limit,
+            restart_backoff_ms,
+        },
+    )
+}
+
+fn append_activation_observation(
+    authority: &meld_events::EventAuthority,
+    world_model: &meld_world_model::activation::WorldModelActivationInput,
+    execution: &meld_execution::activation::ExecutionActivationInput,
+) -> Result<(), ApiError> {
+    let subject = world_model.seed_agent.subject.clone();
+    let frame_type = &execution.selection.frame_type;
+    let head = meld_events::DomainObjectRef::new(
+        "context",
+        "head",
+        format!("{}::{frame_type}", subject.object_id),
+    )
+    .map_err(runtime_error)?;
+    let frame = meld_events::DomainObjectRef::new(
+        "context",
+        "frame",
+        format!("activation-{}", &execution.selection.activation_hash[..16]),
+    )
+    .map_err(runtime_error)?;
+    let relation = meld_events::EventRelation::new("selected", subject.clone(), frame.clone())
+        .map_err(runtime_error)?;
+    authority
+        .append_capability()
+        .append_durable(
+            meld_events::EventEnvelope::with_now_domain(
+                "docs-freshness-runtime",
+                "context",
+                format!("docs-freshness-{}", execution.selection.activation_id),
+                "context.head_selected",
+                None,
+                serde_json::json!({
+                    "source": "activation_target_observation",
+                    "target": execution.selection.target,
+                }),
+            )
+            .with_record_id(format!(
+                "docs-freshness-observation-{}",
+                execution.selection.activation_hash
+            ))
+            .with_graph(vec![head, subject, frame], vec![relation]),
+            meld_events::AppendMode::Idempotent,
+        )
+        .map_err(runtime_error)?;
+    Ok(())
+}
+
 fn apply_prepared_activation(
     workspace_root: &std::path::Path,
     prepared: crate::runtime::activation::PreparedProductActivation,
@@ -497,6 +633,7 @@ pub fn handle_cli_command(
             "runtime activate must be routed before product stores open".to_string(),
         )),
         RuntimeCommands::Run {
+            activation: _,
             instance_id,
             tick_ms,
             duration_ms,
@@ -881,11 +1018,8 @@ fn runtime_run(
     assembly: &ProductRuntimeAssembly,
     options: RuntimeRunOptions<'_>,
 ) -> Result<String, ApiError> {
-    validate_format(options.format)?;
-    if options.tick_ms == 0 {
-        return Err(runtime_message("tick-ms must be greater than 0"));
-    }
-    let restart_policy = parse_restart_policy(options.restart_policy)?;
+    let restart_policy =
+        validate_runtime_run_options(options.format, options.tick_ms, options.restart_policy)?;
     let started_at_ms = current_time_ms()?;
     let instance_id = options
         .instance_id
@@ -1275,6 +1409,18 @@ fn parse_restart_policy(value: &str) -> Result<RestartPolicy, ApiError> {
             "unknown restart policy '{other}', expected 'never', 'on-retryable-failure', or 'on-heartbeat-expiry'"
         ))),
     }
+}
+
+fn validate_runtime_run_options(
+    format: &str,
+    tick_ms: u64,
+    restart_policy: &str,
+) -> Result<RestartPolicy, ApiError> {
+    validate_format(format)?;
+    if tick_ms == 0 {
+        return Err(runtime_message("tick-ms must be greater than 0"));
+    }
+    parse_restart_policy(restart_policy)
 }
 
 fn validate_format(format: &str) -> Result<(), ApiError> {

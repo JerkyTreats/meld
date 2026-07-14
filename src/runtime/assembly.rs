@@ -8,16 +8,35 @@ use meld_events::EventAuthority;
 #[cfg(test)]
 use meld_events::EventAuthorityOpenOptions;
 use meld_execution::activation::{
-    validate_execution_activation, ExecutionActivationInput, ExecutionActivationValidationReceipt,
+    validate_execution_activation, BuiltInExecutionActivationRegistry, ExecutionActivationInput,
+    ExecutionActivationValidationReceipt,
 };
+use meld_execution::planning::{
+    ExecutionCompositionLowerer, PlanningPerspectiveRef, PlanningRuntime, PlanningRuntimeActor,
+    PlanningRuntimeActorRequest,
+};
+use meld_execution::task::TaskCompiler;
 use meld_execution::task_network::store::network_storage_key;
+use meld_execution::task_network::{
+    PublicationRuntime, PublicationRuntimeScope, PublishPendingPublicationsRequest,
+};
 use meld_execution::task_network::{TaskNetworkAuthorityError, TaskNetworkAuthorityLifecycle};
-use meld_world_model::activation::{validate_world_model_activation, WorldModelActivationInput};
+use meld_world_model::activation::{
+    validate_world_model_activation, AgentBootstrapReceipt, WorldModelActivationInput,
+};
+use meld_world_model::belief::{
+    BeliefAssessmentActor, BeliefAssessmentRequest, BeliefConfigLoader, BeliefDirtyKeyTickRequest,
+    EvidenceIngestionActor, EvidenceIngestionActorRequest,
+};
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
-use meld_world_model::AgentBootstrapRuntime;
+use meld_world_model::{
+    AgentBootstrapRuntime, AgentCurationTickRequest, AgentGoalCurationActor, AgentHydrationActor,
+    AgentHydrationTickRequest, AgentQuery, AgentSatisfactionCurationActor, PlannerProjectionActor,
+    PlannerProjectionTickRequest,
+};
 
 use crate::config::MerkleConfig;
-use crate::runtime::activation::RuntimeActivationInput;
+use crate::runtime::activation::{RuntimeActivationInput, SemanticRuntimeSelection};
 use crate::runtime::contracts::{
     RuntimeImplementationState, RuntimeRoleClass, WorkBudget, WorkerTickReport,
 };
@@ -25,6 +44,10 @@ use crate::runtime::error::{RuntimeAssemblyError, RuntimeRegistryError};
 use crate::runtime::ports::{ProductRuntimePorts, ProviderPortConfig};
 use crate::runtime::storage::{OpenProductStores, ProductStorageLayout, ProductStorageRoot};
 use crate::runtime::supervisor::SupervisorStore;
+use crate::runtime::task_dispatch::{
+    DocsFreshnessDispatchConfig, DocsFreshnessDispatchRoutes, TaskDispatchActor,
+    TaskDispatchDisposition, TaskDispatchError, TaskDispatchRequest,
+};
 
 /// Root product runtime assembly.
 ///
@@ -47,7 +70,17 @@ pub struct ProductRuntimeAssembly {
     process_services: RuntimeProcessServices,
     diagnostics: Vec<AssemblyDiagnostic>,
     activation_execution: Option<ExecutionActivationState>,
+    activation_semantic: Option<SemanticRuntimeSelection>,
     configured_task_network: Option<ConfiguredTaskNetworkIdentity>,
+}
+
+struct SemanticActivationState {
+    workspace_root: PathBuf,
+    repository_config: MerkleConfig,
+    runtime: RuntimeActivationInput,
+    world_model: WorldModelActivationInput,
+    world_model_receipt: AgentBootstrapReceipt,
+    selection: SemanticRuntimeSelection,
 }
 
 /// Pure execution activation products retained without opening execution stores.
@@ -260,6 +293,62 @@ enum RuntimeSemanticHandleFactory {
         runtime: Arc<AgentBootstrapRuntime>,
         input: Arc<WorldModelActivationInput>,
     },
+    BeliefAssessment {
+        actor: Arc<BeliefAssessmentActor>,
+        store: Arc<meld_world_model::belief::BeliefStore>,
+        belief_key: meld_world_model::belief::BeliefKey,
+        initial_request: BeliefAssessmentRequest,
+    },
+    EvidenceIngestion {
+        actor: Arc<EvidenceIngestionActor>,
+        store: Arc<meld_world_model::belief::BeliefStore>,
+        request: Box<EvidenceIngestionActorRequest>,
+    },
+    AgentHydration {
+        actor: Arc<AgentHydrationActor>,
+        agent_store: Arc<meld_world_model::AgentStore>,
+        belief_store: Arc<meld_world_model::belief::BeliefStore>,
+        planner_store: Arc<meld_world_model::PlannerProjectionStore>,
+    },
+    AgentGoalCuration {
+        actor: Arc<AgentGoalCurationActor>,
+        agent_store: Arc<meld_world_model::AgentStore>,
+        goal_store: Arc<meld_execution::goals::PersistentGoalSetStore>,
+        goal_port: crate::runtime::ports::ExecutionGoalCommandPort,
+    },
+    AgentSatisfactionCuration {
+        actor: Arc<AgentSatisfactionCurationActor>,
+        agent_store: Arc<meld_world_model::AgentStore>,
+        goal_store: Arc<meld_execution::goals::PersistentGoalSetStore>,
+        goal_port: crate::runtime::ports::ExecutionGoalCommandPort,
+        mutation_port: crate::runtime::ports::ExecutionGoalMutationPort,
+    },
+    PlannerProjection {
+        actor: Arc<PlannerProjectionActor>,
+        store: Arc<meld_world_model::PlannerProjectionStore>,
+    },
+    Planning {
+        runtime: PlanningRuntime,
+        lowerer: ExecutionCompositionLowerer<TaskCompiler>,
+        attempt_store: Arc<meld_execution::planning::PlanningAttemptStore>,
+        goal_store: Arc<meld_execution::goals::PersistentGoalSetStore>,
+        projection: crate::runtime::ports::PlannerProjectionPort,
+        host: crate::runtime::ports::TaskNetworkAuthorityHostPort,
+        request: PlanningRuntimeActorRequest,
+    },
+    TaskDispatch {
+        host: crate::runtime::ports::TaskNetworkAuthorityHostPort,
+        artifact_repos: meld_execution::task::TaskArtifactRepoFactory,
+        routes: Box<DocsFreshnessDispatchRoutes>,
+        network_id: String,
+    },
+    Publication {
+        runtime: PublicationRuntime,
+        host: crate::runtime::ports::TaskNetworkAuthorityHostPort,
+        events: crate::runtime::ports::ProductEventAppendPort,
+        network_id: String,
+        session_id: String,
+    },
     TaskNetworkAuthority {
         host: crate::runtime::ports::TaskNetworkAuthorityHostPort,
         identity: ConfiguredTaskNetworkIdentity,
@@ -272,6 +361,15 @@ enum RuntimeSemanticHandle {
     GraphReplay(GraphReplayRuntimeHandle),
     EventAppend(EventAppendRuntimeHandle),
     AgentBootstrap(AgentBootstrapRuntimeHandle),
+    BeliefAssessment(BeliefAssessmentRuntimeHandle),
+    EvidenceIngestion(Box<EvidenceIngestionRuntimeHandle>),
+    AgentHydration(AgentHydrationRuntimeHandle),
+    AgentGoalCuration(AgentGoalCurationRuntimeHandle),
+    AgentSatisfactionCuration(AgentSatisfactionCurationRuntimeHandle),
+    PlannerProjection(PlannerProjectionRuntimeHandle),
+    Planning(PlanningRuntimeHandle),
+    TaskDispatch(Box<TaskDispatchRuntimeHandle>),
+    Publication(PublicationRuntimeHandle),
     TaskNetworkAuthority(TaskNetworkAuthorityRuntimeHandle),
 }
 
@@ -283,6 +381,78 @@ struct GraphReplayRuntimeHandle {
 struct AgentBootstrapRuntimeHandle {
     runtime: Arc<AgentBootstrapRuntime>,
     input: Arc<WorldModelActivationInput>,
+}
+
+struct BeliefAssessmentRuntimeHandle {
+    actor: Arc<BeliefAssessmentActor>,
+    store: Arc<meld_world_model::belief::BeliefStore>,
+    belief_key: meld_world_model::belief::BeliefKey,
+    initial_request: BeliefAssessmentRequest,
+    lease_id: Option<String>,
+}
+
+struct EvidenceIngestionRuntimeHandle {
+    actor: Arc<EvidenceIngestionActor>,
+    store: Arc<meld_world_model::belief::BeliefStore>,
+    request: EvidenceIngestionActorRequest,
+    lease_id: Option<String>,
+}
+
+struct AgentHydrationRuntimeHandle {
+    actor: Arc<AgentHydrationActor>,
+    agent_store: Arc<meld_world_model::AgentStore>,
+    belief_store: Arc<meld_world_model::belief::BeliefStore>,
+    planner_store: Arc<meld_world_model::PlannerProjectionStore>,
+    lease_id: Option<String>,
+}
+
+struct AgentGoalCurationRuntimeHandle {
+    actor: Arc<AgentGoalCurationActor>,
+    agent_store: Arc<meld_world_model::AgentStore>,
+    goal_store: Arc<meld_execution::goals::PersistentGoalSetStore>,
+    goal_query: crate::runtime::ports::ExecutionGoalCommandPort,
+    outcome_query: crate::runtime::ports::ExecutionGoalCommandPort,
+    sink: crate::runtime::ports::ExecutionGoalCommandPort,
+}
+
+struct AgentSatisfactionCurationRuntimeHandle {
+    actor: Arc<AgentSatisfactionCurationActor>,
+    agent_store: Arc<meld_world_model::AgentStore>,
+    goal_store: Arc<meld_execution::goals::PersistentGoalSetStore>,
+    goal_query: crate::runtime::ports::ExecutionGoalCommandPort,
+    outcome_query: crate::runtime::ports::ExecutionGoalCommandPort,
+    sink: crate::runtime::ports::ExecutionGoalMutationPort,
+}
+
+struct PlannerProjectionRuntimeHandle {
+    actor: Arc<PlannerProjectionActor>,
+    store: Arc<meld_world_model::PlannerProjectionStore>,
+}
+
+struct PlanningRuntimeHandle {
+    actor: PlanningRuntimeActor<TaskCompiler>,
+    attempt_store: Arc<meld_execution::planning::PlanningAttemptStore>,
+    goal_store: Arc<meld_execution::goals::PersistentGoalSetStore>,
+    projection: crate::runtime::ports::PlannerProjectionPort,
+    host: crate::runtime::ports::TaskNetworkAuthorityHostPort,
+    request: PlanningRuntimeActorRequest,
+}
+
+struct TaskDispatchRuntimeHandle {
+    host: crate::runtime::ports::TaskNetworkAuthorityHostPort,
+    artifact_repos: meld_execution::task::TaskArtifactRepoFactory,
+    routes: DocsFreshnessDispatchRoutes,
+    network_id: String,
+    worker_id: Option<String>,
+}
+
+struct PublicationRuntimeHandle {
+    runtime: PublicationRuntime,
+    host: crate::runtime::ports::TaskNetworkAuthorityHostPort,
+    events: crate::runtime::ports::ProductEventAppendPort,
+    network_id: String,
+    session_id: String,
+    worker_id: Option<String>,
 }
 
 struct TaskNetworkAuthorityRuntimeHandle {
@@ -416,7 +586,7 @@ pub struct SupervisorStartupPackage<'a> {
     pub supervisor_store: &'a SupervisorStore,
     /// Direct handoff and adapter ports.
     pub ports: &'a ProductRuntimePorts,
-    /// Inert runtime handle factories.
+    /// Classified runtime handle factories for concrete and declared roles.
     pub handle_factories: &'a RuntimeHandleFactoryRegistry,
     /// Desired runtime state from config.
     pub desired_runtime_state: &'a [DesiredRuntimeState],
@@ -606,6 +776,50 @@ impl ProductRuntimeAssembly {
         Ok(())
     }
 
+    /// Validate the exact post-bootstrap runtime selection without opening stores.
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_semantic_inputs(
+        runtime: &RuntimeActivationInput,
+        world_model: &WorldModelActivationInput,
+        execution: &ExecutionActivationInput,
+        execution_receipt: &ExecutionActivationValidationReceipt,
+        world_model_receipt: &AgentBootstrapReceipt,
+        selection: &SemanticRuntimeSelection,
+    ) -> Result<(), RuntimeAssemblyError> {
+        Self::validate_activated_inputs(runtime, world_model, execution, execution_receipt)?;
+        let world_identity = validate_world_model_activation(world_model).map_err(|error| {
+            RuntimeAssemblyError::Config(format!(
+                "world-model activation validation failed at '{}': {}",
+                error.field, error.message
+            ))
+        })?;
+        if world_model_receipt.bootstrap_id != world_identity.bootstrap_id
+            || world_model_receipt.activation_id != world_identity.activation_id
+            || world_model_receipt.activation_hash != world_identity.activation_hash
+            || world_model_receipt.input_hash != world_identity.input_hash
+            || world_model_receipt.belief.family_id != world_model.belief_family.family_id
+            || world_model_receipt.belief.config_snapshot_hash != world_identity.belief_config_hash
+            || world_model_receipt.belief.activation_id != world_identity.activation_id
+            || world_model_receipt.belief.activation_hash != world_identity.activation_hash
+        {
+            return Err(RuntimeAssemblyError::Config(
+                "bootstrap receipt does not match validated world-model input".to_string(),
+            ));
+        }
+        let derived = SemanticRuntimeSelection::docs_freshness_v1(
+            runtime,
+            world_model_receipt,
+            execution_receipt,
+        )
+        .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
+        if &derived != selection {
+            return Err(RuntimeAssemblyError::Config(
+                "semantic runtime selection does not match accepted owner products".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Describe runtime infrastructure from a workspace without opening stores.
     pub fn describe_for_workspace(
         workspace_root: &Path,
@@ -707,6 +921,65 @@ impl ProductRuntimeAssembly {
                 input: execution,
                 receipt: execution_receipt,
             }),
+            None,
+        )
+    }
+
+    /// Open recurring semantic runtimes from exact accepted bootstrap products.
+    #[allow(clippy::too_many_arguments)]
+    pub fn load_semantic_with_authority(
+        workspace_root: &Path,
+        config: &MerkleConfig,
+        event_authority: Arc<EventAuthority>,
+        runtime: RuntimeActivationInput,
+        world_model: WorldModelActivationInput,
+        execution: ExecutionActivationInput,
+        execution_receipt: ExecutionActivationValidationReceipt,
+        world_model_receipt: AgentBootstrapReceipt,
+        selection: SemanticRuntimeSelection,
+    ) -> Result<Self, RuntimeAssemblyError> {
+        Self::validate_semantic_inputs(
+            &runtime,
+            &world_model,
+            &execution,
+            &execution_receipt,
+            &world_model_receipt,
+            &selection,
+        )?;
+        let product_root = config
+            .system
+            .storage
+            .resolve_product_root(workspace_root)
+            .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
+        let mut product_config = ProductRuntimeConfig::for_product_root(product_root);
+        product_config.provider.provider_available = config
+            .providers
+            .contains_key(&execution.selection.provider_binding_ref);
+        product_config.enabled_runtime_ids = selection
+            .actor_runtime_ids
+            .iter()
+            .chain(&selection.service_runtime_ids)
+            .cloned()
+            .collect();
+        product_config.configured_task_network = Some(
+            ConfiguredTaskNetworkIdentity::from_execution_receipt(&execution_receipt)?,
+        );
+        Self::load_with_authority_inner(
+            product_config,
+            event_authority,
+            None,
+            Some(ExecutionActivationState {
+                input: execution,
+                receipt: execution_receipt,
+            }),
+            Some(SemanticActivationState {
+                workspace_root: workspace_root.to_path_buf(),
+                repository_config: config.clone(),
+                runtime,
+                world_model,
+                world_model_receipt,
+                selection,
+            }),
         )
     }
 
@@ -736,7 +1009,7 @@ impl ProductRuntimeAssembly {
         config: ProductRuntimeConfig,
         event_authority: Arc<EventAuthority>,
     ) -> Result<Self, RuntimeAssemblyError> {
-        Self::load_with_authority_inner(config, event_authority, None, None)
+        Self::load_with_authority_inner(config, event_authority, None, None, None)
     }
 
     fn load_with_authority_inner(
@@ -744,9 +1017,12 @@ impl ProductRuntimeAssembly {
         event_authority: Arc<EventAuthority>,
         activation: Option<(RuntimeActivationInput, WorldModelActivationInput)>,
         activation_execution: Option<ExecutionActivationState>,
+        activation_semantic: Option<SemanticActivationState>,
     ) -> Result<Self, RuntimeAssemblyError> {
-        let (registry, desired_runtime_state) =
-            prevalidate_runtime_assembly_config(&config, activation.is_some())?;
+        let (registry, desired_runtime_state) = prevalidate_runtime_assembly_config(
+            &config,
+            activation.is_some() || activation_semantic.is_some(),
+        )?;
         let configured_task_network = config.configured_task_network.clone();
         let task_network_handle_config =
             configured_task_network
@@ -788,13 +1064,56 @@ impl ProductRuntimeAssembly {
                 world_model,
                 task_network_handle_config.as_ref(),
             )?,
-            None => RuntimeHandleFactoryRegistry::from_registry_with_task_network(
-                &registry,
-                &ports,
-                &graph_runtime,
-                task_network_handle_config.as_ref(),
-            )?,
+            None => {
+                if let Some(semantic) = activation_semantic.as_ref() {
+                    let durable_receipt = stores
+                        .agent_store
+                        .get_bootstrap_receipt(&semantic.runtime.bootstrap_runtime_id)
+                        .map_err(|error| {
+                            RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                        })?
+                        .ok_or_else(|| {
+                            RuntimeAssemblyError::RuntimeHandleConstruction(
+                                "semantic runtime requires a durable bootstrap receipt".to_string(),
+                            )
+                        })?;
+                    if durable_receipt != semantic.world_model_receipt {
+                        return Err(RuntimeAssemblyError::RuntimeHandleConstruction(
+                            "semantic runtime bootstrap receipt differs from durable authority"
+                                .to_string(),
+                        ));
+                    }
+                    AgentQuery::new(stores.agent_store.as_ref())
+                        .semantic_enablement_audit()
+                        .map_err(|error| {
+                            RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                        })?;
+                    RuntimeHandleFactoryRegistry::from_semantic_registry(
+                        &registry,
+                        &ports,
+                        &graph_runtime,
+                        stores.as_ref(),
+                        semantic,
+                        activation_execution.as_ref().ok_or_else(|| {
+                            RuntimeAssemblyError::RuntimeHandleConstruction(
+                                "semantic runtime requires accepted execution activation"
+                                    .to_string(),
+                            )
+                        })?,
+                        task_network_handle_config.as_ref(),
+                    )?
+                } else {
+                    RuntimeHandleFactoryRegistry::from_registry_with_task_network(
+                        &registry,
+                        &ports,
+                        &graph_runtime,
+                        task_network_handle_config.as_ref(),
+                    )?
+                }
+            }
         };
+
+        let activation_semantic = activation_semantic.map(|semantic| semantic.selection);
 
         Ok(Self {
             product_root,
@@ -812,6 +1131,7 @@ impl ProductRuntimeAssembly {
             process_services: config.process_services,
             diagnostics: Vec::new(),
             activation_execution,
+            activation_semantic,
             configured_task_network,
         })
     }
@@ -874,6 +1194,11 @@ impl ProductRuntimeAssembly {
     /// Return retained pure execution activation products when configured.
     pub fn activation_execution(&self) -> Option<&ExecutionActivationState> {
         self.activation_execution.as_ref()
+    }
+
+    /// Return the exact accepted recurring semantic selection when configured.
+    pub fn activation_semantic(&self) -> Option<&SemanticRuntimeSelection> {
+        self.activation_semantic.as_ref()
     }
 
     /// Return the configured task-network identity without opening its store.
@@ -1019,7 +1344,7 @@ impl RuntimeFactoryRegistry {
 
     /// Build the first durable flywheel proof runtime registry.
     pub fn first_proof_registry() -> Result<Self, RuntimeRegistryError> {
-        use RuntimeImplementationState::{Concrete, Inert};
+        use RuntimeImplementationState::Concrete;
         use RuntimeResource::*;
         use RuntimeRoleClass::{Actor, PassiveService, PortOnly};
         Self::from_descriptors([
@@ -1059,7 +1384,7 @@ impl RuntimeFactoryRegistry {
                 "world_model.belief_assessment",
                 &["world_model.belief.assessment"],
                 Actor,
-                Inert,
+                Concrete,
                 false,
                 vec![],
             )?,
@@ -1067,7 +1392,7 @@ impl RuntimeFactoryRegistry {
                 "world_model.agent_goal_curation",
                 &["world_model.agent.goal_curation"],
                 Actor,
-                Inert,
+                Concrete,
                 false,
                 vec![GoalCommand, PlannerProjection],
             )?,
@@ -1075,7 +1400,7 @@ impl RuntimeFactoryRegistry {
                 "world_model.agent_hydration",
                 &[],
                 Actor,
-                Inert,
+                Concrete,
                 false,
                 vec![PlannerProjection],
             )?,
@@ -1083,7 +1408,7 @@ impl RuntimeFactoryRegistry {
                 "world_model.evidence_ingestion",
                 &["world_model.belief.event_evidence_ingestion"],
                 Actor,
-                Inert,
+                Concrete,
                 false,
                 vec![EventReplay],
             )?,
@@ -1091,7 +1416,7 @@ impl RuntimeFactoryRegistry {
                 "world_model.planner_projection",
                 &[],
                 Actor,
-                Inert,
+                Concrete,
                 false,
                 vec![],
             )?,
@@ -1099,7 +1424,7 @@ impl RuntimeFactoryRegistry {
                 "world_model.satisfaction_curation",
                 &["world_model.agent.satisfaction_curation"],
                 Actor,
-                Inert,
+                Concrete,
                 false,
                 vec![GoalMutation, PlannerProjection],
             )?,
@@ -1115,7 +1440,7 @@ impl RuntimeFactoryRegistry {
                 "execution.planning",
                 &[],
                 Actor,
-                Inert,
+                Concrete,
                 false,
                 vec![PlannerProjection, TaskNetworkFactory],
             )?,
@@ -1131,7 +1456,7 @@ impl RuntimeFactoryRegistry {
                 "execution.task_dispatch",
                 &["execution.task.dispatch"],
                 Actor,
-                Inert,
+                Concrete,
                 false,
                 vec![
                     TaskNetworkFactory,
@@ -1146,7 +1471,7 @@ impl RuntimeFactoryRegistry {
                 "execution.publication",
                 &["execution.task_network.publication"],
                 Actor,
-                Inert,
+                Concrete,
                 false,
                 vec![TaskNetworkFactory, EventAppend],
             )?,
@@ -1270,6 +1595,249 @@ impl RuntimeHandleFactoryRegistry {
         Ok(Self { factories })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn from_semantic_registry(
+        registry: &RuntimeFactoryRegistry,
+        ports: &ProductRuntimePorts,
+        graph_runtime: &Arc<GraphRuntime>,
+        stores: &OpenProductStores,
+        semantic: &SemanticActivationState,
+        execution: &ExecutionActivationState,
+        task_network_config: Option<&TaskNetworkAuthorityHandleConfig>,
+    ) -> Result<Self, RuntimeAssemblyError> {
+        let config = BeliefConfigLoader::snapshot(semantic.world_model.belief_family.clone())
+            .map_err(|error| RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string()))?;
+        let belief_assessment = Arc::new(BeliefAssessmentActor::new(
+            Arc::clone(&stores.belief_store),
+            Arc::clone(&stores.traversal_store),
+            config.clone(),
+            semantic.world_model.seed_agent.perspective_key.clone(),
+            semantic.world_model.seed_agent.branch_scope.clone(),
+        ));
+        let initial_belief_request = BeliefAssessmentRequest {
+            subject: semantic.world_model.seed_agent.subject.clone(),
+            anchor_perspective_kind: "frame_type".to_string(),
+            anchor_perspective_id: execution.input.selection.frame_type.clone(),
+            lease_owner_id: String::new(),
+        };
+        let evidence_ingestion = Arc::new(EvidenceIngestionActor::new(
+            Arc::new(ports.event_replay().clone()),
+            Arc::clone(&stores.belief_store),
+            Arc::clone(&stores.traversal_store),
+        ));
+        let evidence_request = EvidenceIngestionActorRequest {
+            subject: semantic.world_model.seed_agent.subject.clone(),
+            config,
+            perspective: semantic.world_model.seed_agent.perspective_key.clone(),
+            branch_scope: semantic.world_model.seed_agent.branch_scope.clone(),
+            lease_owner_id: String::new(),
+            max_items: 1,
+            required_artifact_type_id: Some(
+                execution
+                    .input
+                    .selection
+                    .required_artifact
+                    .artifact_type_id
+                    .clone(),
+            ),
+        };
+        let agent_hydration = Arc::new(AgentHydrationActor::new(
+            Arc::clone(&stores.agent_store),
+            Arc::clone(&stores.belief_store),
+            Arc::clone(&stores.planner_projection_store),
+        ));
+        let agent_goal_curation = Arc::new(AgentGoalCurationActor::new(
+            Arc::clone(&stores.agent_store),
+            Arc::clone(&stores.belief_store),
+            Arc::clone(&stores.traversal_store),
+        ));
+        let agent_satisfaction = Arc::new(AgentSatisfactionCurationActor::new(
+            Arc::clone(&stores.agent_store),
+            Arc::clone(&stores.belief_store),
+            Arc::clone(&stores.traversal_store),
+        ));
+        let planner_projection = Arc::new(PlannerProjectionActor::new(
+            Arc::clone(&stores.planner_projection_store),
+            Arc::clone(&stores.belief_store),
+            Arc::clone(&stores.traversal_store),
+        ));
+        let execution_assets = BuiltInExecutionActivationRegistry::new()
+            .resolve_runtime_assets(&execution.input.selection)
+            .map_err(|error| RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string()))?;
+        if execution_assets.activation.method_library != execution.input.method_library
+            || execution_assets.activation.method_binding != execution.input.method_binding
+            || execution_assets.activation.task_package != execution.input.task_package
+        {
+            return Err(RuntimeAssemblyError::RuntimeHandleConstruction(
+                "execution runtime assets disagree with accepted activation input".to_string(),
+            ));
+        }
+        let planning_runtime = PlanningRuntime::new(
+            execution.input.method_library.clone(),
+            execution_assets.capability_catalog.clone(),
+        );
+        let planning_lowerer = ExecutionCompositionLowerer::new(
+            TaskCompiler::new(),
+            execution_assets.capability_catalog,
+        );
+        let planning_request = PlanningRuntimeActorRequest {
+            network_id: semantic.selection.task_network_id.clone(),
+            perspective: PlanningPerspectiveRef::new(
+                semantic
+                    .world_model
+                    .seed_agent
+                    .perspective_key
+                    .perspective_kind
+                    .clone(),
+                semantic
+                    .world_model
+                    .seed_agent
+                    .perspective_key
+                    .perspective_id
+                    .clone(),
+            )
+            .map_err(RuntimeAssemblyError::RuntimeHandleConstruction)?,
+            branch_id: semantic
+                .world_model
+                .seed_agent
+                .branch_scope
+                .branch_id
+                .clone(),
+            requested_dimensions: vec![semantic.world_model.belief_family.dimension_id.clone()],
+            required_preconditions: Vec::new(),
+            limit: None,
+        };
+        let publication_scope = PublicationRuntimeScope::from_activation(
+            &execution.input.selection,
+        )
+        .map_err(|error| RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string()))?;
+        if publication_scope.network_id != semantic.selection.task_network_id {
+            return Err(RuntimeAssemblyError::RuntimeHandleConstruction(
+                "execution publication scope disagrees with semantic selection".to_string(),
+            ));
+        }
+        let dispatch_routes =
+            build_docs_freshness_dispatch_routes(stores, graph_runtime, semantic, execution)?;
+        let factories = registry
+            .descriptors()
+            .map(|descriptor| {
+                let semantic_factory = match descriptor.runtime_id.as_str() {
+                    "world_model.belief_assessment" => {
+                        RuntimeSemanticHandleFactory::BeliefAssessment {
+                            actor: Arc::clone(&belief_assessment),
+                            store: Arc::clone(&stores.belief_store),
+                            belief_key: semantic.world_model.belief_key.clone(),
+                            initial_request: initial_belief_request.clone(),
+                        }
+                    }
+                    "world_model.evidence_ingestion" => {
+                        RuntimeSemanticHandleFactory::EvidenceIngestion {
+                            actor: Arc::clone(&evidence_ingestion),
+                            store: Arc::clone(&stores.belief_store),
+                            request: Box::new(evidence_request.clone()),
+                        }
+                    }
+                    "world_model.agent_hydration" => RuntimeSemanticHandleFactory::AgentHydration {
+                        actor: Arc::clone(&agent_hydration),
+                        agent_store: Arc::clone(&stores.agent_store),
+                        belief_store: Arc::clone(&stores.belief_store),
+                        planner_store: Arc::clone(&stores.planner_projection_store),
+                    },
+                    "world_model.agent_goal_curation" => {
+                        RuntimeSemanticHandleFactory::AgentGoalCuration {
+                            actor: Arc::clone(&agent_goal_curation),
+                            agent_store: Arc::clone(&stores.agent_store),
+                            goal_store: Arc::clone(&stores.goal_store),
+                            goal_port: ports.goal_command().clone(),
+                        }
+                    }
+                    "world_model.satisfaction_curation" => {
+                        RuntimeSemanticHandleFactory::AgentSatisfactionCuration {
+                            actor: Arc::clone(&agent_satisfaction),
+                            agent_store: Arc::clone(&stores.agent_store),
+                            goal_store: Arc::clone(&stores.goal_store),
+                            goal_port: ports.goal_command().clone(),
+                            mutation_port: ports.goal_mutation().clone(),
+                        }
+                    }
+                    "world_model.planner_projection" => {
+                        RuntimeSemanticHandleFactory::PlannerProjection {
+                            actor: Arc::clone(&planner_projection),
+                            store: Arc::clone(&stores.planner_projection_store),
+                        }
+                    }
+                    "execution.planning" => RuntimeSemanticHandleFactory::Planning {
+                        runtime: planning_runtime.clone(),
+                        lowerer: planning_lowerer.clone(),
+                        attempt_store: Arc::clone(&stores.planning_attempt_store),
+                        goal_store: Arc::clone(&stores.goal_store),
+                        projection: ports.planner_projection().clone(),
+                        host: ports.adapters().task_networks().clone(),
+                        request: planning_request.clone(),
+                    },
+                    "execution.task_dispatch" => RuntimeSemanticHandleFactory::TaskDispatch {
+                        host: ports.adapters().task_networks().clone(),
+                        artifact_repos: ports.adapters().task_artifacts().factory().clone(),
+                        routes: Box::new(dispatch_routes.clone()),
+                        network_id: semantic.selection.task_network_id.clone(),
+                    },
+                    "execution.publication" => RuntimeSemanticHandleFactory::Publication {
+                        runtime: PublicationRuntime::new(),
+                        host: ports.adapters().task_networks().clone(),
+                        events: ports.event_append().clone(),
+                        network_id: publication_scope.network_id.clone(),
+                        session_id: publication_scope.session_id.clone(),
+                    },
+                    _ => RuntimeSemanticHandleFactory::for_descriptor(
+                        descriptor,
+                        ports,
+                        graph_runtime,
+                        task_network_config,
+                    )?,
+                };
+                Ok((
+                    descriptor.runtime_id.clone(),
+                    RuntimeHandleFactory {
+                        descriptor: descriptor.clone(),
+                        semantic: semantic_factory,
+                    },
+                ))
+            })
+            .collect::<Result<_, RuntimeAssemblyError>>()?;
+        let semantic_registry = Self { factories };
+        for runtime_id in &semantic.selection.actor_runtime_ids {
+            let factory = semantic_registry.get(runtime_id).ok_or_else(|| {
+                RuntimeAssemblyError::RuntimeHandleConstruction(format!(
+                    "semantic actor '{runtime_id}' has no registered factory"
+                ))
+            })?;
+            if factory.descriptor.role_class != RuntimeRoleClass::Actor
+                || factory.descriptor.implementation_state != RuntimeImplementationState::Concrete
+                || !factory.semantic.owns_actor_tick()
+            {
+                return Err(RuntimeAssemblyError::RuntimeHandleConstruction(format!(
+                    "semantic actor '{runtime_id}' is not a concrete ticking factory"
+                )));
+            }
+        }
+        for runtime_id in &semantic.selection.service_runtime_ids {
+            let factory = semantic_registry.get(runtime_id).ok_or_else(|| {
+                RuntimeAssemblyError::RuntimeHandleConstruction(format!(
+                    "semantic service '{runtime_id}' has no registered factory"
+                ))
+            })?;
+            if factory.descriptor.role_class != RuntimeRoleClass::PassiveService
+                || factory.descriptor.implementation_state != RuntimeImplementationState::Concrete
+                || !factory.semantic.owns_passive_service()
+            {
+                return Err(RuntimeAssemblyError::RuntimeHandleConstruction(format!(
+                    "semantic service '{runtime_id}' is not a concrete passive factory"
+                )));
+            }
+        }
+        Ok(semantic_registry)
+    }
+
     /// Return one handle factory by runtime id.
     pub fn get(&self, runtime_id: &str) -> Option<&RuntimeHandleFactory> {
         self.factories.get(runtime_id)
@@ -1284,6 +1852,107 @@ impl RuntimeHandleFactoryRegistry {
     pub fn is_empty(&self) -> bool {
         self.factories.is_empty()
     }
+}
+
+fn build_docs_freshness_dispatch_routes(
+    stores: &OpenProductStores,
+    graph_runtime: &Arc<GraphRuntime>,
+    semantic: &SemanticActivationState,
+    execution: &ExecutionActivationState,
+) -> Result<DocsFreshnessDispatchRoutes, RuntimeAssemblyError> {
+    let workflow_registry = Arc::new(parking_lot::RwLock::new(
+        crate::workflow::WorkflowRegistry::load(&semantic.repository_config.workflows)
+            .map_err(|error| RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string()))?,
+    ));
+    let workflow = workflow_registry
+        .read()
+        .get(&execution.input.selection.workflow_id)
+        .cloned()
+        .ok_or_else(|| {
+            RuntimeAssemblyError::RuntimeHandleConstruction(format!(
+                "activated workflow '{}' is not installed",
+                execution.input.selection.workflow_id
+            ))
+        })?;
+
+    let mut agent_registry = crate::agent::AgentRegistry::new();
+    agent_registry
+        .load_from_config(&semantic.repository_config)
+        .and_then(|_| agent_registry.load_from_xdg())
+        .map_err(|error| RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string()))?;
+    let agent_id = workflow.profile.target_agent_id.clone().ok_or_else(|| {
+        RuntimeAssemblyError::RuntimeHandleConstruction(format!(
+            "activated workflow '{}' has no target agent",
+            execution.input.selection.workflow_id
+        ))
+    })?;
+    let agent = agent_registry.get(&agent_id).ok_or_else(|| {
+        RuntimeAssemblyError::RuntimeHandleConstruction(format!(
+            "activated workflow agent '{agent_id}' is not installed"
+        ))
+    })?;
+    if !agent.can_write()
+        || agent
+            .workflow_binding()
+            .is_some_and(|binding| binding != execution.input.selection.workflow_id)
+    {
+        return Err(RuntimeAssemblyError::RuntimeHandleConstruction(format!(
+            "activated agent '{agent_id}' cannot run workflow '{}'",
+            execution.input.selection.workflow_id
+        )));
+    }
+    crate::agent::profile::PromptContract::from_agent(agent)
+        .map_err(|error| RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string()))?;
+
+    let mut provider_registry = crate::provider::ProviderRegistry::new();
+    provider_registry
+        .load_from_config(&semantic.repository_config)
+        .and_then(|_| provider_registry.load_from_xdg())
+        .map_err(|error| RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string()))?;
+    if provider_registry
+        .get(&execution.input.selection.provider_binding_ref)
+        .is_none()
+    {
+        return Err(RuntimeAssemblyError::RuntimeHandleConstruction(format!(
+            "activated provider '{}' is not installed",
+            execution.input.selection.provider_binding_ref
+        )));
+    }
+
+    let head_index_path = crate::heads::HeadIndex::persistence_path(&semantic.workspace_root);
+    let head_index = crate::heads::HeadIndex::load_from_disk(&head_index_path)
+        .unwrap_or_else(|_| crate::heads::HeadIndex::new());
+    let node_store: Arc<dyn crate::store::NodeRecordStore + Send + Sync> =
+        stores.node_store.clone();
+    let api = Arc::new(crate::api::ContextApi::with_workspace_root(
+        node_store,
+        Arc::clone(&stores.frame_storage),
+        Arc::new(parking_lot::RwLock::new(head_index)),
+        Arc::clone(&stores.prompt_artifacts),
+        Arc::new(parking_lot::RwLock::new(agent_registry)),
+        Arc::new(parking_lot::RwLock::new(provider_registry)),
+        Arc::new(crate::concurrency::NodeLockManager::new()),
+        semantic.workspace_root.clone(),
+    ));
+    api.set_world_model_queries(Arc::new(crate::world_state::WorldModelQueries::new(
+        Arc::clone(graph_runtime),
+    )));
+    api.set_belief_store(Arc::clone(&stores.belief_store));
+    api.set_workflow_registry(workflow_registry);
+
+    Ok(DocsFreshnessDispatchRoutes::new(
+        api,
+        DocsFreshnessDispatchConfig {
+            workspace_root: semantic.workspace_root.clone(),
+            workflow,
+            task_package: execution.input.task_package.clone(),
+            agent_id,
+            provider_binding_ref: execution.input.selection.provider_binding_ref.clone(),
+            frame_type: execution.input.selection.frame_type.clone(),
+            force_policy: execution.input.selection.force_policy,
+            target: execution.input.selection.target.clone(),
+        },
+    ))
 }
 
 impl RuntimeHandleFactory {
@@ -1456,6 +2125,30 @@ impl RuntimeHandle {
 }
 
 impl RuntimeSemanticHandleFactory {
+    fn owns_actor_tick(&self) -> bool {
+        matches!(
+            self,
+            Self::GraphReplay { .. }
+                | Self::AgentBootstrap { .. }
+                | Self::BeliefAssessment { .. }
+                | Self::EvidenceIngestion { .. }
+                | Self::AgentHydration { .. }
+                | Self::AgentGoalCuration { .. }
+                | Self::AgentSatisfactionCuration { .. }
+                | Self::PlannerProjection { .. }
+                | Self::Planning { .. }
+                | Self::TaskDispatch { .. }
+                | Self::Publication { .. }
+        )
+    }
+
+    fn owns_passive_service(&self) -> bool {
+        matches!(
+            self,
+            Self::EventAppend { .. } | Self::TaskNetworkAuthority { .. }
+        )
+    }
+
     fn supports_activated_runtime(runtime_id: &str) -> bool {
         matches!(
             runtime_id,
@@ -1523,6 +2216,123 @@ impl RuntimeSemanticHandleFactory {
                     input: Arc::clone(input),
                 })
             }
+            Self::BeliefAssessment {
+                actor,
+                store,
+                belief_key,
+                initial_request,
+            } => RuntimeSemanticHandle::BeliefAssessment(BeliefAssessmentRuntimeHandle {
+                actor: Arc::clone(actor),
+                store: Arc::clone(store),
+                belief_key: belief_key.clone(),
+                initial_request: initial_request.clone(),
+                lease_id: None,
+            }),
+            Self::EvidenceIngestion {
+                actor,
+                store,
+                request,
+            } => {
+                RuntimeSemanticHandle::EvidenceIngestion(Box::new(EvidenceIngestionRuntimeHandle {
+                    actor: Arc::clone(actor),
+                    store: Arc::clone(store),
+                    request: request.as_ref().clone(),
+                    lease_id: None,
+                }))
+            }
+            Self::AgentHydration {
+                actor,
+                agent_store,
+                belief_store,
+                planner_store,
+            } => RuntimeSemanticHandle::AgentHydration(AgentHydrationRuntimeHandle {
+                actor: Arc::clone(actor),
+                agent_store: Arc::clone(agent_store),
+                belief_store: Arc::clone(belief_store),
+                planner_store: Arc::clone(planner_store),
+                lease_id: None,
+            }),
+            Self::AgentGoalCuration {
+                actor,
+                agent_store,
+                goal_store,
+                goal_port,
+            } => RuntimeSemanticHandle::AgentGoalCuration(AgentGoalCurationRuntimeHandle {
+                actor: Arc::clone(actor),
+                agent_store: Arc::clone(agent_store),
+                goal_store: Arc::clone(goal_store),
+                goal_query: goal_port.clone(),
+                outcome_query: goal_port.clone(),
+                sink: goal_port.clone(),
+            }),
+            Self::AgentSatisfactionCuration {
+                actor,
+                agent_store,
+                goal_store,
+                goal_port,
+                mutation_port,
+            } => RuntimeSemanticHandle::AgentSatisfactionCuration(
+                AgentSatisfactionCurationRuntimeHandle {
+                    actor: Arc::clone(actor),
+                    agent_store: Arc::clone(agent_store),
+                    goal_store: Arc::clone(goal_store),
+                    goal_query: goal_port.clone(),
+                    outcome_query: goal_port.clone(),
+                    sink: mutation_port.clone(),
+                },
+            ),
+            Self::PlannerProjection { actor, store } => {
+                RuntimeSemanticHandle::PlannerProjection(PlannerProjectionRuntimeHandle {
+                    actor: Arc::clone(actor),
+                    store: Arc::clone(store),
+                })
+            }
+            Self::Planning {
+                runtime,
+                lowerer,
+                attempt_store,
+                goal_store,
+                projection,
+                host,
+                request,
+            } => RuntimeSemanticHandle::Planning(PlanningRuntimeHandle {
+                actor: PlanningRuntimeActor::new_durable(
+                    runtime.clone(),
+                    lowerer.clone(),
+                    Arc::clone(attempt_store),
+                ),
+                attempt_store: Arc::clone(attempt_store),
+                goal_store: Arc::clone(goal_store),
+                projection: projection.clone(),
+                host: host.clone(),
+                request: request.clone(),
+            }),
+            Self::TaskDispatch {
+                host,
+                artifact_repos,
+                routes,
+                network_id,
+            } => RuntimeSemanticHandle::TaskDispatch(Box::new(TaskDispatchRuntimeHandle {
+                host: host.clone(),
+                artifact_repos: artifact_repos.clone(),
+                routes: routes.as_ref().clone(),
+                network_id: network_id.clone(),
+                worker_id: None,
+            })),
+            Self::Publication {
+                runtime,
+                host,
+                events,
+                network_id,
+                session_id,
+            } => RuntimeSemanticHandle::Publication(PublicationRuntimeHandle {
+                runtime: runtime.clone(),
+                host: host.clone(),
+                events: events.clone(),
+                network_id: network_id.clone(),
+                session_id: session_id.clone(),
+                worker_id: None,
+            }),
             Self::TaskNetworkAuthority {
                 host,
                 identity,
@@ -1544,6 +2354,15 @@ impl RuntimeSemanticHandle {
             Self::GraphReplay(handle) => Some(handle.tick(budget)),
             Self::EventAppend(_) => None,
             Self::AgentBootstrap(handle) => Some(handle.tick(budget)),
+            Self::BeliefAssessment(handle) => Some(handle.tick(budget)),
+            Self::EvidenceIngestion(handle) => Some(handle.tick(budget)),
+            Self::AgentHydration(handle) => Some(handle.tick(budget)),
+            Self::AgentGoalCuration(handle) => Some(handle.tick(budget)),
+            Self::AgentSatisfactionCuration(handle) => Some(handle.tick(budget)),
+            Self::PlannerProjection(handle) => Some(handle.tick(budget)),
+            Self::Planning(handle) => Some(handle.tick(budget)),
+            Self::TaskDispatch(handle) => Some(handle.tick(budget)),
+            Self::Publication(handle) => Some(handle.tick(budget)),
             Self::TaskNetworkAuthority(_) => None,
         }
     }
@@ -1561,14 +2380,27 @@ impl RuntimeSemanticHandle {
         lease: &RuntimeLeaseContext,
     ) -> Result<(), RuntimeAssemblyError> {
         match self {
+            Self::BeliefAssessment(handle) => handle.start_after_lease(lease),
+            Self::EvidenceIngestion(handle) => handle.start_after_lease(lease),
+            Self::AgentHydration(handle) => handle.start_after_lease(lease),
+            Self::Planning(handle) => handle.start_after_lease(lease),
+            Self::TaskDispatch(handle) => handle.start_after_lease(lease),
+            Self::Publication(handle) => handle.start_after_lease(lease),
             Self::TaskNetworkAuthority(handle) => handle.start_after_lease(lease),
             _ => Ok(()),
         }
     }
 
     fn request_stop(&mut self) {
-        if let Self::TaskNetworkAuthority(handle) = self {
-            handle.request_stop();
+        match self {
+            Self::BeliefAssessment(handle) => handle.lease_id = None,
+            Self::EvidenceIngestion(handle) => handle.lease_id = None,
+            Self::AgentHydration(handle) => handle.lease_id = None,
+            Self::Planning(handle) => handle.actor.clear_owner_binding(),
+            Self::TaskDispatch(handle) => handle.worker_id = None,
+            Self::Publication(handle) => handle.worker_id = None,
+            Self::TaskNetworkAuthority(handle) => handle.request_stop(),
+            _ => {}
         }
     }
 
@@ -1581,10 +2413,445 @@ impl RuntimeSemanticHandle {
 
     fn flush_resources(&self) -> Result<bool, RuntimeAssemblyError> {
         match self {
+            Self::BeliefAssessment(handle) => handle.flush_resources(),
+            Self::EvidenceIngestion(handle) => handle.flush_resources(),
+            Self::AgentHydration(handle) => handle.flush_resources(),
+            Self::AgentGoalCuration(handle) => handle.flush_resources(),
+            Self::AgentSatisfactionCuration(handle) => handle.flush_resources(),
+            Self::PlannerProjection(handle) => handle.flush_resources(),
+            Self::Planning(handle) => handle.flush_resources(),
+            Self::TaskDispatch(_) => Ok(false),
+            Self::Publication(handle) => handle.flush_resources(),
             Self::TaskNetworkAuthority(handle) => handle.flush_resources(),
             _ => Ok(false),
         }
     }
+}
+
+impl BeliefAssessmentRuntimeHandle {
+    fn start_after_lease(
+        &mut self,
+        lease: &RuntimeLeaseContext,
+    ) -> Result<(), RuntimeAssemblyError> {
+        bind_actor_lease(&mut self.lease_id, lease)
+    }
+
+    fn tick(&self, budget: WorkBudget) -> WorkerTickReport {
+        match self.store.current_revision(&self.belief_key) {
+            Ok(None) => {
+                let mut request = self.initial_request.clone();
+                request.lease_owner_id = self.lease_id.clone().unwrap_or_default();
+                self.actor.assess_subject(request).into()
+            }
+            Ok(Some(_)) => self
+                .actor
+                .tick_dirty(BeliefDirtyKeyTickRequest {
+                    max_items: budget.max_items,
+                    lease_owner_id: self.lease_id.clone().unwrap_or_default(),
+                })
+                .into(),
+            Err(error) => worker_failure(
+                "world_model.belief_assessment",
+                "world_model",
+                "initial_belief",
+                "belief_revision",
+                "belief_revision_read_failed",
+                error.to_string(),
+                true,
+            ),
+        }
+    }
+
+    fn flush_resources(&self) -> Result<bool, RuntimeAssemblyError> {
+        self.store
+            .flush()
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        Ok(true)
+    }
+}
+
+impl EvidenceIngestionRuntimeHandle {
+    fn start_after_lease(
+        &mut self,
+        lease: &RuntimeLeaseContext,
+    ) -> Result<(), RuntimeAssemblyError> {
+        bind_actor_lease(&mut self.lease_id, lease)
+    }
+
+    fn tick(&self, budget: WorkBudget) -> WorkerTickReport {
+        let mut request = self.request.clone();
+        request.lease_owner_id = self.lease_id.clone().unwrap_or_default();
+        request.max_items = budget.max_items;
+        self.actor.tick(request).into()
+    }
+
+    fn flush_resources(&self) -> Result<bool, RuntimeAssemblyError> {
+        self.store
+            .flush()
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        Ok(true)
+    }
+}
+
+impl AgentHydrationRuntimeHandle {
+    fn start_after_lease(
+        &mut self,
+        lease: &RuntimeLeaseContext,
+    ) -> Result<(), RuntimeAssemblyError> {
+        bind_actor_lease(&mut self.lease_id, lease)
+    }
+
+    fn tick(&self, budget: WorkBudget) -> WorkerTickReport {
+        self.actor
+            .tick(AgentHydrationTickRequest {
+                lease_id: self.lease_id.clone().unwrap_or_default(),
+                max_items: budget.max_items,
+            })
+            .into()
+    }
+
+    fn flush_resources(&self) -> Result<bool, RuntimeAssemblyError> {
+        self.agent_store
+            .flush()
+            .and_then(|_| self.belief_store.flush())
+            .and_then(|_| self.planner_store.flush())
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        Ok(true)
+    }
+}
+
+impl AgentGoalCurationRuntimeHandle {
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+        self.actor
+            .tick(
+                AgentCurationTickRequest {
+                    max_items: budget.max_items,
+                },
+                &mut self.goal_query,
+                &mut self.outcome_query,
+                &mut self.sink,
+            )
+            .into()
+    }
+
+    fn flush_resources(&self) -> Result<bool, RuntimeAssemblyError> {
+        self.agent_store
+            .flush()
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        self.goal_store
+            .flush()
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        Ok(true)
+    }
+}
+
+impl AgentSatisfactionCurationRuntimeHandle {
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+        self.actor
+            .tick(
+                AgentCurationTickRequest {
+                    max_items: budget.max_items,
+                },
+                &mut self.goal_query,
+                &mut self.outcome_query,
+                &mut self.sink,
+            )
+            .into()
+    }
+
+    fn flush_resources(&self) -> Result<bool, RuntimeAssemblyError> {
+        self.agent_store
+            .flush()
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        self.goal_store
+            .flush()
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        Ok(true)
+    }
+}
+
+impl PlannerProjectionRuntimeHandle {
+    fn tick(&self, budget: WorkBudget) -> WorkerTickReport {
+        self.actor
+            .tick(PlannerProjectionTickRequest {
+                max_items: budget.max_items,
+            })
+            .into()
+    }
+
+    fn flush_resources(&self) -> Result<bool, RuntimeAssemblyError> {
+        self.store
+            .flush()
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        Ok(true)
+    }
+}
+
+impl PlanningRuntimeHandle {
+    fn start_after_lease(
+        &mut self,
+        lease: &RuntimeLeaseContext,
+    ) -> Result<(), RuntimeAssemblyError> {
+        self.actor
+            .bind_owner(lease.lease_id.clone())
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
+    }
+
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+        let ports = match self.host.authority_ports(&self.request.network_id) {
+            Ok(ports) => ports,
+            Err(error) => {
+                return worker_failure(
+                    "execution.planning",
+                    "execution",
+                    "planning_attempts",
+                    "task_network_revision",
+                    "planning_authority_unavailable",
+                    error.to_string(),
+                    true,
+                )
+            }
+        };
+        let mut request = self.request.clone();
+        request.limit = Some(budget.max_items);
+        match self.actor.run_once(
+            self.goal_store.as_ref(),
+            &ports,
+            &mut self.projection,
+            request,
+        ) {
+            Ok(report) => report.into(),
+            Err(error) => {
+                let retryable = error.retryable();
+                worker_failure(
+                    "execution.planning",
+                    "execution",
+                    "planning_attempts",
+                    "task_network_revision",
+                    "planning_tick_failed",
+                    error.to_string(),
+                    retryable,
+                )
+            }
+        }
+    }
+
+    fn flush_resources(&self) -> Result<bool, RuntimeAssemblyError> {
+        self.goal_store
+            .flush()
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        self.attempt_store
+            .flush()
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        Ok(true)
+    }
+}
+
+impl TaskDispatchRuntimeHandle {
+    fn start_after_lease(
+        &mut self,
+        lease: &RuntimeLeaseContext,
+    ) -> Result<(), RuntimeAssemblyError> {
+        bind_actor_lease(&mut self.worker_id, lease)
+    }
+
+    fn tick(&self, budget: WorkBudget) -> WorkerTickReport {
+        if budget.max_items == 0 {
+            return task_dispatch_worker_report(&self.network_id, 0, 0, None, 0, false, true);
+        }
+        let ports = match self.host.authority_ports(&self.network_id) {
+            Ok(ports) => ports,
+            Err(error) => {
+                return worker_failure(
+                    "execution.task_dispatch",
+                    "execution",
+                    "task_dispatch",
+                    "task_network_revision",
+                    "task_dispatch_authority_unavailable",
+                    error.to_string(),
+                    true,
+                )
+            }
+        };
+        let actor = TaskDispatchActor::new(
+            ports.clone(),
+            self.artifact_repos.clone(),
+            self.routes.clone(),
+        );
+        match actor.run_once(TaskDispatchRequest {
+            worker_id: self.worker_id.clone().unwrap_or_default(),
+        }) {
+            Ok(report) => {
+                let more_ready = ports
+                    .query()
+                    .ready_set()
+                    .map(|ready| !ready.task_instance_ids.is_empty())
+                    .unwrap_or(false);
+                let attempted = usize::from(report.task_instance_id.is_some());
+                let committed = usize::from(report.outcome_recorded);
+                let task_instance_id = report.task_instance_id.clone();
+                task_dispatch_worker_report(
+                    &report.network_id,
+                    report.input_revision,
+                    report.output_revision,
+                    task_instance_id,
+                    committed,
+                    matches!(report.disposition, TaskDispatchDisposition::Failed),
+                    attempted > 0 && more_ready,
+                )
+            }
+            Err(error) => worker_failure(
+                "execution.task_dispatch",
+                "execution",
+                "task_dispatch",
+                "task_network_revision",
+                "task_dispatch_tick_failed",
+                error.to_string(),
+                task_dispatch_error_retryable(&error),
+            ),
+        }
+    }
+}
+
+fn task_dispatch_worker_report(
+    network_id: &str,
+    input_revision: u64,
+    output_revision: u64,
+    task_instance_id: Option<String>,
+    committed: usize,
+    route_failed: bool,
+    budget_exhausted: bool,
+) -> WorkerTickReport {
+    WorkerTickReport {
+        actor_id: "execution.task_dispatch".to_string(),
+        scope: crate::runtime::contracts::WorkerScope {
+            domain_id: "execution".to_string(),
+            stream_id: Some(network_id.to_string()),
+            work_key: task_instance_id.clone(),
+            agent_id: None,
+            perspective_key: None,
+            branch_id: None,
+            subject_key: None,
+        },
+        input_checkpoint: crate::runtime::contracts::WorkerCheckpoint {
+            name: "task_network_revision".to_string(),
+            value: input_revision,
+        },
+        output_checkpoint: crate::runtime::contracts::WorkerCheckpoint {
+            name: "task_network_revision".to_string(),
+            value: output_revision,
+        },
+        items_attempted: usize::from(task_instance_id.is_some()),
+        items_committed: committed,
+        retryable_errors: Vec::new(),
+        fatal_errors: Vec::new(),
+        budget_exhausted: budget_exhausted || route_failed,
+    }
+}
+
+fn task_dispatch_error_retryable(error: &TaskDispatchError) -> bool {
+    matches!(
+        error,
+        TaskDispatchError::Authority(_)
+            | TaskDispatchError::ClaimRejected(_)
+            | TaskDispatchError::ArtifactRepository(_)
+            | TaskDispatchError::OutcomeRejected(_)
+    )
+}
+
+impl PublicationRuntimeHandle {
+    fn start_after_lease(
+        &mut self,
+        lease: &RuntimeLeaseContext,
+    ) -> Result<(), RuntimeAssemblyError> {
+        bind_actor_lease(&mut self.worker_id, lease)
+    }
+
+    fn tick(&self, budget: WorkBudget) -> WorkerTickReport {
+        let ports = match self.host.authority_ports(&self.network_id) {
+            Ok(ports) => ports,
+            Err(error) => {
+                return worker_failure(
+                    "execution.publication",
+                    "execution",
+                    "publication_outbox",
+                    "task_network_revision",
+                    "publication_authority_unavailable",
+                    error.to_string(),
+                    true,
+                )
+            }
+        };
+        match self.runtime.publish_pending(
+            ports.query(),
+            ports.commands(),
+            &self.events,
+            PublishPendingPublicationsRequest {
+                session_id: self.session_id.clone(),
+                worker_id: self.worker_id.clone().unwrap_or_default(),
+                limit: Some(budget.max_items),
+            },
+        ) {
+            Ok(report) => report.into(),
+            Err(error) => {
+                let retryable = error.retryable();
+                worker_failure(
+                    "execution.publication",
+                    "execution",
+                    "publication_outbox",
+                    "task_network_revision",
+                    "publication_tick_failed",
+                    error.to_string(),
+                    retryable,
+                )
+            }
+        }
+    }
+
+    fn flush_resources(&self) -> Result<bool, RuntimeAssemblyError> {
+        self.events
+            .barrier()
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        Ok(true)
+    }
+}
+
+fn bind_actor_lease(
+    slot: &mut Option<String>,
+    lease: &RuntimeLeaseContext,
+) -> Result<(), RuntimeAssemblyError> {
+    if slot.is_some() {
+        return Err(RuntimeAssemblyError::SupervisorHandoff(format!(
+            "runtime '{}' already has an active actor lease",
+            lease.runtime_id
+        )));
+    }
+    *slot = Some(lease.lease_id.clone());
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn worker_failure(
+    actor_id: &str,
+    domain_id: &str,
+    work_key: &str,
+    checkpoint_name: &str,
+    code: &str,
+    message: String,
+    retryable: bool,
+) -> WorkerTickReport {
+    let mut report = WorkerTickReport::fatal(
+        actor_id,
+        domain_id,
+        Some(work_key),
+        checkpoint_name,
+        code,
+        message,
+    );
+    if retryable {
+        report.retryable_errors = std::mem::take(&mut report.fatal_errors);
+    }
+    report
 }
 
 impl TaskNetworkAuthorityRuntimeHandle {
@@ -1758,6 +3025,28 @@ fn prevalidate_runtime_assembly_config(
     {
         return Err(RuntimeAssemblyError::RuntimeHandleConstruction(
             "bootstrap runtime requires activated world-model owner input".to_string(),
+        ));
+    }
+    if !has_activation
+        && desired_runtime_state.iter().any(|state| {
+            state.enabled
+                && matches!(
+                    state.runtime_id.as_str(),
+                    "world_model.belief_assessment"
+                        | "world_model.agent_goal_curation"
+                        | "world_model.agent_hydration"
+                        | "world_model.evidence_ingestion"
+                        | "world_model.planner_projection"
+                        | "world_model.satisfaction_curation"
+                        | "execution.planning"
+                        | "execution.task_dispatch"
+                        | "execution.publication"
+                )
+        })
+    {
+        return Err(RuntimeAssemblyError::RuntimeHandleConstruction(
+            "recurring semantic runtime requires accepted post-bootstrap owner products"
+                .to_string(),
         ));
     }
     Ok((registry, desired_runtime_state))
@@ -2119,7 +3408,7 @@ mod tests {
         assert!(task_dispatch.factory_available);
         assert_eq!(
             task_dispatch.implementation_state,
-            RuntimeImplementationState::Inert
+            RuntimeImplementationState::Concrete
         );
         assembly.flush_product_boundary().unwrap();
         assembly.flush_supervisor_store().unwrap();
@@ -2229,6 +3518,26 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_assembly_rejects_recurring_semantic_actor_before_store_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let product_root = temp.path().join("product");
+        let mut config = ProductRuntimeConfig::for_product_root(&product_root);
+        config.enabled_runtime_ids = vec!["execution.planning".to_string()];
+
+        let error = match ProductRuntimeAssembly::load(config) {
+            Ok(_) => panic!("semantic actor without accepted owner products should fail"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            RuntimeAssemblyError::RuntimeHandleConstruction(message)
+                if message.contains("requires accepted post-bootstrap owner products")
+        ));
+        assert!(!product_root.exists());
+    }
+
+    #[test]
     fn task_network_service_requires_identity_before_store_creation() {
         let temp = tempfile::tempdir().unwrap();
         let product_root = temp.path().join("product");
@@ -2271,26 +3580,23 @@ mod tests {
     }
 
     #[test]
-    fn enabled_inert_runtime_does_not_require_provider() {
+    fn task_dispatch_requires_semantic_owner_products() {
         let temp = tempfile::tempdir().unwrap();
-        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        let product_root = temp.path().join("product");
+        let mut config = ProductRuntimeConfig::for_product_root(&product_root);
         config.enabled_runtime_ids = vec!["execution.task_dispatch".to_string()];
         config.disabled_runtime_ids = Vec::new();
 
-        let assembly = ProductRuntimeAssembly::load(config).unwrap();
-        let dispatch = assembly
-            .desired_runtime_state()
-            .iter()
-            .find(|state| state.runtime_id == "execution.task_dispatch")
-            .unwrap();
-
-        assert!(dispatch.enabled);
-        assert!(dispatch.factory_available);
-        assert_eq!(
-            dispatch.implementation_state,
-            RuntimeImplementationState::Inert
-        );
-        assert!(!assembly.ports().adapters().provider().is_required());
+        let error = match ProductRuntimeAssembly::load(config) {
+            Ok(_) => panic!("task dispatch without semantic owner products should fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            RuntimeAssemblyError::RuntimeHandleConstruction(message)
+                if message.contains("recurring semantic runtime")
+        ));
+        assert!(!product_root.exists());
     }
 
     #[test]
@@ -2922,8 +4228,13 @@ mod tests {
         assert!(handle.poll_passive_health().unwrap().healthy);
 
         let host = assembly.ports().adapters().task_networks();
-        let stale_command = host.command_port("network-docs").unwrap();
-        let stale_query = host.query_port("network-docs").unwrap();
+        let stale_ports = host.authority_ports("network-docs").unwrap();
+        let stale_command = stale_ports.commands().clone();
+        let stale_query = stale_ports.query().clone();
+        assert_eq!(
+            stale_command.lifecycle().epoch,
+            stale_query.lifecycle().epoch
+        );
         let first_epoch = stale_query.lifecycle().epoch;
         assert_eq!(
             stale_query.lifecycle().lifecycle,

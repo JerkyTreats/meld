@@ -1,7 +1,7 @@
 # Cognitive Architecture Implementation Plan
 
 Date: 2026-07-13
-Status: active
+Status: first cognitive flywheel validated
 Scope: declarative implementation readiness and dependency order for the cognitive architecture
 
 ## Purpose
@@ -21,7 +21,7 @@ The first vertical slice threads the thinnest possible path through every layer 
 
 The typed loop has already proven the full contract chain through `meld-lang` pure types and operations. The vertical slice now makes each layer real with runtime code that materializes state, projects belief, curates goals, and dispatches work.
 
-Production runtime truth is narrower than domain-library completeness. The registry defines exactly fifteen canonical roles: eleven actors, two passive services, and two port-only roles. Graph replay is the only default-enabled role. The bootstrap actor is concrete and enabled only by explicit activation. Nine recurring semantic actors remain inert and default disabled. The concrete `event.append` and `execution.task_network_command` passive services and the two concrete ports are not supervisor workers. Wave 1 closes authority and recovery safety without activating semantic roles. Wave 2 is accepted through `de1d54c`. Explicit product activation validates source-neutral owner inputs and execution assets before stores open, then runs one supervised world-model bootstrap to durable completion with bounded retry for storage failures. W3A is accepted through `0217117`. It freezes proof-bearing process hydration and operational readiness, durable planner frame identity, the execution-owned task-network authority, semantic runtime selection, and passive service lifecycle recovery. No recurring semantic actor is enabled by W3A. W3B semantic actor implementation is ready.
+Production runtime truth is narrower than domain-library completeness. Wave 2 is accepted through `de1d54c`, and W3A is accepted through `0217117`. The production closure program then over-weighted durability, recovery, and process hosting before the end-to-end product loop was demonstrated. The flywheel-first validation program has now proven one real `docs_freshness` turn through the supervisor and the foreground command. Further work should be driven by product learning and observed failures, not automatic continuation of the deferred reliability backlog.
 
 The focused runtime wiring template is [Minimal Runtime Flywheel](integration/minimal_runtime_flywheel.md). Use it after Assessment By Domain work identifies the exact requirements for each participating domain.
 
@@ -68,7 +68,7 @@ It lands the minimal runtime surface: durable seed record, subscription cursor, 
 Owner: `meld-world-model`
 Blocked by: Phase 4
 
-### Phase 6: Execution Planning Runtime — `first slice implemented`
+### Phase 6: Execution Planning Runtime — `first vertical validated`
 
 Method library loading. Goal evaluation against `WorldState`, method matching via `unify`, composition preparation via `substitute` and `validate`. Bridges from typed planning substrate to runtime orchestration. Task network execution is deferred. First slice stops at an execution composition artifact.
 
@@ -77,7 +77,7 @@ Progress landed in `meld-execution`: execution goal contracts, in memory goal st
 Owner: `meld-execution`
 Depends on: Phase 5
 
-### Phase 7: Task Dispatch and Outcome — `first slice implemented`
+### Phase 7: Task Dispatch and Outcome — `first vertical validated`
 
 Bridge execution composition to task network commands and the existing task and capability engine. Dispatch one task. Publish outcome events to the spine. World model reducer consumes them. The flywheel turns once.
 
@@ -109,7 +109,8 @@ These components predate the vertical slice and support all phases.
 | `events` ledger mechanics | complete | `meld-events` |
 | event foundation closeout | closed 2026-07-12 | `meld-events` with root `meld` |
 | product event authority cutover | complete, E5 closed 2026-07-12 | `events` with root `meld` |
-| production cognitive runtime closure | active, W3A accepted and W3B ready | root `meld` with domain crates |
+| docs freshness flywheel validation | complete for first-turn validation | root `meld` with domain crates |
+| production cognitive runtime closure | historical through accepted W3A | root `meld` with domain crates |
 | `integration/typed_loop` | complete | `meld-lang` integration tests |
 
 Foundation work follows this order:
@@ -131,7 +132,7 @@ event authority and observability hardening
 2. event authority and observability hardening — complete, E1 through E4
 3. product event authority cutover — complete, E5 closed 2026-07-12
 4. event foundation closure — closed 2026-07-12, E6
-5. production cognitive runtime closure — active, W3A accepted through `0217117`, W3B ready
+5. docs freshness flywheel validation — complete for one real supervised and command-driven turn
 6. `meld-lang` — complete, Phase 1
 7. `world_model/graph` — complete, Phase 2
 8. `world_model/belief` — complete, Phase 3
@@ -160,8 +161,9 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — first slice implemented
 - [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
 - [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - closed event foundation closeout
-- [integration/production_cognitive_runtime_closure_program.md](integration/production_cognitive_runtime_closure_program.md) - active production runtime implementation and buildout orchestration
-- [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - current executable ledger with W3A accepted and W3B ready
+- [integration/docs_freshness_flywheel_validation_program.md](integration/docs_freshness_flywheel_validation_program.md) - completed first-turn validation and deferred-risk record
+- [integration/production_cognitive_runtime_closure_program.md](integration/production_cognitive_runtime_closure_program.md) - historical accepted work and deferred reliability backlog
+- [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - historical executable evidence through W3A
 - [integration/runtime_operator_visibility_program_ledger.md](integration/runtime_operator_visibility_program_ledger.md) - active child ledger with the runtime visibility core complete under parent Wave 0
 - [integration/runtime_assembly_program_ledger.md](integration/runtime_assembly_program_ledger.md) - historical runtime assembly evidence
 - [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — template

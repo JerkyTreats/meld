@@ -69,7 +69,7 @@ pub use publication::{
     PublicationPublishResult, PublishPendingPublicationsRequest,
 };
 pub use readiness::compute_ready_set;
-pub use runtime::{PublicationRuntime, PublicationRuntimeReport};
+pub use runtime::{PublicationRuntime, PublicationRuntimeReport, PublicationRuntimeScope};
 pub use state::{
     NetworkState, ReadySet, StaticSeedInitSource, TaskInitSource, TaskNode, TaskStatus,
     UpstreamArtifactInitSource,

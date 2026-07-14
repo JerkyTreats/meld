@@ -5,11 +5,12 @@
 //! fence that must be checked again before a semantic commit.
 
 use crate::agent::contracts::{
-    AgentDelivery, AgentDeliverySelection, AgentSatisfactionCursorIdentity,
-    AgentSatisfactionReview, AgentSatisfactionReviewCursor, AgentSatisfactionReviewSelection,
-    AgentStatus, AgentSubscriptionRecord, AgentSubscriptionStatus, BELIEF_REVISION_REVIEW_SOURCE,
+    AgentDelivery, AgentDeliverySelection, AgentGoalRecoverySelection,
+    AgentSatisfactionCursorIdentity, AgentSatisfactionRecoverySelection, AgentSatisfactionReview,
+    AgentSatisfactionReviewCursor, AgentSatisfactionReviewSelection, AgentStatus,
+    AgentSubscriptionRecord, AgentSubscriptionStatus, BELIEF_REVISION_REVIEW_SOURCE,
 };
-use crate::agent::store::AgentStore;
+use crate::agent::store::{AgentBoundedSelection, AgentCurationSelectionStream, AgentStore};
 use crate::belief::{BeliefKey, BeliefQuery, BeliefRevision};
 use crate::error::StorageError;
 
@@ -22,6 +23,145 @@ impl<'a> AgentSemanticSelector<'a> {
     /// Bind semantic selection to durable agent state.
     pub fn new(store: &'a AgentStore) -> Self {
         Self { store }
+    }
+
+    /// Select a computationally bounded delivery window with durable rotation.
+    pub(crate) fn select_deliveries_bounded(
+        &self,
+        belief_query: &BeliefQuery<'_>,
+        limit: usize,
+    ) -> Result<AgentBoundedSelection<AgentDeliverySelection>, StorageError> {
+        let candidates = self
+            .store
+            .curation_subscription_candidates_bounded(AgentCurationSelectionStream::Goal, limit)?;
+        let mut selections = Vec::with_capacity(candidates.items.len());
+        for candidate in candidates.items {
+            if candidate.agent.status != AgentStatus::Operational
+                || candidate.subscription.status != AgentSubscriptionStatus::Active
+            {
+                continue;
+            }
+            let Some(revision) =
+                current_head_revision(belief_query, &candidate.subscription.belief_key)?
+            else {
+                continue;
+            };
+            if !pending_revision(
+                "subscription delivery",
+                candidate.subscription.last_delivered_revision_id.as_deref(),
+                candidate.subscription.last_delivered_seq,
+                &revision,
+            )? {
+                continue;
+            }
+            selections.push(AgentDeliverySelection {
+                delivery: AgentDelivery {
+                    agent_id: candidate.agent.agent_id.clone(),
+                    subscription_id: candidate.subscription.subscription_id.clone(),
+                    belief_revision_id: revision.revision_id.clone(),
+                    revision_seq: revision.source_cursor_end,
+                },
+                belief_key: candidate.subscription.belief_key,
+                expected_agent_updated_at_seq: candidate.agent.updated_at_seq,
+                expected_subscription_updated_at_seq: candidate.subscription.updated_at_seq,
+                expected_delivered_revision_id: candidate.subscription.last_delivered_revision_id,
+                expected_delivered_seq: candidate.subscription.last_delivered_seq,
+            });
+        }
+        Ok(AgentBoundedSelection {
+            items: selections,
+            budget_exhausted: candidates.budget_exhausted,
+        })
+    }
+
+    /// Select exact incomplete goal work before consulting the current belief head.
+    pub(crate) fn select_goal_recoveries_bounded(
+        &self,
+        limit: usize,
+    ) -> Result<AgentBoundedSelection<AgentGoalRecoverySelection>, StorageError> {
+        self.store.goal_recoveries_bounded(limit)
+    }
+
+    /// Select a computationally bounded satisfaction window with durable rotation.
+    pub(crate) fn select_satisfaction_reviews_bounded(
+        &self,
+        belief_query: &BeliefQuery<'_>,
+        review_source: &str,
+        limit: usize,
+    ) -> Result<AgentBoundedSelection<AgentSatisfactionReviewSelection>, StorageError> {
+        if review_source != BELIEF_REVISION_REVIEW_SOURCE {
+            return Err(StorageError::InvalidPath(format!(
+                "unsupported satisfaction review source '{review_source}'"
+            )));
+        }
+        let candidates = self.store.curation_subscription_candidates_bounded(
+            AgentCurationSelectionStream::Satisfaction,
+            limit,
+        )?;
+        let mut selections = Vec::with_capacity(candidates.items.len());
+        for candidate in candidates.items {
+            if candidate.agent.status != AgentStatus::Operational
+                || candidate.subscription.status != AgentSubscriptionStatus::Active
+            {
+                continue;
+            }
+            let Some(revision) =
+                current_head_revision(belief_query, &candidate.subscription.belief_key)?
+            else {
+                continue;
+            };
+            let cursor_identity = AgentSatisfactionCursorIdentity {
+                agent_id: candidate.agent.agent_id.clone(),
+                subscription_id: candidate.subscription.subscription_id.clone(),
+                branch_id: candidate
+                    .subscription
+                    .belief_key
+                    .branch_scope
+                    .branch_id
+                    .clone(),
+                review_source: review_source.to_string(),
+            };
+            let cursor = self
+                .store
+                .satisfaction_review_cursor(&cursor_identity)?
+                .unwrap_or_else(|| AgentSatisfactionReviewCursor::empty(cursor_identity.clone()));
+            if !pending_revision(
+                "satisfaction review",
+                cursor.last_reviewed_revision_id.as_deref(),
+                cursor.last_reviewed_seq,
+                &revision,
+            )? {
+                continue;
+            }
+            selections.push(AgentSatisfactionReviewSelection {
+                review: AgentSatisfactionReview {
+                    agent_id: candidate.agent.agent_id.clone(),
+                    subscription_id: candidate.subscription.subscription_id.clone(),
+                    review_seq: revision.source_cursor_end,
+                },
+                belief_key: candidate.subscription.belief_key,
+                belief_revision_id: revision.revision_id,
+                belief_revision_seq: revision.source_cursor_end,
+                cursor_identity,
+                expected_agent_updated_at_seq: candidate.agent.updated_at_seq,
+                expected_subscription_updated_at_seq: candidate.subscription.updated_at_seq,
+                expected_reviewed_revision_id: cursor.last_reviewed_revision_id,
+                expected_reviewed_seq: cursor.last_reviewed_seq,
+                expected_cursor_updated_at_seq: cursor.updated_at_seq,
+            });
+        }
+        Ok(AgentBoundedSelection {
+            items: selections,
+            budget_exhausted: candidates.budget_exhausted,
+        })
+    }
+
+    /// Select exact incomplete satisfaction work before current-head review.
+    pub(crate) fn select_satisfaction_recoveries_bounded(
+        &self,
+        limit: usize,
+    ) -> Result<AgentBoundedSelection<AgentSatisfactionRecoverySelection>, StorageError> {
+        self.store.satisfaction_recoveries_bounded(limit)
     }
 
     /// Select pending belief deliveries in one stable global order.
@@ -282,6 +422,22 @@ fn current_revision(
         ));
     }
     Ok(Some(revision))
+}
+
+fn current_head_revision(
+    belief_query: &BeliefQuery<'_>,
+    belief_key: &BeliefKey,
+) -> Result<Option<BeliefRevision>, StorageError> {
+    let revision = belief_query.current_revision(belief_key)?;
+    if revision
+        .as_ref()
+        .is_some_and(|revision| revision.source_cursor_end == 0)
+    {
+        return Err(StorageError::InvalidPath(
+            "belief revision source sequence must be positive for agent selection".to_string(),
+        ));
+    }
+    Ok(revision)
 }
 
 fn require_selected_revision(

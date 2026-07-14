@@ -22,5 +22,7 @@ pub mod status_cache;
 pub mod storage;
 /// Root supervisor lifecycle storage.
 pub mod supervisor;
+/// Bounded task-network dispatch into concrete execution routes.
+pub mod task_dispatch;
 /// Runtime CLI adapter.
 pub mod tooling;

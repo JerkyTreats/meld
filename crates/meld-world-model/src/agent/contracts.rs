@@ -1126,6 +1126,24 @@ impl AgentDeliverySelection {
     }
 }
 
+/// Durable recovery identity for one selected goal-curation decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentGoalRecoverySelection {
+    /// Exact durable decision and outbox recovered by this item.
+    pub decision_id: AgentDecisionId,
+    /// Original owner and cursor fences captured with the decision.
+    pub selection: AgentDeliverySelection,
+}
+
+impl AgentGoalRecoverySelection {
+    /// Validate the decision identity and original selector token.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        require_non_empty("goal recovery decision id", &self.decision_id)?;
+        self.selection.validate()
+    }
+}
+
 /// Stable identity of one independent satisfaction-review consumer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1265,6 +1283,24 @@ impl AgentSatisfactionReviewSelection {
             self.expected_reviewed_seq,
             "satisfaction selection",
         )
+    }
+}
+
+/// Durable recovery identity for one selected satisfaction decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSatisfactionRecoverySelection {
+    /// Exact durable decision and outbox recovered by this item.
+    pub decision_id: AgentDecisionId,
+    /// Original owner and cursor fences captured with the decision.
+    pub selection: AgentSatisfactionReviewSelection,
+}
+
+impl AgentSatisfactionRecoverySelection {
+    /// Validate the decision identity and original selector token.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        require_non_empty("satisfaction recovery decision id", &self.decision_id)?;
+        self.selection.validate()
     }
 }
 

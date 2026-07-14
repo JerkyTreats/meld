@@ -329,6 +329,7 @@ mod tests {
         );
 
         let run = RuntimeCommands::Run {
+            activation: None,
             instance_id: None,
             tick_ms: 1000,
             duration_ms: None,

@@ -167,6 +167,14 @@ enum PlanningAttemptSourceIdentity {
     ProjectionCompleted {
         planning_request: Box<PlanningRequestIdentity>,
     },
+    Rebased {
+        planning_request: Box<PlanningRequestIdentity>,
+        parent_attempt_id: String,
+        rejected_command_id: String,
+        rejected_response_hash: String,
+        base_revision: u64,
+        base_state_hash: String,
+    },
     ProjectionFailed {
         inputs: PlanningProjectionFailureIdentityInputs,
     },
@@ -215,30 +223,60 @@ impl PlanningAttemptIdentity {
         Ok(identity)
     }
 
+    /// Bind a deterministic child attempt to a retryable rejected parent outcome.
+    pub fn bind_rebase(
+        parent: &PlanningAttemptIdentity,
+        outcome: &PlanningAttemptCommandOutcome,
+        base_revision: u64,
+        base_state_hash: String,
+    ) -> Result<Self, String> {
+        parent.validate()?;
+        let planning_request = parent
+            .planning_request()
+            .ok_or_else(|| "projection-failure attempts cannot be rebased".to_string())?
+            .clone();
+        if outcome.command_id.trim().is_empty() || !retryable_rebase_response(&outcome.response) {
+            return Err("planning rebase requires a retryable rejected parent command".to_string());
+        }
+        let mut identity = Self {
+            attempt_id: String::new(),
+            source: PlanningAttemptSourceIdentity::Rebased {
+                planning_request: Box::new(planning_request),
+                parent_attempt_id: parent.attempt_id().to_string(),
+                rejected_command_id: outcome.command_id.clone(),
+                rejected_response_hash: outcome.response_hash.clone(),
+                base_revision,
+                base_state_hash,
+            },
+        };
+        identity.attempt_id = derive_attempt_id(&identity)?;
+        identity.validate()?;
+        Ok(identity)
+    }
+
     /// Validate the derived id and its one canonical source identity.
     pub fn validate(&self) -> Result<(), String> {
         match &self.source {
             PlanningAttemptSourceIdentity::ProjectionCompleted { planning_request } => {
-                planning_request.validate()?;
-                let inputs = planning_request.inputs();
-                validate_bounded_text("planning attempt goal id", &inputs.goal_id, 256)?;
-                if inputs.goal_updated_at_seq == 0 {
-                    return Err(
-                        "planning attempt goal update sequence must be positive".to_string()
-                    );
-                }
-                inputs.projection_identity.validate()?;
-                if inputs.projection_identity.goal_id() != inputs.goal_id
-                    || inputs.projection_identity.goal_updated_at_seq()
-                        != inputs.goal_updated_at_seq
-                {
-                    return Err(
-                        "planning attempt goal identity does not match its projection".to_string(),
-                    );
-                }
-                validate_digest("method library", &inputs.method_library_digest)?;
-                validate_digest("capability catalog", &inputs.capability_catalog_digest)?;
-                validate_bounded_text("planning version", &inputs.planning_version, 256)?;
+                validate_completed_planning_identity(planning_request)?;
+            }
+            PlanningAttemptSourceIdentity::Rebased {
+                planning_request,
+                parent_attempt_id,
+                rejected_command_id,
+                rejected_response_hash,
+                base_state_hash,
+                ..
+            } => {
+                validate_completed_planning_identity(planning_request)?;
+                validate_bounded_text("planning rebase parent attempt id", parent_attempt_id, 256)?;
+                validate_bounded_text(
+                    "planning rebase rejected command id",
+                    rejected_command_id,
+                    256,
+                )?;
+                validate_digest("planning rebase rejected response", rejected_response_hash)?;
+                validate_digest("planning rebase base state", base_state_hash)?;
             }
             PlanningAttemptSourceIdentity::ProjectionFailed { inputs } => {
                 inputs.validate()?;
@@ -261,6 +299,9 @@ impl PlanningAttemptIdentity {
             PlanningAttemptSourceIdentity::ProjectionCompleted { planning_request } => {
                 Some(planning_request)
             }
+            PlanningAttemptSourceIdentity::Rebased {
+                planning_request, ..
+            } => Some(planning_request),
             PlanningAttemptSourceIdentity::ProjectionFailed { .. } => None,
         }
     }
@@ -268,7 +309,8 @@ impl PlanningAttemptIdentity {
     /// Borrow failed projection identity inputs when this attempt has no frame.
     pub fn projection_failure(&self) -> Option<&PlanningProjectionFailureIdentityInputs> {
         match &self.source {
-            PlanningAttemptSourceIdentity::ProjectionCompleted { .. } => None,
+            PlanningAttemptSourceIdentity::ProjectionCompleted { .. }
+            | PlanningAttemptSourceIdentity::Rebased { .. } => None,
             PlanningAttemptSourceIdentity::ProjectionFailed { inputs } => Some(inputs),
         }
     }
@@ -279,6 +321,9 @@ impl PlanningAttemptIdentity {
             PlanningAttemptSourceIdentity::ProjectionCompleted { planning_request } => {
                 &planning_request.inputs().goal_id
             }
+            PlanningAttemptSourceIdentity::Rebased {
+                planning_request, ..
+            } => &planning_request.inputs().goal_id,
             PlanningAttemptSourceIdentity::ProjectionFailed { inputs } => &inputs.goal_id,
         }
     }
@@ -289,6 +334,9 @@ impl PlanningAttemptIdentity {
             PlanningAttemptSourceIdentity::ProjectionCompleted { planning_request } => {
                 planning_request.inputs().goal_updated_at_seq
             }
+            PlanningAttemptSourceIdentity::Rebased {
+                planning_request, ..
+            } => planning_request.inputs().goal_updated_at_seq,
             PlanningAttemptSourceIdentity::ProjectionFailed { inputs } => {
                 inputs.goal_updated_at_seq
             }
@@ -301,6 +349,9 @@ impl PlanningAttemptIdentity {
             PlanningAttemptSourceIdentity::ProjectionCompleted { planning_request } => {
                 Some(planning_request.inputs().projection_identity.frame_id())
             }
+            PlanningAttemptSourceIdentity::Rebased {
+                planning_request, ..
+            } => Some(planning_request.inputs().projection_identity.frame_id()),
             PlanningAttemptSourceIdentity::ProjectionFailed { .. } => None,
         }
     }
@@ -311,6 +362,9 @@ impl PlanningAttemptIdentity {
             PlanningAttemptSourceIdentity::ProjectionCompleted { planning_request } => {
                 &planning_request.inputs().method_library_digest
             }
+            PlanningAttemptSourceIdentity::Rebased {
+                planning_request, ..
+            } => &planning_request.inputs().method_library_digest,
             PlanningAttemptSourceIdentity::ProjectionFailed { inputs } => {
                 &inputs.method_library_digest
             }
@@ -323,11 +377,81 @@ impl PlanningAttemptIdentity {
             PlanningAttemptSourceIdentity::ProjectionCompleted { planning_request } => {
                 &planning_request.inputs().capability_catalog_digest
             }
+            PlanningAttemptSourceIdentity::Rebased {
+                planning_request, ..
+            } => &planning_request.inputs().capability_catalog_digest,
             PlanningAttemptSourceIdentity::ProjectionFailed { inputs } => {
                 &inputs.capability_catalog_digest
             }
         }
     }
+
+    /// Borrow the parent attempt id for a deterministic rebase child.
+    pub fn rebase_parent_attempt_id(&self) -> Option<&str> {
+        match &self.source {
+            PlanningAttemptSourceIdentity::Rebased {
+                parent_attempt_id, ..
+            } => Some(parent_attempt_id),
+            PlanningAttemptSourceIdentity::ProjectionCompleted { .. }
+            | PlanningAttemptSourceIdentity::ProjectionFailed { .. } => None,
+        }
+    }
+
+    pub(crate) fn rebase_parent_outcome(&self) -> Option<(&str, &str)> {
+        match &self.source {
+            PlanningAttemptSourceIdentity::Rebased {
+                rejected_command_id,
+                rejected_response_hash,
+                ..
+            } => Some((rejected_command_id, rejected_response_hash)),
+            PlanningAttemptSourceIdentity::ProjectionCompleted { .. }
+            | PlanningAttemptSourceIdentity::ProjectionFailed { .. } => None,
+        }
+    }
+
+    /// Return the task-network head that deterministically identifies a rebase child.
+    pub fn rebase_base(&self) -> Option<(u64, &str)> {
+        match &self.source {
+            PlanningAttemptSourceIdentity::Rebased {
+                base_revision,
+                base_state_hash,
+                ..
+            } => Some((*base_revision, base_state_hash)),
+            PlanningAttemptSourceIdentity::ProjectionCompleted { .. }
+            | PlanningAttemptSourceIdentity::ProjectionFailed { .. } => None,
+        }
+    }
+}
+
+fn validate_completed_planning_identity(
+    planning_request: &PlanningRequestIdentity,
+) -> Result<(), String> {
+    planning_request.validate()?;
+    let inputs = planning_request.inputs();
+    validate_bounded_text("planning attempt goal id", &inputs.goal_id, 256)?;
+    if inputs.goal_updated_at_seq == 0 {
+        return Err("planning attempt goal update sequence must be positive".to_string());
+    }
+    inputs.projection_identity.validate()?;
+    if inputs.projection_identity.goal_id() != inputs.goal_id
+        || inputs.projection_identity.goal_updated_at_seq() != inputs.goal_updated_at_seq
+    {
+        return Err("planning attempt goal identity does not match its projection".to_string());
+    }
+    validate_digest("method library", &inputs.method_library_digest)?;
+    validate_digest("capability catalog", &inputs.capability_catalog_digest)?;
+    validate_bounded_text("planning version", &inputs.planning_version, 256)
+}
+
+fn retryable_rebase_response(response: &command::Response) -> bool {
+    matches!(
+        response,
+        command::Response::Rejected(
+            crate::task_network::mutation::Rejection::StaleBase { .. }
+                | crate::task_network::mutation::Rejection::StateHashMismatch { .. }
+                | crate::task_network::mutation::Rejection::FailedPrecondition(_)
+        )
+    )
 }
 
 impl TryFrom<PlanningAttemptIdentityWire> for PlanningAttemptIdentity {
