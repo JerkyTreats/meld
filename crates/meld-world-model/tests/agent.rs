@@ -9,13 +9,13 @@ use meld_lang::{
 };
 use meld_world_model::agent::{
     curate_goal_satisfaction, curate_threshold_rule, ActiveGoalSummary, AgentActivationRecord,
-    AgentActivationStatus, AgentCuration, AgentCurationDedupeKey, AgentCurationInput,
-    AgentCurationInputRefs, AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery,
-    AgentGoalCommand, AgentGoalCurationRuntime, AgentGoalMutationCommand, AgentGoalMutationKind,
-    AgentGoalSatisfactionInput, AgentQuery, AgentRegistration, AgentSatisfactionCurationRuntime,
-    AgentSatisfactionReview, AgentSinkError, AgentSinkReceiptKind, AgentSinkSubmission,
-    AgentStatus, AgentStore, AgentSubscription, AgentSubscriptionRecord, AgentSubscriptionStatus,
-    SeedAgentRegistration, SubscribeAgentCommand,
+    AgentActivationStatus, AgentAuthoredCommand, AgentCuration, AgentCurationDedupeKey,
+    AgentCurationInput, AgentCurationInputRefs, AgentCurationRuleConfig, AgentDecisionKind,
+    AgentDecisionOutboxRecord, AgentDelivery, AgentGoalCommand, AgentGoalCurationRuntime,
+    AgentGoalMutationCommand, AgentGoalMutationKind, AgentGoalSatisfactionInput, AgentQuery,
+    AgentRegistration, AgentSatisfactionCurationRuntime, AgentSatisfactionReview, AgentSinkError,
+    AgentSinkSubmission, AgentStatus, AgentStore, AgentSubscription, AgentSubscriptionRecord,
+    AgentSubscriptionStatus, SeedAgentRegistration, SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
     BeliefProvenanceSummary, BeliefQuery, BeliefStore, BranchScope, ContradictionState,
@@ -919,6 +919,35 @@ fn agent_goal_command_validate_requires_proposed_lifecycle() {
 }
 
 #[test]
+fn agent_goal_command_validate_requires_causal_sequence() {
+    let command = invalid_goal_command(|command| {
+        command.command_seq = 0;
+    });
+
+    let error = command.validate().unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("sequence must be greater than zero"));
+}
+
+#[test]
+fn agent_goal_outbox_binds_command_sequence_to_decision() {
+    let outcome = curate_threshold_rule(curation_input(0.2)).unwrap();
+    let mut outbox = AgentDecisionOutboxRecord::from_outcome(&outcome)
+        .unwrap()
+        .unwrap();
+    let AgentAuthoredCommand::Goal(command) = &mut outbox.command else {
+        panic!("expected goal command outbox");
+    };
+    command.command_seq += 1;
+
+    let error = outbox.validate_for(&outcome.decision).unwrap_err();
+
+    assert!(error.to_string().contains("does not match its decision"));
+}
+
+#[test]
 fn agent_goal_command_validate_rejects_dedupe_agent_mismatch() {
     let command = invalid_goal_command(|command| {
         command.dedupe_key.agent_id = "other-agent".to_string();
@@ -1062,7 +1091,7 @@ fn agent_delivery_is_idempotent_and_advances_cursor_after_decision() {
 }
 
 #[test]
-fn agent_goal_runtime_duplicate_delivery_does_not_emit_second_sink_call() {
+fn agent_goal_compatibility_runtime_fails_closed_before_command_sink() {
     let (_agent_temp, agent_store) = agent_store();
     let (_agent, subscription) = setup_agent(&agent_store);
     let belief_temp = tempfile::tempdir().unwrap();
@@ -1113,37 +1142,40 @@ fn agent_goal_runtime_duplicate_delivery_does_not_emit_second_sink_call() {
 
     assert_eq!(first.actor_id, AGENT_ID);
     assert_eq!(first.input_sequence, 7);
-    assert_eq!(first.output_sequence, 7);
+    assert_eq!(first.output_sequence, 0);
     assert_eq!(first.delivered_count, 1);
     assert_eq!(first.decision_count, 1);
-    assert_eq!(first.sink_submission_count, 1);
+    assert_eq!(first.sink_submission_count, 0);
     assert!(first.retryable_errors.is_empty());
-    assert!(first.fatal_errors.is_empty());
+    assert_eq!(first.fatal_errors.len(), 1);
+    assert!(first.fatal_errors[0].contains("selector-issued owner fence"));
     assert!(!first.budget_exhausted);
-    assert_eq!(duplicate.output_sequence, 7);
-    assert_eq!(duplicate.delivered_count, 0);
-    assert_eq!(duplicate.decision_count, 0);
+    assert_eq!(duplicate.output_sequence, 0);
+    assert_eq!(duplicate.delivered_count, 1);
+    assert_eq!(duplicate.decision_count, 1);
     assert_eq!(duplicate.sink_submission_count, 0);
-    assert_eq!(sink_calls.borrow().len(), 1);
+    assert_eq!(duplicate.fatal_errors.len(), 1);
+    assert_eq!(sink_calls.borrow().len(), 0);
     assert_eq!(
         agent_store
             .get_subscription(&subscription.subscription_id)
             .unwrap()
             .unwrap()
             .last_delivered_seq,
-        7
+        0
     );
-    assert_eq!(
-        AgentQuery::new(&agent_store)
-            .recent_decisions(AGENT_ID, 10)
-            .unwrap()
-            .len(),
-        1
-    );
+    let decisions = AgentQuery::new(&agent_store)
+        .recent_decisions(AGENT_ID, 10)
+        .unwrap();
+    assert_eq!(decisions.len(), 1);
+    assert!(agent_store
+        .decision_outbox(&decisions[0].decision_id)
+        .unwrap()
+        .is_none());
 }
 
 #[test]
-fn agent_goal_runtime_sink_failure_leaves_subscription_cursor_unadvanced() {
+fn agent_goal_compatibility_runtime_never_reaches_retryable_sink() {
     let (_agent_temp, agent_store) = agent_store();
     let (_agent, subscription) = setup_agent(&agent_store);
     let belief_temp = tempfile::tempdir().unwrap();
@@ -1185,13 +1217,11 @@ fn agent_goal_runtime_sink_failure_leaves_subscription_cursor_unadvanced() {
     assert_eq!(report.output_sequence, 0);
     assert_eq!(report.delivered_count, 1);
     assert_eq!(report.decision_count, 1);
-    assert_eq!(report.sink_submission_count, 1);
-    assert_eq!(
-        report.retryable_errors,
-        vec!["execution goal sink unavailable".to_string()]
-    );
-    assert!(report.fatal_errors.is_empty());
-    assert_eq!(sink_calls.borrow().len(), 1);
+    assert_eq!(report.sink_submission_count, 0);
+    assert!(report.retryable_errors.is_empty());
+    assert_eq!(report.fatal_errors.len(), 1);
+    assert!(report.fatal_errors[0].contains("selector-issued owner fence"));
+    assert_eq!(sink_calls.borrow().len(), 0);
     assert_eq!(
         agent_store
             .get_subscription(&subscription.subscription_id)
@@ -1210,7 +1240,7 @@ fn agent_goal_runtime_sink_failure_leaves_subscription_cursor_unadvanced() {
 }
 
 #[test]
-fn agent_goal_runtime_recovers_receipt_from_visible_execution_goal() {
+fn agent_goal_compatibility_runtime_never_fabricates_outbox_from_visible_goal() {
     let (_agent_temp, agent_store) = agent_store();
     let (_agent, subscription) = setup_agent(&agent_store);
     let belief_temp = tempfile::tempdir().unwrap();
@@ -1276,38 +1306,27 @@ fn agent_goal_runtime_recovers_receipt_from_visible_execution_goal() {
     );
 
     assert!(report.retryable_errors.is_empty());
-    assert!(report.fatal_errors.is_empty());
+    assert_eq!(report.fatal_errors.len(), 1);
+    assert!(report.fatal_errors[0].contains("selector-issued owner fence"));
     assert_eq!(report.sink_submission_count, 0);
     assert_eq!(sink_calls.borrow().len(), 0);
-    assert_eq!(report.sink_receipts.len(), 1);
-    assert_eq!(
-        report.sink_receipts[0].kind,
-        AgentSinkReceiptKind::GoalCommand
-    );
-    assert_eq!(
-        report.sink_receipts[0].submission.command_id,
-        pending_outcome
-            .decision
-            .goal_command_id
-            .clone()
-            .expect("persisted command id")
-    );
-    assert_eq!(
-        report.sink_receipts[0].submission.goal_id,
-        active_goal.goal_id
-    );
+    assert!(report.sink_receipts.is_empty());
     assert_eq!(
         agent_store
             .get_subscription(&subscription.subscription_id)
             .unwrap()
             .unwrap()
             .last_delivered_seq,
-        7
+        0
     );
     assert!(agent_store
         .sink_receipt_by_decision(&pending_outcome.decision.decision_id)
         .unwrap()
-        .is_some());
+        .is_none());
+    assert!(agent_store
+        .decision_outbox(&pending_outcome.decision.decision_id)
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -1430,7 +1449,7 @@ fn agent_satisfaction_review_replays_by_review_identity() {
 }
 
 #[test]
-fn agent_satisfaction_runtime_reuses_durable_sink_receipt_on_replay() {
+fn agent_satisfaction_compatibility_runtime_fails_closed_before_command_sink() {
     let (_agent_temp, agent_store) = agent_store();
     let (_agent, subscription) = setup_agent(&agent_store);
     let belief_temp = tempfile::tempdir().unwrap();
@@ -1468,7 +1487,6 @@ fn agent_satisfaction_runtime_reuses_durable_sink_receipt_on_replay() {
         },
         &mut sink,
     );
-    goal.lifecycle = GoalLifecycle::Satisfied { at_seq: 22 };
     let replay = runtime.handle_review(
         review.clone(),
         &belief_query,
@@ -1477,27 +1495,28 @@ fn agent_satisfaction_runtime_reuses_durable_sink_receipt_on_replay() {
         &mut sink,
     );
 
-    assert!(first.fatal_errors.is_empty());
-    assert_eq!(first.sink_submission_count, 1);
-    assert_eq!(first.sink_receipts.len(), 1);
-    assert_eq!(
-        first.sink_receipts[0].kind,
-        AgentSinkReceiptKind::GoalMutationCommand
-    );
-    assert_eq!(replay.output_sequence, 22);
+    assert_eq!(first.fatal_errors.len(), 1);
+    assert!(first.fatal_errors[0].contains("selector-issued owner fence"));
+    assert_eq!(first.sink_submission_count, 0);
+    assert!(first.sink_receipts.is_empty());
+    assert_eq!(replay.output_sequence, 0);
     assert!(replay.retryable_errors.is_empty());
-    assert!(replay.fatal_errors.is_empty());
+    assert_eq!(replay.fatal_errors.len(), 1);
     assert_eq!(replay.sink_submission_count, 0);
-    assert_eq!(replay.sink_receipts.len(), 1);
-    assert_eq!(sink_calls.borrow().len(), 1);
-    assert!(agent_store
-        .sink_receipt_by_decision(&first.sink_receipts[0].decision_id)
+    assert!(replay.sink_receipts.is_empty());
+    assert_eq!(sink_calls.borrow().len(), 0);
+    let decision = AgentQuery::new(&agent_store)
+        .decision_by_satisfaction_review(&review)
         .unwrap()
-        .is_some());
+        .expect("compatibility decision");
+    assert!(agent_store
+        .decision_outbox(&decision.decision_id)
+        .unwrap()
+        .is_none());
 }
 
 #[test]
-fn agent_satisfaction_runtime_rejects_not_found_sink_submission() {
+fn agent_satisfaction_compatibility_runtime_never_reaches_mutation_sink() {
     let (_agent_temp, agent_store) = agent_store();
     let (_agent, subscription) = setup_agent(&agent_store);
     let belief_temp = tempfile::tempdir().unwrap();
@@ -1536,12 +1555,12 @@ fn agent_satisfaction_runtime_rejects_not_found_sink_submission() {
     assert_eq!(report.output_sequence, 0);
     assert_eq!(report.delivered_count, 1);
     assert_eq!(report.decision_count, 1);
-    assert_eq!(report.sink_submission_count, 1);
+    assert_eq!(report.sink_submission_count, 0);
     assert!(report.retryable_errors.is_empty());
     assert_eq!(report.fatal_errors.len(), 1);
-    assert!(report.fatal_errors[0].contains("not an accepted command outcome"));
+    assert!(report.fatal_errors[0].contains("selector-issued owner fence"));
     assert!(report.sink_receipts.is_empty());
-    assert_eq!(sink_calls.borrow().len(), 1);
+    assert_eq!(sink_calls.borrow().len(), 0);
     assert!(AgentQuery::new(&agent_store)
         .decision_by_satisfaction_review(&satisfaction_review(&subscription, 22))
         .unwrap()

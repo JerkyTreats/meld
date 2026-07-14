@@ -352,6 +352,7 @@ pub fn curate_threshold_rule(
     };
     let command = AgentGoalCommand {
         command_id: command_id.clone(),
+        command_seq: input.delivered_seq,
         goal,
         dedupe_key: dedupe_key.clone(),
     };

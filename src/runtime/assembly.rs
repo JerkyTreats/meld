@@ -2428,7 +2428,7 @@ mod tests {
         let outcome = assembly
             .ports()
             .goal_command()
-            .accept_agent_goal_command(command, 7)
+            .accept_agent_goal_command(command)
             .unwrap();
 
         match outcome {
@@ -2442,6 +2442,196 @@ mod tests {
     }
 
     #[test]
+    fn agent_goal_ports_submit_query_and_recover_exact_command() {
+        use meld_world_model::agent::{
+            AgentActiveGoalQuery, AgentAuthoredCommand, AgentCommandOutcomeQuery,
+            AgentGoalCommandSink,
+        };
+
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let command = agent_goal_command();
+        let decision = agent_goal_decision(&command);
+        let mut command_port = assembly.ports().goal_command().clone();
+
+        let submitted = command_port.submit_goal_command(&command).unwrap();
+        let active = command_port.active_goals_for_agent("agent-a").unwrap();
+        let recovered = command_port
+            .committed_submission(
+                &decision,
+                &AgentAuthoredCommand::Goal(Box::new(command.clone())),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(submitted.command_id, command.command_id);
+        assert_eq!(submitted.goal_id, command.goal.goal_id);
+        assert_eq!(submitted.outcome, "applied");
+        assert_eq!(active.goals.len(), 1);
+        assert_eq!(active.goals[0].goal_id, command.goal.goal_id);
+        assert!(matches!(active.goals[0].lifecycle, GoalLifecycle::Active));
+        assert_eq!(recovered.command_id, submitted.command_id);
+        assert_eq!(recovered.goal_id, submitted.goal_id);
+        assert_eq!(recovered.outcome, "recovered");
+    }
+
+    #[test]
+    fn agent_goal_recovery_rejects_every_foreign_decision_binding() {
+        use meld_world_model::agent::{AgentAuthoredCommand, AgentCommandOutcomeQuery};
+
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let command = agent_goal_command();
+        let mut command_port = assembly.ports().goal_command().clone();
+        command_port
+            .accept_agent_goal_command(command.clone())
+            .unwrap();
+
+        let mut foreign_command = agent_goal_decision(&command);
+        foreign_command.goal_command_id = Some("foreign-command".to_string());
+        let mut foreign_kind = agent_goal_decision(&command);
+        foreign_kind.decision = meld_world_model::AgentDecisionKind::Absorbed;
+        foreign_kind.goal_command_id = None;
+        let mut foreign_agent = agent_goal_decision(&command);
+        foreign_agent.agent_id = "agent-b".to_string();
+        foreign_agent.dedupe_key = alternate_agent_dedupe_key("agent-b");
+        let mut foreign_dedupe = agent_goal_decision(&command);
+        foreign_dedupe.dedupe_key = alternate_agent_dedupe_key("agent-a");
+        let mut foreign_sequence = agent_goal_decision(&command);
+        foreign_sequence.created_at_seq += 1;
+        let cases = [
+            ("command id", foreign_command),
+            ("command kind", foreign_kind),
+            ("agent", foreign_agent),
+            ("dedupe key", foreign_dedupe),
+            ("command sequence", foreign_sequence),
+        ];
+
+        for (case, decision) in cases {
+            decision.validate().unwrap();
+            let error = command_port
+                .committed_submission(
+                    &decision,
+                    &AgentAuthoredCommand::Goal(Box::new(command.clone())),
+                )
+                .unwrap_err();
+            assert!(!error.retryable, "{case}");
+            assert!(
+                error.message.contains("outbox command kind or identity"),
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_goal_mutation_port_submits_and_recovers_exact_command() {
+        use meld_world_model::agent::{
+            AgentAuthoredCommand, AgentCommandOutcomeQuery, AgentGoalMutationSink,
+        };
+
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let command = agent_goal_command();
+        let goal_id = command.goal.goal_id.clone();
+        let dedupe_key = command.dedupe_key.clone();
+        assembly
+            .ports()
+            .goal_command()
+            .accept_agent_goal_command(command)
+            .unwrap();
+        let mutation = agent_goal_mutation_command(dedupe_key, goal_id, 9);
+        let decision = agent_mutation_decision(&mutation);
+        let mut mutation_port = assembly.ports().goal_mutation().clone();
+        let mut outcome_port = assembly.ports().goal_command().clone();
+
+        let submitted = mutation_port.submit_goal_mutation(&mutation).unwrap();
+        let recovered = outcome_port
+            .committed_submission(
+                &decision,
+                &AgentAuthoredCommand::GoalMutation(Box::new(mutation.clone())),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(submitted.command_id, mutation.command_id);
+        assert_eq!(submitted.goal_id, mutation.goal_id);
+        assert_eq!(submitted.outcome, "applied");
+        assert_eq!(recovered.command_id, submitted.command_id);
+        assert_eq!(recovered.goal_id, submitted.goal_id);
+        assert_eq!(recovered.outcome, "recovered");
+    }
+
+    #[test]
+    fn agent_mutation_recovery_rejects_every_foreign_decision_binding() {
+        use meld_world_model::agent::{AgentAuthoredCommand, AgentCommandOutcomeQuery};
+
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let goal_command = agent_goal_command();
+        let mutation = agent_goal_mutation_command(
+            goal_command.dedupe_key.clone(),
+            goal_command.goal.goal_id.clone(),
+            9,
+        );
+        assembly
+            .ports()
+            .goal_command()
+            .accept_agent_goal_command(goal_command)
+            .unwrap();
+        assembly
+            .ports()
+            .goal_mutation()
+            .satisfy_agent_goal_mutation(mutation.clone())
+            .unwrap();
+        let mut outcome_port = assembly.ports().goal_command().clone();
+
+        let mut foreign_command = agent_mutation_decision(&mutation);
+        foreign_command.goal_mutation_command_id = Some("foreign-command".to_string());
+        let mut foreign_kind = agent_mutation_decision(&mutation);
+        foreign_kind.decision = meld_world_model::AgentDecisionKind::Indeterminate;
+        foreign_kind.goal_mutation_command_id = None;
+        let mut foreign_agent = agent_mutation_decision(&mutation);
+        foreign_agent.agent_id = "agent-b".to_string();
+        foreign_agent.dedupe_key = alternate_agent_dedupe_key("agent-b");
+        let mut foreign_dedupe = agent_mutation_decision(&mutation);
+        foreign_dedupe.dedupe_key = alternate_agent_dedupe_key("agent-a");
+        let mut foreign_sequence = agent_mutation_decision(&mutation);
+        foreign_sequence.created_at_seq += 1;
+        let mut foreign_projection = agent_mutation_decision(&mutation);
+        foreign_projection.input_refs.planner_projection_version =
+            "planner_projection.foreign".to_string();
+        let mut foreign_source_refs = agent_mutation_decision(&mutation);
+        foreign_source_refs.input_refs.planner_source_refs = vec!["foreign-source".to_string()];
+        let mut foreign_warnings = agent_mutation_decision(&mutation);
+        foreign_warnings.input_refs.planner_warnings = vec!["foreign-warning".to_string()];
+        let cases = [
+            ("command id", foreign_command),
+            ("command kind", foreign_kind),
+            ("agent", foreign_agent),
+            ("dedupe key", foreign_dedupe),
+            ("review sequence", foreign_sequence),
+            ("projection version", foreign_projection),
+            ("projection source refs", foreign_source_refs),
+            ("projection warnings", foreign_warnings),
+        ];
+
+        for (case, decision) in cases {
+            decision.validate().unwrap();
+            let error = outcome_port
+                .committed_submission(
+                    &decision,
+                    &AgentAuthoredCommand::GoalMutation(Box::new(mutation.clone())),
+                )
+                .unwrap_err();
+            assert!(!error.retryable, "{case}");
+            assert!(
+                error.message.contains("outbox command kind or identity"),
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
     fn goal_mutation_port_satisfies_agent_goal_mutation() {
         let temp = tempfile::tempdir().unwrap();
         let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
@@ -2451,7 +2641,7 @@ mod tests {
         assembly
             .ports()
             .goal_command()
-            .accept_agent_goal_command(command, 7)
+            .accept_agent_goal_command(command)
             .unwrap();
 
         let mutation = agent_goal_mutation_command(dedupe_key, goal_id, 9);
@@ -3132,7 +3322,7 @@ mod tests {
         let outcome = assembly
             .ports()
             .goal_command()
-            .accept_agent_goal_command(agent_goal_command(), 7)
+            .accept_agent_goal_command(agent_goal_command())
             .unwrap();
         assert!(matches!(outcome, GoalCommandOutcome::Applied(_)));
     }
@@ -3161,7 +3351,7 @@ mod tests {
         first
             .ports()
             .goal_command()
-            .accept_agent_goal_command(command, 7)
+            .accept_agent_goal_command(command)
             .unwrap();
         let network = first
             .stores()
@@ -3182,7 +3372,7 @@ mod tests {
         let outcome = second
             .ports()
             .goal_command()
-            .accept_agent_goal_command(command_replay, 7)
+            .accept_agent_goal_command(command_replay)
             .unwrap();
 
         assert_eq!(records.len(), 1);
@@ -3284,6 +3474,7 @@ mod tests {
         );
         meld_world_model::AgentGoalCommand {
             command_id: "command-a".to_string(),
+            command_seq: 7,
             goal: Goal {
                 goal_id: "goal-a".to_string(),
                 agent_id: "agent-a".to_string(),
@@ -3304,6 +3495,82 @@ mod tests {
                 lifecycle: GoalLifecycle::Proposed,
             },
             dedupe_key,
+        }
+    }
+
+    fn alternate_agent_dedupe_key(agent_id: &str) -> meld_world_model::AgentCurationDedupeKey {
+        let rule = meld_world_model::AgentCurationRuleConfig {
+            dimension_id: "docs_freshness_alternate".to_string(),
+            threshold: 0.6,
+            priority_urgency: 5,
+            desired_summary: "alternate fresh docs".to_string(),
+            source_kind: "docs_freshness_alternate".to_string(),
+        };
+        meld_world_model::AgentCurationDedupeKey::threshold_rule(
+            agent_id,
+            &subject(),
+            &meld_world_model::BranchScope::main(),
+            &rule,
+        )
+    }
+
+    fn agent_goal_decision(
+        command: &meld_world_model::AgentGoalCommand,
+    ) -> meld_world_model::AgentCurationDecision {
+        meld_world_model::AgentCurationDecision {
+            decision_id: "decision-a".to_string(),
+            agent_id: "agent-a".to_string(),
+            subscription_id: "subscription-a".to_string(),
+            decision: meld_world_model::AgentDecisionKind::GoalCommand,
+            goal_command_id: Some(command.command_id.clone()),
+            goal_mutation_command_id: None,
+            dedupe_key: command.dedupe_key.clone(),
+            input_refs: meld_world_model::agent::AgentCurationInputRefs {
+                belief_revision_id: Some("revision-a".to_string()),
+                belief_key: meld_world_model::BeliefKey {
+                    subject: subject(),
+                    dimension_id: "docs_freshness".to_string(),
+                    predicate_id: "stale".to_string(),
+                    perspective: meld_world_model::PerspectiveKey::new("agent", "agent-a").unwrap(),
+                    branch_scope: meld_world_model::BranchScope::main(),
+                    evidence_policy_id: "docs".to_string(),
+                },
+                planner_projection_version: "planner_projection.v1".to_string(),
+                planner_source_refs: Vec::new(),
+                planner_warnings: Vec::new(),
+            },
+            reason: "belief confidence is below threshold".to_string(),
+            created_at_seq: command.command_seq,
+        }
+    }
+
+    fn agent_mutation_decision(
+        command: &meld_world_model::AgentGoalMutationCommand,
+    ) -> meld_world_model::AgentCurationDecision {
+        meld_world_model::AgentCurationDecision {
+            decision_id: "decision-mutation-a".to_string(),
+            agent_id: command.agent_id.clone(),
+            subscription_id: "subscription-a".to_string(),
+            decision: meld_world_model::AgentDecisionKind::GoalMutationCommand,
+            goal_command_id: None,
+            goal_mutation_command_id: Some(command.command_id.clone()),
+            dedupe_key: command.dedupe_key.clone(),
+            input_refs: meld_world_model::agent::AgentCurationInputRefs {
+                belief_revision_id: Some("revision-b".to_string()),
+                belief_key: meld_world_model::BeliefKey {
+                    subject: subject(),
+                    dimension_id: "docs_freshness".to_string(),
+                    predicate_id: "stale".to_string(),
+                    perspective: meld_world_model::PerspectiveKey::new("agent", "agent-a").unwrap(),
+                    branch_scope: meld_world_model::BranchScope::main(),
+                    evidence_policy_id: "docs".to_string(),
+                },
+                planner_projection_version: command.projection_version.clone(),
+                planner_source_refs: command.planner_source_refs.clone(),
+                planner_warnings: command.planner_warnings.clone(),
+            },
+            reason: "goal target satisfied".to_string(),
+            created_at_seq: command.review_seq,
         }
     }
 

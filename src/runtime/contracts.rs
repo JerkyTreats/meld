@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 use meld_execution::planning::PlanningRuntimeActorReport;
 use meld_execution::task_network::{PublicationBridgeReport, PublicationRuntimeReport};
 use meld_world_model::world_state::graph::runtime::GraphCatchUpReport;
-use meld_world_model::{AgentRuntimeReport, DocsTaskEvidenceReplayReport};
+use meld_world_model::{
+    AgentHydrationTickReport, AgentRuntimeReport, BeliefRuntimeTickReport,
+    DocsTaskEvidenceReplayReport, EvidenceIngestionActorReport, PlannerProjectionTickReport,
+};
 use serde::{Deserialize, Serialize};
 
 /// Current schema version for runtime status cache records.
@@ -1309,6 +1312,194 @@ impl From<GraphCatchUpReport> for WorkerTickReport {
     }
 }
 
+impl From<BeliefRuntimeTickReport> for WorkerTickReport {
+    fn from(report: BeliefRuntimeTickReport) -> Self {
+        Self {
+            actor_id: report.actor_id,
+            scope: WorkerScope {
+                domain_id: "world_model".to_string(),
+                stream_id: None,
+                work_key: Some("belief_assessment".to_string()),
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "belief_source_sequence".to_string(),
+                value: report.input_sequence,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "belief_source_sequence".to_string(),
+                value: report.output_sequence,
+            },
+            items_attempted: report.selected_count,
+            items_committed: report.committed_count,
+            retryable_errors: report
+                .retryable_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.item_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            fatal_errors: report
+                .fatal_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.item_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            budget_exhausted: report.budget_exhausted,
+        }
+    }
+}
+
+impl From<AgentHydrationTickReport> for WorkerTickReport {
+    fn from(report: AgentHydrationTickReport) -> Self {
+        Self {
+            actor_id: report.actor_id,
+            scope: WorkerScope {
+                domain_id: "world_model".to_string(),
+                stream_id: None,
+                work_key: Some("agent_hydration".to_string()),
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "agent_hydration_sequence".to_string(),
+                value: report.input_sequence,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "agent_hydration_sequence".to_string(),
+                value: report.output_sequence,
+            },
+            items_attempted: report.selected_count,
+            items_committed: report.started_count
+                + report.attested_count
+                + report.projection_requested_count
+                + report.operational_count
+                + report.failed_count,
+            retryable_errors: report
+                .retryable_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.agent_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            fatal_errors: report
+                .fatal_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.agent_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            budget_exhausted: report.budget_exhausted,
+        }
+    }
+}
+
+impl From<EvidenceIngestionActorReport> for WorkerTickReport {
+    fn from(report: EvidenceIngestionActorReport) -> Self {
+        Self {
+            actor_id: report.actor_id,
+            scope: WorkerScope {
+                domain_id: "world_model".to_string(),
+                stream_id: None,
+                work_key: Some("evidence_ingestion".to_string()),
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "event_spine_seq".to_string(),
+                value: report.input_event_sequence,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "event_spine_seq".to_string(),
+                value: report.output_event_sequence,
+            },
+            items_attempted: report.events_attempted,
+            items_committed: report.receipts.len(),
+            retryable_errors: report
+                .retryable_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.item_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            fatal_errors: report
+                .fatal_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.item_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            budget_exhausted: report.budget_exhausted,
+        }
+    }
+}
+
+impl From<PlannerProjectionTickReport> for WorkerTickReport {
+    fn from(report: PlannerProjectionTickReport) -> Self {
+        Self {
+            actor_id: report.actor_id,
+            scope: WorkerScope {
+                domain_id: "world_model".to_string(),
+                stream_id: None,
+                work_key: Some("planner_projection".to_string()),
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "planner_request_sequence".to_string(),
+                value: report.input_request_sequence,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "planner_request_sequence".to_string(),
+                value: report.output_request_sequence,
+            },
+            items_attempted: report.selected_count,
+            items_committed: report.completed_count + report.failed_count,
+            retryable_errors: report
+                .retryable_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.item_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            fatal_errors: report
+                .fatal_errors
+                .into_iter()
+                .map(|issue| WorkerTickIssue {
+                    item_id: issue.item_id,
+                    code: issue.code,
+                    message: issue.message,
+                })
+                .collect(),
+            budget_exhausted: report.budget_exhausted,
+        }
+    }
+}
+
 impl From<PublicationBridgeReport> for WorkerTickReport {
     fn from(report: PublicationBridgeReport) -> Self {
         Self {
@@ -1552,6 +1743,146 @@ mod tests {
         assert_eq!(worker.output_checkpoint.value, 3);
         assert_eq!(worker.items_attempted, 2);
         assert_eq!(worker.items_committed, 1);
+        assert!(worker.made_progress());
+    }
+
+    #[test]
+    fn belief_assessment_report_maps_to_worker_report() {
+        let report = BeliefRuntimeTickReport {
+            actor_id: "world_model.belief_assessment".to_string(),
+            input_sequence: 3,
+            output_sequence: 5,
+            source_high_water: 9,
+            lease_clock: 12,
+            selected_count: 2,
+            committed_count: 1,
+            recovered_lease_count: 1,
+            no_work_count: 1,
+            retryable_errors: vec![meld_world_model::BeliefRuntimeIssue {
+                item_id: Some("belief-a".to_string()),
+                code: "assessment_conflict".to_string(),
+                message: "lease changed".to_string(),
+            }],
+            fatal_errors: Vec::new(),
+            budget_exhausted: true,
+        };
+
+        let worker: WorkerTickReport = report.into();
+
+        assert_eq!(worker.actor_id, "world_model.belief_assessment");
+        assert_eq!(worker.scope.domain_id, "world_model");
+        assert_eq!(worker.scope.work_key.as_deref(), Some("belief_assessment"));
+        assert_eq!(worker.input_checkpoint.value, 3);
+        assert_eq!(worker.output_checkpoint.value, 5);
+        assert_eq!(worker.items_attempted, 2);
+        assert_eq!(worker.items_committed, 1);
+        assert_eq!(worker.retryable_errors[0].code, "assessment_conflict");
+        assert!(worker.budget_exhausted);
+    }
+
+    #[test]
+    fn agent_hydration_report_maps_to_worker_report() {
+        let report = AgentHydrationTickReport {
+            actor_id: "world_model.agent_hydration".to_string(),
+            input_sequence: 13,
+            output_sequence: 21,
+            selected_count: 3,
+            started_count: 1,
+            attested_count: 1,
+            projection_requested_count: 1,
+            projection_pending_count: 1,
+            operational_count: 1,
+            failed_count: 1,
+            retryable_errors: vec![meld_world_model::AgentHydrationIssue {
+                agent_id: Some("agent-a".to_string()),
+                code: "projection_pending".to_string(),
+                message: "planner projection remains pending".to_string(),
+            }],
+            fatal_errors: vec![meld_world_model::AgentHydrationIssue {
+                agent_id: Some("agent-b".to_string()),
+                code: "divergent_checkpoint".to_string(),
+                message: "hydration checkpoint diverged".to_string(),
+            }],
+            budget_exhausted: true,
+        };
+
+        let worker: WorkerTickReport = report.into();
+
+        assert_eq!(worker.actor_id, "world_model.agent_hydration");
+        assert_eq!(worker.scope.domain_id, "world_model");
+        assert_eq!(worker.scope.work_key.as_deref(), Some("agent_hydration"));
+        assert_eq!(worker.input_checkpoint.name, "agent_hydration_sequence");
+        assert_eq!(worker.input_checkpoint.value, 13);
+        assert_eq!(worker.output_checkpoint.value, 21);
+        assert_eq!(worker.items_attempted, 3);
+        assert_eq!(worker.items_committed, 5);
+        assert_eq!(
+            worker.retryable_errors[0].item_id.as_deref(),
+            Some("agent-a")
+        );
+        assert_eq!(worker.fatal_errors[0].item_id.as_deref(), Some("agent-b"));
+        assert!(worker.budget_exhausted);
+    }
+
+    #[test]
+    fn evidence_ingestion_report_maps_to_worker_report() {
+        let report = EvidenceIngestionActorReport {
+            actor_id: "world_model.evidence_ingestion".to_string(),
+            input_event_sequence: 7,
+            output_event_sequence: 9,
+            events_attempted: 2,
+            promoted_record_count: 1,
+            rejected_record_count: 0,
+            irrelevant_record_count: 1,
+            normalized_evidence_count: 1,
+            new_assignment_count: 1,
+            committed_revision_count: 1,
+            receipts: Vec::new(),
+            retryable_errors: Vec::new(),
+            fatal_errors: vec![meld_world_model::EvidenceIngestionIssue {
+                item_id: Some("event-9".to_string()),
+                code: "invalid_mapping".to_string(),
+                message: "mapping mismatch".to_string(),
+            }],
+            budget_exhausted: false,
+        };
+
+        let worker: WorkerTickReport = report.into();
+
+        assert_eq!(worker.scope.work_key.as_deref(), Some("evidence_ingestion"));
+        assert_eq!(worker.input_checkpoint.name, "event_spine_seq");
+        assert_eq!(worker.output_checkpoint.value, 9);
+        assert_eq!(worker.items_attempted, 2);
+        assert_eq!(worker.items_committed, 0);
+        assert_eq!(worker.fatal_errors[0].item_id.as_deref(), Some("event-9"));
+    }
+
+    #[test]
+    fn planner_projection_report_maps_to_worker_report() {
+        let report = PlannerProjectionTickReport {
+            actor_id: "world_model.planner_projection".to_string(),
+            input_request_sequence: 11,
+            output_request_sequence: 12,
+            selected_count: 2,
+            completed_count: 1,
+            failed_count: 1,
+            retryable_errors: Vec::new(),
+            fatal_errors: vec![meld_world_model::PlannerProjectionIssue {
+                item_id: Some("request-b".to_string()),
+                code: "invalid_projection".to_string(),
+                message: "projection failed".to_string(),
+            }],
+            budget_exhausted: false,
+        };
+
+        let worker: WorkerTickReport = report.into();
+
+        assert_eq!(worker.scope.work_key.as_deref(), Some("planner_projection"));
+        assert_eq!(worker.input_checkpoint.name, "planner_request_sequence");
+        assert_eq!(worker.output_checkpoint.value, 12);
+        assert_eq!(worker.items_attempted, 2);
+        assert_eq!(worker.items_committed, 2);
+        assert_eq!(worker.fatal_errors[0].item_id.as_deref(), Some("request-b"));
         assert!(worker.made_progress());
     }
 

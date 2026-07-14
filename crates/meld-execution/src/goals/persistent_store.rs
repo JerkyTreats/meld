@@ -1646,6 +1646,74 @@ impl PersistentGoalSetStore {
         )
     }
 
+    /// Return one complete verified durable command result.
+    ///
+    /// Missing components fail closed because an identity, outcome, or receipt
+    /// without its peers represents an incomplete authority transaction.
+    pub fn command_commit(
+        &self,
+        command_id: &str,
+    ) -> Result<Option<(GoalCommandOutcome, GoalCommandCommitReceipt)>, ExecutionInvariantError>
+    {
+        self.command_commit_with_snapshot_probe(command_id, || {})
+    }
+
+    fn command_commit_with_snapshot_probe<F>(
+        &self,
+        command_id: &str,
+        after_identity_read: F,
+    ) -> Result<Option<(GoalCommandOutcome, GoalCommandCommitReceipt)>, ExecutionInvariantError>
+    where
+        F: Fn(),
+    {
+        let command_key = command_id.as_bytes().to_vec();
+        let (raw_identity, raw_outcome, raw_receipt) = (
+            &self.command_identities,
+            &self.command_outcomes,
+            &self.command_receipts,
+        )
+            .transaction(
+                |(identities, outcomes, receipts)| -> Result<_, GoalTransactionError> {
+                    let identity = identities.get(command_key.clone())?;
+                    after_identity_read();
+                    Ok((
+                        identity,
+                        outcomes.get(command_key.clone())?,
+                        receipts.get(command_key.clone())?,
+                    ))
+                },
+            )
+            .map_err(to_goal_transaction)?;
+
+        // The snapshot can include a transaction that has not yet crossed a
+        // durability boundary. Flush after the snapshot so every present
+        // result returned below is covered by this observer's barrier.
+        self.flush()?;
+        let identity: Option<GoalCommandRequestIdentity> = decode_optional(raw_identity)?;
+        let outcome = decode_optional(raw_outcome)?;
+        let receipt = decode_optional(raw_receipt)?;
+        match (identity, outcome, receipt) {
+            (None, None, None) => Ok(None),
+            (Some(identity), Some(outcome), Some(receipt)) => {
+                if identity.command_id != command_id {
+                    return Err(ExecutionInvariantError::ConfigError(format!(
+                        "goal command '{command_id}' has a divergent request identity"
+                    )));
+                }
+                let expected = commit_receipt(identity, &outcome)?;
+                if receipt != expected {
+                    return Err(ExecutionInvariantError::ConfigError(format!(
+                        "goal command '{command_id}' has a divergent commit receipt"
+                    )));
+                }
+                Ok(Some((outcome, receipt)))
+            }
+            _ => Err(ExecutionInvariantError::ConfigError(format!(
+                "goal command '{command_id}' has an incomplete durable commit"
+            ))),
+        }
+    }
+
     /// Flush durable writes to the backing database.
     pub fn flush(&self) -> Result<(), ExecutionInvariantError> {
         self.db.flush().map_err(to_store_io)?;
@@ -2943,6 +3011,17 @@ mod tests {
             .is_none());
     }
 
+    fn add_command(command_id: &str) -> AddGoalCommand {
+        AddGoalCommand {
+            metadata: GoalCommandMetadata {
+                command_id: command_id.to_string(),
+                source_identity: None,
+                seq: 1,
+            },
+            goal: active_goal_record().goal,
+        }
+    }
+
     #[test]
     fn strict_legacy_policy_rejects_unverified_outcome() {
         let dir = tempfile::tempdir().unwrap();
@@ -2999,5 +3078,141 @@ mod tests {
             .to_string()
             .contains("has no verified request identity"));
         assert!(store.command_identity("cmd-legacy").unwrap().is_none());
+    }
+
+    #[test]
+    fn command_commit_returns_one_verified_authority_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PersistentGoalSetStore::new(sled::open(dir.path()).unwrap()).unwrap();
+        let expected = store.add_goal(add_command("cmd-a")).unwrap();
+
+        let (outcome, receipt) = store.command_commit("cmd-a").unwrap().unwrap();
+
+        assert_eq!(outcome, expected);
+        assert_eq!(receipt.identity.command_id, "cmd-a");
+        assert!(store.command_commit("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn command_commit_fails_closed_on_incomplete_or_divergent_products() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PersistentGoalSetStore::new(sled::open(dir.path()).unwrap()).unwrap();
+        store.add_goal(add_command("cmd-a")).unwrap();
+        let mut receipt = store.command_receipt("cmd-a").unwrap().unwrap();
+        receipt.outcome_hash = "divergent".to_string();
+        store
+            .command_receipts
+            .insert("cmd-a", serde_json::to_vec(&receipt).unwrap())
+            .unwrap();
+
+        let error = store.command_commit("cmd-a").unwrap_err();
+
+        assert!(error.to_string().contains("divergent commit receipt"));
+
+        store.command_receipts.remove("cmd-a").unwrap();
+        let error = store.command_commit("cmd-a").unwrap_err();
+        assert!(error.to_string().contains("incomplete durable commit"));
+    }
+
+    #[test]
+    fn command_commit_rejects_divergent_lookup_identity_without_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PersistentGoalSetStore::new(sled::open(dir.path()).unwrap()).unwrap();
+        store.add_goal(add_command("cmd-a")).unwrap();
+        let identity = store.command_identity("cmd-a").unwrap().unwrap();
+        let (outcome, receipt) = store.command_commit("cmd-a").unwrap().unwrap();
+        store
+            .command_identities
+            .insert("cmd-alias", serde_json::to_vec(&identity).unwrap())
+            .unwrap();
+        store
+            .command_outcomes
+            .insert("cmd-alias", serde_json::to_vec(&outcome).unwrap())
+            .unwrap();
+        store
+            .command_receipts
+            .insert("cmd-alias", serde_json::to_vec(&receipt).unwrap())
+            .unwrap();
+        store.flush().unwrap();
+        let before = (
+            store.command_identities.get("cmd-alias").unwrap(),
+            store.command_outcomes.get("cmd-alias").unwrap(),
+            store.command_receipts.get("cmd-alias").unwrap(),
+        );
+
+        let error = store.command_commit("cmd-alias").unwrap_err();
+
+        assert!(matches!(
+            error,
+            ExecutionInvariantError::ConfigError(message)
+                if message.contains("divergent request identity")
+        ));
+        let after = (
+            store.command_identities.get("cmd-alias").unwrap(),
+            store.command_outcomes.get("cmd-alias").unwrap(),
+            store.command_receipts.get("cmd-alias").unwrap(),
+        );
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn command_commit_atomically_snapshots_and_flushes_a_concurrent_commit() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc::sync_channel;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = sled::Config::new()
+            .path(dir.path().join("goals"))
+            .flush_every_ms(None)
+            .open()
+            .unwrap();
+        let store = PersistentGoalSetStore::new(db.clone()).unwrap();
+        let command = add_command("cmd-race");
+        let identity = request_identity(&command).unwrap();
+        let observer = store.clone();
+        let writer = store.clone();
+        let probe_called = Arc::new(AtomicBool::new(false));
+        let reader_probe_called = Arc::clone(&probe_called);
+        let (snapshot_started_tx, snapshot_started_rx) = sync_channel(0);
+        let (snapshot_resume_tx, snapshot_resume_rx) = sync_channel(0);
+        let reader = std::thread::spawn(move || {
+            observer.command_commit_with_snapshot_probe("cmd-race", || {
+                if !reader_probe_called.swap(true, Ordering::SeqCst) {
+                    snapshot_started_tx.send(()).unwrap();
+                    snapshot_resume_rx.recv().unwrap();
+                }
+            })
+        });
+
+        snapshot_started_rx.recv().unwrap();
+        let (writer_started_tx, writer_started_rx) = sync_channel(0);
+        let writer = std::thread::spawn(move || {
+            writer_started_tx.send(()).unwrap();
+            writer
+                .commit_add_goal_with_identity(command, identity)
+                .unwrap()
+        });
+        writer_started_rx.recv().unwrap();
+        snapshot_resume_tx.send(()).unwrap();
+
+        let first_observation = reader.join().unwrap().unwrap();
+        let expected = writer.join().unwrap();
+        let before_complete_observation = (
+            store.command_identities.get("cmd-race").unwrap(),
+            store.command_outcomes.get("cmd-race").unwrap(),
+            store.command_receipts.get("cmd-race").unwrap(),
+        );
+        let complete_observation = store.command_commit("cmd-race").unwrap().unwrap();
+        let after_complete_observation = (
+            store.command_identities.get("cmd-race").unwrap(),
+            store.command_outcomes.get("cmd-race").unwrap(),
+            store.command_receipts.get("cmd-race").unwrap(),
+        );
+
+        assert!(first_observation.is_none());
+        assert!(probe_called.load(Ordering::SeqCst));
+        assert_eq!(complete_observation, expected);
+        assert_eq!(after_complete_observation, before_complete_observation);
+        assert_eq!(db.flush().unwrap(), 0);
     }
 }

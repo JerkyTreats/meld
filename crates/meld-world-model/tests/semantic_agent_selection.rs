@@ -605,6 +605,10 @@ fn satisfaction_cursor_advances_independently_from_delivery_progress() {
         .expect("runtime schema")
         .remove(b"semantic_runtime")
         .expect("remove schema marker for migration replay");
+    db.open_tree("agent_runtime_schema")
+        .expect("runtime schema")
+        .remove(b"goal_command_sequence_migration")
+        .expect("remove later migration checkpoint");
     store.flush().expect("flush independent decisions");
     drop(belief_store);
     drop(traversal_store);
@@ -738,38 +742,159 @@ fn selected_delivery_resumes_from_receipt_before_cursor_after_reopen() {
 }
 
 #[test]
-fn stale_agent_lifecycle_fails_selected_work_before_decision() {
+fn selected_command_outcome_rejects_registered_suspended_and_changed_owners() {
+    for owner_change in ["registered", "suspended", "sequence"] {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db = sled::open(temp.path()).expect("database");
+        let store = AgentStore::new(db.clone()).expect("agent store");
+        register_operational_agent(&db, &store, "agent-a", 1);
+        install_belief(&db, 0.2, "revision-7", 7);
+        let belief_store = BeliefStore::new(db.clone()).expect("belief store");
+        let traversal_store = Arc::new(TraversalStore::new(db.clone()).expect("traversal store"));
+        let belief_query = BeliefQuery::new(&belief_store);
+        let planner_query = PlannerQuery::new(
+            BeliefQuery::new(&belief_store),
+            TraversalQuery::new(&traversal_store),
+        );
+        let selection = AgentSemanticSelector::new(&store)
+            .select_deliveries(&belief_query, 1)
+            .expect("select delivery")
+            .pop()
+            .expect("pending delivery");
+        let mut agent = store
+            .get_agent("agent-a")
+            .expect("agent query")
+            .expect("agent record");
+        agent.status = match owner_change {
+            "registered" => AgentStatus::Registered,
+            "suspended" => AgentStatus::Suspended,
+            "sequence" => AgentStatus::Operational,
+            _ => unreachable!("owner change"),
+        };
+        agent.updated_at_seq += 1;
+        db.open_tree("agent_records")
+            .expect("agent records")
+            .insert(
+                agent.agent_id.as_bytes(),
+                serde_json::to_vec(&agent).expect("encode changed agent"),
+            )
+            .expect("change selected agent");
+
+        let goal_query_called = Cell::new(false);
+        let mut goal_query = |_agent_id: &str| {
+            goal_query_called.set(true);
+            Ok::<ActiveGoalSummary, AgentActiveGoalQueryError>(ActiveGoalSummary::default())
+        };
+        let outcome_query_called = Cell::new(false);
+        let mut outcome_query = |_decision: &AgentCurationDecision,
+                                 _command: &AgentAuthoredCommand| {
+            outcome_query_called.set(true);
+            Ok::<Option<AgentSinkSubmission>, AgentCommandOutcomeQueryError>(None)
+        };
+        let sink_called = Cell::new(false);
+        let mut sink = |_command: &AgentGoalCommand| {
+            sink_called.set(true);
+            Err::<AgentSinkSubmission, AgentSinkError>(AgentSinkError::fatal(
+                "stale owner reached sink",
+            ))
+        };
+
+        let report = AgentGoalCurationRuntime::new(&store).handle_selected_delivery(
+            AgentSelectedGoalTick {
+                selection,
+                belief_query: &belief_query,
+                planner_query: &planner_query,
+                rule_config: rule_config(),
+            },
+            &mut goal_query,
+            &mut outcome_query,
+            &mut sink,
+        );
+
+        assert_eq!(report.decision_count, 0, "{owner_change}");
+        assert_eq!(report.retryable_errors.len(), 1, "{owner_change}");
+        assert!(
+            report.retryable_errors[0].contains("lifecycle changed"),
+            "{owner_change}"
+        );
+        assert!(!goal_query_called.get(), "{owner_change}");
+        assert!(!outcome_query_called.get(), "{owner_change}");
+        assert!(!sink_called.get(), "{owner_change}");
+        assert!(
+            AgentQuery::new(&store)
+                .recent_decisions("agent-a", 1)
+                .expect("decisions")
+                .is_empty(),
+            "{owner_change}"
+        );
+    }
+}
+
+#[test]
+fn selected_command_outcome_rechecks_owner_after_cross_domain_goal_query() {
     let temp = tempfile::tempdir().expect("tempdir");
     let db = sled::open(temp.path()).expect("database");
     let store = AgentStore::new(db.clone()).expect("agent store");
     register_operational_agent(&db, &store, "agent-a", 1);
     install_belief(&db, 0.2, "revision-7", 7);
     let belief_store = BeliefStore::new(db.clone()).expect("belief store");
+    let traversal_store = Arc::new(TraversalStore::new(db.clone()).expect("traversal store"));
     let belief_query = BeliefQuery::new(&belief_store);
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&traversal_store),
+    );
     let selection = AgentSemanticSelector::new(&store)
         .select_deliveries(&belief_query, 1)
         .expect("select delivery")
         .pop()
         .expect("pending delivery");
-    let mut agent = store
+    let mut changed_agent = store
         .get_agent("agent-a")
         .expect("agent query")
         .expect("agent record");
-    agent.status = AgentStatus::Suspended;
-    agent.updated_at_seq += 1;
-    db.open_tree("agent_records")
-        .expect("agent records")
-        .insert(
-            agent.agent_id.as_bytes(),
-            serde_json::to_vec(&agent).expect("encode suspended agent"),
-        )
-        .expect("suspend agent");
+    changed_agent.updated_at_seq += 1;
+    let agent_records = db.open_tree("agent_records").expect("agent records");
+    let mut goal_query = move |_agent_id: &str| {
+        agent_records
+            .insert(
+                changed_agent.agent_id.as_bytes(),
+                serde_json::to_vec(&changed_agent).expect("encode changed agent"),
+            )
+            .expect("change agent during goal query");
+        Ok::<ActiveGoalSummary, AgentActiveGoalQueryError>(ActiveGoalSummary::default())
+    };
+    let outcome_query_called = Cell::new(false);
+    let mut outcome_query = |_decision: &AgentCurationDecision, _command: &AgentAuthoredCommand| {
+        outcome_query_called.set(true);
+        Ok::<Option<AgentSinkSubmission>, AgentCommandOutcomeQueryError>(None)
+    };
+    let sink_called = Cell::new(false);
+    let mut sink = |_command: &AgentGoalCommand| {
+        sink_called.set(true);
+        Err::<AgentSinkSubmission, AgentSinkError>(AgentSinkError::fatal(
+            "changed owner reached sink",
+        ))
+    };
 
-    let error = AgentSemanticSelector::new(&store)
-        .revalidate_delivery(&selection, &belief_query)
-        .expect_err("stale lifecycle must fail");
+    let report = AgentGoalCurationRuntime::new(&store).handle_selected_delivery(
+        AgentSelectedGoalTick {
+            selection,
+            belief_query: &belief_query,
+            planner_query: &planner_query,
+            rule_config: rule_config(),
+        },
+        &mut goal_query,
+        &mut outcome_query,
+        &mut sink,
+    );
 
-    assert!(error.to_string().contains("lifecycle changed"));
+    assert_eq!(report.delivered_count, 1);
+    assert_eq!(report.decision_count, 0);
+    assert_eq!(report.retryable_errors.len(), 1);
+    assert!(report.retryable_errors[0].contains("lifecycle changed"));
+    assert!(!outcome_query_called.get());
+    assert!(!sink_called.get());
     assert!(AgentQuery::new(&store)
         .recent_decisions("agent-a", 1)
         .expect("decisions")
@@ -865,6 +990,10 @@ fn mutation_outcome_requires_exact_satisfaction_review_identity() {
             .expect("runtime schema")
             .remove(b"semantic_runtime")
             .expect("remove schema marker");
+        db.open_tree("agent_runtime_schema")
+            .expect("runtime schema")
+            .remove(b"goal_command_sequence_migration")
+            .expect("remove later migration checkpoint");
         store.flush().expect("flush missing review identity");
     }
 
@@ -874,6 +1003,72 @@ fn mutation_outcome_requires_exact_satisfaction_review_identity() {
     assert!(reopen_error
         .to_string()
         .contains("no exact satisfaction review identity"));
+}
+
+#[test]
+fn selected_mutation_rechecks_owner_after_cross_domain_goal_query() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let db = sled::open(temp.path()).expect("database");
+    let store = AgentStore::new(db.clone()).expect("agent store");
+    let (belief_store, traversal_store, selection, goal) = prepare_mutation_fixture(&db, &store);
+    let belief_query = BeliefQuery::new(&belief_store);
+    let planner_query = PlannerQuery::new(
+        BeliefQuery::new(&belief_store),
+        TraversalQuery::new(&traversal_store),
+    );
+    let mut changed_agent = store
+        .get_agent("agent-a")
+        .expect("agent query")
+        .expect("agent record");
+    changed_agent.updated_at_seq += 1;
+    let agent_records = db.open_tree("agent_records").expect("agent records");
+    let mut goal_query = move |_agent_id: &str| {
+        agent_records
+            .insert(
+                changed_agent.agent_id.as_bytes(),
+                serde_json::to_vec(&changed_agent).expect("encode changed agent"),
+            )
+            .expect("change agent during goal query");
+        Ok::<ActiveGoalSummary, AgentActiveGoalQueryError>(ActiveGoalSummary {
+            goals: vec![goal.clone()],
+        })
+    };
+    let outcome_query_called = Cell::new(false);
+    let mut outcome_query = |_decision: &AgentCurationDecision, _command: &AgentAuthoredCommand| {
+        outcome_query_called.set(true);
+        Ok::<Option<AgentSinkSubmission>, AgentCommandOutcomeQueryError>(None)
+    };
+    let sink_called = Cell::new(false);
+    let mut sink = |_command: &AgentGoalMutationCommand| {
+        sink_called.set(true);
+        Err::<AgentSinkSubmission, AgentSinkError>(AgentSinkError::fatal(
+            "changed owner reached mutation sink",
+        ))
+    };
+
+    let report = AgentSatisfactionCurationRuntime::new(&store).handle_selected_review(
+        selection.clone(),
+        &belief_query,
+        &planner_query,
+        &mut goal_query,
+        &mut outcome_query,
+        &mut sink,
+    );
+
+    assert_eq!(report.delivered_count, 1);
+    assert_eq!(report.decision_count, 0);
+    assert_eq!(report.retryable_errors.len(), 1);
+    assert!(report.retryable_errors[0].contains("lifecycle changed"));
+    assert!(!outcome_query_called.get());
+    assert!(!sink_called.get());
+    assert!(AgentQuery::new(&store)
+        .decision_by_satisfaction_review(&selection.review)
+        .expect("decision query")
+        .is_none());
+    assert!(AgentQuery::new(&store)
+        .satisfaction_review_cursor(&selection.cursor_identity)
+        .expect("cursor query")
+        .is_none());
 }
 
 #[test]
@@ -1069,6 +1264,10 @@ fn semantic_schema_migration_rejects_orphaned_indexes() {
             .expect("runtime schema")
             .remove(b"semantic_runtime")
             .expect("remove schema marker");
+        db.open_tree("agent_runtime_schema")
+            .expect("runtime schema")
+            .remove(b"goal_command_sequence_migration")
+            .expect("remove later migration checkpoint");
         store.flush().expect("flush corrupt migration fixture");
     }
 
@@ -1099,6 +1298,10 @@ fn semantic_schema_migration_rejects_noncanonical_dedupe_alias() {
             .expect("runtime schema")
             .remove(b"semantic_runtime")
             .expect("remove schema marker");
+        db.open_tree("agent_runtime_schema")
+            .expect("runtime schema")
+            .remove(b"goal_command_sequence_migration")
+            .expect("remove later migration checkpoint");
         store.flush().expect("flush corrupt migration fixture");
     }
 
@@ -1129,6 +1332,10 @@ fn semantic_schema_migration_rejects_goal_decision_satisfaction_alias() {
             .expect("runtime schema")
             .remove(b"semantic_runtime")
             .expect("remove schema marker");
+        db.open_tree("agent_runtime_schema")
+            .expect("runtime schema")
+            .remove(b"goal_command_sequence_migration")
+            .expect("remove later migration checkpoint");
         store.flush().expect("flush corrupt migration fixture");
     }
 

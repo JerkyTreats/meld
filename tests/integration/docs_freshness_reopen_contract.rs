@@ -9,7 +9,6 @@ use meld::runtime::contracts::WorkerTickReport;
 use meld::runtime::ports::{ProductRuntimePorts, ProviderPortConfig};
 use meld::runtime::storage::{OpenProductStores, ProductStorageLayout};
 use meld_events::{AppendMode, EventAuthority, EventAuthorityOpenOptions, EventEnvelope};
-use meld_execution::goals::GoalCommandOutcome;
 use meld_execution::planning::{
     PlanningPerspectiveRef, PlanningRequest, PlanningResult, PlanningWorldStateFrameRef,
     PlanningWorldStateRequest,
@@ -28,25 +27,23 @@ use meld_execution::task_network::store::SledTaskNetworkStore;
 use meld_execution::task_network::{PublicationRuntime, TaskNetworkAuthority};
 use meld_lang::{Condition, GoalLifecycle, Literal, Proposition, Term, WorldState};
 use meld_world_model::agent::{
-    ActiveGoalSummary, AgentActiveGoalQueryError, AgentCurationDedupeKey, AgentDelivery,
-    AgentGoalCommand, AgentGoalCurationRuntime, AgentGoalMutationCommand, AgentQuery,
-    AgentRegistration, AgentSatisfactionCurationRuntime, AgentSatisfactionReview, AgentSinkError,
-    AgentSinkSubmission, AgentSubscription, SubscribeAgentCommand,
+    AgentCurationDedupeKey, AgentGoalCurationRuntime, AgentQuery, AgentRegistration,
+    AgentSatisfactionCurationRuntime, AgentSelectedGoalTick, AgentSemanticSelector, AgentStatus,
+    AgentSubscription, SubscribeAgentCommand, BELIEF_REVISION_REVIEW_SOURCE,
 };
 use meld_world_model::belief::{
-    BeliefConfigLoader, BeliefProvenanceSummary, BeliefQuery, BeliefRuntime, ContradictionState,
-    DocsTaskEvidenceIngestionRuntime, DocsTaskEvidenceReplayRequest, FreshnessState, HydrationRefs,
-    PlannerProjectionSummary, PosteriorSummary,
+    BeliefConfigLoader, BeliefQuery, BeliefRuntime, DocsTaskEvidenceIngestionRuntime,
+    DocsTaskEvidenceReplayRequest,
 };
 use meld_world_model::planner::{PlannerQuery, PLANNER_PROJECTION_VERSION};
-use meld_world_model::{BeliefStatus, BeliefView, TraversalQuery};
+use meld_world_model::TraversalQuery;
 use serde_json::json;
 
 use super::docs_freshness_fixture::{
-    DocsFreshnessFirstProofFixture, AGENT_ID, ARTIFACT_ID, DIMENSION_ID, GOAL_COMMAND_REVISION_ID,
-    GRAPH_PERSPECTIVE_ID, GRAPH_PERSPECTIVE_KIND, OUTCOME_ID, PUBLICATION_EVENT_TYPE,
-    PUBLICATION_ID, REQUIRED_ARTIFACT_TYPE_ID, SESSION_ID, TASK_ARTIFACT_REPO_ID, TASK_INSTANCE_ID,
-    TASK_NETWORK_ID, THRESHOLD, WORKER_ID,
+    DocsFreshnessFirstProofFixture, AGENT_ID, ARTIFACT_ID, DIMENSION_ID, GRAPH_PERSPECTIVE_ID,
+    GRAPH_PERSPECTIVE_KIND, OUTCOME_ID, PUBLICATION_EVENT_TYPE, PUBLICATION_ID,
+    REQUIRED_ARTIFACT_TYPE_ID, SESSION_ID, TASK_ARTIFACT_REPO_ID, TASK_INSTANCE_ID,
+    TASK_NETWORK_ID, WORKER_ID,
 };
 
 struct ReopenHarness {
@@ -167,8 +164,8 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
     authority.shutdown().unwrap();
     assert_eq!(report.attempted, 1);
     assert_eq!(report.committed, 1);
-    assert!(report.retryable_errors.is_empty());
-    assert!(report.fatal_errors.is_empty());
+    assert!(report.retryable_errors.is_empty(), "{report:?}");
+    assert!(report.fatal_errors.is_empty(), "{report:?}");
     assert!(report.output_revision > report.input_revision);
 
     stores.flush_boundary().unwrap();
@@ -230,63 +227,54 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
         .any(|result| !result.committed.is_empty()));
     drop(evidence_runtime);
 
-    let review = AgentSatisfactionReview {
-        agent_id: AGENT_ID.to_string(),
-        subscription_id: harness.fixture.expected_subscription_id(),
-        review_seq: harness.fixture.satisfaction_review_seq(),
-    };
-    let mut goal_query = |_agent_id: &str| {
-        stores
-            .goal_store
-            .active_goals()
-            .map(|goals| ActiveGoalSummary { goals })
-            .map_err(|error| AgentActiveGoalQueryError::retryable(error.to_string()))
-    };
-    let mut mutation_sink = |command: &AgentGoalMutationCommand| match ports
-        .goal_mutation()
-        .satisfy_agent_goal_mutation(command.clone())
-    {
-        Ok(outcome) => submission_from_mutation_outcome(command, outcome),
-        Err(error) => Err(AgentSinkError::retryable(error.to_string())),
-    };
-    let satisfaction_report = {
+    let (satisfaction_report, review) = {
         let belief_query = BeliefQuery::new(stores.belief_store.as_ref());
         let planner_query = PlannerQuery::new(
             BeliefQuery::new(stores.belief_store.as_ref()),
             TraversalQuery::new(stores.traversal_store.as_ref()),
         );
-        AgentSatisfactionCurationRuntime::new(stores.agent_store.as_ref())
-            .handle_review_with_goal_query(
-                review.clone(),
+        let selection = AgentSemanticSelector::new(stores.agent_store.as_ref())
+            .select_satisfaction_reviews(&belief_query, BELIEF_REVISION_REVIEW_SOURCE, 1)
+            .unwrap()
+            .pop()
+            .expect("expected satisfaction review selection");
+        let review = selection.review.clone();
+        let mut goal_query = ports.goal_command().clone();
+        let mut outcome_query = ports.goal_command().clone();
+        let mut mutation_sink = ports.goal_mutation().clone();
+        let report = AgentSatisfactionCurationRuntime::new(stores.agent_store.as_ref())
+            .handle_selected_review(
+                selection,
                 &belief_query,
                 &planner_query,
                 &mut goal_query,
+                &mut outcome_query,
                 &mut mutation_sink,
-            )
+            );
+        (report, review)
     };
     assert_eq!(satisfaction_report.delivered_count, 1);
     assert_eq!(satisfaction_report.decision_count, 1);
     assert_eq!(satisfaction_report.sink_submission_count, 1);
     assert!(satisfaction_report.retryable_errors.is_empty());
     assert!(satisfaction_report.fatal_errors.is_empty());
-    assert_eq!(
-        satisfaction_report.output_sequence,
-        harness.fixture.satisfaction_review_seq()
-    );
+    assert_eq!(satisfaction_report.output_sequence, review.review_seq);
 
     let persisted = AgentQuery::new(stores.agent_store.as_ref())
         .decision_by_satisfaction_review(&review)
         .unwrap()
         .expect("expected persisted satisfaction decision");
+    let persisted_outcome = AgentQuery::new(stores.agent_store.as_ref())
+        .curation_outcome(&persisted.decision_id)
+        .unwrap();
+    let mutation = persisted_outcome
+        .goal_mutation_command
+        .expect("expected durable satisfaction command");
     assert_eq!(
         persisted.goal_mutation_command_id.as_deref(),
-        Some(
-            harness
-                .fixture
-                .expected_satisfaction_mutation_command_id()
-                .as_str()
-        )
+        Some(mutation.command_id.as_str())
     );
+    assert_eq!(mutation.review_seq, review.review_seq);
     stores.flush_boundary().unwrap();
     drop(ports);
     drop(stores);
@@ -301,9 +289,7 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
         .expect("expected final goal record");
     assert_eq!(
         record.goal.lifecycle,
-        harness
-            .fixture
-            .expected_final_lifecycle(harness.fixture.satisfaction_review_seq())
+        harness.fixture.expected_final_lifecycle(review.review_seq)
     );
 }
 
@@ -320,10 +306,6 @@ fn docs_freshness_reopens_after_goal_acceptance_from_product_stores() {
         .expect("expected reopened goal record");
     assert_eq!(record.goal.lifecycle, GoalLifecycle::Active);
     assert_eq!(
-        record.source_command_id.as_deref(),
-        Some(fixture.expected_goal_command_id().as_str())
-    );
-    assert_eq!(
         record.source_identity.as_deref(),
         Some(fixture.expected_goal_source_identity().as_str())
     );
@@ -333,9 +315,10 @@ fn docs_freshness_reopens_after_goal_acceptance_from_product_stores() {
         .unwrap()
         .expect("expected persisted curation decision");
     assert_eq!(
-        decision.goal_command_id.as_deref(),
-        Some(fixture.expected_goal_command_id().as_str())
+        record.source_command_id.as_deref(),
+        decision.goal_command_id.as_deref()
     );
+    assert!(decision.goal_command_id.is_some());
 
     let active = stores.goal_store.active_goals().unwrap();
     assert_eq!(active.len(), 1);
@@ -480,64 +463,55 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
         .iter()
         .any(|result| !result.committed.is_empty()));
 
-    let review = AgentSatisfactionReview {
-        agent_id: AGENT_ID.to_string(),
-        subscription_id: harness.fixture.expected_subscription_id(),
-        review_seq: harness.fixture.satisfaction_review_seq(),
-    };
-    let mut goal_query = |_agent_id: &str| {
-        stores
-            .goal_store
-            .active_goals()
-            .map(|goals| ActiveGoalSummary { goals })
-            .map_err(|error| AgentActiveGoalQueryError::retryable(error.to_string()))
-    };
-    let mut mutation_sink = |command: &AgentGoalMutationCommand| match ports
-        .goal_mutation()
-        .satisfy_agent_goal_mutation(command.clone())
-    {
-        Ok(outcome) => submission_from_mutation_outcome(command, outcome),
-        Err(error) => Err(AgentSinkError::retryable(error.to_string())),
-    };
-    let satisfaction_report = {
+    let (satisfaction_report, review) = {
         let belief_query = BeliefQuery::new(stores.belief_store.as_ref());
         let planner_query = PlannerQuery::new(
             BeliefQuery::new(stores.belief_store.as_ref()),
             TraversalQuery::new(stores.traversal_store.as_ref()),
         );
-        AgentSatisfactionCurationRuntime::new(stores.agent_store.as_ref())
-            .handle_review_with_goal_query(
-                review.clone(),
+        let selection = AgentSemanticSelector::new(stores.agent_store.as_ref())
+            .select_satisfaction_reviews(&belief_query, BELIEF_REVISION_REVIEW_SOURCE, 1)
+            .unwrap()
+            .pop()
+            .expect("expected satisfaction review selection");
+        let review = selection.review.clone();
+        let mut goal_query = ports.goal_command().clone();
+        let mut outcome_query = ports.goal_command().clone();
+        let mut mutation_sink = ports.goal_mutation().clone();
+        let report = AgentSatisfactionCurationRuntime::new(stores.agent_store.as_ref())
+            .handle_selected_review(
+                selection,
                 &belief_query,
                 &planner_query,
                 &mut goal_query,
+                &mut outcome_query,
                 &mut mutation_sink,
-            )
+            );
+        (report, review)
     };
     assert_eq!(satisfaction_report.delivered_count, 1);
     assert_eq!(satisfaction_report.decision_count, 1);
     assert_eq!(satisfaction_report.sink_submission_count, 1);
     assert!(satisfaction_report.retryable_errors.is_empty());
     assert!(satisfaction_report.fatal_errors.is_empty());
-    assert_eq!(
-        satisfaction_report.output_sequence,
-        harness.fixture.satisfaction_review_seq()
-    );
+    assert_eq!(satisfaction_report.output_sequence, review.review_seq);
 
     let persisted = AgentQuery::new(stores.agent_store.as_ref())
         .decision_by_satisfaction_review(&review)
         .unwrap()
         .expect("expected persisted satisfaction decision");
+    let persisted_outcome = AgentQuery::new(stores.agent_store.as_ref())
+        .curation_outcome(&persisted.decision_id)
+        .unwrap();
+    let mutation = persisted_outcome
+        .goal_mutation_command
+        .expect("expected durable satisfaction command");
     assert_eq!(
         persisted.goal_mutation_command_id.as_deref(),
-        Some(
-            harness
-                .fixture
-                .expected_satisfaction_mutation_command_id()
-                .as_str()
-        ),
+        Some(mutation.command_id.as_str()),
         "{persisted:?}"
     );
+    assert_eq!(mutation.review_seq, review.review_seq);
 
     let record = stores
         .goal_store
@@ -546,10 +520,45 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
         .expect("expected final goal record");
     assert_eq!(
         record.goal.lifecycle,
-        harness
-            .fixture
-            .expected_final_lifecycle(harness.fixture.satisfaction_review_seq())
+        harness.fixture.expected_final_lifecycle(review.review_seq)
     );
+}
+
+fn mark_fixture_agent_operational(db: &sled::Db) {
+    let records = db.open_tree("agent_records").unwrap();
+    let statuses = db.open_tree("agent_by_status").unwrap();
+    let mut agent: meld_world_model::AgentRecord = serde_json::from_slice(
+        &records
+            .get(AGENT_ID)
+            .unwrap()
+            .expect("registered fixture agent"),
+    )
+    .unwrap();
+    let prior_status_key = format!(
+        "{}::{:020}::{}",
+        agent.status.index_key(),
+        agent.updated_at_seq,
+        agent.agent_id
+    );
+    agent.status = AgentStatus::Operational;
+    agent.updated_at_seq += 1;
+    records
+        .insert(AGENT_ID, serde_json::to_vec(&agent).unwrap())
+        .unwrap();
+    statuses.remove(prior_status_key.as_bytes()).unwrap();
+    statuses
+        .insert(
+            format!(
+                "{}::{:020}::{}",
+                agent.status.index_key(),
+                agent.updated_at_seq,
+                agent.agent_id
+            )
+            .as_bytes(),
+            AGENT_ID.as_bytes(),
+        )
+        .unwrap();
+    db.flush().unwrap();
 }
 
 fn setup_reopened_active_goal(harness: &ReopenHarness) -> OpenReopenProduct {
@@ -572,63 +581,66 @@ fn setup_reopened_active_goal(harness: &ReopenHarness) -> OpenReopenProduct {
     AgentRegistration::new(stores.agent_store.as_ref())
         .register_seed_agent(fixture.seed_agent_registration())
         .unwrap();
+    let initial_revision_seq = BeliefQuery::new(stores.belief_store.as_ref())
+        .current_revision(&fixture.belief_key())
+        .unwrap()
+        .expect("initial assessed belief revision")
+        .source_cursor_end;
     let subscription = AgentSubscription::new(stores.agent_store.as_ref())
         .subscribe(SubscribeAgentCommand {
             agent_id: AGENT_ID.to_string(),
             belief_key: fixture.belief_key(),
-            created_at_seq: fixture.goal_acceptance_seq(),
+            created_at_seq: initial_revision_seq,
         })
         .unwrap();
     assert_eq!(
         subscription.subscription_id,
         fixture.expected_subscription_id()
     );
-    stores
-        .belief_store
-        .put_view(&belief_view(&fixture, 0.2, GOAL_COMMAND_REVISION_ID, 7))
-        .unwrap();
+    stores.flush_boundary().unwrap();
+    mark_fixture_agent_operational(stores.traversal_store.db());
 
     let ports = harness.ports(&stores);
-    let mut sink = |command: &AgentGoalCommand| match ports
-        .goal_command()
-        .accept_agent_goal_command(command.clone(), fixture.goal_acceptance_seq())
-    {
-        Ok(outcome) => submission_from_goal_outcome(command, outcome),
-        Err(error) => Err(AgentSinkError::retryable(error.to_string())),
-    };
     let belief_query = BeliefQuery::new(stores.belief_store.as_ref());
     let planner_query = PlannerQuery::new(
         BeliefQuery::new(stores.belief_store.as_ref()),
         TraversalQuery::new(stores.traversal_store.as_ref()),
     );
-    let delivery = AgentDelivery {
-        agent_id: AGENT_ID.to_string(),
-        subscription_id: subscription.subscription_id,
-        belief_revision_id: GOAL_COMMAND_REVISION_ID.to_string(),
-        revision_seq: fixture.goal_acceptance_seq(),
-    };
-    let mut goal_query = |_agent_id: &str| {
-        stores
-            .goal_store
-            .active_goals()
-            .map(|goals| ActiveGoalSummary { goals })
-            .map_err(|error| AgentActiveGoalQueryError::retryable(error.to_string()))
-    };
+    let selection = AgentSemanticSelector::new(stores.agent_store.as_ref())
+        .select_deliveries(&belief_query, 1)
+        .unwrap()
+        .pop()
+        .expect("expected goal delivery selection");
+    assert_eq!(selection.delivery.agent_id, AGENT_ID);
+    assert_eq!(
+        selection.delivery.subscription_id,
+        subscription.subscription_id
+    );
+    let selected_revision_seq = selection.delivery.revision_seq;
+    let mut goal_query = ports.goal_command().clone();
+    let mut outcome_query = ports.goal_command().clone();
+    let mut sink = ports.goal_command().clone();
     let report = AgentGoalCurationRuntime::new(stores.agent_store.as_ref())
-        .handle_delivery_with_goal_query(
-            delivery,
-            &belief_query,
-            &planner_query,
+        .handle_selected_delivery(
+            AgentSelectedGoalTick {
+                selection,
+                belief_query: &belief_query,
+                planner_query: &planner_query,
+                rule_config: fixture.curation_rule_config(),
+            },
             &mut goal_query,
-            fixture.curation_rule_config(),
+            &mut outcome_query,
             &mut sink,
         );
     assert_eq!(report.delivered_count, 1);
     assert_eq!(report.decision_count, 1);
     assert_eq!(report.sink_submission_count, 1);
-    assert!(report.retryable_errors.is_empty());
-    assert!(report.fatal_errors.is_empty());
-    assert_eq!(report.output_sequence, fixture.goal_acceptance_seq());
+    assert!(report.retryable_errors.is_empty(), "{report:?}");
+    assert!(report.fatal_errors.is_empty(), "{report:?}");
+    assert_eq!(report.output_sequence, selected_revision_seq);
+    drop(goal_query);
+    drop(outcome_query);
+    drop(sink);
     drop(ports);
 
     harness.flush_and_reopen(stores)
@@ -772,48 +784,6 @@ fn seed_event_allocator_before_publication(
     assert_eq!(receipts.last().map(|receipt| receipt.seq), Some(prior_seq));
 }
 
-fn submission_from_goal_outcome(
-    command: &AgentGoalCommand,
-    outcome: GoalCommandOutcome,
-) -> Result<AgentSinkSubmission, AgentSinkError> {
-    match outcome {
-        GoalCommandOutcome::Applied(record) => Ok(AgentSinkSubmission::new(
-            command.command_id.clone(),
-            record.goal.goal_id.clone(),
-            "applied",
-        )),
-        GoalCommandOutcome::Duplicate { existing_goal_id } => Ok(AgentSinkSubmission::new(
-            command.command_id.clone(),
-            existing_goal_id,
-            "duplicate",
-        )),
-        GoalCommandOutcome::NotFound { goal_id } => Err(AgentSinkError::fatal(format!(
-            "goal command sink did not find goal '{goal_id}'"
-        ))),
-    }
-}
-
-fn submission_from_mutation_outcome(
-    command: &AgentGoalMutationCommand,
-    outcome: GoalCommandOutcome,
-) -> Result<AgentSinkSubmission, AgentSinkError> {
-    match outcome {
-        GoalCommandOutcome::Applied(record) => Ok(AgentSinkSubmission::new(
-            command.command_id.clone(),
-            record.goal.goal_id.clone(),
-            "applied",
-        )),
-        GoalCommandOutcome::Duplicate { existing_goal_id } => Ok(AgentSinkSubmission::new(
-            command.command_id.clone(),
-            existing_goal_id,
-            "duplicate",
-        )),
-        GoalCommandOutcome::NotFound { goal_id } => Err(AgentSinkError::fatal(format!(
-            "goal mutation sink did not find goal '{goal_id}'"
-        ))),
-    }
-}
-
 fn planning_request(goal: meld_lang::Goal, world_state: WorldState) -> PlanningRequest {
     let world_state_request = PlanningWorldStateRequest::for_goal(
         &goal,
@@ -855,60 +825,6 @@ fn world_state_below_threshold(fixture: &DocsFreshnessFirstProofFixture) -> Worl
         },
     ])
     .unwrap()
-}
-
-fn belief_view(
-    fixture: &DocsFreshnessFirstProofFixture,
-    confidence: f64,
-    revision_id: &str,
-    seq: u64,
-) -> BeliefView {
-    let key = fixture.belief_key();
-    BeliefView {
-        view_id: format!("view-{revision_id}"),
-        key,
-        current_revision_id: Some(revision_id.to_string()),
-        status: BeliefStatus::Settled,
-        posterior: PosteriorSummary {
-            probability: confidence,
-            meaning: "probability".to_string(),
-        },
-        planner_projection: PlannerProjectionSummary {
-            confidence_field: "confidence".to_string(),
-            confidence,
-            threshold: THRESHOLD,
-        },
-        uncertainty: 1.0 - confidence,
-        precision: 1.0,
-        freshness: FreshnessState {
-            stale: false,
-            reasons: Vec::new(),
-            high_water_seq: seq,
-        },
-        contradiction: ContradictionState {
-            contradicted: false,
-            reasons: Vec::new(),
-            supporting_evidence_ids: Vec::new(),
-            contradicted_evidence_ids: Vec::new(),
-        },
-        observation: None,
-        assessment_state: "settled".to_string(),
-        advisory_posture: "ready".to_string(),
-        provenance: BeliefProvenanceSummary {
-            evidence_ids: vec![format!("evidence-{revision_id}")],
-            source_fact_ids: vec![format!("ledger-{seq}")],
-            graph_anchor_ids: vec!["anchor-a".to_string()],
-            objects: vec![fixture.subject()],
-            relations: Vec::new(),
-            revision_ids: vec![revision_id.to_string()],
-        },
-        hydration: HydrationRefs {
-            evidence_ids: vec![format!("evidence-{revision_id}")],
-            source_fact_ids: vec![format!("ledger-{seq}")],
-            graph_anchor_ids: vec!["anchor-a".to_string()],
-            revision_id: Some(revision_id.to_string()),
-        },
-    }
 }
 
 fn threshold_dedupe_key(fixture: &DocsFreshnessFirstProofFixture) -> AgentCurationDedupeKey {

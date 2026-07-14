@@ -264,8 +264,9 @@ impl<'a> AgentGoalCurationRuntime<'a> {
 
     /// Curate one delivery, submit any goal command, and advance the cursor.
     ///
-    /// The decision is flushed before the sink is invoked. The subscription
-    /// cursor advances only after no sink is required or the sink succeeds.
+    /// This compatibility entrypoint can persist command-free decisions only.
+    /// Command-producing work requires `handle_selected_delivery` so the final
+    /// durable commit carries the selector-issued owner and belief fences.
     pub fn handle_delivery<S>(
         &self,
         delivery: AgentDelivery,
@@ -292,6 +293,9 @@ impl<'a> AgentGoalCurationRuntime<'a> {
     }
 
     /// Curate one delivery after reloading active goals from execution.
+    ///
+    /// This compatibility entrypoint cannot emit a goal command. Recurring
+    /// semantic actors must use `handle_selected_delivery`.
     pub fn handle_delivery_with_goal_query<Q, S>(
         &self,
         delivery: AgentDelivery,
@@ -630,6 +634,37 @@ impl<'a> AgentGoalCurationRuntime<'a> {
                 return None;
             }
         };
+        match self.store.decision_by_dedupe_and_revision(
+            &outcome.decision.dedupe_key,
+            outcome.decision.input_refs.belief_revision_id.as_deref(),
+        ) {
+            Ok(Some(existing)) => {
+                report.decision_count = 1;
+                return match self.store.decision_outbox(&existing.decision_id) {
+                    Ok(Some(_)) => match self.store.outcome_for_decision(&existing.decision_id) {
+                        Ok(outcome) => Some(outcome),
+                        Err(error) => {
+                            report.fatal_error(error.to_string());
+                            None
+                        }
+                    },
+                    Ok(None) => Some(AgentCurationOutcome {
+                        decision: existing,
+                        goal_command: None,
+                        goal_mutation_command: None,
+                    }),
+                    Err(error) => {
+                        report.fatal_error(error.to_string());
+                        None
+                    }
+                };
+            }
+            Ok(None) => {}
+            Err(error) => {
+                report.fatal_error(error.to_string());
+                return None;
+            }
+        }
         let persisted = match self.store.put_decision(&outcome.decision) {
             Ok(persisted) => persisted,
             Err(error) => {
@@ -637,10 +672,6 @@ impl<'a> AgentGoalCurationRuntime<'a> {
                 return None;
             }
         };
-        if let Err(error) = self.store.flush() {
-            report.fatal_error(error.to_string());
-            return None;
-        }
         report.decision_count = 1;
         if persisted == outcome.decision {
             Some(outcome)
@@ -656,7 +687,7 @@ impl<'a> AgentGoalCurationRuntime<'a> {
     fn submit_goal_command_if_needed<S>(
         &self,
         outcome: &AgentCurationOutcome,
-        active_goals: &ActiveGoalSummary,
+        _active_goals: &ActiveGoalSummary,
         sink: &mut S,
         report: &mut AgentRuntimeReport,
     ) -> bool
@@ -675,10 +706,13 @@ impl<'a> AgentGoalCurationRuntime<'a> {
             }
         }
 
+        if outcome.decision.decision == AgentDecisionKind::GoalCommand {
+            report.fatal_error(
+                "compatibility goal curation cannot emit commands without a selector-issued owner fence",
+            );
+            return false;
+        }
         let Some(command) = &outcome.goal_command else {
-            if outcome.decision.decision == AgentDecisionKind::GoalCommand {
-                return self.recover_goal_command_receipt(outcome, active_goals, report);
-            }
             return true;
         };
 
@@ -698,32 +732,6 @@ impl<'a> AgentGoalCurationRuntime<'a> {
             }
         }
     }
-
-    fn recover_goal_command_receipt(
-        &self,
-        outcome: &AgentCurationOutcome,
-        active_goals: &ActiveGoalSummary,
-        report: &mut AgentRuntimeReport,
-    ) -> bool {
-        let Some(command_id) = &outcome.decision.goal_command_id else {
-            report.fatal_error("persisted goal command decision has no command id");
-            return false;
-        };
-        let Some(goal) = active_goals.first_open_matching_goal(&outcome.decision.dedupe_key) else {
-            report.fatal_error("persisted goal command decision has no replayable command");
-            return false;
-        };
-        let submission =
-            AgentSinkSubmission::new(command_id.clone(), goal.goal_id.clone(), "recovered");
-        record_sink_receipt(
-            self.store,
-            &outcome.decision,
-            AgentSinkReceiptKind::GoalCommand,
-            submission,
-            command_id,
-            report,
-        )
-    }
 }
 
 /// Runtime facade for agent-owned satisfaction reviews.
@@ -739,8 +747,9 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
 
     /// Curate one satisfaction review and submit any mutation command.
     ///
-    /// The satisfaction decision is flushed before the mutation sink is
-    /// invoked. This facade does not advance subscription cursors.
+    /// This compatibility entrypoint can persist command-free decisions only.
+    /// Command-producing work requires `handle_selected_review` so the final
+    /// durable commit carries the selector-issued owner and belief fences.
     pub fn handle_review<S>(
         &self,
         review: AgentSatisfactionReview,
@@ -759,6 +768,9 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
     }
 
     /// Curate one satisfaction review after reloading active goals from execution.
+    ///
+    /// This compatibility entrypoint cannot emit a goal mutation. Recurring
+    /// semantic actors must use `handle_selected_review`.
     pub fn handle_review_with_goal_query<Q, S>(
         &self,
         review: AgentSatisfactionReview,
@@ -1029,6 +1041,38 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
                 return None;
             }
         };
+        match self.store.decision_by_satisfaction_review(&review) {
+            Ok(Some(existing)) => {
+                report.decision_count = 1;
+                return match self.store.decision_outbox(&existing.decision_id) {
+                    Ok(Some(_)) => match self.store.outcome_for_satisfaction_review(&review) {
+                        Ok(Some(outcome)) => Some(outcome),
+                        Ok(None) => {
+                            report.fatal_error("satisfaction decision disappeared during replay");
+                            None
+                        }
+                        Err(error) => {
+                            report.fatal_error(error.to_string());
+                            None
+                        }
+                    },
+                    Ok(None) => Some(AgentCurationOutcome {
+                        decision: existing,
+                        goal_command: None,
+                        goal_mutation_command: None,
+                    }),
+                    Err(error) => {
+                        report.fatal_error(error.to_string());
+                        None
+                    }
+                };
+            }
+            Ok(None) => {}
+            Err(error) => {
+                report.fatal_error(error.to_string());
+                return None;
+            }
+        }
         let persisted = match self
             .store
             .put_satisfaction_decision(&review, &outcome.decision)
@@ -1039,10 +1083,6 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
                 return None;
             }
         };
-        if let Err(error) = self.store.flush() {
-            report.fatal_error(error.to_string());
-            return None;
-        }
         report.decision_count = 1;
         if persisted == outcome.decision {
             Some(outcome)
@@ -1058,7 +1098,7 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
     fn submit_goal_mutation_if_needed<S>(
         &self,
         outcome: &AgentCurationOutcome,
-        active_goals: &ActiveGoalSummary,
+        _active_goals: &ActiveGoalSummary,
         sink: &mut S,
         report: &mut AgentRuntimeReport,
     ) -> bool
@@ -1077,10 +1117,13 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
             }
         }
 
+        if outcome.decision.decision == AgentDecisionKind::GoalMutationCommand {
+            report.fatal_error(
+                "compatibility satisfaction curation cannot emit commands without a selector-issued owner fence",
+            );
+            return false;
+        }
         let Some(command) = &outcome.goal_mutation_command else {
-            if outcome.decision.decision == AgentDecisionKind::GoalMutationCommand {
-                return self.recover_goal_mutation_receipt(outcome, active_goals, report);
-            }
             return true;
         };
 
@@ -1099,32 +1142,6 @@ impl<'a> AgentSatisfactionCurationRuntime<'a> {
                 false
             }
         }
-    }
-
-    fn recover_goal_mutation_receipt(
-        &self,
-        outcome: &AgentCurationOutcome,
-        active_goals: &ActiveGoalSummary,
-        report: &mut AgentRuntimeReport,
-    ) -> bool {
-        let Some(command_id) = &outcome.decision.goal_mutation_command_id else {
-            report.fatal_error("persisted mutation decision has no command id");
-            return false;
-        };
-        let Some(goal) = active_goals.first_matching_goal(&outcome.decision.dedupe_key) else {
-            report.fatal_error("persisted mutation decision has no replayable command");
-            return false;
-        };
-        let submission =
-            AgentSinkSubmission::new(command_id.clone(), goal.goal_id.clone(), "recovered");
-        record_sink_receipt(
-            self.store,
-            &outcome.decision,
-            AgentSinkReceiptKind::GoalMutationCommand,
-            submission,
-            command_id,
-            report,
-        )
     }
 }
 

@@ -22,7 +22,7 @@ use crate::agent::bootstrap::{
 use crate::agent::contracts::{
     deterministic_id, AgentActivationRecord, AgentActivationStatus, AgentAuthoredCommand,
     AgentCurationDecision, AgentCurationDedupeKey, AgentCurationOutcome, AgentDecisionKind,
-    AgentDecisionOutboxRecord, AgentDeliverySelection, AgentHydrationCheckpoint,
+    AgentDecisionOutboxRecord, AgentDeliverySelection, AgentGoalCommand, AgentHydrationCheckpoint,
     AgentHydrationCheckpointStage, AgentRecord, AgentSatisfactionCursorCasIntent,
     AgentSatisfactionCursorIdentity, AgentSatisfactionReview, AgentSatisfactionReviewCursor,
     AgentSatisfactionReviewSelection, AgentSemanticEnablementAudit, AgentSinkReceipt,
@@ -76,7 +76,8 @@ const READINESS_SCHEMA_VERSION: u16 = 2;
 const READINESS_MIGRATION_BATCH: usize = 128;
 const HYDRATION_CONTINUATION_KEY: &[u8] = b"registered_continuation";
 const RUNTIME_SCHEMA_VERSION_KEY: &[u8] = b"semantic_runtime";
-const RUNTIME_SCHEMA_VERSION: u16 = 1;
+const GOAL_COMMAND_SEQUENCE_MIGRATION_KEY: &[u8] = b"goal_command_sequence_migration";
+const RUNTIME_SCHEMA_VERSION: u16 = 2;
 const KEY_PAD: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -115,6 +116,99 @@ impl AgentReadinessMigrationState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoalCommandSequenceMigrationState {
+    target_schema_version: u16,
+    last_decision_id: Option<String>,
+    migrated_count: u64,
+    complete: bool,
+}
+
+impl GoalCommandSequenceMigrationState {
+    fn initial() -> Self {
+        Self {
+            target_schema_version: RUNTIME_SCHEMA_VERSION,
+            last_decision_id: None,
+            migrated_count: 0,
+            complete: false,
+        }
+    }
+
+    fn validate(&self) -> Result<(), StorageError> {
+        if self.target_schema_version != RUNTIME_SCHEMA_VERSION {
+            return Err(StorageError::MigrationConflict(
+                "goal command sequence migration targets an unsupported schema".to_string(),
+            ));
+        }
+        match self.last_decision_id.as_deref() {
+            Some(decision_id) if decision_id.trim().is_empty() || self.migrated_count == 0 => {
+                return Err(StorageError::MigrationConflict(
+                    "goal command sequence migration checkpoint is malformed".to_string(),
+                ));
+            }
+            None if self.migrated_count != 0 => {
+                return Err(StorageError::MigrationConflict(
+                    "goal command sequence migration count has no checkpoint".to_string(),
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyAgentGoalCommand {
+    command_id: String,
+    goal: meld_lang::Goal,
+    dedupe_key: AgentCurationDedupeKey,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "command",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+enum LegacyAgentAuthoredCommand {
+    Goal(Box<LegacyAgentGoalCommand>),
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyAgentDecisionOutboxRecord {
+    decision_id: String,
+    command: LegacyAgentAuthoredCommand,
+    recorded_at_seq: u64,
+}
+
+struct GoalCommandSequenceMigrationPlan {
+    decision_id: String,
+    decision_raw: Vec<u8>,
+    agent_id: String,
+    agent_raw: Vec<u8>,
+    subscription_id: String,
+    subscription_raw: Vec<u8>,
+    legacy_outbox_raw: Vec<u8>,
+    canonical_outbox: AgentDecisionOutboxRecord,
+    canonical_outbox_raw: Vec<u8>,
+}
+
+struct GoalCommandSequenceDecisionAuthority {
+    decision: AgentCurationDecision,
+    decision_raw: Vec<u8>,
+    agent_raw: Vec<u8>,
+    subscription_raw: Vec<u8>,
+}
+
+type GoalCommandSequenceCheckpoint = Option<(GoalCommandSequenceMigrationState, Vec<u8>)>;
+type GoalCommandSequencePreflight = (
+    GoalCommandSequenceCheckpoint,
+    Vec<GoalCommandSequenceMigrationPlan>,
+);
 #[cfg(test)]
 #[derive(Default)]
 struct FlushProbe {
@@ -2253,6 +2347,34 @@ impl AgentStore {
         self.outcome_for_decision(&outcome.decision.decision_id)
     }
 
+    /// Persist one satisfaction decision and its exact command outbox atomically.
+    pub fn put_satisfaction_curation_outcome(
+        &self,
+        review: &AgentSatisfactionReview,
+        outcome: &AgentCurationOutcome,
+    ) -> Result<AgentCurationOutcome, StorageError> {
+        review.validate()?;
+        outcome.decision.validate()?;
+        if outcome.decision.decision == AgentDecisionKind::GoalCommand
+            || outcome.decision.agent_id != review.agent_id
+            || outcome.decision.subscription_id != review.subscription_id
+            || outcome.decision.created_at_seq != review.review_seq
+        {
+            return Err(StorageError::InvalidPath(
+                "satisfaction review and curation outcome disagree".to_string(),
+            ));
+        }
+        let outbox = AgentDecisionOutboxRecord::from_outcome(outcome)?;
+        self.persist_outcome_transaction(outcome, outbox.as_ref(), Some(review))?;
+        self.flush_durable("agent satisfaction curation outcome")?;
+        self.outcome_for_satisfaction_review(review)?
+            .ok_or_else(|| {
+                StorageError::MigrationConflict(
+                    "satisfaction curation outcome disappeared after commit".to_string(),
+                )
+            })
+    }
+
     /// Persist one selected delivery outcome under exact lifecycle and cursor fences.
     pub fn put_selected_delivery_outcome(
         &self,
@@ -3110,11 +3232,13 @@ impl AgentStore {
         let decision = self.get_decision(&receipt.decision_id)?.ok_or_else(|| {
             StorageError::InvalidPath("sink receipt references an unknown decision".to_string())
         })?;
-        let outbox = self.decision_outbox(&receipt.decision_id)?;
-        if let Some(outbox) = &outbox {
-            outbox.validate_for(&decision)?;
-        }
-        validate_sink_receipt_for_decision(receipt, &decision, outbox.as_ref())?;
+        let outbox = self.decision_outbox(&receipt.decision_id)?.ok_or_else(|| {
+            StorageError::InvalidPath(
+                "sink receipt submission requires an exact decision outbox".to_string(),
+            )
+        })?;
+        outbox.validate_for(&decision)?;
+        validate_sink_receipt_for_decision(receipt, &decision, Some(&outbox))?;
         if let Some(existing) = self.sink_receipt_by_decision(&receipt.decision_id)? {
             if existing != *receipt {
                 return Err(StorageError::InvalidPath(
@@ -3318,6 +3442,394 @@ impl AgentStore {
         Ok(u16::from_be_bytes(encoded))
     }
 
+    fn goal_command_sequence_migration_state(
+        &self,
+    ) -> Result<Option<(GoalCommandSequenceMigrationState, Vec<u8>)>, StorageError> {
+        let Some(raw) = self
+            .runtime_schema
+            .get(GOAL_COMMAND_SEQUENCE_MIGRATION_KEY)
+            .map_err(to_storage_io)?
+        else {
+            return Ok(None);
+        };
+        let state: GoalCommandSequenceMigrationState =
+            serde_json::from_slice(&raw).map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "goal command sequence migration checkpoint is malformed: {error}"
+                ))
+            })?;
+        state.validate()?;
+        Ok(Some((state, raw.to_vec())))
+    }
+
+    fn preflight_goal_command_sequence_migration(
+        &self,
+        version: u16,
+    ) -> Result<GoalCommandSequencePreflight, StorageError> {
+        let checkpoint = self.goal_command_sequence_migration_state()?;
+        match (version, checkpoint.as_ref().map(|entry| &entry.0)) {
+            (RUNTIME_SCHEMA_VERSION, Some(state)) if state.complete => {}
+            (RUNTIME_SCHEMA_VERSION, _) => {
+                return Err(StorageError::MigrationConflict(
+                    "agent runtime schema is current without a complete goal command sequence migration"
+                        .to_string(),
+                ));
+            }
+            (_, Some(state)) if state.complete => {
+                return Err(StorageError::MigrationConflict(
+                    "goal command sequence migration completed without the target runtime schema"
+                        .to_string(),
+                ));
+            }
+            _ => {}
+        }
+
+        let mut authorities = BTreeMap::new();
+        for item in &self.decisions {
+            let (key, raw) = item.map_err(to_storage_io)?;
+            let decision: AgentCurationDecision = serde_json::from_slice(&raw).map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "agent decision cannot be decoded during goal command sequence migration: {error}"
+                ))
+            })?;
+            decision.validate().map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "agent decision '{}' is invalid during goal command sequence migration: {error}",
+                    decision.decision_id
+                ))
+            })?;
+            if key.as_ref() != decision.decision_id.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "agent decision '{}' is stored under an aliased primary key",
+                    decision.decision_id
+                )));
+            }
+            if decision.created_at_seq == 0 {
+                return Err(StorageError::MigrationConflict(format!(
+                    "agent decision '{}' has no positive causal sequence",
+                    decision.decision_id
+                )));
+            }
+            validate_migration_projection_bindings(&decision)?;
+
+            let agent_raw = self
+                .agents
+                .get(decision.agent_id.as_bytes())
+                .map_err(to_storage_io)?
+                .ok_or_else(|| {
+                    StorageError::MigrationConflict(format!(
+                        "agent decision '{}' references a missing agent",
+                        decision.decision_id
+                    ))
+                })?;
+            let agent: AgentRecord = serde_json::from_slice(&agent_raw).map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "agent '{}' cannot be decoded during goal command sequence migration: {error}",
+                    decision.agent_id
+                ))
+            })?;
+            agent.validate().map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "agent '{}' is invalid during goal command sequence migration: {error}",
+                    decision.agent_id
+                ))
+            })?;
+            if agent.agent_id != decision.agent_id {
+                return Err(StorageError::MigrationConflict(format!(
+                    "agent decision '{}' references an aliased agent record",
+                    decision.decision_id
+                )));
+            }
+
+            let subscription_raw = self
+                .subscriptions
+                .get(decision.subscription_id.as_bytes())
+                .map_err(to_storage_io)?
+                .ok_or_else(|| {
+                    StorageError::MigrationConflict(format!(
+                        "agent decision '{}' references a missing subscription",
+                        decision.decision_id
+                    ))
+                })?;
+            let subscription: AgentSubscriptionRecord = serde_json::from_slice(&subscription_raw)
+                .map_err(|error| {
+                    StorageError::MigrationConflict(format!(
+                        "agent subscription '{}' cannot be decoded during goal command sequence migration: {error}",
+                        decision.subscription_id
+                    ))
+                })?;
+            subscription.validate().map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "agent subscription '{}' is invalid during goal command sequence migration: {error}",
+                    decision.subscription_id
+                ))
+            })?;
+            validate_migration_decision_owner(&decision, &agent, &subscription)?;
+            let decision_id = decision.decision_id.clone();
+            if authorities
+                .insert(
+                    decision_id.clone(),
+                    GoalCommandSequenceDecisionAuthority {
+                        decision,
+                        decision_raw: raw.to_vec(),
+                        agent_raw: agent_raw.to_vec(),
+                        subscription_raw: subscription_raw.to_vec(),
+                    },
+                )
+                .is_some()
+            {
+                return Err(StorageError::MigrationConflict(format!(
+                    "agent decision '{decision_id}' has duplicate primary authority"
+                )));
+            }
+        }
+
+        let mut outbox_decisions = BTreeSet::new();
+        let mut canonical_goal_decisions = BTreeSet::new();
+        let mut plans = Vec::new();
+        for item in &self.decision_outbox {
+            let (key, raw) = item.map_err(to_storage_io)?;
+            let decision_id = std::str::from_utf8(&key).map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "agent outbox primary key is not UTF-8: {error}"
+                ))
+            })?;
+            let authority = authorities.get(decision_id).ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "agent outbox '{decision_id}' references a foreign decision"
+                ))
+            })?;
+
+            match serde_json::from_slice::<AgentDecisionOutboxRecord>(&raw) {
+                Ok(outbox) => {
+                    validate_migration_outbox(decision_id, &outbox, &authority.decision)?;
+                    if matches!(outbox.command, AgentAuthoredCommand::Goal(_)) {
+                        canonical_goal_decisions.insert(decision_id.to_string());
+                    }
+                }
+                Err(canonical_error) => {
+                    let legacy: LegacyAgentDecisionOutboxRecord =
+                        serde_json::from_slice(&raw).map_err(|legacy_error| {
+                            StorageError::MigrationConflict(format!(
+                                "agent outbox '{decision_id}' is neither canonical nor an exact legacy goal command: canonical decode failed with {canonical_error}; legacy decode failed with {legacy_error}"
+                            ))
+                        })?;
+                    if legacy.decision_id != decision_id
+                        || legacy.recorded_at_seq != authority.decision.created_at_seq
+                    {
+                        return Err(StorageError::MigrationConflict(format!(
+                            "legacy agent outbox '{decision_id}' has a foreign decision link"
+                        )));
+                    }
+                    let LegacyAgentAuthoredCommand::Goal(command) = legacy.command;
+                    let outbox = AgentDecisionOutboxRecord {
+                        decision_id: legacy.decision_id,
+                        command: AgentAuthoredCommand::Goal(Box::new(AgentGoalCommand {
+                            command_id: command.command_id,
+                            command_seq: authority.decision.created_at_seq,
+                            goal: command.goal,
+                            dedupe_key: command.dedupe_key,
+                        })),
+                        recorded_at_seq: legacy.recorded_at_seq,
+                    };
+                    validate_migration_outbox(decision_id, &outbox, &authority.decision)?;
+                    let canonical_outbox_raw =
+                        serde_json::to_vec(&outbox).map_err(to_storage_data)?;
+                    plans.push(GoalCommandSequenceMigrationPlan {
+                        decision_id: decision_id.to_string(),
+                        decision_raw: authority.decision_raw.clone(),
+                        agent_id: authority.decision.agent_id.clone(),
+                        agent_raw: authority.agent_raw.clone(),
+                        subscription_id: authority.decision.subscription_id.clone(),
+                        subscription_raw: authority.subscription_raw.clone(),
+                        legacy_outbox_raw: raw.to_vec(),
+                        canonical_outbox: outbox,
+                        canonical_outbox_raw,
+                    });
+                }
+            }
+            if !outbox_decisions.insert(decision_id.to_string()) {
+                return Err(StorageError::MigrationConflict(format!(
+                    "agent decision '{decision_id}' has duplicate outbox authority"
+                )));
+            }
+        }
+
+        if let Some((state, _)) = &checkpoint {
+            if let Some(last_decision_id) = state.last_decision_id.as_deref() {
+                if !canonical_goal_decisions.contains(last_decision_id) {
+                    return Err(StorageError::MigrationConflict(format!(
+                        "goal command sequence migration checkpoint '{last_decision_id}' has no canonical goal outbox"
+                    )));
+                }
+                if plans
+                    .iter()
+                    .any(|plan| plan.decision_id.as_str() <= last_decision_id)
+                {
+                    return Err(StorageError::MigrationConflict(
+                        "goal command sequence migration checkpoint skips a legacy outbox"
+                            .to_string(),
+                    ));
+                }
+            }
+            if version < RUNTIME_SCHEMA_VERSION {
+                let canonical_count =
+                    u64::try_from(canonical_goal_decisions.len()).map_err(|_| {
+                        StorageError::MigrationConflict(
+                            "canonical goal outbox count exceeds migration capacity".to_string(),
+                        )
+                    })?;
+                let canonical_last = canonical_goal_decisions.last().map(String::as_str);
+                if state.migrated_count != canonical_count
+                    || state.last_decision_id.as_deref() != canonical_last
+                {
+                    return Err(StorageError::MigrationConflict(
+                        "goal command sequence migration checkpoint does not exactly cover its canonical prefix"
+                            .to_string(),
+                    ));
+                }
+            }
+            if state.complete && !plans.is_empty() {
+                return Err(StorageError::MigrationConflict(
+                    "completed goal command sequence migration retains a legacy outbox".to_string(),
+                ));
+            }
+        } else if version < RUNTIME_SCHEMA_VERSION && !canonical_goal_decisions.is_empty() {
+            return Err(StorageError::MigrationConflict(
+                "canonical goal outbox exists without a migration checkpoint".to_string(),
+            ));
+        }
+        if version == RUNTIME_SCHEMA_VERSION && !plans.is_empty() {
+            return Err(StorageError::MigrationConflict(
+                "current agent runtime schema retains a legacy goal command outbox".to_string(),
+            ));
+        }
+        Ok((checkpoint, plans))
+    }
+
+    fn apply_goal_command_sequence_migration(
+        &self,
+        version: u16,
+        checkpoint: GoalCommandSequenceCheckpoint,
+        plans: Vec<GoalCommandSequenceMigrationPlan>,
+    ) -> Result<(), StorageError> {
+        if version == RUNTIME_SCHEMA_VERSION {
+            return self.flush_durable("agent goal command sequence migration completion replay");
+        }
+        let version_raw = if version == 0 {
+            None
+        } else {
+            Some(version.to_be_bytes().to_vec())
+        };
+        let (mut state, mut state_raw) = checkpoint
+            .map(|entry| (entry.0, Some(entry.1)))
+            .unwrap_or_else(|| (GoalCommandSequenceMigrationState::initial(), None));
+
+        if plans.is_empty() {
+            state.complete = true;
+            let complete_raw = serde_json::to_vec(&state).map_err(to_storage_data)?;
+            (&self.runtime_schema,)
+                .transaction(|(schema,)| {
+                    require_optional_transaction_value(
+                        schema,
+                        GOAL_COMMAND_SEQUENCE_MIGRATION_KEY,
+                        state_raw.as_deref(),
+                        "goal command sequence migration checkpoint",
+                    )?;
+                    require_optional_transaction_value(
+                        schema,
+                        RUNTIME_SCHEMA_VERSION_KEY,
+                        version_raw.as_deref(),
+                        "agent runtime schema version",
+                    )?;
+                    schema.insert(GOAL_COMMAND_SEQUENCE_MIGRATION_KEY, complete_raw.as_slice())?;
+                    schema.insert(
+                        RUNTIME_SCHEMA_VERSION_KEY,
+                        RUNTIME_SCHEMA_VERSION.to_be_bytes().as_slice(),
+                    )?;
+                    Ok(())
+                })
+                .map_err(to_goal_sequence_migration_error)?;
+            return self.flush_durable("agent goal command sequence migration completion");
+        }
+
+        let last_plan_index = plans.len() - 1;
+        for (index, plan) in plans.into_iter().enumerate() {
+            state.last_decision_id = Some(plan.decision_id.clone());
+            state.migrated_count = state.migrated_count.checked_add(1).ok_or_else(|| {
+                StorageError::MigrationConflict(
+                    "goal command sequence migration count overflowed".to_string(),
+                )
+            })?;
+            state.complete = index == last_plan_index;
+            let next_state_raw = serde_json::to_vec(&state).map_err(to_storage_data)?;
+            (
+                &self.decision_outbox,
+                &self.decisions,
+                &self.agents,
+                &self.subscriptions,
+                &self.runtime_schema,
+            )
+                .transaction(|(outboxes, decisions, agents, subscriptions, schema)| {
+                    require_transaction_value(
+                        outboxes,
+                        plan.decision_id.as_bytes(),
+                        &plan.legacy_outbox_raw,
+                        "legacy agent goal outbox",
+                    )?;
+                    require_transaction_value(
+                        decisions,
+                        plan.decision_id.as_bytes(),
+                        &plan.decision_raw,
+                        "agent decision",
+                    )?;
+                    require_transaction_value(
+                        agents,
+                        plan.agent_id.as_bytes(),
+                        &plan.agent_raw,
+                        "agent record",
+                    )?;
+                    require_transaction_value(
+                        subscriptions,
+                        plan.subscription_id.as_bytes(),
+                        &plan.subscription_raw,
+                        "agent subscription",
+                    )?;
+                    require_optional_transaction_value(
+                        schema,
+                        GOAL_COMMAND_SEQUENCE_MIGRATION_KEY,
+                        state_raw.as_deref(),
+                        "goal command sequence migration checkpoint",
+                    )?;
+                    require_optional_transaction_value(
+                        schema,
+                        RUNTIME_SCHEMA_VERSION_KEY,
+                        version_raw.as_deref(),
+                        "agent runtime schema version",
+                    )?;
+                    outboxes.insert(
+                        plan.decision_id.as_bytes(),
+                        plan.canonical_outbox_raw.as_slice(),
+                    )?;
+                    schema.insert(
+                        GOAL_COMMAND_SEQUENCE_MIGRATION_KEY,
+                        next_state_raw.as_slice(),
+                    )?;
+                    if state.complete {
+                        schema.insert(
+                            RUNTIME_SCHEMA_VERSION_KEY,
+                            RUNTIME_SCHEMA_VERSION.to_be_bytes().as_slice(),
+                        )?;
+                    }
+                    Ok(())
+                })
+                .map_err(to_goal_sequence_migration_error)?;
+            self.flush_durable("agent goal command sequence migration checkpoint")?;
+            state_raw = Some(next_state_raw);
+        }
+        Ok(())
+    }
+
     fn migrate_runtime_schema(&self) -> Result<(), StorageError> {
         let version = self.runtime_schema_version()?;
         if version > RUNTIME_SCHEMA_VERSION {
@@ -3325,9 +3837,18 @@ impl AgentStore {
                 "agent runtime schema version {version} is newer than supported version {RUNTIME_SCHEMA_VERSION}"
             )));
         }
-
         let satisfaction_reviews = self.satisfaction_review_index_map()?;
-
+        self.validate_decision_primaries(&satisfaction_reviews)?;
+        self.validate_decision_indexes()?;
+        let (goal_sequence_checkpoint, goal_sequence_plans) =
+            self.preflight_goal_command_sequence_migration(version)?;
+        self.validate_sink_receipt_primaries(&goal_sequence_plans)?;
+        self.validate_sink_receipt_indexes()?;
+        self.validate_bootstrap_receipt_primaries()?;
+        self.validate_bootstrap_receipt_agent_index()?;
+        self.validate_hydration_primaries()?;
+        self.validate_hydration_agent_index()?;
+        self.validate_hydration_lease_index(true)?;
         // Primary records are authoritative during the additive migration. Every
         // reconstructable index is repaired exactly before the version is enabled.
         for item in &self.decisions {
@@ -3389,8 +3910,6 @@ impl AgentStore {
                 )?;
             }
         }
-        self.validate_decision_indexes()?;
-
         for item in &self.sink_receipts {
             let (key, value) = item.map_err(to_storage_io)?;
             let receipt: AgentSinkReceipt =
@@ -3481,15 +4000,14 @@ impl AgentStore {
                 ))
                 .map_err(to_storage_io)?;
         }
-        self.validate_hydration_lease_index()?;
+        self.validate_hydration_agent_index()?;
+        self.validate_hydration_lease_index(false)?;
 
-        repair_exact_tree_value(
-            &self.runtime_schema,
-            RUNTIME_SCHEMA_VERSION_KEY,
-            &RUNTIME_SCHEMA_VERSION.to_be_bytes(),
-            "agent runtime schema version",
-        )?;
-        self.flush_durable("agent runtime schema migration")
+        self.apply_goal_command_sequence_migration(
+            version,
+            goal_sequence_checkpoint,
+            goal_sequence_plans,
+        )
     }
 
     fn migrate_legacy_readiness_proofs(
@@ -3641,6 +4159,30 @@ impl AgentStore {
         Ok(by_decision)
     }
 
+    fn validate_bootstrap_receipt_primaries(&self) -> Result<(), StorageError> {
+        for item in &self.bootstrap_receipts {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let bootstrap_id = std::str::from_utf8(&key).map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "bootstrap receipt primary key is not UTF-8: {error}"
+                ))
+            })?;
+            let receipt: AgentBootstrapReceipt =
+                serde_json::from_slice(&value).map_err(|error| {
+                    StorageError::MigrationConflict(format!(
+                        "bootstrap receipt '{bootstrap_id}' cannot be decoded during migration: {error}"
+                    ))
+                })?;
+            let progress = self.get_bootstrap_progress(bootstrap_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "bootstrap receipt '{bootstrap_id}' has no completed progress"
+                ))
+            })?;
+            validate_bootstrap_join(&receipt.agent_id, bootstrap_id, &receipt, &progress)?;
+        }
+        Ok(())
+    }
+
     fn validate_bootstrap_receipt_agent_index(&self) -> Result<(), StorageError> {
         for item in &self.bootstrap_receipts_by_agent {
             let (agent_id, bootstrap_id) = item.map_err(to_storage_io)?;
@@ -3665,23 +4207,117 @@ impl AgentStore {
         Ok(())
     }
 
-    fn validate_hydration_lease_index(&self) -> Result<(), StorageError> {
+    fn validate_hydration_primaries(&self) -> Result<(), StorageError> {
+        for item in &self.process_hydrations {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let hydration_id = std::str::from_utf8(&key).map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "process hydration primary key is not UTF-8: {error}"
+                ))
+            })?;
+            let hydration: AgentProcessHydrationRecord =
+                serde_json::from_slice(&value).map_err(|error| {
+                    StorageError::MigrationConflict(format!(
+                        "process hydration '{hydration_id}' cannot be decoded during migration: {error}"
+                    ))
+                })?;
+            hydration.validate().map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "invalid process hydration '{hydration_id}': {error}"
+                ))
+            })?;
+            if hydration.hydration_id != hydration_id {
+                return Err(StorageError::MigrationConflict(format!(
+                    "process hydration primary key diverges for '{hydration_id}'"
+                )));
+            }
+            let activation = self.get_activation(hydration_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "process hydration '{hydration_id}' has no activation diagnostic"
+                ))
+            })?;
+            validate_hydration_pair(&hydration, &activation)?;
+        }
+        Ok(())
+    }
+
+    fn validate_hydration_agent_index(&self) -> Result<(), StorageError> {
+        for item in &self.process_hydrations_by_agent {
+            let (key, hydration_id) = item.map_err(to_storage_io)?;
+            let hydration_id = std::str::from_utf8(&hydration_id).map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "process hydration agent index value is not UTF-8: {error}"
+                ))
+            })?;
+            let (hydration, _) = self.require_hydration_pair(hydration_id)?;
+            let expected = hydration_agent_key(
+                &hydration.agent_id,
+                hydration.started_at_seq,
+                &hydration.hydration_id,
+            );
+            if key.as_ref() != expected.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "process hydration agent index diverges for '{hydration_id}'"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_hydration_lease_index(&self, allow_legacy: bool) -> Result<(), StorageError> {
         for item in &self.process_hydrations_by_lease {
             let (key, hydration_id) = item.map_err(to_storage_io)?;
             let hydration_id = std::str::from_utf8(&hydration_id).map_err(|error| {
                 StorageError::IoError(io::Error::new(io::ErrorKind::InvalidData, error))
             })?;
             let (hydration, _) = self.require_hydration_pair(hydration_id)?;
-            if key.as_ref()
-                != hydration_lease_key(
-                    &hydration.agent_id,
-                    &hydration.lease_id,
-                    hydration.attempt_epoch,
-                )
-                .as_bytes()
+            let canonical = hydration_lease_key(
+                &hydration.agent_id,
+                &hydration.lease_id,
+                hydration.attempt_epoch,
+            );
+            let legacy = hydration_legacy_lease_key(&hydration.agent_id, &hydration.lease_id);
+            if key.as_ref() != canonical.as_bytes()
+                && !(allow_legacy && key.as_ref() == legacy.as_bytes())
             {
                 return Err(StorageError::MigrationConflict(format!(
                     "process hydration lease index diverges for '{hydration_id}'"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_decision_primaries(
+        &self,
+        satisfaction_reviews: &BTreeMap<String, String>,
+    ) -> Result<(), StorageError> {
+        for item in &self.decisions {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let decision: AgentCurationDecision =
+                serde_json::from_slice(&value).map_err(|error| {
+                    StorageError::MigrationConflict(format!(
+                        "agent decision primary cannot be decoded during migration: {error}"
+                    ))
+                })?;
+            decision.validate().map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "agent decision '{}' is invalid during migration: {error}",
+                    decision.decision_id
+                ))
+            })?;
+            if key.as_ref() != decision.decision_id.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "decision primary key diverges for '{}'",
+                    decision.decision_id
+                )));
+            }
+            if decision.decision == AgentDecisionKind::GoalMutationCommand
+                && !satisfaction_reviews.contains_key(&decision.decision_id)
+            {
+                return Err(StorageError::MigrationConflict(format!(
+                    "mutation decision '{}' has no exact satisfaction review identity",
+                    decision.decision_id
                 )));
             }
         }
@@ -3785,6 +4421,62 @@ impl AgentStore {
                     "satisfaction review index diverges for '{decision_id}'"
                 )));
             }
+        }
+        Ok(())
+    }
+
+    fn validate_sink_receipt_primaries(
+        &self,
+        goal_sequence_plans: &[GoalCommandSequenceMigrationPlan],
+    ) -> Result<(), StorageError> {
+        for item in &self.sink_receipts {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let receipt: AgentSinkReceipt = serde_json::from_slice(&value).map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "sink receipt primary cannot be decoded during agent migration: {error}"
+                ))
+            })?;
+            receipt.validate().map_err(|error| {
+                StorageError::MigrationConflict(format!(
+                    "sink receipt '{}' is invalid during agent migration: {error}",
+                    receipt.receipt_id
+                ))
+            })?;
+            if key.as_ref() != receipt.decision_id.as_bytes() {
+                return Err(StorageError::MigrationConflict(format!(
+                    "sink receipt primary key diverges for '{}'",
+                    receipt.receipt_id
+                )));
+            }
+            let decision = self.get_decision(&receipt.decision_id)?.ok_or_else(|| {
+                StorageError::MigrationConflict(format!(
+                    "sink receipt '{}' references a missing decision",
+                    receipt.receipt_id
+                ))
+            })?;
+            let outbox = match goal_sequence_plans
+                .iter()
+                .find(|plan| plan.decision_id == receipt.decision_id)
+            {
+                Some(plan) => Some(plan.canonical_outbox.clone()),
+                None => self.decision_outbox(&receipt.decision_id)?,
+            };
+            if let Some(outbox) = &outbox {
+                outbox.validate_for(&decision).map_err(|error| {
+                    StorageError::MigrationConflict(format!(
+                        "sink receipt '{}' has an invalid command outbox: {error}",
+                        receipt.receipt_id
+                    ))
+                })?;
+            }
+            validate_sink_receipt_for_decision(&receipt, &decision, outbox.as_ref()).map_err(
+                |error| {
+                    StorageError::MigrationConflict(format!(
+                        "sink receipt '{}' is not bound to its decision: {error}",
+                        receipt.receipt_id
+                    ))
+                },
+            )?;
         }
         Ok(())
     }
@@ -4828,6 +5520,72 @@ fn repair_exact_tree_value(
     }
 }
 
+fn validate_migration_projection_bindings(
+    decision: &AgentCurationDecision,
+) -> Result<(), StorageError> {
+    if decision
+        .input_refs
+        .planner_source_refs
+        .iter()
+        .chain(decision.input_refs.planner_warnings.iter())
+        .any(|value| value.trim().is_empty())
+    {
+        return Err(StorageError::MigrationConflict(format!(
+            "agent decision '{}' has an incomplete planner projection binding",
+            decision.decision_id
+        )));
+    }
+    Ok(())
+}
+
+fn validate_migration_decision_owner(
+    decision: &AgentCurationDecision,
+    agent: &AgentRecord,
+    subscription: &AgentSubscriptionRecord,
+) -> Result<(), StorageError> {
+    let belief_key = &decision.input_refs.belief_key;
+    if subscription.subscription_id != decision.subscription_id
+        || subscription.agent_id != decision.agent_id
+        || subscription.belief_key != *belief_key
+        || belief_key.subject != agent.subject
+        || belief_key.perspective != agent.perspective_key
+        || belief_key.branch_scope != agent.branch_scope
+        || decision.dedupe_key.subject_key != agent.subject.index_key()
+        || decision.dedupe_key.branch_id != agent.branch_scope.branch_id
+        || decision.dedupe_key.dimension_id != belief_key.dimension_id
+    {
+        return Err(StorageError::MigrationConflict(format!(
+            "agent decision '{}' has divergent owner, dedupe, or belief bindings",
+            decision.decision_id
+        )));
+    }
+    Ok(())
+}
+
+fn validate_migration_outbox(
+    durable_decision_id: &str,
+    outbox: &AgentDecisionOutboxRecord,
+    decision: &AgentCurationDecision,
+) -> Result<(), StorageError> {
+    if outbox.decision_id != durable_decision_id {
+        return Err(StorageError::MigrationConflict(format!(
+            "agent outbox '{durable_decision_id}' has an aliased decision id"
+        )));
+    }
+    outbox.validate_for(decision).map_err(|error| {
+        StorageError::MigrationConflict(format!(
+            "agent outbox '{durable_decision_id}' is invalid: {error}"
+        ))
+    })
+}
+
+fn to_goal_sequence_migration_error(error: TransactionError<String>) -> StorageError {
+    match error {
+        TransactionError::Abort(message) => StorageError::MigrationConflict(message),
+        TransactionError::Storage(error) => StorageError::IoError(io::Error::other(error)),
+    }
+}
+
 fn encode_epoch(epoch: u64) -> [u8; 8] {
     epoch.to_be_bytes()
 }
@@ -5373,12 +6131,641 @@ pub(crate) fn fuzz_terminal_hydration_fence(data: &[u8]) {
 mod tests {
     use super::*;
     use crate::activation::BeliefActivationReceipt;
+    use crate::agent::contracts::{
+        AgentCurationInputRefs, AgentCurationRuleConfig, AgentSinkSubmission,
+    };
     use crate::belief::{
         BeliefAuthorityMigrationIdentity, BeliefAuthorityMigrationProgress, BeliefStore,
         BranchScope,
     };
     use crate::events::DomainObjectRef;
     use crate::world_state::graph::PerspectiveKey;
+    use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
+
+    fn migration_subject() -> DomainObjectRef {
+        DomainObjectRef::new("workspace", "node", "node-a").expect("subject")
+    }
+
+    fn migration_belief_key(agent_id: &str) -> BeliefKey {
+        BeliefKey {
+            subject: migration_subject(),
+            dimension_id: "docs_freshness".to_string(),
+            predicate_id: "confidence".to_string(),
+            perspective: PerspectiveKey::new("agent", agent_id).expect("perspective"),
+            branch_scope: BranchScope::main(),
+            evidence_policy_id: "default".to_string(),
+        }
+    }
+
+    fn canonical_goal_outbox(decision_id: &str, sequence: u64) -> AgentDecisionOutboxRecord {
+        let agent_id = format!("agent-{decision_id}");
+        let rule = AgentCurationRuleConfig {
+            dimension_id: "docs_freshness".to_string(),
+            threshold: 0.7,
+            priority_urgency: 50,
+            desired_summary: "fresh docs".to_string(),
+            source_kind: "belief_divergence".to_string(),
+        };
+        let dedupe_key = AgentCurationDedupeKey::threshold_rule(
+            agent_id.clone(),
+            &migration_subject(),
+            &BranchScope::main(),
+            &rule,
+        );
+        AgentDecisionOutboxRecord {
+            decision_id: decision_id.to_string(),
+            command: AgentAuthoredCommand::Goal(Box::new(AgentGoalCommand {
+                command_id: format!("command-{decision_id}"),
+                command_seq: sequence,
+                goal: Goal {
+                    goal_id: format!("goal-{decision_id}"),
+                    agent_id,
+                    target: Proposition::Holds {
+                        subject: Term::Object(migration_subject()),
+                        dimension: Term::Dimension("docs_freshness".to_string()),
+                        condition: rule.target_condition(),
+                    },
+                    priority: GoalPriority {
+                        urgency: 50,
+                        cost_ceiling: None,
+                    },
+                    source: GoalSource::BeliefDivergence {
+                        dimension: "docs_freshness".to_string(),
+                        observed: "confidence=0.2".to_string(),
+                        desired: "fresh docs".to_string(),
+                    },
+                    lifecycle: GoalLifecycle::Proposed,
+                },
+                dedupe_key,
+            })),
+            recorded_at_seq: sequence,
+        }
+    }
+
+    fn insert_goal_sequence_fixture(
+        db: &Db,
+        decision_id: &str,
+        sequence: u64,
+        legacy: bool,
+    ) -> AgentDecisionOutboxRecord {
+        let outbox = canonical_goal_outbox(decision_id, sequence);
+        let AgentAuthoredCommand::Goal(command) = &outbox.command else {
+            unreachable!("goal fixture")
+        };
+        let belief_key = migration_belief_key(&command.goal.agent_id);
+        let agent = AgentRecord {
+            agent_id: command.goal.agent_id.clone(),
+            perspective_key: belief_key.perspective.clone(),
+            subject: belief_key.subject.clone(),
+            branch_scope: belief_key.branch_scope.clone(),
+            observation_scope: belief_key.dimension_id.clone(),
+            directive_id: format!("directive-{decision_id}"),
+            seed_provenance: "migration test".to_string(),
+            status: AgentStatus::Registered,
+            created_at_seq: 1,
+            updated_at_seq: sequence,
+        };
+        let subscription = AgentSubscriptionRecord {
+            subscription_id: format!("subscription-{decision_id}"),
+            agent_id: agent.agent_id.clone(),
+            belief_key: belief_key.clone(),
+            status: AgentSubscriptionStatus::Active,
+            last_delivered_revision_id: Some(format!("revision-{decision_id}")),
+            last_delivered_seq: sequence,
+            created_at_seq: 1,
+            updated_at_seq: sequence,
+        };
+        let decision = AgentCurationDecision {
+            decision_id: decision_id.to_string(),
+            agent_id: agent.agent_id.clone(),
+            subscription_id: subscription.subscription_id.clone(),
+            decision: AgentDecisionKind::GoalCommand,
+            goal_command_id: Some(command.command_id.clone()),
+            goal_mutation_command_id: None,
+            dedupe_key: command.dedupe_key.clone(),
+            input_refs: AgentCurationInputRefs {
+                belief_revision_id: subscription.last_delivered_revision_id.clone(),
+                belief_key,
+                planner_projection_version: "planner_projection.v1".to_string(),
+                planner_source_refs: vec!["source-a".to_string()],
+                planner_warnings: Vec::new(),
+            },
+            reason: "confidence below threshold".to_string(),
+            created_at_seq: sequence,
+        };
+        db.open_tree(TREE_AGENT_RECORDS)
+            .expect("agent tree")
+            .insert(
+                agent.agent_id.as_bytes(),
+                serde_json::to_vec(&agent).expect("agent encoding"),
+            )
+            .expect("agent insert");
+        db.open_tree(TREE_SUBSCRIPTIONS)
+            .expect("subscription tree")
+            .insert(
+                subscription.subscription_id.as_bytes(),
+                serde_json::to_vec(&subscription).expect("subscription encoding"),
+            )
+            .expect("subscription insert");
+        db.open_tree(TREE_DECISIONS)
+            .expect("decision tree")
+            .insert(
+                decision.decision_id.as_bytes(),
+                serde_json::to_vec(&decision).expect("decision encoding"),
+            )
+            .expect("decision insert");
+        let mut outbox_value = serde_json::to_value(&outbox).expect("outbox encoding");
+        if legacy {
+            outbox_value["command"]["command"]
+                .as_object_mut()
+                .expect("goal command object")
+                .remove("command_seq");
+        }
+        db.open_tree(TREE_DECISION_OUTBOX)
+            .expect("outbox tree")
+            .insert(
+                decision.decision_id.as_bytes(),
+                serde_json::to_vec(&outbox_value).expect("legacy outbox encoding"),
+            )
+            .expect("outbox insert");
+        db.flush().expect("fixture flush");
+        outbox
+    }
+
+    fn downgrade_goal_sequence_schema(db: &Db) {
+        let schema = db.open_tree(TREE_RUNTIME_SCHEMA).expect("schema tree");
+        schema
+            .insert(RUNTIME_SCHEMA_VERSION_KEY, 1u16.to_be_bytes().as_slice())
+            .expect("schema downgrade");
+        schema
+            .remove(GOAL_COMMAND_SEQUENCE_MIGRATION_KEY)
+            .expect("checkpoint removal");
+        db.flush().expect("schema downgrade flush");
+    }
+
+    fn migration_database() -> Db {
+        let db = sled::Config::new()
+            .temporary(true)
+            .open()
+            .expect("temporary migration database");
+        AgentStore::new(db.clone()).expect("initialize all agent trees");
+        downgrade_goal_sequence_schema(&db);
+        db
+    }
+
+    #[test]
+    fn legacy_goal_command_sequence_migrates_and_complete_reopen_is_idempotent() {
+        let db = migration_database();
+        let expected = insert_goal_sequence_fixture(&db, "decision-a", 7, true);
+
+        let store = AgentStore::new(db.clone()).expect("legacy migration");
+
+        assert_eq!(store.runtime_schema_version().expect("schema version"), 2);
+        assert_eq!(
+            store.decision_outbox("decision-a").expect("outbox read"),
+            Some(expected.clone())
+        );
+        let state = store
+            .goal_command_sequence_migration_state()
+            .expect("migration state")
+            .expect("migration checkpoint")
+            .0;
+        assert!(state.complete);
+        assert_eq!(state.last_decision_id.as_deref(), Some("decision-a"));
+        assert_eq!(state.migrated_count, 1);
+
+        let before_reopen = database_snapshot(&db);
+        drop(store);
+        let reopened = AgentStore::new(db.clone()).expect("complete migration replay");
+        assert_eq!(database_snapshot(&db), before_reopen);
+        assert_eq!(
+            reopened
+                .decision_outbox("decision-a")
+                .expect("reopened outbox"),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn legacy_goal_outbox_with_sink_receipt_migrates_before_receipt_validation() {
+        let db = migration_database();
+        let expected = insert_goal_sequence_fixture(&db, "decision-a", 7, true);
+        let decision: AgentCurationDecision = serde_json::from_slice(
+            &db.open_tree(TREE_DECISIONS)
+                .expect("decision tree")
+                .get("decision-a")
+                .expect("decision read")
+                .expect("decision"),
+        )
+        .expect("decision decode");
+        let AgentAuthoredCommand::Goal(command) = &expected.command else {
+            unreachable!("goal command")
+        };
+        let receipt = AgentSinkReceipt::new(
+            &decision,
+            AgentSinkReceiptKind::GoalCommand,
+            AgentSinkSubmission::new(&command.command_id, &command.goal.goal_id, "applied"),
+        );
+        db.open_tree(TREE_SINK_RECEIPTS)
+            .expect("sink receipt tree")
+            .insert(
+                decision.decision_id.as_bytes(),
+                serde_json::to_vec(&receipt).expect("receipt encoding"),
+            )
+            .expect("receipt insert");
+        db.flush().expect("legacy delivered command flush");
+
+        let store = AgentStore::new(db.clone()).expect("legacy delivered command migration");
+
+        assert_eq!(
+            store.decision_outbox("decision-a").expect("outbox read"),
+            Some(expected)
+        );
+        assert_eq!(
+            store
+                .sink_receipt_by_decision("decision-a")
+                .expect("receipt read"),
+            Some(receipt)
+        );
+        let audit = store
+            .audit_semantic_enablement()
+            .expect("migrated delivery must be enableable");
+        assert_eq!(audit.command_outbox_count, 1);
+        assert_eq!(audit.sink_receipt_count, 1);
+
+        let after_migration = database_snapshot(&db);
+        drop(store);
+        AgentStore::new(db.clone()).expect("migrated delivery reopen");
+        assert_eq!(database_snapshot(&db), after_migration);
+    }
+
+    #[test]
+    fn decision_only_crash_state_reopens_and_accepts_exact_later_outbox() {
+        let db = migration_database();
+        let expected = insert_goal_sequence_fixture(&db, "decision-a", 7, true);
+        db.open_tree(TREE_DECISION_OUTBOX)
+            .expect("outbox tree")
+            .remove("decision-a")
+            .expect("outbox removal");
+        db.flush().expect("decision-only flush");
+
+        let store = AgentStore::new(db.clone()).expect("decision-only migration");
+        assert!(store
+            .decision_outbox("decision-a")
+            .expect("outbox read")
+            .is_none());
+        let after_migration = database_snapshot(&db);
+        drop(store);
+        let reopened = AgentStore::new(db.clone()).expect("decision-only reopen");
+        assert_eq!(database_snapshot(&db), after_migration);
+
+        let decision = reopened
+            .get_decision("decision-a")
+            .expect("decision read")
+            .expect("decision");
+        let AgentAuthoredCommand::Goal(command) = expected.command.clone() else {
+            unreachable!("goal command")
+        };
+        reopened
+            .put_curation_outcome(&AgentCurationOutcome {
+                decision,
+                goal_command: Some(*command),
+                goal_mutation_command: None,
+            })
+            .expect("later exact outbox recovery");
+        drop(reopened);
+        let recovered = AgentStore::new(db).expect("recovered reopen");
+        assert_eq!(
+            recovered
+                .decision_outbox("decision-a")
+                .expect("recovered outbox"),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn legacy_sink_receipt_without_outbox_reopens_but_is_not_semantically_enableable() {
+        let db = migration_database();
+        let expected = insert_goal_sequence_fixture(&db, "decision-a", 7, true);
+        db.open_tree(TREE_DECISION_OUTBOX)
+            .expect("outbox tree")
+            .remove("decision-a")
+            .expect("outbox removal");
+        let decision: AgentCurationDecision = serde_json::from_slice(
+            &db.open_tree(TREE_DECISIONS)
+                .expect("decision tree")
+                .get("decision-a")
+                .expect("decision read")
+                .expect("decision"),
+        )
+        .expect("decision decode");
+        let AgentAuthoredCommand::Goal(command) = expected.command else {
+            unreachable!("goal command")
+        };
+        let receipt = AgentSinkReceipt::new(
+            &decision,
+            AgentSinkReceiptKind::GoalCommand,
+            AgentSinkSubmission::new(&command.command_id, &command.goal.goal_id, "applied"),
+        );
+        db.open_tree(TREE_SINK_RECEIPTS)
+            .expect("sink receipt tree")
+            .insert(
+                decision.decision_id.as_bytes(),
+                serde_json::to_vec(&receipt).expect("receipt encoding"),
+            )
+            .expect("receipt insert");
+        db.flush().expect("legacy receipt flush");
+
+        let store = AgentStore::new(db.clone()).expect("legacy receipt migration");
+        assert_eq!(
+            store
+                .sink_receipt_by_decision("decision-a")
+                .expect("receipt read"),
+            Some(receipt)
+        );
+        let audit_error = store
+            .audit_semantic_enablement()
+            .expect_err("missing outbox must remain non-enableable");
+        assert!(audit_error.to_string().contains("no exact durable outbox"));
+        let after_migration = database_snapshot(&db);
+        drop(store);
+
+        let reopened = AgentStore::new(db.clone()).expect("legacy receipt reopen");
+        assert_eq!(database_snapshot(&db), after_migration);
+        assert!(reopened.audit_semantic_enablement().is_err());
+    }
+
+    #[test]
+    fn new_sink_receipt_requires_exact_outbox_before_any_mutation() {
+        let db = migration_database();
+        let expected = insert_goal_sequence_fixture(&db, "decision-a", 7, true);
+        db.open_tree(TREE_DECISION_OUTBOX)
+            .expect("outbox tree")
+            .remove("decision-a")
+            .expect("outbox removal");
+        db.flush().expect("decision-only flush");
+        let store = AgentStore::new(db.clone()).expect("decision-only migration");
+        let decision = store
+            .get_decision("decision-a")
+            .expect("decision read")
+            .expect("decision");
+        let AgentAuthoredCommand::Goal(command) = expected.command.clone() else {
+            unreachable!("goal command")
+        };
+        let receipt = AgentSinkReceipt::new(
+            &decision,
+            AgentSinkReceiptKind::GoalCommand,
+            AgentSinkSubmission::new(&command.command_id, &command.goal.goal_id, "applied"),
+        );
+        let before_rejection = database_snapshot(&db);
+
+        let error = store
+            .put_sink_receipt(&receipt)
+            .expect_err("receipt without outbox must fail");
+
+        assert!(error.to_string().contains("exact decision outbox"));
+        assert_eq!(database_snapshot(&db), before_rejection);
+        assert!(store
+            .sink_receipt_by_decision("decision-a")
+            .expect("receipt read")
+            .is_none());
+
+        store
+            .put_curation_outcome(&AgentCurationOutcome {
+                decision,
+                goal_command: Some(*command),
+                goal_mutation_command: None,
+            })
+            .expect("exact outbox recovery");
+        assert_eq!(
+            store
+                .put_sink_receipt(&receipt)
+                .expect("receipt with exact outbox"),
+            receipt
+        );
+    }
+
+    #[test]
+    fn completed_goal_sequence_migration_reflushes_indeterminate_completion() {
+        for has_final_item in [false, true] {
+            let db = sled::Config::new()
+                .temporary(true)
+                .open()
+                .expect("temporary migration database");
+            let store = AgentStore::new(db.clone()).expect("initial store");
+            downgrade_goal_sequence_schema(&db);
+            if has_final_item {
+                insert_goal_sequence_fixture(&db, "decision-a", 7, true);
+            }
+            store.fail_next_flush();
+
+            assert!(matches!(
+                store.migrate_runtime_schema(),
+                Err(StorageError::DurabilityIndeterminate(_))
+            ));
+            assert_eq!(store.runtime_schema_version().expect("schema version"), 2);
+            store
+                .migrate_runtime_schema()
+                .expect("completion replay reflush");
+            assert!(
+                store
+                    .goal_command_sequence_migration_state()
+                    .expect("migration state")
+                    .expect("checkpoint")
+                    .0
+                    .complete
+            );
+        }
+    }
+
+    #[test]
+    fn interrupted_goal_command_sequence_migration_resumes_after_reopen() {
+        let db = migration_database();
+        let first = insert_goal_sequence_fixture(&db, "decision-a", 7, false);
+        let second = insert_goal_sequence_fixture(&db, "decision-b", 8, true);
+        let state = GoalCommandSequenceMigrationState {
+            target_schema_version: RUNTIME_SCHEMA_VERSION,
+            last_decision_id: Some("decision-a".to_string()),
+            migrated_count: 1,
+            complete: false,
+        };
+        db.open_tree(TREE_RUNTIME_SCHEMA)
+            .expect("schema tree")
+            .insert(
+                GOAL_COMMAND_SEQUENCE_MIGRATION_KEY,
+                serde_json::to_vec(&state).expect("checkpoint encoding"),
+            )
+            .expect("checkpoint insert");
+        db.flush().expect("interrupted checkpoint flush");
+
+        let store = AgentStore::new(db.clone()).expect("migration resume");
+
+        assert_eq!(
+            store.decision_outbox("decision-a").expect("first outbox"),
+            Some(first)
+        );
+        assert_eq!(
+            store.decision_outbox("decision-b").expect("second outbox"),
+            Some(second)
+        );
+        let resumed = store
+            .goal_command_sequence_migration_state()
+            .expect("migration state")
+            .expect("migration checkpoint")
+            .0;
+        assert!(resumed.complete);
+        assert_eq!(resumed.last_decision_id.as_deref(), Some("decision-b"));
+        assert_eq!(resumed.migrated_count, 2);
+        assert_eq!(store.runtime_schema_version().expect("schema version"), 2);
+    }
+
+    #[test]
+    fn goal_command_sequence_migration_rejects_invalid_links_byte_clean() {
+        for corruption in ["missing", "divergent", "malformed", "aliased", "foreign"] {
+            let db = migration_database();
+            insert_goal_sequence_fixture(&db, "decision-a", 7, true);
+            let outboxes = db.open_tree(TREE_DECISION_OUTBOX).expect("outbox tree");
+            match corruption {
+                "missing" => {
+                    db.open_tree(TREE_AGENT_RECORDS)
+                        .expect("agent tree")
+                        .remove("agent-decision-a")
+                        .expect("agent removal");
+                }
+                "divergent" => {
+                    let raw = outboxes
+                        .get("decision-a")
+                        .expect("outbox read")
+                        .expect("outbox");
+                    let mut value: serde_json::Value =
+                        serde_json::from_slice(&raw).expect("outbox value");
+                    value["command"]["command"]["dedupe_key"]["agent_id"] =
+                        serde_json::Value::String("agent-foreign".to_string());
+                    outboxes
+                        .insert(
+                            "decision-a",
+                            serde_json::to_vec(&value).expect("divergent encoding"),
+                        )
+                        .expect("divergent insert");
+                }
+                "malformed" => {
+                    outboxes
+                        .insert("decision-a", b"not-json".as_slice())
+                        .expect("malformed insert");
+                }
+                "aliased" => {
+                    let raw = outboxes
+                        .remove("decision-a")
+                        .expect("outbox removal")
+                        .expect("outbox");
+                    outboxes
+                        .insert("decision-alias", raw)
+                        .expect("aliased insert");
+                }
+                "foreign" => {
+                    let raw = outboxes
+                        .get("decision-a")
+                        .expect("outbox read")
+                        .expect("outbox");
+                    let mut value: serde_json::Value =
+                        serde_json::from_slice(&raw).expect("outbox value");
+                    value["decision_id"] =
+                        serde_json::Value::String("decision-foreign".to_string());
+                    outboxes
+                        .insert(
+                            "decision-a",
+                            serde_json::to_vec(&value).expect("foreign encoding"),
+                        )
+                        .expect("foreign insert");
+                }
+                _ => unreachable!("known corruption"),
+            }
+            db.flush().expect("corruption flush");
+            let before = database_snapshot(&db);
+
+            let error = AgentStore::new(db.clone())
+                .err()
+                .expect("invalid migration must fail");
+
+            assert!(matches!(error, StorageError::MigrationConflict(_)));
+            assert_eq!(database_snapshot(&db), before, "corruption {corruption}");
+        }
+    }
+
+    #[test]
+    fn goal_sequence_migration_rejects_forged_checkpoint_prefix_byte_clean() {
+        for corruption in ["missing", "count", "last"] {
+            let db = migration_database();
+            insert_goal_sequence_fixture(&db, "decision-a", 7, false);
+            let schema = db.open_tree(TREE_RUNTIME_SCHEMA).expect("schema tree");
+            if corruption != "missing" {
+                let state = GoalCommandSequenceMigrationState {
+                    target_schema_version: RUNTIME_SCHEMA_VERSION,
+                    last_decision_id: Some(if corruption == "last" {
+                        "decision-foreign".to_string()
+                    } else {
+                        "decision-a".to_string()
+                    }),
+                    migrated_count: if corruption == "count" { 2 } else { 1 },
+                    complete: false,
+                };
+                schema
+                    .insert(
+                        GOAL_COMMAND_SEQUENCE_MIGRATION_KEY,
+                        serde_json::to_vec(&state).expect("checkpoint encoding"),
+                    )
+                    .expect("checkpoint insert");
+            }
+            db.flush().expect("forged checkpoint flush");
+            let before = database_snapshot(&db);
+
+            let error = AgentStore::new(db.clone())
+                .err()
+                .expect("forged checkpoint must fail");
+
+            assert!(matches!(error, StorageError::MigrationConflict(_)));
+            assert_eq!(database_snapshot(&db), before, "corruption {corruption}");
+        }
+    }
+
+    #[test]
+    fn late_sink_corruption_rejects_before_missing_index_repair() {
+        for corruption in ["dangling_index", "malformed_primary"] {
+            let db = migration_database();
+            insert_goal_sequence_fixture(&db, "decision-a", 7, true);
+            let expected_agent_index = decision_agent_key("agent-decision-a", 7, "decision-a");
+            assert!(db
+                .open_tree(TREE_DECISIONS_BY_AGENT)
+                .expect("decision agent index")
+                .get(expected_agent_index.as_bytes())
+                .expect("index read")
+                .is_none());
+            match corruption {
+                "dangling_index" => {
+                    db.open_tree(TREE_SINK_RECEIPTS_BY_COMMAND)
+                        .expect("sink index")
+                        .insert("command-missing::decision-missing", "decision-missing")
+                        .expect("dangling index insert");
+                }
+                "malformed_primary" => {
+                    db.open_tree(TREE_SINK_RECEIPTS)
+                        .expect("sink primary")
+                        .insert("decision-a", b"not-json".as_slice())
+                        .expect("malformed receipt insert");
+                }
+                _ => unreachable!("known corruption"),
+            }
+            db.flush().expect("corrupt sink flush");
+            let before = database_snapshot(&db);
+
+            let error = AgentStore::new(db.clone())
+                .err()
+                .expect("late corruption must fail");
+
+            assert!(matches!(error, StorageError::MigrationConflict(_)));
+            assert_eq!(database_snapshot(&db), before, "corruption {corruption}");
+        }
+    }
 
     type DatabaseSnapshot = Vec<(Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>)>;
 

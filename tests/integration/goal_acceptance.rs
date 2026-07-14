@@ -181,17 +181,14 @@ fn low_confidence_goal_command() -> AgentGoalCommand {
     outcome.goal_command.unwrap()
 }
 
-fn acceptance_request_from_agent_command(
-    command: AgentGoalCommand,
-    accepted_at_seq: u64,
-) -> GoalAcceptanceRequest {
+fn acceptance_request_from_agent_command(command: AgentGoalCommand) -> GoalAcceptanceRequest {
     command.validate().unwrap();
 
     GoalAcceptanceRequest {
         metadata: GoalCommandMetadata {
             command_id: command.command_id,
             source_identity: Some(command.dedupe_key.index_key()),
-            seq: accepted_at_seq,
+            seq: command.command_seq,
         },
         goal: command.goal,
         lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
@@ -343,7 +340,7 @@ fn producer_neutral_goal_acceptance_stores_active_plannable_goal() {
 
     let temp = tempfile::tempdir().unwrap();
     let mut store = PersistentGoalSetStore::new(sled::open(temp.path()).unwrap()).unwrap();
-    let acceptance_request = acceptance_request_from_agent_command(goal_command.clone(), 7);
+    let acceptance_request = acceptance_request_from_agent_command(goal_command.clone());
 
     let outcome = GoalSetApi::new(&mut store)
         .accept_goal(acceptance_request.clone())
@@ -368,8 +365,9 @@ fn producer_neutral_goal_acceptance_stores_active_plannable_goal() {
 
     let mut duplicate_command = goal_command.clone();
     duplicate_command.command_id = "goal-command-duplicate".to_string();
+    duplicate_command.command_seq = 8;
     let duplicate = GoalSetApi::new(&mut store)
-        .accept_goal(acceptance_request_from_agent_command(duplicate_command, 8))
+        .accept_goal(acceptance_request_from_agent_command(duplicate_command))
         .unwrap();
     assert!(matches!(
         duplicate,
@@ -395,10 +393,7 @@ fn agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match
     let temp = tempfile::tempdir().unwrap();
     let mut store = PersistentGoalSetStore::new(sled::open(temp.path()).unwrap()).unwrap();
     GoalSetApi::new(&mut store)
-        .accept_goal(acceptance_request_from_agent_command(
-            goal_command.clone(),
-            7,
-        ))
+        .accept_goal(acceptance_request_from_agent_command(goal_command.clone()))
         .unwrap();
     let (_decision_temp, decision_store) = agent_store();
     let (_agent, subscription) = setup_agent(&decision_store);
@@ -500,10 +495,7 @@ fn failure_outcome_does_not_satisfy_goal() {
     let temp = tempfile::tempdir().unwrap();
     let mut store = PersistentGoalSetStore::new(sled::open(temp.path()).unwrap()).unwrap();
     GoalSetApi::new(&mut store)
-        .accept_goal(acceptance_request_from_agent_command(
-            goal_command.clone(),
-            7,
-        ))
+        .accept_goal(acceptance_request_from_agent_command(goal_command.clone()))
         .unwrap();
 
     let active_goal = store.active_goal(&goal_id).unwrap().expect("active goal");
@@ -595,6 +587,7 @@ fn producer_neutral_goal_acceptance_rejects_invalid_agent_command_before_executi
     let valid = low_confidence_goal_command();
     let cases = [
         invalid_case(&valid, |command| command.command_id.clear()),
+        invalid_case(&valid, |command| command.command_seq = 0),
         invalid_case(&valid, |command| command.goal.agent_id.clear()),
         invalid_case(&valid, |command| {
             command.goal.target = Proposition::Accessible {
@@ -632,8 +625,9 @@ fn producer_neutral_goal_acceptance_rejects_invalid_agent_command_before_executi
 
 #[test]
 fn producer_neutral_goal_acceptance_builds_stable_request_from_agent_command() {
-    let goal_command = low_confidence_goal_command();
-    let request = acceptance_request_from_agent_command(goal_command.clone(), 11);
+    let mut goal_command = low_confidence_goal_command();
+    goal_command.command_seq = 11;
+    let request = acceptance_request_from_agent_command(goal_command.clone());
 
     assert_eq!(
         request.metadata.command_id.as_str(),

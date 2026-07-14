@@ -611,6 +611,7 @@ impl AgentDecisionOutboxRecord {
                     && decision.goal_mutation_command_id.is_none()
                     && decision.agent_id == command.goal.agent_id
                     && decision.dedupe_key == command.dedupe_key
+                    && decision.created_at_seq == command.command_seq
             }
             AgentAuthoredCommand::GoalMutation(command) => {
                 decision.decision == AgentDecisionKind::GoalMutationCommand
@@ -852,9 +853,12 @@ pub struct RecordCurationDecisionCommand {
 /// Execution does not interpret this producer-specific object directly.
 /// Integration maps it into a neutral execution goal acceptance request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentGoalCommand {
     /// Stable command identifier reused for execution idempotency.
     pub command_id: AgentGoalCommandId,
+    /// Agent-owned causal sequence used by execution lifecycle records.
+    pub command_seq: u64,
     /// Ground proposed goal owned by the emitting agent.
     pub goal: Goal,
     /// Dedupe key that must match the goal target and agent.
@@ -865,6 +869,11 @@ impl AgentGoalCommand {
     /// Validate producer invariants before crossing into execution.
     pub fn validate(&self) -> Result<(), StorageError> {
         require_non_empty("goal command id", &self.command_id)?;
+        if self.command_seq == 0 {
+            return Err(StorageError::InvalidPath(
+                "goal command sequence must be greater than zero".to_string(),
+            ));
+        }
         self.dedupe_key.validate()?;
         if let Some(variable) = self.goal.target.grounding_issue() {
             return Err(StorageError::InvalidPath(format!(

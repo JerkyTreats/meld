@@ -11,8 +11,8 @@ use meld_events::{
     LedgerIdentity, ReplayRequest,
 };
 use meld_execution::goals::{
-    GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
-    GoalSetApi, PersistentGoalSetStore,
+    GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandCommitReceipt, GoalCommandMetadata,
+    GoalCommandOutcome, GoalCommandRequestContract, GoalSetApi, PersistentGoalSetStore,
 };
 use meld_execution::planning::{
     PlanningProjectionError as ExecutionPlanningProjectionError,
@@ -26,6 +26,11 @@ use meld_execution::task_network::authority::{
 };
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use meld_execution::task_network::{EventAppendFailure, EventAppendSink};
+use meld_world_model::agent::{
+    AgentActiveGoalQuery, AgentActiveGoalQueryError, AgentAuthoredCommand,
+    AgentCommandOutcomeQuery, AgentCommandOutcomeQueryError, AgentDecisionOutboxRecord,
+    AgentGoalCommandSink, AgentGoalMutationSink, AgentSinkError, AgentSinkSubmission,
+};
 use meld_world_model::belief::EvidenceEventReplaySource;
 use meld_world_model::error::StorageError as WorldModelStorageError;
 use meld_world_model::planner::{
@@ -35,7 +40,10 @@ use meld_world_model::planner::{
 use meld_world_model::world_state::graph::{
     GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource, PerspectiveKey,
 };
-use meld_world_model::{AgentGoalCommand, AgentGoalMutationCommand, BranchScope};
+use meld_world_model::{
+    ActiveGoalSummary, AgentCurationDecision, AgentGoalCommand, AgentGoalMutationCommand,
+    BranchScope,
+};
 
 use crate::context::frame::FrameStorage;
 use crate::control::projection::ExecutionProjectionReplaySource;
@@ -465,21 +473,21 @@ impl ExecutionGoalCommandPort {
     pub fn accept_agent_goal_command(
         &self,
         command: AgentGoalCommand,
-        seq: u64,
     ) -> Result<GoalCommandOutcome, RuntimePortError> {
-        command
-            .validate()
-            .map_err(|error| RuntimePortError::InvalidRequest(error.to_string()))?;
-        let request = GoalAcceptanceRequest {
-            metadata: GoalCommandMetadata {
-                command_id: command.command_id,
-                source_identity: Some(command.dedupe_key.index_key()),
-                seq,
-            },
-            goal: command.goal,
-            lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
-        };
-        self.accept_goal(request)
+        self.accept_agent_goal_command_durable(command)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Validate, durably accept, and return the execution authority receipt.
+    pub fn accept_agent_goal_command_durable(
+        &self,
+        command: AgentGoalCommand,
+    ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), RuntimePortError> {
+        let request = agent_goal_acceptance_request(&command)?;
+        let mut store = self.store.as_ref().clone();
+        GoalSetApi::new(&mut store)
+            .accept_goal_durable(request)
+            .map_err(|error| RuntimePortError::Storage(error.to_string()))
     }
 }
 
@@ -494,12 +502,193 @@ impl ExecutionGoalMutationPort {
         &self,
         command: AgentGoalMutationCommand,
     ) -> Result<GoalCommandOutcome, RuntimePortError> {
+        self.satisfy_agent_goal_mutation_durable(command)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Validate, durably apply, and return the execution authority receipt.
+    pub fn satisfy_agent_goal_mutation_durable(
+        &self,
+        command: AgentGoalMutationCommand,
+    ) -> Result<(GoalCommandOutcome, GoalCommandCommitReceipt), RuntimePortError> {
         let command = satisfy_request_from_agent_mutation(GoalMutationRequest { command })
             .map_err(|error| RuntimePortError::InvalidRequest(error.to_string()))?;
         let mut store = self.store.as_ref().clone();
         GoalSetApi::new(&mut store)
-            .satisfy_goal(command)
+            .satisfy_goal_durable(command)
             .map_err(|error| RuntimePortError::Storage(error.to_string()))
+    }
+}
+
+impl AgentActiveGoalQuery for ExecutionGoalCommandPort {
+    fn active_goals_for_agent(
+        &mut self,
+        agent_id: &str,
+    ) -> Result<ActiveGoalSummary, AgentActiveGoalQueryError> {
+        if agent_id.trim().is_empty() {
+            return Err(AgentActiveGoalQueryError::fatal(
+                "agent goal query requires a non-empty agent id",
+            ));
+        }
+        let goals = self
+            .store
+            .active_goals()
+            .map_err(|error| AgentActiveGoalQueryError::fatal(error.to_string()))?
+            .into_iter()
+            .filter(|goal| goal.agent_id == agent_id)
+            .collect();
+        Ok(ActiveGoalSummary { goals })
+    }
+}
+
+impl AgentCommandOutcomeQuery for ExecutionGoalCommandPort {
+    fn committed_submission(
+        &mut self,
+        decision: &AgentCurationDecision,
+        command: &AgentAuthoredCommand,
+    ) -> Result<Option<AgentSinkSubmission>, AgentCommandOutcomeQueryError> {
+        decision
+            .validate()
+            .map_err(|error| AgentCommandOutcomeQueryError::fatal(error.to_string()))?;
+        AgentDecisionOutboxRecord {
+            decision_id: decision.decision_id.clone(),
+            command: command.clone(),
+            recorded_at_seq: decision.created_at_seq,
+        }
+        .validate_for(decision)
+        .map_err(|error| AgentCommandOutcomeQueryError::fatal(error.to_string()))?;
+        let expected_identity = match command {
+            AgentAuthoredCommand::Goal(command) => agent_goal_acceptance_request(command)
+                .map_err(|error| AgentCommandOutcomeQueryError::fatal(error.to_string()))?
+                .request_identity()
+                .map_err(AgentCommandOutcomeQueryError::fatal)?,
+            AgentAuthoredCommand::GoalMutation(command) => {
+                satisfy_request_from_agent_mutation(GoalMutationRequest {
+                    command: (**command).clone(),
+                })
+                .map_err(|error| AgentCommandOutcomeQueryError::fatal(error.to_string()))?
+                .request_identity()
+                .map_err(AgentCommandOutcomeQueryError::fatal)?
+            }
+        };
+        let Some((outcome, receipt)) = self
+            .store
+            .command_commit(command.command_id())
+            .map_err(|error| AgentCommandOutcomeQueryError::fatal(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        if receipt.identity != expected_identity {
+            return Err(AgentCommandOutcomeQueryError::fatal(
+                "durable goal command identity does not match the agent outbox",
+            ));
+        }
+        outcome_submission(
+            command.command_id(),
+            command.goal_id(),
+            outcome,
+            "recovered",
+        )
+        .map(Some)
+        .map_err(AgentCommandOutcomeQueryError::fatal)
+    }
+}
+
+impl AgentGoalCommandSink for ExecutionGoalCommandPort {
+    fn submit_goal_command(
+        &mut self,
+        command: &AgentGoalCommand,
+    ) -> Result<AgentSinkSubmission, AgentSinkError> {
+        let (outcome, receipt) = self
+            .accept_agent_goal_command_durable(command.clone())
+            .map_err(agent_sink_port_error)?;
+        let expected = agent_goal_acceptance_request(command)
+            .map_err(agent_sink_port_error)?
+            .request_identity()
+            .map_err(AgentSinkError::fatal)?;
+        if receipt.identity != expected {
+            return Err(AgentSinkError::fatal(
+                "goal command receipt does not match the submitted request",
+            ));
+        }
+        outcome_submission(
+            &command.command_id,
+            &command.goal.goal_id,
+            outcome,
+            "applied",
+        )
+        .map_err(AgentSinkError::fatal)
+    }
+}
+
+impl AgentGoalMutationSink for ExecutionGoalMutationPort {
+    fn submit_goal_mutation(
+        &mut self,
+        command: &AgentGoalMutationCommand,
+    ) -> Result<AgentSinkSubmission, AgentSinkError> {
+        let expected = satisfy_request_from_agent_mutation(GoalMutationRequest {
+            command: command.clone(),
+        })
+        .map_err(|error| AgentSinkError::fatal(error.to_string()))?
+        .request_identity()
+        .map_err(AgentSinkError::fatal)?;
+        let (outcome, receipt) = self
+            .satisfy_agent_goal_mutation_durable(command.clone())
+            .map_err(agent_sink_port_error)?;
+        if receipt.identity != expected {
+            return Err(AgentSinkError::fatal(
+                "goal mutation receipt does not match the submitted request",
+            ));
+        }
+        outcome_submission(&command.command_id, &command.goal_id, outcome, "applied")
+            .map_err(AgentSinkError::fatal)
+    }
+}
+
+fn agent_goal_acceptance_request(
+    command: &AgentGoalCommand,
+) -> Result<GoalAcceptanceRequest, RuntimePortError> {
+    command
+        .validate()
+        .map_err(|error| RuntimePortError::InvalidRequest(error.to_string()))?;
+    Ok(GoalAcceptanceRequest {
+        metadata: GoalCommandMetadata {
+            command_id: command.command_id.clone(),
+            source_identity: Some(command.dedupe_key.index_key()),
+            seq: command.command_seq,
+        },
+        goal: command.goal.clone(),
+        lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
+    })
+}
+
+fn outcome_submission(
+    command_id: &str,
+    expected_goal_id: &str,
+    outcome: GoalCommandOutcome,
+    applied_label: &str,
+) -> Result<AgentSinkSubmission, String> {
+    let (goal_id, label) = match outcome {
+        GoalCommandOutcome::Applied(record) => (record.goal.goal_id, applied_label),
+        GoalCommandOutcome::Duplicate { existing_goal_id } => (existing_goal_id, "duplicate"),
+        GoalCommandOutcome::NotFound { goal_id } => {
+            return Err(format!(
+                "goal command '{command_id}' targeted missing goal '{goal_id}'"
+            ));
+        }
+    };
+    if goal_id != expected_goal_id {
+        return Err(format!(
+            "goal command '{command_id}' resolved to divergent goal '{goal_id}'"
+        ));
+    }
+    Ok(AgentSinkSubmission::new(command_id, goal_id, label))
+}
+
+fn agent_sink_port_error(error: RuntimePortError) -> AgentSinkError {
+    match error {
+        RuntimePortError::InvalidRequest(message) => AgentSinkError::fatal(message),
+        other => AgentSinkError::retryable(other.to_string()),
     }
 }
 
