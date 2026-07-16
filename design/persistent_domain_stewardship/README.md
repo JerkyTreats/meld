@@ -1,8 +1,10 @@
 # Persistent Domain Stewardship
 
-Date: 2026-07-13  
-Status: proposed  
-Scope: declarative application layer for configuring persistent, evidence-grounded stewardship over bounded domains
+Date: 2026-07-16  
+Status: proposed, non-authoritative  
+Scope: design options for a declarative application layer configuring persistent, evidence-grounded stewardship over bounded domains
+
+> This directory is a proposal corpus rather than an accepted implementation contract. Read [Proposal Status And Decision Semantics](proposal_status.md) and [Proposal Index](proposal_index.md) before interpreting concrete schemas or requirements as final.
 
 ## Thesis
 
@@ -10,39 +12,74 @@ Meld is not itself a persistent domain steward.
 
 Meld is the runtime that can host persistent domain stewards.
 
-A running steward is the composition of:
+The current working decomposition is:
 
 ```text
 Meld cognitive runtime
-    + compiled stewardship package
+    + stewardship package
+    + steward profile
     + stewardship assignment
+    + stewardship activation
     + persistent runtime state
 ```
 
 The cognitive runtime defines **how** observation, temporal integration, belief revision, goal curation, planning, execution, and outcome publication operate.
 
-A stewardship package defines **what** a particular steward understands, watches, values, may change, and uses as evidence of success.
+A stewardship package defines the full operational domain theory available to a steward family.
+
+A steward profile exposes a smaller customer-facing surface for intent, scope, sensitivity, autonomy, budget, escalation, and verification.
+
+An assignment binds a profile to a principal, scope, and authority grant.
+
+An activation binds the assignment to sensors, connectors, credentials, providers, capabilities, runtime placement, and quotas.
+
+These layers remain proposed. A first implementation may combine assignment and activation while preserving their conceptual distinction.
 
 ```mermaid
 flowchart TD
-    PKG[stewardship package<br/>what to steward] --> CMP[package compiler]
-    CMP --> IR[compiled stewardship IR]
-    IR --> RT[Meld cognitive runtime<br/>how stewardship operates]
+    USER[customer intent] --> PROFILE[steward profile]
+    PACKAGE[stewardship package] --> LINK[PDS linker / compiler]
+    PROFILE --> LINK
+    ASSIGN[assignment] --> LINK
+    ACT[activation] --> LINK
+    LINK --> IMAGE[compiled stewardship image]
+    IMAGE --> RT[Meld cognitive runtime]
     EXT[domain systems and environment] --> RT
     RT --> EXT
+    RT --> VIEW[PDS stewardship projection]
 ```
 
-The package is the declarative program.
+[`meld-lang`](../cognitive_architecture/meld-lang/README.md) remains the shared runtime intermediate representation for propositions, goals, operators, effects, methods, and world state.
 
-[`meld-lang`](../cognitive_architecture/meld-lang/README.md) is the shared runtime intermediate representation for propositions, goals, operators, effects, methods, and world state.
+Sensors and capabilities remain executable adapters at domain boundaries.
 
-Meld is the persistent execution and world-model runtime.
+## Proposal Posture
 
-Sensors and capabilities are executable adapters at the domain boundary.
+This module distinguishes:
+
+- **constraints** inherited from Meld's existing architecture;
+- **hypotheses** being tested;
+- **options** with different tradeoffs;
+- **recommendations** based on current evidence;
+- **open decisions** requiring experiments;
+- **illustrative examples** that do not freeze schemas.
+
+Concrete Rust types, YAML, state machines, and crate layouts are proposed unless explicitly identified as existing contracts.
+
+The current recommendations are:
+
+- treat PDS as a control-plane meta-domain rather than a second cognitive runtime;
+- explore federated domain-owned facets instead of assuming one universal PDS schema;
+- preserve a small customer-facing profile above the full package model;
+- reuse existing cognitive-runtime authorities;
+- use workflows as compatibility methods where appropriate;
+- prove the model with documentation freshness, software performance, and one non-software steward.
+
+See [Proposal Status](proposal_status.md), [Meta-Domain](meta_domain.md), and [Open Decisions](open_decisions.md).
 
 ## Why This Module Exists
 
-The cognitive architecture has extensive design for the runtime loop:
+The cognitive architecture has extensive design and implementation direction for the runtime loop:
 
 ```text
 observe
@@ -53,46 +90,45 @@ observe
 → outcome publication
 ```
 
-It does not yet have one top-level representation that declares:
+It does not yet provide one user-facing application model declaring:
 
-- the bounded domain being stewarded
-- the domain vocabulary and identity rules
-- the observations that make the domain visible
-- the belief families that interpret those observations
-- the standing conditions a steward is responsible for maintaining
-- the observations and interventions available to it
-- the authority under which it may act
-- the evidence that establishes whether an intervention succeeded
-- the scenarios that prove the package is safe and coherent
+- the bounded domain being stewarded;
+- the customer intent and selected profile;
+- the domain vocabulary and identity rules;
+- observations and projections;
+- belief families;
+- standing responsibilities;
+- observation and intervention possibilities;
+- authority and approvals;
+- verification and escalation;
+- package, assignment, activation, and runtime lineage.
 
-Those concerns currently appear in separate places such as belief-family configuration, Agent directives, workflow profiles, task packages, capability registrations, prompts, and execution policy.
+Those concerns currently appear across belief-family configuration, Agent directives, workflow profiles, task packages, capabilities, prompts, physical runtime configuration, and execution policy.
 
-Persistent Domain Stewardship defines the composition layer that turns those fragments into one versioned operational domain theory.
+Persistent Domain Stewardship explores the composition layer that can connect them without absorbing their domain authority.
 
 ## Location And Naming
 
-This module is a sibling of `cognitive_architecture` rather than a child of it.
+This module is a sibling of `cognitive_architecture` rather than a child.
 
-That separation is intentional:
+That separation reflects the current hypothesis:
 
-- `cognitive_architecture` defines runtime authority and mechanics
-- `persistent_domain_stewardship` defines declarative applications loaded into that runtime
+- `cognitive_architecture` defines runtime authorities and mechanics;
+- `persistent_domain_stewardship` defines application, profile, linking, activation, and inspection options above those authorities.
 
-The current directory name `cognitive_architecture` is retained in this change to avoid mixing a repository-wide path rename with the new semantic boundary.
-
-A future rename to `cognitive_runtime` is compatible with this design and should be performed as a separate mechanical change after the boundary has stabilized.
+A future rename from `cognitive_architecture` to `cognitive_runtime` remains compatible but should be a separate decision and mechanical change.
 
 ## Persistent Domain Steward
 
 A persistent domain steward is an evidence-grounded, policy-bounded controller responsible for maintaining conditions over a domain for an indefinite horizon.
 
-It differs from a workflow because its responsibility survives completion of any individual execution.
+It differs from a workflow because responsibility survives completion of one execution.
 
-It differs from a reconciler because actual state may be incomplete, stale, contradictory, or perspective-dependent.
+It differs from a reconciler because state may be incomplete, stale, contradictory, or perspective-dependent.
 
-It differs from a monitor because it can acquire new evidence and initiate bounded interventions.
+It differs from a monitor because it may acquire evidence and initiate bounded interventions.
 
-It differs from a general agent because its domain, mandate, authority, and outcome semantics are explicit.
+It differs from a general agent because mandate, scope, authority, and outcome semantics are explicit.
 
 ```text
 standing mandate remains active
@@ -103,18 +139,20 @@ belief revision
     ↓
 act / tolerate / observe / escalate
     ↓
-stewardship episode opens
+stewardship episode opens or is projected
     ↓
 goals and task-network work
     ↓
 outcome evidence
     ↓
-desired region restored or intervention rejected
+desired region restored, tolerated, failed, or escalated
     ↓
 episode closes
     ↓
 standing mandate remains active
 ```
+
+Whether objective and episode state are PDS-owned, Agent-owned, or projected remains open.
 
 ## Qualification
 
@@ -133,311 +171,230 @@ A use case is stewardship-shaped when most of the following are true:
 | Outcome feedback | Later observations can evaluate intervention effects |
 | Bounded authority | Permissions, budgets, approvals, and prohibitions are explicit |
 | Temporal continuity | Prior evidence, decisions, and outcomes remain relevant |
-| Audit value | Reconstructing why an action occurred matters |
+| Audit value | Reconstructing why the steward acted matters |
 
-A deterministic controller, workflow, scheduler, optimizer, or ordinary tool call should remain the baseline.
+A deterministic controller, workflow, scheduler, optimizer, or tool call remains the mandatory baseline.
 
-Meld is justified only when the additional world-model, uncertainty, perspective, or adaptive-decision machinery measurably improves the result.
+Meld is justified only when world-model, uncertainty, perspective, persistent context, or adaptive-decision machinery measurably improves the result.
 
 See [Use-Case Decomposition](use_case_decomposition.md).
 
-## Core Terms
+## Abstraction Layers
 
-### Domain module
+## Stewardship package
 
-Declares the vocabulary of a bounded domain:
+Expert-authored operational domain theory. Depending on the selected meta-domain option, it may be one central schema or a linked set of domain-owned facets.
 
-- object types
-- relation types
-- identity rules
-- attributes and units
-- artifact types
-- belief dimensions
-- lifecycle and scope semantics
+## Steward profile
 
-The domain module does not contain live domain data.
-
-### Observation module
-
-Declares how promoted observations become facts, graph mutations, and belief evidence.
-
-It references sensory implementations and connectors. It does not implement raw polling, streaming, or lowering.
-
-### Belief module
-
-Declares epistemic concern families:
-
-- the question being assessed
-- admissible evidence
-- posterior semantics
-- comparator selection
-- priors
-- freshness and conflict policy
-- planner-facing projection
-
-A belief family answers what should be believed. It should not own a steward-specific desired state or action policy.
-
-### Steward charter
-
-Declares a reusable stewardship role:
-
-- perspective and trust profile
-- subject scope shape
-- standing objectives
-- concern bindings
-- tolerance and hysteresis
-- inaction-cost policy
-- authority requirements
-- escalation and lifecycle policy
-
-The charter is persistent. Goals generated from it are episodic.
-
-### Stewardship assignment
-
-Binds one charter to:
-
-- a concrete subject scope
-- a principal
-- a world-model Agent identity
-- an effective authority grant
-- a compiled package hash
-
-The package is reusable. The assignment is a live runtime object.
-
-### Stewardship objective
-
-A standing responsibility expressed over planner-facing world state.
-
-An objective remains active after satisfaction. A later breach can open another episode.
-
-### Stewardship episode
-
-One divergence-to-restoration lifecycle for an objective.
-
-An episode records:
-
-- triggering belief revisions
-- acquired observations
-- generated goals
-- selected methods
-- interventions
-- outcomes
-- closure reason
-
-### Goal
-
-A transient operational commitment owned by execution.
-
-A goal is not the standing mandate and does not replace the charter.
-
-### Action module
-
-Declares:
-
-- operators
-- capability requirements
-- known methods and compositions
-- observation actions
-- intervention actions
-- compensating actions
-- resource and conflict claims
-
-### Outcome contract
-
-Declares how an action's real effects are verified.
-
-Expected planner effects are predictions. They are not proof that the environment changed.
-
-### Governance module
-
-Declares authority requirements, approval policy, budgets, rate limits, rollback requirements, and prohibitions.
-
-A package can request authority. It cannot grant authority to itself.
-
-## Package Shape
-
-A stewardship bundle is a versioned composition of modules:
+Customer-facing declaration of:
 
 ```text
-StewardshipBundle
-├── manifest and imports
-├── domain modules
-├── observation modules
-├── belief modules
-├── steward charters
-├── action modules
-├── outcome contracts
-├── governance modules
-└── scenario and conformance tests
+steward type
++ scope
++ desired conditions
++ sensitivity
++ autonomy
++ budget
++ escalation
++ verification
 ```
 
-The source bundle is compiled into a canonical, content-addressed representation before it can be loaded.
+See [Profile Abstraction](profile_abstraction.md).
 
-```text
-package source
-    ↓ parse and import resolution
-symbol and schema validation
-    ↓
-semantic and authority validation
-    ↓
-lowering to Meld registries and meld-lang values
-    ↓
-CompiledStewardshipPackage
-    ↓
-runtime assignment
-```
+## Stewardship assignment
 
-See [Stewardship Package Model](package_model.md).
+Normative binding of profile, principal, concrete scope, effective authority, and lifecycle.
+
+## Stewardship activation
+
+Physical binding of sensors, connectors, credentials, providers, capability implementations, runtime placement, and operational quotas.
+
+## Compiled stewardship image
+
+Content-addressed linked representation containing resolved package semantics, profile selections, domain facets, activation requirements, and lineage.
+
+## Stewardship projection
+
+User-facing correlation of objective, belief, decision, work, outcome, and verification state. It should not duplicate authoritative domain truth.
+
+## Meta-Domain Options
+
+The proposal compares:
+
+1. a central PDS-owned package schema;
+2. federated domain-owned stewardship facets linked by PDS;
+3. root `meld` product composition without an independent PDS domain;
+4. a rejected PDS runtime-orchestrator model.
+
+The current recommendation is federated facets with a root-composed first proof if needed.
+
+See [Meta-Domain](meta_domain.md), [Facet Protocol](facet_protocol.md), and [Assessment By Domain](assessment_by_domain.md).
 
 ## Relationship To Existing Architecture
 
-Persistent Domain Stewardship does not create a new authority domain.
+PDS does not create new event, world-model, Agent, execution, or capability authority.
 
-It composes existing authorities:
-
-| PDS declaration | Runtime owner |
+| PDS concern | Candidate runtime owner |
 |---|---|
-| promoted observation bindings | `sensory` and events |
-| object and relation vocabulary | graph projection and domain adapters |
-| evidence and belief-family definitions | `world_model/belief` |
-| perspective and normative evaluation | `world_model/agent` |
+| package, profile, assignment, activation, linking | PDS control plane or root first slice |
+| promoted observation semantics | source/sensory domain |
+| canonical event append and replay | `meld-events` |
+| graph projection and state | world-model graph |
+| evidence, belief, revisions, projection | world-model belief |
+| perspective and normative evaluation | world-model Agent |
 | propositions, goals, operators, methods | `meld-lang` |
-| goal set, planning, task network, dispatch | `execution` |
-| outcome facts and replay | events plus world model |
-| authority enforcement | runtime policy below planning |
+| goals, planning, task network, dispatch | execution |
+| capability invocation | capability/execution |
+| outcome evidence meaning | source/world-model/Agent facets |
+| authority grant | external or runtime governance |
+| authority enforcement | planning filter and dispatch |
+| unified stewardship status | PDS projection over domain truth |
 
-The world-model Agent remains the owner of perspective and normative judgment.
-
-A steward is a configured running composition around that Agent, not a replacement for it.
+See [Runtime Anchor Map](runtime_anchor_map.md).
 
 ## Package Versus Runtime State
 
-A stewardship package must not contain:
+A package or compiled image may contain types, rules, contracts, templates, links, presets, and tests.
 
-- current observations
-- graph anchors
-- belief revisions
-- active goals
-- task-network state
-- leases
-- execution attempts
-- approval decisions
-- measured outcomes
+It should not become the source of truth for:
 
-Those are runtime state.
+- current observations;
+- graph anchors;
+- belief revisions;
+- Agent decisions;
+- active goals;
+- task-network state;
+- execution attempts;
+- approvals;
+- measured outcomes.
 
-The package contains types, rules, contracts, templates, and tests used to interpret and operate on runtime state.
+Those remain domain-owned runtime state.
 
 ## Design Axioms
 
-1. **Packages declare responsibility, not control flow.**  
-   Known decompositions may be imported as methods, but the package is not a workflow script.
+The following are current proposal constraints or recommendations.
 
-2. **Standing objectives are distinct from goals.**  
-   Objectives persist. Goals are created and retired as the domain diverges and recovers.
+1. **Packages declare responsibility, not procedural control flow.**  
+   Known methods may be imported, but the customer profile is not a workflow program.
+
+2. **Standing objectives are distinct from transient goals.**  
+   The final ownership of objective state remains open.
 
 3. **Belief is distinct from preference.**  
-   Belief families are epistemic. Steward concern bindings are normative.
+   Belief families are epistemic; concern bindings are normative.
 
 4. **Expected effects are distinct from verified outcomes.**  
-   Planning predictions must be closed by observation contracts.
+   Task success need not restore a stewardship objective.
 
 5. **Authority is distinct from capability.**  
-   The existence of a capability does not authorize its use.
+   A package requests authority; it does not grant it.
 
-6. **The package is declarative; adapters remain executable code.**  
-   Sensors, comparators, capabilities, and evaluators are referenced plugins with typed contracts.
+6. **Adapters remain executable code.**  
+   Package or facet declarations reference sensors, comparators, capabilities, and evaluators through typed contracts.
 
-7. **Source systems retain domain authority.**  
-   Meld canonicalizes event, identity, provenance, belief, and stewardship history; it does not silently replace external systems of record.
+7. **Source systems retain authority.**  
+   PDS canonicalizes application identity, linking, activation, lineage, and user projection rather than every domain fact.
 
-8. **Runtime vocabulary is open; package authoring is type-checked.**  
-   String-backed runtime identifiers remain possible, but undeclared or incompatible symbols fail package compilation.
+8. **Runtime vocabulary may remain open while authoring is validated.**
 
-9. **Replay binds to exact package semantics.**  
-   Beliefs, goals, actions, and outcomes retain the compiled package hash and relevant module versions.
+9. **Replay binds to exact semantics and activation identity.**
 
-10. **A simpler baseline is mandatory.**  
-    A stewardship package is accepted only when the use case cannot be served adequately by a materially simpler mechanism.
+10. **A simpler baseline is mandatory.**
+
+11. **PDS is a control plane, not the cognitive data plane.**
+
+12. **Domain integration is optional.**  
+    A truthful result may be no PDS integration.
 
 ## First Slice
 
-The first slice should configure one existing concern end to end without introducing a new planner or executor.
-
-Recommended slice:
+The current recommended first proof remains documentation freshness.
 
 ```text
-domain:
-    software workspace subtree
+package:
+    software documentation steward
+
+profile:
+    selected workspace scope
+    balanced sensitivity
+    draft or generated-artifact autonomy
+
+assignment:
+    repository owner
+    workspace subtree
+    bounded authority
+
+activation:
+    workspace source
+    event and world-model stores
+    provider and capability bindings
+    task network and supervisor
 
 belief:
     content_freshness
 
-charter:
-    maintain documentation freshness for selected nodes
-
-objective:
-    content_freshness posterior below configured threshold
-    with evidence fresher than configured maximum age
-
 known method:
     existing docs-writer behavior
 
-authority:
-    may collect evidence and write generated context artifacts
-    may create a draft change
-    may not merge or publish externally without approval
-
 outcome:
-    content artifact exists
-    verification passes
-    subsequent content_freshness belief enters restore region
+    verification evidence updates belief
+    Agent evaluates restoration
 ```
 
-The current docs-writer workflow can be imported as a known method during migration.
+The proof should lower into existing cognitive-runtime contracts without creating a PDS planner or executor.
 
-See [Workflow Migration](workflow_migration.md).
+The same abstraction must then be tested with software performance and one non-software steward.
 
-## Success Criteria
+## Proposal Success Criteria
 
-The design has succeeded when:
+The proposal is ready to generate an authoritative implementation plan when:
 
-- a new steward can be added without adding a domain-specific runtime branch
-- several dissimilar steward packages compile to the same runtime contracts
-- standing objectives can be inspected independently of active goals
-- every autonomous action has an explicit authority grant and outcome contract
-- replay identifies the exact package semantics used at each decision
-- the existing docs-writer behavior can be expressed as a method inside a stewardship package
-- package conformance tests can reject unsafe, unreachable, or semantically incomplete declarations
-- game, software, learner, reliability, and portfolio examples do not require changes to the package grammar
+- one package/profile lowers into existing runtime contracts;
+- one dissimilar package does not require PDS kernel changes;
+- customer profiles prove materially simpler than full package source;
+- objective and episode ownership is resolved;
+- domain ownership remains explicit;
+- authority enforcement is demonstrated;
+- package upgrade and exact-hash replay are demonstrated;
+- workflow migration value is measured rather than assumed.
+
+See [Evaluation Plan](evaluation_plan.md).
 
 ## Non-Goals
 
-This module does not define:
+This proposal does not currently define:
 
-- a universal ontology for all domains
-- a new event ledger
-- a new belief engine
-- a new planner
-- a new task executor
-- a general-purpose workflow language
-- an LLM prompt language
-- autonomous authority expansion
-- a claim that every agentic application is a stewardship application
+- a universal ontology;
+- a final source language;
+- a final crate layout;
+- a new event ledger;
+- a new belief engine;
+- a new planner;
+- a new task executor;
+- a general-purpose workflow language;
+- autonomous authority expansion;
+- a requirement that every application be a steward;
+- a final answer for objective, episode, context-projection, or governance ownership.
 
 ## Documents
 
-- [Stewardship Package Model](package_model.md)  
-  package modules, compiler, canonical representation, runtime objects, validation, versioning, and authority
+Start with [Proposal Index](proposal_index.md).
 
-- [Use-Case Decomposition](use_case_decomposition.md)  
-  adversarial qualification, decomposition template, cross-domain extraction, and falsification criteria
-
-- [Workflow Migration](workflow_migration.md)  
-  mapping current workflow behavior into stewardship objectives, methods, capabilities, runtime mechanics, and outcomes
-
-- [Software Quality Example](examples/software_quality.md)  
-  worked multi-perspective example for performance, persistence, reliability, usability, and documentation stewardship
+- [Proposal Status And Decision Semantics](proposal_status.md)
+- [PDS Meta-Domain](meta_domain.md)
+- [Assessment By Domain](assessment_by_domain.md)
+- [Steward Profile Abstraction](profile_abstraction.md)
+- [Stewardship Facet Protocol](facet_protocol.md)
+- [Stewardship Package Model](package_model.md)
+- [Runtime Anchor Map](runtime_anchor_map.md)
+- [Candidate Implementation Requirements](candidate_implementation_requirements.md)
+- [Use-Case Decomposition](use_case_decomposition.md)
+- [Workflow Migration](workflow_migration.md)
+- [Open Decisions](open_decisions.md)
+- [Evaluation Plan](evaluation_plan.md)
+- [Software Quality Example](examples/software_quality.md)
+- [Software Quality Profile Example](examples/software_quality_profile.md)
 
 ## Read With
 
