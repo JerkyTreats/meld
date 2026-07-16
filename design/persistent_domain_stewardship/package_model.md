@@ -1,14 +1,16 @@
 # Stewardship Package Model
 
-Date: 2026-07-14  
-Status: proposed  
-Scope: declarative source representation, compilation, loading, and lifecycle for persistent domain stewardship packages
+Date: 2026-07-16  
+Status: proposed option  
+Scope: one candidate declarative source representation, compilation, loading, and lifecycle model for persistent domain stewardship packages
+
+> This document explores a central package-schema option. It is not an accepted implementation contract. The competing federated-facet model is described in [PDS Meta-Domain](meta_domain.md) and [Stewardship Facet Protocol](facet_protocol.md). Read [Proposal Status And Decision Semantics](proposal_status.md) before interpreting normative language below.
 
 ## Thesis
 
-A stewardship package is a versioned, declarative operational domain theory.
+A stewardship package may be represented as a versioned, declarative operational domain theory.
 
-It tells Meld:
+Under the central-schema option, it tells Meld:
 
 ```text
 what exists
@@ -26,70 +28,104 @@ It does not tell Meld how to persist events, revise beliefs, schedule tasks, ret
 package source
     ↓ compile
 CompiledStewardshipPackage
-    ↓ bind to scope and principal
-StewardshipAssignment
-    ↓ run
+    ↓ combine with profile, assignment, and activation
+CompiledStewardshipImage
+    ↓ register with existing domain authorities
 Meld cognitive runtime
 ```
 
-The package is the declarative program. `meld-lang` is the shared runtime intermediate representation. Meld is the persistent machine.
+The package is one candidate declarative program model. `meld-lang` remains the shared runtime intermediate representation. Meld remains the persistent machine.
+
+## Competing Integration Models
+
+This document gives detailed form to **Option A: central PDS package schema**.
+
+The proposal also considers:
+
+- **Option B: federated domain-owned facets**, where each domain owns its facet schema, compiler, validation, activation, and inspection;
+- **Option C: root product composition**, where an initial implementation directly coordinates existing domain APIs without a durable PDS meta-domain.
+
+The current recommendation is to test the federated-facet option while permitting a root-composed first proof.
+
+The source structures below should therefore be read as:
+
+- a completeness checklist for operational domain theory;
+- one candidate package-authoring representation;
+- input to comparison experiments;
+- not a final ownership decision.
 
 ## Representation Layers
 
-The design distinguishes three representations.
+The design distinguishes five conceptual representations.
 
-### Source bundle
+### Source package
 
-Human-authored, modular declarations. The initial source format should be typed YAML or JSON backed by serializable Rust structures.
+Expert-authored domain theory or a linked set of domain-owned facet sources.
 
-A custom language is deferred until several dissimilar packages demonstrate repeated authoring problems that schema tooling cannot solve.
+The initial source format could be typed YAML or JSON backed by serializable structures. A custom language is deferred.
+
+### Steward profile
+
+Customer-authored intent selecting package-defined scope, objectives, sensitivity, autonomy, budget, escalation, and verification.
+
+See [Steward Profile Abstraction](profile_abstraction.md).
 
 ### Compiled stewardship package
 
-A canonical, content-addressed representation produced by the package compiler.
+A canonical, content-addressed semantic package produced by a central compiler or a linker of compiled facets.
 
-It contains:
+Candidate contents:
 
-- resolved imports and symbols
-- normalized object, relation, dimension, artifact, and unit declarations
-- validated observation and evidence routes
-- compiled belief-family registrations
-- steward templates and objective templates
-- lowered `meld-lang` propositions, operators, effects, and methods
-- outcome-verification routes
-- authority requirements and governance constraints
-- package provenance and conformance-test results
+- resolved imports and symbols;
+- normalized object, relation, dimension, artifact, and unit declarations;
+- validated observation and evidence routes;
+- compiled belief-family registrations;
+- steward templates and objective templates;
+- lowered `meld-lang` propositions, operators, effects, and methods;
+- outcome-verification routes;
+- authority requirements and governance constraints;
+- package provenance and conformance-test results.
 
-Only compiled packages may be instantiated.
+The current recommendation is that only validated, versioned package semantics are activated. The exact compilation and validation ownership remains open.
+
+### Stewardship assignment and activation
+
+An assignment binds profile semantics to a principal, scope, and authority grant.
+
+An activation binds the assignment to physical sensors, connectors, credentials, providers, capability implementations, runtime placement, and quotas.
+
+A first implementation may combine these records.
 
 ### Runtime state
 
-Live state created after a package is assigned:
+Live state created after activation:
 
-- concrete subject scope
-- observations and facts
-- graph anchors
-- evidence and belief revisions
-- stewardship episodes
-- goals and task-network state
-- execution attempts
-- approvals
-- measured outcomes
-- learned cost and value beliefs
+- concrete subject scope;
+- observations and facts;
+- graph anchors;
+- evidence and belief revisions;
+- objective and episode state or projections;
+- goals and task-network state;
+- execution attempts;
+- approvals;
+- measured outcomes;
+- learned cost and value beliefs.
 
-Runtime state references the compiled package hash. It is never written back into the immutable package.
+Domain runtime state remains owned by the relevant domains and refers back to package, profile, assignment, and activation lineage where required.
 
-## Package Composition
+## Central Package Composition Option
 
-A source bundle is composed from independent modules:
+One candidate source bundle composes independent sections:
 
 ```text
 StewardshipBundle
 ├── manifest and imports
+├── profile surface
 ├── domain modules
 ├── observation modules
 ├── belief modules
 ├── steward charters
+├── context projections
 ├── action modules
 ├── outcome modules
 ├── governance modules
@@ -102,10 +138,12 @@ Conceptual Rust shape:
 struct StewardshipBundleSpec {
     manifest: PackageManifestSpec,
     imports: Vec<PackageImportSpec>,
+    profile_surface: ProfileSurfaceSpec,
     domains: Vec<DomainModuleSpec>,
     observations: Vec<ObservationModuleSpec>,
     beliefs: Vec<BeliefModuleSpec>,
     charters: Vec<StewardCharterSpec>,
+    context_projections: Vec<ContextProjectionSpec>,
     actions: Vec<ActionModuleSpec>,
     outcomes: Vec<OutcomeModuleSpec>,
     governance: Vec<GovernanceModuleSpec>,
@@ -113,7 +151,9 @@ struct StewardshipBundleSpec {
 }
 ```
 
-The exact source schema is intentionally not frozen by this document.
+Under the federated-facet option, these sections become domain-owned facet payloads linked through imports and exports rather than centrally owned PDS types.
+
+The exact source schema is intentionally not frozen.
 
 ## Manifest And Imports
 
@@ -141,19 +181,43 @@ imports:
     version: "^2"
 ```
 
-Compilation resolves imports to exact content hashes. Floating imports are not permitted at runtime.
+A candidate compiler or linker resolves imports to exact content hashes. Floating imports are not recommended for active runtime use.
 
-A compiled package records:
+A compiled package should record:
 
-- source package id and version
-- exact imported package hashes
-- compiler version
-- runtime schema version
-- canonical package hash
+- source package id and version;
+- exact imported package or facet hashes;
+- compiler/linker version;
+- runtime schema version;
+- canonical package hash.
+
+## Profile Surface
+
+The package should expose a smaller public profile API rather than requiring customers to edit the full source.
+
+Candidate surface:
+
+```rust
+struct ProfileSurfaceSpec {
+    steward_templates: Vec<StewardTemplateRef>,
+    scope_parameters: Vec<ProfileParameter>,
+    objectives: Vec<ProfileObjective>,
+    sensitivity_presets: Vec<ProfilePreset>,
+    autonomy_levels: Vec<ProfileAutonomy>,
+    budget_profiles: Vec<ProfileBudget>,
+    verification_profiles: Vec<ProfileVerification>,
+    escalation_options: Vec<ProfileEscalation>,
+    advanced_overrides: Vec<ProfileOverridePoint>,
+}
+```
+
+The package defines what presets such as `strict`, `balanced`, or `release_grade` mean.
+
+PDS provides consistent profile structure and tooling rather than universal domain meanings.
 
 ## Domain Module
 
-The domain module defines declarative vocabulary, not current state.
+Under the central-schema option, a domain module defines declarative vocabulary rather than current state.
 
 ```rust
 struct DomainModuleSpec {
@@ -167,16 +231,18 @@ struct DomainModuleSpec {
 }
 ```
 
+Under the federated-facet option, the owning domain exports these symbols through its facet compiler.
+
 ### Object types
 
-An object type declares:
+An object type may declare:
 
-- stable type id
-- identity strategy
-- optional external system of record
-- lifecycle semantics
-- allowed attributes
-- default security classification
+- stable type id;
+- identity strategy;
+- optional external system of record;
+- lifecycle semantics;
+- allowed attributes;
+- default security classification.
 
 ```yaml
 object_types:
@@ -191,8 +257,6 @@ object_types:
 
 ### Relation types
 
-A relation type declares legal endpoints and temporal behavior.
-
 ```yaml
 relation_types:
   - id: software.depends_on
@@ -202,11 +266,9 @@ relation_types:
     temporal: bitemporal
 ```
 
-The runtime may continue to encode type identifiers as strings. Package compilation supplies type safety over those identifiers.
+The runtime may continue to encode identifiers as strings. Package or facet compilation can supply authoring-time type validation.
 
 ### Attributes and units
-
-Numeric values require value types and units.
 
 ```yaml
 attributes:
@@ -216,11 +278,9 @@ attributes:
     unit: millisecond
 ```
 
-A condition comparing milliseconds with bytes must fail compilation.
+A candidate compiler should reject incompatible unit comparisons.
 
 ### Belief dimensions
-
-A dimension declaration defines the value projected into planner-facing state.
 
 ```yaml
 belief_dimensions:
@@ -230,11 +290,9 @@ belief_dimensions:
     semantics: probability_healthy
 ```
 
-The dimension does not define evidence or inference. Those belong to the belief module.
+The dimension does not define evidence or inference. Those remain belief-domain semantics.
 
 ### Artifact types
-
-Artifact types define typed values exchanged by capabilities and methods.
 
 ```yaml
 artifact_types:
@@ -242,11 +300,9 @@ artifact_types:
     schema: schemas/test_report.v1.json
 ```
 
-Artifact schemas are part of package compatibility.
-
 ## Observation Module
 
-Observation modules bind promoted sensory events to domain semantics.
+Observation declarations bind promoted sensory events to domain semantics.
 
 ```rust
 struct ObservationModuleSpec {
@@ -259,42 +315,22 @@ struct ObservationModuleSpec {
 }
 ```
 
-The module does not implement sensor workers. It declares:
+The declarations may specify:
 
-- required promoted observation schema
-- subject extraction and identity resolution
-- fact and graph projection
-- belief evidence mapping
-- provenance and security propagation
-- event-time and freshness semantics
+- promoted observation schema;
+- subject extraction and identity resolution;
+- fact and graph projection;
+- belief evidence mapping;
+- provenance and security propagation;
+- event-time and freshness semantics.
 
-```yaml
-observations:
-  - id: software.git.file_changed
-    requires:
-      sensor: sensory.git
-      event_schema: git.file_changed.v1
+Raw high-volume signals remain inside sensory lanes.
 
-    subject:
-      object_type: software.file
-      identity_from: payload.path
-
-    graph:
-      upsert_anchor: true
-
-    evidence:
-      - belief_family: content.freshness
-        schema: source_churn.v1
-        payload:
-          lines_added: $.lines_added
-          lines_removed: $.lines_removed
-```
-
-Raw high-volume signals remain inside sensory lanes. Packages consume promoted semantic observations.
+Under the facet option, source, graph, and belief domains may own separate portions of this declaration rather than one central observation module.
 
 ## Belief Module
 
-Belief modules define epistemic concern families.
+Belief declarations define epistemic concern families.
 
 ```rust
 struct BeliefFamilySpec {
@@ -326,8 +362,6 @@ Does this steward want the state to change?
 
 ### Epistemic and normative separation
 
-Persistent stewardship requires a boundary between shared belief semantics and steward-specific policy:
-
 ```text
 BeliefFamilySpec
     epistemic semantics shared by consuming perspectives
@@ -337,20 +371,13 @@ StewardConcernBinding
     action classes, and value policy for one charter
 ```
 
-This permits several stewards to consume the same belief family differently.
+This permits several profiles to consume the same belief family differently.
 
-```text
-api.stability belief
-    security steward: low tolerance for uncertainty
-    product steward: accepts temporary instability during experiment
-    compatibility steward: requires migration evidence before action
-```
-
-No belief-family duplication is required.
+The belief domain remains the candidate owner of family schema and validation under a federated model.
 
 ## Steward Charter
 
-A charter declares a reusable stewardship role.
+A charter is a reusable stewardship-role declaration.
 
 ```rust
 struct StewardCharterSpec {
@@ -364,34 +391,9 @@ struct StewardCharterSpec {
 }
 ```
 
-### Perspective
-
-The perspective is lowered into the world-model Agent profile. It declares:
-
-- trust profile
-- evidence admissibility
-- observation and branch scope
-- uncertainty tolerance defaults
-- regime sensitivity
-- planner-projection requirements
-
-### Scope template
-
-A scope template describes valid assignment parameters.
-
-```yaml
-scope:
-  root_type: software.workspace
-  selector_parameters:
-    - name: path_prefix
-      value_type: path
-```
-
-The assignment supplies concrete values.
+The current candidate lowering target is the world-model Agent domain.
 
 ### Concern binding
-
-A concern binding connects one belief family to one standing objective.
 
 ```rust
 struct StewardConcernBindingSpec {
@@ -421,64 +423,67 @@ struct StewardshipObjectiveSpec {
 }
 ```
 
-`desired`, `breach`, and `restore` lower to `meld-lang::Proposition`.
+`desired`, `breach`, and `restore` may lower to `meld-lang::Proposition`.
 
-They may differ:
-
-```text
-breach:
-    test.health below 0.80
-
-restore:
-    test.health above 0.95
-    and belief evidence fresher than 1 hour
-    and stable for 3 revisions
-```
-
-This prevents rapid goal oscillation.
+Objective declaration may belong to the package/PDS control plane while runtime evaluation belongs to Agent. Final ownership remains open.
 
 ### Directive handling
 
 Free-form directives should not silently create live domain semantics.
 
-Preferred flow:
+Recommended flow:
 
 ```text
 directive
     ↓
-select declared steward template
+select a declared package and steward template
     ↓
-bind scope and parameters
+propose a structured profile
     ↓
-validate principal and authority
+validate scope and authority
     ↓
-create stewardship assignment
+create assignment and activation
 ```
 
-If no template satisfies the directive, Meld may open package-authoring or package-synthesis work. It should not immediately register arbitrary belief dimensions, objectives, or action policy from uncompiled prose.
+## Stewardship Assignment And Activation
 
-## Stewardship Assignment
-
-A charter is reusable declaration. An assignment binds it to a concrete principal and scope.
+Candidate assignment:
 
 ```rust
 struct StewardshipAssignment {
     assignment_id: AssignmentId,
     package_hash: PackageHash,
+    profile_id: ProfileId,
     charter_id: CharterId,
-    agent_id: AgentId,
     principal: PrincipalRef,
     scope: ScopeBinding,
-    effective_authority: EffectiveAuthority,
+    effective_authority: EffectiveAuthorityRef,
     lifecycle: AssignmentLifecycle,
 }
 ```
 
-The first slice may use one Agent per assignment. Later designs may allow one Agent to host several assignments when perspective and governance are compatible.
+Candidate activation:
+
+```rust
+struct StewardshipActivation {
+    activation_id: ActivationId,
+    assignment_id: AssignmentId,
+    source_bindings: Vec<SourceBinding>,
+    capability_bindings: Vec<CapabilityBinding>,
+    provider_bindings: Vec<ProviderBinding>,
+    runtime_placement: RuntimePlacement,
+    quotas: Vec<QuotaBinding>,
+    lifecycle: ActivationLifecycle,
+}
+```
+
+Whether these remain separate records in the first implementation is open.
 
 ## Stewardship Episode
 
-A standing objective can diverge repeatedly. Each divergence creates an episode.
+The proposal needs a user-facing episode concept, but ownership is unresolved.
+
+Candidate record:
 
 ```rust
 struct StewardshipEpisode {
@@ -494,33 +499,40 @@ struct StewardshipEpisode {
 }
 ```
 
-Suggested states:
+Options include:
 
-```text
-Open
-Observing
-Acting
-Verifying
-Restored
-Tolerated
-Escalated
-Abandoned
-Failed
+- authoritative PDS record;
+- Agent-owned lifecycle;
+- PDS projection over domain events;
+- split coordination record and detailed projection.
+
+The current recommendation is to begin with projection unless explicit coordination state proves necessary.
+
+## Context Projection
+
+A package may need to declare bounded context hydration for model-backed capabilities.
+
+Candidate concept:
+
+```rust
+struct ContextProjectionSpec {
+    projection_id: ContextProjectionId,
+    subject_selector: SubjectSelector,
+    graph_traversal: GraphTraversalSpec,
+    belief_families: Vec<BeliefFamilyId>,
+    perspective: PerspectiveRef,
+    evidence_policy: ContextEvidencePolicy,
+    ranking: ContextRankingPolicy,
+    retention: ContextRetentionPolicy,
+    output_artifact: ArtifactTypeId,
+}
 ```
 
-Episode state is not goal state. One episode may contain several observation goals, failed methods, an approval, and multiple verification windows.
-
-```text
-Assignment persists
-Objective persists
-Episodes recur
-Goals come and go
-Tasks come and go
-```
+Ownership remains open among PDS, the world model, context, and capability input binding.
 
 ## Action Module
 
-Action modules define the operational vocabulary available to planning.
+Action declarations define the operational vocabulary available to planning.
 
 ```rust
 struct ActionModuleSpec {
@@ -533,55 +545,15 @@ struct ActionModuleSpec {
 }
 ```
 
-### Operators
+Operators and methods lower to existing `meld-lang` and execution contracts.
 
-Operators lower to `meld-lang::Operator` and declare:
+Current workflows may be imported as compatibility methods.
 
-- preconditions
-- expected effects
-- cost estimate or cost-belief reference
-- capability-resolution constraints
-- required authority class
-- observation or intervention classification
-
-### Methods
-
-Methods lower to `meld-lang::Method`.
-
-A method is a reusable decomposition, not the standing stewardship program. Current workflows may be imported as methods during migration.
-
-### Observation actions
-
-Observation is an action when it consumes time, money, compute, user attention, or risk.
-
-Examples:
-
-- run a benchmark
-- execute selected tests
-- scout a game region
-- ask a learner a diagnostic question
-- retrieve a filing
-- query production traces
-
-Observation actions produce typed evidence artifacts and semantic events.
-
-### Intervention actions
-
-Interventions attempt to change the domain:
-
-- create a patch
-- change service capacity
-- schedule a lesson
-- allocate game-faction resources
-- propose or execute a portfolio rebalance
-
-### Compensation
-
-High-impact actions should declare rollback, compensation, safe checkpoints, or escalation requirements. The compiler cannot prove real-world reversibility, but it can require the declaration.
+Capability availability remains separate from authority.
 
 ## Outcome Module
 
-Planner effects are predictions. Outcome contracts define how actual effects become evidence.
+Planner effects are predictions. Outcome declarations specify how real effects become evidence.
 
 ```rust
 struct OutcomeContractSpec {
@@ -599,46 +571,11 @@ struct OutcomeContractSpec {
 }
 ```
 
-```yaml
-outcomes:
-  - id: performance.optimization_verified
-    action_class: software.optimize_performance
-
-    verification:
-      observations:
-        - performance.benchmark_completed
-        - software.test_run_completed
-      window: 30m
-
-    success:
-      all:
-        - holds: performance.latency_p95
-          condition: below_baseline_by
-          value: 5%
-        - holds: test.health
-          condition: above
-          value: 0.95
-
-    evaluator:
-      independence: different_capability_instance
-```
-
-The outcome contract closes the loop:
-
-```text
-action completed
-    ≠ objective restored
-
-verification observations
-    → new evidence
-    → belief revision
-    → proposition evaluation
-    → objective restored, tolerated, or still breached
-```
+The current recommendation is to compile outcome declarations into domain-owned evidence mappings and Agent satisfaction inputs rather than a new PDS outcome engine.
 
 ## Governance Module
 
-Governance is enforced independently of planning.
+Governance declarations request authority and constraints.
 
 ```rust
 struct GovernanceModuleSpec {
@@ -652,367 +589,178 @@ struct GovernanceModuleSpec {
 }
 ```
 
-Suggested authority classes:
+Effective authority is proposed as:
 
 ```text
-Observe
-Recommend
-Draft
-ExecuteReversible
-ExecuteBounded
-ExecutePrivileged
-Prohibited
+package support/request
+∩ profile request
+∩ principal grant
+∩ organization/runtime policy
+∩ current restrictions
 ```
 
-Effective authority is the intersection of:
-
-```text
-package requested authority
-∩ assignment principal grant
-∩ runtime policy
-∩ current regime restrictions
-```
-
-A package can never expand authority. The planner filters on authority, and dispatch enforces the same rule again.
+Planning may filter on authority and dispatch should enforce it independently.
 
 ## Scenario Module
 
-Scenarios are package-level conformance tests.
+Scenarios are candidate package-level conformance tests.
 
-```rust
-struct ScenarioModuleSpec {
-    scenario_id: ScenarioId,
-    initial_events: Vec<EventFixture>,
-    expected_graph: Vec<GraphExpectation>,
-    expected_beliefs: Vec<BeliefExpectation>,
-    expected_episodes: Vec<EpisodeExpectation>,
-    expected_goals: Vec<GoalExpectation>,
-    allowed_actions: Vec<ActionExpectation>,
-    forbidden_actions: Vec<ActionExpectation>,
-    expected_outcomes: Vec<OutcomeExpectation>,
-}
+Required scenario classes may include:
+
+- nominal restoration;
+- tolerance;
+- insufficient or contradictory evidence;
+- denied authority;
+- unavailable capability;
+- failed or harmful action;
+- external restoration;
+- concurrent environmental change;
+- exact-hash replay;
+- package upgrade.
+
+Whether PDS owns a generic scenario language or links domain harnesses remains open.
+
+## Candidate Compiler Or Linker
+
+Under the central option:
+
+```text
+parse
+→ resolve imports
+→ resolve symbols
+→ type and schema check
+→ semantic validation
+→ authority validation
+→ lower to canonical IR
+→ run scenarios
+→ hash
 ```
 
-Required scenario classes:
+Under the federated option:
 
-- nominal restoration
-- no-action tolerance
-- insufficient evidence
-- contradictory evidence
-- stale evidence
-- unavailable capability
-- denied authority
-- failed action
-- harmful or regressive outcome
-- external restoration
-- exact-hash replay
-- package upgrade and migration
-
-A package without conformance scenarios should not be production-loadable.
-
-## Package Compiler
-
-```mermaid
-flowchart TD
-    SRC[source files] --> PARSE[parse]
-    PARSE --> IMP[resolve imports]
-    IMP --> SYM[resolve symbols]
-    SYM --> TYPE[type and schema check]
-    TYPE --> SEM[semantic validation]
-    SEM --> GOV[authority and safety validation]
-    GOV --> LOW[lower to canonical IR]
-    LOW --> TEST[run conformance scenarios]
-    TEST --> HASH[content hash and sign]
-    HASH --> OUT[CompiledStewardshipPackage]
+```text
+parse package/profile
+→ route facet sources to domain compilers
+→ collect compiled facet envelopes
+→ link exports and imports
+→ resolve profile presets
+→ validate cross-domain requirements
+→ run linked scenarios
+→ hash compiled image
 ```
 
-Compilation stages:
+Candidate static failures include unresolved symbols, incompatible versions, missing evidence paths, unavailable capability requirements, absent authority requests, or outcome declarations without verification.
 
-1. Parse source files.
-2. Resolve imports to exact versions and hashes.
-3. Construct namespace and symbol tables.
-4. Validate object, relation, dimension, artifact, and unit types.
-5. Validate event, evidence, and graph-projection routes.
-6. Validate belief-family semantics and comparator bindings.
-7. Lower objectives, operators, effects, and methods to `meld-lang`.
-8. Validate authority, budgets, compensation, and outcome closure.
-9. Validate reachability from observations to beliefs to objectives to actions to outcomes.
-10. Run scenarios against a deterministic test runtime.
-11. Emit canonical IR and package hash.
-
-### Required static failures
-
-Compilation must fail when:
-
-- a referenced symbol is undeclared
-- relation endpoints are incompatible
-- an evidence mapping targets an incompatible schema
-- a dimension receives an invalid value type or unit
-- a comparator implementation is unavailable
-- an objective references no observable belief
-- breach or restore semantics are absent
-- no observation or intervention path can affect a required proposition
-- a method references unavailable artifact contracts
-- an action requires undeclared authority
-- an autonomous action has no outcome contract
-- an irreversible action has neither approval nor compensation
-- an outcome has no verification observation
-- package versions are incompatible
-- a scenario permits an explicitly prohibited action
-- canonical output cannot be reproduced from the same source and imports
-
-### Warnings
-
-The compiler may warn when:
-
-- cost or value beliefs use uncalibrated priors
-- a concern has no observation action for resolving uncertainty
-- a restore threshold lacks hysteresis
-- an attribution window is unusually broad
-- a method is reachable only through semantic synthesis
-- requested authority is broader than common deployment profiles
-- two objectives appear to induce opposing effects
-
-Warnings remain machine-readable and visible through inspection commands.
-
-## Canonical Intermediate Representation
-
-The canonical IR must be:
-
-- deterministic
-- schema-versioned
-- serializable
-- content-addressed
-- independent of source-file layout and formatting
-- suitable for signing
-- inspectable through CLI
-- loadable without invoking an LLM
-
-```rust
-struct CompiledStewardshipPackage {
-    identity: CompiledPackageIdentity,
-    domain_registry: CompiledDomainRegistry,
-    observation_plan: CompiledObservationPlan,
-    belief_registry: CompiledBeliefRegistry,
-    steward_templates: Vec<CompiledStewardTemplate>,
-    action_registry: CompiledActionRegistry,
-    outcome_registry: CompiledOutcomeRegistry,
-    governance: CompiledGovernancePlan,
-    scenarios: CompiledScenarioIndex,
-    provenance: CompilationProvenance,
-}
-```
-
-The IR may retain source locations for diagnostics, but source location is not part of semantic identity.
+The final failure set belongs to the selected architecture and owning domains.
 
 ## Runtime Registration
 
-Loading a compiled package coordinates registration with existing authorities:
+Loading a compiled image should coordinate registration with existing authorities rather than reimplement them.
 
 ```text
-domain registry
-    → identity and graph-projection validation
+observation requirements
+    → sensory/source adapters
 
-observation plan
-    → sensory and event-route registration
+graph and evidence facets
+    → world-model domains
 
-belief registry
-    → belief-family registry
+charter and concern facets
+    → Agent
 
-steward templates
-    → assignment service and Agent bootstrap
+methods and capability requirements
+    → execution
 
-action registry
-    → method library and capability-query metadata
+outcome routes
+    → events/world model/Agent
 
-outcome registry
-    → event-to-evaluation routes
-
-governance
-    → policy enforcement and approval service
+governance requirements
+    → policy and execution enforcement
 ```
 
-The package loader does not reimplement those domains.
+The package loader or facet connectors should not write live beliefs, goals, graph anchors, or task outcomes directly.
 
-## Package Upgrade
+## Upgrade
 
-Package upgrades distinguish:
+A running assignment should not silently follow mutable package semantics.
 
-- additive vocabulary changes
-- comparator or prior changes
-- objective changes
-- authority changes
-- method changes
-- outcome-semantics changes
-- destructive identity or schema changes
-
-A running assignment does not silently follow a mutable package version.
+Candidate upgrade flow:
 
 ```text
-new package compiled
-    ↓
-compatibility and migration assessment
-    ↓
-assignment upgrade proposed
-    ↓
-required approval
-    ↓
-new package hash bound at a sequence boundary
-    ↓
-affected subscriptions, beliefs, objectives, and episodes reconciled
+compile new package/image
+→ semantic and authority diff
+→ domain migration preparation
+→ approval where required
+→ sequence-bound activation
+→ preserve old hashes for replay
 ```
 
-Historical revisions remain associated with the old package hash.
+Major incompatible changes may create a new assignment rather than update an existing one.
 
-## Security And Trust
+## Source Syntax
 
-Packages are declarative, but they still control semantics and action selection.
+No source syntax is selected.
 
-Requirements include:
+Options include:
 
-- signed or trusted package sources
-- immutable compiled hashes
-- least-privilege capability resolution
-- no dynamic code execution in the package parser
-- explicit plugin allowlists
-- resource budgets
-- provenance on prompts and model-backed adapters
-- deterministic authority inspection
-- denial-safe failure behavior
+- typed package YAML or JSON;
+- domain package SDKs;
+- CUE or similar expert composition;
+- federated facet files;
+- generated package authoring tools.
 
-An LLM may assist package authoring or synthesis. It may not directly mutate a live package without compilation, scenario validation, and authorization.
-
-## Illustrative Source Fragment
-
-This fragment is illustrative, not a finalized schema.
-
-```yaml
-package:
-  id: software.performance-steward
-  version: 0.1.0
-  schema_version: 1
-
-imports:
-  - package: software.core
-    version: "^1"
-  - package: software.git-observations
-    version: "^1"
-  - package: software.benchmark-actions
-    version: "^1"
-
-charters:
-  - id: module-performance
-    perspective:
-      trust_profile: measured-benchmarks
-
-    scope:
-      root_type: software.module
-      parameters:
-        - module_ref
-
-    concerns:
-      - id: maintain-latency
-        belief_family: performance.health
-
-        objective:
-          breach:
-            holds:
-              subject: $module_ref
-              dimension: performance.health
-              condition:
-                below: 0.75
-
-          restore:
-            all:
-              - holds:
-                  subject: $module_ref
-                  dimension: performance.health
-                  condition:
-                    above: 0.90
-              - holds:
-                  subject: $module_ref
-                  dimension: performance.evidence_freshness
-                  condition:
-                    below_duration: 24h
-
-          stability_window:
-            revisions: 3
-
-        actions:
-          - performance.run_benchmark
-          - performance.profile
-          - performance.optimize
-
-    authority:
-      autonomous:
-        - performance.run_benchmark
-        - performance.profile
-        - git.create_branch
-        - pull_request.open_draft
-
-      approval_required:
-        - pull_request.merge
-        - deployment.production
-```
+Customer profiles are addressed separately in [Steward Profile Abstraction](profile_abstraction.md).
 
 ## Suggested Code Routing
 
-The design does not require immediate crate extraction.
-
-A likely eventual split is:
+One candidate trajectory:
 
 ```text
-meld-steward-spec
-    source schemas and canonical package IR
+root meld first slice
+    package/profile loading and concrete connector wiring
 
-meld-steward-compiler
-    imports, symbol resolution, validation, lowering, hashing
+possible meld-stewardship
+    package, profile, assignment, activation, linking, receipts, projection
 
-meld
-    package loading, assignment lifecycle, CLI, and runtime wiring
+domain crates
+    facet schemas, validation, registration, runtime behavior
 ```
 
-The first slice may live in root `meld` until the package model stabilizes.
+No extracted crate should depend back on root `meld`.
 
-Neither package crate should own event, belief, Agent, planning, task, or capability runtime authority.
+Immediate crate extraction is not recommended until two package proofs establish stable contracts.
 
-## Inspectability Surface
+## Inspectability
 
-Illustrative commands:
+Candidate user-facing operations include:
 
 ```text
-meld stewardship package validate <path>
-meld stewardship package compile <path>
-meld stewardship package inspect <package>
-meld stewardship assignment create <template> --scope <binding>
-meld stewardship assignment inspect <assignment>
-meld stewardship episode list <assignment>
-meld stewardship episode explain <episode>
+meld stewardship package validate
+meld stewardship package inspect
+meld stewardship profile diff
+meld stewardship assignment inspect
+meld stewardship activation inspect
+meld stewardship episode explain
 ```
 
-Inspection should show:
-
-- exact package and import hashes
-- requested and effective authority
-- registered domain symbols
-- observation and evidence routes
-- belief families
-- standing objectives
-- open episodes and active goals
-- selected methods
-- outcome status
-- compilation warnings
+Inspection should distinguish PDS-owned identity and projection from authoritative domain state.
 
 ## Non-Goals
 
-The package model is not:
+This package model is not:
 
-- a universal domain ontology
-- a graph-query language
-- an arbitrary programming language
-- a replacement for sensor or capability implementations
-- a place to store live beliefs or tasks
-- a direct authority grant
-- a prompt-orchestration format
-- a mechanism for bypassing `meld-lang`
-- a requirement that every domain use Bayesian inference
+- an accepted final schema;
+- a universal ontology;
+- a graph-query language;
+- an arbitrary programming language;
+- a replacement for domain compilers or adapters;
+- a place to store live beliefs or tasks;
+- a direct authority grant;
+- a prompt-orchestration format;
+- a mechanism for bypassing `meld-lang`;
+- a requirement that every domain use Bayesian inference.
+
+## Evaluation
+
+The central schema and federated-facet options should be compared through the experiments in [Evaluation Plan](evaluation_plan.md).
+
+Open ownership and representation decisions are tracked in [Open Decisions](open_decisions.md).
