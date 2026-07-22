@@ -99,6 +99,8 @@ Regime change directly affects goal generation. The world model agent's cost-ben
 
 The practical effect: regime change reshapes which goals the agent generates. During incident response, stability goals pass the cost-benefit threshold easily while documentation goals do not — not because of a hardcoded policy, but because the regime-scoped value priors reflect learned experience from prior incidents.
 
+Regime change may also invalidate or re-rank a Strategy decision when its causal, efficacy, time, cost, or risk assumptions no longer apply. Strategy consumes this verdict without deciding regime identity itself.
+
 See [Goal Curation](../agent/goal_curation.md) for the full cost-benefit evaluation mechanism.
 
 ## Queries
@@ -144,3 +146,4 @@ That is enough to prevent stationary priors from becoming silent hidden assumpti
 - [Causal Layer](../causation/README.md)
 - [World Model Planner](../planner/README.md)
 - [Goal Curation](../agent/goal_curation.md)
+- [World Model Strategy](../strategy/README.md)

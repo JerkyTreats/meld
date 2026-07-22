@@ -51,6 +51,8 @@ flowchart TD
 
 [`meld-lang`](../cognitive_architecture/meld-lang/README.md) remains the shared runtime intermediate representation for propositions, goals, operators, effects, methods, and world state.
 
+[World Model Strategy](../cognitive_architecture/world_model/strategy/README.md) is the authoritative runtime boundary for turning activated operational domain theory and current world-model projections into Agent-authorized candidate Compositions. PDS supplies state-free semantics, action affordances, outcome theory, authority, and governance. It does not own episode-specific Strategy decisions, generated Compositions, or task-network state.
+
 Sensors and capabilities remain executable adapters at domain boundaries.
 
 ## Proposal Posture
@@ -244,11 +246,13 @@ PDS does not create new event, world-model, Agent, execution, or capability auth
 | evidence, belief, revisions, projection | world-model belief |
 | perspective and normative evaluation | world-model Agent |
 | propositions, goals, operators, methods | `meld-lang` |
-| goals, planning, task network, dispatch | execution |
+| semantic candidate construction | world-model Strategy |
+| Strategy decision authorization | world-model Agent |
+| Goal lifecycle, operational planning, task network, dispatch | execution |
 | capability invocation | capability/execution |
 | outcome evidence meaning | source/world-model/Agent facets |
 | authority grant | external or runtime governance |
-| authority enforcement | planning filter and dispatch |
+| authority enforcement | Agent judgment, Strategy eligibility, Execution resolution and dispatch |
 | unified stewardship status | PDS projection over domain truth |
 
 See [Runtime Anchor Map](runtime_anchor_map.md).

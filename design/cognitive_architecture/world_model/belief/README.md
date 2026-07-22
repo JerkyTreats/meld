@@ -247,6 +247,7 @@ The first slice leaves these research-direction items deferred:
 - [Causal Layer](../causation/README.md)
 - [Regime Layer](../regime/README.md)
 - [World Model Planner](../planner/README.md)
+- [World Model Strategy](../strategy/README.md)
 - [Active Inference Gap Summary](../../research/world_model_architecture/summary/ACTIVE_INFERENCE_GAP_SUMMARY.md)
 - [Predictive Coding Gap Summary](../../research/world_model_architecture/summary/PREDICTIVE_CODING_GAP_SUMMARY.md)
 - [Non-Stationarity Gap Summary](../../research/world_model_architecture/summary/NON_STATIONARITY_GAP_SUMMARY.md)

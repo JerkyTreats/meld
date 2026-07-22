@@ -55,12 +55,14 @@ Domain owners own event meaning:
 - `workspace_fs` owns workspace facts
 - `context` owns frame and head facts
 - `execution` owns task, control, workflow, and artifact facts
-- world model owns derived graph and later belief facts
+- world model owns derived graph, belief, Agent curation, and Strategy judgment facts
 - `sensory` owns observation promotion rules
 - a producer-owned runtime-health or sensory concern owns health thresholds, hysteresis, process epochs, retry and outbox state, and promotion decisions
 
 `events` durably appends promoted facts presented through its authority capability.
 It does not promote raw health signals or define the policy that decides when a health observation becomes semantic.
+
+An Agent-authorized Strategy decision is a fact about semantic judgment. An accepted task-network commitment is a fact about operational intent. Neither is an observed external outcome, and neither may be promoted as evidence of Goal satisfaction.
 
 `telemetry` is downstream.
 It consumes event history for summaries, metrics, operator feedback, and compatibility.

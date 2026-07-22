@@ -48,13 +48,13 @@ If the observation task fails without producing the expected artifact:
 
 1. The DataFlow and Conditional dependency edges from this task remain unsatisfied
 2. Downstream tasks never enter the ready set
-3. The planning loop receives the failure event
-4. The planning loop re-evaluates via HTN lineage — it may:
-   - Retry the observation task (inject a replacement)
-   - Reselect the method at a parent task boundary
-   - Abandon the goal if the observation is not achievable
+3. Execution records and publishes the failure
+4. Task-local retry follows the exact authorized task policy
+5. After retry exhaustion, Execution may select another still-authorized alternative or return typed rejection
+6. Strategy may construct a replacement proposal from revised state
+7. Only the Agent may suspend or abandon the Goal
 
-This replaces the original control graph's `repair_entry` mechanism. The planning loop's cost-aware re-evaluation handles failure at the observation task the same way it handles any task failure.
+This replaces the original control graph's `repair_entry` mechanism. Semantic replacement returns through Strategy and Agent authorization. Execution owns only the transition mechanics for authorized work.
 
 ## Timeout
 
@@ -62,16 +62,16 @@ Timeout policy applies to observation tasks the same way it applies to any task.
 
 1. The task network emits a timeout event (treated as task failure)
 2. The planning loop receives it and re-evaluates
-3. The planning loop may inject a replacement observation task, try an alternative method, or accept the timeout and prune the dependent subtree
+3. Execution may realize another still-authorized observation alternative or report typed timeout and rejection for renewed Strategy
 
-Timeout is a task-level concern, not a graph-level concern. The observation task's task definition (or the planning loop's policy) determines timeout behavior.
+Timeout is a task-level concern, not a graph-level concern. The authorized task definition and Execution policy determine timeout behavior.
 
 ## Relationship to Conditional Branching
 
 Observation tasks and conditional dependency edges form the branching pattern:
 
 ```
-planning loop emits:
+authorized Composition contains:
   observation_task (produces decision_artifact)
       |
       |── Conditional(guard: should_execute = true) ──▶ action_subtree

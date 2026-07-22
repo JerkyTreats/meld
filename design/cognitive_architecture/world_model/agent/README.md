@@ -27,6 +27,7 @@ Many Agents may consume one shared event and graph substrate while producing dif
 - normative framework — what belief states the agent cares about and what thresholds trigger action
 - planner-facing world-model view assembly for one perspective
 - goal set curation — evaluating beliefs through cost-benefit comparators and curating execution's goal set through its public API
+- Strategy authority — authorizing evidence-backed candidate Compositions for accepted Goals
 - active goal awareness — reading the goal set for prediction, redundancy avoidance, and normative evaluation
 - cost-benefit evaluation — deciding when belief divergence warrants action based on learned cost and value beliefs
 
@@ -34,7 +35,7 @@ Many Agents may consume one shared event and graph substrate while producing dif
 
 - the goal set itself (owned by execution)
 - goal lifecycle state machine (owned by execution)
-- task graphs, task decomposition, or dispatch
+- task-network graphs, operational planning, or dispatch
 - continuation or runtime control state
 - provider execution
 - canonical event append
@@ -58,7 +59,7 @@ It does not become agent-private because one Agent distrusts or ignores part of 
 The Agent is not the execution runtime.
 
 Within `world_model`, the Agent owns epistemic perspective and normative judgment.
-Within `execution`, the Agent's goals are data — the planning loop reads them and the task network works toward them.
+Within `execution`, the Agent's Goals and authorized Strategy decisions are data. Execution Planning realizes those decisions and the task network works toward the Goals.
 
 The Agent bridges the two domains through the shared typed language [`meld-lang`](../../meld-lang/README.md) and integration mapping into execution's neutral Goal Set API:
 
@@ -66,14 +67,21 @@ The Agent bridges the two domains through the shared typed language [`meld-lang`
 - the Agent evaluates beliefs through cost-benefit comparators — combining state beliefs, cost beliefs (learned from execution outcomes), and value beliefs (learned from downstream outcome correlation) into act/tolerate decisions
 - the Agent constructs `Goal` values using `meld-lang` types: the desired state is a `Proposition`, the priority is a `GoalPriority` with cost ceiling, the source records provenance as `GoalSource`
 - the Agent emits producer curation output that integration maps into execution's Goal Set API: add, modify, remove, satisfy, suspend, resume
+- the Agent authorizes Strategy construction and comparison for accepted Goal revisions
+- the Agent judges candidate proposals and authorizes concrete semantic theories of action
+- the Agent accepts or rejects Strategy proposals and may supersede prior Strategy decisions
 - execution evaluates goals mechanically against `WorldState` — it never interprets semantic intent
 
 The normative framework reduces to: which belief keys the agent watches (subscription filter), and what regime-scoped priors it carries for the cost-benefit comparison on each concern class. See [Goal Curation](goal_curation.md) for the full mechanism.
 
+See [World Model Strategy](../strategy/README.md) for the Agent-authorized transition from accepted Goals to semantic theories of action.
+
 The boundary is:
 
-- `world_model/agent` decides what should be true (normative judgment over belief), expressed as `Proposition` targets
-- `execution` decides how to make it true (planning, task decomposition, dispatch), evaluated mechanically against `WorldState`
+- `world_model/agent` decides what should be true, expressed as `Proposition` targets
+- `world_model/strategy` constructs semantic candidate proposals
+- `world_model/agent` authorizes Strategy decisions
+- `execution` realizes authorized theories through applicability checks, capability resolution, lowering, task-network commitment, and dispatch
 
 The shared language eliminates the need for execution to interpret belief semantics. The Agent constructs a `Proposition::Holds { subject, dimension, condition }` and execution evaluates it with `evaluate(world_state, goal.target)`. The three-valued result (Satisfied, Unsatisfied, Indeterminate) drives planning decisions without any interpretation of what the dimension means. See [World State and Evaluation](../../meld-lang/world_state.md).
 
@@ -96,10 +104,11 @@ The meta-layer extends the watching and reducing pattern one level above the age
 | Layer | Watches | Produces | Decomposes | Question |
 |---|---|---|---|---|
 | meta-layer | user intent | agents | intent into an agent set | why |
-| agent | belief revisions | goals | belief into a goal set | what |
-| execution | goal set | tasks | goal into a task network | how |
+| agent | belief revisions | Goals and Strategy authority | belief into desired state and authorized action posture | what and why |
+| Strategy | ground Goals and typed projections | candidate Compositions | desired state into theory of action | viable means |
+| execution | authorized candidates and live state | committed task network | theory into operational work | realization |
 
-Where execution decomposes a goal into tasks, the meta-layer decomposes intent into agents. The agent is the unit it produces.
+Where Strategy constructs semantic action structure and Execution realizes it as committed work, the meta-layer decomposes intent into Agents. The Agent is the unit it produces.
 
 ### Durable Contract
 
@@ -245,6 +254,7 @@ It defers:
 - [Agent Genesis And Activation](genesis_and_activation.md)
 - [Agent Runtime Surface](runtime_surface.md)
 - [Goal Curation](goal_curation.md)
+- [World Model Strategy](../strategy/README.md)
 - [World Model Public Interface](../public_interface.md)
 - [Lang Domain](../../meld-lang/README.md)
 - [Lang Goals and Methods](../../meld-lang/goals_and_methods.md)

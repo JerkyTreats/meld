@@ -8,11 +8,11 @@ Scope: planner-facing world model projection for action-relevant reads
 
 `world_model/planner` is the planner-facing projection of the modeled world.
 
-Its job is to expose the current action-relevant view of belief, uncertainty, freshness, contradiction, causal effect, and regime sensitivity in a form that downstream planning can consume.
+Its job is to expose the current action-relevant view of belief, uncertainty, freshness, contradiction, causal effect, and regime sensitivity in a form that Strategy and downstream operational planning can consume.
 
 This area belongs to `world_model` because it is still an epistemic concern. It answers what appears to hold, what is unclear, what is risky, and what observation would most reduce uncertainty for a decision.
 
-It does not own task decomposition, dispatch, continuation, repair, or live runtime coordination. Those concerns belong to `execution`.
+It does not construct candidate Compositions, own Strategy judgment, perform task decomposition, dispatch, continuation, repair, or live runtime coordination. Strategy construction belongs to `world_model/strategy`. Operational concerns belong to `execution`.
 
 ## Boundary
 
@@ -27,6 +27,7 @@ It does not own task decomposition, dispatch, continuation, repair, or live runt
 - observation opportunity summaries
 - abstention grounds
 - execution precondition summaries as world-facing conditions
+- bound candidate-Composition projections for Strategy
 
 `world_model/planner` does not own:
 
@@ -54,6 +55,16 @@ The boundary matters because these crates serve different authorities:
 - `execution` owns operational commitment
 
 This area may describe action relevance, but it must not drift into execution policy.
+
+## Relationship To Strategy
+
+`world_model/strategy` is a first-class consumer of planner projection.
+
+Strategy may request a projection over a bound candidate Composition and exact world-model frame. Planner projection assembles typed causal, efficacy, uncertainty, risk, information-gain, relevance, admission, and abstention views from their owning domains. Strategy combines those authoritative views under Agent authority but must not replace them with private epistemic judgments.
+
+PDS declares evidence policy. Belief owns evidence admission and epistemic relevance verdicts. Planner projection scopes and exposes those verdicts for the requested decision context. The Agent selects decision context and normative relevance but cannot override admission.
+
+Planner projection answers what the modeled world supports. Strategy answers which supported theory of action the Agent authorizes. Execution answers what operational work it can commit now.
 
 ### WorldState as the Downstream Contract
 
@@ -105,6 +116,7 @@ Its responsibility is to present those concerns in decision-relevant form withou
 - `SensitivitySummary`
 - `AssumptionSet`
 - `HydrationHandle`
+- `StrategyProjection`
 
 `ExpectedInformationGain` and `DecisionRelevance` are not durable planner entities.
 They are scoring fields carried by observation opportunities, belief summaries, causal summaries, regime summaries, and risk projections.
@@ -115,6 +127,8 @@ The planner-facing output should prefer `ObservationOpportunityView`, because ex
 `ExecutionPreconditions` should be expressed as `PreconditionAssessment`.
 The planner assesses world-facing conditions.
 Execution owns method applicability, task readiness, and dispatch.
+
+Candidate-Composition projection must preserve the exact candidate hash, input frame, assumptions, and source revisions. A projection is a forecast, not evidence that the candidate succeeded.
 
 ## Deterministic Projection Rule
 

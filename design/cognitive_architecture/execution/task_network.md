@@ -16,7 +16,7 @@ Task            graph of Capabilities, compiled and dependency ordered
 Task Network    graph of Tasks, the plan and dependency ordered
 ```
 
-The task network IS the plan. There is no separate plan artifact. Planning agents decompose goals into candidate subgraphs and submit commands to commit them to the task network. The task network executes by computing the ready set and dispatching.
+The task network is the accepted operational plan. There is no separate operational plan artifact. Agent-authorized Strategy decisions are upstream semantic theories of action, not operational plans. Execution Planning realizes an authorized candidate and submits commands to commit it to the task network. The task network executes by computing the ready set and dispatching.
 
 At each level, the execution model is identical: compute ready set, dispatch ready nodes, receive completion events, update state.
 
@@ -26,7 +26,7 @@ The authoritative task network is a single writer event sourced aggregate. Agent
 
 There is one task network graph across all goals and all agents. This is how the system discovers shared dependencies, avoids redundant work, and coordinates parallel execution.
 
-When two goals independently require "run tests," both planning processes decompose into subgraphs that reference the same task. The commit phase detects the overlap. A shared task satisfies both dependency chains.
+When two authorized Strategy candidates independently require the same concrete work, Execution Planning may propose subgraphs that reference an equivalent task. The commit phase detects the overlap. A shared task may satisfy both dependency chains when exact reuse contracts permit it.
 
 The graph is the coordination mechanism. No separate multi-goal coordination protocol is needed.
 
@@ -46,7 +46,8 @@ The task network owns:
 The task network does NOT own:
 
 - **goal state**: owned by the goal set in execution, curated by world model agents
-- **plan decisions**: owned by planning agents that submit commands for subgraph commits
+- **Strategy decisions**: owned by the authorizing world-model Agent and Strategy domain
+- **operational planning decisions**: owned by Execution Planning before command submission
 - **task internals**: the capability graph within a task is owned by the task executor
 - **normative judgment**: the decision of what to pursue is the world model agent's concern
 
@@ -118,6 +119,8 @@ The first payload families are:
 
 The task network revalidates commands against the latest committed state. Accepted commands enter one monotonic revision stream. Duplicate commands return the prior response. Commands whose preconditions no longer hold return typed conflicts.
 
+Strategy-originated mutation commands are unique by `network_id` plus `planning_request_idempotency_key`, not merely by a caller-supplied command identity. The command identity is derived from that uniqueness key. The reducer atomically persists the key-to-command mapping with the graph commit, planning commitment, terminal planning response, and publication outbox. A crash retry using a new caller identity but the same uniqueness key returns the original result and cannot duplicate work.
+
 Typed preconditions cover revision, state hash, node existence, node status, edge existence, artifact availability, path absence, current claim, and pending publication state.
 
 ## Graph Mutations
@@ -127,16 +130,20 @@ The task network accepts graph mutation sets through commands from planning agen
 | Mutation | Effect |
 |---|---|
 | **inject** | Add a task with dependency edges. If dependencies already satisfied, task enters ready set immediately. |
-| **cancel** | Remove a task. If pending, remove from graph. If running, issue graceful cancellation. Cleanup tasks may be injected as normal tasks. |
+| **cancel** | Remove a task. If pending, remove from graph. If running, issue graceful cancellation. Cleanup follows an authorized transition contract. |
 | **relink** | Modify a task's dependency edges. Task position in graph changes; task itself is unchanged. |
 | **preserve** | Mark a completed task's artifacts as valid under a modified plan. Artifacts relinked into new dependency structure without re-execution. |
 | **prune** | Remove a conditional subtree whose guard was not satisfied. |
 
-Mutations are the graph delta interface between planning and execution. The planning loop decides what to propose based on goal evaluation, belief changes, and cost analysis. The task network decides how to accept or reject the command based on state transitions, cleanup rules, and ready set recomputation.
+Mutations are the graph delta interface between planning and execution. Execution Planning proposes a delta from the exact authorized Strategy candidate, current operational state, and immutable selection policy. The task network accepts or rejects the command from state preconditions and ready-set rules.
 
 ## Atomic Graph Commit
 
 Task network mutation sets are accepted atomically. A command either commits every graph mutation in the set or commits none of them.
+
+Each Strategy-originated mutation set carries immutable planning-commitment intent with planning request identity, idempotency key, exact Strategy, Goal, world-frame, PDS, authority, activation, capability-catalog, Method, and Composition lineage. Acceptance validates Agent authority, Goal lifecycle, and Strategy eligibility epoch fences. The reducer persists graph mutations, `CommitRecord`, derived planning commitment, accepted planning response, and publication outbox obligation in one atomic commit.
+
+Dispatch claims validate the same three epoch fences. Authority revocation and Strategy invalidation advance their owning epochs. The Goal lifecycle epoch advances on every lifecycle, replacement, or content transition that changes work eligibility, including activation, suspension, resume, satisfaction, reopening, abandonment, removal, supersession, and replacement. These transitions serialize against commits and claims, so stale work cannot begin new dispatch.
 
 Lowering from an execution composition must not leave partial executable subgraphs in the authoritative task network. When one executable operator step cannot be lowered, the lowerer reports diagnostics and submits no executable graph changes for that composition.
 
@@ -151,6 +158,11 @@ For each task that is NOT completed and NOT in-flight:
 2. For `DataFlow` edges: the upstream task must have produced the required artifact
 3. For `Ordering` edges: the upstream task must be completed
 4. For `Conditional` edges: the upstream task must be completed AND the guard expression must evaluate to true
+5. For `EvidenceAdmission` edges: an authoritative admitted verdict must bind the exact prospective contract, artifact content identity, subject, scope, schema, and admission authority
+
+Artifact availability never satisfies an evidence-admission edge by itself. The task network consumes the verdict as an authority-preserving input and does not reinterpret it.
+
+The owning domain submits each verdict through `RecordEvidenceAdmissionVerdict`. Acceptance verifies owning-domain revision, prospective contract, exact content identity, subject, scope, schema, and admission authority against a pending edge. The reducer persists an immutable accepted-verdict record in the task-network revision stream and only then advances dependency state. Verdict identity is idempotent, while conflicting reuse is rejected. Replay therefore reconstructs the same evidence-admission readiness decision without consulting mutable external state.
 
 Tasks whose dependencies are all satisfied enter the ready set and may be dispatched to workers.
 
@@ -205,7 +217,7 @@ Each dispatched task is executed by a task executor that runs the internal capab
 
 The task executor is implemented in `task/executor.rs`. It uses `compute_ready_capability_instances` from `task/readiness.rs` for ready-set computation.
 
-Task-internal retry remains in the task executor. Only when retries are exhausted does the failure propagate to the task network, where the planning loop handles it.
+Task-internal retry remains in the task executor. When retries are exhausted, the failure propagates through the task network and event spine. Execution may choose another still-authorized alternative. A new semantic path requires renewed Strategy and Agent authorization.
 
 ## State Ownership Split
 
@@ -224,7 +236,9 @@ Task-internal retry remains in the task executor. Only when retries are exhauste
 | Task-scoped artifact repo | task executor |
 | Task-internal retry | task executor |
 | Goal set curation | world model agent → goal set |
-| Plan decomposition | planning agents |
+| Semantic candidate decomposition | world-model Strategy |
+| Candidate authorization | world-model Agent |
+| Operational realization | Execution Planning |
 
 ## Weak Points
 

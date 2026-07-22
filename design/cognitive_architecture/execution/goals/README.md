@@ -8,7 +8,7 @@ Scope: goal model bridging world-model belief and execution planning
 
 Goals are the normative layer. Beliefs describe what the system thinks is true. Goals describe what the system wants to be true. The gap between a current belief and a desired state is what creates the need for action.
 
-Goals live inside execution because they are execution's data — the planning loop reads them, the task network works toward them, and execution owns their lifecycle state machine. But execution does not decide which goals should exist. That is the world model agent's concern.
+Goals live inside execution because they are execution's lifecycle data. Strategy reads accepted Goal revisions and constructs candidate theories of action for Agent judgment. Execution Planning reads only the authorized Strategy inventory. Execution does not decide which Goals should exist or which semantic action theory is viable.
 
 ## Ownership Split
 
@@ -23,7 +23,7 @@ The Goal Set is a data structure inside execution. It holds the current goals, t
 - **suspend / resume**: hold or release a goal
 - **read**: query the current goal set (active, proposed, satisfied, all)
 
-The planning loop reads the active goal set and the world model view, then maintains the task network. Execution is indifferent to *why* a goal was added, removed, or reprioritized. It reacts to the current set.
+Strategy reads accepted Goal revisions and world-model projections. Execution Planning reads the active Goal set, authorized Strategy inventory, and live operational state, then maintains the task network. Execution remains indifferent to why a Goal was added, removed, or reprioritized.
 
 ### World Model Agent curates the Goal Set
 
@@ -54,9 +54,9 @@ Restarting an existing agent is not a `CreateAgent` goal. Runtime startup hydrat
 
 ### Why this split
 
-Execution should not understand regime shifts, belief divergence semantics, or observation-needed signals. Those are world-model concerns. Execution should understand "here is a goal, achieve it" and "this goal is no longer relevant, clean up."
+Execution should not understand regime shifts, belief divergence semantics, observation-needed signals, or novel causal decomposition. Those are world-model concerns. Execution should understand the accepted Goal revision, authorized candidate inventory, and current operational state.
 
-The world model should not decompose tasks, dispatch capabilities, or manage plan transitions. Those are execution concerns. The world model should understand "here is what I believe, here is what I want to be true, here is the API to say so."
+The world model should not dispatch capabilities, commit task-network mutations, or manage live plan transitions. Strategy may construct semantic Composition candidates under Agent authority. Execution realizes authorized candidates mechanically.
 
 The Goal Set API is the contract boundary. It is narrow enough that neither domain imports the other's internals, and stable enough that both sides can evolve independently.
 
@@ -68,16 +68,18 @@ The world model agent is the active entity in this bridge. It evaluates beliefs 
 flowchart LR
     BV[belief view] --> AG[world model agent]
     AG -->|add, modify, remove, satisfy| GS[goal set in execution]
-    GS --> PL[planning loop]
+    GS --> ST[world model Strategy]
+    ST -->|proposal| AG
+    AG -->|authorized decision| PL[planning loop]
     PL -->|task network commands| TN[task network]
     TN -->|outcome events| SP[spine]
     SP --> WM[world model]
     WM -->|belief revision| BV
 ```
 
-The cycle closes through the spine. Execution outcomes become facts. Facts become evidence. Evidence revises belief. The world model agent evaluates revised belief against its normative framework and curates the goal set. The planning loop reacts to the updated goal set.
+The cycle closes through the spine. Execution outcomes become facts. Facts become evidence. Evidence revises belief. The world model Agent evaluates revised belief, curates the Goal set, and judges Strategy proposals. Execution Planning reacts to authorized decisions and live operational change.
 
-The world model agent is the only entity that crosses the boundary. It reads beliefs (its own domain) and curates goals (execution's domain, through the public API). No other component needs to span both.
+Explicit typed contracts cross the boundary. Agent curation mutates Goal lifecycle through the public API. Strategy decisions cross into Execution Planning as immutable authorized inventories. Outcomes return through events.
 
 ## World Model Knowledge of Active Goals
 
@@ -147,7 +149,7 @@ Examples in the shared language:
 - "build artifact exists and is valid" → `Exists { scope: build_target, artifact_type: "build_artifact" }`
 - "uncertainty about API compatibility is below threshold" → `Holds { subject: api_ref, dimension: "api_compatibility", condition: Above(0.8) }`
 
-The proposition does not name tasks, capabilities, or methods. It names a desired belief state. The planning loop determines how to achieve it through method matching and composition construction.
+The proposition does not name tasks, capabilities, or Methods. It names a desired belief state. Strategy constructs semantic candidates and the Agent authorizes a decision. Execution Planning realizes that decision.
 
 ### Goal source
 
@@ -180,7 +182,7 @@ enum GoalSource {
 
 **Maintenance**: the agent holds a standing invariant and monitors belief continuously. When the invariant is violated, the agent reactivates the goal. Maintenance goals may cycle between `Active` and `Satisfied` as belief moves relative to the invariant.
 
-**Decomposed**: the agent (or the planning loop, through the agent) decomposed a parent goal into sub-goals. Each sub-goal has its own target proposition and lifecycle. The parent goal tracks its children. The `Decomposed` source in `meld-lang` replaces the prior `GoalDecomposition` variant.
+**Decomposed**: the Agent curated a parent Goal into separately authorized subgoals. Each subgoal has its own target proposition and lifecycle. Internal Strategy obligations and Composition subgoal steps are not Goal-set entries unless Agent curation creates them.
 
 ### Goal lifecycle
 
@@ -196,11 +198,11 @@ enum GoalLifecycle {
 }
 ```
 
-**Proposed**: goal exists but has not been committed to. The planning loop has not yet incorporated it. Proposed goals may be evaluated for cost and priority before the agent activates them.
+**Proposed**: Goal exists but the Agent has not activated it. Proposed Goals may be evaluated for cost and priority before activation.
 
-**Active**: the planning loop is maintaining task network state toward this goal.
+**Active**: the Goal is eligible for Strategy construction and authorized operational work.
 
-**Suspended**: the goal is valid but cannot be pursued right now. The agent suspends goals when: insufficient belief to plan (observation needed first), resource contention with higher-priority goals, or dependency on another goal's completion.
+**Suspended**: the Goal remains valid but the Agent has explicitly paused pursuit. Missing evidence or no useful action does not suspend it. The Goal remains `Active` while its Strategy association becomes quiescent.
 
 **Satisfied**: the goal's target proposition holds in the world state. The world model agent curates satisfaction when `evaluate(world_state, goal.target)` returns `EvalResult::Satisfied`, and execution persists the transition only through its public satisfy API. The `at_seq` field records the event sequence number at which satisfaction was confirmed. Maintenance goals may cycle back to `Active` if the agent later detects invariant violation.
 
@@ -208,7 +210,9 @@ enum GoalLifecycle {
 
 The prior `Superseded { by: GoalId }` variant is absorbed into `Abandoned` — supersession is an abandonment reason, not a distinct lifecycle state.
 
-Lifecycle transitions are initiated by the world model agent and persisted by execution through public goal APIs. Planning may observe that a target is satisfied, but it does not own the `Active` to `Satisfied` lifecycle mutation. The planning loop may also propose suspension when it determines that a goal cannot be planned against with the current capability catalog. Even then, the suspension is communicated back to the agent for confirmation.
+Lifecycle transitions are initiated by the world model Agent and persisted by Execution through public Goal APIs. Planning may observe that a target appears satisfied or that no candidate is currently realizable, but it does not own satisfaction or suspension mutations.
+
+The Goal lifecycle epoch advances on every lifecycle, replacement, or content transition that changes operational eligibility. This includes activation, suspension, resume, satisfaction, reopening, abandonment, removal, supersession, and replacement. The transition serializes against task-network commitment and dispatch claims, preventing work authorized under the prior Goal state from beginning afterward.
 
 ### Goal priority
 
@@ -223,7 +227,7 @@ GoalPriority {
 
 **Urgency**: lower number = higher urgency. 0 is most urgent. Set by the agent based on belief context — the value-to-cost ratio from the agent's cost-benefit evaluation (see [Goal Curation](../../world_model/agent/goal_curation.md)) determines the urgency level. This replaces the prior separate `urgency`/`importance` fields — importance is now expressed through urgency ordering, which is itself derived from the agent's cost-benefit posterior.
 
-**Cost ceiling**: optional upper bound on effort expressed as a `CostEstimate` (time_ms, money_microdollars, provider_calls). If the planning loop estimates that a composition's aggregated cost exceeds the ceiling on any dimension, it rejects that composition and signals the agent. The agent may adjust the ceiling, suspend, or abandon.
+**Cost ceiling**: optional upper bound on effort expressed as a `CostEstimate`. Strategy projection determines semantic candidate eligibility against the ceiling. Execution rechecks current operational cost and rejects a candidate that no longer fits. The Agent may adjust the ceiling, suspend, or abandon.
 
 The prior `preemption_policy` field is deferred. Preemption behavior will be derived from urgency ordering and cost-aware plan transition logic as those mechanisms mature.
 
@@ -268,7 +272,8 @@ In each pattern below, the world model agent is the active decision-maker. "Beli
 agent reads: tests_pass = false (confidence: 0.95)
 agent's normative framework: tests_pass = true is a maintenance invariant
 → agent adds goal: make tests pass (via curation API)
-→ execution's planning loop decomposes into tasks
+→ Strategy proposes a candidate and the Agent authorizes it
+→ Execution Planning realizes it as tasks
 ```
 
 ### Pattern 2: Agent detects uncertainty, adds observation goal
@@ -277,7 +282,8 @@ agent's normative framework: tests_pass = true is a maintenance invariant
 agent reads: api_compatible = unknown (uncertainty: high, freshness: stale)
 agent's normative framework: api_compatible is a precondition for an active goal
 → agent adds observation goal: determine API compatibility (via curation API)
-→ execution's planning loop emits observation tasks
+→ Strategy proposes observation work and the Agent authorizes it
+→ Execution Planning realizes the observation tasks
 → observation result → belief revision → agent re-evaluates, may add action goal
 ```
 
@@ -332,17 +338,17 @@ The agent's normative framework — what states it cares about, what thresholds 
 
 ## Relationship to Planning
 
-The planning loop reads the active goal set and the world model view. It does not know or care who curated the goals. Its contract is:
+Execution Planning reads active Goals, exact authorized Strategy inventories, world-model precondition views, and live operational state. Its contract is:
 
-- **input**: active goals as desired belief states plus world model view as current belief states
-- **process**: compute gap, HTN decompose, maintain task network
+- **input**: active Goals, authorized concrete candidate Compositions with zero or more exact Method-instance derivations, world-state projection, and task-network state
+- **process**: validate applicability, resolve capabilities, tune authorized operational choices, lower, and maintain the task network
 - **output**: task network commands carrying mutation sets
 
-When the goal set changes because an agent adds, removes, or reprioritizes goals, the planning loop re-evaluates. This is the same cost-aware transition logic used for any plan change — the planning loop weighs the benefit of adapting the task network against the switching cost.
+When the Goal set or Strategy authorization changes, Execution Planning re-evaluates. It computes operational switching cost and applies only the exact Agent-authorized selection policy. Semantic benefit and risk come from referenced world-model projections.
 
 ## Goal Decomposition
 
-Some goals are too abstract to plan against directly. The agent may decompose a goal into sub-goals before adding them to the goal set, or the planning loop may signal that a goal needs decomposition (it cannot find methods to address it directly).
+Some Goals are too abstract to ground directly. The Agent may curate them into separate subgoals. Strategy may also use internal obligations and fully authorized Composition subgoal paths without creating Goal lifecycle entries.
 
 ```
 goal: "repository is well-documented"
@@ -351,9 +357,9 @@ goal: "repository is well-documented"
   sub-goal: "examples compile and run" (belief: examples_validity)
 ```
 
-Each sub-goal is a separate entry in the goal set with its own desired state, satisfaction criteria, and lifecycle. The parent goal tracks its children. The agent satisfies the parent when all children are satisfied.
+Each subgoal is a separate entry in the Goal set with its own desired state, satisfaction criteria, and lifecycle. Child satisfaction may trigger parent reevaluation. The Agent satisfies the parent only when its own target evaluates as satisfied. A parent that depends on every child must express that condition explicitly as an `All` proposition.
 
-Goal decomposition is the agent's concern (deciding what to want). Task decomposition is the planning loop's concern (deciding what to do). The two are related but distinct — a goal decomposition may not map 1:1 to an HTN decomposition.
+Goal decomposition is the Agent concern of deciding what desired states deserve independent lifecycle. Strategy decomposition constructs semantic theories of action and instantiates any reusable Method path. Execution decomposition is limited to realizing the authorized concrete Composition.
 
 ## Resolving the GAPS.md Tension
 
@@ -361,7 +367,7 @@ GAPS.md identified a tension: goals as world-state propositions vs goals as oper
 
 The resolution: goals are propositions about desired belief states, owned as data by execution. Operational triggers (task failure, belief divergence, regime shift) are events that cause the world model agent to curate the goal set. The agent is the translator between "something changed in belief" and "this goal should now exist/change/retire."
 
-Repair becomes: a task fails, the planning loop signals the failure, the agent evaluates whether the threatened goal is still worth pursuing and whether the plan should change. If yes, execution's planning loop handles it through HTN lineage and task network commands. If the agent decides the goal is no longer worth the cost, it abandons it. The decision is the agent's. The mechanics are execution's.
+Repair becomes: a task fails and Execution publishes the outcome. The Agent evaluates whether the threatened Goal remains worthwhile. Strategy determines whether a different semantic candidate is justified. Execution Planning may select another still-authorized alternative or mechanically transition to a newly authorized decision. The Agent owns intent, Strategy owns semantic approach, and Execution owns transition mechanics.
 
 ## What This Design Does Not Cover
 
@@ -397,6 +403,7 @@ Can the agent learn which goals are productive from outcomes? Can it refine its 
 - [Lang Goals and Methods](../../meld-lang/goals_and_methods.md)
 - [Lang World State and Evaluation](../../meld-lang/world_state.md)
 - [World Model Belief](../../world_model/belief/README.md)
+- [World Model Strategy](../../world_model/strategy/README.md)
 - [Fact To Belief](../../world_model/belief/fact_to_belief.md)
 - [World Model Agent](../../world_model/agent/README.md)
 - [World Model Planner](../../world_model/planner/README.md)

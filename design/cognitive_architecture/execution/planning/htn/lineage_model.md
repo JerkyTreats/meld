@@ -35,8 +35,8 @@ Repair, audit, and explanation should operate on task intent rather than only on
 
 ## Mapping Rules
 
-- one abstract task may decompose into multiple child tasks
-- one chosen method owns the child task set for one task instance
+- one Strategy-resolved abstract task may contain multiple child tasks
+- every exact Method derivation records the child task set selected by Strategy
 - one task instance may map to multiple primitive regions when execution spans several invocations
 - every invoked primitive region must map back to at least one task instance
 
@@ -55,7 +55,7 @@ Repair should be able to answer:
 
 - which task boundary absorbed the failure
 - whether the current method can continue
-- whether a parent task must reselect its method
+- whether another already-authorized alternative remains applicable
 - which completed regions remain reusable
 
 ## First Slice

@@ -7,11 +7,13 @@ Scope: planning structure inside execution
 ## Thesis
 
 Planning lives inside `execution`.
-It reads the goal set curated by world model agents and the `WorldState` projected by the world model through the shared language, then submits commands that maintain a task network graph that closes the gap between current belief and desired state.
+It reads the goal set curated by world model agents, the authorized Strategy inventory, the `WorldState` projected by the world model, and live task-network state. It then submits commands that realize an authorized theory of action as committed operational work.
 
-The foundational pattern is graphs-lower-graphs: capabilities compose into tasks, tasks compose into the task network. The planning loop continuously decomposes goals via HTN methods and issues task network commands when the plan should change.
+The foundational pattern is graphs-lower-graphs: capabilities compose into tasks, tasks compose into the task network. The planning loop continuously checks authorized concrete Compositions for current applicability, tunes realization against live state, and issues task-network commands when the operational plan should change.
 
-The shared typed language [`meld-lang`](../../meld-lang/README.md) provides the substrate for all planning operations. Goals are `Proposition` targets evaluated against `WorldState`. Methods match goals through pattern unification and produce raw `Composition` graphs. Execution wraps a concrete `Composition` as an execution composition when planning context, validation reports, projected effects, and operator resolution reports are attached. Operators resolve to capabilities through the catalog. The planning loop is mechanical — it never interprets semantic intent.
+The shared typed language [`meld-lang`](../../meld-lang/README.md) provides the substrate for all planning operations. Goals are `Proposition` targets evaluated against `WorldState`. Strategy-authorized concrete Compositions are the episode-specific input. A candidate may preserve a complete inventory of exact Method-instance derivations, but Strategy has already instantiated them. Execution wraps the concrete Composition with planning context, validation reports, projected effects, and operator resolution reports. Operators resolve to capabilities through the catalog. The planning loop is mechanical and never invents semantic intent.
+
+Strategy owns causal candidate construction. Execution Planning owns applicability, exact allowed bindings, live operational selection, capability resolution, reuse, lowering, task-network diffing, and commitment. Rejection of a stale or unsupported candidate returns typed facts for renewed Strategy. It does not authorize semantic repair inside Execution.
 
 ## Documents
 
@@ -47,3 +49,4 @@ The shared typed language [`meld-lang`](../../meld-lang/README.md) provides the 
 - [Lang World State and Evaluation](../../meld-lang/world_state.md)
 - [World Model Planner](../../world_model/planner/README.md)
 - [World Model Agent](../../world_model/agent/README.md)
+- [World Model Strategy](../../world_model/strategy/README.md)

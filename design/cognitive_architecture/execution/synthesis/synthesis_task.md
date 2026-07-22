@@ -9,10 +9,7 @@ Scope: CapabilitySynthesisTask definition — the task that discovers or writes 
 Define `CapabilitySynthesisTask` as a standard task in the task network that produces a new
 runtime catalog entry as its terminal output.
 
-The task is triggered when the HTN planner cannot satisfy a capability requirement from the
-existing catalog. Its output is a `CompiledCapabilityRef` pointing to a newly registered
-synthesized capability. After the task completes, the planner can requery the catalog and
-proceed.
+The task enters the task network only through an exact Agent-authorized Strategy synthesis candidate. A missing catalog match produces a typed Execution rejection but does not trigger this task. Its output is a `CompiledCapabilityRef` pointing to a newly registered synthesized capability. That catalog outcome may wake Strategy for another bounded turn.
 
 ## Why This Is a Task, Not a Capability
 
@@ -199,12 +196,12 @@ The terminal output artifact:
 ```
 
 The `registered_at_seq` is the spine event sequence at which the capability was registered.
-The HTN planner uses this to confirm the catalog was updated before replanning.
+The catalog outcome may wake Strategy. Execution uses the recorded sequence when validating a later authorized candidate against the catalog revision.
 
 ## Read With
 
 - [External Process Capability](external_process_capability.md)
 - [Runtime Catalog](runtime_catalog.md)
 - [Synthesis Overview](README.md)
-- [Task Design](../../completed/capabilities/task/README.md)
+- [Task Design](../../../completed/capabilities/task/README.md)
 - [Execution Planning](../planning/README.md)

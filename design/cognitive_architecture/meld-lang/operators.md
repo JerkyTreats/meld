@@ -8,7 +8,7 @@ Scope: Operator contract, Resolution query, and the bridge to the capability cat
 
 An operator is a runtime-constructed contract defined by its typed boundary — preconditions, effects, cost, and a resolution hint — not by its identity or by a compile-time enum variant. The language does not know what capabilities exist. It describes what an operator needs and produces. The capability catalog, owned by execution, resolves operators to registered capabilities at dispatch time.
 
-This separation is critical for runtime composition. A world model agent constructing a novel composition can define operators by their contracts without knowing which specific capabilities implement them. If a matching capability exists in the catalog, the operator resolves. If not, synthesis is triggered or the composition fails with an explicit unresolved error.
+This separation is critical for runtime composition. Strategy can define Operators by semantic contracts without knowing which capabilities implement them. If a matching capability exists, the Operator resolves. Otherwise Execution returns an explicit unresolved result. Synthesis occurs only through a separately authorized Strategy candidate.
 
 ## Operator
 
@@ -36,9 +36,9 @@ pub struct Operator {
 ### Operator Design Rules
 
 - `operator_id` is local to the composition. Edges reference it. It has no meaning outside the composition.
-- `preconditions` are checked against world state during planning. An operator whose preconditions are not met is not dispatchable. The planning loop may insert upstream operators to satisfy unmet preconditions.
-- `effects` are the typed contract of what changes. The planning loop chains effects: one operator's effects may satisfy another operator's preconditions. Effect chaining across operators within a composition is how the planning loop verifies that a composition achieves a goal.
-- `cost` is an estimate. Actual cost may differ. The planning loop uses cost for method comparison and cost ceiling checks, not for precise accounting.
+- `preconditions` are checked against world state during planning. An Operator whose preconditions are not met is not dispatchable. Strategy may construct an upstream semantic action when authoritative projections support that causal role.
+- `effects` are the typed contract of predicted change. Strategy uses effect chaining when constructing a Composition. Execution mechanically validates the authorized chain against current state and capability contracts.
+- `cost` is an estimate. Actual cost may differ. Strategy uses projected cost for candidate comparison. Execution rechecks operational cost before commitment.
 - An operator does not name a specific action family, action type, or method. It describes what it needs. Resolution finds the implementation.
 
 ## Resolution
@@ -103,7 +103,8 @@ meld-execution: runtime compile step
     |
     | Validates input/output wiring between resolved capabilities
     | Validates scope compatibility
-    | Validates effect chain achieves goal
+    | Validates current state and capability contracts against
+    | the Strategy-authorized effect chain
     |
     | Produces: CompiledTaskRecord (existing task compiler output)
     |

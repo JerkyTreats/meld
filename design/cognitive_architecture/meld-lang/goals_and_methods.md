@@ -6,11 +6,11 @@ Scope: Goal specification, Method caching, pattern unification
 
 ## Thesis
 
-A goal is a proposition the world model agent wants to become true. A method is a cached composition that the planning loop can reuse when a matching goal appears. Goals are the input to planning. Methods are an optimization within planning. Both are expressed entirely in the shared language.
+A Goal is a proposition the world model Agent wants to become true. A Method is a cached Composition template that Strategy may instantiate into a concrete candidate proposal. Execution realizes only the Agent-authorized concrete candidate. Both are expressed entirely in the shared language.
 
-Goals must be constructable at runtime by the world model agent. The agent observes belief divergence, interprets whether it matters (normative judgment), and formalizes the desired state as a proposition. Execution receives the goal and plans mechanically. The entire burden of meaning and intention lives in the world model. Execution never interprets why a goal exists.
+Goals must be constructable at runtime by the world model Agent. The Agent observes belief divergence, judges whether it matters, and formalizes the desired state as a proposition. Strategy constructs candidate theories of action. Execution receives an authorized Strategy inventory and realizes it mechanically. Meaning and intention remain in the world model.
 
-Methods must be loadable at runtime from serialized files. New methods do not require recompilation. The planning loop must also function without methods — the world model agent or planning loop can construct compositions directly for novel situations.
+Methods must be loadable at runtime from serialized files. New Methods do not require recompilation. The runtime must also function without Methods because Strategy can construct episode-specific Compositions for novel situations.
 
 ## Goal
 
@@ -48,8 +48,8 @@ pub struct GoalPriority {
     pub urgency: u32,
 
     /// Maximum acceptable cost. None means no ceiling.
-    /// The planning loop rejects compositions whose aggregated
-    /// cost exceeds any dimension of the ceiling.
+    /// Strategy rejects candidates whose projected cost exceeds the ceiling.
+    /// Execution rechecks current operational cost before commitment.
     pub cost_ceiling: Option<CostEstimate>,
 }
 ```
@@ -80,8 +80,7 @@ pub enum GoalSource {
         invariant_description: String,
     },
 
-    /// Decomposed from a parent goal. The planning loop or a
-    /// decompose operator produced this sub-goal.
+    /// Decomposed from a parent goal through Agent curation.
     Decomposed {
         parent_goal_id: String,
     },
@@ -94,7 +93,7 @@ pub enum GoalLifecycle {
     /// Proposed by the world model agent but not yet active.
     Proposed,
 
-    /// Active. The planning loop should find or construct a composition.
+    /// Active. Strategy may construct candidates for Agent authorization.
     Active,
 
     /// Suspended. The planning loop ignores this goal until resumed.
@@ -114,7 +113,7 @@ pub enum GoalLifecycle {
 - Goals may contain `Term::Variable` only when used as method trigger patterns. A goal submitted to the planning loop for execution must have a ground target (all terms concrete). The planning loop rejects goals with unbound variables.
 - `GoalSource` is carried for provenance and audit. Execution reads the `source` only for lineage tracking and explanation. It does not interpret the source to decide how to plan.
 - `GoalLifecycle` transitions are persisted by execution through public goal APIs. The world model agent owns satisfaction curation for `Active` to `Satisfied` by evaluating projected world state and emitting a satisfy mutation only after `meld_lang::evaluate` returns `EvalResult::Satisfied`. Planning may mechanically observe `EvalResult::Satisfied`, but it does not own lifecycle mutation. `meld_lang::evaluate` remains pure.
-- `GoalPriority.cost_ceiling` is optional. When present, the planning loop rejects any composition whose aggregated cost exceeds the ceiling on any dimension. When absent, the planning loop uses cost for method preference ordering but does not enforce a ceiling.
+- `GoalPriority.cost_ceiling` is optional. Strategy uses it for candidate eligibility and Agent judgment. Execution rechecks current operational cost before commitment.
 
 ### Goal Construction by the World Model
 
@@ -173,8 +172,8 @@ pub struct Method {
     pub composition: Composition,
 
     /// Net effects of the full composition.
-    /// Used by the planning loop to verify that the method achieves
-    /// the goal without expanding the full composition.
+    /// Used by Strategy to screen projected Goal achievement before
+    /// expanding the full Composition.
     pub net_effects: Vec<Effect>,
 
     /// Estimated cost of the full composition.
@@ -188,19 +187,20 @@ pub struct Method {
 ### Method Design Rules
 
 - Methods are optional. The system must function without any methods. Methods are a performance optimization: known decompositions should not be re-derived every planning cycle.
+- Episode-specific Compositions are constructed by [World Model Strategy](../world_model/strategy/README.md) and authorized by the Directive Agent or explicit delegate. They do not require Method registration.
 - Methods are serializable. A method library is a directory of serialized method files loaded at runtime. New methods do not require recompilation.
 - `Method.trigger` uses `Term::Variable` in positions that should bind against the goal. When `unify(method.trigger, goal.target)` succeeds, it produces `Bindings` that map variable names to concrete terms from the goal.
 - `Method.preconditions` are checked after trigger unification. Bindings from the trigger are substituted into preconditions before evaluation against world state. This enables preconditions like "scope ?node must be accessible" where `?node` was bound from the trigger.
 - `Method.composition` is a template. It contains `Term::Variable` references matching the trigger's variables. `substitute(composition, bindings)` produces a concrete composition ready for validation and runtime compilation.
-- `Method.net_effects` allow the planning loop to check goal achievement at the method level without expanding the full composition. If the net effects, applied to the current world state, produce a state where the goal holds, the method achieves the goal.
-- `Method.preference` is used when multiple methods match the same goal. The planning loop considers lower-preference methods first. Cost may further narrow the selection if the goal has a cost ceiling.
+- `Method.net_effects` allow Strategy to screen projected Goal achievement before expanding the full Composition. Authoritative world-model projections remain the semantic proof surface.
+- `Method.preference` is a reusable source hint when several Methods match. Strategy may use it during bounded construction but Agent authorization applies to the resulting concrete candidate.
 
-### Method Matching Flow
+### Strategy Method Instantiation Flow
 
 ```
-Goal arrives at planning loop
+Accepted Goal revision arrives at Strategy
     |
-    | For each method in library (ordered by preference):
+    | For each verified Method revision in the visible inventory:
     |     1. unify(method.trigger, goal.target) → Option<Bindings>
     |        MISS → skip
     |        HIT  → bindings
@@ -221,12 +221,14 @@ Goal arrives at planning loop
     |     5. substitute(method.composition, bindings) → Composition
     |        validate(composition) → must be valid
     |
-    |     6. Return composition for runtime compilation
+    |     6. Preserve Method revision, bindings, and Composition hash
+    |     7. Include concrete Composition in a Strategy proposal
+    |     8. Agent judgment authorizes an exact candidate subset
+    |     9. Execution realizes only the authorized concrete candidate
     |
-    | No method matched:
-    |     Agent constructs composition directly
-    |     OR planning loop requests LLM-assisted decomposition
-    |     OR goal is reported as unachievable
+    | No Method matched:
+    |     Strategy may construct an episode-specific Composition
+    |     OR Strategy records abstention
 ```
 
 ### Unification
@@ -308,7 +310,7 @@ methods/
 
 Each file is a serialized `Method`. Loaded at startup or reloaded at runtime. New files extend the method library without recompilation.
 
-The method library is an execution concern (it decides which methods to load and how to index them). The language crate provides the `Method` type and the operations over it (`unify`, `substitute`). It does not own method storage or loading.
+The Method library is an Execution concern. Execution decides which verified Methods to register, load, index, quarantine, and retire. Strategy may consider visible Method revisions and may propose generalized Method candidates. The Agent authorizes the resulting concrete Strategy candidates for one Goal. The language crate provides the pure `Method` type and operations over it. It does not own Method storage, authorization, or loading.
 
 ## Read With
 

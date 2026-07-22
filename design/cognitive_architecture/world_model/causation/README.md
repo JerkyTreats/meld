@@ -115,6 +115,7 @@ The first durable causal query families are:
 - belief provides uncertainty and evidence normalization
 - regime layer conditions which mechanisms are currently plausible
 - planner surface consumes effect summaries, not raw causal graphs
+- Strategy consumes candidate-intervention and bound-Composition forecasts without becoming a causal authority
 
 ## First Design Slice
 
@@ -135,3 +136,4 @@ That is enough to prevent the common failure where a selected anchor is mistaken
 - [Graph](../graph/README.md)
 - [Belief](../belief/README.md)
 - [Regime Layer](../regime/README.md)
+- [World Model Strategy](../strategy/README.md)

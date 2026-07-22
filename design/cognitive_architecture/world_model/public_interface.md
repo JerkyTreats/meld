@@ -8,7 +8,7 @@ Scope: common contract for world model operations invoked by capabilities and ot
 
 The world model exposes a public interface that capabilities can invoke without importing world model internals. This interface is the world model's equivalent of execution's Goal Set API — a narrow, stable contract that other domains consume.
 
-The public interface defines the common contract. Implementation routes live in each owning domain: belief routes in belief, graph routes in graph, agent routes in agent. Each domain owns its operations and their semantics. The interface document defines what is available and which domain owns it.
+The public interface defines the common contract. Implementation routes live in each owning domain: belief routes in belief, graph routes in graph, agent routes in agent, planner routes in planner, and Strategy routes in Strategy. Each domain owns its operations and their semantics. The interface document defines what is available and which domain owns it.
 
 ## Interface By Domain
 
@@ -129,6 +129,30 @@ Planner operations are read-only deterministic projections over graph and belief
 They do not expose raw inference internals.
 They must return view records with provenance and hydration handles, not free-form semantic summaries.
 
+### Strategy
+
+Owned by `world_model/strategy`. These operations expose durable construction results and the exact Agent-authorized inventory for one accepted Goal revision.
+
+```
+construct_strategy(request: StrategyConstructionRequest) -> StrategyConstructionResult
+
+judge_strategy_proposal(request: AgentStrategyJudgmentRequest) -> AgentStrategyJudgment
+
+query_strategy_decision(decision_ref: StrategyDecisionRef) -> StrategyDecision
+
+query_authorized_inventory(goal_ref: GoalSnapshotRef, agent_ref: AgentRef) -> AuthorizedStrategyInventory
+
+invalidate_strategy(request: StrategyInvalidationRequest) -> StrategyInvalidation
+```
+
+Strategy construction consumes planner projections through their public contracts. It does not expose or import lower inference internals.
+
+Only the Goal-owning Agent or an explicit delegate may authorize a Strategy decision. Persistence custody does not confer authority.
+
+Execution consumes the authorized inventory through a read contract and returns planning acceptance or rejection through an explicit handoff. Execution must not mutate Strategy records directly.
+
+These Strategy routes define the target public contract and are not implemented in the current runtime. Current implementation stops at Agent Goal curation, planner projection, and configured Method selection.
+
 ## Capability Invocation Pattern
 
 Capabilities invoke the public interface through domain routes. The capability contract declares which interface operations it uses:
@@ -191,4 +215,5 @@ Writing to the spine is not a world model operation. Capabilities that produce o
 - [World Model Belief](belief/README.md)
 - [World Model Graph](graph/README.md)
 - [World Model Planner](planner/README.md)
+- [World Model Strategy](strategy/README.md)
 - [Goals (Execution)](../execution/goals/README.md)

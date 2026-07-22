@@ -185,23 +185,25 @@ impl WorldState {
 }
 ```
 
-`gap()` is a convenience over `evaluate()`. It flattens the `Unsatisfied` and `Indeterminate` sub-propositions into a list. The planning loop uses this to identify what operators are needed: each gap proposition is a condition that some operator's effects must establish.
+`gap()` is a convenience over `evaluate()`. It flattens the `Unsatisfied` and `Indeterminate` sub-propositions into a list. Strategy may use the typed result as one input to semantic construction. A gap does not itself select an Operator or action path.
 
 ### Indeterminate vs. Unsatisfied
 
-This distinction is critical for planning behavior:
+This distinction is critical for world-model and Strategy behavior:
 
-- **Unsatisfied**: the world model has asserted a value for this dimension, but it does not meet the condition. The planning loop should plan action to change the value.
-- **Indeterminate**: the world model has not asserted anything about this dimension for this subject. The planning loop should plan observation to gather evidence before planning action.
+- **Unsatisfied**: the world model has asserted a value for this dimension, but it does not meet the condition.
+- **Indeterminate**: the world model has not asserted anything about this dimension for this subject.
+
+Neither result prescribes action. Strategy may propose observation, intervention, reuse, or abstention from the full authoritative context. The Agent decides whether to authorize the proposal.
 
 Example:
 - Goal: "confidence in docs_freshness for node X is above 0.7"
 - World state contains: `Holds { subject: node_X, dimension: "docs_freshness", condition: Equals(0.3) }`
-- Evaluation: `Unsatisfied` — confidence is 0.3, below 0.7. Plan action.
+- Evaluation: `Unsatisfied` — confidence is 0.3, below 0.7.
 
 - Goal: "confidence in docs_freshness for node X is above 0.7"
 - World state contains no proposition about docs_freshness for node X.
-- Evaluation: `Indeterminate` — no belief exists. Plan observation first.
+- Evaluation: `Indeterminate` — no belief exists.
 
 ## World State Construction by the World Model
 
@@ -256,28 +258,22 @@ The world model owns the translation from internal belief state to the shared pr
 ## World State Consumption by Execution
 
 ```rust
-// In meld-execution, the planning loop:
+// Pure evaluation produces typed facts. It does not construct work.
 
-fn evaluate_goal(&self, goal: &Goal, state: &WorldState) -> PlanningDecision {
+fn evaluate_goal(goal: &Goal, state: &WorldState) -> GoalEvaluationFact {
     match evaluate(state, &goal.target) {
-        EvalResult::Satisfied => PlanningDecision::GoalAlreadySatisfied,
+        EvalResult::Satisfied => GoalEvaluationFact::AppearsSatisfied,
 
-        EvalResult::Indeterminate { missing } => {
-            // Observation needed — construct operators that produce
-            // evidence for the missing dimensions.
-            PlanningDecision::ObservationNeeded { missing }
-        }
+        EvalResult::Indeterminate { missing } =>
+            GoalEvaluationFact::Indeterminate { missing },
 
-        EvalResult::Unsatisfied { gap } => {
-            // Action needed — find methods or construct composition
-            // that closes the gap.
-            PlanningDecision::ActionNeeded { gap }
-        }
+        EvalResult::Unsatisfied { gap } =>
+            GoalEvaluationFact::Unsatisfied { gap },
     }
 }
 ```
 
-Execution reads the `EvalResult` mechanically. `Indeterminate` triggers observation. `Unsatisfied` triggers planning. No interpretation of what the dimensions mean.
+Agent satisfaction curation may consume the satisfied result. Strategy may consume indeterminate and unsatisfied results when constructing a proposal. Execution uses evaluation only for no-op detection and current applicability of an already authorized candidate. It does not construct observation or action work from the result.
 
 ## Read With
 

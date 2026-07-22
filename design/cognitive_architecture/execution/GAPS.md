@@ -33,7 +33,7 @@ Residual gaps within the goal model:
 
 **Status: type substrate and expanded execution slice implemented. Residual runtime gaps identified.**
 
-See [Planning Pipeline](planning/planning_pipeline.md) for the unified pipeline: two concurrent processes connected by task network commands.
+See [Planning Pipeline](planning/planning_pipeline.md) for the unified pipeline: Agent curation and authorization, Strategy construction, Execution Planning, and task-network execution connected by durable contracts.
 
 The pipeline document resolves the structural gap. The previous six-stage sequential model and the separate adaptation domain both dissolved into the graphs-lower-graphs abstraction. Control flow is expressed as graph structure through conditional dependency edges and multi-dependency nodes, not as a separate compiled control program. Adaptation's reconciliation concern folds into the planning loop's cost-aware mutation proposal decisions.
 
@@ -41,10 +41,10 @@ The pipeline document resolves the structural gap. The previous six-stage sequen
 
 Residual gaps within the pipeline:
 
-- **method library loading** — the `Method` type and JSON serialization exist; the runtime infrastructure for loading, indexing, and querying method libraries belongs to `meld-execution` and is not yet implemented
-- **planning algorithm** — the search strategy for HTN decomposition is unspecified; `meld-lang` provides the matching primitives but the search orchestration is an `meld-execution` concern
-- **task network graph executor** — the expanded execution slice exists; remaining gaps are conditional edge evaluation, recursive sub-goal lowering, graph repair mutations, shared task reuse, and deeper runtime recovery
-- **switching cost model** — cost-aware plan transitions require cost estimates on tasks and a model for computing cleanup cost, sunk cost, disruption cost, and benefit estimation
+- **Method registry deepening** — first-slice loading and verification exist; durable registration, revision, visibility, quarantine, indexing, and retirement remain
+- **Strategy construction** — semantic candidate search, Method instantiation, and novel Composition construction belong to Agent-authorized [World Model Strategy](../world_model/strategy/README.md); `meld-execution` retains Method registry custody and concrete candidate realization
+- **task network graph executor** — the expanded execution slice exists; remaining gaps are conditional edge evaluation, exact authorized subgoal lowering, graph repair mutations, shared task reuse, and deeper runtime recovery
+- **switching cost model** — operational transitions require cleanup, sunk, and disruption cost plus exact integration with Agent-authorized selection policy and world-model benefit projections
 
 ## Gap 3: World Model Read Interface
 
@@ -167,7 +167,7 @@ The gaps are not independent. Closing them in the wrong order produces circular 
 Current resolution state:
 
 - **Gap 1 (goal model)**: **resolved and implemented.** `Goal`, `GoalPriority`, `GoalSource`, `GoalLifecycle` are implemented in `meld-lang`. Goals are typed propositions in the shared language. The world model agent constructs goals as `Proposition` targets with priority and lifecycle metadata. Execution evaluates goals mechanically without interpreting semantic intent. Residual: agent normative framework, goal conflict resolution, multi-agent coordination, goal learning. See [Lang Goals and Methods](../meld-lang/goals_and_methods.md).
-- **Gap 2 planning pipeline**: **type substrate and expanded execution slice implemented.** `Method`, `Composition`, `Operator`, `unify()`, `substitute()`, and `validate()` are implemented in `meld-lang`. The planning loop reads goals and world state as propositions, matches methods via pattern unification, substitutes bindings into compositions, validates, and projects effects. Phase 8 proves multi node task network lowering, task init materialization, real task runtime dispatch, and replay. Residual: recursive planning algorithm, conditional graph execution, graph repair mutations, shared task reuse, and switching cost model. See [Lang Compositions](../meld-lang/compositions.md).
+- **Gap 2 planning pipeline**: **configured-path execution slice implemented; Strategy missing.** `Method`, `Composition`, `Operator`, `unify`, `substitute`, and `validate` are implemented in `meld-lang`. Current Execution matches configured Methods and lowers concrete Compositions. Target Strategy must own semantic search and Method instantiation before Agent authorization. Phase 8 proves multi-node task-network lowering, task init materialization, real task dispatch, and replay. Residual: Strategy construction, authorized subgoal expansion, conditional graph execution, repair mutations, shared reuse, and switching policy integration. See [Lang Compositions](../meld-lang/compositions.md).
 - **Gap 3 (world model read interface)**: **resolved and implemented.** `WorldState`, `evaluate()`, `EvalResult`, gap detection, and pattern query are implemented in `meld-lang`. The world model publishes `WorldState` as a set of ground propositions. Execution evaluates propositions with three-valued semantics. Residual: world model planner projection from internal types into ground `WorldState` propositions (`meld-world-model` concern). See [Lang World State](../meld-lang/world_state.md).
 - **Gap 4 (outcome publication)**: **resolved.** Execution publishes task lifecycle events to the spine. The world model reducer consumes them and materializes claims for belief revision. `Effect` and `WorldState::apply()` in `meld-lang` serve forward projection in the planning loop, not outcome publication. Residual: world model reducer enrichment as belief layer matures (world model concern).
 - **Gap 5 (workflow integration)**: continuous. Workflows remain the compatibility layer where cognitive subsystems are not yet built.

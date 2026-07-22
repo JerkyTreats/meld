@@ -63,13 +63,16 @@ interfaces; synthesized capabilities are additional implementations.
 
 ## Planning Integration: Online Capability Acquisition
 
-With synthesis available, the HTN planner gains a new response to planning failure:
+With synthesis available, Strategy gains another semantic action affordance. A missing capability remains a typed Execution rejection until a Directive Agent authorizes a concrete synthesis candidate:
 
 ```
 goal: produce ChangeSummary for node X
   → query capability catalog: any capability producing ChangeSummary?
   → [found: compiled git_diff_summary]    → use it, proceed
-  → [not found]                           → instantiate CapabilitySynthesisTask
+  → [not found]                           → return typed rejection to Strategy
+                                          → construct synthesis candidate
+                                          → Agent authorizes candidate
+                                          → instantiate CapabilitySynthesisTask
                                           → seed: GoalContext { artifact_type: ChangeSummary }
                                           → await synthesis completion
                                           → requery catalog
@@ -77,9 +80,7 @@ goal: produce ChangeSummary for node X
                                           → use it, proceed
 ```
 
-This is online planning with capability acquisition. Planning failure on "no capability
-available" triggers synthesis, then replanning. The HTN planner structure does not change.
-The catalog lookup gains a second resolution path.
+This is online capability acquisition under semantic authority. Missing capability does not trigger synthesis automatically. Synthesis runs as ordinary authorized task-network work. Its admitted catalog result becomes new world and operational state that may wake Strategy.
 
 The capability catalog query is by **artifact type produced**, not by capability identity.
 "I need something that produces a `ChangeSummary`" is the query. The response is any

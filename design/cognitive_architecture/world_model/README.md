@@ -2,7 +2,7 @@
 
 Date: 2026-05-27
 Status: active
-Scope: durable world model shape across graph, belief, causation, regimes, and planner-facing reads
+Scope: durable world model shape across graph, belief, causation, regimes, planner-facing reads, Agent judgment, and Strategy
 
 ## Thesis
 
@@ -21,6 +21,7 @@ World model layers:
 3. causal layer
 4. regime layer
 5. planner-facing world model projection
+6. Agent-authorized Strategy
 
 The event spine is upstream event authority, not a world model layer.
 
@@ -70,6 +71,7 @@ Belief should consume anchors, provenance, lineage, and object history as eviden
 Causation should consume temporal state, intervention-shaped facts, outcome links, and measurement paths without treating anchor selection as proof of effect.
 Regime should consume graph and belief signals that indicate structural change, including relation stability, observation cadence, calibration drift, and correlated failures.
 The planner-facing projection should consume settled graph-derived views from belief, causation, and regime rather than raw reducer internals.
+Strategy should consume typed planner projections and Agent authority to construct concrete theories of action without creating substitute epistemic verdicts.
 
 ## Upstream Dependency
 
@@ -245,6 +247,33 @@ Design:
 - [World Model Planner](planner/README.md)
 - [Planner Spec](planner/spec.md)
 
+### 6. Strategy
+
+Job:
+construct episode-specific semantic theories of action for Agent authorization
+
+Consumes:
+Agent authority, operational domain theory, trusted scope, typed planner projections, semantic action affordances, and operational projections
+
+Primary concepts:
+
+- `StrategyConstructionAttempt`
+- `StrategyAlternative`
+- `StrategyProjection`
+- `StrategyDecision`
+- `StrategyAbstention`
+- `StrategyInvalidation`
+- `GoalStrategyAssociation`
+
+Strategy creates concrete candidate `Composition` values. It does not settle beliefs, mutate Goal lifecycle, resolve capabilities, or commit task-network work.
+
+Design:
+
+- [World Model Strategy](strategy/README.md)
+- [Strategy Requirements](strategy/requirements.md)
+- [Strategy Contracts](strategy/contracts.md)
+- [Docs Freshness Strategy](strategy/docs_freshness.md)
+
 ## Layer Rules
 
 - The event spine remains upstream event authority, not a world model layer.
@@ -253,6 +282,8 @@ Design:
 - The causal layer owns mechanism claims, intervention semantics, and counterfactual answers.
 - The regime layer owns structural change and recurring contexts.
 - The planner-facing world model projection owns action-relevant reads, not execution policy or raw inference internals.
+- The Agent owns normative authorization for Strategy decisions.
+- Strategy owns semantic candidate construction, not epistemic source truth or operational commitment.
 
 ## Public Interface
 
@@ -268,15 +299,16 @@ See [World Model Public Interface](public_interface.md) for the full contract.
 2. [Multi-Domain Spine](../events/multi_domain_spine.md)
 3. [World Model Crate](CRATE.md)
 4. [World Model Graph](graph/README.md)
-6. [World Model Belief](belief/README.md)
-7. [Fact To Belief](belief/fact_to_belief.md)
-8. [Belief Families](belief/belief_families.md)
-9. [Causal Layer](causation/README.md)
-10. [Regime Layer](regime/README.md)
-11. [World Model Planner](planner/README.md)
-12. [World Model Public Interface](public_interface.md)
-13. [World Model Agent](agent/README.md)
-14. [Goal Curation](agent/goal_curation.md)
+5. [World Model Belief](belief/README.md)
+6. [Fact To Belief](belief/fact_to_belief.md)
+7. [Belief Families](belief/belief_families.md)
+8. [Causal Layer](causation/README.md)
+9. [Regime Layer](regime/README.md)
+10. [World Model Planner](planner/README.md)
+11. [World Model Agent](agent/README.md)
+12. [Goal Curation](agent/goal_curation.md)
+13. [World Model Strategy](strategy/README.md)
+14. [World Model Public Interface](public_interface.md)
 
 ## Naming Rule
 

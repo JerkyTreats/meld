@@ -14,7 +14,8 @@ This is not a novel mechanism. It is the belief→goal instance of the same watc
 - Graph reducers watch spine events, materialize anchors
 - Belief comparators watch graph anchors and facts, produce belief revisions
 - **The agent watches belief revisions, produces goal mutations**
-- The planning loop watches the goal set, produces task network mutations
+- Strategy watches accepted Goal revisions and relevant projections, produces candidate Composition proposals for Agent judgment
+- Execution Planning watches authorized Strategy decisions and live operational state, produces task-network mutations
 
 At each boundary, the watcher reduces frequency and increases connectivity. Sense data is high-frequency and isolated. Events are discrete and typed. Facts have some connections to other facts. Beliefs have high connectivity to facts, other beliefs, and agents. Goals have the highest connectivity — connecting beliefs, cost data, regime context, and active goal state.
 
@@ -180,6 +181,8 @@ belief revision event arrives (or freshness decay fires)
 
 The agent constructs goals at runtime using `meld-lang` types. No predefined goal variants — the agent composes `Proposition::Holds`, `Proposition::Exists`, or compound `All`/`Any`/`Not` propositions from its belief assessment. The urgency level is derived from the cost-benefit posterior. The cost ceiling is derived from the cost belief. See [Goals and Methods](../../meld-lang/goals_and_methods.md) for the concrete types and construction examples.
 
+Goal curation answers whether acting is worthwhile and what desired state is authorized. [World Model Strategy](../strategy/README.md) separately compares evidence-backed theories of action for that Goal. Execution Planning then realizes only the Agent-authorized candidate inventory.
+
 Satisfaction curation follows the same watching pattern. With `meld-lang`, planning may mechanically observe whether `goal.target` holds against `WorldState`, but the agent owns the decision to emit a satisfaction mutation:
 
 ```
@@ -265,5 +268,6 @@ The subscription filter comes from the agent's seed configuration during bootstr
 - [Lang World State and Evaluation](../../meld-lang/world_state.md)
 - [Regime Layer](../regime/README.md)
 - [Belief](../belief/README.md)
+- [World Model Strategy](../strategy/README.md)
 - [Fact To Belief](../belief/fact_to_belief.md)
 - [Observe Merge Push](../../observe_merge_push.md)

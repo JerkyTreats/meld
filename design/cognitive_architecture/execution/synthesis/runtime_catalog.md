@@ -84,8 +84,7 @@ Resolution order:
    For each result, load `SynthesizedCapabilityRecord`. Filter to `status == Active`.
    Return matches with `TrustLevel::Synthesized`.
 
-3. If no matches in either catalog: return empty. The planner treats this as a synthesis
-   opportunity and may instantiate `CapabilitySynthesisTask`.
+3. If no matches in either catalog: return empty with typed resolution facts. Execution must not instantiate synthesis unless the active Strategy decision contains an exact authorized synthesis candidate.
 
 When both catalogs return results, the task compiler prefers `TrustLevel::Compiled`.
 If only synthesized results exist, they are used. The trust level is recorded in the compiled
@@ -101,8 +100,7 @@ Schema drift is detected through two paths:
 **Invocation failure path**: when a synthesized capability invocation fails with
 `SchemaHashMismatch` (the LLM conversion produced output that does not match the stored
 schema hash), the runtime catalog marks the entry as `Stale { reason: SchemaHashMismatch }`.
-The task network surfaces this to control. Control may trigger a new `CapabilitySynthesisTask`
-for the same goal context.
+The task network publishes this outcome. It may wake Strategy, which can propose a new synthesis candidate for Agent judgment. Control does not trigger synthesis directly.
 
 **Proactive validation**: optionally, the catalog may schedule periodic re-validation of
 synthesized capabilities by replaying the `contract_validation` step against a cached
@@ -135,8 +133,8 @@ struct BoundCapabilityInstance {
 ```
 
 A compiled task that includes one or more synthesized capability instances is tagged as
-`contains_synthesized_capabilities: true`. This tag informs repair logic: if a synthesized
-capability fails repeatedly, control may prefer re-synthesis over continued retry.
+`contains_synthesized_capabilities: true`. This tag enriches outcome evidence. Repeated
+failure may inform a later Strategy proposal but does not authorize re-synthesis.
 
 ## Event Spine Integration
 
@@ -154,8 +152,8 @@ answerable by filtering spine events up to S and projecting the catalog state.
 On startup, the runtime catalog is loaded from sled. No synthesis is triggered at startup.
 The compiled catalog is populated first. The runtime catalog extends it.
 
-If the sled store is empty or missing, the runtime catalog starts empty and synthesized
-capabilities are acquired on demand as planning needs them.
+If the sled store is empty or missing, the runtime catalog starts empty. Synthesized
+capabilities appear only through Agent-authorized Strategy work.
 
 ## Read With
 
@@ -163,4 +161,3 @@ capabilities are acquired on demand as planning needs them.
 - [Synthesis Task](synthesis_task.md)
 - [Synthesis Overview](README.md)
 - [Multi-Domain Spine](../../events/multi_domain_spine.md)
-- [Event Manager Requirements](../../events/event_manager_requirements.md)

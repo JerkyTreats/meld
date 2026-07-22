@@ -5,11 +5,11 @@ Status: active
 
 ## Intent
 
-Define the hierarchical task model owned by `execution`.
+Define Execution-owned realization lineage for hierarchical structure already selected by an Agent-authorized Strategy decision.
 
 ## Definition
 
-The HTN model owns abstract task identity, method identity, decomposition boundaries, and lineage from abstract task intent down to primitive capability regions.
+The HTN model owns operational identity and lineage from an exact Strategy candidate, its complete Method-derivation inventory, and resolved child structure down to primitive capability regions.
 
 It preserves why a region exists, not only what primitive nodes it contains.
 
@@ -27,14 +27,14 @@ The HTN area should define these durable records:
 
 - abstract task and method lineage must survive compilation
 - primitive execution records must map back to task lineage
-- method choice must be inspectable and durable
+- Strategy-selected Method revision, bindings, and expanded hash must be inspectable and durable
 - hierarchy is not flattened away when repair depends on task boundaries
 - one task may map to one or more primitive regions
-- one method choice must declare the child task set it introduces
+- every Method instance must reflect the exact child task set already resolved in the authorized candidate
 
 ## First Slice
 
-The first slice HTN model should be sufficient to map one abstract task through one chosen method into one or more primitive capability regions.
+The first slice HTN model should be sufficient to map one authorized candidate and its Method derivation set into one or more primitive capability regions.
 
 ## Next Doc
 

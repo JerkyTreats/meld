@@ -62,7 +62,7 @@ Evaluates to true unconditionally. Used for the default branch of a conditional 
 
 ## Conditional Branching Pattern
 
-When the planning loop cannot resolve a decision at planning time (insufficient belief), it emits:
+When an Agent-authorized Composition contains an observation-dependent branch, Execution realizes:
 
 1. An observation task that will produce a decision artifact
 2. Conditional dependency edges from the observation task to alternative downstream subtrees
