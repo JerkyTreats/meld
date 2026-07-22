@@ -56,6 +56,8 @@ This area does own:
 
 This area does not own implementation schedule, migration execution, or historical completion records. Those belong under `design/plan` and `design/completed`.
 
+The declarative application layer is defined separately in [Persistent Domain Stewardship](../persistent_domain_stewardship/README.md). Cognitive architecture defines how the runtime operates; stewardship packages declare what bounded domain, mandate, evidence, actions, outcomes, and authority are loaded into it.
+
 ## Crate Routing
 
 `CRATE.md` files map design ownership to the multi-crate code direction.
@@ -142,6 +144,7 @@ This area does not own implementation schedule, migration execution, or historic
 
 ## Read With
 
+- [Persistent Domain Stewardship](../persistent_domain_stewardship/README.md)
 - [Execution Planning](execution/planning/README.md)
 - [Events Design](events/README.md)
 - [Multi-Domain Event Ledger](events/multi_domain_spine.md)
