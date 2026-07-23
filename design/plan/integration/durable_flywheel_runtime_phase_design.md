@@ -1,14 +1,16 @@
 # Durable Flywheel Runtime Phase Design
 
 Date: 2026-06-16
-Status: proposed
+Status: historical phase design, superseded for runtime completion
 Scope: phased implementation design for domain embedded flywheel runtimes and root assembly
+
+Authority: [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) replace this one-turn phase design for current implementation. Retain domain ownership and completed implementation evidence only where current source confirms them.
 
 ## Purpose
 
 This document defines the implementation phases for the first durable flywheel runtime.
 
-The first proof still targets one `docs_freshness` flywheel turn. The architecture is different from a root driven convergence loop. Runtime behavior belongs inside the owning crates. Root `meld` opens stores, wires ports, starts runtimes, supervises lifecycle, flushes product checkpoints, and reports diagnostics.
+This historical design targeted one `docs_freshness` flywheel turn. Runtime behavior belongs inside the owning crates. Root `meld` opens stores, wires ports, starts runtimes, supervises lifecycle, flushes product checkpoints, and reports diagnostics. The current proof target is defined by the operational-parity authority above.
 
 The product flywheel is:
 

@@ -1,12 +1,25 @@
 # Strategy Requirements
 
-Date: 2026-07-22
+Date: 2026-07-23
 Status: active
 Scope: normative requirements for Agent-authorized Strategy construction
 
 ## Objective
 
-Strategy must turn an Agent-authorized desired state and authoritative world-model views into one or more causally justified concrete `meld-lang::Composition` candidates without transferring epistemic authority into Execution or procedural control into PDS.
+Strategy must turn an Agent-curated Goal draft and authoritative world-model views into one or more causally justified concrete `meld-lang::Composition` candidates before that Goal may enter Execution. It must do so without transferring epistemic authority into Execution or procedural control into PDS.
+
+## Core invariants
+
+The detailed requirements preserve six simple rules:
+
+1. A Goal draft is not yet an Execution Goal.
+2. Initial Goal admission requires at least one eligible Strategy candidate.
+3. Strategy searches both reusable knowledge and novel constructions.
+4. The known Strategy catalog is not the complete space of possible Strategies.
+5. `NoMethodAvailable` before admission is different from quiescence after admission.
+6. Execution may realize or reject authorized meaning, but it may not invent new meaning.
+
+The first implementation should prove these rules with one configured domain shape. It does not require learned ranking, automatic Strategy promotion, catalog governance, or a general Strategy language.
 
 ## Ownership requirements
 
@@ -14,7 +27,7 @@ Strategy must turn an Agent-authorized desired state and authoritative world-mod
 
 Every Strategy decision must be authorized by a Directive Agent or an explicitly delegated Agent acting under a durable grant.
 
-The authorization must identify the Goal, allowed scope, normative posture, authority boundary, delegation lineage, and revocation boundary.
+The authorization must identify the Goal draft, allowed scope, normative posture, authority boundary, delegation lineage, and revocation boundary.
 
 ### STR-002 No independent epistemic authority
 
@@ -32,7 +45,9 @@ Strategy decision authority remains attached to the authorizing Agent and any ex
 
 Strategy must not directly add, modify, satisfy, suspend, resume, abandon, or remove Execution Goals.
 
-Goal lifecycle changes remain Agent curation decisions submitted through Execution Goal APIs.
+Before initial admission, the Goal draft remains world-model curation state. Strategy construction does not create an Execution Goal. The Agent may authorize an admission bundle only when the Strategy decision contains at least one eligible candidate.
+
+After admission, Goal lifecycle changes remain Agent curation decisions submitted through Execution Goal APIs.
 
 Internal Strategy obligations must not be represented as active Goals unless the Directive Agent separately authorizes them.
 
@@ -44,7 +59,7 @@ Every Strategy attempt must reference exact revisions for:
 
 ```text
 Directive
-Goal
+Goal draft
 PDS package or linked facet set
 profile
 assignment
@@ -60,9 +75,9 @@ Agent and delegation grant
 
 ### STR-011 Trusted scope
 
-Belief Reconciliation and graph projection must provide a typed scope view at an exact graph revision.
+Directive grounding, Belief Reconciliation, and graph projection must provide a typed scope and belief view at exact revisions.
 
-Directive Agent curation alone authorizes expansion of a universal objective over that scope.
+The Directive Agent authorizes expansion of maintained belief questions over that scope. Strategy may expand a Goal draft into action obligations only after the relevant epistemic grounding is represented in the input frame.
 
 Strategy must not ground work over stale, indeterminate, unauthorized, or unbounded scope.
 
@@ -94,11 +109,27 @@ Execution remains authoritative for the underlying operational records.
 
 Every operational value used for construction or ranking must be captured in the exact Strategy input frame and invalidation dependencies.
 
+### STR-014 Known Strategy catalog
+
+World-model Strategy must own one canonical persisted catalog of known reusable Strategies.
+
+The catalog is the complete set of persisted reusable Strategy knowledge. It must not claim to enumerate every Strategy that can be constructed from PDS semantics.
+
+Catalog entries must reference exact verified Method revisions or reusable Composition templates without duplicating Execution-owned Method bodies.
+
+For one Goal draft, Strategy must derive an available set from applicable catalog entries and novel episode-specific candidates constructed during the bounded attempt.
+
+### STR-015 Directive-grounded belief input
+
+Goal drafts must derive from reconciled belief questions instantiated by Directive grounding or from explicit user-directed desired state.
+
+Strategy must not invent missing persistent belief questions while constructing executable work. Missing epistemic grounding returns to the Directive Agent and belief domains.
+
 ## Construction requirements
 
 ### STR-020 Obligation graph
 
-Strategy must expand the authorized desired state into an internal obligation graph before constructing executable work.
+Strategy must expand the Goal draft desired state into an internal Strategy obligation graph before constructing executable work.
 
 Every obligation must cite the domain-theory rule, Goal target, concrete subject, and world-model revision that introduced it.
 
@@ -139,6 +170,8 @@ Artifact type compatibility alone must not justify an action or edge.
 Strategy must retain multiple causally valid alternatives when available.
 
 Different alternatives may use direct evidence, reusable settled artifacts, semantic compression, observation, intervention, or hybrid paths.
+
+Candidate discovery must include applicable known Strategies and novel construction from PDS semantic affordances. An empty known Strategy catalog must not by itself produce `NoMethodAvailable`.
 
 ### STR-025 Concrete graph construction
 
@@ -232,13 +265,15 @@ The Agent value posture determines how viable candidates trade resolution speed,
 
 ### STR-040 Strategy decision
 
-Each completed Strategy attempt must produce either a candidate proposal or an explicit abstention record.
+An initial Strategy attempt for a Goal draft must produce either a candidate proposal with at least one eligible alternative or `NoMethodAvailable`.
+
+A later attempt for an already admitted Goal may produce a candidate proposal or an explicit abstention record.
 
 The proposal becomes judgeable only after its complete content-addressed closure has persisted atomically or every referenced record exists and hash-verifies.
 
 Construction does not confer authorization. The Directive Agent or explicit delegate must accept a candidate proposal through a separate durable judgment before a `StrategyDecision` exists.
 
-Agent acceptance must recheck active Goal lifecycle, delegation, effective authority, assignment, activation, proposal closure, selected alternative eligibility, and all validity dependencies at judgment time.
+Initial Agent acceptance must recheck that the Goal draft remains current, delegation and effective authority remain valid, assignment and activation revisions remain current, proposal closure hash-verifies, and every selected alternative remains eligible.
 
 A Strategy decision must contain:
 
@@ -246,7 +281,8 @@ A Strategy decision must contain:
 immutable decision identity and revision
 candidate proposal reference
 authorizing Agent and delegation lineage
-Goal identity and revision
+Goal draft identity and revision
+proposed Goal identity
 exact input lineage
 immutable Agent-authorized selection policy
 one or more concrete Composition candidates
@@ -258,6 +294,8 @@ validity horizon
 invalidation dependencies
 outcome-contract references
 ```
+
+Accepted Goal admission separately supplies the first Execution Goal revision and lifecycle epoch. The immutable pre-admission Strategy decision does not predict those values.
 
 ### STR-041 Concrete Composition
 
@@ -273,11 +311,19 @@ Execution owns Method verification, registration, namespace, visibility, revisio
 
 ### STR-043 Goal association
 
-A durable association must connect the Goal revision to the Strategy decision without embedding the Strategy payload in the Goal.
+A durable association must connect the Goal draft, admitted Goal revision, and Strategy decision without embedding the Strategy payload in the Goal.
+
+Initial admission must hand Execution the Goal and a nonempty authorized candidate inventory together. Execution must reject initial admission with an empty inventory.
 
 ### STR-044 Explanation
 
 Inspection must explain why every candidate action and edge exists, which authoritative verdicts supported it, why alternatives were rejected, and which assumptions remain unresolved.
+
+### STR-045 Outcome association
+
+Strategy identity and selected candidate lineage must survive through the Strategy decision, planning commitment, and outcome event.
+
+This lineage must support later curation that compares projected efficacy with observed reality and prefers a previously successful reusable Strategy when it remains applicable. The first implementation does not require a learned efficacy model.
 
 ## Boundedness and lifecycle requirements
 
@@ -293,13 +339,13 @@ Model-backed or otherwise nondeterministic construction must record the model id
 
 ### STR-052 Idempotency
 
-Repeated processing of the same Goal, input frame, Strategy version, and invalidation state must not produce duplicate active decisions or equivalent operational work.
+Repeated processing of the same Goal draft or admitted Goal, input frame, Strategy version, and invalidation state must not produce duplicate active decisions or equivalent operational work.
 
 ### STR-053 Invalidation
 
 Strategy must reconsider a decision when a declared dependency changes.
 
-Dependencies may include graph topology, belief revision, evidence admission, capability catalog, verified Method inventory, activation, authority, capacity, efficacy, Goal revision, or PDS semantics.
+Dependencies may include graph topology, belief revision, evidence admission, capability catalog, verified Method inventory, activation, authority, capacity, efficacy, Goal draft or admitted Goal revision, or PDS semantics.
 
 ### STR-054 Supersession
 
@@ -307,7 +353,9 @@ Strategy decisions are append-only revisions. Supersession must preserve the pri
 
 ### STR-055 Abstention and quiescence
 
-Missing semantic proof, authority, or useful action must produce explicit abstention.
+`NoMethodAvailable` applies before initial Goal admission when bounded construction cannot produce any eligible reusable or novel candidate. It is a visible runtime error and the Goal draft must remain outside Execution.
+
+Abstention applies after Goal admission when no useful action is currently available for an active Goal.
 
 An unsatisfied Goal remains `Active` while its Strategy association or convergence loop may become quiescent. Strategy must not hot-loop solely because the Goal remains active.
 
@@ -321,7 +369,7 @@ Abstention and its durable wake registration must commit atomically with the qui
 
 ### STR-060 Scoped visibility
 
-Execution must receive only Strategy decisions and candidate Compositions visible to the current Goal, assignment, activation, and effective authority.
+Execution must receive initial Goals only through an Agent-authorized admission bundle with at least one candidate Composition visible to the current Goal, assignment, activation, and effective authority.
 
 ### STR-061 Exact mechanical tuning
 
@@ -334,6 +382,8 @@ Execution may tune only through exact contract matching and pure proposition eva
 Execution must reject a candidate when its Strategy proof is missing, stale, inapplicable, unavailable, unauthorized, or incompatible with current task-network state.
 
 Rejection returns typed operational facts to the Strategy and Agent loop. It does not authorize Execution to invent replacement meaning.
+
+The existing Execution `NoApplicableMethod` result remains a mechanical boundary failure. When it occurs for a newly admitted Goal with an authorized candidate inventory, it signals stale or inconsistent realization rather than ordinary semantic absence.
 
 ### STR-063 Accepted commitment
 
@@ -369,7 +419,7 @@ The event record identity must derive from the accepted commit identity so repla
 
 ### STR-065 Authority fence
 
-Every Strategy decision and planning request must carry Agent authority, Goal lifecycle, and Strategy eligibility epoch fences.
+Every Strategy decision must carry Agent authority and Strategy eligibility epoch fences. Accepted Goal admission must supply the initial Goal lifecycle epoch. Every planning request must carry all three.
 
 Task-network commitment and every new dispatch claim must validate those fences through an authority-preserving linearizable contract. Authority revocation and Strategy invalidation advance their owning epochs. The Goal lifecycle epoch must advance on every lifecycle, replacement, or content transition that changes work eligibility, including activation, suspension, resume, satisfaction, reopening, abandonment, removal, supersession, and replacement. Every such transition serializes against commits and claims.
 
@@ -392,6 +442,8 @@ The reducer must atomically persist the uniqueness mapping, command result, grap
 Tests must prove that Strategy cannot write belief revisions, mutate Goal lifecycle, register capabilities, mutate the task network, or publish task outcomes.
 
 Tests must prove that Execution cannot create semantic edges, substitute evidence, or reinterpret outcome criteria.
+
+Tests must prove that an initial Goal cannot enter Execution without a nonempty Agent-authorized Strategy inventory.
 
 ### STR-071 Derivation verification
 
@@ -428,6 +480,7 @@ Strategy is not:
 - a task-network store
 - a guarantee that predicted effects will occur
 - a requirement that every Goal use model-backed construction
+- a claim that the known Strategy catalog enumerates every constructible Strategy
 
 ## Read with
 
@@ -435,6 +488,7 @@ Strategy is not:
 - [Strategy Contracts](contracts.md)
 - [Docs Freshness Strategy](docs_freshness.md)
 - [World Model Agent](../agent/README.md)
+- [Directive Grounding](../agent/directive_grounding.md)
 - [World Model Planner](../planner/README.md)
 - [Meld Lang](../../meld-lang/README.md)
 - [Execution Planning](../../execution/planning/README.md)

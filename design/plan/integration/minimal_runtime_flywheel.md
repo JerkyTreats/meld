@@ -1,8 +1,10 @@
 # Minimal Runtime Flywheel
 
 Date: 2026-06-06
-Status: assessed
+Status: historical assessment, superseded for runtime completion
 Scope: focused runtime wiring plan for one `docs_writer` cognitive flywheel turn
+
+Authority: [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) replace this one-turn template for current implementation. Retain its domain handoff analysis as historical evidence only.
 
 ## Purpose
 

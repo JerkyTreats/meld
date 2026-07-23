@@ -1,8 +1,10 @@
 # Durable Flywheel Vertical Proof Requirements
 
 Date: 2026-06-17
-Status: proposed
+Status: historical characterization, superseded for runtime completion
 Scope: vertical proof requirements for Phase 5 Event Led Feedback, Phase 6 Deterministic Proof Harness, and Phase 7 Failure Path Proof
+
+Authority: [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) replace this document for current implementation. Retain it only as evidence of the earlier deterministic one-turn contracts. Its synthetic work result, direct proof driver, mandatory one-turn sequence, and failure-path scope are not current completion requirements.
 
 ## Purpose
 

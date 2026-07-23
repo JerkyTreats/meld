@@ -1,8 +1,10 @@
 # Flywheel Runtime Code Assessment
 
 Date: 2026-06-16
-Status: proposed
+Status: historical code assessment
 Scope: current codebase assessment for domain embedded flywheel runtime implementation
+
+Current runtime-completion authority is [Runtime Completion Ground Map](runtime_completion_ground_map.md), followed by [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md). This dated assessment remains implementation evidence only where it agrees with that authority.
 
 ## Purpose
 

@@ -1,8 +1,10 @@
 # Docs Freshness Physical Configuration Requirements
 
 Date: 2026-06-18
-Status: proposed
+Status: historical proposal, superseded for runtime completion
 Scope: physical configuration requirements for the first `docs_freshness` durable flywheel example
+
+Authority: [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) replace this document for current implementation. The large activation document and embedded runtime choices conflict with the current minimal stewardship expression and runtime-binding boundary. Retain the file only as configuration and ownership history.
 
 ## Purpose
 

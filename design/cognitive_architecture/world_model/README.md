@@ -257,6 +257,8 @@ Agent authority, operational domain theory, trusted scope, typed planner project
 
 Primary concepts:
 
+- `GoalDraft`
+- `KnownStrategyCatalog`
 - `StrategyConstructionAttempt`
 - `StrategyAlternative`
 - `StrategyProjection`
@@ -265,11 +267,12 @@ Primary concepts:
 - `StrategyInvalidation`
 - `GoalStrategyAssociation`
 
-Strategy creates concrete candidate `Composition` values. It does not settle beliefs, mutate Goal lifecycle, resolve capabilities, or commit task-network work.
+Directive grounding creates the concrete belief questions that precede Goal curation. Strategy creates candidate `Composition` values for Goal drafts and gates initial Execution admission. It does not settle beliefs, mutate admitted Goal lifecycle, resolve capabilities, or commit task-network work.
 
 Design:
 
 - [World Model Strategy](strategy/README.md)
+- [Directive Grounding](agent/directive_grounding.md)
 - [Strategy Requirements](strategy/requirements.md)
 - [Strategy Contracts](strategy/contracts.md)
 - [Docs Freshness Strategy](strategy/docs_freshness.md)
@@ -282,14 +285,14 @@ Design:
 - The causal layer owns mechanism claims, intervention semantics, and counterfactual answers.
 - The regime layer owns structural change and recurring contexts.
 - The planner-facing world model projection owns action-relevant reads, not execution policy or raw inference internals.
-- The Agent owns normative authorization for Strategy decisions.
+- The Agent owns Directive grounding, Goal drafts, and normative authorization for Goal admission and Strategy decisions.
 - Strategy owns semantic candidate construction, not epistemic source truth or operational commitment.
 
 ## Public Interface
 
 The world model exposes a public interface that capabilities can invoke without importing world model internals. Each domain owns its routes: graph owns traversal and discovery, belief owns belief queries and key registration, agent owns identity and subscription management, planner owns action-relevant projections.
 
-This interface is the world model's equivalent of execution's Goal Set API. The two public APIs form a symmetric pair — execution's goal set curated by world model agents, world model's belief and graph queried by execution capabilities.
+This interface meets Execution at Goal admission and later lifecycle curation. Initial admission carries a Goal with a nonempty authorized Strategy inventory. World-model belief and graph remain available through domain-owned query routes.
 
 See [World Model Public Interface](public_interface.md) for the full contract.
 
@@ -307,8 +310,9 @@ See [World Model Public Interface](public_interface.md) for the full contract.
 10. [World Model Planner](planner/README.md)
 11. [World Model Agent](agent/README.md)
 12. [Goal Curation](agent/goal_curation.md)
-13. [World Model Strategy](strategy/README.md)
-14. [World Model Public Interface](public_interface.md)
+13. [Directive Grounding](agent/directive_grounding.md)
+14. [World Model Strategy](strategy/README.md)
+15. [World Model Public Interface](public_interface.md)
 
 ## Naming Rule
 

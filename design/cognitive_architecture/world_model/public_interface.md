@@ -1,6 +1,6 @@
 # World Model Public Interface
 
-Date: 2026-05-10
+Date: 2026-07-23
 Status: active
 Scope: common contract for world model operations invoked by capabilities and other domains
 
@@ -93,6 +93,9 @@ advance_subscription(agent_id: AgentId, subscription_id: SubscriptionId, revisio
 // Record a deterministic curation decision for idempotency and replay
 record_curation_decision(decision: AgentCurationDecision) -> AgentCurationDecision
 
+// Ground one activated Directive into concrete belief questions over trusted scope
+ground_directive(request: DirectiveGroundingRequest) -> EpistemicObligationSet
+
 // Query agent status (registered, bootstrapping, operational, suspended)
 query_agent_status(agent_id: AgentId) -> AgentStatus
 ```
@@ -102,6 +105,8 @@ Agent registration creates durable identity and perspective anchor state. Regist
 Activation is process hydration for an existing durable agent record. It starts or resumes runtime watchers and subscription cursors. It does not create a new agent.
 
 Subscription binding happens during the initialization workflow through execution capabilities that invoke these operations.
+
+Directive grounding derives concrete belief questions from activated PDS theory and trusted graph scope. Belief retains authority for key registration, evidence admission, assessment, and revision.
 
 The runtime surface also needs a durable curation decision record and subscription cursor advancement. These make at least once belief revision delivery safe across restart and replay.
 
@@ -131,12 +136,14 @@ They must return view records with provenance and hydration handles, not free-fo
 
 ### Strategy
 
-Owned by `world_model/strategy`. These operations expose durable construction results and the exact Agent-authorized inventory for one accepted Goal revision.
+Owned by `world_model/strategy`. These operations expose known reusable Strategy knowledge, bounded construction for a Goal draft, and the exact Agent-authorized inventory admitted with one Goal revision.
 
 ```
 construct_strategy(request: StrategyConstructionRequest) -> StrategyConstructionResult
 
 judge_strategy_proposal(request: AgentStrategyJudgmentRequest) -> AgentStrategyJudgment
+
+query_known_strategies(query: KnownStrategyQuery) -> Vec<KnownStrategyCatalogEntry>
 
 query_strategy_decision(decision_ref: StrategyDecisionRef) -> StrategyDecision
 
@@ -147,11 +154,11 @@ invalidate_strategy(request: StrategyInvalidationRequest) -> StrategyInvalidatio
 
 Strategy construction consumes planner projections through their public contracts. It does not expose or import lower inference internals.
 
-Only the Goal-owning Agent or an explicit delegate may authorize a Strategy decision. Persistence custody does not confer authority.
+Only the Goal-owning Agent or an explicit delegate may authorize a Strategy decision and initial Goal admission. Persistence custody does not confer authority.
 
-Execution consumes the authorized inventory through a read contract and returns planning acceptance or rejection through an explicit handoff. Execution must not mutate Strategy records directly.
+Execution consumes the Goal admission bundle and authorized inventory through explicit contracts, then returns planning acceptance or rejection. Execution must not mutate Strategy records directly.
 
-These Strategy routes define the target public contract and are not implemented in the current runtime. Current implementation stops at Agent Goal curation, planner projection, and configured Method selection.
+These Strategy routes define the target public contract and are not implemented in the current runtime. Current implementation stops at configured belief keys, Agent Goal command creation, planner projection, and configured Method selection.
 
 ## Capability Invocation Pattern
 
@@ -186,8 +193,9 @@ The two public APIs form a symmetric pair:
 
 | Execution's Goal Set API | World Model's Public Interface |
 |---|---|
-| Curated by world model agents | Invoked by execution capabilities |
-| add, modify, remove, satisfy, suspend, resume, read | query, walk, subscribe, register |
+| Initial admission requires Goal plus authorized Strategy inventory | Directive grounding constructs belief questions before Goal curation |
+| Later lifecycle curated by world model Agents | Invoked by Execution capabilities and world-model domains |
+| admit, modify, remove, satisfy, suspend, resume, read | query, walk, ground, subscribe, register, construct |
 | Owns goal lifecycle state | Owns belief/graph/subscription state |
 | Narrow mutation contract | Read-heavy with selective writes |
 

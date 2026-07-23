@@ -1,6 +1,6 @@
 # Agent Spec
 
-Date: 2026-05-02
+Date: 2026-07-23
 Status: active
 Scope: perspective-heavy assembly point inside `world_model`
 
@@ -52,7 +52,7 @@ The runtime support types are:
 - `AgentCurationDecision`
   stored output of one deterministic curation evaluation
 - `AgentCurationDedupeKey`
-  stable key that prevents duplicate goal commands
+  stable key that prevents duplicate Goal drafts and compatibility Goal commands
 
 ## Data Model
 
@@ -77,7 +77,7 @@ The Agent data model consists of:
 - `PlannerViewRef`
   reference to the current planner-facing world-model projection
 - `ExecutionHandoffRef`
-  reference to the shaped handoff consumed by `execution`
+  reference to an admitted Goal and its nonempty authorized Strategy inventory
 - `CalibrationProfile`
   history of outcomes that changes how this Agent interprets evidence
 
@@ -87,6 +87,8 @@ These should mostly be references, filters, thresholds, and policy state. They s
 
 The core Agent pipeline stages are:
 
+- Directive grounding
+  derive concrete belief questions from maintained theory and trusted scope
 - perspective resolution
   determine which shared world-model outputs are relevant to one Agent
 - belief lens assembly
@@ -97,8 +99,12 @@ The core Agent pipeline stages are:
   project structural uncertainty into Agent-specific sensitivity
 - planner lens assembly
   assemble the final planner-facing world-model view for that Agent
-- execution handoff publication
-  publish one shaped view for downstream `execution`
+- Goal draft curation
+  translate unacceptable reconciled belief divergence into proposed desired state
+- Strategy judgment
+  authorize a nonempty candidate inventory or preserve `NoMethodAvailable`
+- Execution admission handoff
+  publish the Goal and authorized Strategy inventory together
 
 These are assembly stages. They should consume outputs from the more process-heavy domains rather than re-running their logic.
 

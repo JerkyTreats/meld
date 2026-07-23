@@ -2,8 +2,10 @@
 
 Date: 2026-06-17
 Revised: 2026-07-12
-Status: E5 authority assembly complete; runtime continuation active
+Status: completed E5 assembly evidence; continuation authority moved
 Scope: Phase 1 requirements for root `ProductRuntimeAssembly`
+
+Continuation authority: only completed E5 assembly behavior remains current implementation evidence. Runtime-completion continuation is governed by [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md). Earlier activation-document requirements below are superseded where they conflict with the minimal stewardship expression and physical runtime binding.
 
 ## Purpose
 
@@ -26,9 +28,9 @@ Root assembly sits before this loop. It wires durable boundaries and hands lifec
 
 ## Source Alignment
 
-These requirements refine Phase 1 from `design/plan/integration/durable_flywheel_runtime_phase_design.md`.
+These requirements record completed E5 assembly behavior informed by the historical Phase 1 sources. They do not preserve the earlier first-proof or activation sequence as current authority.
 
-They preserve the shared boundary rules in `design/plan/integration/runtime_requirements.md`, the supervisor ownership split in `design/plan/integration/runtime_supervisor_domain_plan.md`, the detailed supervisor handoff rules in `design/plan/integration/supervisor_runtime_requirements.md`, the storage and first proof expectations in `design/plan/integration/durable_runtime_first_slice.md`, and the pre implementation gap outcomes in `design/plan/integration/durable_runtime_pre_implementation_gaps.md`.
+Current continuation uses [Runtime Requirements Index](runtime_requirements.md), [Runtime Completion Ground Map](runtime_completion_ground_map.md), and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md). Historical supervisor, first-slice, and pre-implementation documents remain contract evidence only where they do not conflict with that authority.
 
 They are grounded in the current root storage and worker diagnostics surfaces in `src/runtime/storage.rs` and `src/runtime/contracts.rs`.
 
@@ -181,11 +183,9 @@ Required product inputs:
 - prompt artifact root selection when not derived from layout
 - workspace root selection when not derived from layout
 
-The first physical `docs_freshness` config surface is detailed in [Docs Freshness Physical Configuration Requirements](docs_freshness_physical_configuration_requirements.md).
+The earlier physical configuration proposal is historical only. Current root assembly accepts the minimal docs freshness selection and physical binding, then constructs owner-scoped runtime inputs without importing stewardship semantics or runtime topology into user configuration.
 
-For the product-visible `docs_freshness` slice, root assembly owns activation document loading and shape validation. The activation document is one physical file that may be TOML, YAML, or JSON behind a single DTO contract. Root assembly must split the validated DTO into owner-scoped runtime input packages before supervisor handoff.
-
-Domain runtimes must not receive the activation document path, raw parsed document, or source format metadata. They receive typed input values for their domain only.
+Domain runtimes receive only their typed inputs. They do not receive raw configuration documents or source-format metadata.
 
 Required environment inputs:
 

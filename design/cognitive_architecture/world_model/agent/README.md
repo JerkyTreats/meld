@@ -1,16 +1,12 @@
 # World Model Agent
 
-Date: 2026-05-01
+Date: 2026-07-23
 Status: active
 Scope: perspective-scoped agent identity and world-model ownership above belief and below execution commitment
 
 ## Thesis
 
-`world_model/agent` defines the Agent as a world-model concern before it becomes an execution concern.
-
-The Agent is the fulcrum from belief to action.
-It does not dispatch tasks or own runtime control.
-It owns the perspective that determines which facts are trusted, which uncertainty matters, which regime concerns are relevant, and which planner-facing world-model view should be published for that perspective.
+The Agent is the decision-maker between belief and action. It owns one perspective, decides which belief divergence matters, drafts desired state, and authorizes Strategy.
 
 This area exists because shared graph truth is not the same as shared belief.
 Many Agents may consume one shared event and graph substrate while producing different belief views, regime sensitivities, and action-relevant projections.
@@ -25,9 +21,10 @@ Many Agents may consume one shared event and graph substrate while producing dif
 - observation scope and branch scope
 - regime sensitivity profile
 - normative framework — what belief states the agent cares about and what thresholds trigger action
+- Directive grounding — applying maintained domain theory to trusted scope so concrete belief questions exist
 - planner-facing world-model view assembly for one perspective
-- goal set curation — evaluating beliefs through cost-benefit comparators and curating execution's goal set through its public API
-- Strategy authority — authorizing evidence-backed candidate Compositions for accepted Goals
+- Goal draft curation — evaluating beliefs through cost-benefit comparators before requesting Execution admission
+- Strategy authority — authorizing evidence-backed candidate Compositions with the Goal they make actionable
 - active goal awareness — reading the goal set for prediction, redundancy avoidance, and normative evaluation
 - cost-benefit evaluation — deciding when belief divergence warrants action based on learned cost and value beliefs
 
@@ -56,34 +53,39 @@ It does not become agent-private because one Agent distrusts or ignores part of 
 
 ## Relationship To Execution
 
-The Agent is not the execution runtime.
+The Agent is not the execution runtime. It decides what should be pursued and which theories of action are authorized. Execution decides how authorized work runs.
 
-Within `world_model`, the Agent owns epistemic perspective and normative judgment.
-Within `execution`, the Agent's Goals and authorized Strategy decisions are data. Execution Planning realizes those decisions and the task network works toward the Goals.
+```mermaid
+flowchart TD
+    D[Directive]
+    G[Directive grounding]
+    B[Reconciled belief revisions]
+    A[Agent judgment]
+    GD[Goal draft]
+    S[Strategy candidates]
+    AD[Goal admission]
+    E[Execution]
 
-The Agent bridges the two domains through the shared typed language [`meld-lang`](../../meld-lang/README.md) and integration mapping into execution's neutral Goal Set API:
+    D --> G
+    G --> B
+    B --> A
+    A -->|Action warranted| GD
+    GD --> S
+    S --> A
+    A -->|Authorize Goal and candidates| AD
+    AD --> E
+```
 
-- the Agent reads its perspective-scoped belief views (world model authority)
-- the Agent evaluates beliefs through cost-benefit comparators — combining state beliefs, cost beliefs (learned from execution outcomes), and value beliefs (learned from downstream outcome correlation) into act/tolerate decisions
-- the Agent constructs `Goal` values using `meld-lang` types: the desired state is a `Proposition`, the priority is a `GoalPriority` with cost ceiling, the source records provenance as `GoalSource`
-- the Agent emits producer curation output that integration maps into execution's Goal Set API: add, modify, remove, satisfy, suspend, resume
-- the Agent authorizes Strategy construction and comparison for accepted Goal revisions
-- the Agent judges candidate proposals and authorizes concrete semantic theories of action
-- the Agent accepts or rejects Strategy proposals and may supersede prior Strategy decisions
-- execution evaluates goals mechanically against `WorldState` — it never interprets semantic intent
+| Domain | Decision |
+|---|---|
+| Agent | what matters and whether action is warranted |
+| Strategy | which theories of action are viable |
+| Agent | which Goal and candidates are authorized |
+| Execution | how authorized work is realized |
 
-The normative framework reduces to: which belief keys the agent watches (subscription filter), and what regime-scoped priors it carries for the cost-benefit comparison on each concern class. See [Goal Curation](goal_curation.md) for the full mechanism.
+The shared typed language [`meld-lang`](../../meld-lang/README.md) carries Goal propositions and candidate Compositions across the boundary. See [Directive Grounding](directive_grounding.md), [Goal Curation](goal_curation.md), and [World Model Strategy](../strategy/README.md).
 
-See [World Model Strategy](../strategy/README.md) for the Agent-authorized transition from accepted Goals to semantic theories of action.
-
-The boundary is:
-
-- `world_model/agent` decides what should be true, expressed as `Proposition` targets
-- `world_model/strategy` constructs semantic candidate proposals
-- `world_model/agent` authorizes Strategy decisions
-- `execution` realizes authorized theories through applicability checks, capability resolution, lowering, task-network commitment, and dispatch
-
-The shared language eliminates the need for execution to interpret belief semantics. The Agent constructs a `Proposition::Holds { subject, dimension, condition }` and execution evaluates it with `evaluate(world_state, goal.target)`. The three-valued result (Satisfied, Unsatisfied, Indeterminate) drives planning decisions without any interpretation of what the dimension means. See [World State and Evaluation](../../meld-lang/world_state.md).
+The shared language eliminates the need for Execution to interpret belief semantics. The Agent constructs a typed proposition and Execution evaluates it mechanically. See [World State and Evaluation](../../meld-lang/world_state.md).
 
 The Agent also has read access to the active goal set. This is epistemically valuable: knowledge of active goals enables prediction (what evidence to expect), anomaly detection (goals without progress), and avoidance of redundant goal generation.
 
@@ -104,8 +106,8 @@ The meta-layer extends the watching and reducing pattern one level above the age
 | Layer | Watches | Produces | Decomposes | Question |
 |---|---|---|---|---|
 | meta-layer | user intent | agents | intent into an agent set | why |
-| agent | belief revisions | Goals and Strategy authority | belief into desired state and authorized action posture | what and why |
-| Strategy | ground Goals and typed projections | candidate Compositions | desired state into theory of action | viable means |
+| agent | Directive, scope, and belief revisions | belief questions, Goal drafts, and Strategy authority | maintained intent into questions and belief divergence into desired state | what and why |
+| Strategy | Goal drafts and typed projections | candidate Compositions | desired state into theory of action | viable means |
 | execution | authorized candidates and live state | committed task network | theory into operational work | realization |
 
 Where Strategy constructs semantic action structure and Execution realizes it as committed work, the meta-layer decomposes intent into Agents. The Agent is the unit it produces.
@@ -179,17 +181,11 @@ See [Agent Genesis And Activation](genesis_and_activation.md) for the durable st
 ```
 1. Init        Seed config or curated CreateAgent goal supplies
                  the directive and agent responsibility
-2. Resolve     Seed config supplies candidate belief dimensions
-                 and subject scope
-3. Survey      Capabilities invoke world model public interface:
-                 - graph.walk to discover subject's entity neighborhood
-                 - belief.query_beliefs to find existing beliefs
-                 - belief.query_evidence_channels to find available observations
-4. Bind        Capabilities invoke world model public interface:
-                 - agent.register_agent to create identity and perspective
-                 - belief.register_belief_key for missing dimensions
-                 - agent.subscribe for each belief key
-5. Observe     Execution requests first observation work for dimensions
+2. Ground      Directive grounding combines activated PDS theory
+                 with a bounded trusted graph scope
+3. Register    Belief registers or reuses each concrete belief question
+4. Bind        Agent subscribes to the resulting belief keys
+5. Observe     Evidence acquisition begins for dimensions
                  where belief keys exist but no belief revision yet
 6. Arrive      Agent processes first belief revision event through
                  its cost-benefit comparator — creation goal satisfied
@@ -205,7 +201,7 @@ For a seed agent, the same arrival criterion enables normal goal curation, but t
 
 ### Steady state
 
-After bootstrap, the agent operates through the watching pattern described in [Goal Curation](goal_curation.md). Belief revision events arrive on subscribed keys. The cost-benefit comparator evaluates. Goal mutations emit when warranted.
+After bootstrap, graph or Directive changes may trigger bounded [Directive Grounding](directive_grounding.md). Belief revision events then arrive on subscribed keys through the watching pattern described in [Goal Curation](goal_curation.md). The cost-benefit comparator evaluates. A Goal draft proceeds to Strategy construction when action is warranted.
 
 ### Re-survey
 
@@ -235,6 +231,8 @@ It defines:
 It defers:
 
 - dynamic spawned Agent creation through curated `CreateAgent` goals
+- Directive grounding from PDS theory and changing graph scope
+- Goal draft gating through Strategy before Execution admission
 - existing Agent activation across process restart
 - full `AgentRuntime` process workers
 - full multi-Agent synchronization strategy
@@ -254,6 +252,7 @@ It defers:
 - [Agent Genesis And Activation](genesis_and_activation.md)
 - [Agent Runtime Surface](runtime_surface.md)
 - [Goal Curation](goal_curation.md)
+- [Directive Grounding](directive_grounding.md)
 - [World Model Strategy](../strategy/README.md)
 - [World Model Public Interface](../public_interface.md)
 - [Lang Domain](../../meld-lang/README.md)

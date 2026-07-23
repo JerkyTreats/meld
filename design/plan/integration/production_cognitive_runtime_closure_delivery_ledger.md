@@ -1,11 +1,13 @@
 # Production Cognitive Runtime Closure Delivery Ledger
 
 Date: 2026-07-12
-Status: design ready for phased delivery
+Status: superseded, do not schedule for current runtime completion
 Program: [Production Cognitive Runtime Closure Program](production_cognitive_runtime_closure_program.md)
 Base branch: `event-foundation-closeout`
 Integration branch: `production-cognitive-runtime-closure`
 Thread ceiling: eight
+
+Authority: [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) replace this ledger. Its packets must not be assigned or executed for the current operational-parity workstream.
 
 ## Purpose
 

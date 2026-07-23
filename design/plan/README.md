@@ -10,21 +10,27 @@ This directory defines implementation readiness, dependency order, scope cuts, a
 
 Durable architecture intent lives under [design/cognitive_architecture](../cognitive_architecture/README.md). That directory is canonical for declarative design intent. This plan states what can be built, what must be built first, and what remains blocked.
 
-Each assessment is current truth. It names the exact slice that is ready, the exact contracts it depends on, and the exact work that is deferred.
+Each assessment named as current authority states current truth. Historical and superseded artifacts preserve dated evidence but must not direct implementation.
 
 When this plan conflicts with `design/cognitive_architecture`, treat the architecture document as intent and this plan as an implementation readiness snapshot that needs reconciliation.
 
-## Strategy
+## Current Runtime Completion Authority
 
-The first vertical slice threads the thinnest possible path through every layer of the cognitive flywheel using the `docs_freshness` scenario. Each layer implements the minimum needed to pass its output to the next. The goal is one complete flywheel turn before deepening any individual layer.
+The active runtime-completion objective is [Runtime Completion Ground Map](integration/runtime_completion_ground_map.md), with build-facing decomposition in [Runtime Completion Implementation Workstreams](integration/runtime_completion_implementation_workstreams.md).
 
-The typed loop has already proven the full contract chain through `meld-lang` pure types and operations. The vertical slice now makes each layer real with runtime code that materializes state, projects belief, curates goals, and dispatches work.
+Flywheel docs freshness must run the existing docs writer package over a selected branching workspace tree, preserve sibling fan-out and child-finalization-before-parent-preparation dependencies, materialize one `README.md` per actionable folder, and advance package progress through bounded durable runtime turns. Earlier one-turn, synthetic-patch, activation-heavy, and production-closure plans are retained only as historical characterization.
 
-The focused runtime wiring template is [Minimal Runtime Flywheel](integration/minimal_runtime_flywheel.md). Use it after Assessment By Domain work identifies the exact requirements for each participating domain.
+## Historical Strategy
 
-## Vertical Slice: Implementation Order
+The original vertical slice threaded the thinnest possible path through every layer of the cognitive flywheel using the `docs_freshness` scenario. It targeted one complete flywheel turn before deepening any individual layer. That completion target is superseded by the current operational-parity authority above.
 
-The `docs_freshness` scenario threads through every phase. Each phase produces the input the next phase consumes.
+The typed loop proved the full contract chain through `meld-lang` pure types and operations. The historical vertical slice made each layer real with runtime code that materialized state, projected belief, curated goals, and dispatched work.
+
+The former focused runtime wiring template is [Minimal Runtime Flywheel](integration/minimal_runtime_flywheel.md). It is historical characterization and not current implementation guidance.
+
+## Historical Vertical Slice Implementation Inventory
+
+This inventory preserves the sequence used by the earlier one-turn slice. It is evidence only and is not the current runtime-completion sequence.
 
 ### Phase 1: Shared Language — `complete`
 
@@ -76,7 +82,7 @@ Depends on: Phase 5
 
 ### Phase 7: Task Dispatch and Outcome — `first slice implemented`
 
-Bridge execution composition to task network commands and the existing task and capability engine. Dispatch one task. Publish outcome events to the spine. World model reducer consumes them. The flywheel turns once.
+This phase historically bridged execution composition to task network commands and the existing task and capability engine. It dispatched one task, published outcome events to the spine, and proved one flywheel turn. That completion claim is superseded by the current operational-parity authority.
 
 Owner: `meld-execution`
 Depends on: Phase 6 first slice
@@ -106,7 +112,7 @@ These components predate the vertical slice and support all phases.
 | `events` ledger mechanics | complete | `meld-events` |
 | event foundation closeout | closed 2026-07-12 | `meld-events` with root `meld` |
 | product event authority cutover | complete, E5 closed 2026-07-12 | `events` with root `meld` |
-| production cognitive runtime closure | design ready, Waves 0 through 6 | root `meld` with domain crates |
+| production cognitive runtime closure | superseded for current runtime completion | root `meld` with domain crates |
 | `integration/typed_loop` | complete | `meld-lang` integration tests |
 
 Foundation work follows this order:
@@ -115,7 +121,7 @@ Foundation work follows this order:
 event authority and observability hardening
 -> product CLI authority cutover
 -> events foundation closed
--> runtime visibility, daemon, and semantic wiring resume
+-> operational parity through the current runtime completion ground map and workstreams
 ```
 
 ## Dependency Order
@@ -124,7 +130,7 @@ event authority and observability hardening
 2. event authority and observability hardening — complete, E1 through E4
 3. product event authority cutover — complete, E5 closed 2026-07-12
 4. event foundation closure — closed 2026-07-12, E6
-5. production cognitive runtime closure — design ready, Waves 0 through 6
+5. runtime completion ground map and implementation workstreams — current operational-parity authority
 6. `meld-lang` — complete, Phase 1
 7. `world_model/graph` — complete, Phase 2
 8. `world_model/belief` — complete, Phase 3
@@ -153,30 +159,33 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — first slice implemented
 - [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
 - [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - closed event foundation closeout
-- [integration/production_cognitive_runtime_closure_program.md](integration/production_cognitive_runtime_closure_program.md) - design-ready production runtime closure and buildout orchestration
-- [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - executable packet, thread, review, and rollback ledger
-- [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — template
-- [integration/durable_runtime_first_slice.md](integration/durable_runtime_first_slice.md) - proposed durable flywheel runtime design
-- [integration/durable_runtime_pre_implementation_gaps.md](integration/durable_runtime_pre_implementation_gaps.md) - proposed pre assembly gap requirements
-- [integration/durable_flywheel_runtime_phase_design.md](integration/durable_flywheel_runtime_phase_design.md) - proposed flywheel runtime phase design
-- [integration/flywheel_runtime_code_assessment.md](integration/flywheel_runtime_code_assessment.md) - proposed flywheel runtime code assessment
-- [integration/runtime_supervisor_domain_plan.md](integration/runtime_supervisor_domain_plan.md) - proposed runtime supervisor domain plan
-- [integration/runtime_requirements.md](integration/runtime_requirements.md) - proposed detailed runtime requirements index
-- [integration/runtime_phase_design_detail_audit.md](integration/runtime_phase_design_detail_audit.md) - implemented runtime phase detail audit
-- [integration/product_runtime_assembly_requirements.md](integration/product_runtime_assembly_requirements.md) - proposed product runtime assembly requirements
+- [integration/runtime_completion_ground_map.md](integration/runtime_completion_ground_map.md) - current operational-parity runtime completion authority
+- [integration/runtime_completion_implementation_workstreams.md](integration/runtime_completion_implementation_workstreams.md) - current build-facing workstream decomposition
+- [integration/production_cognitive_runtime_closure_program.md](integration/production_cognitive_runtime_closure_program.md) - superseded production runtime closure proposal
+- [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - superseded production-closure delivery ledger
+- [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — historical one-turn template
+- [integration/durable_runtime_first_slice.md](integration/durable_runtime_first_slice.md) - historical first-slice design evidence
+- [integration/durable_runtime_pre_implementation_gaps.md](integration/durable_runtime_pre_implementation_gaps.md) - historical pre-assembly gap evidence
+- [integration/durable_flywheel_runtime_phase_design.md](integration/durable_flywheel_runtime_phase_design.md) - historical phase design
+- [integration/flywheel_runtime_code_assessment.md](integration/flywheel_runtime_code_assessment.md) - historical code assessment
+- [integration/runtime_supervisor_domain_plan.md](integration/runtime_supervisor_domain_plan.md) - historical supervisor design evidence
+- [integration/runtime_requirements.md](integration/runtime_requirements.md) - current domain requirement index with superseded vertical links
+- [integration/runtime_phase_design_detail_audit.md](integration/runtime_phase_design_detail_audit.md) - historical phase detail audit
+- [integration/product_runtime_assembly_requirements.md](integration/product_runtime_assembly_requirements.md) - completed E5 assembly evidence with continuation authority moved
 - [integration/product_event_authority_cutover.md](integration/product_event_authority_cutover.md) - complete E5 CLI and product event authority cutover
-- [integration/docs_freshness_physical_configuration_requirements.md](integration/docs_freshness_physical_configuration_requirements.md) - proposed docs freshness physical configuration requirements
-- [integration/docs_freshness_flywheel_next_iteration_report.md](integration/docs_freshness_flywheel_next_iteration_report.md) - proposed docs freshness flywheel next iteration report
-- [integration/docs_freshness_flywheel_domain_spec_skeleton.md](integration/docs_freshness_flywheel_domain_spec_skeleton.md) - proposed docs freshness domain spec skeleton
-- [integration/docs_freshness_flywheel_implementation_guide.md](integration/docs_freshness_flywheel_implementation_guide.md) - proposed docs freshness implementation guide
+- [integration/docs_freshness_physical_configuration_requirements.md](integration/docs_freshness_physical_configuration_requirements.md) - superseded activation-heavy configuration proposal
+- [integration/docs_freshness_flywheel_next_iteration_report.md](integration/docs_freshness_flywheel_next_iteration_report.md) - superseded one-turn iteration report
+- [integration/docs_freshness_flywheel_domain_spec_skeleton.md](integration/docs_freshness_flywheel_domain_spec_skeleton.md) - superseded one-turn domain skeleton
+- [integration/docs_freshness_flywheel_implementation_guide.md](integration/docs_freshness_flywheel_implementation_guide.md) - superseded one-turn implementation guide
 - [integration/world_model_runtime_requirements.md](integration/world_model_runtime_requirements.md) - proposed world model runtime requirements
 - [integration/execution_runtime_requirements.md](integration/execution_runtime_requirements.md) - proposed execution runtime requirements
 - [integration/event_runtime_requirements.md](integration/event_runtime_requirements.md) - proposed event runtime requirements
-- [integration/supervisor_runtime_requirements.md](integration/supervisor_runtime_requirements.md) - proposed supervisor runtime requirements
-- [integration/durable_flywheel_vertical_proof_requirements.md](integration/durable_flywheel_vertical_proof_requirements.md) - proposed vertical proof requirements
+- [integration/supervisor_runtime_requirements.md](integration/supervisor_runtime_requirements.md) - historical supervisor contract evidence
+- [integration/durable_flywheel_vertical_proof_requirements.md](integration/durable_flywheel_vertical_proof_requirements.md) - historical synthetic one-turn proof requirements
 
 ## Assessment Inventory
 
+- [integration/runtime_completion_ground_map.md](integration/runtime_completion_ground_map.md) - assessed runtime ground map for collaborative completion planning
 - `design/plan/events/assessment.md`
 - `design/plan/meld-lang/assessment.md`
 - `design/plan/world_model/graph/assessment.md`
@@ -197,7 +206,7 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 
 The vertical slice excludes full causal effect summaries, regime sensitivity summaries, broad risk envelopes, multi-agent divergence, learned normative policy, multi-agent coordination, goal conflict resolution, broad utility estimation, recursive sub-goal lowering, plan diffing, sensory runtime, and switching cost model.
 
-Each phase implements the minimum needed for one `docs_freshness` flywheel turn. Deepening happens after the loop turns once end-to-end.
+This historical phase inventory implemented the minimum needed for one `docs_freshness` flywheel turn. Current completion instead requires operational parity with the branching docs writer workflow through bounded durable execution.
 
 ## Blocked Areas
 
@@ -226,7 +235,7 @@ Each assessment includes:
 
 ## Validation Rules
 
-Plan files must avoid hidden chronology and stale state language. They must state current truth only.
+Current plan files must avoid hidden chronology and stale state language. Historical files must carry an explicit supersession notice and link to current authority.
 
 Plan files must avoid literal parenthesis characters in Markdown prose.
 

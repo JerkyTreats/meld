@@ -1,8 +1,10 @@
 # Docs Freshness Flywheel Domain Spec Skeleton
 
 Date: 2026-06-22
-Status: proposed
+Status: historical proposal, superseded for runtime completion
 Scope: build-facing domain skeleton for one executable `docs_freshness` flywheel
+
+Authority: [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) replace this skeleton for current implementation. Do not use its activation waves, synthetic proof decomposition, or one-turn completion ordering as build authority.
 
 ## Purpose
 

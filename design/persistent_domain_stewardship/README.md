@@ -53,6 +53,8 @@ flowchart TD
 
 [World Model Strategy](../cognitive_architecture/world_model/strategy/README.md) is the authoritative runtime boundary for turning activated operational domain theory and current world-model projections into Agent-authorized candidate Compositions. PDS supplies state-free semantics, action affordances, outcome theory, authority, and governance. It does not own episode-specific Strategy decisions, generated Compositions, or task-network state.
 
+[Directive Grounding](../cognitive_architecture/world_model/agent/directive_grounding.md) is the authoritative runtime boundary that applies maintained PDS belief-family declarations to trusted graph scope. PDS declares which questions can exist. Meld grounds those declarations into concrete belief keys and reconciles their answers.
+
 Sensors and capabilities remain executable adapters at domain boundaries.
 
 ## Proposal Posture

@@ -1,8 +1,10 @@
 # RTG-6 Reopen Checkpoint Proof Contract
 
 Date: 2026-06-14
-Status: proposed
+Status: historical characterization, superseded for runtime completion
 Scope: durable reopen checkpoints for the first `docs_freshness` flywheel proof
+
+Authority: [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) replace this document for current implementation. Its durable reopen observations remain useful evidence, but its fixture identity map, synthetic artifact path, and deterministic proof-driver sequence are not current completion requirements.
 
 ## Purpose
 

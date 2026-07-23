@@ -23,7 +23,7 @@ The first slice does not need dynamic spawned agents. It does need the same runt
 - `AgentRuntime`
   process runner that activates existing records and dispatches watched belief revisions to curation
 - `AgentCuration`
-  pure decision module that turns one agent record, one belief view, projected world state, and active goal summary into goal commands
+  pure decision module that turns one agent record, one belief view, projected world state, and active goal summary into Goal drafts
 - `AgentRegistration`
   command surface for seed registration and later spawned agent registration
 - `AgentSubscription`
@@ -199,17 +199,17 @@ Rule:
 ```text
 if configured belief confidence is below configured threshold
 and no active matching goal exists
-then emit a proposed goal command requiring configured dimension confidence above configured threshold
+then emit a proposed Goal draft requiring configured dimension confidence above configured threshold
 else absorb the revision
 ```
 
 Output:
 
 - `AgentCurationDecision`
-- optional goal command for execution
+- optional Goal draft for Strategy construction
 - advanced subscription cursor
 
-The curation rule must not write execution goal state directly. The first slice emits producer curation output, currently `AgentGoalCommand`, that maps into execution's neutral Goal Set API outside execution core.
+The curation rule must not write Execution Goal state directly. Current code emits `AgentGoalCommand` directly into integration as a configured-path compatibility behavior. Target runtime routes the same proposed Goal value through Strategy construction and emits an Execution admission bundle only after the Agent authorizes a nonempty candidate inventory.
 
 ## Goal Command Dedupe
 
@@ -258,6 +258,8 @@ The first slice implements:
 - one goal command dedupe key
 - one decision record
 - one query facade
+
+The next boundary change inserts Goal draft and Strategy admission between curation output and the existing Goal Set API. Directive grounding remains a separate missing precursor to this runtime surface.
 
 It defers:
 

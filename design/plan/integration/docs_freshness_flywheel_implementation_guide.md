@@ -1,8 +1,10 @@
 # Docs Freshness Flywheel Implementation Guide
 
 Date: 2026-06-22
-Status: proposed build guide
+Status: historical build guide, superseded for runtime completion
 Scope: reviewed implementation handoff for one executable `docs_freshness` flywheel
+
+Authority: [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) replace this guide for current implementation. Its source inventory may be reused as evidence, but its activation system, one-turn proof, and unbounded package-execution assumptions are not build authority.
 
 ## Purpose
 

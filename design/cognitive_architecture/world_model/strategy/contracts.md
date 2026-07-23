@@ -1,6 +1,6 @@
 # Strategy Contracts
 
-Date: 2026-07-22
+Date: 2026-07-23
 Status: active
 Scope: durable records and cross-domain handoffs for Agent-authorized Strategy
 
@@ -11,9 +11,11 @@ Strategy records an Agent judgment that a concrete theory of action is viable un
 The durable chain is:
 
 ```text
-Goal
+Goal draft
 → Strategy construction attempt
-→ Agent-authorized Strategy decision
+→ candidate proposal or NoMethodAvailable
+→ Agent authorizes candidates and Goal admission
+→ accepted Execution Goal
 → Execution planning attempt
 → accepted task-network commitment
 → task and artifact outcomes
@@ -22,6 +24,22 @@ Goal
 ```
 
 Each arrow crosses an explicit authority boundary. No downstream record may rewrite an upstream record.
+
+## Contract map
+
+| Record | Purpose |
+|---|---|
+| `GoalDraft` | desired state being considered before Execution |
+| `KnownStrategyCatalogEntry` | one persisted reusable Strategy |
+| `AvailableStrategySet` | reused and novel candidates for one Goal draft |
+| `StrategyAlternative` | one concrete Composition with its justification |
+| `NoMethodAvailable` | initial construction found no eligible theory of action |
+| `StrategyDecision` | Agent authorization of a nonempty candidate inventory |
+| `GoalAdmissionBundle` | Goal and authorized candidates sent to Execution together |
+| `StrategyPlanningRequest` | admitted Goal and candidates presented to Execution Planning |
+| `PlanningCommitment` | accepted operational realization |
+| `StrategyOutcomeAssociation` | link from selected Strategy to observed outcomes |
+| `StrategyAbstention` | active Goal has no useful action in the current state |
 
 ## Shared identity posture
 
@@ -35,7 +53,8 @@ Every durable Strategy record must carry:
 - creation transaction time
 - authorizing Agent identity
 - perspective identity
-- Directive and Goal revision
+- Directive and Goal draft revision
+- admitted Goal revision when admission has occurred
 - Strategy policy revision
 - PDS package or facet-set revision
 - profile, assignment, and activation lineage
@@ -45,6 +64,58 @@ Every durable Strategy record must carry:
 - verified Method inventory revision
 
 Supersession creates a new revision. It never edits the prior judgment in place.
+
+## Goal draft
+
+`GoalDraft` is Agent-owned world-model curation state. It contains the exact ground `meld-lang::Goal` value proposed for Execution, but it is not present in the Execution Goal Set.
+
+```text
+GoalDraft
+  draft_ref
+  draft_revision
+  agent_ref
+  directive_ref
+  proposed_goal
+  source_belief_refs
+  world_frame_ref
+  value_posture_ref
+  created_at
+```
+
+The proposed Goal identity may be allocated before admission so Strategy lineage remains stable. Its Execution lifecycle does not begin until Execution accepts a `GoalAdmissionBundle`.
+
+## Known Strategy catalog
+
+`KnownStrategyCatalog` is the canonical world-model index of persisted reusable Strategy knowledge.
+
+```text
+KnownStrategyCatalogEntry
+  strategy_entry_ref
+  strategy_entry_revision
+  goal_pattern
+  pds_lineage
+  reusable_method_refs
+  reusable_composition_template_refs
+  prior_selection_refs
+  prior_outcome_refs
+  availability_posture
+```
+
+Execution retains custody of verified Method bodies. Catalog entries cite exact Method revisions. Novel episode candidates may be selected without entering the catalog.
+
+`AvailableStrategySet` is the bounded result for one Goal draft and input frame.
+
+```text
+AvailableStrategySet
+  set_ref
+  goal_draft_ref
+  input_frame
+  known_strategy_catalog_revision
+  reused_alternative_refs
+  novel_alternative_refs
+```
+
+It is derived from applicable known entries plus newly constructed episode candidates. It is not another global catalog.
 
 ## Strategy construction attempt
 
@@ -57,8 +128,10 @@ StrategyConstructionAttempt
   agent_ref
   delegation_grant_ref
   directive_ref
+  goal_draft_ref
   goal_ref
   input_frame
+  known_strategy_catalog_revision
   search_bounds
   started_at
   completed_at
@@ -68,17 +141,22 @@ StrategyConstructionAttempt
 
 `input_frame` references exact graph, belief, causal, regime, planner-projection, domain-theory, authority, activation, capability-catalog, verified Method inventory, and any consumed Execution operational-projection revisions.
 
+`goal_ref` is absent during initial admission construction and present for later convergence attempts.
+
 `search_bounds` identifies candidate count, expansion depth, compute budget, elapsed budget, and any model-use budget.
 
 `result` is one of:
 
 ```text
 candidate proposal
+no method available
 explicit abstention
 superseded before proposal
 ```
 
 An attempt is not a task and must not enter the task network.
+
+`no method available` is valid only before initial Goal admission. `explicit abstention` is valid only for a later attempt associated with an already admitted Goal.
 
 ## Candidate alternative
 
@@ -87,6 +165,8 @@ An attempt is not a task and must not enter the task network.
 ```text
 StrategyAlternative
   alternative_ref
+  origin
+  known_strategy_entry_ref
   composition
   composition_hash
   obligation_refs
@@ -106,6 +186,8 @@ StrategyAlternative
 ```
 
 The embedded Composition remains a pure language value. The Strategy wrapper owns persistence, provenance, lifecycle, and explanation.
+
+`origin` distinguishes reused known Strategy, verified Method derivation, and novel episode construction. `known_strategy_entry_ref` is present only when the candidate came from the persisted catalog.
 
 Each `subgoal_realizations` entry is keyed by Composition step identity and carries the exact child Composition hash or verified Method revision, bindings, and expanded Composition hash. The mapping must close every subgoal before proposal validation.
 
@@ -131,7 +213,7 @@ StrategyProposal
   proposal_hash
   closure_hash
   attempt_ref
-  goal_ref
+  goal_draft_ref
   input_frame
   ranked_alternative_refs
   recommendation
@@ -154,7 +236,8 @@ AgentStrategyJudgment
   delegation_grant_ref
   proposal_ref
   proposal_hash
-  goal_ref
+  goal_draft_ref
+  proposed_goal_ref
   outcome
   selected_alternative_refs
   selection_policy
@@ -163,9 +246,9 @@ AgentStrategyJudgment
   judged_at
 ```
 
-`outcome` is accepted or rejected. Acceptance must authorize an exact nonempty subset of alternatives present in the referenced proposal. Rejection authorizes none and preserves typed rationale. Proposal reference, hash, Goal, and alternative payload mismatch fails closed.
+`outcome` is accepted or rejected. Acceptance must authorize an exact nonempty subset of alternatives present in the referenced proposal. Rejection authorizes none and preserves typed rationale. Proposal reference, hash, Goal draft, proposed Goal, and alternative payload mismatch fails closed.
 
-Acceptance command preconditions require the Goal to remain `Active`, proposal closure to hash-verify, delegation and effective authority to remain valid, assignment and activation revisions to remain current, and every selected alternative to remain eligible under its validity dependencies. Agent judgment validates authority and Goal epochs through the same linearizable fence used by commitment. Judgment fails closed when any precondition is stale.
+Initial acceptance preconditions require the Goal draft to remain current, proposal closure to hash-verify, delegation and effective authority to remain valid, assignment and activation revisions to remain current, and every selected alternative to remain eligible under its validity dependencies. Later replacement judgments also validate the admitted Goal lifecycle epoch. Judgment fails closed when any precondition is stale.
 
 An accepted judgment creates the corresponding `StrategyDecision`. The judgment, decision, and durable publication obligation must be written atomically or derived by a deterministic idempotent reducer keyed by judgment identity. A crash must not strand accepted Agent authority without a queryable decision and publication obligation.
 
@@ -265,6 +348,7 @@ StrategyDecision
   authorizing_agent_ref
   delegation_grant_ref
   directive_ref
+  goal_draft_ref
   goal_ref
   input_frame
   alternative_refs
@@ -273,7 +357,6 @@ StrategyDecision
   value_posture_ref
   authorization_scope
   authority_epoch_fence
-  goal_epoch_fence
   strategy_eligibility_epoch_fence
   assumptions
   validity_horizon
@@ -299,9 +382,28 @@ The Goal is satisfied.
 Execution accepted the work.
 ```
 
+## No method available
+
+`NoMethodAvailable` records that bounded initial Strategy construction could not produce an eligible reusable or novel candidate for a Goal draft.
+
+```text
+NoMethodAvailable
+  error_ref
+  attempt_ref
+  goal_draft_ref
+  input_frame
+  known_candidate_refs
+  novel_candidate_refs
+  rejection_grounds
+  missing_semantics
+  created_at
+```
+
+This is a visible runtime error rather than quiescence. The Goal draft remains outside Execution. An empty known Strategy catalog is not sufficient grounds because novel construction must also have been attempted under the available PDS affordances.
+
 ## Abstention
 
-`StrategyAbstention` is a first-class result of a bounded attempt.
+`StrategyAbstention` is a first-class result of a bounded later attempt for an already admitted Goal.
 
 ```text
 StrategyAbstention
@@ -342,6 +444,7 @@ Wake delivery is at least once from the durable cursor set. Restart replays ever
 ```text
 GoalStrategyAssociation
   association_ref
+  goal_draft_ref
   goal_ref
   active_decision_ref
   latest_attempt_ref
@@ -349,9 +452,40 @@ GoalStrategyAssociation
   updated_at
 ```
 
-`current_status` distinguishes awaiting construction, proposal pending Agent judgment, proposal rejected by Agent, decision authorized, submitted to Execution, accepted by Execution, rejected by Execution, invalidated, convergence quiescent, and superseded.
+`current_status` distinguishes draft awaiting construction, no method available, proposal pending Agent judgment, proposal rejected by Agent, admission pending, accepted by Execution, rejected by Execution, invalidated, convergence quiescent, and superseded.
 
 The association is a projection over owned records. It must not become an alternate Goal state machine.
+
+## Goal admission
+
+`GoalAdmissionBundle` is the initial cross-domain handoff. It prevents an authored Goal from entering Execution without a viable theory of action.
+
+```text
+GoalAdmissionBundle
+  admission_ref
+  goal_draft_ref
+  proposed_goal
+  strategy_decision_ref
+  authorized_candidate_refs
+  authorizing_agent_ref
+  effective_authority_ref
+  world_frame_ref
+```
+
+`authorized_candidate_refs` must be nonempty and must match the Strategy decision. Execution rejects an empty or mismatched bundle. Acceptance creates the initial Execution Goal revision and makes the Strategy decision eligible for Planning.
+
+This is intentionally one small admission contract. It does not require Strategy persistence and the Execution Goal store to share an implementation or storage engine.
+
+```text
+GoalAdmissionAccepted
+  admission_ref
+  goal_ref
+  goal_revision
+  goal_epoch_fence
+  strategy_decision_ref
+```
+
+The accepted record supplies the first Goal lifecycle epoch. Later planning requests combine it with the Strategy decision authority and eligibility fences.
 
 ## Invalidation
 
@@ -377,7 +511,7 @@ Invalidation is produced either by a deterministic reducer over declared depende
 
 Invalidation advances the Strategy eligibility epoch and blocks new task-network commitment and dispatch for that decision. It does not perform cancellation mechanics for work already in flight. Agent authority decides whether the broader intent remains authorized. Execution decides how committed work stops, transitions, or cleans up.
 
-Every Strategy decision carries Agent authority, Goal lifecycle, and Strategy eligibility epochs. Task-network commit and dispatch claims validate all three through a linearizable authority-preserving fence. Authority revocation and Strategy invalidation advance their owning epochs. The Goal lifecycle epoch advances on every lifecycle, replacement, or content transition that changes work eligibility, including activation, suspension, resume, satisfaction, reopening, abandonment, removal, supersession, and replacement. Each transition serializes against commit and dispatch claims. A stale fence rejects commitment and blocks new dispatch.
+Every Strategy decision carries Agent authority and Strategy eligibility epochs. Accepted Goal admission supplies the initial Goal lifecycle epoch. Task-network commit and dispatch claims validate all three through a linearizable authority-preserving fence. Authority revocation and Strategy invalidation advance their owning epochs. The Goal lifecycle epoch advances on every lifecycle, replacement, or content transition that changes work eligibility, including activation, suspension, resume, satisfaction, reopening, abandonment, removal, supersession, and replacement. Each transition serializes against commit and dispatch claims. A stale fence rejects commitment and blocks new dispatch.
 
 ## Execution handoff
 
@@ -411,6 +545,8 @@ StrategyPlanningRequest
 Execution must validate every referenced revision before attempting realization. The allowed selection policy is read from the immutable Strategy decision and must not be supplied or changed after Agent authorization.
 
 Execution may select only among authorized alternatives and bind only declared variables. Any semantic replacement requires a new Strategy decision.
+
+The request may be issued only after Execution accepts the corresponding Goal admission. Execution `NoApplicableMethod` or an equivalent typed rejection remains a mechanical guard when the authorized inventory is stale or cannot be realized. It does not replace the world-model `NoMethodAvailable` admission error.
 
 ## Execution response
 
@@ -503,6 +639,25 @@ The reducer persists the accepted `StrategyPlanningResponse` atomically with the
 
 The task network remains the operational plan and execution state. The Strategy decision remains its upstream semantic lineage.
 
+## Strategy outcome association
+
+`StrategyOutcomeAssociation` preserves the join needed for later efficacy curation without defining that curation model now.
+
+```text
+StrategyOutcomeAssociation
+  association_ref
+  strategy_decision_ref
+  strategy_entry_ref
+  selected_alternative_ref
+  planning_commitment_ref
+  outcome_event_refs
+  input_world_frame_ref
+  observed_world_frame_ref
+  evaluation_status
+```
+
+`strategy_entry_ref` is optional for a novel episode candidate. `evaluation_status` may remain unassessed. The record preserves which theory was selected, what Execution committed, and which observed outcomes followed. A later curation step may compare the projection with reconciled reality and update reusable Strategy preference through a new record.
+
 ## Evidence-admission ingestion
 
 An owning epistemic domain submits a completed evidence-admission judgment through an authority-preserving task-network command.
@@ -527,7 +682,7 @@ Current execution records require a Method identity. Strategy-generated work req
 
 ## Event posture
 
-Canonical semantic events must be published for Agent authorization, Strategy invalidation, accepted planning commitment, task and artifact outcomes, accepted evaluation, and observed domain outcomes. Strategy decision and invalidation records create durable outbox obligations in the same transaction as their owning transition or through an equivalent deterministic reducer. Stable event identities derive from the owning Strategy transition, task-network commit, outcome record, or evaluator record.
+Canonical semantic events must be published for Goal admission, `NoMethodAvailable`, Agent authorization, Strategy invalidation, accepted planning commitment, task and artifact outcomes, accepted evaluation, and observed domain outcomes. `NoMethodAvailable` is surfaced as a runtime error event because it means a desired state could not be connected to any reusable or novel theory of action. Strategy decision and invalidation records create durable outbox obligations in the same transaction as their owning transition or through an equivalent deterministic reducer. Stable event identities derive from the owning Strategy transition, task-network commit, outcome record, or evaluator record.
 
 Other canonical semantic events may be published for:
 
@@ -541,7 +696,7 @@ A Strategy event records semantic judgment. A planning event records operational
 
 ## Idempotency and replay
 
-The Strategy attempt idempotency key must include Goal revision, exact input frame, Strategy policy revision, construction-grant revision, and invalidation state.
+The initial Strategy attempt idempotency key must include Goal draft revision, exact input frame, Strategy policy revision, known Strategy catalog revision, construction-grant revision, and invalidation state.
 
 The planning request idempotency key must include Strategy decision revision, selected candidate inventory, Goal revision, execution operational-projection revision, capability availability, capacity revision, target task-network revision and state hash, and planning-attempt generation.
 
@@ -569,6 +724,12 @@ Evidence admission does not imply correctness.
 Correctness evaluation does not imply Goal satisfaction.
 
 Only Agent satisfaction curation closes the Goal.
+
+An initial Goal does not enter Execution without a nonempty authorized Strategy inventory.
+
+NoMethodAvailable is not convergence quiescence.
+
+An empty known Strategy catalog does not prove that no Strategy can be constructed.
 ```
 
 ## Read with
@@ -577,6 +738,7 @@ Only Agent satisfaction curation closes the Goal.
 - [Strategy Requirements](requirements.md)
 - [Docs Freshness Strategy](docs_freshness.md)
 - [World Model Agent](../agent/README.md)
+- [Directive Grounding](../agent/directive_grounding.md)
 - [World Model Planner](../planner/README.md)
 - [Execution Planning](../../execution/planning/README.md)
 - [Task Network](../../execution/task_network.md)

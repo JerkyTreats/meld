@@ -1,6 +1,6 @@
 # Execution Domain Gaps
 
-Date: 2026-06-02
+Date: 2026-07-23
 Status: active
 Scope: open contracts and undefined seams preventing a complete execution architecture
 
@@ -16,7 +16,7 @@ Each gap below names what is missing, why it blocks a complete architecture diag
 
 See [Goals](goals/README.md) for the full goal model and [World Model Agent](../world_model/agent/README.md) for the curation side.
 
-The goal model resolves the structural gap through a clean ownership split. Execution owns the Goal Set as data (lifecycle, priority, satisfaction criteria) and exposes a public curation API. The world model agent curates the goal set — it evaluates perspective-scoped beliefs against its normative framework and issues goal mutations (add, modify, remove, satisfy) through the API. Execution reacts to the current goal set without understanding why it changed.
+The goal model resolves the type and lifecycle split. Execution owns admitted Goal lifecycle data. The world model Agent owns Goal drafts and later lifecycle curation. Initial admission requires a nonempty Agent-authorized Strategy inventory.
 
 Goals are propositions about desired belief states. Satisfaction checking is owned by the world model agent (because it requires evaluating belief). The agent also has read access to active goals, enabling prediction (what evidence to expect given active goals) and anomaly detection (goals without belief movement).
 
@@ -24,6 +24,8 @@ The prior tension between world-state propositions and operational triggers is r
 
 Residual gaps within the goal model:
 
+- **Directive grounding** — derive concrete belief questions from activated PDS theory and trusted graph scope
+- **Goal admission gate** — route current configured Goal commands through Strategy construction before Execution admission
 - **agent normative framework** — the agent's policy for what belief states it cares about, what divergence thresholds trigger action, how it prioritizes; this is the core of the agent's decision-making and lives in world_model/agent
 - **goal conflict resolution** — strategy for competing goals beyond priority and preemption policy
 - **multi-agent goal coordination** — protocol for goals that interact across agents with overlapping concerns
@@ -43,6 +45,7 @@ Residual gaps within the pipeline:
 
 - **Method registry deepening** — first-slice loading and verification exist; durable registration, revision, visibility, quarantine, indexing, and retirement remain
 - **Strategy construction** — semantic candidate search, Method instantiation, and novel Composition construction belong to Agent-authorized [World Model Strategy](../world_model/strategy/README.md); `meld-execution` retains Method registry custody and concrete candidate realization
+- **known Strategy catalog** — persist reusable Strategy knowledge separately from Goal-specific available candidate sets
 - **task network graph executor** — the expanded execution slice exists; remaining gaps are conditional edge evaluation, exact authorized subgoal lowering, graph repair mutations, shared task reuse, and deeper runtime recovery
 - **switching cost model** — operational transitions require cleanup, sunk, and disruption cost plus exact integration with Agent-authorized selection policy and world-model benefit projections
 
@@ -166,8 +169,8 @@ The gaps are not independent. Closing them in the wrong order produces circular 
 
 Current resolution state:
 
-- **Gap 1 (goal model)**: **resolved and implemented.** `Goal`, `GoalPriority`, `GoalSource`, `GoalLifecycle` are implemented in `meld-lang`. Goals are typed propositions in the shared language. The world model agent constructs goals as `Proposition` targets with priority and lifecycle metadata. Execution evaluates goals mechanically without interpreting semantic intent. Residual: agent normative framework, goal conflict resolution, multi-agent coordination, goal learning. See [Lang Goals and Methods](../meld-lang/goals_and_methods.md).
-- **Gap 2 planning pipeline**: **configured-path execution slice implemented; Strategy missing.** `Method`, `Composition`, `Operator`, `unify`, `substitute`, and `validate` are implemented in `meld-lang`. Current Execution matches configured Methods and lowers concrete Compositions. Target Strategy must own semantic search and Method instantiation before Agent authorization. Phase 8 proves multi-node task-network lowering, task init materialization, real task dispatch, and replay. Residual: Strategy construction, authorized subgoal expansion, conditional graph execution, repair mutations, shared reuse, and switching policy integration. See [Lang Compositions](../meld-lang/compositions.md).
+- **Gap 1 goal model**: **type and lifecycle implemented; admission gate missing.** `Goal`, `GoalPriority`, `GoalSource`, and `GoalLifecycle` are implemented in `meld-lang`. Current world-model curation emits configured Goal commands directly. Target flow holds a Goal draft outside Execution until Strategy produces an eligible candidate and the Agent authorizes admission. Residual: Directive grounding, Goal admission bundle, Agent normative framework, goal conflict resolution, multi-agent coordination, and goal learning. See [Lang Goals and Methods](../meld-lang/goals_and_methods.md).
+- **Gap 2 planning pipeline**: **configured-path execution slice implemented; Strategy missing.** `Method`, `Composition`, `Operator`, `unify`, `substitute`, and `validate` are implemented in `meld-lang`. Current Execution matches configured Methods and lowers concrete Compositions. Target Strategy must own reusable and novel semantic candidate construction before Goal admission. Residual: known Strategy catalog, Strategy construction, authorized subgoal expansion, conditional graph execution, repair mutations, shared reuse, and switching policy integration. See [Lang Compositions](../meld-lang/compositions.md).
 - **Gap 3 (world model read interface)**: **resolved and implemented.** `WorldState`, `evaluate()`, `EvalResult`, gap detection, and pattern query are implemented in `meld-lang`. The world model publishes `WorldState` as a set of ground propositions. Execution evaluates propositions with three-valued semantics. Residual: world model planner projection from internal types into ground `WorldState` propositions (`meld-world-model` concern). See [Lang World State](../meld-lang/world_state.md).
 - **Gap 4 (outcome publication)**: **resolved.** Execution publishes task lifecycle events to the spine. The world model reducer consumes them and materializes claims for belief revision. `Effect` and `WorldState::apply()` in `meld-lang` serve forward projection in the planning loop, not outcome publication. Residual: world model reducer enrichment as belief layer matures (world model concern).
 - **Gap 5 (workflow integration)**: continuous. Workflows remain the compatibility layer where cognitive subsystems are not yet built.

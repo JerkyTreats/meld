@@ -1,8 +1,10 @@
 # Supervisor Runtime Requirements
 
 Date: 2026-06-17
-Status: proposed
+Status: historical supervisor contract evidence
 Scope: root runtime supervisor requirements only
+
+Current runtime-completion authority is [Runtime Completion Ground Map](runtime_completion_ground_map.md), followed by [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md). These lifecycle contracts remain evidence only where they agree with the operational-parity objective and its deferred failure mechanics.
 
 ## Purpose
 

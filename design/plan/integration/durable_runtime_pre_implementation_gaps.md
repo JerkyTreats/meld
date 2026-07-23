@@ -1,8 +1,10 @@
 # Durable Runtime Pre Implementation Gaps
 
 Date: 2026-06-14
-Status: proposed
+Status: historical pre-assembly gap evidence
 Scope: gaps to resolve before implementing durable single process runtime assembly
+
+Current runtime-completion authority is [Runtime Completion Ground Map](runtime_completion_ground_map.md), followed by [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md). This document preserves earlier gap analysis and must not restore the superseded one-turn or activation-heavy sequence.
 
 ## Purpose
 

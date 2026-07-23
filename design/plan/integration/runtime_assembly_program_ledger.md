@@ -4,6 +4,8 @@ Date: 2026-06-22
 Program branch: runtime-assembly-implementation
 Status: complete
 
+Authority note: this ledger records completed historical assembly work. It does not prove current operational-parity runtime completion. Current gaps and implementation authority live in [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md).
+
 ## Objective
 
 Finish the durable runtime assembly phased plan from root assembly through proof and supervisor foundation.

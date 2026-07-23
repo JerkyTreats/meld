@@ -1,6 +1,6 @@
 # Docs Freshness Strategy
 
-Date: 2026-07-22
+Date: 2026-07-23
 Status: active worked example
 Scope: derive correct README work from domain theory and current world state
 
@@ -16,6 +16,44 @@ whose correctness meets the configured threshold.
 The target preserves the useful output shape of the existing docs freshness workflow: README files are produced per folder, work may fan out across independent folders, and semantic context may flow from descendants toward ancestors. Strategy adds stronger correctness and convergence semantics: exact published bytes are evaluated and bounded work may repeat until the active Goal is satisfied or no useful action is currently available.
 
 The Strategy proof must obtain that behavior without placing bottom-up traversal, repeated turns, prompt order, child wiring, or a fixed task network in the Directive or stewardship package.
+
+## Worked flow
+
+```mermaid
+flowchart TD
+    D[Docs freshness Directive]
+    SCOPE[Ground topology-freshness question]
+    SCAN_GOAL[Draft Goal for current topology]
+    SCAN_STRATEGY[Construct scan candidate]
+    SCAN[Execution scans workspace]
+    TREE[Reconcile current folder graph]
+    QUESTIONS[Ground README questions per folder]
+    DOC_GOAL[Draft docs-correctness Goal]
+    BUILD[Construct reusable and novel candidates]
+    CANDIDATE[Authorized README Composition]
+    EXECUTE[Generate, publish, and evaluate READMEs]
+    BELIEF[Reconcile correctness beliefs]
+    DONE{Threshold met}
+    REFINE[Construct another bounded Strategy]
+
+    D --> SCOPE
+    SCOPE --> SCAN_GOAL
+    SCAN_GOAL --> SCAN_STRATEGY
+    SCAN_STRATEGY --> SCAN
+    SCAN --> TREE
+    TREE --> QUESTIONS
+    QUESTIONS --> DOC_GOAL
+    DOC_GOAL --> BUILD
+    BUILD --> CANDIDATE
+    CANDIDATE --> EXECUTE
+    EXECUTE --> BELIEF
+    BELIEF --> DONE
+    DONE -->|Yes| SATISFY[Agent satisfies Goal]
+    DONE -->|No and useful action exists| REFINE
+    REFINE --> CANDIDATE
+```
+
+Bottom-up fan-out is one candidate topology that Strategy may derive inside `BUILD`. It is not declared by the Directive.
 
 ## What the PDS must supply
 
@@ -122,11 +160,21 @@ Those are candidate realization details or operational policy. They are not the 
 
 ## Grounding the Directive
 
-Belief Reconciliation and graph projection first settle the current folder graph and the relevant beliefs that apply to its members.
+Directive grounding begins from the activated root scope. It can instantiate a topology-freshness question before folder membership is trusted. Once reconciliation establishes a current folder graph, grounding applies the maintained condition and PDS belief-family declarations to each material folder.
 
-The Directive Agent authorizes grounding the universal maintained condition over one exact trusted scope.
+For each material folder, it instantiates concrete belief questions such as:
 
-For each material folder, Strategy derives obligations such as:
+```text
+README existence
+README correctness
+README evidence freshness
+README direct-content coverage
+README child-subtree coverage
+```
+
+Belief Reconciliation assesses those questions from admitted evidence. Unknown, missing, stale, below-threshold, and satisfied are epistemic results. They are not Strategy topology.
+
+When the Directive Agent judges a reconciled divergence worth acting on, it constructs a Goal draft. Strategy then derives internal action obligations such as:
 
 ```text
 README exists at the canonical path
@@ -138,6 +186,15 @@ correctness meets the threshold
 ```
 
 These are internal Strategy obligations. They are not separately inserted Execution Goals.
+
+The distinction is:
+
+```text
+Directive grounding decides which questions must be answerable.
+Belief Reconciliation decides what is currently believed.
+Goal curation decides which divergence warrants action.
+Strategy decides which theory of action can change it.
+```
 
 ## Discovering action paths
 
@@ -230,11 +287,15 @@ folder topology is stale
 README coverage is not yet groundable
 ```
 
-Strategy can propose a bounded observation Composition. After Agent authorization, Execution scans the scope and publishes topology evidence. Belief Reconciliation settles a new trusted graph revision.
+Directive grounding instantiates a scope-freshness question. Reconciliation establishes that the topology is stale. Goal curation produces a draft requiring a current scope.
 
-The next Strategy attempt grounds the Directive over the discovered folders. Missing README and unknown correctness beliefs yield concrete obligations.
+Strategy considers any applicable known Strategy and then novel construction from the `observe folder topology` affordance. It can propose a bounded scan Composition even when the known Strategy catalog is empty. Agent authorization admits the Goal with that candidate inventory. Execution scans the scope and publishes topology evidence. Belief Reconciliation settles a new trusted graph revision.
 
-For one folder, constrained context and recursive coverage may make settled child coverage necessary. Strategy constructs a concrete Composition with parallel child README branches, exact-byte evaluation, world-model admission waits, and child-to-parent edges gated by the resulting authoritative verdicts.
+Directive grounding then instantiates README questions over the newly discovered folders. Missing README and unknown correctness revisions reach Goal curation. The Agent produces a docs-correctness Goal draft.
+
+Strategy again combines applicable known Strategies with novel construction. Constrained context and recursive coverage may make settled child coverage necessary. Strategy constructs a concrete Composition with parallel child README branches, exact-byte evaluation, world-model admission waits, and child-to-parent edges gated by the resulting authoritative verdicts.
+
+If bounded construction produces no eligible candidate from either source, Strategy emits `NoMethodAvailable` and the Goal draft does not enter Execution. An empty known catalog alone does not cause this result.
 
 Execution realizes the authorized candidate and commits the task network. Completed work publishes artifacts and outcomes. Reconciliation revises existence, coverage, freshness, and correctness beliefs.
 
@@ -249,12 +310,15 @@ The example proves a loop rather than one workflow run.
 ```text
 observe topology
 → reconcile scope
-→ ground README obligations
+→ ground README belief questions
+→ reconcile Directive divergence
+→ curate Goal draft
 → construct bounded Strategy
+→ admit Goal with nonempty candidates
 → execute bounded work
 → evaluate exact published bytes
 → reconcile outcome
-→ re-strategy when still below threshold
+→ construct another bounded Strategy when still below threshold
 ```
 
 When no useful action is available, Strategy records abstention and the Strategy association becomes quiescent while the Goal remains `Active`. New evidence, authority, capacity, or capability availability may wake it.
@@ -347,7 +411,9 @@ Meld does not yet implement this derivation.
 Current planner selection chooses among authored Methods and current docs freshness configuration contains the detailed workflow shape. The graph, belief, traversal, context, provider, task-network, and event foundations are useful primitives, but the following are still missing:
 
 - Strategy decision persistence and invalidation
-- universal Directive grounding over trusted scope
+- Directive grounding into dynamically instantiated belief questions
+- Goal draft gating before Execution admission
+- known reusable Strategy catalog and Goal-specific available set
 - semantic action affordance discovery
 - typed evidence admission and projected sufficiency for coverage
 - alternative Composition construction
@@ -355,6 +421,7 @@ Current planner selection chooses among authored Methods and current docs freshn
 - generic many-branch artifact fan-in
 - exact published-byte correctness evaluation and Directive aggregation
 - authoritative post-production evidence gates inside the task network
+- Strategy selection and outcome association for later efficacy curation
 
 The example defines the required architectural outcome. It does not claim that the current runtime already produces it.
 
@@ -364,6 +431,7 @@ The example defines the required architectural outcome. It does not claim that t
 - [Strategy Requirements](requirements.md)
 - [Strategy Contracts](contracts.md)
 - [Belief Reconciliation Network](../belief/README.md)
+- [Directive Grounding](../agent/directive_grounding.md)
 - [Meld Lang Compositions](../../meld-lang/compositions.md)
 - [Execution Planning](../../execution/planning/README.md)
 - [Persistent Domain Stewardship](../../../persistent_domain_stewardship/README.md)

@@ -2,8 +2,10 @@
 
 Date: 2026-07-04
 Revised: 2026-07-12
-Status: active child program with sequencing governed by the parent
+Status: deferred and superseded as a current runtime-completion prerequisite
 Program branch: `runtime-operator-visibility`
+
+Authority: [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) defer broad operator visibility until operational parity and bounded convergence pass. Completed evidence remains historical truth, but remaining packets are not current runtime-completion work.
 
 ## Objective
 
@@ -11,13 +13,9 @@ Implement runtime operator visibility so a user can tell whether `meld runtime r
 
 The first objective is Wave 0 shared contract prework. Later waves must consume these shared contracts instead of inventing alternate cache, action, or status shapes.
 
-## Parent Program
+## Historical Parent Program
 
-The [Production Cognitive Runtime Closure Program](production_cognitive_runtime_closure_program.md) owns cross-wave dependency order, semantic runtime activation, correctness gates, product proof, process hosting, agent scheduling, integration rules, and final closeout.
-
-This ledger remains the child program for status cache, operator actions, console presentation, process visibility, and runtime command behavior.
-It does not own world model or execution semantic progress.
-Its earlier wave sequence is superseded where the parent program defines a dependency or gate, while completed Wave 0 evidence remains historical truth.
+The former [Production Cognitive Runtime Closure Program](production_cognitive_runtime_closure_program.md) no longer owns current delivery order. This ledger and its parent are deferred historical plans. Completed Wave 0 evidence remains historical truth, while current implementation authority stays with the operational-parity ground map and workstreams named above.
 
 ## Source Plan
 

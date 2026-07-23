@@ -1,11 +1,13 @@
 # Production Cognitive Runtime Closure Program
 
 Date: 2026-07-12
-Status: design ready for phased delivery
+Status: superseded for current runtime completion
 Scope: turn the completed event foundation and library-level cognitive flywheel into one honest, restart-safe, operator-visible product runtime
 Base branch: `event-foundation-closeout`
 Recommended program branch: `production-cognitive-runtime-closure`
 Complex workflow: inactive unless separately requested
+
+Authority: [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) replace this program for current implementation. Do not execute its activation, live-account, restart, comprehensive failure, or delivery-ledger scope as part of the operational-parity workstream.
 
 ## Objective
 

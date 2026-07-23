@@ -1,42 +1,45 @@
 # Goals
 
-Date: 2026-06-02
+Date: 2026-07-23
 Status: active
 Scope: goal model bridging world-model belief and execution planning
 
 ## Thesis
 
-Goals are the normative layer. Beliefs describe what the system thinks is true. Goals describe what the system wants to be true. The gap between a current belief and a desired state is what creates the need for action.
+Beliefs describe what Meld thinks is true. Goals describe what Meld is authorized to make true.
 
-Goals live inside execution because they are execution's lifecycle data. Strategy reads accepted Goal revisions and constructs candidate theories of action for Agent judgment. Execution Planning reads only the authorized Strategy inventory. Execution does not decide which Goals should exist or which semantic action theory is viable.
+A proposed desired state begins as a Goal draft in the world model. It becomes an Execution Goal only after Strategy produces at least one eligible theory of action and the Agent authorizes both together.
+
+| Record | Meaning | Owner |
+|---|---|---|
+| Goal draft | a desired state being considered | world-model Agent |
+| Strategy decision | authorized theories of action for that desired state | world-model Strategy under Agent authority |
+| Admitted Goal | desired state accepted into operational lifecycle | Execution |
 
 ## Ownership Split
 
 ### Execution owns the Goal Set
 
-The Goal Set is a data structure inside execution. It holds the current goals, their lifecycle state, their priority, and their satisfaction criteria. Execution exposes a public curation API over this set:
+The Goal Set is a data structure inside execution. It holds admitted Goals, their lifecycle state, their priority, and their satisfaction criteria. Execution exposes a public admission and curation API:
 
-- **add**: propose a new goal with desired state, priority, and satisfaction criteria
+- **admit**: accept an Agent-authorized Goal with a nonempty Strategy inventory
 - **modify**: adjust priority, cost ceiling, or preemption policy of an existing goal
 - **remove**: abandon a goal (with reason)
 - **satisfy**: mark a goal as satisfied (with evidence)
 - **suspend / resume**: hold or release a goal
-- **read**: query the current goal set (active, proposed, satisfied, all)
+- **read**: query active, suspended, satisfied, abandoned, or all admitted Goals
 
-Strategy reads accepted Goal revisions and world-model projections. Execution Planning reads the active Goal set, authorized Strategy inventory, and live operational state, then maintains the task network. Execution remains indifferent to why a Goal was added, removed, or reprioritized.
+Initial admission rejects an empty or mismatched Strategy inventory. Execution Planning reads the active Goal set, authorized Strategy inventory, and live operational state, then maintains the task network. Execution remains indifferent to why a Goal was admitted, removed, or reprioritized.
 
-### World Model Agent curates the Goal Set
+### World Model Agent owns desired state
 
-The world model agent is the decision-maker. It reads its perspective-scoped belief views, evaluates them against its normative framework, and issues goal mutations through execution's public API.
+Directive grounding establishes concrete belief questions. The Agent reads their reconciled belief views and decides whether divergence warrants action.
 
-The agent decides:
-- "Tests are failing with high confidence — add a goal to make tests pass"
-- "Documentation freshness has decayed below threshold — add an observation goal to verify, then potentially an action goal"
-- "Regime shifted to incident response — remove the documentation goal, elevate the stability goal"
-- "The desired belief state is now achieved — satisfy the goal"
-- "This belief divergence is too minor to warrant action — do nothing"
+Before admission, the Agent may draft a new desired state, tolerate the divergence, or decide that an existing Goal already covers it. After admission, the Agent may modify priority, suspend, resume, satisfy, or abandon the Goal.
 
-The normative judgment — "this matters, act on it" vs "this is tolerable, ignore it" — lives in the agent. The agent's normative framework (what states it cares about, what thresholds trigger action, what priorities apply) is agent-specific. Different agents curating different goal sets is the "En Masse and At Will" pattern applied to execution.
+The judgment that a state matters lives in the Agent. Strategy answers a separate question: which theories of action could change it.
+
+If bounded Strategy construction produces no eligible reusable or novel candidate, `NoMethodAvailable` is emitted and the draft remains outside Execution.
 
 ### Seed Agents And Agent Creation Goals
 
@@ -44,7 +47,7 @@ The first agents cannot be created by goal curation because no agent exists yet.
 
 Seed agents are trusted genesis state created by init or loaded from configuration. They provide the first curation authority.
 
-After seed agents exist, new agent creation is represented as an ordinary goal. An authorized existing agent may add a `CreateAgent` goal when a separate concern needs its own perspective, policy, and subscriptions.
+After seed agents exist, new agent creation is represented as an ordinary goal. An authorized existing Agent may draft a `CreateAgent` goal when a separate concern needs its own perspective, policy, and subscriptions. That Goal enters Execution only with an authorized initialization Strategy.
 
 Execution owns the initialization workflow for that goal. The workflow runs tasks and capabilities that create the durable agent record, bind the perspective, register belief keys, bind subscriptions, request first observations, and verify readiness.
 
@@ -54,32 +57,35 @@ Restarting an existing agent is not a `CreateAgent` goal. Runtime startup hydrat
 
 ### Why this split
 
-Execution should not understand regime shifts, belief divergence semantics, observation-needed signals, or novel causal decomposition. Those are world-model concerns. Execution should understand the accepted Goal revision, authorized candidate inventory, and current operational state.
+Execution should not interpret why a belief matters or invent a theory of action. It needs only the admitted Goal, authorized candidate inventory, and current operational state.
 
-The world model should not dispatch capabilities, commit task-network mutations, or manage live plan transitions. Strategy may construct semantic Composition candidates under Agent authority. Execution realizes authorized candidates mechanically.
+The world model should not dispatch capabilities or manage live task transitions. Strategy constructs semantic candidates. Execution realizes them.
 
-The Goal Set API is the contract boundary. It is narrow enough that neither domain imports the other's internals, and stable enough that both sides can evolve independently.
+The Goal admission and lifecycle API is the contract boundary. It is narrow enough that neither domain imports the other's internals.
 
 ## The Belief–Goal Bridge
 
-The world model agent is the active entity in this bridge. It evaluates beliefs and curates goals.
+The Agent is the decision-maker in this bridge.
 
 ```mermaid
-flowchart LR
-    BV[belief view] --> AG[world model agent]
-    AG -->|add, modify, remove, satisfy| GS[goal set in execution]
-    GS --> ST[world model Strategy]
-    ST -->|proposal| AG
-    AG -->|authorized decision| PL[planning loop]
+flowchart TD
+    DR[Directive grounding] --> BQ[belief questions]
+    BQ --> BV[reconciled belief view]
+    BV --> AG[world model Agent]
+    AG --> GD[Goal draft]
+    GD --> ST[world model Strategy]
+    ST -->|proposal or NoMethodAvailable| AG
+    AG -->|Goal admission bundle| GS[Goal Set in Execution]
+    GS --> PL[planning loop]
     PL -->|task network commands| TN[task network]
     TN -->|outcome events| SP[spine]
     SP --> WM[world model]
     WM -->|belief revision| BV
 ```
 
-The cycle closes through the spine. Execution outcomes become facts. Facts become evidence. Evidence revises belief. The world model Agent evaluates revised belief, curates the Goal set, and judges Strategy proposals. Execution Planning reacts to authorized decisions and live operational change.
+The cycle closes through the spine. Execution outcomes become facts. Facts become evidence. Evidence revises belief. The Agent evaluates revised belief, drafts desired state, and judges Strategy proposals. Execution Planning reacts only after Goal admission.
 
-Explicit typed contracts cross the boundary. Agent curation mutates Goal lifecycle through the public API. Strategy decisions cross into Execution Planning as immutable authorized inventories. Outcomes return through events.
+Explicit typed contracts cross the boundary. Initial admission carries the Goal and immutable authorized inventory together. Later Agent curation mutates Goal lifecycle through the public API. Outcomes return through events.
 
 ## World Model Knowledge of Active Goals
 
@@ -149,11 +155,11 @@ Examples in the shared language:
 - "build artifact exists and is valid" → `Exists { scope: build_target, artifact_type: "build_artifact" }`
 - "uncertainty about API compatibility is below threshold" → `Holds { subject: api_ref, dimension: "api_compatibility", condition: Above(0.8) }`
 
-The proposition does not name tasks, capabilities, or Methods. It names a desired belief state. Strategy constructs semantic candidates and the Agent authorizes a decision. Execution Planning realizes that decision.
+The proposition does not name tasks, capabilities, or Methods. It names a desired belief state. The Agent first holds it in a Goal draft. Strategy constructs semantic candidates and the Agent authorizes admission. Execution Planning realizes that decision.
 
 ### Goal source
 
-Goals originate from different triggers. The source is metadata recorded by the world model agent when it curates the goal set — it explains why the goal exists for audit and explanation, but execution does not branch on it.
+Goals originate from different triggers. The source is metadata recorded by the world model Agent when it constructs the Goal draft. It explains why the Goal exists for audit and explanation, but Execution does not branch on it.
 
 The concrete `GoalSource` type is defined in [`meld-lang`](../../meld-lang/goals_and_methods.md). It carries string descriptions for provenance and audit. Execution reads the source for lineage tracking and explanation only — it does not interpret the source to decide how to plan.
 
@@ -178,7 +184,7 @@ enum GoalSource {
 
 **Belief divergence**: the agent detected that current belief diverges from a desired state. The dimension and observed/desired fields are descriptive strings for audit — the actual desired state is the goal's `target` proposition.
 
-**User directed**: user or external system intent enters as a directive on the responsible agent. The agent translates that intent into a goal with a `Proposition` target and adds it to the goal set. User input enters the same cost-benefit evaluation pathway as high-weight value evidence, not as a bypass. See [Goal Curation](../../world_model/agent/goal_curation.md).
+**User directed**: user or external system intent enters as a Directive on the responsible Agent. Directive grounding establishes the relevant belief questions. The Agent may then translate unacceptable divergence into a Goal draft. User input enters the same cost-benefit evaluation pathway as high-weight value evidence, not as a bypass. See [Directive Grounding](../../world_model/agent/directive_grounding.md) and [Goal Curation](../../world_model/agent/goal_curation.md).
 
 **Maintenance**: the agent holds a standing invariant and monitors belief continuously. When the invariant is violated, the agent reactivates the goal. Maintenance goals may cycle between `Active` and `Satisfied` as belief moves relative to the invariant.
 
@@ -198,9 +204,9 @@ enum GoalLifecycle {
 }
 ```
 
-**Proposed**: Goal exists but the Agent has not activated it. Proposed Goals may be evaluated for cost and priority before activation.
+**Proposed**: the `meld-lang` Goal value is held in a world-model Goal draft and has not entered the Execution Goal Set.
 
-**Active**: the Goal is eligible for Strategy construction and authorized operational work.
+**Active**: Execution accepted the Goal admission bundle and its nonempty authorized Strategy inventory. The Goal is eligible for operational work.
 
 **Suspended**: the Goal remains valid but the Agent has explicitly paused pursuit. Missing evidence or no useful action does not suspend it. The Goal remains `Active` while its Strategy association becomes quiescent.
 
@@ -264,25 +270,28 @@ Satisfaction from any source remains: the system's own execution, external actio
 
 ## Belief Interaction Patterns
 
-In each pattern below, the world model agent is the active decision-maker. "Belief generates a goal" is shorthand for "the agent detects a belief state and decides to add a goal."
+In each pattern below, the world model Agent is the active decision-maker. "Belief generates a Goal" is shorthand for the Agent detecting a belief state, drafting desired reality, and admitting it only after Strategy construction succeeds.
 
-### Pattern 1: Agent detects divergence, adds action goal
+### Pattern 1: Agent detects divergence and admits action Goal
 
 ```
 agent reads: tests_pass = false (confidence: 0.95)
 agent's normative framework: tests_pass = true is a maintenance invariant
-→ agent adds goal: make tests pass (via curation API)
-→ Strategy proposes a candidate and the Agent authorizes it
+→ Agent drafts Goal: make tests pass
+→ Strategy proposes reusable or novel candidates
+→ Agent authorizes Goal and nonempty candidate inventory
+→ Execution admits Goal
 → Execution Planning realizes it as tasks
 ```
 
-### Pattern 2: Agent detects uncertainty, adds observation goal
+### Pattern 2: Agent detects uncertainty and admits observation Goal
 
 ```
 agent reads: api_compatible = unknown (uncertainty: high, freshness: stale)
 agent's normative framework: api_compatible is a precondition for an active goal
-→ agent adds observation goal: determine API compatibility (via curation API)
+→ Agent drafts observation Goal: determine API compatibility
 → Strategy proposes observation work and the Agent authorizes it
+→ Execution admits Goal with the authorized candidate
 → Execution Planning realizes the observation tasks
 → observation result → belief revision → agent re-evaluates, may add action goal
 ```
@@ -306,7 +315,8 @@ agent reads: regime shifted from "development" to "incident response"
 active goals: [improve_docs, fix_flaky_test]
 new belief: production system degraded (confidence: 0.9)
 → agent suspends improve_docs and fix_flaky_test
-→ agent adds restore_production (importance: critical, urgency: immediate)
+→ Agent drafts restore_production
+→ Strategy construction and Agent authorization admit it with candidates
 → execution's planning loop rebalances task network via cost-aware transitions
 ```
 
@@ -330,7 +340,7 @@ Maintenance invariants live in the agent's normative framework, not in the goal 
 The agent is one entity with two faces:
 
 - **World model face**: owns perspective, evidence policy, trust profile, observation scope, regime sensitivity. Produces scoped belief views. Evaluates beliefs against its normative framework.
-- **Execution face**: curates the goal set through the public API. The goal set is the agent's operational identity in execution — what it is trying to change about the world.
+- **Execution face**: admits Goals with authorized Strategy inventories, then curates their lifecycle through the public API. The Goal Set is the Agent's operational identity in Execution.
 
 In a multi-agent system, each agent has its own normative framework and its own goal set. Two agents observing the same repository may curate different goals because they have different perspectives, different priorities, or different tolerance thresholds for divergence.
 
@@ -348,7 +358,7 @@ When the Goal set or Strategy authorization changes, Execution Planning re-evalu
 
 ## Goal Decomposition
 
-Some Goals are too abstract to ground directly. The Agent may curate them into separate subgoals. Strategy may also use internal obligations and fully authorized Composition subgoal paths without creating Goal lifecycle entries.
+Some Goal drafts are too abstract to ground directly. The Agent may curate them into separate drafts. Each draft must independently pass Strategy construction before admission. Strategy may also use internal obligations and fully authorized Composition subgoal paths without creating Goal lifecycle entries.
 
 ```
 goal: "repository is well-documented"
@@ -357,7 +367,7 @@ goal: "repository is well-documented"
   sub-goal: "examples compile and run" (belief: examples_validity)
 ```
 
-Each subgoal is a separate entry in the Goal set with its own desired state, satisfaction criteria, and lifecycle. Child satisfaction may trigger parent reevaluation. The Agent satisfies the parent only when its own target evaluates as satisfied. A parent that depends on every child must express that condition explicitly as an `All` proposition.
+Each admitted subgoal is a separate entry in the Goal Set with its own desired state, satisfaction criteria, lifecycle, and authorized Strategy inventory. Child satisfaction may trigger parent reevaluation. The Agent satisfies the parent only when its own target evaluates as satisfied.
 
 Goal decomposition is the Agent concern of deciding what desired states deserve independent lifecycle. Strategy decomposition constructs semantic theories of action and instantiates any reusable Method path. Execution decomposition is limited to realizing the authorized concrete Composition.
 
@@ -365,7 +375,7 @@ Goal decomposition is the Agent concern of deciding what desired states deserve 
 
 GAPS.md identified a tension: goals as world-state propositions vs goals as operational triggers.
 
-The resolution: goals are propositions about desired belief states, owned as data by execution. Operational triggers (task failure, belief divergence, regime shift) are events that cause the world model agent to curate the goal set. The agent is the translator between "something changed in belief" and "this goal should now exist/change/retire."
+The resolution: Goals are propositions about desired belief states. They begin as world-model drafts and become Execution lifecycle data only after Strategy construction and Agent authorization. Operational triggers cause the Agent to draft or later curate a Goal. The Agent is the translator between belief divergence and desired state. Strategy establishes viable means before initial admission.
 
 Repair becomes: a task fails and Execution publishes the outcome. The Agent evaluates whether the threatened Goal remains worthwhile. Strategy determines whether a different semantic candidate is justified. Execution Planning may select another still-authorized alternative or mechanically transition to a newly authorized decision. The Agent owns intent, Strategy owns semantic approach, and Execution owns transition mechanics.
 

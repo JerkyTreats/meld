@@ -1,8 +1,10 @@
 # Durable Flywheel Runtime First Slice
 
 Date: 2026-06-14
-Status: proposed
+Status: historical first-slice design evidence
 Scope: durable single process runtime assembly for the first `docs_freshness` flywheel turn
+
+Current runtime-completion authority is [Runtime Completion Ground Map](runtime_completion_ground_map.md), followed by [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md). This document preserves the earlier one-turn design and must not direct the current operational-parity implementation.
 
 ## Purpose
 

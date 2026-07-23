@@ -1,12 +1,14 @@
 # Runtime Requirements Index
 
 Date: 2026-06-17
-Status: proposed
+Status: domain requirement index with superseded vertical support links
 Scope: detailed runtime requirement map for the durable flywheel
 
 ## Purpose
 
 This document links the detailed runtime requirements for the first durable flywheel and records the shared boundary rules they must all preserve.
+
+Current runtime completion authority is [Runtime Completion Ground Map](runtime_completion_ground_map.md), followed by [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md). Those documents replace the earlier one-turn proof, activation-heavy configuration, synthetic patch, and production-closure assumptions. Domain requirement documents remain useful contract evidence where they do not conflict with the current completion authority.
 
 The product flywheel remains:
 
@@ -32,10 +34,12 @@ Root `meld` assembles stores and ports, starts runtime handles, supervises lifec
 
 | Concern | Requirement Document | Owner |
 | --- | --- | --- |
+| current runtime completion | [Runtime Completion Ground Map](runtime_completion_ground_map.md) | integration |
+| current implementation workstreams | [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) | integration |
 | product runtime assembly | [Product Runtime Assembly Requirements](product_runtime_assembly_requirements.md) | root `meld` |
-| vertical proof path | [Durable Flywheel Vertical Proof Requirements](durable_flywheel_vertical_proof_requirements.md) | integration |
-| docs freshness physical config | [Docs Freshness Physical Configuration Requirements](docs_freshness_physical_configuration_requirements.md) | integration |
-| docs freshness next iteration | [Docs Freshness Flywheel Next Iteration Report](docs_freshness_flywheel_next_iteration_report.md) | integration |
+| historical vertical proof | [Durable Flywheel Vertical Proof Requirements](durable_flywheel_vertical_proof_requirements.md) | integration |
+| historical physical config proposal | [Docs Freshness Physical Configuration Requirements](docs_freshness_physical_configuration_requirements.md) | integration |
+| historical next iteration proposal | [Docs Freshness Flywheel Next Iteration Report](docs_freshness_flywheel_next_iteration_report.md) | integration |
 | phase detail audit | [Runtime Phase Design Detail Audit](runtime_phase_design_detail_audit.md) | integration |
 
 ## Shared Commitments
@@ -47,7 +51,7 @@ Root `meld` assembles stores and ports, starts runtime handles, supervises lifec
 - Each runtime owns its own cursors, journals, leases, revisions, or lifecycle state according to its domain meaning.
 - Bounded worker reports are diagnostics and must not become correctness state.
 - Restart resumes from domain stores, not from supervisor memory.
-- The first proof may use a deterministic driver, but that driver is proof scaffolding and not product architecture.
+- Deterministic provider, clock, and observation fixtures may enter through real product assembly, but proof fixtures must not call semantic handoffs directly after startup.
 
 ## Direct Handoff Map
 
@@ -94,15 +98,7 @@ The supervisor does not own:
 
 ## Implementation Use
 
-Implementation should use the requirement documents in this order:
-
-1. Define root assembly and supervisor contracts.
-2. Wire event append and replay ports.
-3. Wire execution goal command and mutation ports.
-4. Add world model runtime handles for replay, belief, projection, goal curation, evidence ingestion, and satisfaction curation.
-5. Add execution runtime handles for goal set, planning, task network command, dispatch, artifact, and publication work.
-6. Add event runtime handle for append, sequence recovery, replay, retention defaults, and diagnostics.
-7. Prove the durable flywheel with checkpoint reopen and failure path tests.
+Use [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) as the current implementation sequence. The earlier domain-by-domain sequence is historical and does not direct the operational-parity workstream.
 
 ## Acceptance
 
@@ -114,4 +110,4 @@ The detailed requirements are consistent when:
 - execution publishes outcomes into events
 - world model consumes outcomes from events
 - world model submits goal and satisfaction commands into execution
-- the deterministic proof harness can be deleted without changing product runtime semantics
+- proof fixtures do not call semantic handoffs after startup and can be deleted without changing product runtime semantics

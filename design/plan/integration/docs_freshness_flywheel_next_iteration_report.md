@@ -1,8 +1,10 @@
 # Docs Freshness Flywheel Next Iteration Report
 
 Date: 2026-06-22
-Status: proposed
+Status: historical proposal, superseded for runtime completion
 Scope: current goal and next code iteration for one visible `docs_freshness` flywheel
+
+Authority: [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) replace this report for current implementation. Its code inventory remains useful evidence, but its activation-first and one-goal-to-one-satisfaction framing is not the current operational-parity objective.
 
 ## Current Goal
 

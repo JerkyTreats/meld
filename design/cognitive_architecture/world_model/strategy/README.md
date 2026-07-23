@@ -1,6 +1,6 @@
 # World Model Strategy
 
-Date: 2026-07-22
+Date: 2026-07-23
 Status: active
 Scope: Agent-authorized semantic construction of evidence-backed action Compositions
 
@@ -8,56 +8,91 @@ Scope: Agent-authorized semantic construction of evidence-backed action Composit
 
 `world_model/strategy` owns the transition from desired reality to an evidence-backed theory of action.
 
-A Directive Agent decides what should be maintained. World-model domains determine what is currently believed, what evidence is admissible, what remains uncertain, and what causal or efficacy claims are justified. Strategy combines those authoritative views with operational domain theory and constructs one or more concrete `meld-lang::Composition` values believed capable of satisfying an authorized Goal.
+A Directive says what should be maintained. Directive grounding turns that intent into questions about concrete things. Belief Reconciliation answers those questions as far as current evidence allows. When the Agent decides that a belief divergence warrants action, it creates a Goal draft.
 
-Execution does not reinterpret that meaning. It validates current applicability, resolves operators to capabilities, tunes authorized alternatives against live operational state, lowers the selected Composition, and commits task-network mutations.
+Strategy then asks:
 
 ```text
-PDS operational domain theory
-+ current world-model views
-+ Directive Agent Goal and value posture
-+ semantic action affordances
-→ Agent-authorized Strategy decision
-→ concrete Composition candidates
-→ Execution realization
-→ task-network commitment
+Given what we want, what we currently believe, and what actions exist,
+which concrete theories of action could satisfy this Goal?
 ```
 
-Strategy is part of the world model because causal adequacy, evidence sufficiency, uncertainty, and intended semantic effect must remain under epistemic and Agent authority. Execution remains authoritative for operational commitment.
+It may reuse a known Strategy, instantiate a verified Method, construct a new Composition, or combine those sources. The Agent judges the resulting candidates. Execution sees only an admitted Goal and its authorized candidates.
+
+## End-to-end flow
+
+```mermaid
+flowchart TD
+    subgraph WM[World model]
+        D[Directive]
+        PDS[PDS operational domain theory]
+        STATE[Current graph and world-model views]
+
+        GROUND[Ground Directive into belief questions]
+        BELIEFS[Reconcile current beliefs]
+        CURATE[Decide whether action is warranted]
+        DRAFT[Goal draft]
+
+        KNOWN[Known Strategy catalog]
+        METHODS[Verified Method inventory]
+        BUILD[Construct bounded Strategy candidates]
+        CANDIDATES[Concrete Composition candidates]
+        AVAILABLE{Any eligible candidate}
+        ERROR[NoMethodAvailable]
+        JUDGE[Directive Agent judgment]
+        ADMISSION[Goal admission bundle]
+    end
+
+    subgraph EX[Execution]
+        GOAL[Admitted Goal]
+        PLAN[Realize authorized candidate]
+        NETWORK[Commit task network]
+    end
+
+    D --> GROUND
+    PDS --> GROUND
+    STATE --> GROUND
+    GROUND --> BELIEFS
+    STATE --> BELIEFS
+    BELIEFS --> CURATE
+    D --> CURATE
+    CURATE --> DRAFT
+
+    DRAFT --> BUILD
+    PDS -->|action meaning and outcome theory| BUILD
+    STATE -->|current projections| BUILD
+    KNOWN -->|reusable Strategies| BUILD
+    METHODS -->|reusable decompositions| BUILD
+
+    BUILD --> CANDIDATES
+    CANDIDATES --> AVAILABLE
+    AVAILABLE -->|No| ERROR
+    AVAILABLE -->|Yes| JUDGE
+    D -->|authority and value posture| JUDGE
+    JUDGE --> ADMISSION
+
+    ADMISSION --> GOAL
+    GOAL --> PLAN
+    ADMISSION -->|authorized candidates| PLAN
+    PLAN --> NETWORK
+```
+
+The center line is the product flow. PDS, current state, known Strategies, and verified Methods are inputs to particular stages. They are not themselves runtime stages.
 
 ## Canonical authority split
 
-```text
-PDS
-  declares state-free operational domain theory
-
-Graph
-  owns current objects, relations, lineage, and provenance
-
-Belief
-  owns evidence admission, assessment, uncertainty, and revision
-
-Causation and regime
-  own justified effect and structural-context views
-
-World-model planner projection
-  assembles typed action-relevant verdicts
-
-Directive Agent
-  owns desired state, normative posture, and Strategy authority
-
-Strategy
-  constructs semantic theories of action under Agent authority
-
-Execution Planning
-  realizes authorized theories against operational reality
-
-Task network
-  persists and executes committed work
-
-Events
-  record semantic commitments, attempts, and outcomes
-```
+| Concern | Owns |
+|---|---|
+| PDS | state-free domain meaning |
+| Graph | current objects, relations, lineage, and provenance |
+| Belief | evidence admission, assessment, uncertainty, and revision |
+| Causation and regime | effect and structural-context views |
+| World-model planner projection | action-relevant world-model reads |
+| Directive Agent | maintained intent, Goal drafts, value posture, and authorization |
+| Strategy | candidate theories of action |
+| Execution Planning | operational realization of authorized candidates |
+| Task network | committed work and execution state |
+| Events | semantic commitments and observed outcomes |
 
 The Directive Agent may explicitly delegate Strategy construction to another Agent. Delegation must preserve the granting Agent, allowed scope, authority, objective, and revocation boundary.
 
@@ -65,19 +100,18 @@ Persistence custody does not confer semantic authority. Another domain may store
 
 ## Why Strategy exists
 
-A Goal states desired reality. It does not contain a causal theory for reaching that reality.
+A Goal draft states desired reality. It does not contain a causal theory for reaching that reality.
 
 Execution capabilities expose possible operations. Their availability does not establish semantic relevance, evidentiary sufficiency, causal coherence, or authority.
 
-Strategy supplies the missing semantic construction:
+Strategy supplies the missing semantic bridge:
 
 ```text
-desired proposition
-→ grounded obligations
-→ admitted evidence paths
-→ semantic action alternatives
-→ causally justified dependency graph
-→ concrete Composition candidates
+Goal draft
++ current evidence and causal projections
++ reusable Strategies and Methods
++ PDS action affordances
+→ concrete candidate Compositions
 ```
 
 Without this boundary, one of two failures occurs.
@@ -115,16 +149,17 @@ The Directive Agent owns Strategy judgment.
 
 The Agent:
 
-- authorizes the Goal or Goal-linked scope expansion
+- grounds Directive-maintained conditions into concrete belief questions over trusted scope
+- curates a Goal draft when reconciled belief diverges from the desired state
 - supplies perspective and normative posture
 - selects the decision context and normative relevance without overriding epistemic verdicts
 - authorizes Strategy construction and any delegated Agent
-- accepts, rejects, or supersedes Strategy decisions
+- accepts, rejects, or supersedes the proposed Goal and Strategy decision together
 - remains responsible for Goal curation and satisfaction curation
 
 Strategy obligations are not Execution Goals. They are internal semantic nodes explaining why actions and edges belong in a candidate Composition.
 
-Strategy cannot mutate Goal lifecycle. New ground Goals, Goal changes, suspension, satisfaction, and abandonment remain Agent curation decisions submitted through Execution Goal APIs.
+Strategy cannot mutate Goal lifecycle. A Goal draft remains world-model curation state until Strategy presents at least one eligible candidate and the Agent authorizes admission. The initial handoff to Execution contains the nonempty authorized candidate inventory with the Goal. Later Goal changes, suspension, satisfaction, and abandonment remain Agent curation decisions submitted through Execution Goal APIs.
 
 ## Relationship to world-model planner projection
 
@@ -204,26 +239,74 @@ Execution Method library
 
 One-off Compositions must not enter one undifferentiated global Method library.
 
-## Strategy flow
+## Known Strategy catalog
 
-One bounded Strategy attempt follows this semantic flow:
+The names in this area describe different things:
+
+| Name | Meaning |
+|---|---|
+| Known Strategy catalog | every reusable Strategy currently persisted |
+| Available Strategy set | candidates that apply to one Goal draft in one world-model frame |
+| Strategy alternative | one candidate with its evidence and justification |
+| Composition | the concrete action graph inside that candidate |
+| Method | a reusable Composition template verified and stored by Execution |
+
+The known catalog is complete only for persisted reusable knowledge. It does not enumerate every Strategy Meld could construct.
+
+A catalog entry minimally identifies:
 
 ```text
-1. Read an Agent-authorized Goal and exact lineage.
-2. Read a trusted world-model scope and verdict snapshot.
-3. Expand the desired state into internal obligations.
-4. Discover admitted evidence and semantic action candidates.
-5. Construct causally valid Composition alternatives.
-6. Request typed feasibility, efficacy, and risk projections.
-7. Rank viable alternatives under the Agent value posture.
-8. Record a candidate proposal or abstention.
-9. Record the Agent authorization as a Strategy decision.
-10. Hand the decision to Execution Planning.
+Strategy identity and revision
+Goal pattern
+PDS and authority lineage
+reusable Method or Composition template references
+prior selection and outcome references
+availability posture
+```
+
+Execution retains custody of verified Method bodies. Catalog entries refer to exact Method revisions rather than duplicating them.
+
+For one Goal draft, Strategy combines applicable catalog entries with novel episode-specific candidates. An empty catalog does not imply an empty available set.
+
+Selection lineage preserves the catalog entry or novel candidate identity through Strategy decision, planning commitment, and outcome events. This is the minimal foundation for later curation that compares predicted efficacy with observed reality and prefers a previously successful Strategy when it remains applicable. The first implementation need not define a learned efficacy model.
+
+### First implementation shape
+
+The first implementation should remain deliberately small:
+
+```text
+one persisted known Strategy catalog
+one Goal-pattern lookup
+one bounded novel-construction path
+one combined available candidate set
+one explicit NoMethodAvailable result
+one Goal admission bundle
+one selected-Strategy to outcome association
+```
+
+It does not require learned ranking, generalized Strategy promotion, catalog governance, distributed consensus, or a complete Strategy lifecycle framework. Those remain replaceable until the basic cognitive path proves useful.
+
+## Strategy flow
+
+One bounded attempt has four phases:
+
+```text
+1. Understand the Goal draft against current world-model evidence.
+2. Reuse known Strategies and Methods where they apply, then construct novel candidates as needed.
+3. Validate and compare the resulting concrete Compositions.
+4. Present eligible candidates to the Agent for judgment and Goal admission.
 ```
 
 Construction is bounded by candidate count, expansion depth, search budget, elapsed budget, or an explicit combination.
 
-No eligible candidate produces abstention. The unsatisfied Goal remains `Active` while its Strategy association becomes quiescent until new evidence, capability availability, authority, or world state makes useful action available.
+Two empty-result cases must remain distinct:
+
+| Result | When | Meaning |
+|---|---|---|
+| `NoMethodAvailable` | before initial Goal admission | Meld cannot connect the desired state to any eligible theory of action |
+| Strategy abstention | after Goal admission | the Goal remains valid, but no useful action is available in the current state |
+
+`NoMethodAvailable` is a visible runtime error and the Goal draft stays outside Execution. Abstention makes an active Goal quiescent until relevant state changes.
 
 ## Bounded convergence
 
@@ -231,9 +314,11 @@ Strategy participates in an open-ended convergence loop without hot-looping.
 
 ```text
 observe
+→ ground Directive into belief questions
 → reconcile belief
-→ curate Goal
+→ curate Goal draft
 → construct bounded Strategy
+→ admit Goal with nonempty Strategy inventory
 → realize bounded work
 → observe outcome
 → reconcile again
@@ -283,9 +368,19 @@ Current Meld has:
 - a narrow world-model planner projection
 - Agent Goal curation
 
-Current Meld does not yet have:
+The minimum next slice does not yet have:
 
-- an Agent-owned Strategy runtime
+- Directive grounding into dynamically instantiated belief questions
+- a Goal draft gate before Execution Goal admission
+- a persisted known Strategy catalog
+- a bounded Strategy constructor that combines reuse and novel construction
+- a visible `NoMethodAvailable` result
+- Goal admission with a nonempty authorized candidate set
+- selected-Strategy to outcome association
+
+The broader architecture also does not yet have:
+
+- a general Agent-owned Strategy runtime
 - a durable Strategy decision store or projection
 - rich evidence-admission and sufficiency views for Strategy
 - scoped universal Goal expansion
@@ -313,6 +408,7 @@ Current planning behavior must therefore be read as a configured-path first slic
 ## Read with
 
 - [World Model Agent](../agent/README.md)
+- [Directive Grounding](../agent/directive_grounding.md)
 - [World Model Planner](../planner/README.md)
 - [World Model Belief](../belief/README.md)
 - [Causal Layer](../causation/README.md)

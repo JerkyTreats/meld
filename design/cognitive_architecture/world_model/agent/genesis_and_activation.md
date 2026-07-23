@@ -1,6 +1,6 @@
 # Agent Genesis And Activation
 
-Date: 2026-05-28
+Date: 2026-07-23
 Status: active
 Scope: seed agent authority, runtime activation, and execution capability work for agent initialization
 
@@ -9,11 +9,11 @@ Scope: seed agent authority, runtime activation, and execution capability work f
 Agent creation and agent activation are separate concerns.
 
 Creation establishes durable agent identity, perspective, policy, scope, and subscriptions.
-Activation starts or resumes the runtime workers that watch belief revisions and curate goals for an existing durable agent.
+Activation starts or resumes the runtime workers that ground Directive questions, watch belief revisions, and curate Goal drafts for an existing durable Agent.
 
 The first operational agents are seed agents. They are created from trusted init or configuration state, not from a curated goal, because no prior agent is available to curate that goal.
 
-After seed agents exist, new agent creation is normal goal set curation. An authorized existing agent may add a goal that requests another agent for a separate concern. Execution then runs the initialization workflow through tasks and capabilities.
+After seed Agents exist, new Agent creation uses the normal Goal admission path. An authorized existing Agent drafts a Goal that requests another Agent, Strategy constructs an initialization candidate, and Execution admits the Goal only with that authorized inventory.
 
 ## Authority Paths
 
@@ -56,9 +56,9 @@ If activation fails, the system may surface a repair goal through an existing se
 
 ### Spawned Agent Creation
 
-After seed agents exist, a new agent is created by goal curation.
+After seed Agents exist, a new Agent is created through Goal draft curation and Strategy-gated admission.
 
-An authorized existing agent adds a `CreateAgent` goal when its cost benefit evaluation says a separate concern deserves its own perspective, policy, and subscriptions.
+An authorized existing Agent drafts a `CreateAgent` Goal when its cost-benefit evaluation says a separate concern deserves its own perspective, policy, and subscriptions. Strategy must produce an eligible initialization Composition before the Goal enters Execution.
 
 Execution owns the initialization workflow. The new agent is the output of that workflow, not the actor that runs it.
 
@@ -160,7 +160,7 @@ It provides:
 - one deterministic goal construction path
 - one durable subscription cursor
 - one curation decision record
-- one goal command handoff boundary
+- one Goal admission handoff boundary with nonempty Strategy inventory
 
 Dynamic `CreateAgent` goals, inter agent spawn policy, and spawned agent satisfaction of initialization goals are full design concerns deferred past the minimal slice.
 

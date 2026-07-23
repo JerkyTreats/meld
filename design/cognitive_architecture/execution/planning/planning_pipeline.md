@@ -1,6 +1,6 @@
 # Planning Pipeline
 
-Date: 2026-06-02
+Date: 2026-07-23
 Status: active
 Scope: unified planning pipeline aligned to the graphs-lower-graphs execution model
 
@@ -30,18 +30,21 @@ The task executor already implements this for capabilities within a task. The ta
 
 ```mermaid
 flowchart TD
-    AG[world model agent] -->|curates via API| GS[goal set]
-    GS --> ST[world model Strategy]
+    DG[Directive grounding] --> BQ[belief questions]
+    BQ --> AG[world model Agent]
+    AG --> GD[Goal draft]
+    GD --> ST[world model Strategy]
     WMV[world model view] --> ST
-    ST -->|authorized candidates| PL[planning loop]
+    ST -->|proposal or NoMethodAvailable| AG
+    AG -->|Goal admission bundle| GS[Goal Set]
+    GS --> PL[planning loop]
     WMV --> PL
-    GS --> PL
     PL -->|commands| TN[task network command boundary]
     TN -->|accepted work| TE[task network execution]
     TE -->|outcome events| SP[event spine]
     SP --> WM[world model]
     WM -.->|belief revision| WMV
-    WM -.->|belief revision| AG
+    WM -.->|belief revision| BQ
 
     TE -->|task failure| PL
     TE -->|observation artifacts| PL
@@ -50,11 +53,12 @@ flowchart TD
     ST -->|authorized synthesis candidate| PL
 ```
 
-Four cooperating concerns connected by durable contracts:
+Six cooperating concerns form the loop:
 
-- **world model agent**: evaluates beliefs against its normative framework and curates the goal set through execution's public API
-- **world model Strategy**: constructs evidence-backed candidate Composition proposals for accepted Goal revisions
-- **Directive Agent**: judges proposals and authorizes Strategy decisions
+- **Directive grounding**: applies maintained PDS theory to trusted scope and instantiates concrete belief questions
+- **world model Agent**: evaluates reconciled beliefs and constructs Goal drafts
+- **world model Strategy**: constructs reusable and novel candidate Compositions before Goal admission
+- **Directive Agent**: judges proposals and authorizes Goal admission with a nonempty Strategy inventory
 - **planning loop**: continuous, reads authorized candidates and live operational state, maintains the intended task-network graph, issues commands when eligibility or operational state changes
 - **task network**: parallel, executes tasks, emits events, accepts commands, and reduces accepted records into state
 
@@ -79,14 +83,14 @@ The planning loop produces task-network commands carrying graph mutation sets. I
 
 ## Planning Loop
 
-The planning loop is a continuous process that maintains an intended task-network graph. It reads accepted Goals, Agent-authorized Strategy inventory, world-model projections, capability state, and committed task-network state. It issues commands when an authorized candidate should be realized or the operational plan should change.
+The planning loop is a continuous process that maintains an intended task-network graph. It reads admitted Goals, Agent-authorized Strategy inventory, world-model projections, capability state, and committed task-network state. It issues commands when an authorized candidate should be realized or the operational plan should change.
 
 ### Inputs
 
 All planning loop inputs are expressed in the shared language [`meld-lang`](../../meld-lang/README.md):
 
-- **goal set**: `Vec<Goal>` — desired belief states as `Proposition` targets, curated by the world model agent through execution's public API. See [Goals and Methods](../../meld-lang/goals_and_methods.md).
-- **Strategy inventory**: concrete episode Compositions, including candidates derived from exact reusable Method revisions and bindings, scoped to accepted Goal revisions. See [World Model Strategy](../../world_model/strategy/README.md).
+- **Goal Set**: admitted desired belief states as `Proposition` targets. Every initial Goal arrived with a nonempty authorized Strategy inventory. See [Goals and Methods](../../meld-lang/goals_and_methods.md).
+- **Strategy inventory**: concrete episode Compositions, including candidates derived from exact reusable Method revisions and bindings, scoped to admitted Goal revisions. See [World Model Strategy](../../world_model/strategy/README.md).
 - **world state**: `WorldState` — ground propositions published by the world model's planner-facing projection. The planning loop evaluates goals and preconditions against this. See [World State and Evaluation](../../meld-lang/world_state.md).
 - **capability catalog**: available compiled and synthesized capabilities. Resolution queries from `Operator.resolution` match against registered `CapabilityTypeContract` values.
 - **Method lineage**: zero or more exact Method-instance derivations already instantiated by Strategy into the concrete candidate. See [Goals and Methods](../../meld-lang/goals_and_methods.md).
@@ -106,6 +110,8 @@ Execution Planning realizes one candidate from the exact authorized Strategy inv
 8. Submit the mutation set against an exact task-network revision and state hash.
 
 Reusable Methods remain a supported Strategy input. Strategy performs matching and substitution before proposal, preserving exact Method revision, bindings, and resulting Composition hash. Execution receives only the concrete Agent-authorized candidate. If no candidate is applicable, Execution reports typed rejection or no useful operational change.
+
+`NoApplicableMethod` is therefore not ordinary initial Goal discovery. `NoMethodAvailable` already prevented initial admission when world-model Strategy could construct no reusable or novel candidate. An Execution no-applicable result indicates stale, inconsistent, or no-longer-realizable authorized inventory and returns to the Agent and Strategy loop.
 
 The output of execution composition lowering is a task network mutation set carried by a command. The mutation set contains tasks as nodes, dependency edges between them, lineage, and task init source plans. Dependencies encode:
 
@@ -394,7 +400,7 @@ Synthesis may enter the task network only when the active Strategy decision expl
 
 | Design slice | Role in this model |
 |---|---|
-| `goals/` | goal set curated by world model agent, consumed by planning loop |
+| `goals/` | Goal admission and lifecycle store consumed by planning loop |
 | `planning/htn/` | reusable Method realization records and compatibility lineage vocabulary |
 | `planning/htn/lineage_model.md` | lineage preservation for scoped operational changes and Strategy ancestry |
 | `planning/guard_expression_semantics.md` | conditional dependency edge evaluation relocated from dissolved `program/` |

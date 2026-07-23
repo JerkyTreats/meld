@@ -62,7 +62,7 @@ Domain owners own event meaning:
 `events` durably appends promoted facts presented through its authority capability.
 It does not promote raw health signals or define the policy that decides when a health observation becomes semantic.
 
-An Agent-authorized Strategy decision is a fact about semantic judgment. An accepted task-network commitment is a fact about operational intent. Neither is an observed external outcome, and neither may be promoted as evidence of Goal satisfaction.
+An Agent-authorized Strategy decision is a fact about semantic judgment. Goal admission is a fact about authorized intent entering Execution. `NoMethodAvailable` is a world-model runtime error stating that bounded Strategy construction could connect no reusable or novel theory of action to a Goal draft. An accepted task-network commitment is a fact about operational intent. None is an observed external outcome or evidence of Goal satisfaction.
 
 `telemetry` is downstream.
 It consumes event history for summaries, metrics, operator feedback, and compatibility.

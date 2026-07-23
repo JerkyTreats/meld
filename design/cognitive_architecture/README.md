@@ -97,8 +97,10 @@ The declarative application layer is defined separately in [Persistent Domain St
   changepoints, recurring modes, mixture prediction, and structural stress
 - [World Model Planner](world_model/planner/README.md)
   planner-facing world model projection with a strict boundary to execution authority
+- [Directive Grounding](world_model/agent/directive_grounding.md)
+  translation from maintained intent and trusted scope into concrete belief questions
 - [World Model Strategy](world_model/strategy/README.md)
-  Agent-authorized construction of evidence-backed candidate Compositions
+  bounded reusable and novel candidate construction before Goal admission
 - [Belief Microarchitecture](world_model/belief/microarchitecture.md)
   event, world model, and execution boundaries for belief
 - [Fact To Belief](world_model/belief/fact_to_belief.md)
@@ -134,17 +136,18 @@ The declarative application layer is defined separately in [Persistent Domain St
 10. [Regime Layer](world_model/regime/README.md)
 11. [World Model Planner](world_model/planner/README.md)
 12. [World Model Agent](world_model/agent/README.md)
-13. [World Model Strategy](world_model/strategy/README.md)
-14. [Belief Microarchitecture](world_model/belief/microarchitecture.md)
-15. [Fact To Belief](world_model/belief/fact_to_belief.md)
-16. [Comparator Model](world_model/belief/comparator_model.md)
-17. [Belief Substrate](world_model/belief/substrate.md)
-18. [Curation In Belief](world_model/belief/curation.md)
-19. [Lang Domain](meld-lang/README.md)
-20. [Execution Domain](execution/README.md)
-21. [Execution Planning](execution/planning/README.md)
-22. [Events Design](events/README.md)
-23. [Further Research Prompts](../completed/world_state/further_research_prompts.md)
+13. [Directive Grounding](world_model/agent/directive_grounding.md)
+14. [World Model Strategy](world_model/strategy/README.md)
+15. [Belief Microarchitecture](world_model/belief/microarchitecture.md)
+16. [Fact To Belief](world_model/belief/fact_to_belief.md)
+17. [Comparator Model](world_model/belief/comparator_model.md)
+18. [Belief Substrate](world_model/belief/substrate.md)
+19. [Curation In Belief](world_model/belief/curation.md)
+20. [Lang Domain](meld-lang/README.md)
+21. [Execution Domain](execution/README.md)
+22. [Execution Planning](execution/planning/README.md)
+23. [Events Design](events/README.md)
+24. [Further Research Prompts](../completed/world_state/further_research_prompts.md)
 
 ## Read With
 

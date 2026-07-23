@@ -1,8 +1,10 @@
 # Runtime Phase Design Detail Audit
 
 Date: 2026-06-17
-Status: implemented
+Status: historical readiness audit, superseded for runtime completion
 Scope: design detail readiness audit for durable flywheel runtime phases
+
+Authority: this audit records why the earlier one-turn phase design was considered ready. [Runtime Completion Ground Map](runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) replace its vertical proof and phase-readiness conclusions for current implementation.
 
 ## Purpose
 
@@ -26,9 +28,9 @@ The remaining design risk was the vertical glue around product assembly and proo
 | Phase 2 | sufficient | Supervisor diagnostics are already covered by bounded worker report design and supervisor requirements. | Link where useful during implementation. |
 | Phase 3 | sufficient | World model runtime requirements cover graph, belief, projection, goal curation, evidence ingestion, and satisfaction curation. | Keep direct phase link. |
 | Phase 4 | sufficient | Execution runtime requirements cover goals, planning, task network, dispatch, artifacts, and publication. | Keep direct phase link. |
-| Phase 5 | sufficient | Vertical proof requirements now bind event led feedback across event append, bounded replay, evidence ingestion, belief reassessment, projection, and satisfaction. | Use [Durable Flywheel Vertical Proof Requirements](durable_flywheel_vertical_proof_requirements.md). |
-| Phase 6 | sufficient | Vertical proof requirements now separate deterministic harness duties from product runtime architecture and forbid retained semantic state. | Use [Durable Flywheel Vertical Proof Requirements](durable_flywheel_vertical_proof_requirements.md). |
-| Phase 7 | sufficient | Vertical proof requirements now define failure outcome state, false satisfaction guards, idempotency, duplicate replay, and final active goal assertions. | Use [Durable Flywheel Vertical Proof Requirements](durable_flywheel_vertical_proof_requirements.md). |
+| Phase 5 | historically sufficient | The former vertical proof bound event-led feedback for a synthetic one-turn proof. | Use the current runtime completion ground map instead. |
+| Phase 6 | historically sufficient | The former vertical proof separated deterministic harness duties from product runtime architecture. | Preserve as evidence and use the current implementation workstreams. |
+| Phase 7 | historically sufficient | The former vertical proof defined a failure-path matrix beyond the present operationalization scope. | Keep deferred and use the current implementation workstreams. |
 | Phase 8 | sufficient | Supervisor domain plan and supervisor requirements define lifecycle, leases, health, shutdown, restart, and status. | Keep direct phase link. |
 | Phase 9 | sufficiently small | CLI adapter should stay thin and wait until library proof is green. Detailed design is not needed before implementation. | Keep as a small adapter phase. |
 

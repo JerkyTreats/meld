@@ -1,47 +1,64 @@
 # Goal Curation
 
-Date: 2026-05-10
+Date: 2026-07-23
 Status: active
-Scope: the world model agent's process for curating execution's goal set through cost-benefit evaluation over belief
+Scope: deciding whether reconciled belief divergence should become a Goal draft
 
 ## Thesis
 
-Goal curation is the agent's mechanism for translating belief state into execution commitment. The agent watches belief revisions, evaluates them through cost-benefit comparators, and constructs `Goal` values in the shared language ([`meld-lang`](../../meld-lang/README.md)) that it submits to execution's public API.
+Goal curation answers:
 
-This is not a novel mechanism. It is the belief→goal instance of the same watching/reducing pattern that operates at every layer boundary in the architecture:
+```text
+Does this belief divergence matter enough to act on?
+```
 
-- Sensory workers watch external sources, emit typed observations
-- Graph reducers watch spine events, materialize anchors
-- Belief comparators watch graph anchors and facts, produce belief revisions
-- **The agent watches belief revisions, produces goal mutations**
-- Strategy watches accepted Goal revisions and relevant projections, produces candidate Composition proposals for Agent judgment
-- Execution Planning watches authorized Strategy decisions and live operational state, produces task-network mutations
+The Agent receives revisions for questions already created by [Directive Grounding](directive_grounding.md). It compares the current belief with its desired state, expected value, expected cost, and active commitments. Most revisions are tolerated. A revision that warrants action becomes a Goal draft.
 
-At each boundary, the watcher reduces frequency and increases connectivity. Sense data is high-frequency and isolated. Events are discrete and typed. Facts have some connections to other facts. Beliefs have high connectivity to facts, other beliefs, and agents. Goals have the highest connectivity — connecting beliefs, cost data, regime context, and active goal state.
+A Goal draft is not yet an Execution Goal. Strategy must first produce at least one eligible candidate. The Agent then authorizes the Goal and candidate inventory together.
 
-The frequency reduction is the performance model. The agent's goal curation can afford expensive cross-referencing (cost beliefs, value beliefs, active goal set, regime context) precisely because it fires at the lowest frequency in the system. Most belief changes are absorbed without producing a goal mutation.
+```mermaid
+flowchart TD
+    REV[Belief revision]
+    CURATE[Goal curation]
+    TOLERATE[Tolerate]
+    DRAFT[Goal draft]
+    STRATEGY[Strategy construction]
+    ERROR[NoMethodAvailable]
+    ADMIT[Authorize Goal admission]
+    EXECUTION[Execution Goal Set]
+
+    REV --> CURATE
+    CURATE -->|No action warranted| TOLERATE
+    CURATE -->|Action warranted| DRAFT
+    DRAFT --> STRATEGY
+    STRATEGY -->|No eligible candidate| ERROR
+    STRATEGY -->|Eligible candidates| ADMIT
+    ADMIT --> EXECUTION
+```
+
+This is the final semantic filter before Strategy. It reduces many belief revisions to a much smaller number of Goal drafts.
 
 ## Cost-Benefit Evaluation
 
-Goal generation is a Bayesian cost-benefit comparison. The decision to add, modify, or remove a goal uses the same comparator pattern as belief assessment, but applied to action-worthiness rather than truth-assessment.
+Goal generation uses a cost-benefit comparison. It applies the comparator pattern to action-worthiness rather than truth.
 
-The inputs:
+| Input | Question |
+|---|---|
+| State belief | How far is current belief from the desired state |
+| Cost belief | What is action expected to cost |
+| Value belief | What is restoring the desired state expected to improve |
+| Inaction cost | What accumulates if Meld does nothing |
+| Regime context | Which learned priors currently apply |
 
-- **State belief**: the current posterior on the relevant belief key (e.g., "semantic context is stale by 14 files, confidence 0.85")
-- **Cost belief**: the expected cost of pursuing the goal, learned from execution outcomes (e.g., "semantic conversion historically costs 10 minutes, X tokens")
-- **Value belief**: the expected value of achieving the desired state, learned from downstream outcome correlation (e.g., "when semantic context is fresh, downstream planning decisions improve by Y")
-- **Inaction cost**: the accumulating cost of not acting, relevant for maintenance invariants (e.g., "stale semantic context has been degrading decision quality for N hours")
-- **Regime context**: which prior set is active for cost-benefit evaluation
-
-The comparison:
+The result is:
 
 ```
 evidence: divergence magnitude, cost posterior, value posterior, inaction accumulation
-prior: "was acting on similar divergence historically worth it?" (regime-scoped)
-posterior: act / tolerate (with confidence)
-→ if act: construct Goal (Proposition target + GoalPriority + GoalSource in meld-lang)
-         and emit goal mutation through execution's curation API
-→ if tolerate: absorb belief change, no goal mutation
+prior: whether acting on similar divergence was worthwhile
+posterior: act or tolerate with confidence
+→ if act: construct Goal draft
+         and request bounded Strategy construction
+→ if tolerate: absorb belief change
 ```
 
 The "tolerate" outcome is the frequency reduction. Most belief changes don't cross the cost-benefit threshold. The goal layer fires less often than the belief layer.
@@ -124,7 +141,7 @@ For spawned agents, an authorized existing agent curates a `CreateAgent` goal. E
 3. Register belief keys for dimensions that should exist but don't
 4. Bind subscriptions to each relevant belief key
 
-The subscription filter — which belief keys the agent watches — comes from the agent's seed configuration during initialization. Execution capabilities bind the resulting agent responsibility to concrete world model records through the public interface. See [World Model Public Interface](../public_interface.md).
+The implemented subscription filter comes from seed configuration. The target architecture derives concrete belief questions from Directive grounding over activated PDS theory and trusted graph scope, then binds the Agent to the resulting keys. See [Directive Grounding](directive_grounding.md) and [World Model Public Interface](../public_interface.md).
 
 The subscription filter is the agent's definition of "what I care about." It does not define what to do about changes — the cost-benefit comparator handles that. It defines which changes reach the comparator at all.
 
@@ -135,7 +152,8 @@ When a belief revision event arrives for a watched belief key:
 1. Agent reads the updated belief view
 2. Agent evaluates the cost-benefit comparator for that concern class
 3. Agent checks the active goal set for redundancy and coherence
-4. Agent emits goal mutation (or absorbs the change)
+4. Agent constructs a Goal draft or absorbs the change
+5. Strategy construction gates initial Execution admission
 
 ### Freshness-driven evaluation
 
@@ -154,34 +172,27 @@ The agent reads the active goal set when evaluating. This provides:
 
 ## The Decision Loop
 
-The complete agent decision loop for goal curation:
+The complete Agent decision loop is:
 
 ```
-belief revision event arrives (or freshness decay fires)
-  → is this belief key in my subscription filter?
-  → read current belief view for the affected key
-  → read cost belief for this concern class
-  → read value belief for this concern class
-  → read regime context (which prior set is active)
+belief revision arrives
+  → confirm the Agent watches this question
+  → read state, cost, value, inaction, and regime views
   → read active goal set
-  → run cost-benefit comparator:
-      evidence: divergence, cost posterior, value posterior, inaction cost
-      prior: regime-scoped learned prior for this concern class
-      posterior: act / tolerate
-  → if tolerate: done (frequency reduction — most changes absorbed here)
+  → compare act against tolerate
+  → if tolerate: absorb the revision
   → if act:
-      → is there an existing goal addressing this? modify if needed
-      → is there goal conflict? evaluate priority, may suspend other goals
-      → construct Goal in meld-lang:
-          target: Proposition (desired belief state)
-          priority: GoalPriority { urgency, cost_ceiling }
-          source: GoalSource (provenance for audit)
-      → emit goal mutation: add / modify / suspend / satisfy / abandon
+      → avoid or update redundant active Goals
+      → resolve material Goal conflicts
+      → construct a ground meld-lang Goal draft
+      → request bounded Strategy construction
+      → if no candidate: emit NoMethodAvailable
+      → otherwise: authorize and submit the Goal admission bundle
 ```
 
-The agent constructs goals at runtime using `meld-lang` types. No predefined goal variants — the agent composes `Proposition::Holds`, `Proposition::Exists`, or compound `All`/`Any`/`Not` propositions from its belief assessment. The urgency level is derived from the cost-benefit posterior. The cost ceiling is derived from the cost belief. See [Goals and Methods](../../meld-lang/goals_and_methods.md) for the concrete types and construction examples.
+The Agent constructs Goal drafts at runtime using `meld-lang` types. No predefined goal variants are required. The Agent composes a desired proposition from its belief assessment. The urgency level is derived from the cost-benefit posterior. The cost ceiling is derived from the cost belief. See [Goals and Methods](../../meld-lang/goals_and_methods.md) for the concrete types and construction examples.
 
-Goal curation answers whether acting is worthwhile and what desired state is authorized. [World Model Strategy](../strategy/README.md) separately compares evidence-backed theories of action for that Goal. Execution Planning then realizes only the Agent-authorized candidate inventory.
+Goal curation answers whether acting is worthwhile and what desired state should be proposed. [World Model Strategy](../strategy/README.md) compares reusable and novel evidence-backed theories of action for that draft. The Agent admits the Goal only when at least one theory is eligible. Execution Planning then realizes only the authorized candidate inventory.
 
 Satisfaction curation follows the same watching pattern. With `meld-lang`, planning may mechanically observe whether `goal.target` holds against `WorldState`, but the agent owns the decision to emit a satisfaction mutation:
 
@@ -237,7 +248,7 @@ The normative framework concepts discussed in the goal model reduce to cost-bene
 | Regime sensitivity | Which prior set the cost-benefit comparator uses |
 | Maintenance invariant | Concern with accumulating inaction cost |
 
-The normative framework is: which belief keys the agent watches, and what regime-scoped priors it carries for the cost-benefit comparison on each. That is a small, learnable, inspectable thing.
+The normative framework is the maintained conditions a Directive grounds, the resulting belief keys the Agent watches, and the regime-scoped priors it carries for cost-benefit comparison. That is a small, learnable, inspectable thing.
 
 ## What This Design Does Not Cover
 
@@ -255,11 +266,12 @@ How to measure downstream value of goal achievement is a research question. Simp
 
 ### Subscription filter refinement
 
-The subscription filter comes from the agent's seed configuration during bootstrap (see [Agent Lifecycle](README.md#agent-lifecycle)). How subscriptions evolve over time — narrowing to high-value belief keys, expanding when new evidence channels appear — is not fully specified. Re-survey on capability catalog changes provides the mechanism but the policy is not defined.
+The implemented subscription filter comes from seed configuration during bootstrap. Target subscription growth follows Directive grounding when graph scope or activated PDS theory changes. Learning which questions remain valuable is not yet specified.
 
 ## Read With
 
 - [World Model Agent](README.md)
+- [Directive Grounding](directive_grounding.md)
 - [World Model Public Interface](../public_interface.md)
 - [Comparator Model](../belief/comparator_model.md)
 - [Goals](../../execution/goals/README.md)

@@ -1,8 +1,10 @@
 # Runtime Supervisor Domain Plan
 
 Date: 2026-06-16
-Status: proposed
+Status: historical supervisor design evidence
 Scope: root `meld` runtime supervisor domain for lifecycle, leases, health, and operator visibility
+
+Current runtime-completion authority is [Runtime Completion Ground Map](runtime_completion_ground_map.md), followed by [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md). This document preserves supervisor boundary evidence but does not set the current completion sequence.
 
 ## Purpose
 

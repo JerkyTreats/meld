@@ -1,6 +1,6 @@
 # Goals and Methods
 
-Date: 2026-05-18
+Date: 2026-07-23
 Status: active
 Scope: Goal specification, Method caching, pattern unification
 
@@ -8,7 +8,7 @@ Scope: Goal specification, Method caching, pattern unification
 
 A Goal is a proposition the world model Agent wants to become true. A Method is a cached Composition template that Strategy may instantiate into a concrete candidate proposal. Execution realizes only the Agent-authorized concrete candidate. Both are expressed entirely in the shared language.
 
-Goals must be constructable at runtime by the world model Agent. The Agent observes belief divergence, judges whether it matters, and formalizes the desired state as a proposition. Strategy constructs candidate theories of action. Execution receives an authorized Strategy inventory and realizes it mechanically. Meaning and intention remain in the world model.
+Goals must be constructable at runtime by the world model Agent. The Agent observes reconciled belief divergence, judges whether it matters, and formalizes the desired state as a Goal draft. Strategy constructs reusable and novel candidate theories of action. Execution admits the Goal only with a nonempty authorized Strategy inventory and realizes it mechanically.
 
 Methods must be loadable at runtime from serialized files. New Methods do not require recompilation. The runtime must also function without Methods because Strategy can construct episode-specific Compositions for novel situations.
 
@@ -90,10 +90,10 @@ pub enum GoalSource {
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GoalLifecycle {
-    /// Proposed by the world model agent but not yet active.
+    /// Held by the world model Agent as a Goal draft and not yet admitted.
     Proposed,
 
-    /// Active. Strategy may construct candidates for Agent authorization.
+    /// Active in Execution with a nonempty authorized Strategy inventory.
     Active,
 
     /// Suspended. The planning loop ignores this goal until resumed.
@@ -110,14 +110,16 @@ pub enum GoalLifecycle {
 ### Goal Design Rules
 
 - `Goal.target` is a `Proposition`. It uses the same type as world state assertions, operator preconditions, and method triggers. This is the single-type property that makes the language a shared substrate.
+- A `Goal` value with `GoalLifecycle::Proposed` may exist inside a world-model `GoalDraft` without being present in the Execution Goal Set.
+- Initial Execution admission requires the exact Goal value and a nonempty Agent-authorized Strategy inventory.
 - Goals may contain `Term::Variable` only when used as method trigger patterns. A goal submitted to the planning loop for execution must have a ground target (all terms concrete). The planning loop rejects goals with unbound variables.
 - `GoalSource` is carried for provenance and audit. Execution reads the `source` only for lineage tracking and explanation. It does not interpret the source to decide how to plan.
 - `GoalLifecycle` transitions are persisted by execution through public goal APIs. The world model agent owns satisfaction curation for `Active` to `Satisfied` by evaluating projected world state and emitting a satisfy mutation only after `meld_lang::evaluate` returns `EvalResult::Satisfied`. Planning may mechanically observe `EvalResult::Satisfied`, but it does not own lifecycle mutation. `meld_lang::evaluate` remains pure.
 - `GoalPriority.cost_ceiling` is optional. Strategy uses it for candidate eligibility and Agent judgment. Execution rechecks current operational cost before commitment.
 
-### Goal Construction by the World Model
+### Goal draft construction by the world model
 
-The world model agent constructs goals at runtime:
+The world model Agent constructs Goal draft values at runtime:
 
 ```rust
 // The world model agent detects stale documentation belief.
