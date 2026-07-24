@@ -146,6 +146,10 @@ event authority and observability hardening
 18. `world_model/regime` — deferred past vertical slice
 19. `world_model` — full integration deferred
 20. `execution` — full integration deferred
+21. runtime completion with initialization and emission — current operational-parity authority
+22. composition-path parity — chartered as Workstream Eight under runtime completion, gating Strategy end-to-end execution
+23. world-model Strategy first slice — pure-language track unblocked now, integration track per-workstream gated per the Strategy ground map
+24. agent-native debugger — requirements now, isolate prototyping per registration set, full sessions after runtime completion
 
 ## Implementation Plans
 
@@ -161,6 +165,9 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - closed event foundation closeout
 - [integration/runtime_completion_ground_map.md](integration/runtime_completion_ground_map.md) - current operational-parity runtime completion authority
 - [integration/runtime_completion_implementation_workstreams.md](integration/runtime_completion_implementation_workstreams.md) - current build-facing workstream decomposition
+- [world_model/strategy/ground_map.md](world_model/strategy/ground_map.md) - current Strategy primitive inventory, concept-to-ground map, and construction delta
+- [integration/agent_native_debugger_requirements.md](integration/agent_native_debugger_requirements.md) - requirements gathering for the agent-native runtime debugger, gated by runtime completion
+- [integration/runtime_initialization.md](integration/runtime_initialization.md) - staged initialization contract owning theory installation, identity genesis, and epistemic seeding
 - [integration/production_cognitive_runtime_closure_program.md](integration/production_cognitive_runtime_closure_program.md) - superseded production runtime closure proposal
 - [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - superseded production-closure delivery ledger
 - [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — historical one-turn template
