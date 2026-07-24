@@ -94,6 +94,8 @@ Two ground propositions match if:
 
 ## Evaluation
 
+Strategy regression evaluates the settlement transform of a Goal target rather than the raw target; the transform and the settlement proposition shape are defined in [Goals and Methods](goals_and_methods.md). The untransformed target remains the satisfaction condition and evaluates through the same rules below.
+
 ```rust
 /// Evaluate a proposition against a world state.
 /// Returns a three-valued result.

@@ -39,6 +39,7 @@ The task network owns:
 - **dependency state**: which edges are satisfied, which are pending
 - **ready set**: tasks whose dependencies are fully satisfied, available for dispatch
 - **graph structure**: the current set of task nodes and dependency edges
+- **edge origin**: every dependency edge preserves whether it derives from an authorized Strategy edge justification or from Execution scheduling policy; semantic edges change only through a new Strategy decision, scheduling constraints relax under Execution authority alone
 - **command acceptance**: validation, idempotency, conflict detection, and durable journal order
 - **dispatch claims**: fenced claims that must match task outcomes
 - **publication outbox**: durable handoff between task completion and event publication

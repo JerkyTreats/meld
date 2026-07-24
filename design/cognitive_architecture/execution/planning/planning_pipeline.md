@@ -430,7 +430,7 @@ The first method library slice exists and supports serialized `meld-lang::Method
 - `trigger`: a `Proposition` pattern with `Term::Variable` for unification against goals
 - `preconditions`: `Vec<Proposition>` checked against `WorldState` after trigger unification
 - `composition`: a `Composition` template with variable references substituted from bindings
-- `net_effects`: `Vec<Effect>` for verifying goal achievement without expanding the composition
+- `net_effects`: `Vec<Effect>` for verifying settlement of the goal target without expanding the composition
 - `cost`: `CostEstimate` for comparison and ceiling checks
 - `preference`: ordering among alternative methods for the same goal
 

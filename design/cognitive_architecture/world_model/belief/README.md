@@ -72,7 +72,7 @@ This does not mean adopting one research framework wholesale. Predictive coding,
 `belief` owns:
 
 - belief keys, belief identity, and perspective-scoped belief ownership
-- runtime family configuration loading, validation, and replay snapshot refs
+- runtime family configuration loading, validation, and replay snapshot refs, through a durable family registry with content-hash revision resolution
 - evidence normalization and attachment to beliefs
 - priors, posteriors, uncertainty, precision, and freshness
 - contradiction handling and unresolved-conflict state

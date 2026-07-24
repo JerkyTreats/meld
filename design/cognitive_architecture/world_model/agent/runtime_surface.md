@@ -67,6 +67,7 @@ Deferred fields for the full design:
 - `parent_goal_id`
 - `activation_policy`
 - `calibration_profile_ref`
+- `curation_rule_ref` — the curation rule's durable home is the agent registration as installed theory
 
 ### AgentSubscriptionRecord
 
@@ -185,7 +186,7 @@ The handler must check the stored subscription cursor before running curation. I
 
 ## Curation Runtime
 
-The first curation rule is deterministic and receives its dimension, threshold, priority, desired summary, and source kind from runtime rule configuration.
+The first curation rule is deterministic and receives its dimension, threshold, priority, desired summary, and source kind from runtime rule configuration. Caller-supplied configuration is the compatibility supply path; the target durable home is the curation-rule binding on the agent registration.
 
 Input:
 

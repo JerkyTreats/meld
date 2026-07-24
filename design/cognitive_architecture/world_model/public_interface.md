@@ -158,7 +158,7 @@ Only the Goal-owning Agent or an explicit delegate may authorize a Strategy deci
 
 Execution consumes the Goal admission bundle and authorized inventory through explicit contracts, then returns planning acceptance or rejection. Execution must not mutate Strategy records directly.
 
-These Strategy routes define the target public contract and are not implemented in the current runtime. Current implementation stops at configured belief keys, Agent Goal command creation, planner projection, and configured Method selection.
+These Strategy routes define the canonical public contract for the boundary. Implementation readiness for the routes lives in [Strategy Ground Map](../../plan/world_model/strategy/ground_map.md).
 
 ## Capability Invocation Pattern
 

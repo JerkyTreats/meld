@@ -10,7 +10,7 @@ Strategy must turn an Agent-curated Goal draft and authoritative world-model vie
 
 ## Core invariants
 
-The detailed requirements preserve six simple rules:
+The detailed requirements preserve seven simple rules:
 
 1. A Goal draft is not yet an Execution Goal.
 2. Initial Goal admission requires at least one eligible Strategy candidate.
@@ -18,8 +18,9 @@ The detailed requirements preserve six simple rules:
 4. The known Strategy catalog is not the complete space of possible Strategies.
 5. `NoMethodAvailable` before admission is different from quiescence after admission.
 6. Execution may realize or reject authorized meaning, but it may not invent new meaning.
+7. A candidate plans to settle questions. It does not assert outcomes.
 
-The first implementation should prove these rules with one configured domain shape. It does not require learned ranking, automatic Strategy promotion, catalog governance, or a general Strategy language.
+One configured domain shape suffices to prove these rules. They do not require learned ranking, automatic Strategy promotion, catalog governance, or a general Strategy language.
 
 ## Ownership requirements
 
@@ -157,6 +158,8 @@ outcome contract
 cost and efficacy projection route
 ```
 
+An affordance is representable as a standalone `meld-lang::Operator` with declared propositional preconditions and effects, joined to capability contracts through the existing resolution constraints and carrying artifact meaning and an outcome contract reference. Domain ordering rules are entailed by affordance preconditions rather than separately authored.
+
 Capability implementation identity remains an Execution concern until resolution.
 
 ### STR-023 Means-end construction
@@ -213,7 +216,7 @@ every dataflow input satisfies its capability and artifact contract
 every existing evidence input is admitted
 every future evidence input has a prospective contract and authoritative admission gate
 every material obligation has an existing admitted discharge or a valid projected discharge path
-projected effects can satisfy the Goal
+projected effects settle the Goal target under the settlement transform
 required evaluator independence is preserved
 scope and authority remain valid
 ```
@@ -226,13 +229,27 @@ A future artifact used as epistemic evidence or obligation discharge may appear 
 
 That epistemic downstream use must be gated on a later authoritative admission verdict. Ordinary operational artifacts use capability and artifact contracts without acquiring epistemic authority. Execution may wait for and route an admission verdict but must not produce it.
 
+### STR-029 Settlement regression
+
+An observational Goal condition must not be asserted by any effect model.
+
+Observationality is declared per belief dimension by the owning belief family in the operational domain theory. It must not be inferred from proposition syntax.
+
+Candidate regression must target the settlement transform of the Goal target. Projected effects must make every Goal proposition settleable with admitted evidence bound to the subject revision of the referenced frame.
+
+Prospective effects gated on a future admission verdict are assumed discharged during regression. Every such assumption must be recorded on the candidate, and a failed admission must invalidate exactly the edges that cite it and wake the Strategy association. The Goal threshold itself must never be assumed.
+
+An effect that asserts an unobserved outcome value is invalid. Crossing a configured threshold remains a Belief reconciliation result and an Agent satisfaction decision inside bounded convergence. The untransformed Goal target remains the satisfaction condition.
+
 ## Projection and ranking requirements
 
 ### STR-030 Feasibility before preference
 
 Strategy must reject candidates that violate semantic validity, evidence coverage, authority, capability availability, capacity, cost ceiling, or assignment scope before preference ranking.
 
-Cost must not be used to prove causal coherence.
+A candidate that changes no unsettled or divergent question is also infeasible. A candidate whose only effect is re-settling a question already settled at the same evidence revision must be rejected before ranking rather than merely dispreferred.
+
+Cost must not be used to prove causal coherence. A projected outcome value below the Goal threshold is preference input, not a feasibility ground, unless a typed capacity or evidence verdict independently excludes the path.
 
 ### STR-031 Bound candidate projection
 
@@ -323,13 +340,13 @@ Inspection must explain why every candidate action and edge exists, which author
 
 Strategy identity and selected candidate lineage must survive through the Strategy decision, planning commitment, and outcome event.
 
-This lineage must support later curation that compares projected efficacy with observed reality and prefers a previously successful reusable Strategy when it remains applicable. The first implementation does not require a learned efficacy model.
+This lineage must support later curation that compares projected efficacy with observed reality and prefers a previously successful reusable Strategy when it remains applicable. The lineage obligation itself does not require a learned efficacy model.
 
 ## Boundedness and lifecycle requirements
 
 ### STR-050 Bounded attempts
 
-Every Strategy attempt must be bounded by candidate count, expansion depth, search budget, elapsed budget, or an explicit combination.
+Every Strategy attempt must be bounded by candidate count, expansion depth, compute budget, elapsed budget, any model-use budget, or an explicit combination.
 
 ### STR-051 Determinism and model use
 
@@ -435,6 +452,18 @@ For Strategy-originated task-network mutations, `network_id` plus the planning r
 
 The reducer must atomically persist the uniqueness mapping, command result, graph commit, planning commitment, terminal planning response, and publication outbox. A retry with another caller-supplied command identity must return the prior result and must not duplicate work.
 
+### STR-068 Construction-time conditionality
+
+Work avoidance is a Strategy decision made at construction time from admitted belief and recorded as reuse lineage.
+
+A capability must not decide whether its own work was necessary by re-reading domain state at run time. That decision is an evidence judgment made without epistemic authority. A world change between construction and dispatch is handled through validity dependencies and invalidation rather than in-task guards.
+
+### STR-069 Edge provenance separation
+
+Every task-network dependency must preserve whether it derives from an authorized semantic justification or from operational scheduling.
+
+Scheduling constraints are Execution-owned and mutable, and they must not be recorded as semantic dependencies. Removing or replacing a semantic edge requires a new Strategy decision. Relaxing a scheduling constraint does not.
+
 ## Verification requirements
 
 ### STR-070 Boundary verification
@@ -465,7 +494,9 @@ Only Agent satisfaction curation over reconciled authoritative outcome evidence 
 
 ### STR-075 Generality
 
-At least one non-documentation domain must construct a structurally similar Strategy from declared semantics without docs-specific Strategy branches or runtime grammar changes.
+At least one non-documentation domain must construct a correct Strategy with a structurally distinct candidate topology from the same schema and construction procedure, using declared semantics, without docs-specific Strategy branches or runtime grammar changes.
+
+Similarity is not the success criterion. A schema that only reproduces the topology it was derived from proves nothing. The paired worked examples are [Docs Freshness Strategy](docs_freshness.md) and [CVE Freshness Strategy](cve_freshness.md).
 
 ## Non-goals
 
@@ -487,6 +518,7 @@ Strategy is not:
 - [World Model Strategy](README.md)
 - [Strategy Contracts](contracts.md)
 - [Docs Freshness Strategy](docs_freshness.md)
+- [Strategy Ground Map](../../../plan/world_model/strategy/ground_map.md)
 - [World Model Agent](../agent/README.md)
 - [Directive Grounding](../agent/directive_grounding.md)
 - [World Model Planner](../planner/README.md)

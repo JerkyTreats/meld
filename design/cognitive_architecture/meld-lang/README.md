@@ -74,6 +74,7 @@ Grammar changes (new proposition shapes or new condition kinds) are rare and del
 - `substitute()` — binding substitution into compositions
 - `validate()` — structural validation of compositions
 - `apply_effects()` — effect application producing new world state
+- `settlement()` and the settlement proposition shape — the pure transform Strategy regression evaluates, a deliberate grammar addition defined in [Goals and Methods](goals_and_methods.md)
 
 `meld-lang` does not own:
 

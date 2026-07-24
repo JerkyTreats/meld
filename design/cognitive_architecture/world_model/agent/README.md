@@ -225,7 +225,7 @@ It defines:
 - one path from belief views to planner-facing projection for that Agent through `BeliefQuery` and `PlannerQuery`
 - seed registration through the world model agent command surface
 - durable runtime records for registration, subscription, cursor, and curation decision
-- one proposed `AgentGoalCommand` with a ground `meld-lang::Goal` built from runtime rule configuration and mapped into execution's neutral Goal Set API
+- one proposed `AgentGoalCommand` with a ground `meld-lang::Goal` built from runtime rule configuration in its compatibility form and mapped into execution's neutral Goal Set API
 - duplicate suppression through active goal summary input and curation decision dedupe
 
 It defers:

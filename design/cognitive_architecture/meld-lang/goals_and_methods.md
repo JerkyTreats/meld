@@ -174,8 +174,8 @@ pub struct Method {
     pub composition: Composition,
 
     /// Net effects of the full composition.
-    /// Used by Strategy to screen projected Goal achievement before
-    /// expanding the full Composition.
+    /// Used by Strategy to screen projected settlement of the Goal
+    /// target before expanding the full Composition.
     pub net_effects: Vec<Effect>,
 
     /// Estimated cost of the full composition.
@@ -194,8 +194,16 @@ pub struct Method {
 - `Method.trigger` uses `Term::Variable` in positions that should bind against the goal. When `unify(method.trigger, goal.target)` succeeds, it produces `Bindings` that map variable names to concrete terms from the goal.
 - `Method.preconditions` are checked after trigger unification. Bindings from the trigger are substituted into preconditions before evaluation against world state. This enables preconditions like "scope ?node must be accessible" where `?node` was bound from the trigger.
 - `Method.composition` is a template. It contains `Term::Variable` references matching the trigger's variables. `substitute(composition, bindings)` produces a concrete composition ready for validation and runtime compilation.
-- `Method.net_effects` allow Strategy to screen projected Goal achievement before expanding the full Composition. Authoritative world-model projections remain the semantic proof surface.
+- `Method.net_effects` allow Strategy to screen projected settlement of the Goal target before expanding the full Composition. Regression targets `settlement(goal.target)` rather than the raw target, because an observational condition cannot be asserted by any honest effect model. Authoritative world-model projections remain the semantic proof surface.
 - `Method.preference` is a reusable source hint when several Methods match. Strategy may use it during bounded construction but Agent authorization applies to the resulting concrete candidate.
+
+### Settlement Transform
+
+The shared language owns `settlement`, a pure transform over a ground Goal target and the settlement proposition shape it emits.
+
+For each proposition whose belief dimension is declared observational by its owning belief family, the transform substitutes the proposition that the owning question is settled with admitted evidence bound to the subject revision of the referenced frame. Non-observational propositions pass through unchanged. The language evaluates the transformed target; the observationality declaration and the settlement verdicts come from world-model domains.
+
+Strategy regression and Method screening evaluate `settlement(goal.target)`. The untransformed target remains the satisfaction condition owned by Agent curation. See [Strategy Contracts](../world_model/strategy/contracts.md).
 
 ### Strategy Method Instantiation Flow
 
@@ -211,9 +219,9 @@ Accepted Goal revision arrives at Strategy
     |        evaluate each against world_state
     |        ANY UNSATISFIED → skip (or plan to satisfy preconditions)
     |
-    |     3. Verify net_effects achieve goal:
+    |     3. Verify net_effects settle the goal target:
     |        world_state.apply(net_effects) → projected_state
-    |        evaluate(projected_state, goal.target) → Satisfied?
+    |        evaluate(projected_state, settlement(goal.target)) → Satisfied?
     |        NOT SATISFIED → skip
     |
     |     4. Check cost:

@@ -36,7 +36,10 @@ Family configuration supplies:
 - default prior
 - freshness policy
 - planner projection fields
+- observationality declaration per dimension
 - config version
+
+The observationality declaration states whether a dimension's value is established only by admitted evidence that arrives after action. The Strategy settlement transform reads it per [Strategy Requirements](../strategy/requirements.md).
 
 Revisions must record the config id or config snapshot hash used for assessment so replay is stable when runtime configuration changes.
 

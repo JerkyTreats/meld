@@ -248,6 +248,8 @@ AgentStrategyJudgment
 
 `outcome` is accepted or rejected. Acceptance must authorize an exact nonempty subset of alternatives present in the referenced proposal. Rejection authorizes none and preserves typed rationale. Proposal reference, hash, Goal draft, proposed Goal, and alternative payload mismatch fails closed.
 
+A configured deterministic judgment policy may compute the outcome under the Agent's authority, on the same pattern as the configured Goal curation rule. The policy identity and revision are part of the judgment record. Delegating computation to a policy does not move the authority, which remains the Agent's.
+
 Initial acceptance preconditions require the Goal draft to remain current, proposal closure to hash-verify, delegation and effective authority to remain valid, assignment and activation revisions to remain current, and every selected alternative to remain eligible under its validity dependencies. Later replacement judgments also validate the admitted Goal lifecycle epoch. Judgment fails closed when any precondition is stale.
 
 An accepted judgment creates the corresponding `StrategyDecision`. The judgment, decision, and durable publication obligation must be written atomically or derived by a deterministic idempotent reducer keyed by judgment identity. A crash must not strand accepted Agent authority without a queryable decision and publication obligation.
@@ -303,6 +305,16 @@ ProspectiveArtifactContract
 
 The eventual artifact instance and admission verdict must cite this contract and bind its exact content identity. A mismatched producer, subject, scope, schema, content identity, outcome contract, or admission authority leaves the gate closed.
 
+## Settlement transform
+
+`settlement` is a pure transform over a ground Goal target. The shared language owns the transform and the settlement proposition shape. The operational domain theory owns the observationality declaration the transform reads: each belief dimension declares whether its value is established only by admitted evidence that arrives after action, never by an action's declared effects. Evaluation over produced artifacts and observation of an authoritative external source are both settlement routes. Observationality is not inferred from proposition syntax.
+
+The transform maps each observational proposition in the target to the proposition that its owning question is settled with admitted evidence bound to the subject revision of the referenced frame. The settling evidence arrives later in time; the binding is to the frame's subject revision, so later subject change invalidates the settlement. Non-observational propositions pass through unchanged.
+
+The planner projection contract must emit the settlement vocabulary for every grounded question in scope, or regression over the transform has nothing to evaluate against.
+
+Proposal validation regresses every candidate against `settlement(goal.target)`. Prospective effects gated on a future admission verdict are assumed discharged during regression, each assumption is recorded on the candidate, and a failed admission invalidates exactly the citing edges. The Goal threshold is never assumed. The untransformed target remains the satisfaction condition evaluated by Agent satisfaction curation over reconciled outcome evidence, and it is also the target that known-catalog `goal_pattern` lookup matches. A candidate whose effect model asserts an unobserved outcome value fails validation.
+
 ## Strategy projection
 
 `StrategyProjection` is an authoritative world-model read over one bound candidate Composition.
@@ -312,7 +324,7 @@ StrategyProjection
   projection_ref
   alternative_ref
   input_frame
-  goal_achievement_support
+  settlement_support
   action_effect_support
   outcome_threshold_projection
   evidence_assumptions
@@ -639,6 +651,8 @@ The reducer persists the accepted `StrategyPlanningResponse` atomically with the
 
 The task network remains the operational plan and execution state. The Strategy decision remains its upstream semantic lineage.
 
+Every committed dependency edge preserves its origin. A semantic edge cites its Strategy edge-justification record and may change only through a new Strategy decision. An operational scheduling constraint cites its Execution policy source and may be relaxed by Execution alone. The two origins must remain distinguishable in the committed network and in replay.
+
 ## Strategy outcome association
 
 `StrategyOutcomeAssociation` preserves the join needed for later efficacy curation without defining that curation model now.
@@ -678,7 +692,7 @@ EvidenceAdmissionVerdict
 
 The task-network reducer validates the verdict against the pending `EvidenceAdmission` edge and persists an immutable accepted-verdict record in its own revision stream. Dependency state advances only after that commit. Verdict identity is idempotent and conflicting reuse is rejected. Replay reconstructs readiness from the accepted record without reading mutable external state.
 
-Current execution records require a Method identity. Strategy-generated work requires that identity to become optional or explicitly classified by origin. Strategy decision identity and Composition hash are mandatory for Strategy-generated lineage.
+Execution lineage classifies work by origin. Method identity is present only for Method-derived steps. Strategy decision identity and Composition hash are mandatory for Strategy-generated lineage.
 
 ## Event posture
 
@@ -730,13 +744,18 @@ An initial Goal does not enter Execution without a nonempty authorized Strategy 
 NoMethodAvailable is not convergence quiescence.
 
 An empty known Strategy catalog does not prove that no Strategy can be constructed.
+
+A candidate settles questions. It does not assert outcomes.
+
+A scheduling constraint is not a semantic dependency.
 ```
 
 ## Read with
 
-- [Strategy Overview](README.md)
+- [World Model Strategy](README.md)
 - [Strategy Requirements](requirements.md)
 - [Docs Freshness Strategy](docs_freshness.md)
+- [Strategy Ground Map](../../../plan/world_model/strategy/ground_map.md)
 - [World Model Agent](../agent/README.md)
 - [Directive Grounding](../agent/directive_grounding.md)
 - [World Model Planner](../planner/README.md)

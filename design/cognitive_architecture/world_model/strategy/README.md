@@ -268,23 +268,9 @@ Execution retains custody of verified Method bodies. Catalog entries refer to ex
 
 For one Goal draft, Strategy combines applicable catalog entries with novel episode-specific candidates. An empty catalog does not imply an empty available set.
 
-Selection lineage preserves the catalog entry or novel candidate identity through Strategy decision, planning commitment, and outcome events. This is the minimal foundation for later curation that compares predicted efficacy with observed reality and prefers a previously successful Strategy when it remains applicable. The first implementation need not define a learned efficacy model.
+Selection lineage preserves the catalog entry or novel candidate identity through Strategy decision, planning commitment, and outcome events. This is the minimal foundation for later curation that compares predicted efficacy with observed reality and prefers a previously successful Strategy when it remains applicable. Catalog lookup matches Goal patterns against the untransformed target. Efficacy curation over this lineage is a separable concern layered on the preserved association.
 
-### First implementation shape
-
-The first implementation should remain deliberately small:
-
-```text
-one persisted known Strategy catalog
-one Goal-pattern lookup
-one bounded novel-construction path
-one combined available candidate set
-one explicit NoMethodAvailable result
-one Goal admission bundle
-one selected-Strategy to outcome association
-```
-
-It does not require learned ranking, generalized Strategy promotion, catalog governance, distributed consensus, or a complete Strategy lifecycle framework. Those remain replaceable until the basic cognitive path proves useful.
+Implementation sequencing, the first-slice scope, and the deferred normative tier live in [Strategy Ground Map](../../../plan/world_model/strategy/ground_map.md).
 
 ## Strategy flow
 
@@ -297,7 +283,54 @@ One bounded attempt has four phases:
 4. Present eligible candidates to the Agent for judgment and Goal admission.
 ```
 
-Construction is bounded by candidate count, expansion depth, search budget, elapsed budget, or an explicit combination.
+Construction is bounded by candidate count, expansion depth, compute budget, elapsed budget, any model-use budget, or an explicit combination.
+
+## Construction procedure
+
+Strategy construction is defined over the pure planning operations that already govern Execution planning: `unify`, `substitute`, `evaluate`, `validate`, `WorldState::gap`, and `WorldState::apply`. Construction is not a new formalism. It is a bounded regression loop over the existing language.
+
+```text
+obligations = per-conjunct decomposition of settlement(goal.target)
+              against the referenced WorldState
+producers   = verified Methods whose trigger unifies with an obligation
+            + affordances whose declared effects unify with an obligation
+expansion   = substitute bindings, project effects with apply,
+              recurse on unmet preconditions as new obligations
+emission    = Composition steps and edges,
+              every edge citing the obligation and effect that produced it
+bound       = candidate count, expansion depth, compute budget,
+              elapsed budget, and any model-use budget
+```
+
+Obligation decomposition is per conjunct and indeterminacy-aware. An unsatisfied proposition and an indeterminate proposition are distinct typed obligations, each carrying the subject, rule, and revision that introduced it. A disjunctive target decomposes into alternative obligation sets, one per viable disjunct. Collapsing an indeterminate or disjunctive target into one opaque obligation is not valid decomposition.
+
+Capacity enters construction as typed verdicts, not arithmetic. The owning world-model projection computes per-subject fit verdicts for each declared evidence path shape, and construction consumes those verdicts as ordinary propositions. Construction itself performs no resource aggregation.
+
+Model-backed proposal may replace or seed the producer and expansion steps. The emitted candidate still passes the same deterministic validation, and the recorded generator artifact governs replay.
+
+### Settlement transform
+
+An observational Goal condition cannot be asserted by any honest effect model. No candidate can truthfully project that a correctness score will exceed a threshold before the evaluation exists.
+
+Observationality is a declared property of a belief dimension, owned by the dimension's belief family in the operational domain theory. A dimension is observational when its value is established only by admitted evidence that arrives after action, never by an action's declared effects. Evaluation over produced artifacts and observation of an authoritative external source are both settlement routes. The transform is not inferred from proposition syntax.
+
+The `settlement` transform maps each observational proposition in a Goal target to the proposition that its owning question is settled with admitted evidence bound to the subject revision of the referenced frame. The settling evidence arrives later in time; the binding is to the frame's subject revision, so later subject change invalidates the settlement rather than the settlement claiming to precede its own evidence. Non-observational propositions pass through unchanged. Candidates regress against `settlement(goal.target)`. The untransformed target remains the satisfaction condition owned by Agent curation.
+
+Prospective effects gated on a future admission verdict are assumed discharged during settlement regression. Each such assumption is recorded on the candidate, and a failed admission invalidates exactly the edges that cite it and wakes the Strategy association. This assumption is legitimate for admission gates because they carry declared invalidation and wake paths. It is never legitimate for the Goal threshold itself, because assuming the satisfaction condition would collapse the convergence loop the threshold exists to drive.
+
+A candidate therefore plans to settle questions. It does not assert outcomes. Crossing the configured threshold is a Belief reconciliation result and a later Agent satisfaction decision inside bounded convergence.
+
+### Affordance ground
+
+A semantic action affordance is representable as a standalone `meld-lang::Operator` with declared propositional preconditions and effects, joined to capability contracts through the existing resolution constraints, and carrying artifact meaning and an outcome contract reference.
+
+Methods remain cached reusable decompositions. Affordances are the atomic verbs that novel construction composes. Domain ordering rules are entailed by affordance preconditions rather than authored: an evaluator that requires `Exists` over exact published bytes makes generation precede evaluation in every candidate that regresses through it.
+
+### Construction-time conditionality
+
+Whether work is required is decided at construction time from reconciled belief, not at run time inside a task.
+
+When an artifact already exists and its evidence is admitted, the candidate contains no producing step and the reuse is recorded as Strategy lineage. A capability must not decide whether its own work was necessary by re-reading domain state, because that is an evidence judgment made without epistemic authority. A world change between construction and dispatch is handled through validity dependencies and invalidation.
 
 Two empty-result cases must remain distinct:
 
@@ -328,6 +361,8 @@ Each Strategy attempt is bounded. Convergence is not limited to one attempt.
 
 A below-threshold outcome may produce a new world-model verdict and a different Strategy decision. An unchanged input frame must not repeatedly generate equivalent work without new eligibility, invalidation, or retry posture.
 
+Ordering between Goals is never declared. Grounding cannot instantiate belief questions over untrusted scope, so a Goal whose questions require evidence from earlier work cannot be drafted until that evidence reconciles. Trusted-scope gating is the only inter-Goal sequencing mechanism. Ordering inside one Goal is explicit in its authorized Composition. Execution orders nothing but the ready front.
+
 ## World change and planning commitment
 
 A candidate Composition is counterfactual. Constructing or comparing it does not change world state and does not require a canonical event.
@@ -352,49 +387,11 @@ task outcome
 
 A planning commitment records what Meld decided to attempt. It is not evidence that the intended domain effect occurred.
 
-## Current implementation status
+## Runtime ground
 
-The active architecture is ahead of current implementation.
+Strategy is constructed over the existing typed planning substrate rather than a new formalism. The construction procedure reuses the shared-language pure operations. Candidate validation generalizes the existing Execution candidate-evaluation regression. Eligibility typing, mechanical no-method reporting, task lineage, data-defined belief families, generic curation, and the generic planner projection are the same primitives this design extends.
 
-Current Meld has:
-
-- typed Goals, Operators, Effects, Compositions, Methods, and WorldState
-- loadable authored Methods
-- first-applicable Method selection
-- capability resolution
-- composition lowering
-- durable task-network mutation and execution
-- event publication for task outcomes
-- a narrow world-model planner projection
-- Agent Goal curation
-
-The minimum next slice does not yet have:
-
-- Directive grounding into dynamically instantiated belief questions
-- a Goal draft gate before Execution Goal admission
-- a persisted known Strategy catalog
-- a bounded Strategy constructor that combines reuse and novel construction
-- a visible `NoMethodAvailable` result
-- Goal admission with a nonempty authorized candidate set
-- selected-Strategy to outcome association
-
-The broader architecture also does not yet have:
-
-- a general Agent-owned Strategy runtime
-- a durable Strategy decision store or projection
-- rich evidence-admission and sufficiency views for Strategy
-- scoped universal Goal expansion
-- semantic action affordance discovery
-- Composition search over alternatives
-- candidate-network efficacy projection
-- durable Goal-to-Strategy association
-- Strategy invalidation and replacement
-- atomic proposal, Agent judgment, and Strategy event outboxes
-- Agent authority and Goal lifecycle epoch fences at commitment and dispatch
-- generic many-valued Composition fan-in
-- semantic planning commitment publication
-
-Current planning behavior must therefore be read as a configured-path first slice rather than the completed Strategy architecture.
+The verified primitive inventory, the concept-to-ground map, the known limits of the current planning path, and the remaining construction delta live in [Strategy Ground Map](../../../plan/world_model/strategy/ground_map.md).
 
 ## Documents
 
@@ -404,6 +401,12 @@ Current planning behavior must therefore be read as a configured-path first slic
   shared records, lifecycle, lineage, durability, and event handoffs
 - [Docs Freshness Strategy](docs_freshness.md)
   authoritative worked example and bottom-up fan-out viability proof
+- [CVE Freshness Strategy](cve_freshness.md)
+  paired non-documentation worked example proving structurally distinct derivation per STR-075
+- [Strategy Ground Map](../../../plan/world_model/strategy/ground_map.md)
+  verified primitive inventory and construction delta under the implementation plan
+- [Use Case Catalog](../../../use_cases/README.md)
+  use-case descriptions, fluid Meld conversions, and required semantics per domain
 
 ## Read with
 
