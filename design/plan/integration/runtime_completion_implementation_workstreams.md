@@ -8,6 +8,8 @@ Source requirements: [Runtime Completion Ground Map](runtime_completion_ground_m
 
 Amendment date: 2026-07-24 — Strategy continuity constraints, harness enablement criteria, the domain emission workstream, the composition-path parity workstream, and initialization packet coverage added. Fresh review runs against the Strategy corpus, [Strategy Ground Map](../world_model/strategy/ground_map.md), [Runtime Initialization](runtime_initialization.md), and [Agent-Native Debugger Requirements](agent_native_debugger_requirements.md) in addition to the source ground map.
 
+Amendment date: 2026-07-24 — review tiering by contract durability added. Pillar contracts receive concentrated fresh review, slice verticals receive objective-scoped packet review, mechanical tails carry no standalone review, and reviewer license is bounded by a two-sided finding rule.
+
 ## Objective Baseline
 
 Requested outcome:
@@ -594,7 +596,7 @@ The active environment supports three worker agents beside one orchestrator. Eac
 
 ### Gate Wave
 
-No implementation begins until the user-selected requirements decisions are recorded. One high-strength integration owner then coordinates commits for the domain-owned public contract skeletons. Fresh architecture and boundary reviewers must approve this gate before domain implementation begins.
+No implementation begins until the user-selected requirements decisions are recorded. One high-strength integration owner then coordinates commits for the domain-owned public contract skeletons. Two fresh high-strength reviewers approve this gate before domain implementation begins: one owning architecture and boundary fitness, one owning durability and the Strategy continuity constraints. This gate carries the highest review leverage in the program because every pillar contract freezes here.
 
 ### Foundation Wave
 
@@ -617,6 +619,8 @@ Run these lanes concurrently after the relevant Foundation Wave contracts pass r
 | World-model evidence | Mapping port, bounded event ingestion, cursor ordering | High | Idempotency and policy-ownership review passed |
 | World-model agent convergence | Goal delivery selection, satisfaction eligibility, future-drift rule implementation, curation-rule durable home, named curation-to-goal-set port, genesis identity command path | High | No-hot-loop and durable-receipt review passed |
 | Execution planning | Active-goal query, revised-state plan identity, docs package selection and lowering | High | Causal-plan and package-path review passed |
+
+Wave exit evidence includes booting the Goal-and-Belief isolate from an explicit registration set over one temporary root and stepping belief assessment and goal curation actor by actor per [Agent-Native Debugger Requirements](agent_native_debugger_requirements.md). A live stepped session over public ports is the exit check on the curation port, bounded-step, and registration-set pillars this wave lands.
 
 ### Execution And Lifecycle Wave
 
@@ -645,9 +649,35 @@ This wave carries four units against three workers. Parity fixture preparation i
 
 Run flywheel parity execution, minimum foreground-availability proof, and repository-wide quality gates concurrently where commands do not contend for the same mutable test resources. The branching filesystem parity and bounded durable convergence proof remains the authoritative exit gate and requires high-strength implementation and review.
 
+## Review Tiering By Contract Durability
+
+Review effort follows contract durability, not code volume. The program has two kinds of surface: pillar contracts that downstream workstreams consume, and slice internals that exist to make one docs freshness loop converge. Review concentrates on the first and stays objective-scoped on the second. The objective is a vertical slice with durable pillars, not production reliability machinery.
+
+Every packet diff decomposes into three tiers:
+
+- Pillar contracts. Durable primitives with named downstream consumers, enumerated below. Changes to a pillar receive high-strength fresh review with the Strategy continuity constraints and debugger harness criteria in scope.
+- Slice verticals. Actor loops, selection queries, store methods, and adapters inside a packet. They must satisfy the objective baseline: bounded, durable, idempotent on reopen, no hot loop, truthful reporting. Downstream generality is out of review scope for this tier.
+- Mechanical tails. Emission instrumentation, path corrections, fixtures, and focused tests. No standalone review; the owning packet reviewer sees them inside the packet diff.
+
+| Pillar contract | Owning workstream | Downstream consumer |
+| --- | --- | --- |
+| Bounded package-step contract, domain-neutral and dispatch-owned | Workstream Four | Composition-path parity, then Strategy end-to-end execution |
+| Public actor bounded-step contract with preserved per-tick reports | Workstream Five | Debugger stepping and step diffing |
+| Registration-set composition as a public surface with registration-scoped resource opening | Workstreams One and Five | Debugger isolates |
+| Named curation-to-goal-set port | Workstream Two | Strategy goal draft gate and admission bundle |
+| Affordance-shaped available-action binding | Workstream Three | Strategy affordance catalog |
+| Per-folder evidence facts with aggregation as belief policy and drift as goal lifecycle epoch advance | Workstream Two | Strategy evidence admission and reopen semantics |
+| Dependency-edge origin recording | Workstream Four | Strategy semantic-versus-scheduling separation |
+| Canonical `EventRecord` and durable evidence-cursor mutation contract | Events | Every consumer lane |
+| Staged initialization contract with theory registry and genesis identities | Root | Debugger boot path and product initialization |
+
 ## Independent Review Protocol
 
 Every workstream receives a fresh-context reviewer who did not implement that workstream. Review prompts contain the objective baseline, owned write scope, frozen contracts, applicable policies, and verification evidence. They do not contain the implementer conclusion.
+
+A packet's verification commands must pass before its review begins. Reviewers review working code; failure triage belongs to the implementer.
+
+Each packet review is one round by default: findings, corrections, then confirmation of the corrections by the same reviewer. A fresh re-review triggers only when a correction changes a frozen contract, a domain owner, or the dependency order.
 
 Review findings use this shape:
 
@@ -657,6 +687,10 @@ Review findings use this shape:
 - Objective baseline item or policy basis
 - Blocking or deferred disposition
 - Concrete correction only when blocking
+
+Findings are two-sided. A blocking finding must cite an objective baseline item, a frozen contract, or a policy; a finding without such a basis is invalid. A finding that requests explicit non-goal machinery — firm retry, backoff, failure classification, recovery and terminality mechanics, daemon management, observability platforms, or presentation surfaces — is disposed as deferred without a discussion round. Speculative generality on slice-tier internals is likewise out of scope. On pillar contracts the burden flips: whether Strategy and the debugger can consume the seam without rework is in scope.
+
+The convergence proof and packet verification commands are the reliability instrument of record. A behavior not observable through them may not generate a hardening demand.
 
 Each review maintains the workstream objective. Reviewers must reject scope expansion into comprehensive failure mechanics, generalized activation, presentation surfaces and observability platforms, or unrelated cleanup unless the finding proves false progress, false satisfaction, lost durable state, a hot loop, or a direct policy violation. Domain emission and hook primitives under Workstream Seven are in scope and are not rejectable as observability expansion.
 
@@ -675,7 +709,7 @@ Per-workstream reviewers focus on:
 | Foreground availability | Continued process life through work, quiescence, satisfaction, and wake | High |
 | Product proof | No semantic test orchestration, real workflow parity, aggregate evidence, wake and drift availability | High |
 
-After packet reviews pass, fresh program reviewers cover six lanes:
+After packet reviews pass, fresh program reviewers cover six lanes in one pass at the Proof And Closeout Wave. Earlier wave closes use integration-owner reconciliation of exports, manifests, and compile-together state rather than program-level review. The six lanes are:
 
 - Spec coverage
 - Domain architecture validity
