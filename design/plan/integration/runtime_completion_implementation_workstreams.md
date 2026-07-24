@@ -1,10 +1,12 @@
 # Runtime Completion Implementation Workstreams
 
-Status: operational-parity rebaseline under fresh review, blocked on product decisions
+Status: operational-parity rebaseline; requirements gate closed 2026-07-24; pending coordinated contract freeze and fresh review
 
 Evidence date: 2026-07-16
 
 Source requirements: [Runtime Completion Ground Map](runtime_completion_ground_map.md)
+
+Amendment date: 2026-07-24 — Strategy continuity constraints, harness enablement criteria, the domain emission workstream, the composition-path parity workstream, and initialization packet coverage added. Fresh review runs against the Strategy corpus, [Strategy Ground Map](../world_model/strategy/ground_map.md), [Runtime Initialization](runtime_initialization.md), and [Agent-Native Debugger Requirements](agent_native_debugger_requirements.md) in addition to the source ground map.
 
 ## Objective Baseline
 
@@ -69,9 +71,9 @@ Cross-domain contracts are frozen through one coordinated gate but remain owned 
 
 ## Initial Dependency Gates
 
-Gate A settles the minimum product intent, satisfaction and evidence granularity, first stale signal, artifact mapping direction, and bootstrap ownership. These decisions constrain configuration and the shared domain contracts.
+Gate A is closed with all decisions recorded: the stage 4 genesis fact is an idempotent unobserved-scope declaration for the selected subtree with its exact record identity frozen at Gate B; satisfaction uses one derived aggregate belief computed by belief policy over per-folder evidence facts; `meld runtime run` takes the target path as its explicit default argument, with configuration resolved only through the XDG config home and no runtime state under the target workspace; and future drift reopens the satisfied goal in place through an idempotent Agent-curated reopen mutation appended as a new goal revision with the lifecycle epoch advanced, provenance citing the triggering belief revision, and satisfaction evidence bound to its epoch. These decisions constrain configuration and the shared domain contracts.
 
-Gate B freezes coordinated domain-owned contract skeletons for actor readiness, bounded work reports, docs outcome mapping input, stable correlation identity, and product runtime registration. No parallel lane may create an alternate source of truth for these concepts.
+Gate B freezes coordinated domain-owned contract skeletons for actor readiness, bounded work reports, docs outcome mapping input, stable correlation identity, product runtime registration, and the staged initialization contract of [Runtime Initialization](runtime_initialization.md) including theory-registry revision resolution and genesis identities. No parallel lane may create an alternate source of truth for these concepts.
 
 After Gate B, world model, execution, event evidence, and physical binding analysis can proceed in parallel. Runtime composition integrates their public contracts after each owning lane has a reviewed packet. Product convergence proof design follows those contracts but may prepare fixtures and assertions in parallel without implementing semantic handoffs.
 
@@ -89,7 +91,7 @@ The current collaboration interface exposes equal-strength subagents and does no
 
 The following product decisions must be frozen before shared implementation contracts. They are allocated to one central decision gate because allowing workstreams to decide them independently would create incompatible sources of truth.
 
-This gate is currently unresolved and blocks implementation. It is a product requirements gate, not an implementation workstream. Phased delivery must receive the selected values as fixed inputs rather than decide them inside a worker lane.
+All gate decisions are recorded and the gate closed 2026-07-24. It was a product requirements gate, not an implementation workstream. Phased delivery receives the selected values as fixed inputs rather than deciding them inside a worker lane. Implementation now waits only on the coordinated contract freeze and fresh review.
 
 Resolved decision:
 
@@ -103,20 +105,28 @@ Resolved decision:
 
 | Decision | Affected workstreams | Why it is central |
 | --- | --- | --- |
-| Satisfaction and evidence granularity | World model, execution publication, product proof | Per-folder outputs must not satisfy the selected-tree goal before aggregate package completion |
-| First stale signal and bootstrap owner | Physical binding, world model, workspace observation | The first loop needs one authoritative wake source without root sequencing semantic work |
-| Deterministic proof provider | Physical binding, execution dispatch, product proof | The proof must use the real provider route without external nondeterminism |
-| Publication artifact mapping direction | Execution, events, world model | Execution owns outcome facts while world model owns evidence interpretation |
-| Future drift goal lifecycle | World model and execution | Current stable goal identity collides with an already satisfied goal on later drift |
-| CLI path targeting | Config and CLI | Policy requires an explicit exception anywhere path is not the default target |
+| Satisfaction and evidence granularity — recorded: one derived aggregate belief over per-folder evidence facts | World model, execution publication, product proof | Per-folder outputs must not satisfy the selected-tree goal before aggregate package completion |
+| Stage 4 genesis fact content — recorded: idempotent unobserved-scope declaration for the selected subtree | Physical binding, world model, workspace observation | The first loop needs one authoritative wake source without root sequencing semantic work |
+| Deterministic proof provider — recorded as chosen | Physical binding, execution dispatch, product proof | The proof must use the real provider route without external nondeterminism |
+| Publication artifact mapping direction — resolved by Runtime Initialization stage 2 | Execution, events, world model | Execution owns outcome facts while world model owns evidence interpretation |
+| Future drift recording — recorded: reopen-in-place as an appended goal revision with epoch advance; satisfied is not an absorbing state | World model and execution | Current stable goal identity collides with an already satisfied goal on later drift |
+| CLI path targeting — recorded: path is the explicit default target with XDG-only configuration and workspace purity | Config and CLI | Policy requires an explicit exception anywhere path is not the default target |
 
 Firm retry, backoff, failure classification, recovery, and terminality mechanics are not part of this gate.
+
+The gate decisions are additionally bounded by the Strategy continuity constraints recorded in the [Runtime Completion Ground Map](runtime_completion_ground_map.md): per-folder evidence facts with aggregation as policy, drift as goal lifecycle epoch advance, an affordance-shaped available-action binding, one named curation-to-goal-set port, recorded dependency-edge origin, and a dispatch-owned domain-neutral bounded package-step contract. A gate selection that violates one of these constraints builds structure the Strategy slice must unwind and is rejected at review.
+
+[Runtime Initialization](runtime_initialization.md) restructures three gate rows. Bootstrap ownership is resolved by structure: explicit initialization owns theory installation, identity genesis, and epistemic seeding, while the runtime owns activation. The first stale signal narrows to the content of the stage 4 genesis fact, now recorded. The artifact-mapping direction resolves to stage 2 selection by id from the stewardship expression. The single remaining open product decision is future-drift recording under the epoch rule.
 
 ## Coordinated Domain Contract Gate
 
 One integration owner coordinates and freezes these skeletons before parallel implementation begins. Each canonical contract remains defined by its owning domain:
 
 - Root owns the validated minimal docs freshness selection and its physical runtime binding without redefining the stewardship package semantics.
+- World model owns the belief-family registry identity and its content-hash revision contract, and the observationality declaration each family carries.
+- The agent domain owns the curation-rule binding on the agent registration and genesis identity per [Agent Genesis And Activation](../../cognitive_architecture/world_model/agent/genesis_and_activation.md).
+- Events and world model jointly own the stage 4 genesis fact record identity.
+- Root owns the initialization command surface shape over stages 2 through 4 of [Runtime Initialization](runtime_initialization.md).
 - Root owns registration identity and lifecycle projection for required active actors, required passive services, unresolved required bindings, active idle, unhealthy, and stopped. Catalog-only descriptors receive no runtime registration or lifecycle state.
 - Each actor domain owns its positive bounded request and domain report. Root owns only translation into its lifecycle projection.
 - World model owns the exact docs subject binding, belief key, outcome-to-evidence mapping input, deterministic promoted-evidence identity, consumer identity, and evidence interpretation.
@@ -152,6 +162,7 @@ Implementation guide:
 4. Add a pure physical binding resolver for workspace, subject, agent, provider, stewardship package, and external storage.
 5. Produce owner-scoped domain registrations without semantic sequencing.
 6. Replace empty internal-role expansion with registrations derived from the selected stewardship expression and physical binding.
+7. Keep registration production a public composition surface. The stewardship-derived registration set is one producer; harness and proof callers may supply an explicit registration set to compose any actor subset.
 
 Boundary rules:
 
@@ -221,6 +232,7 @@ Durability and idempotency:
 - Applicable evidence must be durable before the authority cursor advances.
 - Promoted-evidence identity must derive deterministically from canonical publication and mapping identity so replay cannot create distinct evidence.
 - Events owns durable cursor mutation while world model owns the consumer identity and advancement request after its state is durable.
+- The curation-to-Execution goal boundary is one named port. The later world-model Goal draft gate and admission bundle insert at that port without rewiring curation or the goal set.
 - Non-applicable understood events may advance the cursor.
 - Reopen after evidence commit and before cursor commit must replay idempotently without a second assignment, revision, or confidence increase.
 - An unchanged low-confidence revision becomes ineligible after one absorbed satisfaction review.
@@ -244,6 +256,7 @@ Verification:
 - Second planner projection carries the second belief revision and changed source references
 - Repeated unchanged ticks attempt and commit no work
 - New revision wakes a quiescent active goal
+- Later drift reopens a satisfied goal in place with an advanced epoch, prior-epoch satisfaction evidence never satisfies the reopened goal, and no consumer treats the satisfied state as absorbing
 - Static scans reject execution internals, root logging dependencies, `mod.rs`, hardcoded docs policy in generic modules, and unbounded actor entry points
 
 ## Workstream Three Execution Planning And Docs Writer Selection
@@ -271,7 +284,7 @@ Spec gaps:
 
 Implementation guide:
 
-1. Freeze the execution-owned available-action input derived from stewardship package semantics.
+1. Freeze the execution-owned available-action input derived from stewardship package semantics. The frozen shape carries action identity, artifact meaning, outcome contract reference, and realization route so it can later publish as a semantic action affordance without rework.
 2. Expose the narrow active-goal query contract for execution planning.
 3. Require the exact planner projection identity in planning input and deterministic plan identity.
 4. Adapt method lowering to the existing docs task package and workflow route without adding a package compiler or a flywheel-specific writer.
@@ -327,7 +340,7 @@ Implementation guide:
 
 1. Freeze the canonical outcome and artifact identity consumed by the world-model mapping.
 2. Add deterministic bounded ready-task selection and claim identity.
-3. Add a resumable package-step contract that releases no more than the tick budget of ready capability invocations while preserving sibling fan-out and compiled dependency edges.
+3. Add the bounded package-step contract, resumable across ticks, that releases no more than the tick budget of ready capability invocations while preserving sibling fan-out and compiled dependency edges. The contract is owned by the dispatch boundary and is domain-neutral: bounded ready-wave budget, durable readiness, expansion, artifact, and completion state, and reopen-resume semantics. The existing package executor is its first implementor and is compatibility-scoped; task-network composition graphs are its second consumer.
 4. Persist expanded executor, expansion, artifact, readiness, and completion progress before the tick returns.
 5. Build the dispatch actor inside `meld-execution` over public capability, provider, task, workflow, workspace, prompt, and artifact ports.
 6. Persist real artifacts before accepting the terminal task-network outcome.
@@ -341,6 +354,7 @@ Durability and idempotency:
 - Each top-level adapter domain owns any required change under its own `src` domain path.
 - Root runtime composes public ports but does not reach into capability, provider, task, workflow, workspace, or prompt internals.
 - Claims remain fenced by existing task instance, claim revision, worker, and idempotency identity.
+- Committed dependency edges preserve their origin so the later semantic-versus-scheduling separation requires no migration.
 - Artifact records remain the task-owned canonical product.
 - Task outcome becomes authoritative only through the task-network command boundary.
 - Package progress is durable and resumable without reconstructing completed work from diagnostics.
@@ -395,6 +409,9 @@ Implementation guide:
 8. Keep committed event notification as generic wake transport and heartbeat as fallback.
 9. Preserve foreground continuity across active idle and satisfaction.
 10. Keep domain cursors, confidence, goal state, and semantic order out of supervisor storage.
+11. Expose one public actor bounded-step contract implemented by every active actor handle, adapting the existing bespoke domain entry points behind it.
+12. Persist each bounded tick's full domain report durably, including checkpoints and issues, by wiring the existing typed action-record schema. The supervisor lifecycle summary derives from the durable report rather than replacing it.
+13. Open stores and ports only for the composed registration set rather than unconditionally.
 
 Boundary rules:
 
@@ -416,14 +433,10 @@ Verification:
 - Events emitted during a tick do not immediately self-wake a hot loop.
 - New committed evidence wakes eligible work.
 - Satisfaction does not terminate the foreground runtime.
+- A single-domain assembly composed from an explicit registration set boots, steps with injected time, and exposes durable progress through public surfaces only.
+- The full per-tick domain report is recoverable after the run, including checkpoint movement.
 - `cargo test --test integration_tests runtime_cli`
 - Focused supervisor and assembly unit tests
-
-## Deferred Live Account And Presentation Work
-
-The former event-follow and two-lane CLI workstreams are not prerequisites for operational parity. Runtime completion keeps only a minimal foreground availability proof that the process remains alive through bounded work, quiescence, satisfaction, and later wakeup.
-
-Committed event following, terminal stream representation, broad domain activity instrumentation, log relocation, sink failure matrices, and ordered final-watermark draining are deferred follow-on work. They must not occupy implementation lanes until the real branching docs writer route converges through resumable bounded execution.
 
 ## Workstream Six Product Convergence Proof
 
@@ -476,25 +489,100 @@ Verification:
 - `cargo test --test integration_tests runtime_cli`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 
+## Workstream Seven Domain Emission And Runtime Hooks
+
+Owner: each domain crate for native emission; root runtime for the hook surface
+
+Objective baseline:
+
+- A running flywheel narrates itself. `meld runtime run` over active work emits a structured line for every domain semantic transition and every bounded tick report. A silent healthy runtime is an anti-pattern of the same class as false health.
+- Emission derives from domain records and reports. It never becomes semantic truth, satisfaction evidence, or a substitute for durable state.
+- The emission surface is the stable hook contract for later dashboards, terminal visualizers, and the gated agent-native debugger. Those presentation surfaces remain out of scope; the primitives they consume do not.
+
+Current anchors:
+
+- `crates/meld-world-model` has no tracing dependency and zero emission sites.
+- `crates/meld-execution` declares tracing with one call site.
+- The supervisor collapses each `WorkerTickReport` to health counts at `src/runtime/supervisor/entrypoint.rs:463-492`, discarding checkpoints and per-item issues.
+- A typed per-action observability schema exists unwired: `RuntimeActionRecord`, `RuntimeStatusPublisher`, and `RuntimeStatusReader` in `src/runtime/contracts.rs` have no production impls.
+- Event follow primitives already exist: subscription poll and watermark wait in `crates/meld-events`.
+
+Implementation guide:
+
+1. Add structured tracing to `meld-world-model` and `meld-execution` at semantic transition points: belief revision settled, curation decision recorded, goal accepted, plan accepted, task claimed, task completed, artifact persisted, publication appended, satisfaction decided. Field vocabulary reuses existing record identities.
+2. Preserve the full per-tick `WorkerTickReport` durably through the supervisor path by wiring the existing unimplemented action-record schema. Streamed hooks may layer over the durable record later.
+3. Make the foreground run print the structured per-tick account by default with a machine-readable format option.
+4. Expose the existing event subscription poll and watermark wait as the documented follow hook.
+
+Boundary rules:
+
+- Emission carries record identities, never fabricated summaries of domain meaning.
+- No emission path may gate, reorder, or fail semantic work.
+- Dashboards, terminal visualizers, and generalized observability platforms remain out of scope.
+
+Parallel shape:
+
+Instrumentation inside each domain crate is standard-strength mechanical work after that domain's contracts freeze, running inside the owning lane's write scope. Report preservation is part of the supervisor truth lane. The foreground account and format option belong to the foreground availability owner.
+
+Verification:
+
+- A fixture run emits at least one structured line per semantic transition in the canonical slice sequence.
+- A quiescent tick is distinguishable from a dead process and from active work by emission alone.
+- Full tick reports including checkpoint movement are recoverable after the run.
+- Disabling emission changes no semantic behavior or durable domain record.
+
+## Deferred Presentation Work
+
+The former event-follow and two-lane CLI workstreams are not prerequisites for operational parity. Runtime completion keeps the foreground narration and hook primitives of Workstream Seven plus a minimal availability proof that the process remains alive through bounded work, quiescence, satisfaction, and later wakeup.
+
+Terminal stream representation, two-lane presentation, log relocation, sink failure matrices, and ordered final-watermark draining are deferred follow-on work. They must not occupy implementation lanes until the real branching docs writer route converges through resumable bounded execution.
+
+## Workstream Eight Composition-Path Parity
+
+Owner: `meld-execution` planning, lowering, and task-network boundaries
+
+This workstream is the bridge between runtime completion and the Strategy first slice. Runtime completion proves the flywheel drives the existing docs writer package. Strategy emits multi-node `Composition` graphs realized through lowering and the task network — a path that has never executed a branching fan-out end to end. Neither program previously owned closing that gap.
+
+Objective baseline:
+
+- A branching multi-node composition graph lowers, commits, and executes through the task network using the bounded package-step contract as its second consumer, with sibling fan-out and dependency semantics matching the package route over an equivalent fixture.
+- Committed dependency edges carry their recorded origin.
+- No package-expansion machinery is invoked on this path.
+
+Dependencies:
+
+- The bounded package-step contract from Workstream Four.
+- Completed dispatch, lowering, and task-network verticals.
+- May start in parallel with the Proof And Closeout Wave: its write scope is disjoint from proof fixtures.
+
+Verification:
+
+- A branching composition fixture produces the same dependency-respecting execution shape as the package route over an equivalent tree.
+- Reopen between bounded waves resumes the composition run without repeating completed work.
+- Strategy end-to-end execution is gated on this workstream and on nothing after it.
+
 ## Conditional Vertical Write Packets
 
 These packets become executable only after the requirements decision gate closes. Exact new filenames may be selected within the listed domain path, but a worker must not write outside its packet without integration-owner approval.
 
 | Packet | Owned paths | Frozen contract inputs | Reserved files and merge order |
 | --- | --- | --- | --- |
-| Config source and intent | `src/config.rs`, `src/config/` | Root-owned minimal selection and physical binding schema, source precedence, selected stewardship package and target | Root config owner merges before product assembly |
-| Belief selection | `crates/meld-world-model/src/belief.rs`, `crates/meld-world-model/src/belief/`, `crates/meld-world-model/src/planner.rs`, `crates/meld-world-model/src/planner/`, focused tests | Subject binding, exact belief key, bounded request, domain report | World-model integration owner reserves public exports |
-| Evidence ingestion | New behavior files under `crates/meld-world-model/src/belief/`, focused evidence tests | Intact `EventRecord`, mapping identity, promoted-evidence identity, event cursor mutation port | Merges after event contract and before world-model root adapter |
-| Agent convergence | `crates/meld-world-model/src/agent.rs`, `crates/meld-world-model/src/agent/`, focused agent tests | Goal lifecycle rule, belief revision identity, bounded request, goal and mutation ports | World-model integration owner resolves any shared store or export edit |
-| Execution planning | `crates/meld-execution/src/goals.rs`, `crates/meld-execution/src/goals/`, `crates/meld-execution/src/planning.rs`, `crates/meld-execution/src/planning/`, focused planning tests | Exact planner frame, package selection input, active-goal query | Execution integration owner reserves public exports |
+| Config source and intent | `src/config.rs`, `src/config/` | Root-owned minimal selection and physical binding schema, source precedence, selected stewardship package and target, registration-set production as a public composition surface | Root config owner merges before product assembly |
+| Belief selection | `crates/meld-world-model/src/belief.rs`, `crates/meld-world-model/src/belief/`, `crates/meld-world-model/src/planner.rs`, `crates/meld-world-model/src/planner/`, focused tests | Subject binding, exact belief key, bounded request, domain report, belief-family registry with content-hash revision resolution, theory revision in frame lineage | World-model integration owner reserves public exports |
+| Evidence ingestion | New behavior files under `crates/meld-world-model/src/belief/`, focused evidence tests | Intact `EventRecord`, mapping identity, promoted-evidence identity, event cursor mutation port, stage 4 genesis fact identity | Merges after event contract and before world-model root adapter |
+| Agent convergence | `crates/meld-world-model/src/agent.rs`, `crates/meld-world-model/src/agent/`, focused agent tests | Goal lifecycle rule, belief revision identity, bounded request, goal and mutation ports, curation-rule binding on the agent registration, named curation-to-goal-set port | World-model integration owner resolves any shared store or export edit |
+| Execution planning | `crates/meld-execution/src/goals.rs`, `crates/meld-execution/src/goals/`, `crates/meld-execution/src/planning.rs`, `crates/meld-execution/src/planning/`, focused planning tests | Exact planner frame, package selection input, active-goal query, theory revision in frame lineage | Execution integration owner reserves public exports |
 | Resumable package execution | `crates/meld-execution/src/task.rs`, `crates/meld-execution/src/task/`, focused task executor tests | Bounded ready-invocation budget, durable executor and expansion state, existing compiled package graph | Execution integration owner reserves public exports |
 | Execution dispatch | `crates/meld-execution/src/task_network.rs`, `crates/meld-execution/src/task_network/dispatch.rs`, new dispatch behavior files, focused task-network tests | Public execution ports, bounded request, package-step contract, canonical aggregate outcome | Merges after execution planning and resumable package contracts and before root actor binding |
 | Execution publication | `crates/meld-execution/src/task_network/publication.rs`, focused publication tests | Canonical task outcome and event append sink | May run beside dispatch after outcome contract freezes |
 | Domain adapters | Only the required files under `src/capability.rs` and `src/capability/`, `src/provider.rs` and `src/provider/`, `src/task.rs` and `src/task/`, `src/workflow.rs` and `src/workflow/`, `src/workspace.rs` and `src/workspace/`, `src/prompt_context.rs` and `src/prompt_context/` | Public ports frozen by the owning producer or consumer domain | One owner per top-level domain, no root-runtime internals |
-| Supervisor truth | `src/runtime/supervisor.rs`, `src/runtime/supervisor/`, `src/runtime/contracts.rs` | Root registration classification and translated lifecycle report | Merges before actor binding and foreground account |
+| Supervisor truth | `src/runtime/supervisor.rs`, `src/runtime/supervisor/`, `src/runtime/contracts.rs` | Root registration classification, translated lifecycle report, actor bounded-step contract, per-tick report preservation, registration-scoped resource opening | Merges before actor binding and foreground account |
 | Runtime actor binding | `src/runtime/assembly.rs`, `src/runtime/ports.rs`, `src/runtime/storage.rs`, `src/cli/runtime_assembly.rs` | Reviewed domain actor constructors, ports, reports, stewardship expression, and physical binding | Single high-strength root integration owner |
-| Foreground availability | `src/runtime/tooling.rs`, required routing edits in `src/cli/route.rs`, focused runtime tests | Runtime actor binding, quiescence and wake contract | Single root owner, merges after supervisor truth |
+| Initialization command surface | `src/init.rs` and `src/init/`, required routing edits in `src/cli/` | Staged initialization contract, theory registry identities, genesis identity, stage 4 fact record | Single root owner, merges before product proof |
+| Foreground availability | `src/runtime/tooling.rs`, required routing edits in `src/cli/route.rs`, focused runtime tests | Runtime actor binding, quiescence and wake contract, structured per-tick account with a machine-readable format option, CLI graph catch-up removal | Single root owner, merges after supervisor truth |
 | Product proof | Replacement convergence and workflow parity test files under `tests/integration/` | All reviewed public contracts and branching deterministic fixture | Merges last after product assembly and foreground availability |
+
+Each domain packet also carries its Workstream Seven emission instrumentation as a standard-strength tail task inside the same write scope.
 
 Reserved parent exports such as `crates/meld-world-model/src/lib.rs`, `crates/meld-execution/src/lib.rs`, root `src/lib.rs`, and Cargo manifests are changed only by the named domain integration owner after sublane review. Workers send export and dependency requests to that owner instead of editing these files concurrently.
 
@@ -516,7 +604,7 @@ Run these lanes concurrently:
 | --- | --- | --- | --- |
 | Stewardship selection and physical binding foundations | XDG source, explicit config selection, minimal selection schema, pure binding resolver | High for schema and binding, standard for localized path work | Policy and storage review passed |
 | Resumable package execution foundation | Bounded package-step contract and durable expanded-executor state | High | Semantic-unit and reopen review passed |
-| Belief selection and planner causality | Exact-key queries, bounded assessment selector, belief actor | High | World-model causality review passed |
+| Belief selection and planner causality | Exact-key queries, bounded assessment selector, belief actor, belief-family registry with revision resolution | High | World-model causality review passed |
 
 Each domain integration owner reserves its parent exports and public contract files. The root integration owner reserves root lifecycle adapter files. Workers use disjoint worktrees when implementation begins.
 
@@ -527,7 +615,7 @@ Run these lanes concurrently after the relevant Foundation Wave contracts pass r
 | Lane | Scope | Strength | Exit gate |
 | --- | --- | --- | --- |
 | World-model evidence | Mapping port, bounded event ingestion, cursor ordering | High | Idempotency and policy-ownership review passed |
-| World-model agent convergence | Goal delivery selection, satisfaction eligibility, future-drift rule implementation | High | No-hot-loop and durable-receipt review passed |
+| World-model agent convergence | Goal delivery selection, satisfaction eligibility, future-drift rule implementation, curation-rule durable home, named curation-to-goal-set port, genesis identity command path | High | No-hot-loop and durable-receipt review passed |
 | Execution planning | Active-goal query, revised-state plan identity, docs package selection and lowering | High | Causal-plan and package-path review passed |
 
 ### Execution And Lifecycle Wave
@@ -537,8 +625,8 @@ Run these lanes concurrently:
 | Lane | Scope | Strength | Exit gate |
 | --- | --- | --- | --- |
 | Execution dispatch | Bounded claim, real scan and writer route, artifacts, outcomes, publication binding | High | Real-route and artifact-truth review passed |
-| Supervisor truthfulness | Concrete actor readiness, passive state, active idle, bounded tick projection | High | Lifecycle neutrality review passed |
-| Aggregate package publication | Selected-tree identity, expected directory set, per-folder publish receipts, aggregate completion outcome | High | No-premature-satisfaction review passed |
+| Supervisor truthfulness | Concrete actor readiness, passive state, active idle, bounded tick projection, actor bounded-step contract, registration-scoped resource opening | High | Lifecycle neutrality review passed |
+| Aggregate package publication | Selected-tree identity, expected directory set, per-folder publish receipts, aggregate completion outcome, per-tick report preservation | High | No-premature-satisfaction review passed |
 
 ### Product Integration Wave
 
@@ -546,9 +634,12 @@ Run these lanes concurrently after all owning actor contracts are reviewed:
 
 | Lane | Scope | Strength | Exit gate |
 | --- | --- | --- | --- |
-| Runtime actor binding | Registrations, ports, report translation, assembly factories | High | Clean-boundary integration review passed |
+| Runtime actor binding | Registrations, ports, report translation, assembly factories, stage 5 activation semantics | High | Clean-boundary integration review passed |
+| Initialization command surface | Stages 2 through 4 command path, genesis fact append, CLI graph catch-up removal | High | Init pipeline review passed |
 | Stewardship outcome interpretation | Aggregate package outcome to selected-tree evidence mapping | High | Epistemic-boundary review passed |
 | Parity fixture preparation | Branching depth-and-breadth workspace, deterministic provider, workflow baseline assertions | Standard, escalating to high for causal assertions | Workflow-parity review passed |
+
+This wave carries four units against three workers. Parity fixture preparation is the trailing unit and may complete inside the Proof And Closeout Wave without blocking it.
 
 ### Proof And Closeout Wave
 
@@ -567,7 +658,9 @@ Review findings use this shape:
 - Blocking or deferred disposition
 - Concrete correction only when blocking
 
-Each review maintains the workstream objective. Reviewers must reject scope expansion into comprehensive failure mechanics, generalized activation, broad observability, or unrelated cleanup unless the finding proves false progress, false satisfaction, lost durable state, a hot loop, or a direct policy violation.
+Each review maintains the workstream objective. Reviewers must reject scope expansion into comprehensive failure mechanics, generalized activation, presentation surfaces and observability platforms, or unrelated cleanup unless the finding proves false progress, false satisfaction, lost durable state, a hot loop, or a direct policy violation. Domain emission and hook primitives under Workstream Seven are in scope and are not rejectable as observability expansion.
+
+Reviewers additionally verify the Strategy continuity constraints from the ground map: a packet that persists aggregate-only evidence, invents a drift rule outside lifecycle epochs, freezes a bare package pointer as the available action, binds curation to the goal set without the named port, commits origin-less dependency edges, or buries the bounded package-step contract inside the package executor is blocking.
 
 Per-workstream reviewers focus on:
 
@@ -620,7 +713,7 @@ Fresh independent analysis established the new blocking requirements:
 - Interpret only aggregate package completion as selected-tree satisfaction evidence.
 - Defer comprehensive failure and live-account mechanics until operational convergence passes.
 
-Final spec, architecture, durability, test, and orchestration reviews must run again after the remaining satisfaction and evidence decision is recorded and the revised packets are internally consistent.
+Final spec, architecture, durability, test, and orchestration reviews must run again after the remaining product decisions are recorded and the revised packets are internally consistent.
 
 ## Buildout Handoff
 
@@ -645,24 +738,33 @@ Parallel-safe domains after the gate:
 - Execution planning, resumable package execution, dispatch, and publication under reserved exports
 - Top-level adapter domains with one owner per domain path
 - Branching workflow parity fixture preparation
+- Domain emission instrumentation inside each owning lane after its contracts freeze
 
 Sequential gates:
 
 1. Record selected product decisions.
-2. Freeze and review domain-owned public contracts.
-3. Complete and independently review domain verticals.
+2. Freeze and review domain-owned public contracts, including the initialization stages and theory registries.
+3. Complete and independently review domain verticals, each carrying its emission instrumentation tail.
 4. Integrate supervisor truth and runtime actor binding.
-5. Integrate minimum foreground availability.
+5. Integrate the initialization command surface and minimum foreground availability.
 6. Run the branching workflow parity and bounded convergence proof.
-7. Run formatter, focused crates, integration tests, clippy, commit cleanliness, and final reconciliation.
+7. Run composition-path parity over the bounded package-step contract's second consumer.
+8. Run formatter, focused crates, integration tests, clippy, commit cleanliness, and final reconciliation.
+
+## Program Sequence Beyond Runtime Completion
+
+The critical path of the full program is: Gate A, Gate B, the bounded package-step contract, dispatch, actor binding and foreground availability, the convergence proof, composition-path parity, then Strategy end-to-end execution.
+
+Three tracks run off that path and must not be serialized behind it:
+
+- The Strategy delta's pure-language items — the settlement transform, obligation decomposition, and the public proposition-level substitute in `meld-lang` — share no write scope with any runtime packet and may proceed at any time. Per-item sequencing lives in [Strategy Ground Map](../world_model/strategy/ground_map.md).
+- Agent-native debugger requirements gathering is unblocked now. Isolate prototyping becomes buildable per registration set once the harness criteria, the scoped initialization pipeline, and every actor in the set pass review — end of the Domain Convergence Wave for the Goal-and-Belief isolate — not after full runtime completion. See [Agent-Native Debugger Requirements](agent_native_debugger_requirements.md).
+- Use-case and second-domain design work has no runtime dependency.
 
 Residual risks requiring decision:
 
-- Later drift needs an explicit goal reactivation or episode identity rule.
-- Initial observation needs a selected source and bootstrap owner.
-- The stewardship-to-execution available-action binding needs a fixed typed seam.
-- Aggregate selected-tree satisfaction and evidence granularity remains a product choice.
-- CLI path targeting remains a public choice.
+- The stewardship-to-execution available-action binding needs its affordance-shaped seam frozen at Gate B.
+- The stage 4 genesis fact record identity needs its Gate B freeze; its content is recorded.
 - Broader retry, recovery, interruption, live-account, and presentation policy remains deferred.
 
 Implementation orchestration should use phased program delivery. Each phase vertical should use solo vertical delivery with isolated worktrees for disjoint write scopes, fresh objective reviewers, mandatory reviewed commits, and reconciliation through the reserved integration owners.

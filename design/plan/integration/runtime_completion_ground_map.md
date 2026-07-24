@@ -8,6 +8,8 @@ Baseline branch: `event-foundation-closeout`
 
 Baseline revision: `1f6dc1d`
 
+Amendment date: 2026-07-24 — Strategy continuity constraints, harness enablement hooks, and observability emission requirements added. Fresh review runs against the Strategy corpus and [Strategy Ground Map](../world_model/strategy/ground_map.md) rather than the July baseline alone.
+
 ## Concern
 
 This assessment maps the work required to complete one honest, supervised bounded convergence loop of the Meld cognitive flywheel with docs freshness as the first operational domain theory. It evaluates runtime assembly, lifecycle supervision, configuration, domain contracts, resumable package execution, durable aggregate evidence, physical README output, and the current proof surface. It also uses the Persistent Domain Stewardship proposal as non-authoritative boundary grounding. It does not prescribe the implementation before the remaining product requirements are chosen.
@@ -37,13 +39,15 @@ In scope:
 - Exact execution through the existing `docs_writer` task package, traversal expansion, provider turns, and workspace publication behavior
 - Filesystem proof of per-folder `README.md` outputs across a branching tree
 - Foreground availability through quiescence, convergence, and later evidence
+- Native domain emission and preserved per-tick runtime reports as the stable hook surface for later presentation tools
 
 Out of scope:
 
 - A generalized runtime configuration platform
 - Daemon management and interprocess control
 - Production restart matrices and crash hardening
-- Broad observability platforms, status caches, invocation journals, and generalized action feeds
+- Observability platforms, status caches, invocation journals, and generalized action feeds
+- Presentation surfaces such as dashboards and terminal visualizers that consume the runtime hooks
 - Dynamic agents, generalized scheduling, and multi-network hosting
 - Full sensory, causation, regime, multi-agent, and switching-cost behavior
 - New reliability machinery that does not advance the semantic loop
@@ -121,7 +125,7 @@ actor tick
   -> outcome observation and satisfaction evaluation
 ```
 
-One actor tick must not call the existing execute-to-completion helper for an unbounded tree. Runtime execution needs a resumable package-step boundary that limits ready capability invocations, preserves sibling fan-out and all compiled dependency edges, and persists executor, expansion, artifact, and completion progress between turns.
+One actor tick must not call the existing execute-to-completion helper for an unbounded tree. Runtime execution needs the bounded package-step contract, which limits ready capability invocations, preserves sibling fan-out and all compiled dependency edges, and persists executor, expansion, artifact, and completion progress between turns.
 
 Multiple bounded turns do not imply multiple complete docs writer package runs. Satisfaction is evaluated from aggregate package completion. Replanning selects another complete package run only when the observed aggregate result remains unsatisfactory and distinct useful work exists.
 
@@ -159,7 +163,9 @@ This workstream proves operational convergence before defining comprehensive fai
 
 `meld runtime run` must remain alive while bounded package work is active, while the runtime is quiescent, and after satisfaction. New eligible evidence or later drift must wake the same foreground runtime without requiring process restart.
 
-This workstream needs only enough operator output to prove that the process started, remained available, advanced bounded work, reached quiescence or satisfaction, and resumed after wake. A committed event follower, two-lane terminal presentation, full activity vocabulary, log relocation, output failure matrix, and ordered final-watermark drain are deferred until operational parity and convergence pass.
+The foreground process must narrate the flywheel as it runs. A silent healthy runtime is an anti-pattern of the same class as false health. Each bounded tick emits a structured account of every domain report: actor, scope, input and output checkpoints, items attempted and committed, and issues. Domain crates emit native structured tracing at their semantic transition points, derived from the same domain records and reports that carry authoritative truth.
+
+Emission primitives are runtime completion scope. The per-tick domain report is preserved rather than collapsed to health counts, and the emission surface is stable enough for later dashboards and terminal visualizers to consume without runtime redesign. A committed event follower, two-lane terminal presentation, log relocation, output failure matrix, and ordered final-watermark drain remain deferred presentation work.
 
 Durable domain records and physical workspace outputs remain the authoritative completion evidence. Diagnostics do not become semantic truth.
 
@@ -192,6 +198,12 @@ Runtime completion should leave only inexpensive neutral hooks:
 - Optional root-local registration identity in diagnostic activity only
 - Physical-binding-selected source and capability adapters
 - Domain-owned outcome-to-evidence mapping
+- Assembly composition from an explicit registration set, with the stewardship-derived set as one producer rather than the only entry point
+- One public actor bounded-step contract implemented by every active actor handle
+- Store and port opening scoped to the composed registration set
+- Preserved per-tick domain reports as the runtime hook surface
+
+The last four entries are the harness enablement hooks. They are what the gated agent-native debugger workstream composes. See [Agent-Native Debugger Requirements](agent_native_debugger_requirements.md).
 
 Runtime completion must not add a package compiler, profile language, persistent assignment or activation records, a facet lifecycle, standing stewardship objectives, stewardship episodes, package upgrades, full lineage, semantic diffs, or a stewardship projection.
 
@@ -288,15 +300,15 @@ The CLI currently performs direct graph catch-up around command routing. A runti
 - The target workspace may contain user content and resulting documentation, but locks, cursors, receipts, and other runtime state remain external.
 - Diagnostics must not become satisfaction evidence or substitute for durable package progress.
 
-### Boundary under review
+### Boundary defect to correct
 
-`DocsTaskEvidenceReplayPort` currently replays events, hardcodes docs evidence probabilities and source kind, constructs belief runtime state, and performs ingestion. This direction is invalid for closure. Docs outcome semantics must originate in the stewardship package and enter a world-model-owned evidence mapping contract. Root may adapt event transport and inject the selected typed mapping, but it must not choose probabilities, source kinds, artifact meaning, or belief runtime policy.
+`DocsTaskEvidenceReplayPort` currently replays events, hardcodes docs evidence probabilities and source kind, constructs belief runtime state, and performs ingestion. This direction is invalid for closure, and the replacement direction is decided: the world-model-owned mapping is installed theory selected by id under stage 2 of [Runtime Initialization](runtime_initialization.md). Docs outcome semantics must originate in the stewardship package and enter a world-model-owned evidence mapping contract. Root may adapt event transport and inject the selected typed mapping, but it must not choose probabilities, source kinds, artifact meaning, or belief runtime policy.
 
 ## Configuration Assessment
 
 The active runtime governance requires default user configuration through the XDG configuration home, explicit selection of workspace-local configuration, no working-directory-dependent discovery, external runtime state, pure loading and validation, and product-facing language.
 
-The current base has four relevant gaps:
+The current base has three relevant gaps:
 
 - Global config resolution uses `HOME` rather than honoring `XDG_CONFIG_HOME`.
 - Workspace config is automatically merged from a supplied workspace root instead of requiring an explicit user choice.
@@ -311,12 +323,12 @@ The PDS proposal provides a useful conceptual check without defining the schema.
 The following are real semantic blockers rather than reliability enhancements:
 
 1. Define the minimum configured docs freshness intent and its physical XDG boundary.
-2. Define aggregate selected-tree satisfaction evidence and the source of the first stale observation.
+2. Define aggregate selected-tree satisfaction evidence and the content of the stage 4 genesis fact.
 3. Make inert, disabled, passive, and active role state truthful.
 4. Bind belief assessment and pending-delivery selection.
 5. Bind goal curation and a thin active-goal query for planning.
 6. Bind the existing planning actor.
-7. Add a resumable bounded package-step boundary that preserves the existing docs writer graph and persists progress between ticks.
+7. Implement the bounded package-step contract, preserving the existing docs writer graph with progress persisted between ticks.
 8. Implement bounded dispatch through real workspace scan, docs writer, provider, frame publication, and workspace write paths.
 9. Align aggregate real package completion with the evidence contract without fabricating a `docs_patch` result or accepting one child output as completion.
 10. Bind publication, event-backed evidence selection, and satisfaction curation.
@@ -339,7 +351,7 @@ The following work does not block the first slice:
 - Process-loss proof between every durable mutation and receipt
 - PDS package compilation, profile authoring, assignment, activation, facet lifecycle, lineage, stewardship episodes, and unified projection
 - A generalized diagnostic protocol, remote log transport, log rotation system, or observability platform
-- Committed event following, two-lane terminal presentation, broad domain activity instrumentation, log relocation, sink failure matrices, and ordered final-watermark draining
+- Committed event following, two-lane terminal presentation, log relocation, sink failure matrices, and ordered final-watermark draining
 
 ## Assessment By Domain
 
@@ -404,9 +416,9 @@ world_state
 | `execution` | `own` | Goals, planning, task network, dispatch helpers, and publication exist at different completion levels | `partial` | `crates/meld-execution` and focused actor tests |  | Bind planning and publication, then add one real bounded dispatcher |
 | `heads` | `none` | Legacy head index behavior is not needed | `not needed` | Current objective baseline | Durable event and graph contracts already provide the required progress model | `none` |
 | `ignore` | `consume` | Workspace scan already honors ignored-path policy | `complete` | Workspace scan capability tests |  | Preserve behavior through real dispatch |
-| `init` | `adapter` | Existing initialization assets can support a referenced stewardship package if chosen | `partial` | `src/init.rs` |  | Decide whether bootstrap is explicit config or a package-declared observation |
+| `init` | `adapter` | Existing initialization assets can support a referenced stewardship package if chosen | `partial` | `src/init.rs` |  | Implement stages 2 through 4 of [Runtime Initialization](runtime_initialization.md); explicit initialization owns bootstrap and activation never creates |
 | `lib` | `adapter` | Public root exports expose assembly and runtime contracts | `partial` | `src/lib.rs` |  | Export only the selected product entrypoint |
-| `logging` | `none` | Existing diagnostics are not needed to prove operational parity | `not needed` | Current objective baseline | Durable package state and physical README output are authoritative | Defer presentation expansion |
+| `logging` | `adapter` | Emission primitives and native domain tracing are in scope per Workstream Seven; diagnostics are never proof evidence | `partial` | Current objective baseline and Workstream Seven | Durable package state and physical README output remain authoritative | Presentation surfaces stay deferred |
 | `merkle_traversal` | `consume` | Workspace scan and context paths use existing traversal behavior | `complete` | Current workspace scan capability |  | `none` |
 | `metadata` | `consume` | Existing task and workspace paths carry metadata needed by real work | `complete` | Workspace scan and docs writer integration tests |  | Do not add runtime-owned metadata meaning |
 | `prompt_context` | `consume` | Docs writer path builds prompt artifacts through existing contracts | `complete` | Docs writer task integration test |  | Route real dispatch through the existing path |
@@ -415,7 +427,7 @@ world_state
 | `session` | `observe` | Existing lifecycle records can identify a foreground run | `complete` | `src/session.rs` |  | Use only if needed by the selected public entrypoint |
 | `store` | `consume` | Product storage paths keep durable runtime state outside the target workspace | `complete` | `src/config/workspace/storage_paths.rs` |  | Preserve external state root |
 | `task` | `own` | Real docs writer package and artifact persistence are independently complete | `complete` | Docs writer task integration test |  | Invoke through dispatch without changing task semantics |
-| `telemetry` | `none` | Telemetry is not required to prove semantic completion | `not needed` | Current objective baseline | Durable domain records are the proof surface | `none` |
+| `telemetry` | `none` | Semantic completion is proved by durable records; per-tick report preservation and emission are owned by runtime and domain crates under Workstream Seven, not by this domain | `not needed` | Current objective baseline | Durable domain records are the proof surface | `none` |
 | `tree` | `none` | Tree behavior is internal to existing workspace and context capabilities | `not needed` | Current capability contracts | No new tree integration is required | `none` |
 | `types` | `none` | No generic shared type layer is needed | `not needed` | Explicit domain contracts already exist | New shared runtime types would weaken domain ownership | `none` |
 | `views` | `consume` | Existing planner and workspace views provide read models | `complete` | Planning actor and workspace scan tests |  | Keep views read-only and domain-owned |
@@ -466,12 +478,31 @@ Docs freshness supplies the operational domain theory with no runtime state. Mel
 
 Comprehensive failure policy is not a planning prerequisite for this workstream. The first slice requires bounded failed work, truthful non-progress, and freedom from hot-looping. It defers firm retry, backoff, classification, recovery, and terminality mechanics until the convergence loop is operational.
 
-The ground is sufficiently mapped to plan once the following product decisions are made:
+Recorded decisions:
 
-1. Satisfaction and evidence granularity: one selected-tree belief from aggregate package completion, per-folder beliefs with an aggregate goal, or another explicit aggregation rule.
-2. First stale signal: real workspace scan fact, an existing context event, or an idempotent bootstrap fact.
-3. Provider requirement: deterministic local provider in proof with the same real docs writer route used by configured runs.
-4. Artifact semantics: translate the real writer result through a stewardship-package world-model mapping, or make that mapping consume the real publication result directly.
-5. Bootstrap ownership: explicit pre-run initialization, or a bounded runtime responsibility.
+1. Satisfaction and evidence granularity: per-folder evidence facts persist on the ledger, and one derived aggregate belief computed by belief policy over those facts carries the selected-tree question. Per-folder belief keys remain a later addition, not a migration.
+2. Stage 4 genesis fact content: an idempotent unobserved-scope declaration for the selected subtree. The exact record identity freezes at Gate B.
+3. CLI path targeting: `meld runtime run` takes the target path as its explicit default argument per the CLI targeting policy. Configuration resolves only through the XDG config home, and no runtime state is written under the target workspace per the storage policy. A config-forcing `meld workspace track` flow is noted as a possible later refinement outside this slice.
+4. Per-tick report preservation is durable: the existing typed action-record schema is wired rather than a streamed hook, which may layer over the durable record later.
+5. Future-drift recording is reopen-in-place: the same goal identity transitions from satisfied to active through an idempotent Agent-curated reopen mutation appended as a new goal revision with the lifecycle epoch advanced and provenance citing the triggering belief revision. Storage remains append-only; identity is stable over the revision stream. Satisfaction evidence binds the epoch it was produced under, and no consumer may treat the satisfied state as absorbing — the epoch fence and revision reads enforce this, and it is a named verification invariant.
 
-These are product requirements, not missing platform mechanisms. Once chosen, they are sufficient to produce a small implementation plan with clear domain ownership and acceptance tests.
+Open product decisions: none. The requirements gate closed 2026-07-24.
+
+Resolved by structure or prior selection:
+
+- Provider requirement: deterministic local provider in proof with the same real docs writer route used by configured runs.
+- Artifact semantics: resolved by [Runtime Initialization](runtime_initialization.md) stage 2 — the world-model-owned mapping is installed theory selected by id from the stewardship expression.
+- Bootstrap ownership: resolved by [Runtime Initialization](runtime_initialization.md) structure — explicit initialization owns theory installation, identity genesis, and epistemic seeding; the runtime owns activation, which never creates semantic state.
+
+These are product requirements, not missing platform mechanisms. With all decisions recorded, they are sufficient to produce a small implementation plan with clear domain ownership and acceptance tests.
+
+## Strategy Continuity Constraints
+
+The Strategy corpus under `design/cognitive_architecture/world_model/strategy` is authoritative for the downstream shape these decisions must not foreclose. The constraints below bound the decisions above without expanding this slice.
+
+1. Evidence facts persist per folder on the ledger. Aggregation into selected-tree satisfaction is belief or satisfaction policy over those facts, never a substitution for them. Directive grounding later instantiates per-folder questions over the same evidence stream.
+2. Later drift advances the goal lifecycle epoch. The reactivation rule aligns with the epoch semantics that Strategy admission later formalizes and that dispatch claim fencing can extend.
+3. The available docs action binding freezes affordance-shaped: action identity, artifact meaning, outcome contract reference, and realization route. It may later publish as a semantic action affordance without rework.
+4. The curation-to-goal-set binding passes through one named port. The later Goal draft gate and admission bundle insert at that port without rewiring curation or the goal set.
+5. Committed task-network dependency edges record their origin so the later semantic-versus-scheduling separation requires no migration.
+6. The bounded package-step contract is defined at the dispatch boundary and is domain-neutral: bounded ready-wave budget, durable readiness, expansion, artifact, and completion state, and reopen-resume semantics. The existing package executor is its first implementor and is compatibility-scoped. Task-network composition graphs are its second consumer.
