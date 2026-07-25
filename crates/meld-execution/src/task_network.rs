@@ -18,6 +18,8 @@ pub mod aggregate;
 pub mod aggregate_publication;
 /// Serialized command boundary for task network writers.
 pub mod command;
+/// Bounded composition-path stepping over committed task-network graphs.
+pub mod composition_step;
 /// Shared identity and hashing helpers for task network records.
 pub mod contracts;
 /// Fenced dispatch claim and task outcome contracts.
@@ -58,6 +60,10 @@ pub use aggregate_publication::{
     AggregatePublishResult, AggregateRunBinding, AggregateSkipReason, PublishAggregateRequest,
 };
 pub use command::{Command, Request as CommandRequest, Response};
+pub use composition_step::{
+    CompositionInvocationError, CompositionInvocationOutcome, CompositionNetworkExecution,
+    CompositionStepError, CompositionTaskInvoker,
+};
 pub use dispatch::{Claim, Outcome, OutcomeStatus, Request as DispatchRequest};
 pub use dispatch_actor::{
     dispatch_claim_id, dispatch_claim_repo_id, dispatch_outcome_id, package_route_run_id,
