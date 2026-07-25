@@ -7,7 +7,7 @@
 use crate::error::ExecutionInvariantError;
 use crate::goals::contracts::{
     AddGoalCommand, GoalCommandMetadata, GoalCommandOutcome, ModifyGoalCommand, RemoveGoalCommand,
-    ResumeGoalCommand, SatisfyGoalCommand, SuspendGoalCommand,
+    ReopenGoalCommand, ResumeGoalCommand, SatisfyGoalCommand, SuspendGoalCommand,
 };
 use crate::goals::persistent_store::PersistentGoalSetStore;
 use crate::goals::store::GoalSetStore;
@@ -86,6 +86,12 @@ pub trait GoalSetCommandStore {
         &mut self,
         command: ResumeGoalCommand,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError>;
+
+    /// Persist or replay an epoch-advancing reopen of a satisfied goal.
+    fn reopen_goal_command(
+        &mut self,
+        command: ReopenGoalCommand,
+    ) -> Result<GoalCommandOutcome, ExecutionInvariantError>;
 }
 
 impl GoalSetCommandStore for GoalSetStore {
@@ -130,6 +136,13 @@ impl GoalSetCommandStore for GoalSetStore {
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
         self.resume_goal(command)
     }
+
+    fn reopen_goal_command(
+        &mut self,
+        command: ReopenGoalCommand,
+    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
+        self.reopen_goal(command)
+    }
 }
 
 impl GoalSetCommandStore for PersistentGoalSetStore {
@@ -173,6 +186,13 @@ impl GoalSetCommandStore for PersistentGoalSetStore {
         command: ResumeGoalCommand,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
         self.resume_goal(command)
+    }
+
+    fn reopen_goal_command(
+        &mut self,
+        command: ReopenGoalCommand,
+    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
+        self.reopen_goal(command)
     }
 }
 
@@ -256,6 +276,16 @@ where
     ) -> Result<GoalCommandOutcome, GoalSetApiError> {
         self.store
             .resume_goal_command(command)
+            .map_err(map_store_error)
+    }
+
+    /// Apply an execution-native epoch-advancing reopen through the facade.
+    pub fn reopen_goal(
+        &mut self,
+        command: ReopenGoalCommand,
+    ) -> Result<GoalCommandOutcome, GoalSetApiError> {
+        self.store
+            .reopen_goal_command(command)
             .map_err(map_store_error)
     }
 }

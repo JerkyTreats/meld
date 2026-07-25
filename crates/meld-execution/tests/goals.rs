@@ -1,9 +1,10 @@
 use meld_events::DomainObjectRef;
 use meld_execution::goals::{
-    AddGoalCommand, ExecutionGoalRecord, GoalAcceptanceLifecycle, GoalAcceptanceRequest,
-    GoalCommandMetadata, GoalCommandOutcome, GoalSetApi, GoalSetApiError, GoalSetQuery,
-    GoalSetStore, ModifyGoalCommand, PersistentGoalSetStore, RemoveGoalCommand, ResumeGoalCommand,
-    SatisfyGoalCommand, SuspendGoalCommand,
+    ActiveGoalQuery, AddGoalCommand, ExecutionGoalRecord, GoalAcceptanceLifecycle,
+    GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome, GoalSetApi, GoalSetApiError,
+    GoalSetQuery, GoalSetStore, ModifyGoalCommand, PersistentGoalSetStore, RemoveGoalCommand,
+    ReopenGoalCommand, ResumeGoalCommand, SatisfyGoalCommand, StaleGoalCommandReason,
+    SuspendGoalCommand,
 };
 use meld_lang::{
     Condition, Goal, GoalLifecycle, GoalPriority, GoalSource, Literal, Proposition, Term,
@@ -927,4 +928,324 @@ proptest! {
             existing_goal_id: "goal-1".to_string(),
         });
     }
+}
+
+fn satisfy(command_id: &str, seq: u64, at_seq: u64, lifecycle_epoch: u64) -> SatisfyGoalCommand {
+    SatisfyGoalCommand {
+        metadata: metadata(command_id, None, seq),
+        goal_id: "goal-1".to_string(),
+        at_seq,
+        lifecycle_epoch,
+    }
+}
+
+fn reopen(command_id: &str, seq: u64) -> ReopenGoalCommand {
+    ReopenGoalCommand {
+        metadata: metadata(command_id, None, seq),
+        goal_id: "goal-1".to_string(),
+        triggering_belief_revision_id: "belief-rev-9".to_string(),
+    }
+}
+
+fn assert_epoch_lifecycle_seq(
+    record: &ExecutionGoalRecord,
+    epoch: u64,
+    active: bool,
+    updated_at_seq: u64,
+) {
+    assert_eq!(record.lifecycle_epoch, epoch);
+    assert_eq!(
+        matches!(record.goal.lifecycle, GoalLifecycle::Active),
+        active
+    );
+    assert_eq!(record.updated_at_seq, updated_at_seq);
+}
+
+#[test]
+fn epoch_mismatched_satisfy_is_stale_noop_leaving_record_unchanged_in_memory() {
+    let mut store = GoalSetStore::new();
+    store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-add", None, 1),
+            goal: goal("goal-1", GoalLifecycle::Active),
+        })
+        .unwrap();
+
+    let stale = store.satisfy_goal(satisfy("cmd-stale", 2, 22, 1)).unwrap();
+
+    assert_eq!(
+        stale,
+        GoalCommandOutcome::StaleNoOp {
+            goal_id: "goal-1".to_string(),
+            reason: StaleGoalCommandReason::EpochMismatch {
+                command_epoch: 1,
+                current_epoch: 0,
+            },
+        }
+    );
+    let record = GoalSetQuery::new(&store).get_goal("goal-1").unwrap();
+    assert_epoch_lifecycle_seq(&record, 0, true, 1);
+    // Replay of the stale command id returns the same recorded outcome.
+    assert_eq!(
+        store.satisfy_goal(satisfy("cmd-stale", 3, 22, 1)).unwrap(),
+        stale
+    );
+}
+
+#[test]
+fn reopen_advances_epoch_once_idempotently_and_appends_a_revision_in_memory() {
+    let mut store = GoalSetStore::new();
+    store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-add", None, 1),
+            goal: goal("goal-1", GoalLifecycle::Active),
+        })
+        .unwrap();
+    store.satisfy_goal(satisfy("cmd-sat", 2, 22, 0)).unwrap();
+
+    let reopened = store.reopen_goal(reopen("cmd-reopen", 3)).unwrap();
+    let GoalCommandOutcome::Applied(record) = &reopened else {
+        panic!("expected applied reopen, got {reopened:?}");
+    };
+    assert_epoch_lifecycle_seq(record, 1, true, 3);
+
+    // Same command id replays the recorded outcome without a second advance.
+    assert_eq!(
+        store.reopen_goal(reopen("cmd-reopen", 4)).unwrap(),
+        reopened
+    );
+    // A distinct reopen of the now-active goal is a stale no-op.
+    assert_eq!(
+        store.reopen_goal(reopen("cmd-reopen-2", 5)).unwrap(),
+        GoalCommandOutcome::StaleNoOp {
+            goal_id: "goal-1".to_string(),
+            reason: StaleGoalCommandReason::LifecycleNotSatisfied,
+        }
+    );
+    let record = GoalSetQuery::new(&store).get_goal("goal-1").unwrap();
+    assert_epoch_lifecycle_seq(&record, 1, true, 3);
+}
+
+#[test]
+fn prior_epoch_satisfy_after_reopen_cannot_satisfy_in_memory() {
+    let mut store = GoalSetStore::new();
+    store
+        .add_goal(AddGoalCommand {
+            metadata: metadata("cmd-add", None, 1),
+            goal: goal("goal-1", GoalLifecycle::Active),
+        })
+        .unwrap();
+    store.satisfy_goal(satisfy("cmd-sat", 2, 22, 0)).unwrap();
+    store.reopen_goal(reopen("cmd-reopen", 3)).unwrap();
+
+    let stale = store
+        .satisfy_goal(satisfy("cmd-sat-old", 4, 44, 0))
+        .unwrap();
+
+    assert!(matches!(
+        stale,
+        GoalCommandOutcome::StaleNoOp {
+            reason: StaleGoalCommandReason::EpochMismatch {
+                command_epoch: 0,
+                current_epoch: 1,
+            },
+            ..
+        }
+    ));
+    assert!(GoalSetQuery::new(&store).active_goal("goal-1").is_some());
+
+    // Evidence produced under the current epoch still satisfies.
+    let current = store
+        .satisfy_goal(satisfy("cmd-sat-new", 5, 55, 1))
+        .unwrap();
+    assert!(matches!(
+        current,
+        GoalCommandOutcome::Applied(record)
+            if matches!(record.goal.lifecycle, GoalLifecycle::Satisfied { at_seq: 55 })
+                && record.lifecycle_epoch == 1
+    ));
+}
+
+#[test]
+fn persistent_store_enforces_epoch_fence_and_reopen_across_reopen_of_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("goals");
+
+    let reopened_outcome = {
+        let store = PersistentGoalSetStore::new(sled::open(&path).unwrap()).unwrap();
+        store
+            .add_goal(AddGoalCommand {
+                metadata: metadata("cmd-add", None, 1),
+                goal: goal("goal-1", GoalLifecycle::Active),
+            })
+            .unwrap();
+        store.satisfy_goal(satisfy("cmd-sat", 2, 22, 0)).unwrap();
+
+        let reopened = store.reopen_goal(reopen("cmd-reopen", 3)).unwrap();
+        let GoalCommandOutcome::Applied(record) = &reopened else {
+            panic!("expected applied reopen, got {reopened:?}");
+        };
+        assert_epoch_lifecycle_seq(record, 1, true, 3);
+
+        // Prior-epoch evidence is fenced out and leaves the record unchanged.
+        let stale = store
+            .satisfy_goal(satisfy("cmd-sat-old", 4, 44, 0))
+            .unwrap();
+        assert!(matches!(
+            stale,
+            GoalCommandOutcome::StaleNoOp {
+                reason: StaleGoalCommandReason::EpochMismatch { .. },
+                ..
+            }
+        ));
+        store.flush().unwrap();
+        reopened
+    };
+
+    let store = PersistentGoalSetStore::new(sled::open(&path).unwrap()).unwrap();
+    // Replay after restart returns the recorded outcome without advancing.
+    assert_eq!(
+        store.reopen_goal(reopen("cmd-reopen", 9)).unwrap(),
+        reopened_outcome
+    );
+    let record = store.get_goal("goal-1").unwrap().unwrap();
+    assert_epoch_lifecycle_seq(&record, 1, true, 3);
+    // A distinct reopen of the active goal stays a stale no-op.
+    assert!(matches!(
+        store.reopen_goal(reopen("cmd-reopen-2", 10)).unwrap(),
+        GoalCommandOutcome::StaleNoOp {
+            reason: StaleGoalCommandReason::LifecycleNotSatisfied,
+            ..
+        }
+    ));
+    // Current-epoch evidence satisfies the reopened goal.
+    assert!(matches!(
+        store.satisfy_goal(satisfy("cmd-sat-new", 11, 111, 1)).unwrap(),
+        GoalCommandOutcome::Applied(record)
+            if record.lifecycle_epoch == 1
+                && matches!(record.goal.lifecycle, GoalLifecycle::Satisfied { at_seq: 111 })
+    ));
+}
+
+#[test]
+fn persistent_store_recovers_applied_reopen_from_split_record_write() {
+    // Seed only the advanced record, as if the process stopped between the
+    // record write and the outcome write of a reopen command.
+    let dir = tempfile::tempdir().unwrap();
+    let db = sled::open(dir.path().join("goals")).unwrap();
+    let record = ExecutionGoalRecord {
+        goal: goal("goal-1", GoalLifecycle::Active),
+        source_command_id: Some("cmd-reopen".to_string()),
+        source_identity: None,
+        lifecycle_epoch: 1,
+        created_at_seq: 1,
+        updated_at_seq: 3,
+    };
+    db.open_tree("execution_goal_records")
+        .unwrap()
+        .insert("goal-1", serde_json::to_vec(&record).unwrap())
+        .unwrap();
+    db.flush().unwrap();
+
+    let store = PersistentGoalSetStore::new(db).unwrap();
+    let expected = GoalCommandOutcome::Applied(Box::new(record));
+    assert_eq!(
+        store.reopen_goal(reopen("cmd-reopen", 4)).unwrap(),
+        expected
+    );
+    // Replay resolves byte-identically and never advances a second epoch.
+    assert_eq!(
+        store.reopen_goal(reopen("cmd-reopen", 5)).unwrap(),
+        expected
+    );
+    assert_epoch_lifecycle_seq(&store.get_goal("goal-1").unwrap().unwrap(), 1, true, 3);
+}
+
+#[test]
+fn active_goal_query_is_deterministic_and_budget_honest_in_memory() {
+    let mut store = GoalSetStore::new();
+    for (command_id, goal_id, lifecycle) in [
+        ("cmd-1", "goal-c", GoalLifecycle::Active),
+        ("cmd-2", "goal-a", GoalLifecycle::Active),
+        ("cmd-3", "goal-b", GoalLifecycle::Active),
+        ("cmd-4", "goal-0", GoalLifecycle::Proposed),
+    ] {
+        store
+            .add_goal(AddGoalCommand {
+                metadata: metadata(command_id, None, 1),
+                goal: goal(goal_id, lifecycle),
+            })
+            .unwrap();
+    }
+
+    let ids = |records: Vec<ExecutionGoalRecord>| {
+        records
+            .into_iter()
+            .map(|record| record.goal.goal_id)
+            .collect::<Vec<_>>()
+    };
+
+    let all = ActiveGoalQuery::active_goals(&mut store, None).unwrap();
+    assert_eq!(ids(all), vec!["goal-a", "goal-b", "goal-c"]);
+    let limited = ActiveGoalQuery::active_goals(&mut store, Some(2)).unwrap();
+    assert_eq!(ids(limited), vec!["goal-a", "goal-b"]);
+    assert!(ActiveGoalQuery::active_goals(&mut store, Some(0))
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn active_goal_query_is_deterministic_and_budget_honest_in_persistent_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store =
+        PersistentGoalSetStore::new(sled::open(dir.path().join("goals")).unwrap()).unwrap();
+    for (command_id, goal_id, lifecycle) in [
+        ("cmd-1", "goal-c", GoalLifecycle::Active),
+        ("cmd-2", "goal-a", GoalLifecycle::Active),
+        ("cmd-3", "goal-b", GoalLifecycle::Active),
+        ("cmd-4", "goal-0", GoalLifecycle::Proposed),
+    ] {
+        store
+            .add_goal(AddGoalCommand {
+                metadata: metadata(command_id, None, 1),
+                goal: goal(goal_id, lifecycle),
+            })
+            .unwrap();
+    }
+
+    let ids = |records: Vec<ExecutionGoalRecord>| {
+        records
+            .into_iter()
+            .map(|record| record.goal.goal_id)
+            .collect::<Vec<_>>()
+    };
+
+    let all = ActiveGoalQuery::active_goals(&mut store, None).unwrap();
+    assert_eq!(ids(all), vec!["goal-a", "goal-b", "goal-c"]);
+    let limited = ActiveGoalQuery::active_goals(&mut store, Some(2)).unwrap();
+    assert_eq!(ids(limited), vec!["goal-a", "goal-b"]);
+    assert!(ActiveGoalQuery::active_goals(&mut store, Some(0))
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn reopen_of_missing_goal_returns_not_found() {
+    let mut store = GoalSetStore::new();
+    assert_eq!(
+        store.reopen_goal(reopen("cmd-reopen", 1)).unwrap(),
+        GoalCommandOutcome::NotFound {
+            goal_id: "goal-1".to_string(),
+        }
+    );
+}
+
+#[test]
+fn reopen_rejects_blank_triggering_belief_revision() {
+    let mut store = GoalSetStore::new();
+    let mut command = reopen("cmd-reopen", 1);
+    command.triggering_belief_revision_id = "  ".to_string();
+
+    let error = store.reopen_goal(command).unwrap_err();
+    assert!(error.to_string().contains("triggering belief revision id"));
 }
