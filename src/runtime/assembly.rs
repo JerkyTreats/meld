@@ -36,6 +36,7 @@ use meld_execution::task_network::aggregate_publication::{
 use meld_execution::task_network::dispatch_actor::{
     package_route_run_id, DispatchRuntimeActor, DispatchTickReport, DispatchTickRequest,
 };
+use meld_execution::task_network::terminal_recording::package_run_terminal_outcome;
 use meld_execution::task_network::SledTaskNetworkStore;
 use meld_lang::Method;
 use meld_world_model::agent::{
@@ -772,6 +773,7 @@ struct PublicationFactory {
     handoffs: Arc<PackageRouteHandoffs>,
     bindings: StewardshipActorBindings,
     worker_id: String,
+    network: Option<Arc<Mutex<SledTaskNetworkStore>>>,
 }
 
 #[derive(Clone)]
@@ -883,6 +885,7 @@ struct PublicationHandle {
     handoffs: Arc<PackageRouteHandoffs>,
     bindings: StewardshipActorBindings,
     worker_id: String,
+    network: Option<Arc<Mutex<SledTaskNetworkStore>>>,
 }
 
 /// Lease context supplied by the supervisor before a handle starts.
@@ -1970,6 +1973,7 @@ impl RuntimeSemanticHandleFactory {
                     handoffs: Arc::clone(&composed.handoffs),
                     bindings: composed.bindings.clone(),
                     worker_id: composed.worker_id.clone(),
+                    network: composed.network.clone(),
                 })))
             }
             _ => Ok(Self::None),
@@ -2157,6 +2161,7 @@ impl RuntimeSemanticHandleFactory {
                     handoffs: Arc::clone(&factory.handoffs),
                     bindings: factory.bindings.clone(),
                     worker_id: factory.worker_id.clone(),
+                    network: factory.network.clone(),
                 }))
             }
         }
@@ -2522,15 +2527,18 @@ impl PublicationHandle {
                 // from runtime inventory.
                 folder_unit_capability_types: self.bindings.folder_unit_capability_types.clone(),
             };
-            // Seam: the durable terminal outcome for a package-route run is
-            // not yet recorded through the task-network command boundary by
-            // any actor, so eligible runs stay truthfully skipped here
-            // (`RunNotTerminal`) rather than publishing from a synthesized
-            // outcome. Terminal-outcome recording belongs with firm
-            // terminality policy.
+            // The dispatch actor records the run's terminal outcome through
+            // the task-network command boundary; publication reads it back
+            // from reduced state. A run without a recorded terminal outcome
+            // stays truthfully skipped rather than publishing from a
+            // synthesized one.
+            let terminal = self.network.as_ref().and_then(|network| {
+                let store = network.lock().unwrap_or_else(|e| e.into_inner());
+                package_run_terminal_outcome(store.state(), &binding.package_run_id)
+            });
             match publish_aggregate_for_run(
                 progress,
-                None,
+                terminal.as_ref().map(|record| &record.outcome),
                 &binding,
                 outbox,
                 &self.event_append,
