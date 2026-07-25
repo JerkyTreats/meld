@@ -7,7 +7,7 @@ use meld_execution::goals::PersistentGoalSetStore;
 use meld_execution::task::TaskArtifactRepoFactory;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use meld_world_model::agent::AgentStore;
-use meld_world_model::belief::BeliefStore;
+use meld_world_model::belief::{BeliefFamilyRegistryStore, BeliefStore};
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::store::WorldStateStore;
 use thiserror::Error;
@@ -50,28 +50,141 @@ pub struct ProductStorageLayout {
     pub prompt_artifact_root: PathBuf,
 }
 
+/// Store groups one composed registration set may require.
+///
+/// Registration-scoped resource opening (Runtime Initialization stage 1):
+/// a scope names the durable store groups the composed registration set
+/// requires, and [`OpenProductStores::open_scoped`] opens nothing outside
+/// it. The event ledger is not part of this scope because the event
+/// authority is resolved and supplied by product binding, never opened
+/// here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StoreScope {
+    /// Workspace node record database.
+    pub workspace: bool,
+    /// Shared world model database, including the belief family registry.
+    pub world_model: bool,
+    /// Execution goal set database.
+    pub execution_goals: bool,
+    /// Task execution databases: artifacts, package progress, task networks.
+    pub task_execution: bool,
+    /// Context frame blob storage.
+    pub context_frames: bool,
+    /// Prompt artifact blob storage.
+    pub prompt_artifacts: bool,
+}
+
+impl StoreScope {
+    /// Scope covering every product store group.
+    pub fn all() -> Self {
+        Self {
+            workspace: true,
+            world_model: true,
+            execution_goals: true,
+            task_execution: true,
+            context_frames: true,
+            prompt_artifacts: true,
+        }
+    }
+
+    /// Scope covering no store group.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Union of two scopes.
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            workspace: self.workspace || other.workspace,
+            world_model: self.world_model || other.world_model,
+            execution_goals: self.execution_goals || other.execution_goals,
+            task_execution: self.task_execution || other.task_execution,
+            context_frames: self.context_frames || other.context_frames,
+            prompt_artifacts: self.prompt_artifacts || other.prompt_artifacts,
+        }
+    }
+}
+
+/// One store handle that may be closed under a scoped composition.
+///
+/// Full-scope compositions keep the existing field-access ergonomics
+/// through `Deref`; scoped-aware composition code must use [`Self::get`]
+/// so an out-of-scope store is an explicit `None`, never a panic. A
+/// `Deref` on a closed store is a composition contract violation and
+/// panics with the owning field's diagnostic label.
+pub struct ScopedResource<T> {
+    label: &'static str,
+    inner: Option<T>,
+}
+
+impl<T> ScopedResource<T> {
+    pub(crate) fn open(label: &'static str, inner: T) -> Self {
+        Self {
+            label,
+            inner: Some(inner),
+        }
+    }
+
+    pub(crate) fn closed(label: &'static str) -> Self {
+        Self { label, inner: None }
+    }
+
+    /// The store when its group is inside the composed scope.
+    pub fn opened(&self) -> Option<&T> {
+        self.inner.as_ref()
+    }
+
+    /// Whether the store group was opened for this composition.
+    pub fn is_open(&self) -> bool {
+        self.inner.is_some()
+    }
+}
+
+impl<T> std::ops::Deref for ScopedResource<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.inner.as_ref().unwrap_or_else(|| {
+            panic!(
+                "store '{}' was not opened for the composed registration scope",
+                self.label
+            )
+        })
+    }
+}
+
 /// Opened product stores and execution-owned store factories.
+///
+/// Fields are scoped: a composition built from an explicit registration
+/// set opens only the store groups that set requires, and out-of-scope
+/// fields stay closed. The default product composition opens everything.
 pub struct OpenProductStores {
     /// Workspace node record store.
-    pub node_store: Arc<SledNodeRecordStore>,
+    pub node_store: ScopedResource<Arc<SledNodeRecordStore>>,
     /// World model graph reducer state and traversal indexes.
-    pub traversal_store: Arc<TraversalStore>,
+    pub traversal_store: ScopedResource<Arc<TraversalStore>>,
     /// World model belief configuration, evidence, and revision state.
-    pub belief_store: Arc<BeliefStore>,
+    pub belief_store: ScopedResource<Arc<BeliefStore>>,
+    /// World model belief-family theory registry (Runtime Initialization stage 2 home).
+    pub belief_family_registry: ScopedResource<Arc<BeliefFamilyRegistryStore>>,
     /// World model agent state.
-    pub agent_store: Arc<AgentStore>,
+    pub agent_store: ScopedResource<Arc<AgentStore>>,
     /// Compatibility store for legacy world state claims while migration remains active.
-    pub legacy_world_state_store: Arc<WorldStateStore>,
+    pub legacy_world_state_store: ScopedResource<Arc<WorldStateStore>>,
     /// Execution-owned goal set store.
-    pub goal_store: Arc<PersistentGoalSetStore>,
+    pub goal_store: ScopedResource<Arc<PersistentGoalSetStore>>,
     /// Execution-owned factory for per-network task network stores.
-    pub task_networks: TaskNetworkStoreFactory,
+    pub task_networks: ScopedResource<TaskNetworkStoreFactory>,
     /// Execution-owned factory for task-scoped artifact repositories.
-    pub task_artifacts: TaskArtifactRepoFactory,
+    pub task_artifacts: ScopedResource<TaskArtifactRepoFactory>,
+    /// Shared execution database holding package progress, dispatch claim
+    /// artifact repositories, and the aggregate publication outbox. Same
+    /// database as `task_artifacts`.
+    pub execution_db: ScopedResource<sled::Db>,
     /// Context frame blob storage.
-    pub frame_storage: Arc<FrameStorage>,
+    pub frame_storage: ScopedResource<Arc<FrameStorage>>,
     /// Prompt context artifact blob storage.
-    pub prompt_artifacts: Arc<PromptContextArtifactStorage>,
+    pub prompt_artifacts: ScopedResource<Arc<PromptContextArtifactStorage>>,
 }
 
 /// Error returned while opening or flushing product storage.
@@ -118,14 +231,29 @@ impl ProductStorageLayout {
         }
     }
 
-    /// Create parent directories needed before opening stores.
+    /// Create parent directories needed before opening every store.
     pub fn create_dirs(&self) -> Result<(), ProductStorageError> {
+        self.create_dirs_scoped(&StoreScope::all())
+    }
+
+    /// Create only the parent directories the scoped store groups need.
+    pub fn create_dirs_scoped(&self, scope: &StoreScope) -> Result<(), ProductStorageError> {
         create_dir_all(&self.root)?;
-        create_dir_all(self.execution_root())?;
-        create_dir_all(&self.task_networks_root)?;
-        create_dir_all(self.context_root())?;
-        create_dir_all(&self.frame_blob_root)?;
-        create_dir_all(&self.prompt_artifact_root)?;
+        if scope.execution_goals || scope.task_execution {
+            create_dir_all(self.execution_root())?;
+        }
+        if scope.task_execution {
+            create_dir_all(&self.task_networks_root)?;
+        }
+        if scope.context_frames || scope.prompt_artifacts {
+            create_dir_all(self.context_root())?;
+        }
+        if scope.context_frames {
+            create_dir_all(&self.frame_blob_root)?;
+        }
+        if scope.prompt_artifacts {
+            create_dir_all(&self.prompt_artifact_root)?;
+        }
         Ok(())
     }
 
@@ -145,41 +273,136 @@ impl ProductStorageLayout {
 impl OpenProductStores {
     /// Open all product-level stores and execution-owned factories.
     pub fn open(layout: &ProductStorageLayout) -> Result<Self, ProductStorageError> {
-        layout.create_dirs()?;
+        Self::open_scoped(layout, &StoreScope::all())
+    }
 
-        let workspace_db = open_db(&layout.workspace_db)?;
-        let world_model_db = open_db(&layout.world_model_db)?;
-        let execution_goals_db = open_db(&layout.execution_goals_db)?;
-        let task_artifacts_db = open_db(&layout.task_artifacts_db)?;
+    /// Open only the store groups named by the composed registration scope.
+    ///
+    /// Idempotent by construction: opening an existing world changes
+    /// nothing, and store groups outside the scope are neither created on
+    /// disk nor opened.
+    pub fn open_scoped(
+        layout: &ProductStorageLayout,
+        scope: &StoreScope,
+    ) -> Result<Self, ProductStorageError> {
+        layout.create_dirs_scoped(scope)?;
+
+        let node_store = if scope.workspace {
+            let workspace_db = open_db(&layout.workspace_db)?;
+            ScopedResource::open(
+                "node_store",
+                Arc::new(SledNodeRecordStore::from_db(workspace_db)),
+            )
+        } else {
+            ScopedResource::closed("node_store")
+        };
+
+        let (traversal, belief, family_registry, agent, legacy) = if scope.world_model {
+            let world_model_db = open_db(&layout.world_model_db)?;
+            (
+                ScopedResource::open(
+                    "traversal_store",
+                    Arc::new(TraversalStore::new(world_model_db.clone()).map_err(to_world_model)?),
+                ),
+                ScopedResource::open(
+                    "belief_store",
+                    Arc::new(BeliefStore::new(world_model_db.clone()).map_err(to_world_model)?),
+                ),
+                ScopedResource::open(
+                    "belief_family_registry",
+                    Arc::new(
+                        BeliefFamilyRegistryStore::new(world_model_db.clone())
+                            .map_err(to_world_model)?,
+                    ),
+                ),
+                ScopedResource::open(
+                    "agent_store",
+                    Arc::new(AgentStore::new(world_model_db.clone()).map_err(to_world_model)?),
+                ),
+                ScopedResource::open(
+                    "legacy_world_state_store",
+                    Arc::new(WorldStateStore::new(world_model_db).map_err(to_world_model)?),
+                ),
+            )
+        } else {
+            (
+                ScopedResource::closed("traversal_store"),
+                ScopedResource::closed("belief_store"),
+                ScopedResource::closed("belief_family_registry"),
+                ScopedResource::closed("agent_store"),
+                ScopedResource::closed("legacy_world_state_store"),
+            )
+        };
+
+        let goal_store = if scope.execution_goals {
+            let execution_goals_db = open_db(&layout.execution_goals_db)?;
+            ScopedResource::open(
+                "goal_store",
+                Arc::new(PersistentGoalSetStore::new(execution_goals_db).map_err(to_execution)?),
+            )
+        } else {
+            ScopedResource::closed("goal_store")
+        };
+
+        let (task_networks, task_artifacts, execution_db) = if scope.task_execution {
+            let task_artifacts_db = open_db(&layout.task_artifacts_db)?;
+            (
+                ScopedResource::open(
+                    "task_networks",
+                    TaskNetworkStoreFactory::new(layout.task_networks_root.clone()),
+                ),
+                ScopedResource::open(
+                    "task_artifacts",
+                    TaskArtifactRepoFactory::new(task_artifacts_db.clone()),
+                ),
+                ScopedResource::open("execution_db", task_artifacts_db),
+            )
+        } else {
+            (
+                ScopedResource::closed("task_networks"),
+                ScopedResource::closed("task_artifacts"),
+                ScopedResource::closed("execution_db"),
+            )
+        };
+
+        let frame_storage = if scope.context_frames {
+            ScopedResource::open(
+                "frame_storage",
+                Arc::new(FrameStorage::new(&layout.frame_blob_root).map_err(to_context)?),
+            )
+        } else {
+            ScopedResource::closed("frame_storage")
+        };
+
+        let prompt_artifacts = if scope.prompt_artifacts {
+            ScopedResource::open(
+                "prompt_artifacts",
+                Arc::new(
+                    PromptContextArtifactStorage::new(&layout.prompt_artifact_root)
+                        .map_err(to_context)?,
+                ),
+            )
+        } else {
+            ScopedResource::closed("prompt_artifacts")
+        };
 
         Ok(Self {
-            node_store: Arc::new(SledNodeRecordStore::from_db(workspace_db)),
-            traversal_store: Arc::new(
-                TraversalStore::new(world_model_db.clone()).map_err(to_world_model)?,
-            ),
-            belief_store: Arc::new(
-                BeliefStore::new(world_model_db.clone()).map_err(to_world_model)?,
-            ),
-            agent_store: Arc::new(AgentStore::new(world_model_db.clone()).map_err(to_world_model)?),
-            legacy_world_state_store: Arc::new(
-                WorldStateStore::new(world_model_db).map_err(to_world_model)?,
-            ),
-            goal_store: Arc::new(
-                PersistentGoalSetStore::new(execution_goals_db).map_err(to_execution)?,
-            ),
-            task_networks: TaskNetworkStoreFactory::new(layout.task_networks_root.clone()),
-            task_artifacts: TaskArtifactRepoFactory::new(task_artifacts_db),
-            frame_storage: Arc::new(
-                FrameStorage::new(&layout.frame_blob_root).map_err(to_context)?,
-            ),
-            prompt_artifacts: Arc::new(
-                PromptContextArtifactStorage::new(&layout.prompt_artifact_root)
-                    .map_err(to_context)?,
-            ),
+            node_store,
+            traversal_store: traversal,
+            belief_store: belief,
+            belief_family_registry: family_registry,
+            agent_store: agent,
+            legacy_world_state_store: legacy,
+            goal_store,
+            task_networks,
+            task_artifacts,
+            execution_db,
+            frame_storage,
+            prompt_artifacts,
         })
     }
 
-    /// Flush stores that are opened for every product runtime.
+    /// Flush stores that are opened for this composition.
     ///
     /// Task network stores are opened per network and must be flushed by the
     /// caller before this boundary is used as a checkpoint.
@@ -187,17 +410,33 @@ impl OpenProductStores {
     /// prove semantic convergence, release supervisor leases, or repair domain
     /// records after a failed checkpoint.
     pub fn flush_boundary(&self) -> Result<(), ProductStorageError> {
-        self.node_store.flush().map_err(to_sled)?;
-        self.traversal_store.flush().map_err(to_world_model)?;
-        self.belief_store.flush().map_err(to_world_model)?;
-        self.agent_store.flush().map_err(to_world_model)?;
-        self.legacy_world_state_store
-            .flush()
-            .map_err(to_world_model)?;
-        self.goal_store.flush().map_err(to_execution)?;
-        self.task_artifacts.flush().map_err(to_execution)?;
-        self.frame_storage.flush().map_err(to_context)?;
-        self.prompt_artifacts.flush().map_err(to_context)?;
+        if let Some(store) = self.node_store.opened() {
+            store.flush().map_err(to_sled)?;
+        }
+        if let Some(store) = self.traversal_store.opened() {
+            store.flush().map_err(to_world_model)?;
+        }
+        if let Some(store) = self.belief_store.opened() {
+            store.flush().map_err(to_world_model)?;
+        }
+        if let Some(store) = self.agent_store.opened() {
+            store.flush().map_err(to_world_model)?;
+        }
+        if let Some(store) = self.legacy_world_state_store.opened() {
+            store.flush().map_err(to_world_model)?;
+        }
+        if let Some(store) = self.goal_store.opened() {
+            store.flush().map_err(to_execution)?;
+        }
+        if let Some(factory) = self.task_artifacts.opened() {
+            factory.flush().map_err(to_execution)?;
+        }
+        if let Some(storage) = self.frame_storage.opened() {
+            storage.flush().map_err(to_context)?;
+        }
+        if let Some(storage) = self.prompt_artifacts.opened() {
+            storage.flush().map_err(to_context)?;
+        }
         Ok(())
     }
 }
@@ -270,5 +509,47 @@ mod tests {
             layout.prompt_artifact_root,
             PathBuf::from("/tmp/meld-runtime/context/prompt_artifacts")
         );
+    }
+
+    #[test]
+    fn scoped_open_creates_only_scoped_store_groups() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = ProductStorageLayout::from_root(temp.path());
+        let scope = StoreScope {
+            world_model: true,
+            ..StoreScope::none()
+        };
+
+        let stores = OpenProductStores::open_scoped(&layout, &scope).unwrap();
+
+        assert!(stores.belief_store.is_open());
+        assert!(stores.belief_family_registry.is_open());
+        assert!(stores.traversal_store.is_open());
+        assert!(!stores.goal_store.is_open());
+        assert!(!stores.node_store.is_open());
+        assert!(!stores.task_networks.is_open());
+        assert!(!stores.frame_storage.is_open());
+        assert!(!stores.prompt_artifacts.is_open());
+        assert!(layout.world_model_db.exists());
+        assert!(!layout.workspace_db.exists());
+        assert!(!layout.execution_goals_db.exists());
+        assert!(!layout.task_artifacts_db.exists());
+        assert!(!layout.task_networks_root.exists());
+        assert!(!layout.frame_blob_root.exists());
+        assert!(!layout.prompt_artifact_root.exists());
+        stores.flush_boundary().unwrap();
+    }
+
+    #[test]
+    fn full_scope_open_matches_all_groups() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = ProductStorageLayout::from_root(temp.path());
+
+        let stores = OpenProductStores::open(&layout).unwrap();
+
+        assert!(stores.node_store.is_open());
+        assert!(stores.execution_db.is_open());
+        assert!(stores.legacy_world_state_store.is_open());
+        stores.flush_boundary().unwrap();
     }
 }

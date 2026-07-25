@@ -6,11 +6,14 @@ use std::sync::Arc;
 use crate::api::ContextApi;
 use crate::branches::ResolvedBranch;
 use crate::config::MerkleConfig;
+use crate::config::PhysicalBinding;
 use crate::context::head::backfill_legacy_heads_into_ledger;
 use crate::error::{ApiError, StorageError};
 use crate::events::binding::{resolve_product_event_authority, ProductEventBindingError};
 use crate::heads::HeadIndex;
-use crate::runtime::assembly::ProductRuntimeAssembly;
+use crate::runtime::assembly::{
+    ProductRuntimeAssembly, ProductRuntimeConfig, StewardshipComposition, StewardshipTheoryBindings,
+};
 use crate::runtime::storage::ProductStorageLayout;
 use crate::session::{SessionRuntime, SessionStore};
 use crate::store::persistence::SledNodeRecordStore;
@@ -45,11 +48,30 @@ impl CliRuntimeAssembly {
             &legacy_store_path,
         )
         .map_err(binding_error)?;
+        // Stage 0 resolution followed by composed machine hydration: when a
+        // docs freshness stewardship expression targets this workspace, the
+        // product assembly derives its registration set and actor bindings
+        // from the validated physical binding. A selection that targets a
+        // different workspace leaves this invocation on the plain
+        // composition — that stewardship expression is not this runtime's.
+        let stewardship = match config.stewardship.docs_freshness.as_ref() {
+            Some(_) => {
+                let binding = PhysicalBinding::resolve(config)?;
+                let canonical_workspace = workspace_root
+                    .canonicalize()
+                    .unwrap_or_else(|_| workspace_root.to_path_buf());
+                (binding.workspace_root == canonical_workspace).then(|| StewardshipComposition {
+                    binding,
+                    theory: StewardshipTheoryBindings::default(),
+                })
+            }
+            None => None,
+        };
         let product_runtime = Arc::new(
-            ProductRuntimeAssembly::load_for_workspace_with_authority(
-                workspace_root,
-                config,
+            ProductRuntimeAssembly::load_composed(
+                ProductRuntimeConfig::for_product_root(product_root.clone()),
                 resolved.authority,
+                stewardship,
             )
             .map_err(|error| ApiError::ConfigError(error.to_string()))?,
         );
