@@ -527,7 +527,14 @@ fn package_route_consumes_shared_budget_before_claim_route() {
 
     assert_eq!(report.items_attempted, 3);
     assert!(report.budget_exhausted, "the ready task remained unclaimed");
-    assert!(store.state().claims.is_empty());
+    // The completed package run records its terminal outcome outside the tick
+    // budget, so its recording claim is the only claim in the network: the
+    // claim route itself dispatched nothing.
+    assert!(store
+        .state()
+        .claims
+        .values()
+        .all(|claim| claim.task_instance_id.starts_with("package-run::")));
     assert_eq!(
         store.state().statuses.get("task-alpha"),
         Some(&TaskStatus::Pending)

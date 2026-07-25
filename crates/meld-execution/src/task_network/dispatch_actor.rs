@@ -27,6 +27,18 @@
 //! outcome moves the task out of `Pending` and the ready-set snapshot is
 //! taken once per tick. Retry, backoff, and terminality policy stay deferred.
 //!
+//! When the actor observes a package run's durable completion — a step report
+//! with `package_complete` or an already-complete durable snapshot — it
+//! idempotently records the run's terminal outcome through the command
+//! boundary via [`crate::task_network::terminal_recording`], the durable
+//! terminal authority aggregate publication requires. Terminal recording is
+//! command-boundary bookkeeping over work the package route already released,
+//! so it consumes no tick budget. The claim route never invokes the terminal
+//! nodes this recording injects: it recognizes them by their deterministic
+//! instance-id prefix and completes their recording from durable state
+//! instead, so a crash window inside recording can never re-execute a
+//! completed package.
+//!
 //! # Example
 //!
 //! ```rust
@@ -57,8 +69,12 @@ use crate::task_network::initialization::materialize_task_initialization;
 use crate::task_network::mutation::Rejection;
 use crate::task_network::package_step::{PackageStep, PackageStepReport, PackageStepRequest};
 use crate::task_network::readiness::compute_ready_set;
-use crate::task_network::state::{NetworkState, TaskNode, TaskStatus};
+use crate::task_network::state::{NetworkState, TaskLineage, TaskNode, TaskStatus};
 use crate::task_network::store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
+use crate::task_network::terminal_recording::{
+    load_package_run_artifact_records, package_route_task_lineage,
+    package_run_id_for_task_instance, record_package_run_terminal_outcome, PackageRunRecording,
+};
 use async_trait::async_trait;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -254,6 +270,17 @@ pub enum DispatchCheckpoint {
         task_run_id: String,
         /// Bounded step report projected from durable run state.
         step: PackageStepReport,
+    },
+    /// A package run's terminal outcome was recorded through the command
+    /// boundary. Emitted only when the outcome became durable this tick;
+    /// re-observing an already-recorded run reaches no new checkpoint.
+    PackageTerminalOutcomeRecorded {
+        /// Durable run id derived from the plan identity.
+        task_run_id: String,
+        /// Deterministic task instance recording the run.
+        task_instance_id: String,
+        /// Deterministic outcome id accepted by the command boundary.
+        outcome_id: String,
     },
     /// A claim-route task outcome was recorded through the command boundary.
     TaskOutcomeRecorded {
@@ -475,7 +502,7 @@ where
         let mut report = DispatchTickReport::new(&self.actor_id, request.sequence, input_revision);
         let mut remaining = request.max_items;
 
-        self.drive_package_plans(&request.package_plans, &mut remaining, &mut report)
+        self.drive_package_plans(network, &request.package_plans, &mut remaining, &mut report)
             .await;
         self.drive_claim_route(network, &mut remaining, &mut report)
             .await;
@@ -485,8 +512,9 @@ where
     }
 
     /// Drives at most one bounded package step per deduped plan handoff.
-    async fn drive_package_plans(
+    async fn drive_package_plans<N: TaskNetworkCommandPort>(
         &self,
+        network: &mut N,
         plans: &[TaskPackageRoutePlan],
         remaining: &mut usize,
         report: &mut DispatchTickReport,
@@ -507,8 +535,20 @@ where
                         .checkpoints
                         .push(DispatchCheckpoint::PackageRunAlreadyComplete {
                             plan_id: plan.plan_id.clone(),
-                            task_run_id,
+                            task_run_id: task_run_id.clone(),
                         });
+                    // Re-observation keeps terminal recording idempotently
+                    // converged: a crash window inside a prior recording
+                    // resumes here, and a recorded run is a no-op.
+                    let lineage =
+                        package_route_task_lineage(plan, snapshot.compiled_task.task_version);
+                    self.record_package_run_completion(
+                        network,
+                        &task_run_id,
+                        &snapshot,
+                        Some(lineage),
+                        report,
+                    );
                     continue;
                 }
                 Ok(_) => {}
@@ -572,8 +612,9 @@ where
                     .checkpoints
                     .push(DispatchCheckpoint::PackageRunAlreadyComplete {
                         plan_id: plan.plan_id.clone(),
-                        task_run_id,
+                        task_run_id: task_run_id.clone(),
                     });
+                self.record_observed_package_completion(network, plan, &task_run_id, report);
                 continue;
             }
 
@@ -591,13 +632,22 @@ where
                     if step.budget_exhausted {
                         report.budget_exhausted = true;
                     }
+                    let package_complete = step.package_complete;
                     report
                         .checkpoints
                         .push(DispatchCheckpoint::PackageStepDriven {
                             plan_id: plan.plan_id.clone(),
-                            task_run_id,
+                            task_run_id: task_run_id.clone(),
                             step,
                         });
+                    if package_complete {
+                        self.record_observed_package_completion(
+                            network,
+                            plan,
+                            &task_run_id,
+                            report,
+                        );
+                    }
                 }
                 Err(error) => {
                     // The step persisted its recorded failures durably but the
@@ -612,6 +662,157 @@ where
                         error.to_string(),
                     );
                 }
+            }
+        }
+    }
+
+    /// Records terminal outcome for a completion observed with its plan.
+    ///
+    /// Loads the durable snapshot the completion claim rests on; a missing
+    /// snapshot for an observed-complete run is a broken invariant, not a
+    /// retry condition.
+    fn record_observed_package_completion<N: TaskNetworkCommandPort>(
+        &self,
+        network: &mut N,
+        plan: &TaskPackageRoutePlan,
+        task_run_id: &str,
+        report: &mut DispatchTickReport,
+    ) {
+        match self.progress.load(task_run_id) {
+            Ok(Some(snapshot)) => {
+                let lineage = package_route_task_lineage(plan, snapshot.compiled_task.task_version);
+                self.record_package_run_completion(
+                    network,
+                    task_run_id,
+                    &snapshot,
+                    Some(lineage),
+                    report,
+                );
+            }
+            Ok(None) => {
+                report.fatal(
+                    Some(plan.plan_id.clone()),
+                    "terminal_recording_missing_progress",
+                    format!("complete run '{task_run_id}' has no durable progress snapshot"),
+                );
+            }
+            Err(error) => {
+                report.retryable(
+                    Some(plan.plan_id.clone()),
+                    "package_progress_unavailable",
+                    error.to_string(),
+                );
+            }
+        }
+    }
+
+    /// Records one complete package run's terminal outcome idempotently.
+    ///
+    /// Terminal recording is command-boundary bookkeeping over already
+    /// released package work, so it never consumes tick budget and never
+    /// counts as a committed bounded invocation. A checkpoint is emitted only
+    /// when the outcome became durable this tick.
+    fn record_package_run_completion<N: TaskNetworkCommandPort>(
+        &self,
+        network: &mut N,
+        task_run_id: &str,
+        snapshot: &TaskExecutorSnapshot,
+        lineage: Option<TaskLineage>,
+        report: &mut DispatchTickReport,
+    ) {
+        let artifact_records = match load_package_run_artifact_records(self.db.clone(), task_run_id)
+        {
+            Ok(artifact_records) => artifact_records,
+            Err(error) => {
+                report.retryable(
+                    Some(task_run_id.to_string()),
+                    "terminal_recording_artifacts_unavailable",
+                    error.to_string(),
+                );
+                return;
+            }
+        };
+        match record_package_run_terminal_outcome(
+            network,
+            &self.worker_id,
+            snapshot,
+            artifact_records,
+            lineage,
+        ) {
+            Ok(PackageRunRecording::Recorded(recording)) => {
+                if !recording.already_recorded {
+                    report
+                        .checkpoints
+                        .push(DispatchCheckpoint::PackageTerminalOutcomeRecorded {
+                            task_run_id: recording.task_run_id,
+                            task_instance_id: recording.task_instance_id,
+                            outcome_id: recording.outcome.outcome_id,
+                        });
+                }
+            }
+            Ok(PackageRunRecording::Skipped {
+                pending_instance_ids,
+            }) => {
+                // Callers only reach here after observing durable completion,
+                // so a skip means the durable stores contradict each other.
+                report.fatal(
+                    Some(task_run_id.to_string()),
+                    "terminal_recording_incomplete_run",
+                    format!(
+                        "run '{task_run_id}' observed complete but snapshot has {} pending units",
+                        pending_instance_ids.len()
+                    ),
+                );
+            }
+            Err(error) if error.is_retryable() => {
+                report.retryable(
+                    Some(task_run_id.to_string()),
+                    "terminal_recording_failed",
+                    error.to_string(),
+                );
+            }
+            Err(error) => {
+                report.fatal(
+                    Some(task_run_id.to_string()),
+                    "terminal_recording_failed",
+                    error.to_string(),
+                );
+            }
+        }
+    }
+
+    /// Completes recording for a stranded terminal node from durable state.
+    ///
+    /// The claim route routes package-run terminal nodes here instead of
+    /// invoking them: their work already ran through the package route, so
+    /// the only legitimate remaining action is finishing the claim-and-record
+    /// sequence a crash window interrupted. Needs no plan handoff because the
+    /// node, and therefore its lineage, is already durable in network state.
+    fn recover_package_run_terminal<N: TaskNetworkCommandPort>(
+        &self,
+        network: &mut N,
+        task_run_id: &str,
+        report: &mut DispatchTickReport,
+    ) {
+        match self.progress.load(task_run_id) {
+            Ok(Some(snapshot)) => {
+                self.record_package_run_completion(network, task_run_id, &snapshot, None, report);
+            }
+            Ok(None) => {
+                report.fatal(
+                    Some(task_run_id.to_string()),
+                    "terminal_recording_missing_progress",
+                    format!(
+                        "terminal node exists for run '{task_run_id}' with no durable progress"
+                    ),
+                );
+            }
+            Err(error) => {
+                report.retryable(
+                    Some(task_run_id.to_string()),
+                    "package_progress_unavailable",
+                    error.to_string(),
+                );
             }
         }
     }
@@ -642,6 +843,14 @@ where
                 .collect()
         };
         for claim in resumable {
+            // A running package-run terminal node is a recording crash
+            // window, never invocable work: complete its recording without
+            // charging bounded-invocation budget.
+            if let Some(task_run_id) = package_run_id_for_task_instance(&claim.task_instance_id) {
+                let task_run_id = task_run_id.to_string();
+                self.recover_package_run_terminal(network, &task_run_id, report);
+                continue;
+            }
             if *remaining == 0 {
                 report.budget_exhausted = true;
                 return;
@@ -657,6 +866,13 @@ where
         // rule, and a task failed this tick can never re-enter the snapshot.
         let ready = compute_ready_set(network.network_state());
         for task_instance_id in &ready.task_instance_ids {
+            // Same protection for a pending terminal node stranded before
+            // its claim: recover the recording instead of dispatching it.
+            if let Some(task_run_id) = package_run_id_for_task_instance(task_instance_id) {
+                let task_run_id = task_run_id.to_string();
+                self.recover_package_run_terminal(network, &task_run_id, report);
+                continue;
+            }
             if *remaining == 0 {
                 report.budget_exhausted = true;
                 return;
