@@ -113,6 +113,7 @@ fn belief_view(subject: NodeID, seed: SeededBelief) -> BeliefView {
             graph_anchor_ids: Vec::new(),
             revision_id: Some(format!("rev-{}", &subject_hex[..8])),
         },
+        theory_revision: None,
     }
 }
 

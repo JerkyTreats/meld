@@ -879,6 +879,7 @@ fn belief_view(
             graph_anchor_ids: vec!["anchor-a".to_string()],
             revision_id: Some(revision_id.to_string()),
         },
+        theory_revision: None,
     }
 }
 
