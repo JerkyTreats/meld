@@ -64,8 +64,10 @@ pub mod comparator;
 pub mod config;
 pub mod contracts;
 pub mod evidence;
+pub mod evidence_ingestion;
 pub mod genesis;
 pub mod ingestion;
+pub mod outcome_interpretation;
 pub mod outcome_mapping;
 pub mod query;
 pub mod registry;
@@ -81,11 +83,19 @@ pub use comparator::{BayesianComparator, ComparatorInput, ComparatorOutput};
 pub use config::{BeliefConfigLoader, ConfigSnapshot};
 pub use contracts::*;
 pub use evidence::BeliefEvidenceNormalizer;
+pub use evidence_ingestion::{
+    EvidenceEventReplaySource, EvidenceIngestionActor, EvidenceIngestionIssue,
+    EvidenceIngestionReport, EvidenceIngestionRequest,
+};
 pub use genesis::{
     UnobservedScopeDeclaration, EPISTEMIC_GENESIS_STREAM_ID, UNOBSERVED_SCOPE_EVENT_TYPE,
 };
 pub use ingestion::{
     ingest_promoted_evidence, PromotedEvidenceIngestionRequest, PromotedEvidenceIngestionResult,
+};
+pub use outcome_interpretation::{
+    ConfiguredOutcomeMapping, OutcomeContentRule, OutcomeFieldRule, OutcomeMappingConfig,
+    OutcomeSubjectBinding, OutcomeValueSource,
 };
 pub use outcome_mapping::{
     promoted_evidence_identity, OutcomeEvidenceMapping, OutcomeMappingDisposition,
