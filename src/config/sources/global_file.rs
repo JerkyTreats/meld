@@ -1,5 +1,6 @@
-//! Global config file source: ~/.config/meld/config.toml or $XDG_CONFIG_HOME/meld/config.toml
+//! Global config file source: $XDG_CONFIG_HOME/meld/config.toml, falling back to ~/.config/meld/config.toml
 
+use crate::config::paths::xdg_root;
 use config::builder::DefaultState;
 use config::ConfigBuilder;
 use config::ConfigError;
@@ -7,18 +8,17 @@ use config::File;
 use std::path::PathBuf;
 use tracing::warn;
 
-/// Path to global config file.
+/// Path to the global config file.
+///
+/// Resolved through XDG config home: `$XDG_CONFIG_HOME` wins over the
+/// `$HOME/.config` fallback. Independent of the process working directory.
 pub fn global_config_path() -> Option<PathBuf> {
-    std::env::var("HOME").ok().map(|home| {
-        PathBuf::from(home)
-            .join(".config")
-            .join("meld")
-            .join("config.toml")
-    })
+    xdg_root::config_home()
+        .ok()
+        .map(|config_home| config_home.join("meld").join("config.toml"))
 }
 
 /// Add global config file source to builder if it exists.
-/// Uses XDG_CONFIG_HOME when set, otherwise ~/.config/meld/config.toml.
 pub fn add_to_builder(
     mut builder: ConfigBuilder<DefaultState>,
 ) -> Result<ConfigBuilder<DefaultState>, ConfigError> {
@@ -32,7 +32,7 @@ pub fn add_to_builder(
         } else {
             warn!(
                 config_path = %xdg_config_path.display(),
-                "Default configuration file not found at ~/.config/meld/config.toml. \
+                "Global configuration file not found under XDG config home. \
                  Consider creating it for user-level defaults."
             );
         }

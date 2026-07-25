@@ -11,15 +11,10 @@ use std::path::PathBuf;
 pub struct ConfigLoader;
 
 impl ConfigLoader {
-    /// Get the XDG config directory path (~/.config/meld/config.toml)
+    /// The global config file path resolved through XDG config home.
     #[cfg(test)]
     pub(crate) fn xdg_config_path() -> Option<PathBuf> {
-        std::env::var("HOME").ok().map(|home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("meld")
-                .join("config.toml")
-        })
+        super::sources::global_file::global_config_path()
     }
 
     /// Load configuration from files and environment.

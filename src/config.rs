@@ -467,165 +467,145 @@ provider_name = "test-ollama"
         assert_eq!(agent.system_prompt.as_ref().unwrap(), "Test prompt");
     }
 
-    #[test]
-    fn test_xdg_config_path() {
-        // Serialize access to HOME to avoid race conditions in parallel test execution
-        let _guard = HOME_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    // Serializes HOME and XDG_CONFIG_HOME manipulation across tests and
+    // restores both (even on panic) when the sandbox drops.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
-        // Test that xdg_config_path constructs the correct path
-        // We'll test this indirectly by checking the behavior of load()
-        // First, save the original HOME
-        let original_home = std::env::var("HOME").ok();
+    struct EnvSandbox {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
 
-        // Test with a mock HOME
-        let test_home = "/test/home";
-        std::env::set_var("HOME", test_home);
-
-        // The path should be /test/home/.config/meld/config.toml
-        // We can't directly test the private function, but we can verify
-        // the behavior through load() which will check for this path
-
-        // Clean up
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        } else {
-            std::env::remove_var("HOME");
+    impl EnvSandbox {
+        fn new() -> Self {
+            let guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            let saved = ["HOME", "XDG_CONFIG_HOME"]
+                .into_iter()
+                .map(|key| (key, std::env::var_os(key)))
+                .collect();
+            std::env::remove_var("XDG_CONFIG_HOME");
+            Self {
+                _guard: guard,
+                saved,
+            }
         }
     }
 
-    // Mutex to serialize HOME environment variable access in tests
-    #[cfg(test)]
-    static HOME_MUTEX: Mutex<()> = Mutex::new(());
+    impl Drop for EnvSandbox {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    fn write_global_config(home: &Path, body: &str) -> PathBuf {
+        let config_dir = home.join(".config").join("meld");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let config_file = config_dir.join("config.toml");
+        std::fs::write(&config_file, body).unwrap();
+        config_file
+    }
+
+    const PROVIDER_ONLY_GLOBAL: &str = r#"
+[providers.xdg-provider]
+provider_type = "ollama"
+model = "xdg-model"
+endpoint = "http://localhost:11434"
+"#;
+
+    #[test]
+    fn test_xdg_config_path() {
+        let _sandbox = EnvSandbox::new();
+        std::env::set_var("HOME", "/test/home");
+
+        assert_eq!(
+            ConfigLoader::xdg_config_path().unwrap(),
+            PathBuf::from("/test/home/.config/meld/config.toml")
+        );
+
+        std::env::set_var("XDG_CONFIG_HOME", "/test/xdg");
+        assert_eq!(
+            ConfigLoader::xdg_config_path().unwrap(),
+            PathBuf::from("/test/xdg/meld/config.toml")
+        );
+    }
 
     #[test]
     fn test_load_with_xdg_config() {
-        // Serialize access to HOME to avoid race conditions in parallel test execution
-        let _guard = HOME_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-
+        let _sandbox = EnvSandbox::new();
         let temp_dir = TempDir::new().unwrap();
         let workspace_root = temp_dir.path();
 
-        // Save original HOME
-        let original_home = std::env::var("HOME").ok();
-
-        // Ensure no workspace config exists that could interfere
-        let workspace_config_dir = workspace_root.join("config");
-        let workspace_config_file = workspace_config_dir.join("config.toml");
-        // If it exists, we'll verify it doesn't override XDG config
-
-        // Create a mock XDG config directory with absolute path
         let mock_home = temp_dir.path().join("mock_home");
         std::fs::create_dir_all(&mock_home).unwrap();
-        let mock_home_str = mock_home
-            .canonicalize()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        std::env::set_var("HOME", &mock_home_str);
+        std::env::set_var("HOME", mock_home.canonicalize().unwrap());
+        let xdg_config_file = write_global_config(&mock_home, PROVIDER_ONLY_GLOBAL);
 
-        let xdg_config_dir = mock_home.join(".config").join("meld");
-        std::fs::create_dir_all(&xdg_config_dir).unwrap();
-        let xdg_config_file = xdg_config_dir.join("config.toml");
+        assert_eq!(ConfigLoader::xdg_config_path().unwrap(), xdg_config_file);
 
-        // Write XDG config with a provider
-        std::fs::write(
-            &xdg_config_file,
+        let config = ConfigLoader::load(workspace_root).unwrap();
+        let provider = config.providers.get("xdg-provider").unwrap();
+        assert_eq!(provider.model, "xdg-model");
+    }
+
+    #[test]
+    fn xdg_config_home_wins_over_home() {
+        let _sandbox = EnvSandbox::new();
+        let temp_dir = TempDir::new().unwrap();
+
+        // HOME fallback config says one model, XDG_CONFIG_HOME another.
+        let mock_home = temp_dir.path().join("mock_home");
+        std::fs::create_dir_all(&mock_home).unwrap();
+        write_global_config(
+            &mock_home,
             r#"
-[system]
-default_workspace_root = "."
-
-[system.storage]
-store_path = ".meld/store"
-frames_path = ".meld/frames"
-
-[providers.xdg-provider]
+[providers.shared-provider]
+provider_type = "ollama"
+model = "home-model"
+endpoint = "http://localhost:11434"
+"#,
+        );
+        let xdg_home = temp_dir.path().join("xdg_home");
+        let xdg_meld_dir = xdg_home.join("meld");
+        std::fs::create_dir_all(&xdg_meld_dir).unwrap();
+        std::fs::write(
+            xdg_meld_dir.join("config.toml"),
+            r#"
+[providers.shared-provider]
 provider_type = "ollama"
 model = "xdg-model"
 endpoint = "http://localhost:11434"
 "#,
         )
         .unwrap();
+        std::env::set_var("HOME", mock_home.canonicalize().unwrap());
+        std::env::set_var("XDG_CONFIG_HOME", xdg_home.canonicalize().unwrap());
 
-        // Verify file exists before loading
-        assert!(xdg_config_file.exists(), "XDG config file should exist");
+        let config = ConfigLoader::load(temp_dir.path()).unwrap();
 
-        // Verify XDG config path function returns the correct path
-        let xdg_path = ConfigLoader::xdg_config_path();
-        assert!(xdg_path.is_some(), "XDG config path should be found");
-        assert_eq!(
-            xdg_path.unwrap(),
-            xdg_config_file,
-            "XDG config path should match"
-        );
-
-        // Load config - should pick up XDG config
-        let config = ConfigLoader::load(workspace_root).unwrap();
-        assert!(config.providers.contains_key("xdg-provider"), 
-                "Config should contain xdg-provider. Found providers: {:?}. XDG config file exists: {}, workspace config exists: {}", 
-                config.providers.keys().collect::<Vec<_>>(),
-                xdg_config_file.exists(),
-                workspace_config_file.exists());
-        let provider = config.providers.get("xdg-provider").unwrap();
+        let provider = config.providers.get("shared-provider").unwrap();
         assert_eq!(provider.model, "xdg-model");
-
-        // Clean up
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        } else {
-            std::env::remove_var("HOME");
-        }
     }
 
     #[test]
     fn test_workspace_config_overrides_xdg_config() {
-        // Serialize access to HOME to avoid race conditions in parallel test execution
-        let _guard = HOME_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-
+        let _sandbox = EnvSandbox::new();
         let temp_dir = TempDir::new().unwrap();
         let workspace_root = temp_dir.path();
 
-        // Save original HOME
-        let original_home = std::env::var("HOME").ok();
-
-        // Create a mock XDG config directory with absolute path
         let mock_home = temp_dir.path().join("mock_home_override");
         std::fs::create_dir_all(&mock_home).unwrap();
-        let mock_home_str = mock_home
-            .canonicalize()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        std::env::set_var("HOME", &mock_home_str);
+        std::env::set_var("HOME", mock_home.canonicalize().unwrap());
+        write_global_config(&mock_home, PROVIDER_ONLY_GLOBAL);
 
-        let xdg_config_dir = mock_home.join(".config").join("meld");
-        std::fs::create_dir_all(&xdg_config_dir).unwrap();
-        let xdg_config_file = xdg_config_dir.join("config.toml");
-
-        // Write XDG config with a provider
-        std::fs::write(
-            &xdg_config_file,
-            r#"
-[system]
-default_workspace_root = "."
-
-[system.storage]
-store_path = ".meld/store"
-frames_path = ".meld/frames"
-
-[providers.xdg-provider]
-provider_type = "ollama"
-model = "xdg-model"
-endpoint = "http://localhost:11434"
-"#,
-        )
-        .unwrap();
-
-        // Create workspace config with same provider but different model
         let workspace_config_dir = workspace_root.join("config");
         std::fs::create_dir_all(&workspace_config_dir).unwrap();
-        let workspace_config_file = workspace_config_dir.join("config.toml");
         std::fs::write(
-            &workspace_config_file,
+            workspace_config_dir.join("config.toml"),
             r#"
 [providers.xdg-provider]
 provider_type = "ollama"
@@ -635,105 +615,42 @@ endpoint = "http://localhost:11434"
         )
         .unwrap();
 
-        // Load config - workspace config should override XDG config
+        // The workspace config wins over the global file.
         let config = ConfigLoader::load(workspace_root).unwrap();
-        assert!(config.providers.contains_key("xdg-provider"));
         let provider = config.providers.get("xdg-provider").unwrap();
-        // Workspace config should win
         assert_eq!(provider.model, "workspace-model");
-
-        // Clean up
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        } else {
-            std::env::remove_var("HOME");
-        }
     }
 
     #[test]
     fn test_load_without_xdg_config() {
-        // Serialize access to HOME to avoid race conditions in parallel test execution
-        let _guard = HOME_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-
+        let _sandbox = EnvSandbox::new();
         let temp_dir = TempDir::new().unwrap();
         let workspace_root = temp_dir.path();
 
-        // Save original HOME
-        let original_home = std::env::var("HOME").ok();
-
-        // Create a mock HOME but don't create XDG config
         let mock_home = temp_dir.path().join("mock_home_no_config");
         std::fs::create_dir_all(&mock_home).unwrap();
-        let mock_home_str = mock_home
-            .canonicalize()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        std::env::set_var("HOME", &mock_home_str);
+        std::env::set_var("HOME", mock_home.canonicalize().unwrap());
 
-        // Verify XDG config doesn't exist
-        let xdg_config_file = mock_home.join(".config").join("meld").join("config.toml");
-        assert!(
-            !xdg_config_file.exists(),
-            "XDG config file should not exist"
-        );
-
-        // Load config - should work fine without XDG config (just use defaults)
-        // The warning will be logged but shouldn't cause an error
         let config = ConfigLoader::load(workspace_root).unwrap();
-        // Should have default config (no providers from XDG or workspace)
-        assert_eq!(
-            config.providers.len(),
-            0,
-            "Should have no providers when XDG config doesn't exist. Found: {:?}",
-            config.providers.keys().collect::<Vec<_>>()
-        );
+        assert_eq!(config.providers.len(), 0);
         assert_eq!(config.agents.len(), 0);
-
-        // Clean up
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        } else {
-            std::env::remove_var("HOME");
-        }
     }
 
     #[test]
     fn test_load_without_home_env() {
-        // Serialize access to HOME to avoid race conditions in parallel test execution
-        let _guard = HOME_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-
+        let _sandbox = EnvSandbox::new();
         let temp_dir = TempDir::new().unwrap();
         let workspace_root = temp_dir.path();
 
-        // Save original HOME
-        let original_home = std::env::var("HOME").ok();
-
-        // Remove HOME env var
         std::env::remove_var("HOME");
 
-        // Verify XDG config path returns None when HOME is not set
         assert!(
             ConfigLoader::xdg_config_path().is_none(),
             "XDG config path should be None when HOME is not set"
         );
 
-        // Load config - should work fine without HOME (just skip XDG config)
         let config = ConfigLoader::load(workspace_root).unwrap();
-        // Should have default config (no providers from XDG or workspace)
-        assert_eq!(
-            config.providers.len(),
-            0,
-            "Should have no providers when HOME is not set. Found: {:?}",
-            config.providers.keys().collect::<Vec<_>>()
-        );
+        assert_eq!(config.providers.len(), 0);
         assert_eq!(config.agents.len(), 0);
-
-        // Clean up
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        } else {
-            std::env::remove_var("HOME");
-        }
     }
 }
