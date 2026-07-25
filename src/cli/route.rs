@@ -96,39 +96,10 @@ impl RunContext {
         let frame_storage_path = assembly.frame_storage_path().to_path_buf();
         let artifact_storage_path = assembly.artifact_storage_path().to_path_buf();
 
-        match assembly.graph_runtime().catch_up() {
-            Ok(applied_events) => {
-                let last_reduced_seq = match assembly.graph_runtime().durable_event_cursor() {
-                    Ok(cursor) => cursor.after_seq,
-                    Err(err) => {
-                        warn!(error = %err, "failed to read last reduced seq during startup");
-                        0
-                    }
-                };
-                if let Err(err) = branch_runtime.record_branch_graph_catch_up_success(
-                    &active_branch,
-                    &assembly.product_runtime().layout().world_model_db,
-                    last_reduced_seq,
-                    applied_events,
-                ) {
-                    warn!(error = %err, "failed to record branch graph migration during startup");
-                }
-            }
-            Err(err) => {
-                warn!(error = %err, "failed to catch up graph runtime during startup");
-                if let Err(record_err) = branch_runtime.record_branch_graph_catch_up_failure(
-                    &active_branch,
-                    &assembly.product_runtime().layout().world_model_db,
-                    &err.to_string(),
-                ) {
-                    warn!(
-                        error = %record_err,
-                        "failed to record branch graph migration failure during startup"
-                    );
-                }
-            }
-        }
-
+        // No hidden graph catch-up here: catch-up is supervised actor work
+        // (Runtime Initialization stage 5), not a command-startup side
+        // effect. Callers that need the projection advanced use the
+        // explicit catch_up_graph_projection path.
         Ok(Self {
             assembly,
             workspace_root,
@@ -139,6 +110,54 @@ impl RunContext {
             branch_runtime,
             active_branch,
         })
+    }
+
+    /// Explicitly advance the shared graph projection to the ledger tip.
+    ///
+    /// This is the explicit path replacing the retired hidden catch-up
+    /// around command routing: catch-up is supervised actor work under the
+    /// runtime, and interactive callers that need the projection current
+    /// without booting the supervisor invoke it deliberately. Branch graph
+    /// state is recorded exactly as the supervised path records it.
+    pub fn catch_up_graph_projection(&self) -> Result<usize, ApiError> {
+        // Queued best-effort emissions must be durable before the reducer
+        // reads, so the caller's own events are visible to this pass.
+        if let Err(err) = self.assembly.progress().barrier() {
+            warn!(error = %err, "failed to drain ledger writer before graph catch-up");
+        }
+        match self.assembly.graph_runtime().catch_up() {
+            Ok(applied_events) => {
+                let last_reduced_seq = match self.assembly.graph_runtime().durable_event_cursor() {
+                    Ok(cursor) => cursor.after_seq,
+                    Err(err) => {
+                        warn!(error = %err, "failed to read last reduced seq after graph catch-up");
+                        0
+                    }
+                };
+                if let Err(err) = self.branch_runtime.record_branch_graph_catch_up_success(
+                    &self.active_branch,
+                    &self.assembly.product_runtime().layout().world_model_db,
+                    last_reduced_seq,
+                    applied_events,
+                ) {
+                    warn!(error = %err, "failed to record branch graph migration after catch-up");
+                }
+                Ok(applied_events)
+            }
+            Err(err) => {
+                if let Err(record_err) = self.branch_runtime.record_branch_graph_catch_up_failure(
+                    &self.active_branch,
+                    &self.assembly.product_runtime().layout().world_model_db,
+                    &err.to_string(),
+                ) {
+                    warn!(
+                        error = %record_err,
+                        "failed to record branch graph migration failure after catch-up"
+                    );
+                }
+                Err(ApiError::from(err))
+            }
+        }
     }
 
     /// Execute a CLI command via the single route table.
@@ -155,49 +174,11 @@ impl RunContext {
             command,
         );
         let result = self.execute_inner(command, &session_id);
-        // Best-effort emissions from the command are still queued on the
-        // ledger writer; the barrier makes this command's own events visible
-        // to the catch-up below instead of the next command's startup pass.
-        if let Err(err) = self.assembly.progress().barrier() {
-            warn!(error = %err, "failed to drain ledger writer before graph catch-up");
-        }
-        match self.assembly.graph_runtime().catch_up() {
-            Ok(applied_events) => {
-                let last_reduced_seq = match self.assembly.graph_runtime().durable_event_cursor() {
-                    Ok(cursor) => cursor.after_seq,
-                    Err(err) => {
-                        warn!(error = %err, "failed to read last reduced seq after command execution");
-                        0
-                    }
-                };
-                if applied_events > 0 {
-                    if let Err(err) = self.branch_runtime.record_branch_graph_catch_up_success(
-                        &self.active_branch,
-                        &self.assembly.product_runtime().layout().world_model_db,
-                        last_reduced_seq,
-                        applied_events,
-                    ) {
-                        warn!(error = %err, "failed to record branch graph migration after command execution");
-                    }
-                } else if let Err(err) =
-                    self.branch_runtime.touch_active_branch(&self.active_branch)
-                {
-                    warn!(error = %err, "failed to update active branch last seen after command execution");
-                }
-            }
-            Err(err) => {
-                warn!(error = %err, "failed to catch up graph runtime after command execution");
-                if let Err(record_err) = self.branch_runtime.record_branch_graph_catch_up_failure(
-                    &self.active_branch,
-                    &self.assembly.product_runtime().layout().world_model_db,
-                    &err.to_string(),
-                ) {
-                    warn!(
-                        error = %record_err,
-                        "failed to record branch graph migration failure after command execution"
-                    );
-                }
-            }
+        // No hidden graph catch-up after the command: catch-up is
+        // supervised actor work, never a command-routing side effect. Only
+        // the branch last-seen touch survives from the removed pass.
+        if let Err(err) = self.branch_runtime.touch_active_branch(&self.active_branch) {
+            warn!(error = %err, "failed to update active branch last seen after command execution");
         }
         self.emit_command_summary(
             &session_id,

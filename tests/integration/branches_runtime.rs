@@ -16,7 +16,10 @@ fn startup_registers_active_branch_and_writes_ledger() {
     let workspace = TempDir::new().unwrap();
 
     with_xdg_data_home(&test_dir, || {
-        let _context = RunContext::new(workspace.path().to_path_buf(), None).unwrap();
+        let context = RunContext::new(workspace.path().to_path_buf(), None).unwrap();
+        // Startup no longer performs hidden graph catch-up; the derived
+        // version step is recorded by the explicit catch-up path.
+        context.catch_up_graph_projection().unwrap();
 
         let data_home = xdg::workspace_data_dir(workspace.path()).unwrap();
         let manifest_path = data_home.join("branch_manifest.json");
@@ -291,6 +294,9 @@ fn active_branch_graph_status_reuses_the_open_product_projection() {
     with_xdg_data_home(&test_dir, || {
         let context = RunContext::new(workspace.path().to_path_buf(), None).unwrap();
         context.execute(&Commands::Scan { force: true }).unwrap();
+        // Command routing no longer catches the projection up implicitly;
+        // advance it through the explicit path before reading status.
+        context.catch_up_graph_projection().unwrap();
 
         let output = context
             .execute(&Commands::Branches {
