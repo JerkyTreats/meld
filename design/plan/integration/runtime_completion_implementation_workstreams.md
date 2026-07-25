@@ -172,6 +172,16 @@ Additional findings carried to later lanes:
 - Terminality and recovery: a permanently blocked package plan re-handed-off each tick burns the tick budget under the conservative whole-wave charge; bounded but starving, deferred to firm failure policy.
 - Foreground availability: wire the startup and shutdown snapshot publishing through the new report store.
 
+The Product Integration Wave closed 2026-07-25, merged through `5f7c5ec` with a module-structure follow-up at `725a9f6`: runtime actor binding derives stewardship registrations, binds every domain actor behind truthful hydration probes with registration-scoped store opening, and discharges every carried obligation; the initialization command surface lands `meld world init` over idempotent stages with the hidden CLI graph catch-up retired; stewardship outcome interpretation lands as authored theory under `theory/` with a proven no-premature-satisfaction bound; and the parity fixtures land the deterministic branching workspace, real-surface provider, and reproducible workflow baseline. All four lanes passed fresh review without a correction round.
+
+Findings carried to the Proof And Closeout Wave:
+
+- Package-route terminal outcome recording: no actor records a durable command-boundary terminal outcome for a package-route run, so aggregate publication truthfully skips complete runs; the proof's aggregate step blocks until terminality policy or a minimal terminal-outcome recorder lands.
+- Foreground availability: pass the assembly's derived registration set into the supervisor start command, honoring operator runtime-id subsets; wire startup and shutdown snapshot publishing.
+- Production dispatch route composition: the package-run preparer and invoker ports need production implementations over the real capability, provider, and workflow machinery.
+- Stage 2 outcome-mapping registry: the mapping remains a typed composition injection until a durable world-model registry lands; assembly then hydrates from it.
+- The init lane's stage 4 subject reference and the binding lane's stewardship subject reference must stay one convention; both export it.
+
 ## Workstream One Stewardship Expression And Physical Binding
 
 Owner: root config and product assembly adapters
