@@ -3574,6 +3574,7 @@ mod tests {
                 equals: "docs_patch".to_string(),
             }],
             subject: OutcomeSubjectBinding {
+                from: Default::default(),
                 object_kind: "node".to_string(),
                 domain_id: Some("workspace_fs".to_string()),
             },
