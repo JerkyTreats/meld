@@ -164,6 +164,14 @@ Findings carried to later lanes:
 - Dispatch: dedupe the package-route handoff on its deterministic plan identity; the handoff carries no durable record by design.
 - Debugger requirements register: belief assessment commits inline during evidence ingestion, so per-step revision diffs attribute to the committing actor rather than the nominally responsible one; see DBG-005.
 
+The Execution and Lifecycle Wave closed 2026-07-25, merged at `dc1a658`: the bounded dispatch actor over public ports driving both the package route and the claim route with artifact-truth ordering and crash-window replay; supervisor truthfulness with the missing-report-becomes-healthy defect structurally removed, passive services unleased, the bounded-step contract adopted, and full per-tick reports durably preserved through the first production status publisher; and aggregate package publication with whole-graph completion detection, data-classified folder rows, and dual-layer idempotent ledger publication. The dispatch and aggregate lanes each corrected one blocking finding confirmed by their original reviewers.
+
+Additional findings carried to later lanes:
+
+- Runtime actor binding: obtain package run identities through the exported dispatch derivation rather than any re-derived formula; supply the folder-unit capability types on the aggregate run binding from the stewardship package; treat a completed run rejected with the no-folder-work signal as a classification mismatch, not a retryable condition; worker identity must be stable across supervisor restarts or interrupted claims strand; the event-append diagnostics observer needs a passive-service declaration and a new home for its ledger-health facts.
+- Terminality and recovery: a permanently blocked package plan re-handed-off each tick burns the tick budget under the conservative whole-wave charge; bounded but starving, deferred to firm failure policy.
+- Foreground availability: wire the startup and shutdown snapshot publishing through the new report store.
+
 ## Workstream One Stewardship Expression And Physical Binding
 
 Owner: root config and product assembly adapters
