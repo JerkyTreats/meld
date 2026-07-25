@@ -3,10 +3,14 @@
 use crate::error::ExecutionInvariantError;
 use crate::goals::contracts::{
     AddGoalCommand, ExecutionGoalRecord, GoalCommandMetadata, GoalCommandOutcome,
-    ModifyGoalCommand, RemoveGoalCommand, ResumeGoalCommand, SatisfyGoalCommand,
-    SuspendGoalCommand,
+    ModifyGoalCommand, RemoveGoalCommand, ReopenGoalCommand, ResumeGoalCommand, SatisfyGoalCommand,
+    StaleGoalCommandReason, SuspendGoalCommand,
 };
-use crate::goals::store::{validate_goal, validate_metadata, validate_non_empty};
+use crate::goals::query::{ActiveGoalQuery, ActiveGoalQueryError};
+use crate::goals::store::{
+    resolve_reopen, stale_epoch_outcome, validate_goal, validate_metadata, validate_non_empty,
+    ReopenResolution,
+};
 use meld_lang::{Goal, GoalLifecycle};
 use sled::{
     transaction::{ConflictableTransactionError, TransactionError, Transactional},
@@ -227,6 +231,11 @@ impl PersistentGoalSetStore {
     }
 
     /// Apply an idempotent transition to satisfied.
+    ///
+    /// Satisfaction evidence binds the lifecycle epoch it was produced
+    /// under: a command whose `lifecycle_epoch` mismatches the record's
+    /// current epoch is a deterministic stale no-op, never a satisfied
+    /// transition.
     pub fn satisfy_goal(
         &self,
         command: SatisfyGoalCommand,
@@ -235,6 +244,17 @@ impl PersistentGoalSetStore {
             return Ok(outcome);
         }
         validate_metadata(&command.metadata)?;
+        if let Some(existing) = self.record(&command.goal_id)? {
+            if existing.lifecycle_epoch != command.lifecycle_epoch {
+                let outcome = stale_epoch_outcome(
+                    &command.goal_id,
+                    command.lifecycle_epoch,
+                    existing.lifecycle_epoch,
+                );
+                self.record_outcome(&command.metadata, &outcome)?;
+                return Ok(outcome);
+            }
+        }
         self.update_lifecycle(
             &command.metadata,
             &command.goal_id,
@@ -242,6 +262,52 @@ impl PersistentGoalSetStore {
                 at_seq: command.at_seq,
             },
         )
+    }
+
+    /// Reopen a satisfied goal in place under an advanced lifecycle epoch.
+    ///
+    /// Same semantics as [`crate::goals::GoalSetStore::reopen_goal`]: the
+    /// goal identity returns to active as an appended revision with the
+    /// epoch advanced by one, replay of the same command id never advances
+    /// twice, and reopen of a non-satisfied goal is a stale no-op. The
+    /// record and outcome persist even when the process stops between the
+    /// two writes: a replay that finds the advanced record stamped with
+    /// this command id resolves to the same applied outcome.
+    pub fn reopen_goal(
+        &self,
+        command: ReopenGoalCommand,
+    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
+        if let Some(outcome) = self.replayed_outcome(&command.metadata)? {
+            return Ok(outcome);
+        }
+        validate_metadata(&command.metadata)?;
+        validate_non_empty("goal id", &command.goal_id)?;
+        validate_non_empty(
+            "triggering belief revision id",
+            &command.triggering_belief_revision_id,
+        )?;
+        let Some(existing) = self.record(&command.goal_id)? else {
+            let outcome = GoalCommandOutcome::NotFound {
+                goal_id: command.goal_id.clone(),
+            };
+            self.record_outcome(&command.metadata, &outcome)?;
+            return Ok(outcome);
+        };
+        let outcome = match resolve_reopen(&existing, &command) {
+            ReopenResolution::Advance(record) => {
+                self.put_record(&record)?;
+                GoalCommandOutcome::Applied(Box::new(record))
+            }
+            ReopenResolution::AlreadyApplied(record) => {
+                GoalCommandOutcome::Applied(Box::new(record))
+            }
+            ReopenResolution::Stale => GoalCommandOutcome::StaleNoOp {
+                goal_id: command.goal_id.clone(),
+                reason: StaleGoalCommandReason::LifecycleNotSatisfied,
+            },
+        };
+        self.record_outcome(&command.metadata, &outcome)?;
+        Ok(outcome)
     }
 
     /// Apply an idempotent transition to suspended.
@@ -439,6 +505,36 @@ impl PersistentGoalSetStore {
                 .map_err(to_store_io)?;
         }
         Ok(())
+    }
+}
+
+impl ActiveGoalQuery for PersistentGoalSetStore {
+    /// Active records in ascending goal id order, decoding no more records
+    /// than needed to fill `limit` when a limit is given. Record keys are
+    /// goal ids, so sled's key order is the deterministic goal id order.
+    fn active_goals(
+        &mut self,
+        limit: Option<usize>,
+    ) -> Result<Vec<ExecutionGoalRecord>, ActiveGoalQueryError> {
+        let mut out = Vec::new();
+        for item in self.records.iter() {
+            if limit.is_some_and(|limit| out.len() >= limit) {
+                break;
+            }
+            let (_, value) = item.map_err(|error| ActiveGoalQueryError {
+                message: format!("goal store IO failed: {error}"),
+                retryable: true,
+            })?;
+            let record: ExecutionGoalRecord =
+                serde_json::from_slice(&value).map_err(|error| ActiveGoalQueryError {
+                    message: format!("goal store JSON failed: {error}"),
+                    retryable: false,
+                })?;
+            if matches!(record.goal.lifecycle, GoalLifecycle::Active) {
+                out.push(record);
+            }
+        }
+        Ok(out)
     }
 }
 

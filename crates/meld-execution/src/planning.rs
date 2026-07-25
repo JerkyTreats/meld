@@ -12,6 +12,8 @@ pub mod contracts;
 pub mod lowering;
 /// Method loading, verification, and deterministic ordering.
 pub mod method_library;
+/// Realization-route selection from the injected available-action set.
+pub mod realization;
 /// First-slice planning runtime and bounded actor facade.
 pub mod runtime;
 /// Execution-side world state projection request contracts.
@@ -35,6 +37,10 @@ pub use lowering::{
 pub use method_library::{
     MethodLibrary, MethodLibraryLoadError, MethodSourceRef, MethodVerification,
     MethodVerificationDiagnostic, VerifiedMethodEntry,
+};
+pub use realization::{
+    prepare_task_package_route, select_action_for_method, MethodRealizationBinding,
+    RealizationSelectionError, TaskPackageRoutePlan,
 };
 pub use runtime::{
     PlanningProjectionError, PlanningProjectionPort, PlanningRuntime, PlanningRuntimeActor,

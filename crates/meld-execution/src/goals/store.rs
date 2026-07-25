@@ -3,9 +3,10 @@
 use crate::error::ExecutionInvariantError;
 use crate::goals::contracts::{
     AddGoalCommand, ExecutionGoalRecord, GoalCommandMetadata, GoalCommandOutcome,
-    ModifyGoalCommand, RemoveGoalCommand, ResumeGoalCommand, SatisfyGoalCommand,
-    SuspendGoalCommand,
+    ModifyGoalCommand, RemoveGoalCommand, ReopenGoalCommand, ResumeGoalCommand, SatisfyGoalCommand,
+    StaleGoalCommandReason, SuspendGoalCommand,
 };
+use crate::goals::query::{ActiveGoalQuery, ActiveGoalQueryError};
 use meld_lang::{Goal, GoalLifecycle};
 use std::collections::BTreeMap;
 
@@ -134,6 +135,11 @@ impl GoalSetStore {
     }
 
     /// Apply an idempotent transition to satisfied.
+    ///
+    /// Satisfaction evidence binds the lifecycle epoch it was produced
+    /// under: a command whose `lifecycle_epoch` mismatches the record's
+    /// current epoch is a deterministic stale no-op, never a satisfied
+    /// transition.
     pub fn satisfy_goal(
         &mut self,
         command: SatisfyGoalCommand,
@@ -142,6 +148,17 @@ impl GoalSetStore {
             return Ok(outcome);
         }
         validate_metadata(&command.metadata)?;
+        if let Some(existing) = self.records.get(&command.goal_id) {
+            if existing.lifecycle_epoch != command.lifecycle_epoch {
+                let outcome = stale_epoch_outcome(
+                    &command.goal_id,
+                    command.lifecycle_epoch,
+                    existing.lifecycle_epoch,
+                );
+                self.record_outcome(&command.metadata, outcome.clone());
+                return Ok(outcome);
+            }
+        }
         self.update_lifecycle(
             &command.metadata,
             &command.goal_id,
@@ -149,6 +166,50 @@ impl GoalSetStore {
                 at_seq: command.at_seq,
             },
         )
+    }
+
+    /// Reopen a satisfied goal in place under an advanced lifecycle epoch.
+    ///
+    /// The same goal identity returns to active as an appended revision:
+    /// `lifecycle_epoch` advances by exactly one and `updated_at_seq` moves
+    /// to the command sequence. Replay of the same command id returns the
+    /// recorded outcome without a second advance, and a reopen of a goal
+    /// that is not satisfied is a deterministic stale no-op.
+    pub fn reopen_goal(
+        &mut self,
+        command: ReopenGoalCommand,
+    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
+        if let Some(outcome) = self.replayed_outcome(&command.metadata) {
+            return Ok(outcome);
+        }
+        validate_metadata(&command.metadata)?;
+        validate_non_empty("goal id", &command.goal_id)?;
+        validate_non_empty(
+            "triggering belief revision id",
+            &command.triggering_belief_revision_id,
+        )?;
+        let Some(existing) = self.records.get(&command.goal_id) else {
+            let outcome = GoalCommandOutcome::NotFound {
+                goal_id: command.goal_id.clone(),
+            };
+            self.record_outcome(&command.metadata, outcome.clone());
+            return Ok(outcome);
+        };
+        let outcome = match resolve_reopen(existing, &command) {
+            ReopenResolution::Advance(record) => {
+                self.records.insert(command.goal_id.clone(), record.clone());
+                GoalCommandOutcome::Applied(Box::new(record))
+            }
+            ReopenResolution::AlreadyApplied(record) => {
+                GoalCommandOutcome::Applied(Box::new(record))
+            }
+            ReopenResolution::Stale => GoalCommandOutcome::StaleNoOp {
+                goal_id: command.goal_id.clone(),
+                reason: StaleGoalCommandReason::LifecycleNotSatisfied,
+            },
+        };
+        self.record_outcome(&command.metadata, outcome.clone());
+        Ok(outcome)
     }
 
     /// Apply an idempotent transition to suspended.
@@ -269,6 +330,71 @@ impl GoalSetStore {
             self.source_identity_index
                 .insert(current, goal_id.to_string());
         }
+    }
+}
+
+impl ActiveGoalQuery for GoalSetStore {
+    /// Active records in ascending goal id order, reading no more than
+    /// `limit` records when a limit is given.
+    fn active_goals(
+        &mut self,
+        limit: Option<usize>,
+    ) -> Result<Vec<ExecutionGoalRecord>, ActiveGoalQueryError> {
+        let mut out = Vec::new();
+        for record in self.records.values() {
+            if limit.is_some_and(|limit| out.len() >= limit) {
+                break;
+            }
+            if matches!(record.goal.lifecycle, GoalLifecycle::Active) {
+                out.push(record.clone());
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Deterministic resolution for one reopen command against one record.
+pub(crate) enum ReopenResolution {
+    /// Satisfied record reopens as a new revision under the next epoch.
+    Advance(ExecutionGoalRecord),
+    /// This exact command already produced the current record. Covers the
+    /// durable store's split write between the record and its outcome.
+    AlreadyApplied(ExecutionGoalRecord),
+    /// Record is not satisfied and was not produced by this command.
+    Stale,
+}
+
+pub(crate) fn resolve_reopen(
+    existing: &ExecutionGoalRecord,
+    command: &ReopenGoalCommand,
+) -> ReopenResolution {
+    if matches!(existing.goal.lifecycle, GoalLifecycle::Satisfied { .. }) {
+        let mut record = existing.clone();
+        record.goal.lifecycle = GoalLifecycle::Active;
+        // Reopen is the only command that advances the epoch; every other
+        // mutation revises content under the record's current epoch.
+        record.lifecycle_epoch = existing.lifecycle_epoch + 1;
+        record.source_command_id = Some(command.metadata.command_id.clone());
+        record.updated_at_seq = command.metadata.seq;
+        return ReopenResolution::Advance(record);
+    }
+    if existing.source_command_id.as_deref() == Some(command.metadata.command_id.as_str()) {
+        return ReopenResolution::AlreadyApplied(existing.clone());
+    }
+    ReopenResolution::Stale
+}
+
+pub(crate) fn stale_epoch_outcome(
+    goal_id: &str,
+    command_epoch: u64,
+    current_epoch: u64,
+) -> GoalCommandOutcome {
+    GoalCommandOutcome::StaleNoOp {
+        goal_id: goal_id.to_string(),
+        reason: StaleGoalCommandReason::EpochMismatch {
+            command_epoch,
+            current_epoch,
+        },
     }
 }
 

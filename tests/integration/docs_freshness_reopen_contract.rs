@@ -765,6 +765,9 @@ fn submission_from_goal_outcome(
         GoalCommandOutcome::NotFound { goal_id } => Err(AgentSinkError::fatal(format!(
             "goal command sink did not find goal '{goal_id}'"
         ))),
+        GoalCommandOutcome::StaleNoOp { goal_id, .. } => Err(AgentSinkError::fatal(format!(
+            "goal command sink observed a stale command for goal '{goal_id}'"
+        ))),
     }
 }
 
@@ -785,6 +788,9 @@ fn submission_from_mutation_outcome(
         )),
         GoalCommandOutcome::NotFound { goal_id } => Err(AgentSinkError::fatal(format!(
             "goal mutation sink did not find goal '{goal_id}'"
+        ))),
+        GoalCommandOutcome::StaleNoOp { goal_id, .. } => Err(AgentSinkError::fatal(format!(
+            "goal mutation sink observed a stale command for goal '{goal_id}'"
         ))),
     }
 }

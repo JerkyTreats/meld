@@ -131,4 +131,34 @@ pub enum GoalCommandOutcome {
         /// Goal identifier that could not be found.
         goal_id: String,
     },
+    /// Goal command was ignored as a deterministic stale no-op.
+    ///
+    /// The record is left byte-identical: no lifecycle transition, no epoch
+    /// change, and no `updated_at_seq` advance. Stores return this instead of
+    /// applying a satisfy whose observed epoch mismatches the record, or a
+    /// reopen of a goal that is not satisfied.
+    StaleNoOp {
+        /// Goal whose record was left unchanged.
+        goal_id: String,
+        /// Machine-readable reason the command did not apply.
+        reason: StaleGoalCommandReason,
+    },
+}
+
+/// Reason a goal command resolved to a deterministic stale no-op.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StaleGoalCommandReason {
+    /// Command observed a lifecycle epoch other than the record's current
+    /// epoch. Satisfaction evidence binds the epoch it was produced under,
+    /// so a prior-epoch satisfy can never transition a reopened goal.
+    EpochMismatch {
+        /// Epoch the command observed when its evidence was produced.
+        command_epoch: u64,
+        /// Epoch currently carried by the goal record.
+        current_epoch: u64,
+    },
+    /// Reopen targeted a goal whose lifecycle is not satisfied. Reopen only
+    /// moves satisfied goals back to active; it never advances the epoch of
+    /// an already-active, suspended, proposed, or abandoned goal.
+    LifecycleNotSatisfied,
 }

@@ -294,4 +294,14 @@ pub enum PlanningInputError {
         /// Goal identifier supplied to planning.
         goal_id: String,
     },
+    /// World state frame lacked its durable projection identity.
+    ///
+    /// Planning requires the exact planner projection identity — frame id
+    /// and projection version — because the deterministic plan identity is
+    /// derived from it. Without it a revised frame could not produce a
+    /// causally distinct plan.
+    MissingWorldStateFrameIdentity {
+        /// Goal identifier rejected by frame identity validation.
+        goal_id: String,
+    },
 }
