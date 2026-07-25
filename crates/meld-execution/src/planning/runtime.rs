@@ -1,7 +1,8 @@
 //! First-slice execution planning runtime.
 
 use crate::capability::CapabilityCatalog;
-use crate::goals::PersistentGoalSetStore;
+use crate::goals::ActiveGoalQuery;
+use crate::planning::action::{ActionRealizationRoute, AvailableActionSet};
 use crate::planning::contracts::{
     CandidateStatus, ExecutionComposition, InvalidMethodReport, MethodCandidateReport,
     NoApplicableMethod, PlanningDiagnostic, PlanningDiagnosticCode, PlanningIndeterminate,
@@ -12,6 +13,10 @@ use crate::planning::lowering::{
     Request as CompositionLoweringRequest,
 };
 use crate::planning::method_library::{operator_resolutions, MethodLibrary, VerifiedMethodEntry};
+use crate::planning::realization::{
+    prepare_task_package_route, select_action_for_method, MethodRealizationBinding,
+    TaskPackageRoutePlan,
+};
 use crate::planning::world_state::{PlanningWorldStateFrameRef, PlanningWorldStateRequest};
 use crate::task::TaskDefinitionCompiler;
 use crate::task_network::{
@@ -38,6 +43,12 @@ pub struct PlanningRuntimeActorRequest {
     pub requested_dimensions: Vec<String>,
     /// Extra preconditions the projection port may include in its frame.
     pub required_preconditions: Vec<Proposition>,
+    /// Actions the stewarded domain affords, injected by root. Methods with
+    /// no association in `method_realizations` keep operator-capability
+    /// lowering, so an empty set preserves the pre-affordance behavior.
+    pub available_actions: AvailableActionSet,
+    /// Data-driven association from method ids to afforded action ids.
+    pub method_realizations: Vec<MethodRealizationBinding>,
     /// Optional maximum number of active goals to process in this pass.
     pub limit: Option<usize>,
 }
@@ -139,6 +150,25 @@ pub enum PlanningRuntimeActorGoalResult {
         /// Non-composed planning result.
         result: PlanningResult,
     },
+    /// Realization selection or package-route validation failed.
+    RealizationFailed {
+        /// Goal selected from execution goal storage.
+        goal_id: String,
+        /// Composition whose realization could not be selected.
+        composition_id: String,
+        /// Deterministic realization failure summary.
+        error: String,
+    },
+    /// Composition realized through the task-package workflow route.
+    ///
+    /// Planning stops at selection: the handoff artifact names the built-in
+    /// package and workflow by id and proposes no task network mutation.
+    PackageRouteSelected {
+        /// Goal selected from execution goal storage.
+        goal_id: String,
+        /// Validated package-route handoff artifact.
+        plan: TaskPackageRoutePlan,
+    },
     /// Lowering failed before command submission.
     LoweringFailed {
         /// Goal selected from execution goal storage.
@@ -173,7 +203,9 @@ pub enum PlanningRuntimeActorGoalResult {
 pub struct PlanningRuntimeActorReport {
     /// Stable runtime actor identifier.
     pub actor_id: String,
-    /// Number of active goals read from execution goal storage.
+    /// Number of active goals the bounded query read this pass. With a
+    /// limit the actor reads at most one record past the limit to report
+    /// exhaustion honestly, so this is never a runtime-global count.
     pub active_goal_count: usize,
     /// Task network revision before actor work began.
     pub input_revision: u64,
@@ -230,27 +262,38 @@ where
     }
 
     /// Process a bounded set of active goals through projection, planning, and command submission.
-    pub fn run_once<P>(
+    ///
+    /// Goal discovery is query-driven: the actor reads active goals only
+    /// through the narrow [`ActiveGoalQuery`] boundary, never from a
+    /// caller-supplied goal list or goal store internals. Both execution
+    /// goal stores implement the boundary, so existing store-backed callers
+    /// keep working. When a limit is set the actor asks the query for one
+    /// record past the limit so budget exhaustion is reported without an
+    /// unbounded read.
+    pub fn run_once<Q, P>(
         &self,
-        goals: &PersistentGoalSetStore,
+        goals: &mut Q,
         task_network: &mut SledTaskNetworkStore,
         projection: &mut P,
         request: PlanningRuntimeActorRequest,
     ) -> Result<PlanningRuntimeActorReport, PlanningRuntimeActorError>
     where
+        Q: ActiveGoalQuery + ?Sized,
         P: PlanningProjectionPort,
     {
         validate_actor_request(&request)?;
 
-        let active_goals = goals
-            .active_goals()
-            .map_err(|error| PlanningRuntimeActorError::GoalStore(error.to_string()))?;
+        let fetch_limit = request.limit.map(|limit| limit.saturating_add(1));
+        let mut active_goals = ActiveGoalQuery::active_goals(goals, fetch_limit)
+            .map_err(|error| PlanningRuntimeActorError::GoalStore(error.message))?;
         let active_goal_count = active_goals.len();
         let budget_exhausted = request
             .limit
             .map(|limit| active_goal_count > limit)
             .unwrap_or(false);
-        let goal_limit = request.limit.unwrap_or(active_goal_count);
+        if let Some(limit) = request.limit {
+            active_goals.truncate(limit);
+        }
         let input_revision = task_network.state().revision;
         let mut report = PlanningRuntimeActorReport {
             actor_id: self.actor_id.clone(),
@@ -265,9 +308,9 @@ where
             results: Vec::new(),
         };
 
-        for goal in active_goals.into_iter().take(goal_limit) {
+        for record in active_goals {
             report.attempted += 1;
-            self.process_goal(task_network, projection, &request, goal, &mut report);
+            self.process_goal(task_network, projection, &request, record.goal, &mut report);
         }
 
         report.output_revision = task_network.state().revision;
@@ -343,6 +386,47 @@ where
                 });
             return;
         };
+
+        // Realization selection: an afforded action associated with the
+        // selected method may reroute the plan onto the task-package
+        // workflow route. Everything else keeps capability lowering.
+        let selected_action = match select_action_for_method(
+            &composition.method_id,
+            &request.method_realizations,
+            &request.available_actions,
+        ) {
+            Ok(selected) => selected,
+            Err(error) => {
+                push_realization_failure(report, &goal.goal_id, &composition, error.to_string());
+                return;
+            }
+        };
+        if let Some(action) = selected_action {
+            if matches!(
+                action.realization,
+                ActionRealizationRoute::TaskPackageWorkflow { .. }
+            ) {
+                match prepare_task_package_route(&request.network_id, &composition, action) {
+                    Ok(plan) => {
+                        report
+                            .results
+                            .push(PlanningRuntimeActorGoalResult::PackageRouteSelected {
+                                goal_id: goal.goal_id,
+                                plan,
+                            });
+                    }
+                    Err(error) => {
+                        push_realization_failure(
+                            report,
+                            &goal.goal_id,
+                            &composition,
+                            error.to_string(),
+                        );
+                    }
+                }
+                return;
+            }
+        }
 
         let lower_request = CompositionLoweringRequest {
             request_id: lowering_request_id(&composition),
@@ -488,12 +572,33 @@ fn projection_request_for_goal(
     }
 }
 
+fn push_realization_failure(
+    report: &mut PlanningRuntimeActorReport,
+    goal_id: &str,
+    composition: &ExecutionComposition,
+    error: String,
+) {
+    report.fatal_errors.push(PlanningRuntimeActorIssue {
+        goal_id: Some(goal_id.to_string()),
+        code: "realization_selection_failed".to_string(),
+        message: error.clone(),
+    });
+    report
+        .results
+        .push(PlanningRuntimeActorGoalResult::RealizationFailed {
+            goal_id: goal_id.to_string(),
+            composition_id: composition.composition_id.clone(),
+            error,
+        });
+}
+
 fn planning_request_id(goal: &meld_lang::Goal, frame: &PlanningWorldStateFrameRef) -> String {
     #[derive(Serialize)]
     struct Identity<'a> {
         goal_id: &'a str,
         updated_frame_id: &'a str,
         projection_version: &'a str,
+        source_refs: &'a [String],
     }
 
     stable_runtime_id(
@@ -502,6 +607,10 @@ fn planning_request_id(goal: &meld_lang::Goal, frame: &PlanningWorldStateFrameRe
             goal_id: &goal.goal_id,
             updated_frame_id: &frame.frame_id,
             projection_version: &frame.projection_version,
+            // Source revision references complete the frame identity: a
+            // revision that reuses a frame id must still change the
+            // deterministic plan identity.
+            source_refs: &frame.source_refs,
         },
     )
 }
@@ -696,6 +805,19 @@ fn validate_request(request: &PlanningRequest) -> Result<(), PlanningInputError>
     if request.world_state_request.goal_id != request.goal.goal_id {
         return Err(PlanningInputError::MismatchedWorldStateRequestGoal {
             request_goal_id: request.world_state_request.goal_id.clone(),
+            goal_id: request.goal.goal_id.clone(),
+        });
+    }
+    // The frame identity feeds every deterministic plan identity, so a
+    // frame without durable identity cannot enter planning.
+    if request.world_state_frame.frame_id.trim().is_empty()
+        || request
+            .world_state_frame
+            .projection_version
+            .trim()
+            .is_empty()
+    {
+        return Err(PlanningInputError::MissingWorldStateFrameIdentity {
             goal_id: request.goal.goal_id.clone(),
         });
     }
@@ -915,7 +1037,7 @@ fn prepare_composition(
             &entry.method.method_id,
             &bindings,
             &composition,
-            &request.world_state_frame.frame_id,
+            &request.world_state_frame,
         ),
         goal: request.goal.clone(),
         world_state_frame: request.world_state_frame.clone(),
@@ -1015,7 +1137,7 @@ fn composition_id(
     method_id: &str,
     bindings: &Bindings,
     composition: &Composition,
-    frame_id: &str,
+    frame: &PlanningWorldStateFrameRef,
 ) -> String {
     #[derive(Serialize)]
     struct Identity<'a> {
@@ -1025,15 +1147,21 @@ fn composition_id(
         bindings: &'a Bindings,
         composition: &'a Composition,
         frame_id: &'a str,
+        projection_version: &'a str,
+        source_refs: &'a [String],
     }
 
+    // The full frame identity makes the composition causally distinct for
+    // any revised projection, independent of caller-chosen request ids.
     let bytes = serde_json::to_vec(&Identity {
         request_id,
         goal_id,
         method_id,
         bindings,
         composition,
-        frame_id,
+        frame_id: &frame.frame_id,
+        projection_version: &frame.projection_version,
+        source_refs: &frame.source_refs,
     })
     .expect("planning composition identity is serializable");
     format!(
