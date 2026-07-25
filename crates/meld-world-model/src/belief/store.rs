@@ -641,6 +641,27 @@ impl BeliefStore {
         Ok(out)
     }
 
+    /// Read up to `max_items` durable dirty records plus a remainder flag.
+    ///
+    /// The dirty tree is keyed by [`BeliefKey::index_key`], so iterating the
+    /// index yields deterministic key order without decoding the whole tree.
+    pub fn dirty_key_states_bounded(
+        &self,
+        max_items: usize,
+    ) -> Result<(Vec<DirtyKeyState>, bool), StorageError> {
+        let mut out = Vec::new();
+        let mut more_available = false;
+        for item in self.dirty_keys.iter() {
+            let (_, value) = item.map_err(to_storage_io)?;
+            if out.len() == max_items {
+                more_available = true;
+                break;
+            }
+            out.push(decode_dirty_state(&value)?);
+        }
+        Ok((out, more_available))
+    }
+
     /// Read durable dirty state for one belief key.
     pub fn dirty_state(&self, key: &BeliefKey) -> Result<Option<DirtyKeyState>, StorageError> {
         let Some(raw) = self
