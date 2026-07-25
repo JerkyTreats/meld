@@ -248,7 +248,9 @@ fn belief_config_loads_runtime_family_and_hashes() {
     let snapshot = BeliefConfigLoader::load_json(config_json()).unwrap();
     assert_eq!(snapshot.config.family_id, "docs_freshness");
     assert_eq!(snapshot.config.comparator.engine_id, "weighted_bayesian");
-    assert_eq!(snapshot.hash, "e73f2f84e30146b3");
+    // Hash pins the serialized config shape; the observationality field
+    // added at the Gate B contract freeze changed it.
+    assert_eq!(snapshot.hash, "2ddb86575d116353");
     assert!(!snapshot.hash.is_empty());
 }
 

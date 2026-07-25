@@ -32,6 +32,7 @@ impl<'a> AgentRegistration<'a> {
             observation_scope: request.observation_scope,
             directive: request.directive,
             seed_provenance: request.seed_provenance,
+            curation_rule: request.curation_rule,
             status: AgentStatus::Registered,
             created_at_seq: request.created_at_seq,
             updated_at_seq: request.created_at_seq,

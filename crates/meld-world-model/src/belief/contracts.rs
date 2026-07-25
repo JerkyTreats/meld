@@ -124,6 +124,25 @@ pub struct BeliefFamilyConfig {
     pub default_prior: f64,
     pub planner_projection: PlannerProjectionConfig,
     pub config_version: String,
+    /// Whether the family's dimension can be settled by observation.
+    /// Declared by the owning family so the settlement transform never
+    /// guesses; absent in older configs, defaulting to observational.
+    #[serde(default)]
+    pub observationality: DimensionObservationality,
+}
+
+/// How a belief dimension can be settled.
+///
+/// The Strategy settlement transform consumes this declaration to decide
+/// whether an unsettled question can become an observation obligation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DimensionObservationality {
+    /// The dimension can be settled by direct observation of the subject.
+    #[default]
+    Observational,
+    /// The dimension is derived from other evidence or beliefs and cannot
+    /// be observed directly.
+    Derived,
 }
 
 /// Evidence schema declared by runtime configuration.

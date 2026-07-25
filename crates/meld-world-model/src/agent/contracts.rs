@@ -115,6 +115,13 @@ pub struct AgentRecord {
     pub directive: String,
     /// Provenance string for seed created agents.
     pub seed_provenance: String,
+    /// Curation rule installed on this agent as durable theory.
+    ///
+    /// The durable home for the rule per initialization stage 3: callers
+    /// resolve the rule from the record instead of re-supplying it per
+    /// call. Absent on records created before the binding existed.
+    #[serde(default)]
+    pub curation_rule: Option<AgentCurationRuleBinding>,
     /// Current agent lifecycle status.
     pub status: AgentStatus,
     /// Sequence assigned when the record was first stored.
@@ -299,6 +306,28 @@ impl AgentCurationRuleConfig {
     }
 }
 
+/// Curation rule bound to an agent record as installed theory.
+///
+/// The content hash pins the exact installed rule revision so decisions
+/// can cite which rule produced them, on the same pattern as the belief
+/// family registry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentCurationRuleBinding {
+    /// Installed rule configuration.
+    pub rule: AgentCurationRuleConfig,
+    /// Content hash over the serialized rule, the revision identity.
+    pub content_hash: String,
+}
+
+impl AgentCurationRuleBinding {
+    /// Validate the bound rule and revision hash.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        self.rule.validate()?;
+        require_non_empty("curation rule content hash", &self.content_hash)?;
+        Ok(())
+    }
+}
+
 /// Durable references to the state used for one curation decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentCurationInputRefs {
@@ -465,6 +494,9 @@ pub struct SeedAgentRegistration {
     pub directive: String,
     /// Provenance stored on the agent record.
     pub seed_provenance: String,
+    /// Curation rule installed with the seed registration.
+    #[serde(default)]
+    pub curation_rule: Option<AgentCurationRuleBinding>,
     /// Sequence used for create and update timestamps.
     pub created_at_seq: u64,
 }

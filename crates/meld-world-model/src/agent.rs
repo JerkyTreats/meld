@@ -2,6 +2,7 @@
 
 pub mod contracts;
 pub mod curation;
+pub mod goal_port;
 pub mod query;
 pub mod registration;
 pub mod runtime;
@@ -10,6 +11,7 @@ pub mod subscription;
 
 pub use contracts::*;
 pub use curation::*;
+pub use goal_port::{CurationGoalSetPort, CURATION_GOAL_SET_PORT_ID};
 pub use query::AgentQuery;
 pub use registration::AgentRegistration;
 pub use runtime::*;
