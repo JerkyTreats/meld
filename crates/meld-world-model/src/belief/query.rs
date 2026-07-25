@@ -41,6 +41,43 @@ impl<'a> BeliefQuery<'a> {
         self.store.current_view(key)
     }
 
+    /// Read the current committed revision for one exact belief key.
+    pub fn current_revision(
+        &self,
+        key: &BeliefKey,
+    ) -> Result<Option<BeliefRevision>, StorageError> {
+        self.store.current_revision(key)
+    }
+
+    /// Read the current revision and its planner-safe view for one exact key.
+    ///
+    /// The revision head is the durable authority: the returned view is
+    /// rebuilt from that revision when the view cache is missing, and both
+    /// halves always cite the same revision identity.
+    pub fn current_revision_and_view(
+        &self,
+        key: &BeliefKey,
+    ) -> Result<Option<(BeliefRevision, BeliefView)>, StorageError> {
+        let Some(revision) = self.store.current_revision(key)? else {
+            return Ok(None);
+        };
+        let view = match self.store.current_view(key)? {
+            Some(view) if view.current_revision_id.as_deref() == Some(&revision.revision_id) => {
+                view
+            }
+            // Cache miss or a stale cache entry: durable revision state wins.
+            _ => self
+                .store
+                .rebuild_current_view_from_revision(key)?
+                .ok_or_else(|| {
+                    StorageError::InvalidPath(
+                        "revision head vanished while rebuilding its view".to_string(),
+                    )
+                })?,
+        };
+        Ok(Some((revision, view)))
+    }
+
     /// Read current views for one subject and perspective.
     pub fn current_views_for_subject(
         &self,

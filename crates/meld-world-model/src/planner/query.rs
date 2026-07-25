@@ -1,6 +1,6 @@
 //! Read-only planner projection query facade.
 
-use crate::belief::{BeliefQuery, BranchScope};
+use crate::belief::{BeliefKey, BeliefQuery, BranchScope};
 use crate::events::DomainObjectRef;
 use crate::planner::contracts::{
     PlannerFieldProjectionConfig, PlannerGraphScope, PlannerProjectionContext,
@@ -57,6 +57,55 @@ impl<'a> PlannerQuery<'a> {
             .unwrap_or_default();
 
         let anchors = self.traversal_query.current_anchors_for_subject(subject)?;
+        let graph_scope = PlannerGraphScope {
+            accessible: !anchors.is_empty(),
+            anchor_ids: anchors
+                .iter()
+                .map(|anchor| anchor.anchor_id.clone())
+                .collect(),
+            source_fact_ids: anchors
+                .iter()
+                .flat_map(|anchor| anchor.source_fact_ids.clone())
+                .collect(),
+        };
+
+        project_world_state(PlannerProjectionInput {
+            context,
+            belief_view,
+            graph_scope: Some(graph_scope),
+            field_config,
+        })
+    }
+
+    /// Project the current world state for one exact configured belief key.
+    ///
+    /// Unlike the subject-scan path, this reads the belief view addressed by
+    /// the exact key, so the projection's revision and theory lineage are the
+    /// identities the belief store holds for that key — never a same-subject
+    /// neighbor selected by dimension match.
+    pub fn project_world_state_for_key(
+        &self,
+        key: &BeliefKey,
+    ) -> Result<PlannerProjectionOutput, PlannerProjectionError> {
+        let context = PlannerProjectionContext {
+            subject: key.subject.clone(),
+            perspective: key.perspective.clone(),
+            branch_scope: key.branch_scope.clone(),
+            projection_version: crate::planner::contracts::PLANNER_PROJECTION_VERSION.to_string(),
+        };
+
+        let belief_view = self
+            .belief_query
+            .current_revision_and_view(key)?
+            .map(|(_, view)| view);
+        let field_config = belief_view
+            .as_ref()
+            .map(PlannerFieldProjectionConfig::from_belief_view)
+            .unwrap_or_default();
+
+        let anchors = self
+            .traversal_query
+            .current_anchors_for_subject(&key.subject)?;
         let graph_scope = PlannerGraphScope {
             accessible: !anchors.is_empty(),
             anchor_ids: anchors
