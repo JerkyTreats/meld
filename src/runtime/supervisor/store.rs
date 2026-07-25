@@ -136,6 +136,14 @@ impl SupervisorStore {
         &self.path
     }
 
+    /// Borrow the underlying database for sibling report trees.
+    ///
+    /// The lifecycle trees owned by this store stay lifecycle-only; the
+    /// report store opens its own observational trees beside them.
+    pub(crate) fn database(&self) -> &sled::Db {
+        &self.db
+    }
+
     /// Flush supervisor lifecycle records separately from product stores.
     pub fn flush(&self) -> Result<(), SupervisorStoreError> {
         self.db.flush().map_err(to_sled)?;

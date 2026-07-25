@@ -4,6 +4,10 @@
 pub mod contracts;
 /// Explicit supervisor lifecycle entrypoint.
 pub mod entrypoint;
+/// Durable per-tick report preservation.
+pub mod reports;
+/// Bounded-step adaptation for supervised handles.
+pub mod stepping;
 /// Durable supervisor lifecycle store.
 pub mod store;
 
@@ -19,4 +23,6 @@ pub use entrypoint::{
     SupervisorRuntimeStatus, SupervisorShutdownReport, SupervisorStartCommand,
     SupervisorStatusSnapshot, SupervisorTickReport,
 };
+pub use reports::{SupervisorReportStore, DEFAULT_MAX_TICK_ACTION_RECORDS};
+pub use stepping::BoundedActorHandle;
 pub use store::{SupervisorStore, SupervisorStoreError};
