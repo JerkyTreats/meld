@@ -218,7 +218,9 @@ pub struct DependencyEdge {
     pub kind: DependencyKind,
     /// Why the edge exists. Committed edges record their origin so the
     /// later semantic-versus-scheduling separation needs no migration.
-    #[serde(default)]
+    /// An unrecorded origin is skipped during serialization so pre-origin
+    /// durable snapshots keep their byte form and state hash.
+    #[serde(default, skip_serializing_if = "DependencyEdgeOrigin::is_unrecorded")]
     pub origin: DependencyEdgeOrigin,
 }
 
@@ -234,6 +236,14 @@ pub enum DependencyEdgeOrigin {
     /// The edge predates origin recording. New commits must not use this.
     #[default]
     Unrecorded,
+}
+
+impl DependencyEdgeOrigin {
+    /// True when the origin predates recording, used to keep legacy
+    /// snapshot serialization byte-identical.
+    pub fn is_unrecorded(&self) -> bool {
+        matches!(self, Self::Unrecorded)
+    }
 }
 
 /// Dependency semantics between two task nodes.

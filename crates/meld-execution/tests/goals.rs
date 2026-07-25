@@ -376,6 +376,7 @@ fn goal_set_api_facade_applies_lifecycle_commands() {
             metadata: metadata("cmd-4", None, 4),
             goal_id: "goal-1".to_string(),
             at_seq: 44,
+            lifecycle_epoch: 0,
         })
         .unwrap();
     assert!(matches!(
@@ -539,6 +540,7 @@ fn lifecycle_commands_update_records_deterministically() {
             metadata: metadata("cmd-4", None, 4),
             goal_id: "goal-1".to_string(),
             at_seq: 44,
+            lifecycle_epoch: 0,
         })
         .unwrap();
     assert!(matches!(
@@ -722,6 +724,7 @@ fn persistent_goal_store_preserves_lifecycle_after_reopen() {
                 metadata: metadata("cmd-2", None, 2),
                 goal_id: "goal-1".to_string(),
                 at_seq: 44,
+                lifecycle_epoch: 0,
             })
             .unwrap();
         store.flush().unwrap();

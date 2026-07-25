@@ -4,7 +4,7 @@ mod task_network_support;
 use meld_execution::task_network::command::{Command, Response};
 use meld_execution::task_network::mutation::{Mutation, ReadPrecondition, Rejection, Set};
 use meld_execution::task_network::state::{
-    DependencyEdge, DependencyEdgeOrigin, DependencyKind, TaskStatus,
+    DependencyEdge, DependencyEdgeOrigin, DependencyKind, NetworkState, TaskStatus,
 };
 use meld_execution::task_network::store::InMemoryTaskNetworkStore;
 
@@ -587,6 +587,87 @@ fn duplicate_edges_are_deduped_on_commit() {
 
     assert!(matches!(store.submit(request), Response::Accepted { .. }));
     assert_eq!(store.state().edges, vec![duplicate_edge]);
+}
+
+#[test]
+fn mixed_origin_duplicate_edges_dedupe_to_recorded_origin() {
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let unrecorded = DependencyEdge {
+        from: "task-alpha".to_string(),
+        to: "task-beta".to_string(),
+        kind: DependencyKind::Ordering,
+        origin: DependencyEdgeOrigin::Unrecorded,
+    };
+    let semantic = DependencyEdge {
+        origin: DependencyEdgeOrigin::Semantic,
+        ..unrecorded.clone()
+    };
+    let set = Set::new(
+        "network-docs",
+        "composition-fixture",
+        "mixed-origin-edges",
+        vec![
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::single_task_node("task-alpha"),
+                vec![],
+            )),
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::single_task_node("task-beta"),
+                vec![unrecorded, semantic.clone()],
+            )),
+        ],
+        vec![],
+    );
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-mixed-origin-edges",
+        Command::ApplyMutationSet(set),
+    );
+
+    assert!(matches!(store.submit(request), Response::Accepted { .. }));
+    assert_eq!(store.state().edges, vec![semantic]);
+}
+
+#[test]
+fn pre_origin_snapshot_keeps_serialized_form_and_state_hash() {
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let edge = DependencyEdge {
+        from: "task-alpha".to_string(),
+        to: "task-beta".to_string(),
+        kind: DependencyKind::Ordering,
+        origin: DependencyEdgeOrigin::Unrecorded,
+    };
+    let set = Set::new(
+        "network-docs",
+        "composition-fixture",
+        "legacy-snapshot",
+        vec![
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::single_task_node("task-alpha"),
+                vec![],
+            )),
+            Mutation::Inject(task_network_support::inject_for_node(
+                task_network_support::single_task_node("task-beta"),
+                vec![edge],
+            )),
+        ],
+        vec![],
+    );
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-legacy-snapshot",
+        Command::ApplyMutationSet(set),
+    );
+    assert!(matches!(store.submit(request), Response::Accepted { .. }));
+
+    // An unrecorded origin never serializes, so a snapshot written before
+    // origin recording and one written after are byte-identical and the
+    // stored state hash still validates on load.
+    let json = serde_json::to_string(store.state()).unwrap();
+    assert!(!json.contains("\"origin\""));
+    let loaded: NetworkState = serde_json::from_str(&json).unwrap();
+    assert_eq!(loaded.state_hash, loaded.recompute_state_hash());
+    assert_eq!(&loaded, store.state());
 }
 
 #[test]

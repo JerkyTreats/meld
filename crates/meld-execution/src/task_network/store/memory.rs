@@ -12,7 +12,7 @@ use crate::task_network::{
     mutation::{self, CommitRecord, Rejection},
     outcome::{Publication, PublicationState},
     readiness::{compute_ready_set, validate_active_graph},
-    state::{DependencyEdge, NetworkState, TaskStatus},
+    state::{DependencyEdge, DependencyEdgeOrigin, DependencyKind, NetworkState, TaskStatus},
     store::{codec::decode_error, error::TaskNetworkStoreError, records::StoredJournalRecord},
 };
 use serde::{Deserialize, Serialize};
@@ -802,9 +802,30 @@ fn edge_exists(edges: &[DependencyEdge], from: &str, to: &str) -> bool {
 }
 
 fn dedupe_edges(edges: &mut Vec<DependencyEdge>) {
-    let mut seen = BTreeSet::new();
-    edges.retain(|edge| seen.insert(edge.clone()));
+    // Origin is recorded metadata, not edge identity: a legacy unrecorded
+    // edge and its re-injected recorded twin are one edge. A recorded
+    // origin wins over unrecorded; between recorded origins the lowest
+    // rank wins deterministically.
+    let mut best: BTreeMap<(String, String, DependencyKind), DependencyEdge> = BTreeMap::new();
+    for edge in edges.drain(..) {
+        let key = (edge.from.clone(), edge.to.clone(), edge.kind.clone());
+        match best.get(&key) {
+            Some(existing) if origin_rank(existing.origin) <= origin_rank(edge.origin) => {}
+            _ => {
+                best.insert(key, edge);
+            }
+        }
+    }
+    edges.extend(best.into_values());
     edges.sort();
+}
+
+fn origin_rank(origin: DependencyEdgeOrigin) -> u8 {
+    match origin {
+        DependencyEdgeOrigin::Semantic => 0,
+        DependencyEdgeOrigin::Scheduling => 1,
+        DependencyEdgeOrigin::Unrecorded => 2,
+    }
 }
 
 fn path_exists(edges: &[DependencyEdge], from: &str, to: &str) -> bool {

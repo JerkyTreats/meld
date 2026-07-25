@@ -72,6 +72,12 @@ pub struct SatisfyGoalCommand {
     pub goal_id: String,
     /// Sequence at which satisfaction was established by the caller.
     pub at_seq: u64,
+    /// Lifecycle epoch the satisfaction decision observed. Satisfaction
+    /// evidence binds its epoch: stores must treat a mismatch with the
+    /// record's current epoch as a stale no-op, never a satisfied
+    /// transition. Zero on commands that predate epochs.
+    #[serde(default)]
+    pub lifecycle_epoch: u64,
 }
 
 /// Suspend a goal while retaining its record.
