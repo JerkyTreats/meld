@@ -781,6 +781,7 @@ impl BeliefStore {
             },
             provenance: revision.provenance.clone(),
             hydration,
+            theory_revision: revision.theory_revision.clone(),
         }
     }
 

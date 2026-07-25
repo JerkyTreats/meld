@@ -152,6 +152,7 @@ fn test_view(confidence: f64, revision_id: &str, seq: u64) -> BeliefView {
             graph_anchor_ids: vec!["anchor-a".to_string()],
             revision_id: Some(revision_id.to_string()),
         },
+        theory_revision: None,
     }
 }
 

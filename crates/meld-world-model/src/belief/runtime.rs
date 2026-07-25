@@ -26,6 +26,7 @@ use crate::belief::comparator::{BayesianComparator, ComparatorInput};
 use crate::belief::config::{BeliefConfigLoader, ConfigSnapshot};
 use crate::belief::contracts::{AssessmentLease, BranchScope, LeaseStatus};
 use crate::belief::evidence::BeliefEvidenceNormalizer;
+use crate::belief::registry::{BeliefFamilyRevision, TheoryRevisionRef};
 use crate::belief::store::BeliefStore;
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
@@ -50,6 +51,9 @@ pub struct BeliefRuntime {
     config: ConfigSnapshot,
     perspective: PerspectiveKey,
     branch_scope: BranchScope,
+    // Lineage reference stamped onto every committed revision. `None` only
+    // for legacy construction paths that predate theory registries.
+    theory_revision: Option<TheoryRevisionRef>,
 }
 
 impl BeliefRuntime {
@@ -67,7 +71,40 @@ impl BeliefRuntime {
             config,
             perspective,
             branch_scope,
+            theory_revision: None,
         }
+    }
+
+    /// Build a runtime from one installed belief-family registry revision.
+    ///
+    /// The revision content hash is the config snapshot hash, so replay and
+    /// freshness checks bind to exactly the installed theory content, and the
+    /// revision lineage reference is stamped onto every committed revision.
+    pub fn from_family_revision(
+        belief_store: Arc<BeliefStore>,
+        traversal_store: Arc<TraversalStore>,
+        revision: &BeliefFamilyRevision,
+        perspective: PerspectiveKey,
+        branch_scope: BranchScope,
+    ) -> Self {
+        let theory_revision = revision.revision_ref();
+        Self::new(
+            belief_store,
+            traversal_store,
+            ConfigSnapshot {
+                config: revision.config.clone(),
+                hash: revision.content_hash.clone(),
+            },
+            perspective,
+            branch_scope,
+        )
+        .with_theory_revision(theory_revision)
+    }
+
+    /// Stamp an installed theory revision into committed revision lineage.
+    pub fn with_theory_revision(mut self, theory_revision: TheoryRevisionRef) -> Self {
+        self.theory_revision = Some(theory_revision);
+        self
     }
 
     /// Build a runtime from JSON config using default perspective and branch.
@@ -160,7 +197,7 @@ impl BeliefRuntime {
             status: LeaseStatus::Queued,
         };
         let lease = self.belief_store.acquire_lease(lease)?;
-        let output = BayesianComparator::assess(ComparatorInput {
+        let mut output = BayesianComparator::assess(ComparatorInput {
             config: self.config.config.clone(),
             config_snapshot_hash: self.config.hash.clone(),
             prior_revision: prior,
@@ -168,6 +205,9 @@ impl BeliefRuntime {
             source_cursor_start,
             source_cursor_end,
         })?;
+        // Stamp lineage before commit so the durable revision, not just the
+        // in-memory view, answers which theory produced this belief.
+        output.revision.theory_revision = self.theory_revision.clone();
         self.belief_store
             .commit_revision(&lease, &output.revision)?;
         let view = self
@@ -235,7 +275,7 @@ impl BeliefRuntime {
             self.belief_store.complete_lease(&lease)?;
             return Ok(None);
         }
-        let output = BayesianComparator::assess(ComparatorInput {
+        let mut output = BayesianComparator::assess(ComparatorInput {
             config: self.config.config.clone(),
             config_snapshot_hash: self.config.hash.clone(),
             prior_revision: prior,
@@ -243,6 +283,9 @@ impl BeliefRuntime {
             source_cursor_start,
             source_cursor_end,
         })?;
+        // Stamp lineage before commit so the durable revision, not just the
+        // in-memory view, answers which theory produced this belief.
+        output.revision.theory_revision = self.theory_revision.clone();
         self.belief_store
             .commit_revision(&lease, &output.revision)?;
         let view = self
