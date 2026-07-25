@@ -1,0 +1,67 @@
+{
+  "family_id": "docs_freshness",
+  "dimension_id": "docs_freshness",
+  "predicate_id": "confidence",
+  "evidence_policy_id": "default_policy",
+  "evidence_schemas": [
+    {
+      "schema_id": "folder_task_success",
+      "required": false,
+      "role": "Support",
+      "reliability": 1.0,
+      "precision": 1.0
+    },
+    {
+      "schema_id": "aggregate_completion",
+      "required": true,
+      "role": "Support",
+      "reliability": 1.0,
+      "precision": 1.0
+    }
+  ],
+  "source_mappings": [
+    {
+      "mapping_id": "folder_task_success_to_selected_tree",
+      "source_kind": "execution_folder_task_outcome",
+      "evidence_schema_id": "folder_task_success",
+      "subject_from": "field:selected_scope",
+      "value_field": "tree_stale_signal",
+      "factor_id": "folder_task_success"
+    },
+    {
+      "mapping_id": "package_aggregate_to_selected_tree",
+      "source_kind": "execution_package_aggregate",
+      "evidence_schema_id": "aggregate_completion",
+      "subject_from": "record.subject",
+      "value_field": "tree_stale_signal",
+      "factor_id": "aggregate_completion"
+    }
+  ],
+  "comparator": {
+    "engine_id": "weighted_bayesian",
+    "engine_version": "1",
+    "factors": [
+      {
+        "factor_id": "folder_task_success",
+        "evidence_schema_id": "folder_task_success",
+        "weight": 0.2,
+        "polarity": "Supports"
+      },
+      {
+        "factor_id": "aggregate_completion",
+        "evidence_schema_id": "aggregate_completion",
+        "weight": 1.0,
+        "polarity": "Supports"
+      }
+    ],
+    "missing_evidence_uncertainty": 0.9
+  },
+  "default_prior": 0.75,
+  "planner_projection": {
+    "confidence_field": "confidence",
+    "threshold": 0.6,
+    "posterior_meaning": "stale_probability"
+  },
+  "config_version": "1",
+  "observationality": "Observational"
+}
