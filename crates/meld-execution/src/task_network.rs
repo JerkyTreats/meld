@@ -20,6 +20,8 @@ pub mod command;
 pub mod contracts;
 /// Fenced dispatch claim and task outcome contracts.
 pub mod dispatch;
+/// Bounded execution dispatch actor over public execution ports.
+pub mod dispatch_actor;
 /// Task initialization source validation and materialization.
 pub mod initialization;
 /// Append-only task network journal records.
@@ -48,6 +50,12 @@ pub use aggregate::{
 };
 pub use command::{Command, Request as CommandRequest, Response};
 pub use dispatch::{Claim, Outcome, OutcomeStatus, Request as DispatchRequest};
+pub use dispatch_actor::{
+    dispatch_claim_id, dispatch_claim_repo_id, dispatch_outcome_id, package_route_run_id,
+    ClaimedInvocationOutcome, ClaimedTaskInvoker, DispatchActorError, DispatchCheckpoint,
+    DispatchIssue, DispatchPortError, DispatchRuntimeActor, DispatchTickReport,
+    DispatchTickRequest, PackageRunPreparer, PreparedPackageRun, TaskNetworkCommandPort,
+};
 pub use initialization::{
     materialize_task_initialization, validate_task_init_graph_sources, validate_task_init_sources,
     MaterializedInitSource, MaterializedTaskInitialization, TaskInitializationDiagnostic,
