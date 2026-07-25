@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::belief::contracts::{require_non_empty, EvidenceValue, PromotedEvidenceRecord};
-use crate::belief::outcome_mapping::{
+use crate::belief::outcome::mapping::{
     promoted_evidence_identity, OutcomeEvidenceMapping, OutcomeMappingDisposition,
     OutcomeMappingInput,
 };

@@ -7,8 +7,8 @@
 //! its frozen record identity, and stage selection normalizes to pipeline
 //! order without duplicates.
 
+use meld::init::world::pipeline::{normalized_stages, WorldInitContent, WorldInitPipeline};
 use meld::init::world::{StageDisposition, WorldInitRequest, WorldInitStage};
-use meld::init::world_pipeline::{normalized_stages, WorldInitContent, WorldInitPipeline};
 use meld_events::{
     DomainObjectRef, EventAuthority, EventAuthorityOpenOptions, LedgerCursor, ReplayRequest,
 };

@@ -1,19 +1,40 @@
-//! World initialization command surface over stages 2 through 4.
+//! World initialization: theory installation, identity genesis, and
+//! epistemic seeding.
 //!
-//! Owner: root. Machine initialization hydrates; world initialization
-//! creates the first durable meaning, once per world: theory installation,
-//! identity genesis, and epistemic seeding. Every stage is idempotent by
-//! content identity — reinstalling the same content is a no-op, changed
-//! content is a new revision. Registrations install through domain
-//! commands, epistemic facts append through the canonical event
-//! capability, and nothing writes a domain store directly from root or
-//! CLI code. Activation is stage 5, owned by the runtime, and never
-//! creates semantic state.
+//! Owner: root. The staged initialization contract in
+//! `design/plan/integration/runtime_initialization.md` splits initialization
+//! in two: machine initialization hydrates physical resources — config
+//! resolution and store opening before these stages, actor activation
+//! after them — while world initialization creates the first durable
+//! meaning, once per world. "World" is that contract's term for the
+//! runtime's initialized epistemic state, not the world-model domain
+//! crate. Its three stages, numbered 2 through 4 in the contract:
 //!
-//! This module carries no implementation. The initialization command
-//! surface workstream binds the stages to domain command paths.
+//! - install theory: belief families and curation rules into their
+//!   domain registries
+//! - genesis identities: the seed agent, its rule binding, and its
+//!   subscriptions
+//! - seed epistemic facts: the unobserved-scope genesis fact appended to
+//!   the ledger
+//!
+//! Every stage is idempotent by content identity — reinstalling the same
+//! content is a no-op, changed content is a new revision. Registrations
+//! install through domain commands, epistemic facts append through the
+//! canonical event capability, and nothing writes a domain store directly
+//! from root or CLI code. Activation never creates semantic state.
+//!
+//! This file carries the frozen request and report shapes; [`pipeline`]
+//! executes them, [`theory`] loads authored theory files, and [`tooling`]
+//! adapts the CLI command.
 
 use serde::{Deserialize, Serialize};
+
+/// Stage execution over domain commands and the canonical append.
+pub mod pipeline;
+/// Authored theory file loading from the XDG config home.
+pub mod theory;
+/// CLI adapter binding the command surface to the pipeline.
+pub mod tooling;
 
 /// One world-initialization stage of the staged pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

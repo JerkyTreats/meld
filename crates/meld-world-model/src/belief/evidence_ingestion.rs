@@ -31,7 +31,7 @@ use meld_events::{
 use crate::belief::config::{stable_hash_hex, ConfigSnapshot};
 use crate::belief::contracts::{BranchScope, EvidenceRejection};
 use crate::belief::ingestion::{ingest_promoted_evidence, PromotedEvidenceIngestionRequest};
-use crate::belief::outcome_mapping::{
+use crate::belief::outcome::mapping::{
     OutcomeEvidenceMapping, OutcomeMappingDisposition, OutcomeMappingInput, EVIDENCE_CONSUMER_ID,
 };
 use crate::belief::registry::BeliefFamilyRegistry;

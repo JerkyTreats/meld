@@ -283,7 +283,7 @@ impl RunContext {
                 // Format problems must surface before any stage runs, even
                 // though the stages are idempotent.
                 crate::cli::presentation::validate_world_init_format(format)?;
-                let report = crate::init::world_tooling::run_world_init(
+                let report = crate::init::world::tooling::run_world_init(
                     self.assembly.product_runtime().as_ref(),
                     path,
                     stages,

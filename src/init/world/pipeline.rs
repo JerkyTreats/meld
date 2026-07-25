@@ -1,10 +1,13 @@
-//! World-initialization pipeline over stages 2 through 4.
+//! World-initialization pipeline: theory installation, identity genesis,
+//! and epistemic seeding.
 //!
 //! Owner: root init. This is the command path behind the frozen shapes in
-//! [`crate::init::world`]: stage 2 installs theory through the world-model
-//! registry command, stage 3 creates genesis identities through the agent
-//! registration commands, and stage 4 seeds the epistemic genesis fact
-//! through the canonical event append. The pipeline never writes a domain
+//! [`crate::init::world`], executing the three world-initialization stages
+//! of the staged contract in
+//! `design/plan/integration/runtime_initialization.md`: theory installs
+//! through the world-model registry command, genesis identities are created
+//! through the agent registration commands, and the epistemic genesis fact
+//! seeds through the canonical event append. The pipeline never writes a domain
 //! store directly — every durable effect crosses a domain command or the
 //! append capability, so each stage stays idempotent by the content
 //! identity its owning domain defines.

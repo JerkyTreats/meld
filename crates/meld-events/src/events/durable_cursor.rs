@@ -7,7 +7,10 @@
 //! only report into the mirror (such as the graph reducer) gain no
 //! authoritative state here, so mirror semantics can never silently become
 //! authoritative. Only consumers advanced through the durable cursor
-//! contract own rows in this tree.
+//! contract own rows in this tree. The third cursor surface in this crate,
+//! the test-gated `subscription::EventCursor` helper, is consumer-owned
+//! state outside the authority entirely — the `durable` in this module's
+//! name is what distinguishes the authoritative tree from both.
 //!
 //! Invariants: every row is bound to one ledger identity, advancement is
 //! monotonic (a request behind the durable position writes nothing and

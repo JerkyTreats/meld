@@ -16,9 +16,9 @@ use meld_world_model::PerspectiveKey;
 
 use crate::config::{ConfigLoader, PhysicalBinding};
 use crate::error::ApiError;
+use crate::init::world::pipeline::{WorldInitContent, WorldInitPipeline};
+use crate::init::world::theory::{load_belief_family_config, load_curation_rule_config};
 use crate::init::world::{WorldInitReport, WorldInitRequest, WorldInitStage};
-use crate::init::world_pipeline::{WorldInitContent, WorldInitPipeline};
-use crate::init::world_theory::{load_belief_family_config, load_curation_rule_config};
 use crate::runtime::assembly::ProductRuntimeAssembly;
 
 /// CLI stage-name vocabulary in pipeline order.

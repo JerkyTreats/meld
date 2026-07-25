@@ -49,7 +49,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use meld_world_model::belief::outcome_interpretation::{
+use meld_world_model::belief::outcome::interpretation::{
     ConfiguredOutcomeMappingSet, OutcomeMappingConfig, OutcomeMappingSetConfig,
     OutcomeSubjectSource,
 };

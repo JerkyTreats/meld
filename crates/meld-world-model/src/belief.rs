@@ -67,8 +67,7 @@ pub mod evidence;
 pub mod evidence_ingestion;
 pub mod genesis;
 pub mod ingestion;
-pub mod outcome_interpretation;
-pub mod outcome_mapping;
+pub mod outcome;
 pub mod query;
 pub mod registry;
 pub mod registry_store;
@@ -93,11 +92,11 @@ pub use genesis::{
 pub use ingestion::{
     ingest_promoted_evidence, PromotedEvidenceIngestionRequest, PromotedEvidenceIngestionResult,
 };
-pub use outcome_interpretation::{
+pub use outcome::interpretation::{
     ConfiguredOutcomeMapping, OutcomeContentRule, OutcomeFieldRule, OutcomeMappingConfig,
     OutcomeSubjectBinding, OutcomeValueSource,
 };
-pub use outcome_mapping::{
+pub use outcome::mapping::{
     promoted_evidence_identity, OutcomeEvidenceMapping, OutcomeMappingDisposition,
     OutcomeMappingInput, EVIDENCE_CONSUMER_ID,
 };
