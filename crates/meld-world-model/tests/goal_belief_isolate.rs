@@ -141,6 +141,9 @@ fn mapping_config() -> OutcomeMappingConfig {
         subject: OutcomeSubjectBinding {
             object_kind: "node".to_string(),
             domain_id: Some("workspace_fs".to_string()),
+            // Additive subject-source field; this fixture keeps the original
+            // envelope-object binding semantics.
+            from: Default::default(),
         },
         evidence_fields: vec![
             OutcomeFieldRule {
