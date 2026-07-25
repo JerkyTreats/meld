@@ -182,6 +182,18 @@ Findings carried to the Proof And Closeout Wave:
 - Stage 2 outcome-mapping registry: the mapping remains a typed composition injection until a durable world-model registry lands; assembly then hydrates from it.
 - The init lane's stage 4 subject reference and the binding lane's stewardship subject reference must stay one convention; both export it.
 
+The Proof And Closeout Wave build lanes and Workstream Eight closed 2026-07-25: the package-route terminal outcome recorder with the read surface now feeding aggregate publication; foreground availability with the registration set reaching the supervisor, lifecycle snapshots, the structured per-tick account, and production dispatch-route composition; and the composition-path parity implementor proving the bounded package-step contract's second consumer over committed task-network graphs. All three lanes passed fresh review without correction rounds. Strategy end-to-end execution is no longer gated by any runtime completion workstream.
+
+A live runtime survey over the real CLI composition preceded the convergence proof and found the flywheel mechanically sound but semantically stalled at the first coupling. Findings carried to a flywheel-ignition lane that must land before the proof:
+
+- Belief assessment hard-requires a graph anchor no product path produces, and the stewardship selection subject is a free string that can never match anchor identity vocabulary. Resolution: anchor requirement becomes family-declared theory so an unobserved scope assesses to its prior-based revision without an anchor, and the selection subject canonicalizes into the shared identity vocabulary at binding time. Manufacturing anchors from a harness is a forbidden workaround.
+- Planning theory production composition is unowned: no code path constructs the planning binding, so the planning actor has never composed through the assembly.
+- Assembly diagnostics naming each unresolved binding are collected and dropped; no operator surface prints them.
+- Concurrent runtime status fails on the legacy compatibility store lock, so a running supervisor cannot be observed from another process.
+- The unobserved-scope genesis fact maps to no evidence rule; identity seeding works, belief motion from genesis does not.
+
+Recorded review conventions for later lanes: the package-run marker-node prefix protection is claimer-side convention the composition stepper must adopt; the marker's per-task publication event carries the whole run's artifacts and the evidence mapping should decide whether to filter marker instances; the recorded lowering limit is sharpened to say dependency edges cannot reference steps outside the lowered composition, while disconnected node sets can lower and commit mid-run with manual edge wrapping.
+
 ## Workstream One Stewardship Expression And Physical Binding
 
 Owner: root config and product assembly adapters
