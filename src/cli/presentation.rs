@@ -5,6 +5,7 @@ mod context;
 mod init;
 mod provider;
 mod shared;
+mod world_init;
 
 pub use agent::{
     format_agent_list_result_json, format_agent_list_result_text, format_agent_show_result_json,
@@ -18,3 +19,4 @@ pub use provider::{
     format_provider_test_result, format_provider_validation_result,
 };
 pub use shared::{format_ignore_result, format_list_deleted_result, format_validate_result_text};
+pub use world_init::{format_world_init_report, validate_world_init_format};

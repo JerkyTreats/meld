@@ -15,7 +15,7 @@ pub use output::map_error;
 pub use parse::{
     parse_provider_additional_json_file, AgentCommands, AgentPromptCommands, BranchesCommands, Cli,
     Commands, ContextCommands, DangerCommands, EventCommands, ProviderCommands, RuntimeCommands,
-    WorkflowCommands, WorkspaceCommands,
+    WorkflowCommands, WorkspaceCommands, WorldCommands,
 };
 pub use presentation::{
     format_agent_list_result_json, format_agent_list_result_text, format_agent_show_result_json,

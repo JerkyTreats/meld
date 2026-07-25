@@ -129,6 +129,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: RuntimeCommands,
     },
+    /// World initialization (genesis stages 2 through 4)
+    World {
+        #[command(subcommand)]
+        command: WorldCommands,
+    },
     /// Event ledger observability
     Event {
         #[command(subcommand)]
@@ -384,6 +389,26 @@ pub enum RuntimeCommands {
         /// Restart backoff in milliseconds
         #[arg(long, default_value_t = 0)]
         restart_backoff_ms: u64,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WorldCommands {
+    /// Run world initialization stages 2 through 4 idempotently
+    Init {
+        /// Target workspace path (explicit default argument)
+        #[arg(value_name = "PATH", index = 1, default_value = ".")]
+        path: PathBuf,
+
+        /// Stage subset to run: install-theory, genesis-identities,
+        /// seed-epistemic-facts. Defaults to all stages. Selection is
+        /// normalized to pipeline order without duplicates.
+        #[arg(long = "stage", value_name = "STAGE")]
+        stages: Vec<String>,
+
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
     },
 }
 
@@ -899,9 +924,67 @@ pub enum WorkflowCommands {
 
 #[cfg(test)]
 mod tests {
-    use super::{BranchesCommands, Cli, Commands, RuntimeCommands};
+    use super::{BranchesCommands, Cli, Commands, RuntimeCommands, WorldCommands};
     use clap::Parser;
     use std::path::PathBuf;
+
+    #[test]
+    fn parses_world_init_command_with_explicit_default_path() {
+        let cli = Cli::try_parse_from(["meld", "world", "init"]).unwrap();
+        match cli.command {
+            Commands::World {
+                command:
+                    WorldCommands::Init {
+                        path,
+                        stages,
+                        format,
+                    },
+            } => {
+                assert_eq!(path, PathBuf::from("."));
+                assert!(stages.is_empty());
+                assert_eq!(format, "text");
+            }
+            _ => panic!("expected world init command"),
+        }
+    }
+
+    #[test]
+    fn parses_world_init_command_with_path_and_stage_subset() {
+        let cli = Cli::try_parse_from([
+            "meld",
+            "world",
+            "init",
+            "/tmp/ws",
+            "--stage",
+            "install-theory",
+            "--stage",
+            "seed-epistemic-facts",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::World {
+                command:
+                    WorldCommands::Init {
+                        path,
+                        stages,
+                        format,
+                    },
+            } => {
+                assert_eq!(path, PathBuf::from("/tmp/ws"));
+                assert_eq!(
+                    stages,
+                    vec![
+                        "install-theory".to_string(),
+                        "seed-epistemic-facts".to_string()
+                    ]
+                );
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected world init command"),
+        }
+    }
 
     #[test]
     fn parses_branches_status_command() {

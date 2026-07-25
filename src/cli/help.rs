@@ -3,7 +3,7 @@
 use crate::cli::parse::{
     AgentCommands, AgentPromptCommands, BranchesCommands, Commands, ContextCommands,
     DangerCommands, EventCommands, ProviderCommands, RuntimeCommands, WorkflowCommands,
-    WorkspaceCommands,
+    WorkspaceCommands, WorldCommands,
 };
 use crate::telemetry::summary::TypedSummaryEvent;
 
@@ -21,6 +21,7 @@ pub fn command_name(command: &Commands) -> String {
         Commands::Context { command } => format!("context.{}", context_command_name(command)),
         Commands::Workflow { command } => format!("workflow.{}", workflow_command_name(command)),
         Commands::Runtime { command } => format!("runtime.{}", runtime_command_name(command)),
+        Commands::World { command } => format!("world.{}", world_command_name(command)),
         Commands::Event { command } => format!("event.{}", event_command_name(command)),
         Commands::Branches { command } => format!("branches.{}", branches_command_name(command)),
         Commands::Danger { command } => format!("danger.{}", danger_command_name(command)),
@@ -41,6 +42,12 @@ pub fn runtime_command_name(command: &RuntimeCommands) -> &'static str {
     match command {
         RuntimeCommands::Status { .. } => "status",
         RuntimeCommands::Run { .. } => "run",
+    }
+}
+
+pub fn world_command_name(command: &WorldCommands) -> &'static str {
+    match command {
+        WorldCommands::Init { .. } => "init",
     }
 }
 

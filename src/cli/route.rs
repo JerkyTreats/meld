@@ -1,7 +1,7 @@
 //! CLI route: shared runtime context and top-level command dispatch only.
 
 use crate::branches::{BranchHandle, BranchRuntime};
-use crate::cli::parse::Commands;
+use crate::cli::parse::{Commands, WorldCommands};
 use crate::cli::progress::LiveProgressHandle;
 use crate::cli::runtime_assembly::CliRuntimeAssembly;
 use crate::cli::session::{finish_command_session, start_command_session};
@@ -272,6 +272,25 @@ impl RunContext {
                 self.assembly.product_runtime().as_ref(),
                 command,
             ),
+            Commands::World {
+                command:
+                    WorldCommands::Init {
+                        path,
+                        stages,
+                        format,
+                    },
+            } => {
+                // Format problems must surface before any stage runs, even
+                // though the stages are idempotent.
+                crate::cli::presentation::validate_world_init_format(format)?;
+                let report = crate::init::world_tooling::run_world_init(
+                    self.assembly.product_runtime().as_ref(),
+                    path,
+                    stages,
+                    session_id,
+                )?;
+                crate::cli::presentation::format_world_init_report(&report, format)
+            }
             Commands::Event { command } => {
                 let authority = self.assembly.product_runtime().event_authority();
                 crate::events::tooling::handle_cli_command(
