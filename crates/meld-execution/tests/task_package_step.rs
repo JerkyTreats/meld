@@ -14,11 +14,11 @@ use meld_execution::capability::{
 use meld_execution::error::ExecutionInvariantError;
 use meld_execution::execution::{EventPublicationPort, ExecutionEventContext};
 use meld_execution::task::{
-    execute_task_to_completion, ArtifactProducerRef, ArtifactRecord, CompiledTaskDelta,
-    CompiledTaskRecord, DurablePackageExecution, InitArtifactValue, PackageStepInvoker,
-    TaskDependencyEdge, TaskDependencyKind, TaskExecutor, TaskExpansionRequest, TaskInitSlotSpec,
-    TaskInitializationPayload, TaskRunContext, TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID,
-    TASK_EXPANSION_SCHEMA_VERSION,
+    execute_task_to_completion, package_step_repo_id, ArtifactProducerRef, ArtifactRecord,
+    CompiledTaskDelta, CompiledTaskRecord, DurablePackageExecution, InitArtifactValue,
+    PackageStepInvoker, TaskArtifactRepo, TaskDependencyEdge, TaskDependencyKind, TaskExecutor,
+    TaskExpansionRequest, TaskInitSlotSpec, TaskInitializationPayload, TaskRunContext,
+    TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID, TASK_EXPANSION_SCHEMA_VERSION,
 };
 use meld_execution::task_network::package_step::{PackageStep, PackageStepRequest};
 use serde_json::json;
@@ -162,36 +162,53 @@ fn branching_payload(task_run_id: &str) -> TaskInitializationPayload {
 // Shared scripted behavior so the bounded and completion paths execute the
 // exact same fixture semantics.
 
-fn scripted_artifacts(payload: &CapabilityInvocationPayload) -> Vec<ArtifactRecord> {
-    let mut artifacts = vec![ArtifactRecord {
-        artifact_id: format!("{}::out", payload.invocation_id),
+fn out_artifact(capability_instance_id: &str, invocation_id: &str) -> ArtifactRecord {
+    ArtifactRecord {
+        artifact_id: format!("{invocation_id}::out"),
         artifact_type_id: "readme_summary".to_string(),
         schema_version: 1,
-        content: json!({ "summary": payload.capability_instance_id }),
+        content: json!({ "summary": capability_instance_id }),
+        producer: ArtifactProducerRef {
+            task_id: "task_docs_writer".to_string(),
+            capability_instance_id: capability_instance_id.to_string(),
+            invocation_id: Some(invocation_id.to_string()),
+            output_slot_id: Some("out".to_string()),
+        },
+    }
+}
+
+fn expansion_artifact(
+    payload: &CapabilityInvocationPayload,
+    content: serde_json::Value,
+) -> ArtifactRecord {
+    ArtifactRecord {
+        artifact_id: format!("{}::expansion", payload.invocation_id),
+        artifact_type_id: TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID.to_string(),
+        schema_version: TASK_EXPANSION_SCHEMA_VERSION,
+        content,
         producer: ArtifactProducerRef {
             task_id: "task_docs_writer".to_string(),
             capability_instance_id: payload.capability_instance_id.clone(),
             invocation_id: Some(payload.invocation_id.clone()),
-            output_slot_id: Some("out".to_string()),
+            output_slot_id: Some("expansion".to_string()),
         },
-    }];
+    }
+}
+
+fn scripted_artifacts(payload: &CapabilityInvocationPayload) -> Vec<ArtifactRecord> {
+    let mut artifacts = vec![out_artifact(
+        &payload.capability_instance_id,
+        &payload.invocation_id,
+    )];
     if payload.capability_instance_id == "capinst_child_a" {
-        artifacts.push(ArtifactRecord {
-            artifact_id: format!("{}::expansion", payload.invocation_id),
-            artifact_type_id: TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID.to_string(),
-            schema_version: TASK_EXPANSION_SCHEMA_VERSION,
-            content: json!({
+        artifacts.push(expansion_artifact(
+            payload,
+            json!({
                 "expansion_id": "expansion_child_c",
                 "expansion_kind": "discover_children",
                 "content": {}
             }),
-            producer: ArtifactProducerRef {
-                task_id: "task_docs_writer".to_string(),
-                capability_instance_id: payload.capability_instance_id.clone(),
-                invocation_id: Some(payload.invocation_id.clone()),
-                output_slot_id: Some("expansion".to_string()),
-            },
-        });
+        ));
     }
     artifacts
 }
@@ -232,6 +249,43 @@ impl PackageStepInvoker for ScriptedInvoker {
         _request: &TaskExpansionRequest,
     ) -> Result<CompiledTaskDelta, ApiError> {
         Ok(scripted_delta())
+    }
+}
+
+/// Emits a malformed expansion payload from `capinst_s2` on its first attempt
+/// only, so one sibling's resolution fails mid-wave while its siblings commit.
+struct MalformedExpansionOnFirstAttempt {
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl PackageStepInvoker for MalformedExpansionOnFirstAttempt {
+    async fn invoke_capability(
+        &self,
+        _instance: &BoundCapabilityInstance,
+        payload: &CapabilityInvocationPayload,
+    ) -> Result<CapabilityInvocationResult, ApiError> {
+        self.log.lock().unwrap().push(payload.invocation_id.clone());
+        let mut emitted_artifacts = vec![out_artifact(
+            &payload.capability_instance_id,
+            &payload.invocation_id,
+        )];
+        if payload.invocation_id == "capinst_s2::attempt::1" {
+            // Missing `expansion_kind` makes the expansion request undecodable.
+            emitted_artifacts.push(expansion_artifact(
+                payload,
+                json!({ "expansion_id": "expansion_bad", "content": {} }),
+            ));
+        }
+        Ok(CapabilityInvocationResult { emitted_artifacts })
+    }
+
+    fn compile_expansion(
+        &self,
+        _compiled_task: &CompiledTaskRecord,
+        _request: &TaskExpansionRequest,
+    ) -> Result<CompiledTaskDelta, ApiError> {
+        Ok(CompiledTaskDelta::default())
     }
 }
 
@@ -431,7 +485,14 @@ fn bounded_multi_wave_run_matches_completion_path() {
         completion_executor.completed_count()
     );
     assert_eq!(stepper.executor().expansion_records().len(), 1);
-    assert_eq!(completion_executor.expansion_records().len(), 1);
+    assert_eq!(
+        stepper.executor().expansion_records(),
+        completion_executor.expansion_records()
+    );
+    assert_eq!(
+        stepper.executor().compiled_task(),
+        completion_executor.compiled_task()
+    );
 }
 
 #[test]
@@ -543,4 +604,124 @@ fn reopen_rejects_initialization_payload_drift() {
     assert!(error
         .to_string()
         .contains("different initialization payload"));
+}
+
+#[test]
+fn mid_wave_resolution_failure_persists_committed_sibling_progress() {
+    let db = open_db();
+    let log = Arc::new(Mutex::new(Vec::new()));
+
+    let mut stepper = DurablePackageExecution::open(
+        db.clone(),
+        sibling_task(),
+        run_payload("taskrun_midwave", vec![]),
+        MalformedExpansionOnFirstAttempt { log: log.clone() },
+    )
+    .unwrap();
+    let error = block_on(stepper.step(&request(3))).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("Failed to decode task expansion"));
+    drop(stepper);
+
+    // Reopen from durable state: both healthy siblings stayed committed and
+    // only the failed sibling remains outstanding.
+    let mut stepper = DurablePackageExecution::open(
+        db,
+        sibling_task(),
+        run_payload("taskrun_midwave", vec![]),
+        MalformedExpansionOnFirstAttempt { log: log.clone() },
+    )
+    .unwrap();
+    let progress = stepper.progress();
+    assert_eq!(progress.completed_units, 2);
+    assert_eq!(progress.known_units, 3);
+    assert_eq!(progress.ready_units, 1);
+
+    let report = block_on(stepper.step(&request(3))).unwrap();
+
+    assert_eq!(report.items_attempted, 1, "only the failed sibling retries");
+    assert_eq!(report.items_committed, 1);
+    assert!(report.package_complete);
+    assert_eq!(
+        log.lock().unwrap().clone(),
+        vec![
+            "capinst_s1::attempt::1".to_string(),
+            "capinst_s2::attempt::1".to_string(),
+            "capinst_s3::attempt::1".to_string(),
+            "capinst_s2::attempt::2".to_string(),
+        ],
+        "committed siblings never re-run after the mid-wave failure"
+    );
+}
+
+#[test]
+fn interrupted_wave_recommits_byte_identical_artifacts_as_replay() {
+    let db = open_db();
+    // Simulate the crash window: one sibling's artifact reached the durable
+    // repo, but the progress snapshot never committed for that wave.
+    let mut repo =
+        TaskArtifactRepo::open_sled(db.clone(), package_step_repo_id("taskrun_replay")).unwrap();
+    repo.append_artifact(out_artifact("capinst_s1", "capinst_s1::attempt::1"))
+        .unwrap();
+    drop(repo);
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut stepper = DurablePackageExecution::open(
+        db,
+        sibling_task(),
+        run_payload("taskrun_replay", vec![]),
+        ScriptedInvoker { log },
+    )
+    .unwrap();
+
+    let report = block_on(stepper.step(&request(3))).unwrap();
+
+    assert_eq!(report.items_attempted, 3);
+    assert_eq!(report.items_committed, 3);
+    assert!(report.package_complete);
+    // The replayed artifact was accepted without duplicating the record.
+    assert_eq!(
+        stepper
+            .executor()
+            .artifact_repo()
+            .record()
+            .artifacts
+            .iter()
+            .filter(|artifact| artifact.artifact_id == "capinst_s1::attempt::1::out")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn interrupted_wave_rejects_drifted_artifact_recommit() {
+    let db = open_db();
+    let mut drifted = out_artifact("capinst_s1", "capinst_s1::attempt::1");
+    drifted.content = json!({ "summary": "stale divergent content" });
+    let mut repo =
+        TaskArtifactRepo::open_sled(db.clone(), package_step_repo_id("taskrun_drift_replay"))
+            .unwrap();
+    repo.append_artifact(drifted).unwrap();
+    drop(repo);
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut stepper = DurablePackageExecution::open(
+        db,
+        sibling_task(),
+        run_payload("taskrun_drift_replay", vec![]),
+        ScriptedInvoker { log },
+    )
+    .unwrap();
+
+    let error = block_on(stepper.step(&request(3))).unwrap_err();
+    assert!(error.to_string().contains("duplicate artifact"));
+
+    // The drifted sibling was recorded as failed, its siblings committed, and
+    // a fresh attempt with a new invocation identity completes the run.
+    let progress = stepper.progress();
+    assert_eq!(progress.completed_units, 2);
+    let report = block_on(stepper.step(&request(3))).unwrap();
+    assert_eq!(report.items_attempted, 1);
+    assert!(report.package_complete);
 }

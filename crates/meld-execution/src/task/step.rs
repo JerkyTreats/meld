@@ -161,6 +161,70 @@ impl<I: PackageStepInvoker> DurablePackageExecution<I> {
             package_complete,
         }
     }
+
+    /// Resolves one successful invocation outcome into durable executor state.
+    ///
+    /// Expansion requests are parsed, compiled, and validated against the
+    /// graph before `record_success`, so an invocation commits atomically
+    /// with an applicable expansion: any resolution failure before the commit
+    /// converts to a recorded failure for this invocation, mirroring the
+    /// completion path's failure recording instead of stranding it in flight.
+    fn commit_success(
+        &mut self,
+        payload: &CapabilityInvocationPayload,
+        result: CapabilityInvocationResult,
+    ) -> Result<(), ResolutionError> {
+        let mut expansions = Vec::new();
+        for artifact in &result.emitted_artifacts {
+            match parse_task_expansion_request_artifact(artifact) {
+                Ok(Some(request)) => expansions.push((artifact.artifact_id.clone(), request)),
+                Ok(None) => {}
+                Err(error) => return Err(ResolutionError::BeforeCommit(error)),
+            }
+        }
+
+        let mut deltas = Vec::new();
+        for (source_artifact_id, request) in expansions {
+            let delta = self
+                .invoker
+                .compile_expansion(self.executor.compiled_task(), &request)
+                .map_err(ResolutionError::BeforeCommit)?;
+            self.executor
+                .validate_task_expansion(&request.expansion_id, &delta)
+                .map_err(ResolutionError::BeforeCommit)?;
+            deltas.push((source_artifact_id, request, delta));
+        }
+
+        self.executor
+            .record_success(&payload.invocation_id, result.emitted_artifacts)
+            .map_err(ResolutionError::BeforeCommit)?;
+
+        for (source_artifact_id, request, delta) in deltas {
+            // Duplicate expansion ids stay durable no-ops, matching the
+            // completion path's idempotent expansion behavior. With the delta
+            // pre-validated, a failure here is a storage-level error on an
+            // already committed invocation.
+            let _ = self
+                .executor
+                .apply_task_expansion(
+                    &request.expansion_id,
+                    &request.expansion_kind,
+                    &source_artifact_id,
+                    delta,
+                )
+                .map_err(ResolutionError::AfterCommit)?;
+        }
+        Ok(())
+    }
+}
+
+/// Distinguishes resolution failures around the durable commit boundary.
+///
+/// Failures before `record_success` convert to a recorded invocation failure;
+/// failures after it must not, because the invocation is no longer in flight.
+enum ResolutionError {
+    BeforeCommit(ApiError),
+    AfterCommit(ApiError),
 }
 
 #[async_trait]
@@ -227,50 +291,44 @@ impl<I: PackageStepInvoker> PackageStep for DurablePackageExecution<I> {
         )
         .await;
 
-        // Every released invocation resolves before progress persists, so the
-        // snapshot is always quiesced and failed work is durable, not repeated
-        // blindly on reopen.
+        // Every released invocation resolves to a recorded success or failure
+        // before progress persists, so the snapshot is always quiesced, failed
+        // work is durable rather than repeated blindly on reopen, and one
+        // sibling's resolution error can never discard another sibling's
+        // committed progress.
         let mut items_committed = 0usize;
-        let mut first_error = None;
+        let mut first_error: Option<ApiError> = None;
         for (payload, outcome) in released.iter().zip(outcomes) {
-            match outcome {
-                Ok(result) => {
-                    let mut expansion_requests = Vec::new();
-                    for artifact in &result.emitted_artifacts {
-                        if let Some(expansion) = parse_task_expansion_request_artifact(artifact)? {
-                            expansion_requests.push((artifact.artifact_id.clone(), expansion));
-                        }
+            let failure = match outcome {
+                Ok(result) => match self.commit_success(payload, result) {
+                    Ok(()) => {
+                        items_committed += 1;
+                        None
                     }
-                    self.executor
-                        .record_success(&payload.invocation_id, result.emitted_artifacts)?;
-                    for (source_artifact_id, expansion_request) in expansion_requests {
-                        let delta = self
-                            .invoker
-                            .compile_expansion(self.executor.compiled_task(), &expansion_request)?;
-                        // Duplicate expansion ids stay durable no-ops, matching
-                        // the completion path's idempotent expansion behavior.
-                        let _ = self.executor.apply_task_expansion(
-                            &expansion_request.expansion_id,
-                            &expansion_request.expansion_kind,
-                            &source_artifact_id,
-                            delta,
-                        )?;
+                    Err(ResolutionError::BeforeCommit(error)) => Some(error),
+                    Err(ResolutionError::AfterCommit(error)) => {
+                        // The invocation committed; only its expansion side
+                        // effect failed. Surface the error after persistence
+                        // without misrecording the committed invocation.
+                        items_committed += 1;
+                        first_error.get_or_insert(error);
+                        None
                     }
-                    items_committed += 1;
-                }
-                Err(error) => {
-                    self.executor.record_failure(
-                        &payload.invocation_id,
-                        failure_artifact(
-                            self.executor.compiled_task().task_id.clone(),
-                            payload.capability_instance_id.clone(),
-                            payload.invocation_id.clone(),
-                            error.to_string(),
-                        ),
+                },
+                Err(error) => Some(error),
+            };
+            if let Some(error) = failure {
+                self.executor.record_failure(
+                    &payload.invocation_id,
+                    failure_artifact(
+                        self.executor.compiled_task().task_id.clone(),
+                        payload.capability_instance_id.clone(),
+                        payload.invocation_id.clone(),
                         error.to_string(),
-                    )?;
-                    first_error.get_or_insert(error);
-                }
+                    ),
+                    error.to_string(),
+                )?;
+                first_error.get_or_insert(error);
             }
         }
 
