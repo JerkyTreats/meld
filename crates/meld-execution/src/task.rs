@@ -55,10 +55,14 @@ pub mod init;
 pub mod invocation;
 /// Authored task package contracts and lowering helpers.
 pub mod package;
+/// Durable task executor progress storage.
+pub mod progress;
 /// Readiness evaluation over compiled task graphs.
 pub mod readiness;
 /// Task runtime loop over registered capability invokers.
 pub mod runtime;
+/// Bounded durable stepping over compiled task packages.
+pub mod step;
 /// Workflow task template materialization helpers.
 pub mod templates;
 
@@ -72,7 +76,7 @@ pub use contracts::{
 pub use events::{
     build_execution_task_envelope, canonical_task_event_type, ExecutionTaskEventData, TaskEvent,
 };
-pub use executor::TaskExecutor;
+pub use executor::{TaskExecutor, TaskExecutorSnapshot};
 pub use expansion::{
     parse_task_expansion_request_artifact, CompiledTaskDelta, TaskExpansionRecord,
     TaskExpansionRequest, TaskExpansionTemplate, TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID,
@@ -82,8 +86,10 @@ pub use init::{
     validate_task_initialization, InitArtifactValue, TaskInitializationPayload, TaskRunContext,
 };
 pub use invocation::assemble_invocation_payload;
+pub use progress::{TaskProgressStore, TaskProgressStoreError};
 pub use readiness::compute_ready_capability_instances;
 pub use runtime::{execute_task_to_completion, TaskRunSummary, WorkflowTaskTelemetry};
+pub use step::{package_step_repo_id, DurablePackageExecution, PackageStepInvoker};
 pub use templates::{
     prepare_registered_workflow_task_run, traversal_package_run_resolvers,
     workflow_task_run_id_for_target, workflow_uses_task_package_path,

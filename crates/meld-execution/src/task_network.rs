@@ -28,6 +28,8 @@ pub mod journal;
 pub mod mutation;
 /// Outcome publication outbox contracts.
 pub mod outcome;
+/// Bounded package-step contract for resumable package execution.
+pub mod package_step;
 /// Publication bridge into the event ledger.
 pub mod publication;
 /// Ready set computation over reduced task network state.
@@ -54,6 +56,7 @@ pub use initialization::{
 pub use journal::JournalRecord;
 pub use mutation::{CommitRecord, CommitRequest, CommitResult, Inject, Mutation, Set};
 pub use outcome::{Publication, PublicationState};
+pub use package_step::{PackageStep, PackageStepProgress, PackageStepReport, PackageStepRequest};
 pub use publication::{
     build_publication_envelope, publish_pending_publications, publish_publication, EventAppendSink,
     PublicationAppend, PublicationBridgeError, PublicationBridgeIssue, PublicationBridgeReport,

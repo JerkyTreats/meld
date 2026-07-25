@@ -11,7 +11,32 @@ use crate::task::init::{validate_task_initialization, TaskInitializationPayload}
 use crate::task::invocation::assemble_invocation_payload;
 use crate::task::readiness::compute_ready_capability_instances;
 use crate::task::TaskArtifactRepo;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
+
+/// Durable progress snapshot for one live task executor.
+///
+/// The task domain owns this record. It carries the expanded compiled task,
+/// the run initialization payload, invocation records, expansion records, and
+/// completed instance ids intact so a reopened executor resumes exactly where
+/// the last quiesced step stopped. Artifact truth is not duplicated here: it
+/// stays in the durable task artifact repository the snapshot is reopened
+/// with, and readiness is recomputed from that repository plus this record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskExecutorSnapshot {
+    /// Compiled task graph including every applied expansion delta.
+    pub compiled_task: CompiledTaskRecord,
+    /// Initialization payload that created the task run.
+    pub init_payload: TaskInitializationPayload,
+    /// Capability invocation records accumulated by the run.
+    pub invocation_records: Vec<CapabilityInvocationRecord>,
+    /// Expansion records applied by the run, in application order.
+    pub expansion_records: Vec<TaskExpansionRecord>,
+    /// Capability instance ids completed durably, in sorted order.
+    pub completed_instance_ids: Vec<String>,
+    /// True when the run already emitted its started transition.
+    pub started: bool,
+}
 
 /// Single task-local execution agent for one live task instance.
 #[derive(Debug, Clone)]
@@ -121,6 +146,110 @@ impl TaskExecutor {
         })
     }
 
+    /// Captures the durable progress snapshot at a quiesced step boundary.
+    ///
+    /// Snapshots are only meaningful when no invocation is in flight, because
+    /// released-but-unresolved work has no durable resume semantics. Callers
+    /// must resolve every released invocation before persisting progress.
+    pub fn snapshot(&self) -> Result<TaskExecutorSnapshot, ApiError> {
+        if !self.in_flight_instances.is_empty() {
+            return Err(ApiError::ConfigError(format!(
+                "Task executor for '{}' cannot snapshot with {} invocations in flight",
+                self.compiled_task.task_id,
+                self.in_flight_instances.len()
+            )));
+        }
+
+        let mut completed_instance_ids =
+            self.completed_instances.iter().cloned().collect::<Vec<_>>();
+        completed_instance_ids.sort();
+
+        Ok(TaskExecutorSnapshot {
+            compiled_task: self.compiled_task.clone(),
+            init_payload: self.init_payload.clone(),
+            invocation_records: self.invocation_records.clone(),
+            expansion_records: self.expansion_records.clone(),
+            completed_instance_ids,
+            started: self.started,
+        })
+    }
+
+    /// Reopens a live task executor from a durable snapshot and its artifact repo.
+    ///
+    /// The repo must be the same durable repository the snapshot progressed
+    /// against: init artifacts are not re-seeded and every emitted artifact
+    /// referenced by an invocation record must already exist. Resumed runs do
+    /// not repeat the requested or started transitions.
+    pub fn from_snapshot(
+        snapshot: TaskExecutorSnapshot,
+        artifact_repo: TaskArtifactRepo,
+    ) -> Result<Self, ApiError> {
+        if snapshot.init_payload.task_id != snapshot.compiled_task.task_id {
+            return Err(ApiError::ConfigError(format!(
+                "Task executor snapshot init payload targets '{}' but compiled task is '{}'",
+                snapshot.init_payload.task_id, snapshot.compiled_task.task_id
+            )));
+        }
+
+        let instance_ids = snapshot
+            .compiled_task
+            .capability_instances
+            .iter()
+            .map(|instance| instance.capability_instance_id.as_str())
+            .collect::<HashSet<_>>();
+        for completed_id in &snapshot.completed_instance_ids {
+            if !instance_ids.contains(completed_id.as_str()) {
+                return Err(ApiError::ConfigError(format!(
+                    "Task executor snapshot completed unknown capability instance '{}'",
+                    completed_id
+                )));
+            }
+        }
+        for record in &snapshot.invocation_records {
+            if !instance_ids.contains(record.capability_instance_id.as_str()) {
+                return Err(ApiError::ConfigError(format!(
+                    "Task executor snapshot invocation '{}' names unknown capability instance '{}'",
+                    record.invocation_id, record.capability_instance_id
+                )));
+            }
+            for artifact_id in &record.emitted_artifacts {
+                // Progress and artifact stores must describe the same run;
+                // a missing emitted artifact means the stores diverged.
+                if artifact_repo.get_artifact(artifact_id).is_none() {
+                    return Err(ApiError::ConfigError(format!(
+                        "Task executor snapshot invocation '{}' references artifact '{}' missing from repo '{}'",
+                        record.invocation_id,
+                        artifact_id,
+                        artifact_repo.record().repo_id
+                    )));
+                }
+            }
+        }
+
+        let mut applied_expansion_ids = HashSet::new();
+        for record in &snapshot.expansion_records {
+            if !applied_expansion_ids.insert(record.expansion_id.clone()) {
+                return Err(ApiError::ConfigError(format!(
+                    "Task executor snapshot contains duplicate expansion '{}'",
+                    record.expansion_id
+                )));
+            }
+        }
+
+        Ok(Self {
+            compiled_task: snapshot.compiled_task,
+            init_payload: snapshot.init_payload,
+            artifact_repo,
+            invocation_records: snapshot.invocation_records,
+            events: Vec::new(),
+            expansion_records: snapshot.expansion_records,
+            applied_expansion_ids,
+            completed_instances: snapshot.completed_instance_ids.into_iter().collect(),
+            in_flight_instances: HashSet::new(),
+            started: snapshot.started,
+        })
+    }
+
     /// Returns the current task artifact repo.
     pub fn artifact_repo(&self) -> &TaskArtifactRepo {
         &self.artifact_repo
@@ -176,7 +305,25 @@ impl TaskExecutor {
         &mut self,
         execution_context: CapabilityExecutionContext,
     ) -> Result<Vec<CapabilityInvocationPayload>, ApiError> {
-        let ready = self.ready_capability_instances();
+        self.release_ready_invocations_bounded(usize::MAX, execution_context)
+    }
+
+    /// Releases at most `max_invocations` currently ready capability invocations.
+    ///
+    /// Ready order follows compiled instance order, so truncation under a
+    /// budget is deterministic. A zero budget releases nothing and records no
+    /// lifecycle events, leaving state untouched for the caller's report.
+    pub fn release_ready_invocations_bounded(
+        &mut self,
+        max_invocations: usize,
+        execution_context: CapabilityExecutionContext,
+    ) -> Result<Vec<CapabilityInvocationPayload>, ApiError> {
+        if max_invocations == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut ready = self.ready_capability_instances();
+        ready.truncate(max_invocations);
         if !self.started {
             self.started = true;
             self.events.push(self.new_task_event("task_started"));
@@ -272,6 +419,11 @@ impl TaskExecutor {
     }
 
     /// Records successful invocation completion and emitted artifacts.
+    ///
+    /// A byte-identical artifact that already exists in the repo is accepted
+    /// as durable replay: an interrupted bounded wave may have appended the
+    /// artifact before the progress snapshot committed, and the reopened run
+    /// must be able to re-commit that wave. Only content drift is rejected.
     pub fn record_success(
         &mut self,
         invocation_id: &str,
@@ -282,12 +434,12 @@ impl TaskExecutor {
         let target_node_id = target_node_id_from_init_payload(&self.init_payload);
         let mut emitted_ids = BTreeSet::new();
         for artifact in &emitted_artifacts {
-            if !emitted_ids.insert(artifact.artifact_id.as_str())
-                || self
-                    .artifact_repo
-                    .get_artifact(&artifact.artifact_id)
-                    .is_some()
-            {
+            let duplicate_in_batch = !emitted_ids.insert(artifact.artifact_id.as_str());
+            let drifted_in_repo = self
+                .artifact_repo
+                .get_artifact(&artifact.artifact_id)
+                .is_some_and(|existing| existing != artifact);
+            if duplicate_in_batch || drifted_in_repo {
                 return Err(ApiError::ConfigError(format!(
                     "Task executor invocation '{}' emitted duplicate artifact '{}'",
                     invocation_id, artifact.artifact_id
@@ -316,7 +468,15 @@ impl TaskExecutor {
 
         for artifact in emitted_artifacts {
             record.emitted_artifacts.push(artifact.artifact_id.clone());
-            self.artifact_repo.append_artifact(artifact.clone())?;
+            // Skip the append for validated replay: the artifact is already
+            // durable and append-only storage would reject the duplicate.
+            if self
+                .artifact_repo
+                .get_artifact(&artifact.artifact_id)
+                .is_none()
+            {
+                self.artifact_repo.append_artifact(artifact.clone())?;
+            }
 
             let mut event = Self::build_task_event(
                 task_id.clone(),
@@ -348,6 +508,10 @@ impl TaskExecutor {
     }
 
     /// Records failed invocation completion.
+    ///
+    /// A byte-identical failure artifact that already exists in the repo is
+    /// accepted as durable replay under the same crash-window rule as
+    /// `record_success`; only content drift is rejected.
     pub fn record_failure(
         &mut self,
         invocation_id: &str,
@@ -360,7 +524,7 @@ impl TaskExecutor {
         if self
             .artifact_repo
             .get_artifact(&failure_summary.artifact_id)
-            .is_some()
+            .is_some_and(|existing| existing != &failure_summary)
         {
             return Err(ApiError::ConfigError(format!(
                 "Task executor invocation '{}' emitted duplicate failure artifact '{}'",
@@ -387,7 +551,13 @@ impl TaskExecutor {
             )));
         }
         record.failure_summary = Some(failure_summary.clone());
-        self.artifact_repo.append_artifact(failure_summary)?;
+        if self
+            .artifact_repo
+            .get_artifact(&failure_summary.artifact_id)
+            .is_none()
+        {
+            self.artifact_repo.append_artifact(failure_summary)?;
+        }
         self.in_flight_instances
             .remove(&record.capability_instance_id);
 
@@ -400,16 +570,21 @@ impl TaskExecutor {
         Ok(())
     }
 
-    /// Applies one append-only compiled task delta if the expansion id is new.
-    pub fn apply_task_expansion(
-        &mut self,
+    /// Validates that one compiled task delta can apply without collisions.
+    ///
+    /// This is the non-mutating half of `apply_task_expansion`, exposed so
+    /// bounded stepping can prove a delta applicable before committing the
+    /// invocation that produced it. An already applied expansion id validates
+    /// trivially because applying it again is an idempotent no-op. A
+    /// byte-identical existing init artifact validates as durable replay;
+    /// only drift rejects.
+    pub fn validate_task_expansion(
+        &self,
         expansion_id: &str,
-        expansion_kind: &str,
-        source_artifact_id: &str,
-        delta: CompiledTaskDelta,
-    ) -> Result<bool, ApiError> {
+        delta: &CompiledTaskDelta,
+    ) -> Result<(), ApiError> {
         if self.applied_expansion_ids.contains(expansion_id) {
-            return Ok(false);
+            return Ok(());
         }
 
         let existing_init_slots = self
@@ -464,7 +639,7 @@ impl TaskExecutor {
             if self
                 .artifact_repo
                 .get_artifact(&artifact.artifact_id)
-                .is_some()
+                .is_some_and(|existing| existing != artifact)
             {
                 return Err(ApiError::ConfigError(format!(
                     "Task '{}' already contains init artifact '{}' from expansion '{}'",
@@ -473,10 +648,35 @@ impl TaskExecutor {
             }
         }
 
+        Ok(())
+    }
+
+    /// Applies one append-only compiled task delta if the expansion id is new.
+    pub fn apply_task_expansion(
+        &mut self,
+        expansion_id: &str,
+        expansion_kind: &str,
+        source_artifact_id: &str,
+        delta: CompiledTaskDelta,
+    ) -> Result<bool, ApiError> {
+        if self.applied_expansion_ids.contains(expansion_id) {
+            return Ok(false);
+        }
+        self.validate_task_expansion(expansion_id, &delta)?;
+
         for slot in delta.init_slots {
             self.compiled_task.init_slots.push(slot);
         }
         for artifact in delta.init_artifacts {
+            // Validated replay: an interrupted wave may already have appended
+            // this init artifact durably before the snapshot committed.
+            if self
+                .artifact_repo
+                .get_artifact(&artifact.artifact_id)
+                .is_some()
+            {
+                continue;
+            }
             self.artifact_repo.append_artifact(artifact.clone())?;
 
             let mut event = self.new_task_event("task_artifact_emitted");
@@ -830,7 +1030,7 @@ mod tests {
     }
 
     #[test]
-    fn executor_rejects_duplicate_emitted_artifact_ids_without_mutating_record() {
+    fn executor_rejects_drifted_emitted_artifact_ids_without_mutating_record() {
         let mut executor =
             TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
         let payloads = executor
@@ -842,10 +1042,9 @@ mod tests {
             &payloads[0].invocation_id,
             "resolved_node_ref",
         );
-        executor
-            .artifact_repo
-            .append_artifact(artifact.clone())
-            .unwrap();
+        let mut drifted = artifact.clone();
+        drifted.content = json!({ "node_id": "node_other" });
+        executor.artifact_repo.append_artifact(drifted).unwrap();
 
         let error = executor
             .record_success(&payloads[0].invocation_id, vec![artifact])
@@ -855,6 +1054,48 @@ mod tests {
         assert!(executor.invocation_records()[0]
             .emitted_artifacts
             .is_empty());
+    }
+
+    #[test]
+    fn executor_record_success_accepts_byte_identical_artifact_replay() {
+        let mut executor =
+            TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+        let payloads = executor
+            .release_ready_invocations(CapabilityExecutionContext::default())
+            .unwrap();
+        let artifact = emitted_artifact(
+            "artifact_resolved_node",
+            "capinst_resolve",
+            &payloads[0].invocation_id,
+            "resolved_node_ref",
+        );
+        // Simulate the crash window: the artifact reached durable storage but
+        // the progress snapshot did not, so the reopened wave re-commits it.
+        executor
+            .artifact_repo
+            .append_artifact(artifact.clone())
+            .unwrap();
+
+        executor
+            .record_success(&payloads[0].invocation_id, vec![artifact.clone()])
+            .unwrap();
+
+        assert_eq!(executor.completed_count(), 1);
+        assert_eq!(
+            executor.invocation_records()[0].emitted_artifacts,
+            vec![artifact.artifact_id.clone()]
+        );
+        // Replay must not duplicate the durable record.
+        assert_eq!(
+            executor
+                .artifact_repo()
+                .record()
+                .artifacts
+                .iter()
+                .filter(|record| record.artifact_id == artifact.artifact_id)
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -917,7 +1158,35 @@ mod tests {
     }
 
     #[test]
-    fn executor_rejects_duplicate_failure_artifact_without_mutating_record() {
+    fn executor_rejects_drifted_failure_artifact_without_mutating_record() {
+        let mut executor =
+            TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+        let payloads = executor
+            .release_ready_invocations(CapabilityExecutionContext::default())
+            .unwrap();
+        let failure = failure_artifact(
+            "artifact_failure",
+            "capinst_resolve",
+            &payloads[0].invocation_id,
+        );
+        let mut drifted = failure.clone();
+        drifted.content = json!({ "message": "different failure" });
+        executor.artifact_repo.append_artifact(drifted).unwrap();
+
+        let error = executor
+            .record_failure(&payloads[0].invocation_id, failure, "failed")
+            .unwrap_err();
+
+        assert!(error.to_string().contains("duplicate failure artifact"));
+        assert!(executor.invocation_records()[0].failure_summary.is_none());
+        assert!(!executor
+            .events()
+            .iter()
+            .any(|event| event.event_type == "task_failed"));
+    }
+
+    #[test]
+    fn executor_record_failure_accepts_byte_identical_failure_replay() {
         let mut executor =
             TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
         let payloads = executor
@@ -933,16 +1202,24 @@ mod tests {
             .append_artifact(failure.clone())
             .unwrap();
 
-        let error = executor
-            .record_failure(&payloads[0].invocation_id, failure, "failed")
-            .unwrap_err();
+        executor
+            .record_failure(&payloads[0].invocation_id, failure.clone(), "failed")
+            .unwrap();
 
-        assert!(error.to_string().contains("duplicate failure artifact"));
-        assert!(executor.invocation_records()[0].failure_summary.is_none());
-        assert!(!executor
-            .events()
-            .iter()
-            .any(|event| event.event_type == "task_failed"));
+        assert_eq!(
+            executor.invocation_records()[0].failure_summary,
+            Some(failure.clone())
+        );
+        assert_eq!(
+            executor
+                .artifact_repo()
+                .record()
+                .artifacts
+                .iter()
+                .filter(|record| record.artifact_id == failure.artifact_id)
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -1057,6 +1334,148 @@ mod tests {
             .any(|event| event.event_type == "task_expansion_applied"));
     }
 
+    fn bare_instance(capability_instance_id: &str) -> BoundCapabilityInstance {
+        BoundCapabilityInstance {
+            capability_instance_id: capability_instance_id.to_string(),
+            capability_type_id: "test_capability".to_string(),
+            capability_version: 1,
+            scope_ref: "node_a".to_string(),
+            scope_kind: "node".to_string(),
+            binding_values: vec![],
+            input_wiring: vec![],
+        }
+    }
+
+    fn sibling_task() -> CompiledTaskRecord {
+        CompiledTaskRecord {
+            task_id: "task_docs_writer".to_string(),
+            task_version: 1,
+            init_slots: vec![],
+            capability_instances: vec![
+                bare_instance("capinst_s1"),
+                bare_instance("capinst_s2"),
+                bare_instance("capinst_s3"),
+            ],
+            dependency_edges: vec![],
+        }
+    }
+
+    fn empty_init_payload() -> TaskInitializationPayload {
+        TaskInitializationPayload {
+            init_artifacts: vec![],
+            ..init_payload()
+        }
+    }
+
+    #[test]
+    fn executor_bounded_release_truncates_ready_order_deterministically() {
+        let mut executor =
+            TaskExecutor::new(sibling_task(), empty_init_payload(), "repo_docs_writer").unwrap();
+
+        let zero = executor
+            .release_ready_invocations_bounded(0, CapabilityExecutionContext::default())
+            .unwrap();
+        assert!(zero.is_empty());
+        assert_eq!(executor.events().len(), 1, "zero budget records no events");
+
+        let first = executor
+            .release_ready_invocations_bounded(2, CapabilityExecutionContext::default())
+            .unwrap();
+        let second = executor
+            .release_ready_invocations_bounded(2, CapabilityExecutionContext::default())
+            .unwrap();
+
+        assert_eq!(
+            first
+                .iter()
+                .map(|payload| payload.capability_instance_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["capinst_s1", "capinst_s2"]
+        );
+        assert_eq!(second[0].capability_instance_id, "capinst_s3");
+        assert_eq!(executor.invocation_records().len(), 3);
+    }
+
+    #[test]
+    fn executor_snapshot_rejects_in_flight_invocations() {
+        let mut executor =
+            TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+        let _ = executor
+            .release_ready_invocations(CapabilityExecutionContext::default())
+            .unwrap();
+
+        let error = executor.snapshot().unwrap_err();
+
+        assert!(error.to_string().contains("in flight"));
+    }
+
+    #[test]
+    fn executor_snapshot_round_trip_resumes_exactly() {
+        let mut executor =
+            TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+        let payloads = executor
+            .release_ready_invocations(CapabilityExecutionContext::default())
+            .unwrap();
+        executor
+            .record_success(
+                &payloads[0].invocation_id,
+                vec![emitted_artifact(
+                    "artifact_resolved_node",
+                    "capinst_resolve",
+                    &payloads[0].invocation_id,
+                    "resolved_node_ref",
+                )],
+            )
+            .unwrap();
+
+        let snapshot = executor.snapshot().unwrap();
+        let mut resumed =
+            TaskExecutor::from_snapshot(snapshot, executor.artifact_repo().clone()).unwrap();
+
+        assert_eq!(resumed.completed_count(), 1);
+        assert!(resumed.events().is_empty());
+        assert_eq!(
+            resumed.ready_capability_instances(),
+            vec!["capinst_traversal".to_string()]
+        );
+
+        let next = resumed
+            .release_ready_invocations(CapabilityExecutionContext::default())
+            .unwrap();
+        assert_eq!(next[0].invocation_id, "capinst_traversal::attempt::1");
+        // The resumed run must not repeat requested or started transitions.
+        assert!(resumed
+            .events()
+            .iter()
+            .all(|event| event.event_type == "task_progressed"));
+    }
+
+    #[test]
+    fn executor_from_snapshot_rejects_artifact_repo_divergence() {
+        let mut executor =
+            TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+        let payloads = executor
+            .release_ready_invocations(CapabilityExecutionContext::default())
+            .unwrap();
+        executor
+            .record_success(
+                &payloads[0].invocation_id,
+                vec![emitted_artifact(
+                    "artifact_resolved_node",
+                    "capinst_resolve",
+                    &payloads[0].invocation_id,
+                    "resolved_node_ref",
+                )],
+            )
+            .unwrap();
+        let snapshot = executor.snapshot().unwrap();
+
+        let error =
+            TaskExecutor::from_snapshot(snapshot, TaskArtifactRepo::new("repo_other")).unwrap_err();
+
+        assert!(error.to_string().contains("missing from repo"));
+    }
+
     #[test]
     fn executor_rejects_expansion_delta_collisions() {
         let mut executor =
@@ -1095,5 +1514,70 @@ mod tests {
         assert!(duplicate_edge
             .to_string()
             .contains("already contains dependency edge"));
+    }
+
+    #[test]
+    fn executor_expansion_accepts_identical_init_artifact_replay_and_rejects_drift() {
+        let mut executor =
+            TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+        let init_artifact = ArtifactRecord {
+            artifact_id: "artifact_child_selector".to_string(),
+            artifact_type_id: "target_selector".to_string(),
+            schema_version: 1,
+            content: json!({ "node_id": "node_child" }),
+            producer: ArtifactProducerRef {
+                task_id: "task_docs_writer".to_string(),
+                capability_instance_id: "__task_init__".to_string(),
+                invocation_id: None,
+                output_slot_id: Some("child_selector".to_string()),
+            },
+        };
+        let delta = CompiledTaskDelta {
+            init_slots: vec![TaskInitSlotSpec {
+                init_slot_id: "child_selector".to_string(),
+                artifact_type_id: "target_selector".to_string(),
+                schema_version: 1,
+                required: true,
+            }],
+            init_artifacts: vec![init_artifact.clone()],
+            capability_instances: vec![],
+            dependency_edges: vec![],
+        };
+        // Simulate the crash window: the delta init artifact reached durable
+        // storage before the expansion record persisted.
+        executor
+            .artifact_repo
+            .append_artifact(init_artifact.clone())
+            .unwrap();
+
+        let mut drifted_delta = delta.clone();
+        drifted_delta.init_artifacts[0].content = json!({ "node_id": "node_other" });
+        let drift_error = executor
+            .validate_task_expansion("expansion_1", &drifted_delta)
+            .unwrap_err();
+        assert!(drift_error
+            .to_string()
+            .contains("already contains init artifact"));
+
+        let applied = executor
+            .apply_task_expansion(
+                "expansion_1",
+                "discover_children",
+                "artifact_expansion_request",
+                delta,
+            )
+            .unwrap();
+
+        assert!(applied);
+        assert_eq!(
+            executor
+                .artifact_repo()
+                .record()
+                .artifacts
+                .iter()
+                .filter(|record| record.artifact_id == init_artifact.artifact_id)
+                .count(),
+            1
+        );
     }
 }
